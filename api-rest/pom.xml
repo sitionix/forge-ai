@@ -23,8 +23,8 @@
         </dependency>
         <dependency>
             <groupId>com.afesox</groupId>
-            <artifactId>app-afesox-fgaisox-api-first-sitionix-2-unstable</artifactId>
-            <version>${fgaisox.api.version}</version>
+            <artifactId>app-afesox-fgaisox-api-first-stable</artifactId>
+            <version>${app.afesox.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
