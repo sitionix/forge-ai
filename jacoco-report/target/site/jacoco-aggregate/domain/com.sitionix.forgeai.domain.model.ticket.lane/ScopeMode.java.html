@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ScopeMode.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">jacoco-report</a> &gt; <a href="../index.html" class="el_bundle">domain</a> &gt; <a href="index.source.html" class="el_package">com.sitionix.forgeai.domain.model.ticket.lane</a> &gt; <span class="el_source">ScopeMode.java</span></div><h1>ScopeMode.java</h1><pre class="source lang-java linenums">package com.sitionix.forgeai.domain.model.ticket.lane;
+
+import java.util.Arrays;
+import java.util.List;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+
+<span class="fc" id="L8">@Getter</span>
+@RequiredArgsConstructor
+public enum ScopeMode {
+<span class="fc" id="L11">    PER_SCOPE(&quot;per_scope&quot;) {</span>
+        @Override
+        public List&lt;String&gt; laneScopes(final List&lt;String&gt; selectedScopes) {
+<span class="fc" id="L14">            return selectedScopes;</span>
+        }
+
+        @Override
+        public List&lt;String&gt; dependencyScopes(
+                final List&lt;String&gt; selectedScopes,
+                final String currentScope
+        ) {
+<span class="fc bfc" id="L22" title="All 2 branches covered.">            if (GLOBAL_SCOPE.equals(currentScope)) {</span>
+<span class="fc" id="L23">                return selectedScopes;</span>
+            }
+<span class="fc" id="L25">            return List.of(currentScope);</span>
+        }
+    },
+<span class="fc" id="L28">    GLOBAL(&quot;global&quot;) {</span>
+        @Override
+        public List&lt;String&gt; laneScopes(final List&lt;String&gt; selectedScopes) {
+<span class="fc" id="L31">            return List.of(GLOBAL_SCOPE);</span>
+        }
+
+        @Override
+        public List&lt;String&gt; dependencyScopes(
+                final List&lt;String&gt; selectedScopes,
+                final String currentScope
+        ) {
+<span class="fc" id="L39">            return List.of(GLOBAL_SCOPE);</span>
+        }
+    };
+
+    private final String id;
+    public static final String GLOBAL_SCOPE = &quot;GLOBAL&quot;;
+
+    public static ScopeMode byId(final String id) {
+<span class="fc" id="L47">        return Arrays.stream(values())</span>
+<span class="fc" id="L48">                .filter(value -&gt; value.id.equals(id))</span>
+<span class="fc" id="L49">                .findFirst()</span>
+<span class="pc" id="L50">                .orElseThrow(() -&gt; new IllegalArgumentException(&quot;Unknown scope mode id: &quot; + id));</span>
+    }
+
+    public abstract List&lt;String&gt; laneScopes(List&lt;String&gt; selectedScopes);
+
+    public abstract List&lt;String&gt; dependencyScopes(
+            List&lt;String&gt; selectedScopes,
+            String currentScope
+    );
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.10.202304240956</span></div></body></html>

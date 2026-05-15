@@ -3,7 +3,7 @@ package com.sitionix.forgeai.mapper;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
-import com.sitionix.forgeai.domain.model.ForgeAiStartTask;
+import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.processing.Generated;
@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 
 @Generated(
     value = "org.mapstruct.ap.MappingProcessor",
-    date = "2026-05-15T12:34:54+0300",
+    date = "2026-05-15T19:38:29+0300",
     comments = "version: 1.6.2, compiler: javac, environment: Java 21.0.9 (Oracle Corporation)"
 )
 @Component
@@ -40,19 +40,19 @@ public class ForgeAiApiMapperImpl implements ForgeAiApiMapper {
     }
 
     @Override
-    public StartForgeResponseDTO asStartForgeResponseDto(ForgeAiStartTask src) {
+    public StartForgeResponseDTO asStartForgeResponseDto(Ticket src) {
         if ( src == null ) {
             return null;
         }
 
         StartForgeResponseDTO.StartForgeResponseDTOBuilder startForgeResponseDTO = StartForgeResponseDTO.builder();
 
-        startForgeResponseDTO.ticket( src.getTicket() );
-        startForgeResponseDTO.task( src.getTask() );
-        startForgeResponseDTO.scope( src.getScope() );
-        startForgeResponseDTO.status( src.getStatus() );
+        startForgeResponseDTO.id( src.getId() );
+        startForgeResponseDTO.ticket( src.getTicketKey() );
+        startForgeResponseDTO.task( src.getTaskDescription() );
 
-        startForgeResponseDTO.id( java.util.UUID.fromString(src.getId()) );
+        startForgeResponseDTO.scope( "forgeai" );
+        startForgeResponseDTO.status( src.getStatus() == null ? null : src.getStatus().name() );
         startForgeResponseDTO.createdAt( toOffsetDateTime(src.getCreatedAt()) );
 
         return startForgeResponseDTO.build();

@@ -1,6 +1,6 @@
 package com.sitionix.forgeai.api;
 
-import com.sitionix.forgeai.config.ServicePropertyMissingException;
+import com.sitionix.forgeai.domain.exception.ServicePropertyMissingException;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

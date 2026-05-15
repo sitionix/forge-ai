@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LaneDependencyEntityMapperImpl.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">jacoco-report</a> &gt; <a href="../index.html" class="el_bundle">mongodb</a> &gt; <a href="index.source.html" class="el_package">com.sitionix.forgeai.infrastructure.mongodb</a> &gt; <span class="el_source">LaneDependencyEntityMapperImpl.java</span></div><h1>LaneDependencyEntityMapperImpl.java</h1><pre class="source lang-java linenums">package com.sitionix.forgeai.infrastructure.mongodb;
+
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.lane.LaneDependency;
+import com.sitionix.forgeai.infrastructure.mongodb.entity.LaneDependencyDocument;
+import javax.annotation.processing.Generated;
+import org.springframework.stereotype.Component;
+
+@Generated(
+    value = &quot;org.mapstruct.ap.MappingProcessor&quot;,
+    date = &quot;2026-05-15T19:38:36+0300&quot;,
+    comments = &quot;version: 1.6.2, compiler: javac, environment: Java 21.0.9 (Oracle Corporation)&quot;
+)
+@Component
+<span class="fc" id="L15">public class LaneDependencyEntityMapperImpl implements LaneDependencyEntityMapper {</span>
+
+    @Override
+    public LaneDependencyDocument asLaneDependencyDocument(LaneDependency laneDependency) {
+<span class="pc bpc" id="L19" title="1 of 2 branches missed.">        if ( laneDependency == null ) {</span>
+<span class="nc" id="L20">            return null;</span>
+        }
+
+<span class="fc" id="L23">        Agent type = null;</span>
+<span class="fc" id="L24">        String scope = null;</span>
+
+<span class="fc" id="L26">        type = laneDependency.getType();</span>
+<span class="fc" id="L27">        scope = laneDependency.getScope();</span>
+
+<span class="fc" id="L29">        LaneDependencyDocument laneDependencyDocument = new LaneDependencyDocument( type, scope );</span>
+
+<span class="fc" id="L31">        return laneDependencyDocument;</span>
+    }
+
+    @Override
+    public LaneDependency asLaneDependency(LaneDependencyDocument laneDependencyDocument) {
+<span class="pc bpc" id="L36" title="1 of 2 branches missed.">        if ( laneDependencyDocument == null ) {</span>
+<span class="nc" id="L37">            return null;</span>
+        }
+
+<span class="fc" id="L40">        LaneDependency.LaneDependencyBuilder laneDependency = LaneDependency.builder();</span>
+
+<span class="fc" id="L42">        laneDependency.type( laneDependencyDocument.getType() );</span>
+<span class="fc" id="L43">        laneDependency.scope( laneDependencyDocument.getScope() );</span>
+
+<span class="fc" id="L45">        return laneDependency.build();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.10.202304240956</span></div></body></html>

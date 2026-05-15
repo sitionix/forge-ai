@@ -1,0 +1,197 @@
+{
+  "ticketKey": "SITIONIX-1",
+  "taskDescription": "hi",
+  "status": "OPEN",
+  "lanes": [
+    {
+      "type": "ANALYZER",
+      "scope": "automationservice-sox",
+      "status": "READY_TO_START",
+      "attempt": 0,
+      "dependsOn": []
+    },
+    {
+      "type": "ANALYZER",
+      "scope": "backendforfrontendservice-sox",
+      "status": "READY_TO_START",
+      "attempt": 0,
+      "dependsOn": []
+    },
+    {
+      "type": "ARCHITECT",
+      "scope": "automationservice-sox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "ARCHITECT",
+      "scope": "backendforfrontendservice-sox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "API",
+      "scope": "GLOBAL",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "automationservice-sox"
+        },
+        {
+          "type": "ARCHITECT",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "EVENT",
+      "scope": "GLOBAL",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "automationservice-sox"
+        },
+        {
+          "type": "ARCHITECT",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "QA_LEAD",
+      "scope": "automationservice-sox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "QA_LEAD",
+      "scope": "backendforfrontendservice-sox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "IMPLEMENT_BE",
+      "scope": "automationservice-sox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "automationservice-sox"
+        },
+        {
+          "type": "API",
+          "scope": "GLOBAL"
+        },
+        {
+          "type": "EVENT",
+          "scope": "GLOBAL"
+        }
+      ]
+    },
+    {
+      "type": "IMPLEMENT_BE",
+      "scope": "backendforfrontendservice-sox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "backendforfrontendservice-sox"
+        },
+        {
+          "type": "API",
+          "scope": "GLOBAL"
+        },
+        {
+          "type": "EVENT",
+          "scope": "GLOBAL"
+        }
+      ]
+    },
+    {
+      "type": "TEST_UNIT",
+      "scope": "automationservice-sox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "TEST_UNIT",
+      "scope": "backendforfrontendservice-sox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "TEST_IT",
+      "scope": "automationservice-sox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "automationservice-sox"
+        },
+        {
+          "type": "QA_LEAD",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "TEST_IT",
+      "scope": "backendforfrontendservice-sox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "backendforfrontendservice-sox"
+        },
+        {
+          "type": "QA_LEAD",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    }
+  ]
+}

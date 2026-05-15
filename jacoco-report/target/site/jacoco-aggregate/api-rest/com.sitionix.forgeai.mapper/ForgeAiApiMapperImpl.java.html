@@ -3,7 +3,7 @@
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
-import com.sitionix.forgeai.domain.model.ForgeAiStartTask;
+import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.processing.Generated;
@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 
 @Generated(
     value = &quot;org.mapstruct.ap.MappingProcessor&quot;,
-    date = &quot;2026-05-15T12:34:54+0300&quot;,
+    date = &quot;2026-05-15T19:38:29+0300&quot;,
     comments = &quot;version: 1.6.2, compiler: javac, environment: Java 21.0.9 (Oracle Corporation)&quot;
 )
 @Component
@@ -40,19 +40,19 @@ import org.springframework.stereotype.Component;
     }
 
     @Override
-    public StartForgeResponseDTO asStartForgeResponseDto(ForgeAiStartTask src) {
+    public StartForgeResponseDTO asStartForgeResponseDto(Ticket src) {
 <span class="pc bpc" id="L44" title="1 of 2 branches missed.">        if ( src == null ) {</span>
 <span class="nc" id="L45">            return null;</span>
         }
 
 <span class="fc" id="L48">        StartForgeResponseDTO.StartForgeResponseDTOBuilder startForgeResponseDTO = StartForgeResponseDTO.builder();</span>
 
-<span class="fc" id="L50">        startForgeResponseDTO.ticket( src.getTicket() );</span>
-<span class="fc" id="L51">        startForgeResponseDTO.task( src.getTask() );</span>
-<span class="fc" id="L52">        startForgeResponseDTO.scope( src.getScope() );</span>
-<span class="fc" id="L53">        startForgeResponseDTO.status( src.getStatus() );</span>
+<span class="fc" id="L50">        startForgeResponseDTO.id( src.getId() );</span>
+<span class="fc" id="L51">        startForgeResponseDTO.ticket( src.getTicketKey() );</span>
+<span class="fc" id="L52">        startForgeResponseDTO.task( src.getTaskDescription() );</span>
 
-<span class="fc" id="L55">        startForgeResponseDTO.id( java.util.UUID.fromString(src.getId()) );</span>
+<span class="fc" id="L54">        startForgeResponseDTO.scope( &quot;forgeai&quot; );</span>
+<span class="pc bpc" id="L55" title="1 of 2 branches missed.">        startForgeResponseDTO.status( src.getStatus() == null ? null : src.getStatus().name() );</span>
 <span class="fc" id="L56">        startForgeResponseDTO.createdAt( toOffsetDateTime(src.getCreatedAt()) );</span>
 
 <span class="fc" id="L58">        return startForgeResponseDTO.build();</span>

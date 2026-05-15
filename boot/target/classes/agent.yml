@@ -1,0 +1,60 @@
+agents:
+  - id: analyzer
+    scope_mode: per_scope
+    groups: [ backend, frontend ]
+    depends_on: [ ]
+    produces: [ architect, qa_lead ]
+
+  - id: architect
+    scope_mode: per_scope
+    groups: [ backend, frontend ]
+    depends_on: [ analyzer ]
+    produces: [ implement_be, implement_fe, api, event ]
+
+  - id: api
+    scope_mode: global
+    groups: [ backend, frontend ]
+    depends_on: [ architect ]
+    produces: [ implement_be, implement_fe ]
+
+  - id: event
+    scope_mode: global
+    groups: [ backend ]
+    depends_on: [ architect ]
+    produces: [ implement_be ]
+
+  - id: qa_lead
+    scope_mode: per_scope
+    groups: [ backend, frontend ]
+    depends_on: [ analyzer ]
+    produces: [ test_it, test_ui ]
+
+  - id: implement_be
+    scope_mode: per_scope
+    groups: [ backend ]
+    depends_on: [ architect, api, event ]
+    produces: [ test_unit, test_it ]
+
+  - id: implement_fe
+    scope_mode: per_scope
+    groups: [ frontend ]
+    depends_on: [ architect, api ]
+    produces: [ test_ui ]
+
+  - id: test_unit
+    scope_mode: per_scope
+    groups: [ backend ]
+    depends_on: [ implement_be ]
+    produces: [ ]
+
+  - id: test_it
+    scope_mode: per_scope
+    groups: [ backend ]
+    depends_on: [ implement_be, qa_lead ]
+    produces: [ ]
+
+  - id: test_ui
+    scope_mode: per_scope
+    groups: [ frontend ]
+    depends_on: [ implement_fe, qa_lead ]
+    produces: [ ]

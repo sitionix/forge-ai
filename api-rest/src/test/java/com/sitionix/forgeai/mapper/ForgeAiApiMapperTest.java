@@ -3,8 +3,9 @@ package com.sitionix.forgeai.mapper;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
-import com.sitionix.forgeai.domain.model.ForgeAiStartTask;
-import java.time.Instant;
+import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.model.ticket.TicketStatus;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -47,28 +48,27 @@ class ForgeAiApiMapperTest {
     }
 
     @Test
-    void givenStartTask_whenAsStartForgeResponseDto_thenMapFields() {
+    void givenTicket_whenAsStartForgeResponseDto_thenMapFields() {
         //given
-        final Instant createdAt = Instant.parse("2026-05-15T08:00:00Z");
-        final String id = UUID.randomUUID().toString();
-        final ForgeAiStartTask startTask = ForgeAiStartTask.builder()
+        final UUID id = UUID.randomUUID();
+        final LocalDateTime createdAt = LocalDateTime.of(2026, 5, 15, 8, 0, 0);
+        final Ticket ticket = Ticket.builder()
                 .id(id)
-                .ticket("SITIONIX-1")
-                .task("hi")
-                .scope("forgeai")
-                .status("SUBMITTED")
+                .ticketKey("SITIONIX-1")
+                .taskDescription("hi")
+                .status(TicketStatus.IN_PROGRESS)
                 .createdAt(createdAt)
                 .build();
 
         //when
-        final StartForgeResponseDTO actual = this.forgeAiApiMapper.asStartForgeResponseDto(startTask);
+        final StartForgeResponseDTO actual = this.forgeAiApiMapper.asStartForgeResponseDto(ticket);
 
         //then
-        assertThat(actual.getId()).isEqualTo(UUID.fromString(id));
+        assertThat(actual.getId()).isEqualTo(id);
         assertThat(actual.getTicket()).isEqualTo("SITIONIX-1");
         assertThat(actual.getTask()).isEqualTo("hi");
         assertThat(actual.getScope()).isEqualTo("forgeai");
-        assertThat(actual.getStatus()).isEqualTo("SUBMITTED");
-        assertThat(actual.getCreatedAt()).isEqualTo(OffsetDateTime.ofInstant(createdAt, ZoneOffset.UTC));
+        assertThat(actual.getStatus()).isEqualTo("IN_PROGRESS");
+        assertThat(actual.getCreatedAt()).isEqualTo(createdAt.atOffset(ZoneOffset.UTC));
     }
 }

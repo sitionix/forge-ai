@@ -1,7 +1,4 @@
 /Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/api-rest/src/main/java/com/sitionix/forgeai/mapper/ForgeAiApiMapper.java
 /Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/api-rest/src/main/java/com/sitionix/forgeai/api/ForgeAiController.java
 /Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/api-rest/src/main/java/com/sitionix/forgeai/api/ForgeAiExceptionHandler.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/api-rest/src/main/java/com/sitionix/forgeai/config/ServiceProps.java
 /Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/api-rest/src/main/java/com/sitionix/forgeai/api/TerminalTtyResolver.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/api-rest/src/main/java/com/sitionix/forgeai/config/ServicePropsHandler.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/api-rest/src/main/java/com/sitionix/forgeai/config/ServicePropertyMissingException.java

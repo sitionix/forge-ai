@@ -1,5 +1,4 @@
 com/sitionix/forgeai/api/ForgeAiControllerTest.class
 com/sitionix/forgeai/mapper/ForgeAiApiMapperTest.class
 com/sitionix/forgeai/api/ForgeAiExceptionHandlerTest.class
-com/sitionix/forgeai/config/ServicePropsHandlerTest.class
 com/sitionix/forgeai/api/TerminalTtyResolverTest.class

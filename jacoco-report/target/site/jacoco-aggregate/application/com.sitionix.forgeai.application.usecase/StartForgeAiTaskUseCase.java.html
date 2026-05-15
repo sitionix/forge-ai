@@ -1,21 +1,125 @@
 <?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StartForgeAiTaskUseCase.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">jacoco-report</a> &gt; <a href="../index.html" class="el_bundle">application</a> &gt; <a href="index.source.html" class="el_package">com.sitionix.forgeai.application.usecase</a> &gt; <span class="el_source">StartForgeAiTaskUseCase.java</span></div><h1>StartForgeAiTaskUseCase.java</h1><pre class="source lang-java linenums">package com.sitionix.forgeai.application.usecase;
 
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
-import com.sitionix.forgeai.domain.model.ForgeAiStartTask;
-import com.sitionix.forgeai.domain.port.ForgeAiTaskRunner;
+import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.model.ticket.TicketStatus;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.model.ticket.lane.LaneDependency;
+import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
+import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
+import com.sitionix.forgeai.domain.port.ServicePropertiesProvider;
+import com.sitionix.forgeai.domain.port.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class StartForgeAiTaskUseCase implements StartForgeAiTask {
 
-    private final ForgeAiTaskRunner forgeAiTaskRunner;
+    private final TicketRepository ticketRepository;
+
+    private final ServicePropertiesProvider props;
 
     @Override
-    public ForgeAiStartTask execute(final ForgeAiStartCommand command) {
-<span class="fc" id="L18">        return this.forgeAiTaskRunner.run(command);</span>
+    public Ticket execute(final ForgeAiStartCommand command) {
+<span class="fc" id="L34">        final List&lt;ServicePropertiesProvider.ServiceConfigView&gt; laneProps = command.getServiceIds().stream()</span>
+<span class="fc" id="L35">                .map(serviceId -&gt; props.getServices().get(serviceId))</span>
+<span class="fc" id="L36">                .toList();</span>
+
+<span class="fc" id="L38">        final Ticket ticket = Ticket.builder()</span>
+<span class="fc" id="L39">                .id(UUID.randomUUID())</span>
+<span class="fc" id="L40">                .createdAt(LocalDateTime.now())</span>
+<span class="fc" id="L41">                .taskDescription(command.getTask())</span>
+<span class="fc" id="L42">                .status(TicketStatus.OPEN)</span>
+<span class="fc" id="L43">                .ticketKey(command.getTicket())</span>
+<span class="fc" id="L44">                .lanes(this.mapLane(laneProps))</span>
+<span class="fc" id="L45">                .build();</span>
+
+<span class="fc" id="L47">        return ticketRepository.save(ticket);</span>
+    }
+
+    private List&lt;Lane&gt; mapLane(final List&lt;ServicePropertiesProvider.ServiceConfigView&gt; services) {
+<span class="fc" id="L51">        final List&lt;String&gt; selectedScopes = services.stream()</span>
+<span class="fc" id="L52">                .map(ServicePropertiesProvider.ServiceConfigView::getPath)</span>
+<span class="fc" id="L53">                .toList();</span>
+<span class="fc" id="L54">        return Arrays.stream(Agent.values())</span>
+<span class="fc" id="L55">                .flatMap(agent -&gt; agent.getInfo()</span>
+<span class="fc" id="L56">                        .getScopeMode()</span>
+<span class="fc" id="L57">                        .laneScopes(selectedScopes)</span>
+<span class="fc" id="L58">                        .stream()</span>
+<span class="fc" id="L59">                        .filter(scope -&gt; this.isAgentAllowedForScope(agent, scope, services))</span>
+<span class="fc" id="L60">                        .map(scope -&gt; this.buildLane(agent, scope, selectedScopes, services)))</span>
+<span class="fc" id="L61">                .toList();</span>
+    }
+
+    private LinkedHashSet&lt;LaneDependency&gt; resolveDependencies(
+            final Agent agent,
+            final String currentScope,
+            final List&lt;String&gt; selectedScopes,
+            final List&lt;ServicePropertiesProvider.ServiceConfigView&gt; services
+    ) {
+<span class="fc" id="L70">        return agent.getInfo().getDependsOn().stream()</span>
+<span class="fc" id="L71">                .flatMap(dep -&gt; dep.getInfo()</span>
+<span class="fc" id="L72">                        .getScopeMode()</span>
+<span class="fc" id="L73">                        .dependencyScopes(selectedScopes, currentScope)</span>
+<span class="fc" id="L74">                        .stream()</span>
+<span class="fc" id="L75">                        .filter(scope -&gt; this.isAgentAllowedForScope(dep, scope, services))</span>
+<span class="fc" id="L76">                        .map(scope -&gt; this.dependency(dep, scope)))</span>
+<span class="fc" id="L77">                .collect(Collectors.toCollection(LinkedHashSet::new));</span>
+    }
+
+    private LaneDependency dependency(final Agent agent, final String scope) {
+<span class="fc" id="L81">        return LaneDependency.builder()</span>
+<span class="fc" id="L82">                .type(agent)</span>
+<span class="fc" id="L83">                .scope(scope)</span>
+<span class="fc" id="L84">                .build();</span>
+    }
+
+    private Lane buildLane(
+            final Agent agent,
+            final String scope,
+            final List&lt;String&gt; selectedScopes,
+            final List&lt;ServicePropertiesProvider.ServiceConfigView&gt; services
+    ) {
+<span class="fc" id="L93">        return Lane.builder()</span>
+<span class="fc" id="L94">                .id(UUID.randomUUID())</span>
+<span class="fc" id="L95">                .agent(agent)</span>
+<span class="fc" id="L96">                .scope(scope)</span>
+<span class="fc" id="L97">                .status(this.resolveLaneStatus(agent))</span>
+<span class="fc" id="L98">                .attempt(0)</span>
+<span class="fc" id="L99">                .dependsOn(this.resolveDependencies(agent, scope, selectedScopes, services))</span>
+<span class="fc" id="L100">                .build();</span>
+    }
+
+    private boolean isAgentAllowedForScope(
+            final Agent agent,
+            final String scope,
+            final List&lt;ServicePropertiesProvider.ServiceConfigView&gt; services
+    ) {
+<span class="fc bfc" id="L108" title="All 2 branches covered.">        if (ScopeMode.GLOBAL_SCOPE.equals(scope)) {</span>
+<span class="fc" id="L109">            return services.stream()</span>
+<span class="fc" id="L110">                    .anyMatch(service -&gt; agent.getInfo().getGroups().contains(service.getGroup()));</span>
+        }
+
+<span class="fc" id="L113">        return services.stream()</span>
+<span class="fc" id="L114">                .filter(service -&gt; service.getPath().equals(scope))</span>
+<span class="fc" id="L115">                .anyMatch(service -&gt; agent.getInfo().getGroups().contains(service.getGroup()));</span>
+    }
+
+    private LaneStatus resolveLaneStatus(final Agent agent) {
+<span class="fc bfc" id="L119" title="All 2 branches covered.">        if (agent.equals(Agent.ANALYZER)) {</span>
+<span class="fc" id="L120">            return LaneStatus.READY_TO_START;</span>
+        }
+<span class="fc" id="L122">        return LaneStatus.NOT_STARTED;</span>
     }
 }
 </pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.10.202304240956</span></div></body></html>

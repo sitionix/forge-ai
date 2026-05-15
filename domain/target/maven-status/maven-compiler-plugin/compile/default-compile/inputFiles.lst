@@ -1,4 +1,14 @@
 /Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/model/ForgeAiStartCommand.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/model/ticket/lane/LaneStatus.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/port/ServicePropertiesProvider.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/model/service/ServiceGroup.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/model/ticket/TicketStatus.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/model/ticket/lane/Lane.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/model/ticket/lane/Agent.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/port/TicketRepository.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/port/AgentPropertiesProvider.java
 /Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/usecase/StartForgeAiTask.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/port/ForgeAiTaskRunner.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/model/ForgeAiStartTask.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/exception/ServicePropertyMissingException.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/model/ticket/Ticket.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/model/ticket/lane/LaneDependency.java
+/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/domain/src/main/java/com/sitionix/forgeai/domain/model/ticket/lane/ScopeMode.java
