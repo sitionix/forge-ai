@@ -1,8 +1,0 @@
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/TicketEntityMapper.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/LaneEntityMapper.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/entity/LaneDocument.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/entity/TicketDocument.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/adapter/TicketRepositoryImpl.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/LaneDependencyEntityMapper.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/entity/LaneDependencyDocument.java
-/Users/vladvinskevitch/Documents/Java/sitionix/forge-ai/infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/repository/TicketJpaRepository.java
