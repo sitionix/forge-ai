@@ -22,6 +22,19 @@ public class ControllerEndpoint {
         );
     }
 
+    public static Endpoint<StartForgeRequestDTO, StartForgeResponseDTO> startForgeFrontend() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/start",
+                HttpMethod.POST,
+                StartForgeRequestDTO.class,
+                StartForgeResponseDTO.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestStartForgeFrontend.json")
+                        .expectStatus(HttpStatus.CREATED.value())
+                        .header("X-Terminal-TTY", "/dev/ttys999")
+        );
+    }
+
     private ControllerEndpoint() {
     }
 }

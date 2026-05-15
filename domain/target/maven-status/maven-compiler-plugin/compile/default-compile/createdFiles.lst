@@ -1,6 +1,0 @@
-com/sitionix/forgeai/domain/model/ForgeAiStartCommand$ForgeAiStartCommandBuilder.class
-com/sitionix/forgeai/domain/model/ForgeAiStartCommand.class
-com/sitionix/forgeai/domain/usecase/StartForgeAiTask.class
-com/sitionix/forgeai/domain/model/ForgeAiStartTask.class
-com/sitionix/forgeai/domain/port/ForgeAiTaskRunner.class
-com/sitionix/forgeai/domain/model/ForgeAiStartTask$ForgeAiStartTaskBuilder.class

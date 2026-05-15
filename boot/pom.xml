@@ -47,6 +47,11 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
             <groupId>com.sitionix.forgeit</groupId>
             <artifactId>forgeit</artifactId>
             <version>${forgeit.version}</version>

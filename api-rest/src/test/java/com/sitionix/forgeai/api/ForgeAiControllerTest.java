@@ -3,7 +3,7 @@ package com.sitionix.forgeai.api;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
-import com.sitionix.forgeai.domain.model.ForgeAiStartTask;
+import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -50,7 +50,7 @@ class ForgeAiControllerTest {
         //given
         final StartForgeRequestDTO requestDTO = mock(StartForgeRequestDTO.class);
         final ForgeAiStartCommand command = mock(ForgeAiStartCommand.class);
-        final ForgeAiStartTask startedTask = mock(ForgeAiStartTask.class);
+        final Ticket startedTask = mock(Ticket.class);
         final StartForgeResponseDTO responseDTO = mock(StartForgeResponseDTO.class);
 
         when(this.terminalTtyResolver.resolve()).thenReturn("/dev/ttys008");
