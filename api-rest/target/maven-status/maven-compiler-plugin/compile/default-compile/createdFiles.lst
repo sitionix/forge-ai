@@ -1,0 +1,15 @@
+com/sitionix/forgeai/config/ServiceProps$DeployConfig.class
+com/sitionix/forgeai/config/ServiceProps$TestType.class
+com/sitionix/forgeai/config/ServiceProps.class
+com/sitionix/forgeai/config/ServiceProps$DbType.class
+com/sitionix/forgeai/config/ServicePropertyMissingException.class
+com/sitionix/forgeai/config/ServiceProps$ServiceGroup.class
+com/sitionix/forgeai/mapper/ForgeAiApiMapperImpl.class
+com/sitionix/forgeai/api/TerminalTtyResolver.class
+com/sitionix/forgeai/api/ForgeAiExceptionHandler.class
+com/sitionix/forgeai/config/ServiceProps$ServiceConfig.class
+com/sitionix/forgeai/config/ServiceProps$DbConfig.class
+com/sitionix/forgeai/config/ServiceProps$DeployUnitConfig.class
+com/sitionix/forgeai/api/ForgeAiController.class
+com/sitionix/forgeai/config/ServicePropsHandler.class
+com/sitionix/forgeai/mapper/ForgeAiApiMapper.class

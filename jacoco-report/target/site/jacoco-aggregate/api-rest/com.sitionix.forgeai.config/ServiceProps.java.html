@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ServiceProps.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">jacoco-report</a> &gt; <a href="../index.html" class="el_bundle">api-rest</a> &gt; <a href="index.source.html" class="el_package">com.sitionix.forgeai.config</a> &gt; <span class="el_source">ServiceProps.java</span></div><h1>ServiceProps.java</h1><pre class="source lang-java linenums">package com.sitionix.forgeai.config;
+
+import java.util.List;
+import java.util.Map;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+@Getter
+@Setter
+@Component
+@ConfigurationProperties(prefix = &quot;&quot;)
+<span class="fc" id="L15">public class ServiceProps {</span>
+
+    private Map&lt;String, ServiceConfig&gt; services;
+
+    @Getter
+    @Setter
+<span class="fc" id="L21">    public static class ServiceConfig {</span>
+        private String label;
+        private String path;
+        private ServiceGroup group;
+        private List&lt;String&gt; tags;
+        private List&lt;TestType&gt; tests;
+        private List&lt;String&gt; domainKeywords;
+        private List&lt;String&gt; ownsBusinessAreas;
+        private List&lt;String&gt; architectureRefs;
+        private Map&lt;String, Object&gt; contractRefs;
+        private DeployConfig deploy;
+        private DbConfig db;
+    }
+
+    @Getter
+    @Setter
+<span class="fc" id="L37">    public static class DeployConfig {</span>
+        private String type;
+        private String repo;
+        private DeployUnitConfig service;
+        private DeployUnitConfig db;
+    }
+
+    @Getter
+    @Setter
+<span class="fc" id="L46">    public static class DbConfig {</span>
+        private Boolean required;
+        private DbType type;
+        private String mode;
+        private String key;
+    }
+
+    @Getter
+    @Setter
+<span class="fc" id="L55">    public static class DeployUnitConfig {</span>
+        private String name;
+        private String workflowName;
+        private String workflowEvent;
+    }
+
+<span class="fc" id="L61">    public enum ServiceGroup {</span>
+<span class="fc" id="L62">        @JsonProperty(&quot;backend&quot;)</span>
+        BACKEND,
+<span class="fc" id="L64">        @JsonProperty(&quot;frontend&quot;)</span>
+        FRONTEND,
+<span class="fc" id="L66">        @JsonProperty(&quot;tool&quot;)</span>
+        TOOL
+    }
+
+<span class="fc" id="L70">    public enum TestType {</span>
+<span class="fc" id="L71">        @JsonProperty(&quot;unit&quot;)</span>
+        UNIT,
+<span class="fc" id="L73">        @JsonProperty(&quot;it&quot;)</span>
+        IT,
+<span class="fc" id="L75">        @JsonProperty(&quot;e2e&quot;)</span>
+        E2E
+    }
+
+<span class="fc" id="L79">    public enum DbType {</span>
+<span class="fc" id="L80">        @JsonProperty(&quot;postgresql&quot;)</span>
+        POSTGRESQL,
+<span class="fc" id="L82">        @JsonProperty(&quot;mongodb&quot;)</span>
+        MONGODB,
+<span class="fc" id="L84">        @JsonProperty(&quot;none&quot;)</span>
+        NONE
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.10.202304240956</span></div></body></html>
