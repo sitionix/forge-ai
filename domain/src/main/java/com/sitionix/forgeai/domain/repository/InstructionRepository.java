@@ -1,4 +1,4 @@
-package com.sitionix.forgeai.domain.port;
+package com.sitionix.forgeai.domain.repository;
 
 import com.sitionix.forgeai.domain.model.ticket.lane.AgentInstructions;
 

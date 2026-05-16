@@ -5,9 +5,9 @@ import com.sitionix.forgeai.domain.model.codex.ForgeAiContractApi;
 import com.sitionix.forgeai.domain.model.ticket.lane.AgentInstructions;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
-import com.sitionix.forgeai.domain.port.InstructionRepository;
-import com.sitionix.forgeai.domain.port.ServicePropertiesProvider;
-import com.sitionix.forgeai.domain.port.TicketRepository;
+import com.sitionix.forgeai.domain.repository.InstructionRepository;
+import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
+import com.sitionix.forgeai.domain.repository.TicketRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 

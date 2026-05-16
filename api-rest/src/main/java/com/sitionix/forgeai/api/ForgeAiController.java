@@ -6,8 +6,13 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
+import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +21,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -26,6 +33,7 @@ public class ForgeAiController implements ForgeAiApi {
     private final StartForgeAiTask startForgeAiTask;
     private final ForgeAiApiMapper forgeAiApiMapper;
     private final TerminalTtyResolver terminalTtyResolver;
+    private final AgentTicketApiMapper agentTicketApiMapper;
 
     @Override
     public ResponseEntity<StartForgeResponseDTO> startForge(@Valid final StartForgeRequestDTO startForgeRequestDTO) {
@@ -40,6 +48,11 @@ public class ForgeAiController implements ForgeAiApi {
     @Override
     public ResponseEntity<CompleteAnalyzerLaneResponseDTO> completeAnalyzerLane(final UUID ticketId, final UUID laneId, @Valid final CompleteAnalyzerLaneRequestDTO completeAnalyzerLaneRequestDTO) {
         log.info("Received completeAnalyzerLane request for ticketId: {}, laneId: {}, with request body: {}", ticketId, laneId, completeAnalyzerLaneRequestDTO);
+
+        final AgentTicket<ArchitectPayload> architectTicket = this.agentTicketApiMapper.asArchitectTicket(completeAnalyzerLaneRequestDTO, ticketId, laneId);
+        final AgentTicket<QaLeadPayload> qaLeadTicket = this.agentTicketApiMapper.asQaLeadTicket(completeAnalyzerLaneRequestDTO, ticketId, laneId);
+
+
         return ResponseEntity.ok(CompleteAnalyzerLaneResponseDTO.builder()
                         .laneId(laneId)
                         .laneStatus(HttpStatus.OK.name())

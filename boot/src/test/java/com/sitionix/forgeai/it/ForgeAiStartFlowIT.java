@@ -34,7 +34,7 @@ class ForgeAiStartFlowIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.createdAt").isNotEmpty())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticket").value("SITIONIX-1"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.task").value("hi"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.scope").value("forgeai"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.scope").value("forge-ai"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OPEN"))
                 .assertDefault();
 
@@ -55,7 +55,7 @@ class ForgeAiStartFlowIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.createdAt").isNotEmpty())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticket").value("SITIONIX-2"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.task").value("frontend task"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.scope").value("forgeai"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.scope").value("forge-ai"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OPEN"))
                 .assertDefault();
 

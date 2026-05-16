@@ -1,7 +1,7 @@
 package com.sitionix.forgeai.infrastructure.resources;
 
 import com.sitionix.forgeai.domain.model.ticket.lane.AgentInstructions;
-import com.sitionix.forgeai.domain.port.InstructionRepository;
+import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;

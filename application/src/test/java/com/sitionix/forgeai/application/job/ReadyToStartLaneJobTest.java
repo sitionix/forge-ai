@@ -1,9 +1,10 @@
 package com.sitionix.forgeai.application.job;
 
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
-import com.sitionix.forgeai.domain.port.TicketRepository;
+import com.sitionix.forgeai.domain.repository.TicketRepository;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -42,7 +43,7 @@ class ReadyToStartLaneJobTest {
     @Test
     void givenReadyLanes_whenRun_thenExecuteEachAgent() {
         //given
-        final ExecuteAgent analyzerExecutor = mock(ExecuteAgent.class);
+        final ExecuteAgent<AgentTicketPayload> analyzerExecutor = mock(ExecuteAgent.class);
         Agent.ANALYZER.setExecutor(analyzerExecutor);
 
         final ReadyToStartLane lane = ReadyToStartLane.builder()
@@ -59,7 +60,7 @@ class ReadyToStartLaneJobTest {
 
         //then
         verify(this.ticketRepository).findAllReadyToStartLanes();
-        verify(analyzerExecutor).execute(lane);
+        verify(analyzerExecutor).executeLane(lane);
         verifyNoMoreInteractions(analyzerExecutor);
     }
 }

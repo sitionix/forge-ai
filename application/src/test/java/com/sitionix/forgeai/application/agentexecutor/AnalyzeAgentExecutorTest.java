@@ -6,8 +6,8 @@ import com.sitionix.forgeai.domain.model.codex.ScopeContext;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.port.CodexClient;
-import com.sitionix.forgeai.domain.port.ServicePropertiesProvider;
-import com.sitionix.forgeai.domain.port.TicketRepository;
+import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
+import com.sitionix.forgeai.domain.repository.TicketRepository;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -91,7 +91,7 @@ class AnalyzeAgentExecutorTest {
         when(this.ticketRepository.findTicketContentById(ticketId)).thenReturn("task-description");
 
         //when
-        this.analyzeAgentExecutor.execute(lane);
+        this.analyzeAgentExecutor.executeLane(lane);
 
         //then
         verify(this.prepareAgentExecutionInputUseCase).execute(lane);

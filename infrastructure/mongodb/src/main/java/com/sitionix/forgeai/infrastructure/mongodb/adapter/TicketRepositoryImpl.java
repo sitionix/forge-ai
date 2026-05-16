@@ -3,7 +3,7 @@ package com.sitionix.forgeai.infrastructure.mongodb.adapter;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
-import com.sitionix.forgeai.domain.port.TicketRepository;
+import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.infrastructure.mongodb.TicketEntityMapper;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.repository.TicketJpaRepository;

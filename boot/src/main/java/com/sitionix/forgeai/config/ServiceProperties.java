@@ -1,7 +1,7 @@
 package com.sitionix.forgeai.config;
 
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
-import com.sitionix.forgeai.domain.port.ServicePropertiesProvider;
+import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 import java.util.Map;

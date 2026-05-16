@@ -1,4 +1,4 @@
-package com.sitionix.forgeai.domain.port;
+package com.sitionix.forgeai.domain.props;
 
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import java.util.List;
