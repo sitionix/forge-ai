@@ -8,22 +8,26 @@ import lombok.Setter;
 
 @Getter
 @RequiredArgsConstructor
-public enum Agent {
-    ANALYZER("analyzer"),
-    ARCHITECT("architect"),
-    API("api"),
-    EVENT("event"),
-    QA_LEAD("qa_lead"),
-    IMPLEMENT_BE("implement_be"),
-    IMPLEMENT_FE("implement_fe"),
-    TEST_UNIT("test_unit"),
-    TEST_IT("test_it"),
-    TEST_UI("test_ui");
+public enum Agent implements ExecuteAgent{
+    ANALYZER("analyzer", "analyzeAgentExecutor"),
+    ARCHITECT("architect", "architectAgentExecutor"),
+    API("api", "apiAgentExecutor"),
+    EVENT("event", "eventAgentExecutor"),
+    QA_LEAD("qa_lead", "qaLeadAgentExecutor"),
+    IMPLEMENT_BE("implement_be", "beAgentExecutor"),
+    IMPLEMENT_FE("implement_fe", "feAgentExecutor"),
+    TEST_UNIT("test_unit", "testUnitAgentExecutor"),
+    TEST_IT("test_it", "testItAgentExecutor"),
+    TEST_UI("test_ui", "testUiAgentExecutor");
 
     private final String id;
+    private final String executorBeanName;
 
     @Setter
     private AgentPropertiesProvider.AgentConfigView info;
+
+    @Setter
+    private ExecuteAgent executor;
 
     public AgentPropertiesProvider.AgentConfigView getInfo() {
         if (this.info == null) {
@@ -37,5 +41,10 @@ public enum Agent {
                 .filter(value -> value.id.equals(id))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Unknown agent id: " + id));
+    }
+
+    @Override
+    public void execute(final ReadyToStartLane lane) {
+        this.getExecutor().execute(lane);
     }
 }

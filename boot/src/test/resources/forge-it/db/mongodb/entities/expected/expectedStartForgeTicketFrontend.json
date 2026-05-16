@@ -1,11 +1,13 @@
 {
   "ticketKey": "SITIONIX-2",
   "taskDescription": "frontend task",
+  "sourceTerminalTty": "/dev/ttys999",
   "status": "OPEN",
   "lanes": [
     {
       "type": "ANALYZER",
       "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
       "status": "READY_TO_START",
       "attempt": 0,
       "dependsOn": []
@@ -13,6 +15,7 @@
     {
       "type": "ARCHITECT",
       "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -25,6 +28,7 @@
     {
       "type": "API",
       "scope": "GLOBAL",
+      "serviceId": "global",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -37,6 +41,7 @@
     {
       "type": "QA_LEAD",
       "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -49,6 +54,7 @@
     {
       "type": "IMPLEMENT_FE",
       "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -65,6 +71,7 @@
     {
       "type": "TEST_UI",
       "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [

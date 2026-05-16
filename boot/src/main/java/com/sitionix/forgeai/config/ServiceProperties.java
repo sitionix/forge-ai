@@ -34,13 +34,27 @@ public class ServiceProperties implements ServicePropertiesProvider {
         private List<String> domainKeywords;
         private List<String> ownsBusinessAreas;
         private List<String> architectureRefs;
-        private Map<String, Object> contractRefs;
+        private Map<String, ContractRefConfig> contractRefs;
         private DeployConfig deploy;
         private DbConfig db;
 
         @Override
         public List<String> getTests() {
             return this.tests == null ? null : this.tests.stream().map(value -> value.name().toLowerCase()).toList();
+        }
+
+        @Override
+        public Map<String, ServicePropertiesProvider.ContractRefView> getContractRefs() {
+            if (this.contractRefs == null) {
+                return null;
+            }
+            return this.contractRefs.entrySet().stream()
+                    .collect(java.util.stream.Collectors.toMap(
+                            Map.Entry::getKey,
+                            value -> value.getValue(),
+                            (left, right) -> right,
+                            java.util.LinkedHashMap::new
+                    ));
         }
     }
 
@@ -73,6 +87,23 @@ public class ServiceProperties implements ServicePropertiesProvider {
         private String name;
         private String workflowName;
         private String workflowEvent;
+    }
+
+    @Getter
+    @Setter
+    public static class ContractRefConfig implements ServicePropertiesProvider.ContractRefView {
+        private String sourceRepo;
+        private String apiFamily;
+        private String eventFamily;
+        private String serviceCode;
+        private String root;
+        private List<String> schemas;
+        private List<String> operations;
+        private List<String> topics;
+        private List<String> payloads;
+        private List<String> generatedArtifacts;
+        private List<String> consumerArtifacts;
+        private List<String> frontendPackages;
     }
 
     public enum TestType {

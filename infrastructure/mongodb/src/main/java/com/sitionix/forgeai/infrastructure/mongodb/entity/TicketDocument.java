@@ -17,6 +17,7 @@ public class TicketDocument {
     private UUID id;
     private String ticketKey;
     private String taskDescription;
+    private String sourceTerminalTty;
     private TicketStatus status;
     private List<LaneDocument> lanes;
     private LocalDateTime createdAt;

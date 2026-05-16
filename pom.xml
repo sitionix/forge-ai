@@ -37,7 +37,6 @@
         <testcontainers.version>1.20.1</testcontainers.version>
         <forgeit.version>0.0.39</forgeit.version>
         <forge.security.version>0.0.7</forge.security.version>
-        <app.afesox.version>0.0.2</app.afesox.version>
     </properties>
 
     <dependencyManagement>
@@ -65,6 +64,10 @@
             <dependency>
                 <groupId>${project.groupId}</groupId>
                 <artifactId>codex-cli</artifactId>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>resources</artifactId>
             </dependency>
             <dependency>
                 <groupId>org.mapstruct</groupId>

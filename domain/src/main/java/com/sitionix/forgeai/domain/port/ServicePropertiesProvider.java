@@ -28,7 +28,7 @@ public interface ServicePropertiesProvider {
 
         List<String> getArchitectureRefs();
 
-        Map<String, Object> getContractRefs();
+        Map<String, ContractRefView> getContractRefs();
 
         DeployConfigView getDeploy();
 
@@ -61,5 +61,31 @@ public interface ServicePropertiesProvider {
         String getWorkflowName();
 
         String getWorkflowEvent();
+    }
+
+    interface ContractRefView {
+        String getSourceRepo();
+
+        String getApiFamily();
+
+        String getEventFamily();
+
+        String getServiceCode();
+
+        String getRoot();
+
+        List<String> getSchemas();
+
+        List<String> getOperations();
+
+        List<String> getTopics();
+
+        List<String> getPayloads();
+
+        List<String> getGeneratedArtifacts();
+
+        List<String> getConsumerArtifacts();
+
+        List<String> getFrontendPackages();
     }
 }

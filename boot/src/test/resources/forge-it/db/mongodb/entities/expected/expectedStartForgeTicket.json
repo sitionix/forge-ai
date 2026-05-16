@@ -1,11 +1,13 @@
 {
   "ticketKey": "SITIONIX-1",
   "taskDescription": "hi",
+  "sourceTerminalTty": "/dev/ttys999",
   "status": "OPEN",
   "lanes": [
     {
       "type": "ANALYZER",
       "scope": "automationservice-sox",
+      "serviceId": "atmssox",
       "status": "READY_TO_START",
       "attempt": 0,
       "dependsOn": []
@@ -13,6 +15,7 @@
     {
       "type": "ANALYZER",
       "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
       "status": "READY_TO_START",
       "attempt": 0,
       "dependsOn": []
@@ -20,6 +23,7 @@
     {
       "type": "ARCHITECT",
       "scope": "automationservice-sox",
+      "serviceId": "atmssox",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -32,6 +36,7 @@
     {
       "type": "ARCHITECT",
       "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -44,6 +49,7 @@
     {
       "type": "API",
       "scope": "GLOBAL",
+      "serviceId": "global",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -60,6 +66,7 @@
     {
       "type": "EVENT",
       "scope": "GLOBAL",
+      "serviceId": "global",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -76,6 +83,7 @@
     {
       "type": "QA_LEAD",
       "scope": "automationservice-sox",
+      "serviceId": "atmssox",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -88,6 +96,7 @@
     {
       "type": "QA_LEAD",
       "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -100,6 +109,7 @@
     {
       "type": "IMPLEMENT_BE",
       "scope": "automationservice-sox",
+      "serviceId": "atmssox",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -120,6 +130,7 @@
     {
       "type": "IMPLEMENT_BE",
       "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -140,6 +151,7 @@
     {
       "type": "TEST_UNIT",
       "scope": "automationservice-sox",
+      "serviceId": "atmssox",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -152,6 +164,7 @@
     {
       "type": "TEST_UNIT",
       "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -164,6 +177,7 @@
     {
       "type": "TEST_IT",
       "scope": "automationservice-sox",
+      "serviceId": "atmssox",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
@@ -180,6 +194,7 @@
     {
       "type": "TEST_IT",
       "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [

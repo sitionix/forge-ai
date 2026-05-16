@@ -5,10 +5,11 @@ server:
     context-path: /fgaisox
 spring:
   config:
-    import: optional:classpath:services.yaml,optional:classpath:agent.yml
+    import: optional:classpath:services.yaml,optional:classpath:agent.yml,optional:classpath:instructions.yaml
   data:
     mongodb:
       uri: ${MONGODB_URI:mongodb://localhost:27018/forge_ai}
+      uuid-representation: standard
 management:
   endpoint:
     health:
@@ -29,3 +30,7 @@ forge:
     launcher:
       default-base-url: http://localhost:9099/fgaisox
       services-config-resource: classpath:services.yaml
+forge-ai:
+  jobs:
+    ready-to-start:
+      fixed-delay-ms: 5000
