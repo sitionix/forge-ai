@@ -31,14 +31,15 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
 
     @Override
     public Ticket execute(final ForgeAiStartCommand command) {
-        final List<ServicePropertiesProvider.ServiceConfigView> laneProps = command.getServiceIds().stream()
-                .map(serviceId -> props.getServices().get(serviceId))
+        final List<SelectedService> laneProps = command.getServiceIds().stream()
+                .map(serviceId -> new SelectedService(serviceId, this.props.getServices().get(serviceId)))
                 .toList();
 
         final Ticket ticket = Ticket.builder()
                 .id(UUID.randomUUID())
                 .createdAt(LocalDateTime.now())
                 .taskDescription(command.getTask())
+                .sourceTerminalTty(command.getSourceTerminalTty())
                 .status(TicketStatus.OPEN)
                 .ticketKey(command.getTicket())
                 .lanes(this.mapLane(laneProps))
@@ -47,9 +48,9 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
         return ticketRepository.save(ticket);
     }
 
-    private List<Lane> mapLane(final List<ServicePropertiesProvider.ServiceConfigView> services) {
+    private List<Lane> mapLane(final List<SelectedService> services) {
         final List<String> selectedScopes = services.stream()
-                .map(ServicePropertiesProvider.ServiceConfigView::getPath)
+                .map(value -> value.getService().getPath())
                 .toList();
         return Arrays.stream(Agent.values())
                 .flatMap(agent -> agent.getInfo()
@@ -57,7 +58,7 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
                         .laneScopes(selectedScopes)
                         .stream()
                         .filter(scope -> this.isAgentAllowedForScope(agent, scope, services))
-                        .map(scope -> this.buildLane(agent, scope, selectedScopes, services)))
+                        .map(scope -> this.buildLane(agent, scope, selectedScopes, services, this.resolveServiceId(scope, services))))
                 .toList();
     }
 
@@ -65,7 +66,7 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
             final Agent agent,
             final String currentScope,
             final List<String> selectedScopes,
-            final List<ServicePropertiesProvider.ServiceConfigView> services
+            final List<SelectedService> services
     ) {
         return agent.getInfo().getDependsOn().stream()
                 .flatMap(dep -> dep.getInfo()
@@ -88,12 +89,14 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
             final Agent agent,
             final String scope,
             final List<String> selectedScopes,
-            final List<ServicePropertiesProvider.ServiceConfigView> services
+            final List<SelectedService> services,
+            final String serviceId
     ) {
         return Lane.builder()
                 .id(UUID.randomUUID())
                 .agent(agent)
                 .scope(scope)
+                .serviceId(serviceId)
                 .status(this.resolveLaneStatus(agent))
                 .attempt(0)
                 .dependsOn(this.resolveDependencies(agent, scope, selectedScopes, services))
@@ -103,16 +106,27 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
     private boolean isAgentAllowedForScope(
             final Agent agent,
             final String scope,
-            final List<ServicePropertiesProvider.ServiceConfigView> services
+            final List<SelectedService> services
     ) {
         if (ScopeMode.GLOBAL_SCOPE.equals(scope)) {
             return services.stream()
-                    .anyMatch(service -> agent.getInfo().getGroups().contains(service.getGroup()));
+                    .anyMatch(service -> agent.getInfo().getGroups().contains(service.getService().getGroup()));
         }
 
         return services.stream()
-                .filter(service -> service.getPath().equals(scope))
-                .anyMatch(service -> agent.getInfo().getGroups().contains(service.getGroup()));
+                .filter(service -> service.getService().getPath().equals(scope))
+                .anyMatch(service -> agent.getInfo().getGroups().contains(service.getService().getGroup()));
+    }
+
+    private String resolveServiceId(final String scope, final List<SelectedService> services) {
+        if (ScopeMode.GLOBAL_SCOPE.equals(scope)) {
+            return "global";
+        }
+        return services.stream()
+                .filter(service -> service.getService().getPath().equals(scope))
+                .findFirst()
+                .map(SelectedService::getServiceId)
+                .orElseThrow(() -> new IllegalArgumentException("Service id not found for scope: " + scope));
     }
 
     private LaneStatus resolveLaneStatus(final Agent agent) {
@@ -120,5 +134,23 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
             return LaneStatus.READY_TO_START;
         }
         return LaneStatus.NOT_STARTED;
+    }
+
+    private static class SelectedService {
+        private final String serviceId;
+        private final ServicePropertiesProvider.ServiceConfigView service;
+
+        private SelectedService(final String serviceId, final ServicePropertiesProvider.ServiceConfigView service) {
+            this.serviceId = serviceId;
+            this.service = service;
+        }
+
+        public String getServiceId() {
+            return this.serviceId;
+        }
+
+        public ServicePropertiesProvider.ServiceConfigView getService() {
+            return this.service;
+        }
     }
 }

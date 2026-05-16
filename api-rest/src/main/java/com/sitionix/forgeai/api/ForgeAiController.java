@@ -1,6 +1,8 @@
 package com.sitionix.forgeai.api;
 
 import com.app_afesox.fgaisox.api_first.api.ForgeAiApi;
+import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
@@ -13,6 +15,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.UUID;
 
 @Slf4j
 @RestController
@@ -31,5 +35,15 @@ public class ForgeAiController implements ForgeAiApi {
         final Ticket startedTask = this.startForgeAiTask.execute(command);
         final StartForgeResponseDTO response = this.forgeAiApiMapper.asStartForgeResponseDto(startedTask);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @Override
+    public ResponseEntity<CompleteAnalyzerLaneResponseDTO> completeAnalyzerLane(final UUID ticketId, final UUID laneId, @Valid final CompleteAnalyzerLaneRequestDTO completeAnalyzerLaneRequestDTO) {
+        log.info("Received completeAnalyzerLane request for ticketId: {}, laneId: {}, with request body: {}", ticketId, laneId, completeAnalyzerLaneRequestDTO);
+        return ResponseEntity.ok(CompleteAnalyzerLaneResponseDTO.builder()
+                        .laneId(laneId)
+                        .laneStatus(HttpStatus.OK.name())
+                        .ticketId(ticketId)
+                .build());
     }
 }

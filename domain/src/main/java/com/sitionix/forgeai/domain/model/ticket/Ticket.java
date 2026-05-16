@@ -14,6 +14,7 @@ public class Ticket {
     private UUID id;
     private String ticketKey;
     private String taskDescription;
+    private String sourceTerminalTty;
     private TicketStatus status;
     private List<Lane> lanes;
     private LocalDateTime createdAt;

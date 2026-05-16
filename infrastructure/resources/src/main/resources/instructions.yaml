@@ -1,0 +1,11 @@
+forge:
+  ai:
+    instructions:
+      agents:
+        analyzer:
+          instructions: instructions/agents/analyzer.md
+          endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete
+          additional-instructions: []
+      shared:
+        - instructions/shared/common-rules.md
+        - instructions/shared/completion-callback.md

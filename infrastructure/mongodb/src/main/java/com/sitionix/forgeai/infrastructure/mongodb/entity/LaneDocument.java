@@ -13,6 +13,7 @@ public class LaneDocument {
     private UUID id;
     private Agent type;
     private String scope;
+    private String serviceId;
     private LaneStatus status;
     private int attempt;
     private UUID inputTaskId;

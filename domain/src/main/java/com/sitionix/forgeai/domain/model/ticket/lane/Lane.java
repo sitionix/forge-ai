@@ -12,9 +12,9 @@ public class Lane {
     private UUID id;
     private Agent agent;
     private String scope;
+    private String serviceId;
     private LaneStatus status;
     private int attempt;
     private UUID inputTaskId;
     private Set<LaneDependency> dependsOn;
-
 }

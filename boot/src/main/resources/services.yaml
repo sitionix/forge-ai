@@ -8,8 +8,7 @@ services:
         source_repo: app-afesox
         api_family: athssox
         service_code: athssox
-        roots:
-          - app-afesox/apis/athssox/rest
+        root: app-afesox/apis/athssox/rest/openapi.yml
         schemas:
           - app-afesox/apis/athssox/rest/schemas
         operations:
@@ -22,8 +21,7 @@ services:
         source_repo: app-afesox
         event_family: athssox
         service_code: athssox
-        roots:
-          - app-afesox/apis/athssox/events
+        root: ""
         topics:
           - app-afesox/apis/athssox/events/topics
         payloads:
@@ -59,8 +57,7 @@ services:
         source_repo: app-afesox
         api_family: atmssox
         service_code: atmssox
-        roots:
-          - app-afesox/apis/atmssox/rest
+        root: app-afesox/apis/atmssox/rest/openapi.yml
         schemas:
           - app-afesox/apis/atmssox/rest/schemas
         operations:
@@ -74,8 +71,7 @@ services:
         source_repo: app-afesox
         event_family: atmssox
         service_code: atmssox
-        roots:
-          - app-afesox/apis/atmssox/events
+        root: ""
         topics:
           - app-afesox/apis/atmssox/events/topics
         payloads:
@@ -99,7 +95,7 @@ services:
       mode: service_and_db
       key: atms_sox
     tests: [unit, it, e2e]
-  forgeai:
+  forge-ai:
     label: Forge AI Service SOX
     path: forge-ai
     tags: [java, spring-boot, backend, forge-it, http, mongodb]
@@ -111,8 +107,7 @@ services:
         source_repo: app-afesox
         api_family: fgaisox
         service_code: fgaisox
-        roots:
-          - app-afesox/apis/fgaisox/rest
+        root: app-afesox/apis/fgaisox/rest/openapi.yml
         schemas:
           - app-afesox/apis/fgaisox/rest/schemas
         operations:
@@ -121,14 +116,6 @@ services:
           - app-afesox-fgaisox-api-first-stable
         consumer_artifacts: []
         frontend_packages: []
-      events:
-        source_repo: app-afesox
-        event_family: fgaisox
-        service_code: fgaisox
-        roots: []
-        topics: []
-        payloads: []
-        generated_artifacts: []
     group: backend
     deploy:
       type: service
@@ -146,7 +133,7 @@ services:
   bffssox:
     label: Backend for Frontend Service SOX
     path: backendforfrontendservice-sox
-    tags: [java, spring-boot, backend, forge-it, http, wiremock]
+    tags: [java, spring-boot, backend, http]
     domain_keywords: [bff, proxy, session, csrf, frontend api, error mapping, user context propagation]
     owns_business_areas: [BFF API boundary, SPA-facing endpoints, upstream proxying, session/auth propagation]
     architecture_refs: []
@@ -155,8 +142,7 @@ services:
         source_repo: app-afesox
         api_family: bffssox
         service_code: bffssox
-        roots:
-          - app-afesox/apis/bffssox/rest
+        root: app-afesox/apis/bffssox/rest/openapi.yml
         schemas:
           - app-afesox/apis/bffssox/rest/schemas
         operations:
@@ -170,7 +156,7 @@ services:
         source_repo: app-afesox
         event_family: bffssox
         service_code: bffssox
-        roots: []
+        root: ""
         topics: []
         payloads: []
         generated_artifacts: []
@@ -199,8 +185,7 @@ services:
         source_repo: app-afesox
         api_family: ntfssox
         service_code: ntfssox
-        roots:
-          - app-afesox/apis/ntfssox/rest
+        root: app-afesox/apis/ntfssox/rest/openapi.yml
         schemas:
           - app-afesox/apis/ntfssox/rest/schemas
         operations:
@@ -214,8 +199,7 @@ services:
         source_repo: app-afesox
         event_family: ntfssox
         service_code: ntfssox
-        roots:
-          - app-afesox/apis/ntfssox/events
+        root: ""
         topics:
           - app-afesox/apis/ntfssox/events/topics
         payloads:
@@ -246,8 +230,7 @@ services:
         source_repo: app-afesox
         api_family: stsssox
         service_code: stsssox
-        roots:
-          - app-afesox/apis/stsssox/rest
+        root: app-afesox/apis/stsssox/rest/openapi.yml
         schemas:
           - app-afesox/apis/stsssox/rest/schemas
         operations:
@@ -260,8 +243,7 @@ services:
         source_repo: app-afesox
         event_family: stsssox
         service_code: stsssox
-        roots:
-          - app-afesox/apis/stsssox/events
+        root: ""
         topics:
           - app-afesox/apis/stsssox/events/topics
         payloads:
@@ -297,8 +279,7 @@ services:
         source_repo: app-afesox
         api_family: wagssox
         service_code: wagssox
-        roots:
-          - app-afesox/apis/wagssox/rest
+        root: app-afesox/apis/wagssox/rest/openapi.yml
         schemas:
           - app-afesox/apis/wagssox/rest/schemas
         operations:
@@ -311,8 +292,7 @@ services:
         source_repo: app-afesox
         event_family: wagssox
         service_code: wagssox
-        roots:
-          - app-afesox/apis/wagssox/events
+        root: ""
         topics:
           - app-afesox/apis/wagssox/events/topics
         payloads:
@@ -348,8 +328,7 @@ services:
         source_repo: app-afesox
         api_family: bffssox
         service_code: bffssox
-        roots:
-          - app-afesox/apis/bffssox/rest
+        root: app-afesox/apis/bffssox/rest/openapi.yml
         schemas:
           - app-afesox/apis/bffssox/rest/schemas
         operations:
@@ -363,7 +342,7 @@ services:
         source_repo: app-afesox
         event_family: ""
         service_code: ""
-        roots: []
+        root: ""
         topics: []
         payloads: []
         generated_artifacts: []

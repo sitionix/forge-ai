@@ -11,6 +11,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -44,7 +45,7 @@ class CodexCliJsonClientTest {
         //given
         final Map<String, String> payload = Map.of("ticket", "SITIONIX-1");
         when(this.objectMapper.writeValueAsString(payload)).thenReturn("{\"ticket\":\"SITIONIX-1\"}");
-        when(this.codexCliCommandBuilder.build("Привіт. Оброби цей запит: {\"ticket\":\"SITIONIX-1\"}"))
+        when(this.codexCliCommandBuilder.buildFromPromptFile(anyString()))
                 .thenReturn("codex-cmd");
 
         //when
@@ -52,7 +53,7 @@ class CodexCliJsonClientTest {
 
         //then
         verify(this.objectMapper).writeValueAsString(payload);
-        verify(this.codexCliCommandBuilder).build("Привіт. Оброби цей запит: {\"ticket\":\"SITIONIX-1\"}");
+        verify(this.codexCliCommandBuilder).buildFromPromptFile(anyString());
         verify(this.terminalTabLauncher).launch("codex-cmd", "/dev/ttys008");
     }
 

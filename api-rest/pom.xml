@@ -12,7 +12,7 @@
     <artifactId>api-rest</artifactId>
 
     <properties>
-        <fgaisox.api.version>0.0.2</fgaisox.api.version>
+        <fgaisox.api.version>0.0.3</fgaisox.api.version>
     </properties>
 
     <dependencies>
@@ -24,7 +24,7 @@
         <dependency>
             <groupId>com.afesox</groupId>
             <artifactId>app-afesox-fgaisox-api-first-stable</artifactId>
-            <version>${app.afesox.version}</version>
+            <version>${fgaisox.api.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
