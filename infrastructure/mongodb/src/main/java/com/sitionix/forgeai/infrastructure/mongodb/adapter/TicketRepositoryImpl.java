@@ -1,13 +1,17 @@
 package com.sitionix.forgeai.infrastructure.mongodb.adapter;
 
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
+import com.sitionix.forgeai.infrastructure.mongodb.LaneEntityMapper;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.infrastructure.mongodb.TicketEntityMapper;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.repository.TicketJpaRepository;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -22,6 +26,7 @@ public class TicketRepositoryImpl implements TicketRepository {
 
     private final TicketJpaRepository ticketRepository;
     private final TicketEntityMapper ticketEntityMapper;
+    private final LaneEntityMapper laneEntityMapper;
     private final MongoTemplate mongoTemplate;
 
     @Override
@@ -52,6 +57,20 @@ public class TicketRepositoryImpl implements TicketRepository {
         return this.ticketRepository.findById(ticketId)
                 .map(TicketDocument::getTaskDescription)
                 .orElseThrow(() -> new IllegalArgumentException("Ticket not found with id: " + ticketId));
+    }
+
+    @Override
+    public Optional<Lane> findByLaneId(final UUID laneId) {
+        final Query query = Query.query(Criteria.where("lanes._id").is(laneId));
+        final TicketDocument ticketDocument = this.mongoTemplate.findOne(query, TicketDocument.class);
+        if (ticketDocument == null || ticketDocument.getLanes() == null) {
+            return Optional.empty();
+        }
+        return ticketDocument.getLanes()
+                .stream()
+                .filter(laneDocument -> Objects.equals(laneDocument.getId(), laneId))
+                .findFirst()
+                .map(this.laneEntityMapper::asLane);
     }
 
     @Override

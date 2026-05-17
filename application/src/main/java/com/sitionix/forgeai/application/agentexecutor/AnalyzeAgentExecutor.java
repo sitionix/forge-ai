@@ -2,8 +2,7 @@ package com.sitionix.forgeai.application.agentexecutor;
 
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.codex.ScopeContext;
-import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
-import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.AnalyzerPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
@@ -19,7 +18,7 @@ import java.util.HashSet;
 @Log
 @Component("analyzeAgentExecutor")
 @RequiredArgsConstructor
-public class AnalyzeAgentExecutor implements ExecuteAgent<AgentTicketPayload> {
+public class AnalyzeAgentExecutor implements ExecuteAgent<AnalyzerPayload> {
 
     private final PrepareAgentExecutionInputUseCase prepareAgentExecutionInputUseCase;
 
@@ -50,10 +49,5 @@ public class AnalyzeAgentExecutor implements ExecuteAgent<AgentTicketPayload> {
         log.info("Execute analyzer lane with input: " + enrichedInput);
 
         this.codexClient.submit(enrichedInput, lane.getSourceTerminalTty());
-    }
-
-    @Override
-    public void executeTicket(final AgentTicket<AgentTicketPayload> ticket) {
-        log.info("Received request to execute analyzer agent");
     }
 }

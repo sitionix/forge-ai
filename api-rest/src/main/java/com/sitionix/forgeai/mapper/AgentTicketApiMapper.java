@@ -20,22 +20,17 @@ public interface AgentTicketApiMapper {
 
     @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")
     @Mapping(target = "ticketId", source = "ticketId")
-    @Mapping(target = "laneId", source = "laneId")
     @Mapping(target = "status", constant = "CREATED")
     @Mapping(target = "payload", source = "source.architectHandoff")
     AgentTicket<ArchitectPayload> asArchitectTicket(
             CompleteAnalyzerLaneRequestDTO source,
-            UUID ticketId,
-            UUID laneId);
+            UUID ticketId);
 
     @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")
     @Mapping(target = "ticketId", source = "ticketId")
-    @Mapping(target = "laneId", source = "laneId")
     @Mapping(target = "status", constant = "CREATED")
     @Mapping(target = "payload", source = "source.qaLeadHandoff")
     AgentTicket<QaLeadPayload> asQaLeadTicket(
             CompleteAnalyzerLaneRequestDTO source,
-            UUID ticketId,
-            UUID laneId
-    );
+            UUID ticketId);
 }

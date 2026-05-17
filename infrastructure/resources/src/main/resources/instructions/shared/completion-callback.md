@@ -48,6 +48,4 @@ If `contractApi.path` cannot be read or `contractApi.endpoint` cannot be found, 
 ## Base URL
 
 Use this base URL when constructing the request:
-
-```text
 http://localhost:9099/fgaisox

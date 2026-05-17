@@ -3,8 +3,10 @@ package com.sitionix.forgeai.domain.usecase;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 
-@FunctionalInterface
-public interface StartAgentTask {
+import java.util.UUID;
 
-     <P extends AgentTicketPayload> void execute(final AgentTicket<P> agentTicket);
+@FunctionalInterface
+public interface CreateAgentTask {
+
+     <P extends AgentTicketPayload> void create(final AgentTicket<P> agentTicket, final UUID sourceLaneId);
 }

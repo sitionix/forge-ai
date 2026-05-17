@@ -9,7 +9,6 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
 import java.lang.reflect.Field;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,15 +32,14 @@ class AgentTicketApiMapperTest {
         //given
         final CompleteAnalyzerLaneRequestDTO source = this.getRequest();
         final UUID ticketId = UUID.randomUUID();
-        final UUID laneId = UUID.randomUUID();
 
         //when
-        final AgentTicket<ArchitectPayload> actual = this.agentTicketApiMapper.asArchitectTicket(source, ticketId, laneId);
+        final AgentTicket<ArchitectPayload> actual = this.agentTicketApiMapper.asArchitectTicket(source, ticketId);
 
         //then
         assertThat(actual.getId()).isNotNull();
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
-        assertThat(actual.getLaneId()).isEqualTo(laneId);
+        assertThat(actual.getLaneId()).isNull();
         assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
         assertThat(actual.getPayload().getTask()).isEqualTo("architect-task");
         assertThat(actual.getPayload().getScope()).isEqualTo("automationservice-sox");
@@ -52,15 +50,14 @@ class AgentTicketApiMapperTest {
         //given
         final CompleteAnalyzerLaneRequestDTO source = this.getRequest();
         final UUID ticketId = UUID.randomUUID();
-        final UUID laneId = UUID.randomUUID();
 
         //when
-        final AgentTicket<QaLeadPayload> actual = this.agentTicketApiMapper.asQaLeadTicket(source, ticketId, laneId);
+        final AgentTicket<QaLeadPayload> actual = this.agentTicketApiMapper.asQaLeadTicket(source, ticketId);
 
         //then
         assertThat(actual.getId()).isNotNull();
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
-        assertThat(actual.getLaneId()).isEqualTo(laneId);
+        assertThat(actual.getLaneId()).isNull();
         assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
         assertThat(actual.getPayload().getTask()).isEqualTo("qa-task");
         assertThat(actual.getPayload().getScope()).isEqualTo("automationservice-sox");

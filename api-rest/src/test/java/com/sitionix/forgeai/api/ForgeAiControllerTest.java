@@ -4,6 +4,7 @@ import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
@@ -39,13 +40,17 @@ class ForgeAiControllerTest {
     @Mock
     private AgentTicketApiMapper agentTicketApiMapper;
 
+    @Mock
+    private CreateAgentTask createAgentTask;
+
     @BeforeEach
     void setUp() {
         this.forgeAiController = new ForgeAiController(
                 this.startForgeAiTask,
                 this.forgeAiApiMapper,
                 this.terminalTtyResolver,
-                this.agentTicketApiMapper
+                this.agentTicketApiMapper,
+                this.createAgentTask
         );
     }
 
@@ -55,7 +60,8 @@ class ForgeAiControllerTest {
                 this.startForgeAiTask,
                 this.forgeAiApiMapper,
                 this.terminalTtyResolver,
-                this.agentTicketApiMapper
+                this.agentTicketApiMapper,
+                this.createAgentTask
         );
     }
 
