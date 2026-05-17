@@ -18,10 +18,11 @@ public class AgentTicketRepositoryImpl implements AgentTicketRepository {
     private final AgentTicketEntityMapper agentTicketEntityMapper;
 
     @Override
+    @SuppressWarnings("unchecked")
     public <P extends AgentTicketPayload> AgentTicket<P> save(final AgentTicket<P> agentTicket) {
         final AgentTicketDocument saved = this.agentTicketJpaRepository.save(
                 this.agentTicketEntityMapper.asAgentTicketDocument(agentTicket)
         );
-        return this.agentTicketEntityMapper.asAgentTicket(saved);
+        return (AgentTicket<P>) this.agentTicketEntityMapper.asAgentTicket(saved);
     }
 }
