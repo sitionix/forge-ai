@@ -1,0 +1,16 @@
+{
+  "status": "CREATED",
+  "payload": {
+    "task": "qa-task",
+    "summary": "qa summary",
+    "scope": "automationservice-sox",
+    "agent": "QA_LEAD",
+    "requirements": ["sr1"],
+    "constraints": ["qc1"],
+    "nonGoals": ["qn1"],
+    "risks": ["qr1"],
+    "dependencies": ["qd1"],
+    "qualityFocus": ["qf1"],
+    "edgeConsiderations": ["qe1"]
+  }
+}

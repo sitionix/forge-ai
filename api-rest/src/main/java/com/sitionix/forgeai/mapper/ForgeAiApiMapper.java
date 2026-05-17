@@ -14,14 +14,14 @@ import java.time.ZoneOffset;
 @Mapper(componentModel = "spring")
 public interface ForgeAiApiMapper {
 
-    @Mapping(target = "scope", constant = "forgeai")
+    @Mapping(target = "scope", constant = "forge-ai")
     @Mapping(target = "sourceTerminalTty", source = "sourceTerminalTty")
     ForgeAiStartCommand asForgeAiStartCommand(StartForgeRequestDTO src, String sourceTerminalTty);
 
     @Mapping(target = "id", source = "id")
     @Mapping(target = "ticket", source = "ticketKey")
     @Mapping(target = "task", source = "taskDescription")
-    @Mapping(target = "scope", constant = "forgeai")
+    @Mapping(target = "scope", constant = "forge-ai")
     @Mapping(target = "status", expression = "java(src.getStatus() == null ? null : src.getStatus().name())")
     @Mapping(target = "createdAt", expression = "java(toOffsetDateTime(src.getCreatedAt()))")
     StartForgeResponseDTO asStartForgeResponseDto(Ticket src);

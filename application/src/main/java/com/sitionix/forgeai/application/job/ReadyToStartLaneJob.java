@@ -1,7 +1,7 @@
 package com.sitionix.forgeai.application.job;
 
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
-import com.sitionix.forgeai.domain.port.TicketRepository;
+import com.sitionix.forgeai.domain.repository.TicketRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -20,6 +20,6 @@ public class ReadyToStartLaneJob {
     public void run() {
         final List<ReadyToStartLane> readyLanes = this.ticketRepository.findAllReadyToStartLanes();
         log.info("Found %d ready lanes".formatted(readyLanes.size()));
-        readyLanes.forEach(lane -> lane.getAgent().execute(lane));
+        readyLanes.forEach(lane -> lane.getAgent().executeLane(lane));
     }
 }

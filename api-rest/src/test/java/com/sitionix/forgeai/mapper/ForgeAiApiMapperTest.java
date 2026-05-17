@@ -6,7 +6,6 @@ import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.TicketStatus;
 import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
@@ -40,7 +39,7 @@ class ForgeAiApiMapperTest {
         final ForgeAiStartCommand actual = this.forgeAiApiMapper.asForgeAiStartCommand(requestDTO, "/dev/ttys008");
 
         //then
-        assertThat(actual.getScope()).isEqualTo("forgeai");
+        assertThat(actual.getScope()).isEqualTo("forge-ai");
         assertThat(actual.getTicket()).isEqualTo("SITIONIX-1");
         assertThat(actual.getTask()).isEqualTo("hi");
         assertThat(actual.getServiceIds()).isEqualTo(List.of("athssox", "forgeai"));
@@ -67,7 +66,7 @@ class ForgeAiApiMapperTest {
         assertThat(actual.getId()).isEqualTo(id);
         assertThat(actual.getTicket()).isEqualTo("SITIONIX-1");
         assertThat(actual.getTask()).isEqualTo("hi");
-        assertThat(actual.getScope()).isEqualTo("forgeai");
+        assertThat(actual.getScope()).isEqualTo("forge-ai");
         assertThat(actual.getStatus()).isEqualTo("IN_PROGRESS");
         assertThat(actual.getCreatedAt()).isEqualTo(createdAt.atOffset(ZoneOffset.UTC));
     }

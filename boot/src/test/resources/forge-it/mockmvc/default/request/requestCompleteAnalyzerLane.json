@@ -1,0 +1,29 @@
+{
+  "summary": "debug analyzer completion",
+  "architectHandoff": {
+    "writtenBy": "ANALYZER",
+    "sourceOutput": null,
+    "task": "architect-task",
+    "scope": "automationservice-sox",
+    "summary": "architect summary",
+    "requirements": ["r1"],
+    "constraints": ["c1"],
+    "nonGoals": ["n1"],
+    "risks": ["risk1"],
+    "dependencies": ["dep1"]
+  },
+  "qaLeadHandoff": {
+    "writtenBy": "ANALYZER",
+    "sourceOutput": null,
+    "task": "qa-task",
+    "scope": "automationservice-sox",
+    "summary": "qa summary",
+    "scopeRequirements": ["sr1"],
+    "constraints": ["qc1"],
+    "nonGoals": ["qn1"],
+    "dependencies": ["qd1"],
+    "qualityFocus": ["qf1"],
+    "riskAreas": ["qr1"],
+    "edgeConsiderations": ["qe1"]
+  }
+}

@@ -3,7 +3,7 @@ package com.sitionix.forgeai.config;
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
-import com.sitionix.forgeai.domain.port.AgentPropertiesProvider;
+import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;

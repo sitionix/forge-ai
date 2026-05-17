@@ -1,6 +1,8 @@
 package com.sitionix.forgeai.domain.model.ticket.lane;
 
-public interface ExecuteAgent {
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 
-     void execute(final ReadyToStartLane lane);
+public interface ExecuteAgent<P extends AgentTicketPayload> {
+
+     void executeLane(final ReadyToStartLane lane);
 }

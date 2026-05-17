@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.domain.model.ticket.lane;
 
-import com.sitionix.forgeai.domain.port.AgentPropertiesProvider;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
+import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import java.util.Arrays;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -8,7 +9,7 @@ import lombok.Setter;
 
 @Getter
 @RequiredArgsConstructor
-public enum Agent implements ExecuteAgent{
+public enum Agent {
     ANALYZER("analyzer", "analyzeAgentExecutor"),
     ARCHITECT("architect", "architectAgentExecutor"),
     API("api", "apiAgentExecutor"),
@@ -27,7 +28,7 @@ public enum Agent implements ExecuteAgent{
     private AgentPropertiesProvider.AgentConfigView info;
 
     @Setter
-    private ExecuteAgent executor;
+    private ExecuteAgent<? extends AgentTicketPayload> executor;
 
     public AgentPropertiesProvider.AgentConfigView getInfo() {
         if (this.info == null) {
@@ -43,8 +44,8 @@ public enum Agent implements ExecuteAgent{
                 .orElseThrow(() -> new IllegalArgumentException("Unknown agent id: " + id));
     }
 
-    @Override
-    public void execute(final ReadyToStartLane lane) {
-        this.getExecutor().execute(lane);
+    public void executeLane(final ReadyToStartLane lane) {
+        this.getExecutor().executeLane(lane);
     }
+
 }

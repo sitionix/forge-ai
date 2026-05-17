@@ -1,5 +1,7 @@
 package com.sitionix.forgeai.it.infra;
 
+import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
@@ -32,6 +34,18 @@ public class ControllerEndpoint {
                         .withRequest("requestStartForgeFrontend.json")
                         .expectStatus(HttpStatus.CREATED.value())
                         .header("X-Terminal-TTY", "/dev/ttys999")
+        );
+    }
+
+    public static Endpoint<CompleteAnalyzerLaneRequestDTO, CompleteAnalyzerLaneResponseDTO> completeAnalyzerLane() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete",
+                HttpMethod.POST,
+                CompleteAnalyzerLaneRequestDTO.class,
+                CompleteAnalyzerLaneResponseDTO.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteAnalyzerLane.json")
+                        .expectStatus(HttpStatus.OK.value())
         );
     }
 

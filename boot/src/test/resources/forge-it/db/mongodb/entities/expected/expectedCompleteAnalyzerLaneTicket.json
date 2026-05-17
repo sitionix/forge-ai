@@ -1,0 +1,48 @@
+{
+  "id": "11111111-1111-1111-1111-111111111111",
+  "ticketKey": "SITIONIX-1",
+  "taskDescription": "complete-analyzer-task",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "OPEN",
+  "lanes": [
+    {
+      "id": "22222222-2222-2222-2222-222222222222",
+      "type": "ANALYZER",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "COMPLETED",
+      "attempt": 0,
+      "dependsOn": []
+    },
+    {
+      "id": "33333333-3333-3333-3333-333333333333",
+      "type": "ARCHITECT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "READY_TO_START",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "44444444-4444-4444-4444-444444444444",
+      "type": "QA_LEAD",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "READY_TO_START",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "automationservice-sox"
+        }
+      ]
+    }
+  ],
+  "createdAt": "2026-01-01T10:00",
+  "updatedAt": "2026-01-01T10:00:00"
+}

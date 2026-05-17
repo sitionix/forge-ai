@@ -2,7 +2,7 @@ package com.sitionix.forgeai.config;
 
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
-import com.sitionix.forgeai.domain.port.AgentPropertiesProvider;
+import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import jakarta.annotation.PostConstruct;
 
 import java.util.Map;
