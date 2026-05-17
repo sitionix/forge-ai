@@ -11,19 +11,27 @@ import java.lang.reflect.Field;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+@ExtendWith(MockitoExtension.class)
 class AgentTicketApiMapperTest {
 
     private AgentTicketApiMapper agentTicketApiMapper;
-    private ArchitectTicketPayloadApiMapperStub architectTicketPayloadApiMapper;
-    private QaLeadTicketPayloadApiMapperStub qaLeadTicketPayloadApiMapper;
+
+    @Mock
+    private ArchitectTicketPayloadApiMapper architectTicketPayloadApiMapper;
+
+    @Mock
+    private QaLeadTicketPayloadApiMapper qaLeadTicketPayloadApiMapper;
 
     @BeforeEach
     void setUp() throws Exception {
-        this.architectTicketPayloadApiMapper = new ArchitectTicketPayloadApiMapperStub();
-        this.qaLeadTicketPayloadApiMapper = new QaLeadTicketPayloadApiMapperStub();
         this.agentTicketApiMapper = new AgentTicketApiMapperImpl();
         this.setField(this.agentTicketApiMapper, "architectTicketPayloadApiMapper", this.architectTicketPayloadApiMapper);
         this.setField(this.agentTicketApiMapper, "qaLeadTicketPayloadApiMapper", this.qaLeadTicketPayloadApiMapper);
@@ -37,6 +45,8 @@ class AgentTicketApiMapperTest {
                 .architectHandoff(architectHandoff)
                 .build();
         final UUID ticketId = UUID.randomUUID();
+        final ArchitectPayload architectPayload = ArchitectPayload.builder().build();
+        when(this.architectTicketPayloadApiMapper.asArchitectPayload(architectHandoff)).thenReturn(architectPayload);
 
         //when
         final AgentTicket<ArchitectPayload> actual = this.agentTicketApiMapper.asArchitectTicket(source, ticketId);
@@ -46,8 +56,8 @@ class AgentTicketApiMapperTest {
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
         assertThat(actual.getLaneId()).isNull();
         assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
-        assertThat(actual.getPayload()).isEqualTo(this.architectTicketPayloadApiMapper.expected);
-        assertThat(this.architectTicketPayloadApiMapper.captured).isEqualTo(architectHandoff);
+        assertThat(actual.getPayload()).isEqualTo(architectPayload);
+        verify(this.architectTicketPayloadApiMapper).asArchitectPayload(architectHandoff);
     }
 
     @Test
@@ -58,6 +68,8 @@ class AgentTicketApiMapperTest {
                 .qaLeadHandoff(qaLeadHandoff)
                 .build();
         final UUID ticketId = UUID.randomUUID();
+        final QaLeadPayload qaLeadPayload = QaLeadPayload.builder().build();
+        when(this.qaLeadTicketPayloadApiMapper.asQaLeadPayload(qaLeadHandoff)).thenReturn(qaLeadPayload);
 
         //when
         final AgentTicket<QaLeadPayload> actual = this.agentTicketApiMapper.asQaLeadTicket(source, ticketId);
@@ -67,35 +79,13 @@ class AgentTicketApiMapperTest {
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
         assertThat(actual.getLaneId()).isNull();
         assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
-        assertThat(actual.getPayload()).isEqualTo(this.qaLeadTicketPayloadApiMapper.expected);
-        assertThat(this.qaLeadTicketPayloadApiMapper.captured).isEqualTo(qaLeadHandoff);
+        assertThat(actual.getPayload()).isEqualTo(qaLeadPayload);
+        verify(this.qaLeadTicketPayloadApiMapper).asQaLeadPayload(qaLeadHandoff);
     }
 
     private void setField(final Object target, final String fieldName, final Object value) throws Exception {
         final Field field = target.getClass().getDeclaredField(fieldName);
         field.setAccessible(true);
         field.set(target, value);
-    }
-
-    private static class ArchitectTicketPayloadApiMapperStub implements ArchitectTicketPayloadApiMapper {
-        private final ArchitectPayload expected = ArchitectPayload.builder().build();
-        private AnalyzerArchitectHandoffDTO captured;
-
-        @Override
-        public ArchitectPayload asArchitectPayload(final AnalyzerArchitectHandoffDTO source) {
-            this.captured = source;
-            return this.expected;
-        }
-    }
-
-    private static class QaLeadTicketPayloadApiMapperStub implements QaLeadTicketPayloadApiMapper {
-        private final QaLeadPayload expected = QaLeadPayload.builder().build();
-        private AnalyzerQaLeadHandoffDTO captured;
-
-        @Override
-        public QaLeadPayload asQaLeadPayload(final AnalyzerQaLeadHandoffDTO source) {
-            this.captured = source;
-            return this.expected;
-        }
     }
 }
