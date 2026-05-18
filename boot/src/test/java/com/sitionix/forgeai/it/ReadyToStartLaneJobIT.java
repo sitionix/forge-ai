@@ -35,7 +35,7 @@ class ReadyToStartLaneJobIT {
 
     @Test
     @DisplayName("Should move analyzer lanes to in progress by scheduler job")
-    void givenStartForgeRequest_whenSchedulerRuns_thenMoveAnalyzerLanesToInProgress() throws Exception {
+    void givenStartForgeRequest_whenSchedulerRuns_thenMoveAnalyzerLanesToInProgress() {
         //when
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.startForge())
@@ -43,41 +43,16 @@ class ReadyToStartLaneJobIT {
                 .assertDefault();
 
         //then
-        for (int attempt = 0; attempt < 20; attempt++) {
-            try {
-                final TicketDocument actual = this.testManager.mongo()
-                        .get(TicketDocument.class)
-                        .hasSize(1)
-                        .singleElement()
-                        .assertEntity();
-                final List<LaneDocument> lanes = actual.getLanes();
-                final boolean valid = lanes.stream()
-                        .filter(lane -> Objects.equals("ANALYZER", lane.getType().name()))
-                        .allMatch(lane ->
-                                Objects.equals(LaneStatus.READY_TO_START, lane.getStatus())
-                                        || Objects.equals(LaneStatus.IN_PROGRESS, lane.getStatus()));
-                if (!valid) {
-                    throw new AssertionError("Analyzer lanes are not in READY_TO_START/IN_PROGRESS state");
-                }
-                return;
-            } catch (AssertionError error) {
-                Thread.sleep(200);
-            }
-        }
-
-        final TicketDocument actual = this.testManager.mongo()
+        this.testManager.mongo()
                 .get(TicketDocument.class)
                 .hasSize(1)
                 .singleElement()
-                .assertEntity();
-        final List<LaneDocument> lanes = actual.getLanes();
-        final boolean valid = lanes.stream()
-                .filter(lane -> Objects.equals("ANALYZER", lane.getType().name()))
-                .allMatch(lane ->
-                        Objects.equals(LaneStatus.READY_TO_START, lane.getStatus())
-                                || Objects.equals(LaneStatus.IN_PROGRESS, lane.getStatus()));
-        if (!valid) {
-            throw new AssertionError("Analyzer lanes are not in READY_TO_START/IN_PROGRESS state");
-        }
+                .andExpected(actual -> {
+                    final List<LaneDocument> lanes = actual.getLanes();
+                    return lanes.stream()
+                            .filter(lane -> Objects.equals("ANALYZER", lane.getType().name()))
+                            .allMatch(lane -> Objects.equals(LaneStatus.READY_TO_START, lane.getStatus())
+                                    || Objects.equals(LaneStatus.IN_PROGRESS, lane.getStatus()));
+                });
     }
 }

@@ -63,30 +63,6 @@ public class ControllerEndpoint {
         );
     }
 
-    public static Endpoint<CompleteArchitectLaneRequest, CompleteArchitectLaneResponse> completeArchitectLaneAutomationApiEventRequired() {
-        return Endpoint.createContract(
-                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/architect/complete",
-                HttpMethod.POST,
-                CompleteArchitectLaneRequest.class,
-                CompleteArchitectLaneResponse.class,
-                (MockmvcDefault) context -> context
-                        .withRequest("requestCompleteArchitectLaneAutomationApiEventRequired.json")
-                        .expectStatus(HttpStatus.OK.value())
-        );
-    }
-
-    public static Endpoint<CompleteArchitectLaneRequest, CompleteArchitectLaneResponse> completeArchitectLaneBffApiEventRequired() {
-        return Endpoint.createContract(
-                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/architect/complete",
-                HttpMethod.POST,
-                CompleteArchitectLaneRequest.class,
-                CompleteArchitectLaneResponse.class,
-                (MockmvcDefault) context -> context
-                        .withRequest("requestCompleteArchitectLaneBffApiEventRequired.json")
-                        .expectStatus(HttpStatus.OK.value())
-        );
-    }
-
     private ControllerEndpoint() {
     }
 }

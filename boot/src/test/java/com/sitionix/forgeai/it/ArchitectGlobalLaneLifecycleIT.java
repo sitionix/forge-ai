@@ -42,7 +42,8 @@ class ArchitectGlobalLaneLifecycleIT {
 
         //when
         this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeArchitectLaneAutomationApiEventRequired())
+                .ping(ControllerEndpoint.completeArchitectLane())
+                .withRequest("requestCompleteArchitectLaneAutomationApiEventRequired.json")
                 .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", architectLaneId))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(architectLaneId.toString()))
@@ -73,7 +74,8 @@ class ArchitectGlobalLaneLifecycleIT {
 
         //when
         this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeArchitectLaneBffApiEventRequired())
+                .ping(ControllerEndpoint.completeArchitectLane())
+                .withRequest("requestCompleteArchitectLaneBffApiEventRequired.json")
                 .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", architectLaneId))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(architectLaneId.toString()))
