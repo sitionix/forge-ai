@@ -28,6 +28,6 @@ public interface LaneJpaRepository extends MongoRepository<TicketDocument, UUID>
     Optional<TicketDocument> findTicketByLaneId(UUID laneId);
 
     @Query("{ 'lanes._id': ?0 }")
-    @Update("{ '$set': { 'lanes.$.inputTaskId': ?1 } }")
+    @Update("{ '$addToSet': { 'lanes.$.inputTaskIds': ?1 } }")
     long assignInputTaskId(UUID laneId, UUID inputTaskId);
 }

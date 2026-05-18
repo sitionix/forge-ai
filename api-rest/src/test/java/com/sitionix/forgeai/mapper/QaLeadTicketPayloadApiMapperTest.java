@@ -27,10 +27,6 @@ class QaLeadTicketPayloadApiMapperTest {
         final QaLeadPayload actual = this.qaLeadTicketPayloadApiMapper.asQaLeadPayload(source);
 
         //then
-        assertThat(actual.getId()).isNotNull();
-        assertThat(actual.getTask()).isEqualTo("qa-task");
-        assertThat(actual.getSummary()).isEqualTo("qa-summary");
-        assertThat(actual.getScope()).isEqualTo("automationservice-sox");
         assertThat(actual.getRequirements()).containsExactly("scope-r1");
         assertThat(actual.getConstraints()).containsExactly("qc1");
         assertThat(actual.getNonGoals()).containsExactly("qn1");

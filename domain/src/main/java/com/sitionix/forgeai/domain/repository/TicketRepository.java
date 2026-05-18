@@ -22,4 +22,6 @@ public interface TicketRepository {
     Optional<Lane> findByLaneId(UUID laneId);
 
     void updateLaneStatus(UUID laneId, LaneStatus laneStatus);
+
+    boolean isReadyToStart(UUID laneId);
 }

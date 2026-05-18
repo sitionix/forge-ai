@@ -2,19 +2,17 @@ package com.sitionix.forgeai.domain.model.ticket.agentticket;
 
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
-import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
-import lombok.experimental.SuperBuilder;
 
 import java.util.Set;
 
-@EqualsAndHashCode(callSuper = true)
 @Data
-@SuperBuilder
+@Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ArchitectPayload extends AgentTicketPayload {
+public class ArchitectPayload implements AgentTicketPayload {
 
     private Set<String> requirements;
 

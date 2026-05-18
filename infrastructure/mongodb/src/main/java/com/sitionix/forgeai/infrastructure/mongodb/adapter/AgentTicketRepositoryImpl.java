@@ -6,6 +6,8 @@ import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.infrastructure.mongodb.AgentTicketEntityMapper;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.repository.AgentTicketJpaRepository;
+import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -24,5 +26,21 @@ public class AgentTicketRepositoryImpl implements AgentTicketRepository {
                 this.agentTicketEntityMapper.asAgentTicketDocument(agentTicket)
         );
         return (AgentTicket<P>) this.agentTicketEntityMapper.asAgentTicket(saved);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Optional<AgentTicket<AgentTicketPayload>> findById(final UUID id) {
+        return this.agentTicketJpaRepository.findById(id)
+                .map(this.agentTicketEntityMapper::asAgentTicket)
+                .map(value -> (AgentTicket<AgentTicketPayload>) value);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <P extends AgentTicketPayload> Optional<AgentTicket<P>> findById(final UUID id, final Class<P> payloadType) {
+        return this.findById(id)
+                .filter(ticket -> payloadType.isInstance(ticket.getPayload()))
+                .map(ticket -> (AgentTicket<P>) ticket);
     }
 }

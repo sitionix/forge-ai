@@ -8,7 +8,7 @@
       "type": "ANALYZER",
       "scope": "automationservice-sox",
       "serviceId": "atmssox",
-      "status": "IN_PROGRESS",
+      "status": "READY_TO_START",
       "attempt": 0,
       "dependsOn": []
     },
@@ -16,7 +16,7 @@
       "type": "ANALYZER",
       "scope": "backendforfrontendservice-sox",
       "serviceId": "bffssox",
-      "status": "IN_PROGRESS",
+      "status": "READY_TO_START",
       "attempt": 0,
       "dependsOn": []
     },

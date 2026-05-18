@@ -6,6 +6,13 @@ forge:
           instructions: instructions/agents/analyzer.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete
           additional-instructions: []
+        architect:
+          instructions: instructions/agents/architect.md
+          endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/architect/complete
+          additional-instructions:
+            - instructions/additional-instructions/api-decision-instruction.md
+            - instructions/additional-instructions/event-decision-instruction.md
       shared:
         - instructions/shared/common-rules.md
         - instructions/shared/completion-callback.md
+        - instructions/shared/scope-context-usage.md

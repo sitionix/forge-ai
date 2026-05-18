@@ -49,7 +49,7 @@ class CompleteAnalyzerLaneDebugIT {
 
         this.testManager.mongo()
                 .assertEntities(TicketDocument.class)
-                .ignoreFields("lanes.inputTaskId", "updatedAt")
+                .ignoreFields("lanes.inputTaskIds", "updatedAt")
                 .hasSize(1)
                 .containsAllWithJsons("expectedCompleteAnalyzerLaneTicket.json");
 

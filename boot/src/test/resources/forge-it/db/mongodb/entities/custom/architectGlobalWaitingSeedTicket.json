@@ -1,0 +1,99 @@
+{
+  "id": "12121212-1212-1212-1212-121212121212",
+  "ticketKey": "SITIONIX-12",
+  "taskDescription": "architect-global-waiting",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "OPEN",
+  "lanes": [
+    {
+      "id": "aaaaaaaa-1111-1111-1111-111111111111",
+      "type": "ARCHITECT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "IN_PROGRESS",
+      "attempt": 0,
+      "inputTaskIds": ["01010101-0101-0101-0101-010101010101"],
+      "dependsOn": []
+    },
+    {
+      "id": "bbbbbbbb-2222-2222-2222-222222222222",
+      "type": "ARCHITECT",
+      "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
+      "status": "IN_PROGRESS",
+      "attempt": 0,
+      "inputTaskIds": ["02020202-0202-0202-0202-020202020202"],
+      "dependsOn": []
+    },
+    {
+      "id": "cccccccc-3333-3333-3333-333333333333",
+      "type": "IMPLEMENT_BE",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "dddddddd-4444-4444-4444-444444444444",
+      "type": "IMPLEMENT_BE",
+      "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "eeeeeeee-5555-5555-5555-555555555555",
+      "type": "API",
+      "scope": "GLOBAL",
+      "serviceId": "global",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "automationservice-sox"
+        },
+        {
+          "type": "ARCHITECT",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "ffffffff-6666-6666-6666-666666666666",
+      "type": "EVENT",
+      "scope": "GLOBAL",
+      "serviceId": "global",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "automationservice-sox"
+        },
+        {
+          "type": "ARCHITECT",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    }
+  ],
+  "createdAt": "2026-01-01T10:00:00",
+  "updatedAt": "2026-01-01T10:00:00"
+}

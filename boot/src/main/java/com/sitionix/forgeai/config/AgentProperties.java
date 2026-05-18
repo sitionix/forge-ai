@@ -31,6 +31,7 @@ public class AgentProperties implements AgentPropertiesProvider {
     public static class AgentConfig implements AgentConfigView {
         private String id;
         private String scopeMode;
+        private Boolean enabled;
         private List<String> groups;
         private List<String> dependsOn;
         private List<String> produces;
@@ -71,6 +72,11 @@ public class AgentProperties implements AgentPropertiesProvider {
             return this.groups.stream()
                     .map(value -> ServiceGroup.valueOf(value.toUpperCase(Locale.ROOT)))
                     .collect(Collectors.toSet());
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return this.enabled == null || this.enabled;
         }
     }
 }

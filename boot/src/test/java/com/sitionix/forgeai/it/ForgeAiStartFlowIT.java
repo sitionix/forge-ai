@@ -40,7 +40,7 @@ class ForgeAiStartFlowIT {
 
         this.testManager.mongo()
                 .assertEntities(TicketDocument.class)
-                .ignoreFields("id", "createdAt", "updatedAt", "lanes.id", "lanes.inputTaskId")
+                .ignoreFields("id", "createdAt", "updatedAt", "lanes.id", "lanes.inputTaskIds")
                 .hasSize(1)
                 .containsAllWithJsons("expectedStartForgeTicket.json");
     }
@@ -61,7 +61,7 @@ class ForgeAiStartFlowIT {
 
         this.testManager.mongo()
                 .assertEntities(TicketDocument.class)
-                .ignoreFields("id", "createdAt", "updatedAt", "lanes.id", "lanes.inputTaskId")
+                .ignoreFields("id", "createdAt", "updatedAt", "lanes.id", "lanes.inputTaskIds")
                 .hasSize(1)
                 .containsAllWithJsons("expectedStartForgeTicketFrontend.json");
     }

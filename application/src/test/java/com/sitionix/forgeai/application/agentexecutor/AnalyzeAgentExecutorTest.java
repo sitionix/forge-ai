@@ -2,14 +2,12 @@ package com.sitionix.forgeai.application.agentexecutor;
 
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
-import com.sitionix.forgeai.domain.model.codex.ScopeContext;
+import com.sitionix.forgeai.domain.model.codex.AnalyzerExecutionPayload;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.port.CodexClient;
-import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
-import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -21,8 +19,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -36,9 +34,6 @@ class AnalyzeAgentExecutorTest {
     private PrepareAgentExecutionInputUseCase prepareAgentExecutionInputUseCase;
 
     @Mock
-    private ServicePropertiesProvider props;
-
-    @Mock
     private CodexClient codexClient;
 
     @Mock
@@ -48,7 +43,6 @@ class AnalyzeAgentExecutorTest {
     void setUp() {
         this.analyzeAgentExecutor = new AnalyzeAgentExecutor(
                 this.prepareAgentExecutionInputUseCase,
-                this.props,
                 this.codexClient,
                 this.ticketRepository
         );
@@ -56,7 +50,7 @@ class AnalyzeAgentExecutorTest {
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.prepareAgentExecutionInputUseCase, this.props, this.codexClient, this.ticketRepository);
+        verifyNoMoreInteractions(this.prepareAgentExecutionInputUseCase, this.codexClient, this.ticketRepository);
     }
 
     @Test
@@ -73,7 +67,7 @@ class AnalyzeAgentExecutorTest {
                 .sourceTerminalTty("/dev/ttys003")
                 .build();
 
-        final AgentExecutionInput baseInput = AgentExecutionInput.builder()
+        final AgentExecutionInput<AgentTicketPayload> baseInput = AgentExecutionInput.<AgentTicketPayload>builder()
                 .ticketId(ticketId)
                 .laneId(laneId)
                 .agentInstruction("instruction")
@@ -81,22 +75,22 @@ class AnalyzeAgentExecutorTest {
                 .build();
         when(this.prepareAgentExecutionInputUseCase.execute(lane)).thenReturn(baseInput);
 
-        final ServicePropertiesProvider.ServiceConfigView serviceConfigView = mock(ServicePropertiesProvider.ServiceConfigView.class);
-        when(serviceConfigView.getLabel()).thenReturn("Automation Service SOX");
-        when(serviceConfigView.getDomainKeywords()).thenReturn(List.of("automation", "agents"));
-        when(serviceConfigView.getTags()).thenReturn(List.of("java", "backend"));
-        when(serviceConfigView.getOwnsBusinessAreas()).thenReturn(List.of("Agents"));
-        when(this.props.getServices()).thenReturn(Map.of("atmssox", serviceConfigView));
-
         when(this.ticketRepository.findTicketContentById(ticketId)).thenReturn("task-description");
+        final AgentExecutionInput<AgentTicketPayload> enrichedInput = AgentExecutionInput.<AgentTicketPayload>builder()
+                .ticketId(ticketId)
+                .laneId(laneId)
+                .payload(AnalyzerExecutionPayload.builder().ticket("task-description").build())
+                .build();
+        when(this.prepareAgentExecutionInputUseCase.enrichWithPayload(eq(lane), eq(baseInput), any(AnalyzerExecutionPayload.class)))
+                .thenReturn(enrichedInput);
 
         //when
         this.analyzeAgentExecutor.executeLane(lane);
 
         //then
         verify(this.prepareAgentExecutionInputUseCase).execute(lane);
-        verify(this.props).getServices();
         verify(this.ticketRepository).findTicketContentById(ticketId);
+        verify(this.prepareAgentExecutionInputUseCase).enrichWithPayload(eq(lane), eq(baseInput), any(AnalyzerExecutionPayload.class));
 
         final ArgumentCaptor<AgentExecutionInput> inputCaptor = ArgumentCaptor.forClass(AgentExecutionInput.class);
         verify(this.codexClient).submit(inputCaptor.capture(), eq("/dev/ttys003"));
@@ -104,19 +98,8 @@ class AnalyzeAgentExecutorTest {
 
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
         assertThat(actual.getLaneId()).isEqualTo(laneId);
-        assertThat(actual.getTicket()).isEqualTo("task-description");
-        assertThat(actual.getScope()).isEqualTo(ScopeContext.builder()
-                .scope("automationservice-sox")
-                .label("Automation Service SOX")
-                .domainKeywords(Set.of("automation", "agents"))
-                .tags(Set.of("java", "backend"))
-                .ownBusinessAreas(Set.of("Agents"))
+        assertThat(actual.getPayload()).isEqualTo(AnalyzerExecutionPayload.builder()
+                .ticket("task-description")
                 .build());
-
-        verify(serviceConfigView).getLabel();
-        verify(serviceConfigView).getDomainKeywords();
-        verify(serviceConfigView).getTags();
-        verify(serviceConfigView).getOwnsBusinessAreas();
-        verifyNoMoreInteractions(serviceConfigView);
     }
 }

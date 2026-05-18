@@ -45,6 +45,9 @@ public enum Agent {
     }
 
     public void executeLane(final ReadyToStartLane lane) {
+        if (!this.getInfo().isEnabled()) {
+            return;
+        }
         this.getExecutor().executeLane(lane);
     }
 

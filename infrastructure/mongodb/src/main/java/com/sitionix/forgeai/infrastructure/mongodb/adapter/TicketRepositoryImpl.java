@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.infrastructure.mongodb.adapter;
 
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.model.ticket.lane.LaneDependency;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
@@ -78,5 +79,45 @@ public class TicketRepositoryImpl implements TicketRepository {
         final Query query = Query.query(Criteria.where("lanes._id").is(laneId));
         final Update update = new Update().set("lanes.$.status", laneStatus);
         this.mongoTemplate.updateFirst(query, update, TicketDocument.class);
+    }
+
+    @Override
+    public boolean isReadyToStart(final UUID laneId) {
+        final Query query = Query.query(Criteria.where("lanes._id").is(laneId));
+        final TicketDocument ticketDocument = this.mongoTemplate.findOne(query, TicketDocument.class);
+        if (ticketDocument == null || ticketDocument.getLanes() == null) {
+            return false;
+        }
+
+        final Optional<Lane> laneOptional = this.findLane(ticketDocument, laneId);
+        if (laneOptional.isEmpty()) {
+            return false;
+        }
+        final Lane lane = laneOptional.get();
+        if (this.hasNoDependencies(lane)) {
+            return true;
+        }
+
+        return lane.getDependsOn().stream()
+                .allMatch(dependency -> this.isDependencyCompleted(ticketDocument, dependency));
+    }
+
+    private Optional<Lane> findLane(final TicketDocument ticketDocument, final UUID laneId) {
+        return ticketDocument.getLanes().stream()
+                .filter(value -> Objects.equals(value.getId(), laneId))
+                .findFirst()
+                .map(this.laneEntityMapper::asLane);
+    }
+
+    private boolean hasNoDependencies(final Lane lane) {
+        return lane.getDependsOn() == null || lane.getDependsOn().isEmpty();
+    }
+
+    private boolean isDependencyCompleted(final TicketDocument ticketDocument, final LaneDependency dependency) {
+        return ticketDocument.getLanes().stream()
+                .filter(value -> Objects.equals(value.getType(), dependency.getType())
+                        && Objects.equals(value.getScope(), dependency.getScope()))
+                .anyMatch(value -> Objects.equals(value.getStatus(), LaneStatus.COMPLETED)
+                        || Objects.equals(value.getStatus(), LaneStatus.NOT_NEEDED));
     }
 }

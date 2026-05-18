@@ -27,10 +27,6 @@ class ArchitectTicketPayloadApiMapperTest {
         final ArchitectPayload actual = this.architectTicketPayloadApiMapper.asArchitectPayload(source);
 
         //then
-        assertThat(actual.getId()).isNotNull();
-        assertThat(actual.getTask()).isEqualTo("architect-task");
-        assertThat(actual.getSummary()).isEqualTo("architect-summary");
-        assertThat(actual.getScope()).isEqualTo("automationservice-sox");
         assertThat(actual.getRequirements()).containsExactlyInAnyOrder("r1", "r2");
         assertThat(actual.getConstraints()).containsExactly("c1");
         assertThat(actual.getNonGoals()).containsExactly("n1");

@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.domain.model.ticket;
 
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -19,6 +20,8 @@ public class AgentTicket<P extends AgentTicketPayload> {
 
     private UUID laneId;
     private AgentTicketStatus status;
+    private String scope;
+    private Agent agent;
 
     private P payload;
 

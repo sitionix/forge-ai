@@ -9,7 +9,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
 
 @Service
@@ -29,12 +28,21 @@ public class CompleteAgentUseCase implements CompleteAgentLane {
 
         if (this.readyToComplete(producedLanes)) {
             this.ticketRepository.updateLaneStatus(laneId, LaneStatus.COMPLETED);
+            this.moveReadyProducedLanes(producedLanes);
         }
-
-        producedLanes.forEach(l -> this.ticketRepository.updateLaneStatus(l.getId(), LaneStatus.READY_TO_START));
     }
 
     private boolean readyToComplete(final List<Lane> lanes) {
-        return lanes.stream().allMatch(l -> Objects.nonNull(l.getInputTaskId()));    }
+        return lanes.stream().allMatch(value ->
+                (value.getInputTaskIds() != null && !value.getInputTaskIds().isEmpty())
+                        || LaneStatus.NOT_NEEDED.equals(value.getStatus()));
+    }
+
+    private void moveReadyProducedLanes(final List<Lane> producedLanes) {
+        producedLanes.stream()
+                .filter(value -> !LaneStatus.NOT_NEEDED.equals(value.getStatus()))
+                .filter(value -> this.ticketRepository.isReadyToStart(value.getId()))
+                .forEach(value -> this.ticketRepository.updateLaneStatus(value.getId(), LaneStatus.READY_TO_START));
+    }
 
 }

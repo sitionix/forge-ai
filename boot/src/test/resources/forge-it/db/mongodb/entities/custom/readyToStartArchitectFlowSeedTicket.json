@@ -1,0 +1,31 @@
+{
+  "id": "12121212-1212-1212-1212-121212121212",
+  "ticketKey": "SITIONIX-3",
+  "taskDescription": "ready architect produced lanes",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "OPEN",
+  "lanes": [
+    {
+      "id": "13131313-1313-1313-1313-131313131313",
+      "type": "IMPLEMENT_BE",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "READY_TO_START",
+      "attempt": 0,
+      "inputTaskIds": ["14141414-1414-1414-1414-141414141414"],
+      "dependsOn": []
+    },
+    {
+      "id": "15151515-1515-1515-1515-151515151515",
+      "type": "API",
+      "scope": "GLOBAL",
+      "serviceId": "global",
+      "status": "READY_TO_START",
+      "attempt": 0,
+      "inputTaskIds": ["16161616-1616-1616-1616-161616161616"],
+      "dependsOn": []
+    }
+  ],
+  "createdAt": "2026-01-01T10:00:00",
+  "updatedAt": "2026-01-01T10:00:00"
+}
