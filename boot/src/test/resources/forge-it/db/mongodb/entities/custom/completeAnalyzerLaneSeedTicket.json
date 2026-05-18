@@ -12,7 +12,7 @@
       "serviceId": "atmssox",
       "status": "IN_PROGRESS",
       "attempt": 0,
-      "inputTaskId": null,
+      "inputTaskIds": [],
       "dependsOn": []
     },
     {
@@ -22,7 +22,7 @@
       "serviceId": "atmssox",
       "status": "NOT_STARTED",
       "attempt": 0,
-      "inputTaskId": null,
+      "inputTaskIds": [],
       "dependsOn": [
         {
           "type": "ANALYZER",
@@ -37,7 +37,7 @@
       "serviceId": "atmssox",
       "status": "NOT_STARTED",
       "attempt": 0,
-      "inputTaskId": null,
+      "inputTaskIds": [],
       "dependsOn": [
         {
           "type": "ANALYZER",

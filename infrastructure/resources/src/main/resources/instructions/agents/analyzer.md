@@ -32,7 +32,10 @@ Rules:
 - Do not copy unrelated scope work into this scope.
 - Do not convert another scope's responsibility into this scope's requirement.
 - Do not decide final API/events requirement status.
-- Preserve potential API/events needs as dependencies, risks, or notes for `architect`.
+- If this scope owns backend/domain capability that must be called by another service, preserve the possible backend API contract need as a dependency or note for the architect.
+- Do not limit API-related notes only to Workspace-facing/public endpoints.
+- For domain owner scopes, if another scope must call this capability synchronously, mention that a service API/contract may be required, but do not decide final API requirement status.
+- Preserve potential API/events needs as dependencies, risks, or notes for `architect`.\
 
 ## Owned Requirement Classification
 
@@ -44,27 +47,6 @@ For the assigned scope, classify task content as:
 - unrelated work → omit.
 
 If task text describes business/domain/visibility/filtering/consistency semantics owned by another scope, do not rewrite them as this scope's own requirements.
-
-## Scope Context Usage
-
-Use the provided `scopeContext` to understand the assigned service boundary.
-
-Use:
-
-- `label` to identify the assigned service;
-- `group` to distinguish backend, frontend, tool, or other service category;
-- `tags` to understand technical/runtime characteristics;
-- `domainKeywords` to detect likely domain relevance;
-- `ownsBusinessAreas` to determine what this scope actually owns.
-
-Rules:
-
-- Do not treat `tags` as requirements.
-- Do not treat `domainKeywords` as requirements.
-- Do not infer ownership from keywords alone.
-- Prefer `ownsBusinessAreas` when deciding whether the assigned scope owns a business/domain responsibility.
-- If `ownsBusinessAreas` is missing or inconclusive, use `domainKeywords`, `tags`, and task wording only as supporting context.
-- If the assigned scope does not own a described behavior, classify it as dependency, constraint, risk, or omit it if unrelated.
 
 ## Scope Ownership Resolution
 

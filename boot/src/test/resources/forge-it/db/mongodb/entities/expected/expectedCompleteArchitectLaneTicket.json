@@ -1,0 +1,62 @@
+{
+  "id": "55555555-5555-5555-5555-555555555555",
+  "ticketKey": "SITIONIX-2",
+  "taskDescription": "complete-architect-task",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "OPEN",
+  "lanes": [
+    {
+      "id": "66666666-6666-6666-6666-666666666666",
+      "type": "ARCHITECT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "COMPLETED",
+      "attempt": 0,
+      "dependsOn": []
+    },
+    {
+      "id": "77777777-7777-7777-7777-777777777777",
+      "type": "IMPLEMENT_BE",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "READY_TO_START",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "88888888-8888-8888-8888-888888888888",
+      "type": "API",
+      "scope": "GLOBAL",
+      "serviceId": "global",
+      "status": "READY_TO_START",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "type": "EVENT",
+      "scope": "GLOBAL",
+      "serviceId": "global",
+      "status": "NOT_NEEDED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "automationservice-sox"
+        }
+      ]
+    }
+  ],
+  "createdAt": "2026-01-01T10:00",
+  "updatedAt": "2026-01-01T10:00:00"
+}

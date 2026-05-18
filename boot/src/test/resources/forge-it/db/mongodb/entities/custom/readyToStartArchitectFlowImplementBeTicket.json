@@ -1,0 +1,22 @@
+{
+  "id": "14141414-1414-1414-1414-141414141414",
+  "ticketId": "12121212-1212-1212-1212-121212121212",
+  "laneId": "13131313-1313-1313-1313-131313131313",
+  "status": "CREATED",
+  "scope": "automationservice-sox",
+  "agent": "IMPLEMENT_BE",
+  "payload": {
+    "task": "implement task",
+    "scope": "automationservice-sox",
+    "summary": "summary",
+    "requirements": ["r1"],
+    "constraints": ["c1"],
+    "nonGoals": ["n1"],
+    "architectureDecision": "decision",
+    "dependencies": ["d1"],
+    "acceptanceNotes": ["a1"],
+    "risks": ["risk1"]
+  },
+  "createdAt": "2026-01-01T10:00:00",
+  "updatedAt": "2026-01-01T10:00:00"
+}

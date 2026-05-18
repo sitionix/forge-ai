@@ -16,6 +16,6 @@ public class LaneDocument {
     private String serviceId;
     private LaneStatus status;
     private int attempt;
-    private UUID inputTaskId;
+    private Set<UUID> inputTaskIds;
     private Set<LaneDependencyDocument> dependsOn;
 }

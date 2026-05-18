@@ -84,7 +84,7 @@ class QaLeadAgentExecutorTest {
 
         final Lane laneState = Lane.builder()
                 .id(laneId)
-                .inputTaskId(inputTaskId)
+                .inputTaskIds(Set.of(inputTaskId))
                 .build();
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(laneState));
 

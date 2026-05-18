@@ -11,6 +11,7 @@ import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
 import org.springframework.stereotype.Component;
@@ -33,18 +34,16 @@ public class ArchitectAgentExecutor implements ExecuteAgent<ArchitectPayload> {
         final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.execute(lane);
         final Lane laneState = this.ticketRepository.findByLaneId(lane.getLaneId())
                 .orElseThrow(() -> new IllegalArgumentException("Lane not found with id: " + lane.getLaneId()));
+        final UUID inputTaskId = laneState.singleInputTaskIdForExecution();
 
-        final AgentTicket<ArchitectPayload> agentTicket = this.agentTicketRepository.findById(laneState.getInputTaskId(), ArchitectPayload.class)
-                .orElseThrow(() -> new IllegalArgumentException("Agent ticket not found with id: " + laneState.getInputTaskId()));
+        final AgentTicket<ArchitectPayload> agentTicket = this.agentTicketRepository.findById(inputTaskId, ArchitectPayload.class)
+                .orElseThrow(() -> new IllegalArgumentException("Agent ticket not found with id: " + inputTaskId));
 
         final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareAgentExecutionInputUseCase.enrichWithPayload(
                 lane,
                 input,
                 agentTicket.getPayload()
         );
-
-        log.info("Execute architect lane with input: " + enrichedInput);
-
         this.codexClient.submit(enrichedInput, lane.getSourceTerminalTty());
     }
 }

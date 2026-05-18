@@ -2,6 +2,8 @@ package com.sitionix.forgeai.it.infra;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
+import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
@@ -45,6 +47,42 @@ public class ControllerEndpoint {
                 CompleteAnalyzerLaneResponseDTO.class,
                 (MockmvcDefault) context -> context
                         .withRequest("requestCompleteAnalyzerLane.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<CompleteArchitectLaneRequest, CompleteArchitectLaneResponse> completeArchitectLane() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/architect/complete",
+                HttpMethod.POST,
+                CompleteArchitectLaneRequest.class,
+                CompleteArchitectLaneResponse.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteArchitectLane.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<CompleteArchitectLaneRequest, CompleteArchitectLaneResponse> completeArchitectLaneAutomationApiEventRequired() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/architect/complete",
+                HttpMethod.POST,
+                CompleteArchitectLaneRequest.class,
+                CompleteArchitectLaneResponse.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteArchitectLaneAutomationApiEventRequired.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<CompleteArchitectLaneRequest, CompleteArchitectLaneResponse> completeArchitectLaneBffApiEventRequired() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/architect/complete",
+                HttpMethod.POST,
+                CompleteArchitectLaneRequest.class,
+                CompleteArchitectLaneResponse.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteArchitectLaneBffApiEventRequired.json")
                         .expectStatus(HttpStatus.OK.value())
         );
     }

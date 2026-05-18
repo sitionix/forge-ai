@@ -3,8 +3,11 @@ package com.sitionix.forgeai.api;
 import com.app_afesox.fgaisox.api_first.api.ForgeAiApi;
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
+import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
+import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
@@ -33,6 +36,7 @@ public class ForgeAiController implements ForgeAiApi {
     private final TerminalTtyResolver terminalTtyResolver;
     private final AgentTicketApiMapper agentTicketApiMapper;
     private final CreateAgentTask createAgentTask;
+    private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
 
     @Override
     public ResponseEntity<StartForgeResponseDTO> startForge(@Valid final StartForgeRequestDTO startForgeRequestDTO) {
@@ -58,6 +62,18 @@ public class ForgeAiController implements ForgeAiApi {
                         .laneId(laneId)
                         .laneStatus(HttpStatus.OK.name())
                         .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteArchitectLaneResponse> completeArchitectLane(final UUID ticketId, final UUID laneId, @Valid final CompleteArchitectLaneRequest completeArchitectLaneRequest) {
+        log.info("Received completeArchitectLane request for ticketId: {}, laneId: {}, with request body: {}", ticketId, laneId, completeArchitectLaneRequest);
+        this.completeArchitectLaneOrchestrationUseCase.complete(ticketId, laneId, completeArchitectLaneRequest);
+
+        return ResponseEntity.ok(CompleteArchitectLaneResponse.builder()
+                .laneId(laneId)
+                .laneStatus(HttpStatus.OK.name())
+                .ticketId(ticketId)
                 .build());
     }
 }

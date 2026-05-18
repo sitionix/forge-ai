@@ -288,6 +288,16 @@ ensure_forge_ai_up() {
   die "Forge AI did not become healthy at ${url}/actuator/health"
 }
 
+ensure_existing_forge_ai_up() {
+  local url="$1"
+  if ! is_forge_ai_up "$url"; then
+    die "Forge AI is not healthy at ${url}/actuator/health (existing-only mode)"
+  fi
+  log_step "Forge AI is already healthy. Reusing existing run."
+  echo "[forge-ai-start] Forge AI is healthy."
+  FORGE_AI_STARTED_LOCAL_THIS_RUN="0"
+}
+
 shell_quote() {
   local value="$1"
   printf "'%s'" "${value//\'/\'\"\'\"\'}"
@@ -342,6 +352,7 @@ main() {
   local task
   local forge_ai_base_url
   local force_rebuild="0"
+  local existing_only="0"
   local source_tty
 
   while (($# > 0)); do
@@ -350,8 +361,12 @@ main() {
         force_rebuild="1"
         shift
         ;;
+      -e|--existing)
+        existing_only="1"
+        shift
+        ;;
       *)
-        die "unknown argument: $1 (supported: -r | --rebuild)"
+        die "unknown argument: $1 (supported: -r | --rebuild | -e | --existing)"
         ;;
     esac
   done
@@ -366,15 +381,26 @@ main() {
   forge_ai_base_url="$(base_url)"
   source_tty="$(tty)"
 
+  if [[ "$force_rebuild" == "1" && "$existing_only" == "1" ]]; then
+    die "flags -r/--rebuild and -e/--existing are mutually exclusive"
+  fi
+
   if [[ "$force_rebuild" == "1" ]]; then
     SKIP_FORGE_AI_REBUILD="0"
     log_step "Rebuild flag detected (-r): Forge AI will be rebuilt."
+  elif [[ "$existing_only" == "1" ]]; then
+    SKIP_FORGE_AI_REBUILD="1"
+    log_step "Existing-only flag detected (-e): will not start Forge AI, only reuse healthy existing instance."
   else
     SKIP_FORGE_AI_REBUILD="1"
     log_step "Rebuild flag not set: running without rebuild."
   fi
 
-  ensure_forge_ai_up "$forge_ai_base_url"
+  if [[ "$existing_only" == "1" ]]; then
+    ensure_existing_forge_ai_up "$forge_ai_base_url"
+  else
+    ensure_forge_ai_up "$forge_ai_base_url"
+  fi
   start_task "$forge_ai_base_url" "$ticket" "$task" "$selected_modules" "$source_tty"
 }
 

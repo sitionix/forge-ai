@@ -36,9 +36,6 @@ public class AnalyzeAgentExecutor implements ExecuteAgent<AnalyzerPayload> {
                         .build()
         );
 
-
-        log.info("Execute analyzer lane with input: " + enrichedInput);
-
         this.codexClient.submit(enrichedInput, lane.getSourceTerminalTty());
     }
 }

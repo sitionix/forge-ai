@@ -33,4 +33,4 @@ forge:
 forge-ai:
   jobs:
     ready-to-start:
-      fixed-delay-ms: 5000
+      fixed-delay-ms: 10000

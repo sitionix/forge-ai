@@ -11,6 +11,7 @@ import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
 import org.springframework.stereotype.Component;
@@ -32,9 +33,10 @@ public class QaLeadAgentExecutor implements ExecuteAgent<QaLeadPayload> {
         final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.execute(lane);
         final Lane laneState = this.ticketRepository.findByLaneId(lane.getLaneId())
                 .orElseThrow(() -> new IllegalArgumentException("Lane not found with id: " + lane.getLaneId()));
+        final UUID inputTaskId = laneState.singleInputTaskIdForExecution();
 
-        final AgentTicket<QaLeadPayload> agentTicket = this.agentTicketRepository.findById(laneState.getInputTaskId(), QaLeadPayload.class)
-                .orElseThrow(() -> new IllegalArgumentException("Agent ticket not found with id: " + laneState.getInputTaskId()));
+        final AgentTicket<QaLeadPayload> agentTicket = this.agentTicketRepository.findById(inputTaskId, QaLeadPayload.class)
+                .orElseThrow(() -> new IllegalArgumentException("Agent ticket not found with id: " + inputTaskId));
 
         final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareAgentExecutionInputUseCase.enrichWithPayload(
                 lane,

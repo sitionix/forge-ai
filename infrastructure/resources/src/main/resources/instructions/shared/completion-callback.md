@@ -37,9 +37,12 @@ The contract lookup flow is:
     - field types,
     - examples,
     - validation rules.
-4. Build the request body according to that endpoint contract.
-5. Fill all required fields.
-6. Use runtime values for `ticketId`, `laneId`, and `scope`.
+4. For each request field, read that field's `description` in the OpenAPI schema and use it as the semantic instruction for what content must be provided.
+5. Populate fields with meaningful, task-specific content that satisfies the field description.
+6. Fill each field with complete, specific, and semantically meaningful content that directly satisfies the field description and the assigned lane outcome.
+7. Build the request body according to that endpoint contract.
+8. Fill all required fields.
+9. Use runtime values for `ticketId`, `laneId`, and `scope`.
 
 Do not derive the completion request from any source other than the provided OpenAPI contract reference.
 
