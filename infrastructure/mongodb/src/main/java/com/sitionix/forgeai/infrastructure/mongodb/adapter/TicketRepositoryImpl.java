@@ -89,23 +89,35 @@ public class TicketRepositoryImpl implements TicketRepository {
             return false;
         }
 
-        final Lane lane = ticketDocument.getLanes()
-                .stream()
-                .filter(value -> Objects.equals(value.getId(), laneId))
-                .findFirst()
-                .map(this.laneEntityMapper::asLane)
-                .orElse(null);
-        if (lane == null) {
+        final Optional<Lane> laneOptional = this.findLane(ticketDocument, laneId);
+        if (laneOptional.isEmpty()) {
             return false;
         }
-        if (lane.getInputTaskIds() == null || lane.getInputTaskIds().isEmpty()) {
+        final Lane lane = laneOptional.get();
+        if (this.hasNoInputTasks(lane)) {
             return false;
         }
-        if (lane.getDependsOn() == null || lane.getDependsOn().isEmpty()) {
+        if (this.hasNoDependencies(lane)) {
             return true;
         }
 
-        return lane.getDependsOn().stream().allMatch(dependency -> this.isDependencyCompleted(ticketDocument, dependency));
+        return lane.getDependsOn().stream()
+                .allMatch(dependency -> this.isDependencyCompleted(ticketDocument, dependency));
+    }
+
+    private Optional<Lane> findLane(final TicketDocument ticketDocument, final UUID laneId) {
+        return ticketDocument.getLanes().stream()
+                .filter(value -> Objects.equals(value.getId(), laneId))
+                .findFirst()
+                .map(this.laneEntityMapper::asLane);
+    }
+
+    private boolean hasNoInputTasks(final Lane lane) {
+        return lane.getInputTaskIds() == null || lane.getInputTaskIds().isEmpty();
+    }
+
+    private boolean hasNoDependencies(final Lane lane) {
+        return lane.getDependsOn() == null || lane.getDependsOn().isEmpty();
     }
 
     private boolean isDependencyCompleted(final TicketDocument ticketDocument, final LaneDependency dependency) {

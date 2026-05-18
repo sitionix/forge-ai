@@ -26,6 +26,7 @@ public class CreateAgentTaskUseCase implements CreateAgentTask {
     private final AgentTicketRepository agentTicketRepository;
 
     private final LaneRepository laneRepository;
+
     private final TicketRepository ticketRepository;
 
     private final CompleteAgentLane completeAgentLane;
