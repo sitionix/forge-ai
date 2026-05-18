@@ -74,7 +74,6 @@ class CreateAgentTaskUseCaseTest {
 
         when(this.laneRepository.findLaneToProduceOptional(sourceLaneId, "automationservice-sox", Agent.ARCHITECT)).thenReturn(Optional.of(lane));
         when(this.agentTicketRepository.save(agentTicket)).thenReturn(agentTicket);
-        when(this.ticketRepository.isReadyToStart(producedLaneId)).thenReturn(true);
 
         //when
         this.createAgentTaskUseCase.create(agentTicket, sourceLaneId);
@@ -86,38 +85,6 @@ class CreateAgentTaskUseCaseTest {
         verify(this.laneRepository).findLaneToProduceOptional(sourceLaneId, "automationservice-sox", Agent.ARCHITECT);
         verify(this.agentTicketRepository).save(agentTicket);
         verify(this.laneRepository).assignInputTaskId(producedLaneId, ticketId);
-        verify(this.ticketRepository).isReadyToStart(producedLaneId);
-        verify(this.ticketRepository).updateLaneStatus(producedLaneId, LaneStatus.READY_TO_START);
-        verify(this.completeAgentLane).completeAndPrepareAgents(sourceLaneId);
-    }
-
-    @Test
-    void givenLaneNotReadyToStart_whenCreate_thenDoNotUpdateProducedLaneStatus() {
-        //given
-        final UUID sourceLaneId = UUID.randomUUID();
-        final UUID producedLaneId = UUID.randomUUID();
-        final UUID ticketId = UUID.randomUUID();
-        final AgentTicket<ArchitectPayload> agentTicket = AgentTicket.<ArchitectPayload>builder()
-                .id(ticketId)
-                .scope("automationservice-sox")
-                .agent(Agent.ARCHITECT)
-                .status(AgentTicketStatus.CREATED)
-                .payload(ArchitectPayload.builder().build())
-                .build();
-        final Lane lane = Lane.builder().id(producedLaneId).build();
-
-        when(this.laneRepository.findLaneToProduceOptional(sourceLaneId, "automationservice-sox", Agent.ARCHITECT)).thenReturn(Optional.of(lane));
-        when(this.agentTicketRepository.save(agentTicket)).thenReturn(agentTicket);
-        when(this.ticketRepository.isReadyToStart(producedLaneId)).thenReturn(false);
-
-        //when
-        this.createAgentTaskUseCase.create(agentTicket, sourceLaneId);
-
-        //then
-        verify(this.laneRepository).findLaneToProduceOptional(sourceLaneId, "automationservice-sox", Agent.ARCHITECT);
-        verify(this.agentTicketRepository).save(agentTicket);
-        verify(this.laneRepository).assignInputTaskId(producedLaneId, ticketId);
-        verify(this.ticketRepository).isReadyToStart(producedLaneId);
         verify(this.completeAgentLane).completeAndPrepareAgents(sourceLaneId);
     }
 

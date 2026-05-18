@@ -2,27 +2,15 @@ package com.sitionix.forgeai.api;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
-import com.app_afesox.fgaisox.api_first.dto.ArchitectApiRequest;
-import com.app_afesox.fgaisox.api_first.dto.ArchitectEventRequest;
-import com.app_afesox.fgaisox.api_first.dto.ArchitectImplementationHandoff;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
+import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
-import com.sitionix.forgeai.domain.model.service.ServiceGroup;
-import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
-import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
-import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
-import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
-import java.util.UUID;
-import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,10 +22,10 @@ import org.springframework.http.ResponseEntity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import java.util.UUID;
 
 @ExtendWith(MockitoExtension.class)
 class ForgeAiControllerTest {
@@ -60,10 +48,7 @@ class ForgeAiControllerTest {
     private CreateAgentTask createAgentTask;
 
     @Mock
-    private ServicePropertiesProvider servicePropertiesProvider;
-
-    @Mock
-    private ServicePropertiesProvider.ServiceConfigView serviceConfigView;
+    private CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
 
     @BeforeEach
     void setUp() {
@@ -73,7 +58,7 @@ class ForgeAiControllerTest {
                 this.terminalTtyResolver,
                 this.agentTicketApiMapper,
                 this.createAgentTask,
-                this.servicePropertiesProvider
+                this.completeArchitectLaneOrchestrationUseCase
         );
     }
 
@@ -85,8 +70,7 @@ class ForgeAiControllerTest {
                 this.terminalTtyResolver,
                 this.agentTicketApiMapper,
                 this.createAgentTask,
-                this.servicePropertiesProvider,
-                this.serviceConfigView
+                this.completeArchitectLaneOrchestrationUseCase
         );
     }
 
@@ -116,23 +100,11 @@ class ForgeAiControllerTest {
     }
 
     @Test
-    void givenBackendArchitectLaneRequest_whenCompleteArchitectLane_thenCreateImplementAndApiAndMarkEventNotNeeded() {
+    void givenArchitectLaneRequest_whenCompleteArchitectLane_thenReturnOkResponse() {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
-        final CompleteArchitectLaneRequest request = CompleteArchitectLaneRequest.builder()
-                .implementationHandoff(ArchitectImplementationHandoff.builder().scope("automationservice-sox").build())
-                .apiRequest(ArchitectApiRequest.builder().required(Boolean.TRUE).build())
-                .eventRequest(ArchitectEventRequest.builder().required(Boolean.FALSE).build())
-                .build();
-        final AgentTicket<ImplementBePayload> implementBeTicket = AgentTicket.<ImplementBePayload>builder().scope("automationservice-sox").build();
-        final AgentTicket<ApiPayload> apiTicket = AgentTicket.<ApiPayload>builder().scope("automationservice-sox").build();
-
-        when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of("atmssox", this.serviceConfigView));
-        when(this.serviceConfigView.getPath()).thenReturn("automationservice-sox");
-        when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.BACKEND);
-        when(this.agentTicketApiMapper.asImplementBeTicket(request, ticketId)).thenReturn(implementBeTicket);
-        when(this.agentTicketApiMapper.asApiTicket(request, ticketId)).thenReturn(apiTicket);
+        final CompleteArchitectLaneRequest request = CompleteArchitectLaneRequest.builder().build();
 
         //when
         final ResponseEntity<CompleteArchitectLaneResponse> actual = this.forgeAiController.completeArchitectLane(ticketId, laneId, request);
@@ -144,15 +116,6 @@ class ForgeAiControllerTest {
                 .laneId(laneId)
                 .laneStatus(HttpStatus.OK.name())
                 .build());
-        assertThat(apiTicket.getScope()).isEqualTo(ScopeMode.GLOBAL_SCOPE);
-        verify(this.servicePropertiesProvider).getServices();
-        verify(this.serviceConfigView).getPath();
-        verify(this.serviceConfigView).getGroup();
-        verify(this.agentTicketApiMapper).asImplementBeTicket(request, ticketId);
-        verify(this.agentTicketApiMapper).asApiTicket(request, ticketId);
-        verify(this.createAgentTask).create(implementBeTicket, laneId);
-        verify(this.createAgentTask).create(apiTicket, laneId);
-        verify(this.createAgentTask).markAsNotNeeded(laneId, ScopeMode.GLOBAL_SCOPE, Agent.EVENT);
-        verify(this.agentTicketApiMapper, never()).asEventTicket(request, ticketId);
+        verify(this.completeArchitectLaneOrchestrationUseCase).complete(ticketId, laneId, request);
     }
 }

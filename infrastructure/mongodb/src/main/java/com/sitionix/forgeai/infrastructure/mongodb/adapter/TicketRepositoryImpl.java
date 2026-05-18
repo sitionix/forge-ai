@@ -94,9 +94,6 @@ public class TicketRepositoryImpl implements TicketRepository {
             return false;
         }
         final Lane lane = laneOptional.get();
-        if (this.hasNoInputTasks(lane)) {
-            return false;
-        }
         if (this.hasNoDependencies(lane)) {
             return true;
         }
@@ -110,10 +107,6 @@ public class TicketRepositoryImpl implements TicketRepository {
                 .filter(value -> Objects.equals(value.getId(), laneId))
                 .findFirst()
                 .map(this.laneEntityMapper::asLane);
-    }
-
-    private boolean hasNoInputTasks(final Lane lane) {
-        return lane.getInputTaskIds() == null || lane.getInputTaskIds().isEmpty();
     }
 
     private boolean hasNoDependencies(final Lane lane) {

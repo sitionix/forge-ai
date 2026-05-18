@@ -41,10 +41,6 @@ public class CreateAgentTaskUseCase implements CreateAgentTask {
         log.info("Created agent ticket: " + agentTicket.getId());
 
         this.laneRepository.assignInputTaskId(laneToProduce.getId(), agentTicket.getId());
-        if (this.ticketRepository.isReadyToStart(laneToProduce.getId())) {
-            this.ticketRepository.updateLaneStatus(laneToProduce.getId(), LaneStatus.READY_TO_START);
-        }
-
         this.completeAgentLane.completeAndPrepareAgents(sourceLaneId);
     }
 
