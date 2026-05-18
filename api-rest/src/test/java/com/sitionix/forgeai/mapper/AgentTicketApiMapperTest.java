@@ -7,6 +7,7 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import java.lang.reflect.Field;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,7 +41,11 @@ class AgentTicketApiMapperTest {
     @Test
     void givenCompleteAnalyzerLaneRequestDTO_whenAsArchitectTicket_thenMapFields() {
         //given
-        final AnalyzerArchitectHandoffDTO architectHandoff = AnalyzerArchitectHandoffDTO.builder().build();
+        final AnalyzerArchitectHandoffDTO architectHandoff = AnalyzerArchitectHandoffDTO.builder()
+                .task("architect-task")
+                .summary("architect-summary")
+                .scope("automationservice-sox")
+                .build();
         final CompleteAnalyzerLaneRequestDTO source = CompleteAnalyzerLaneRequestDTO.builder()
                 .architectHandoff(architectHandoff)
                 .build();
@@ -56,6 +61,8 @@ class AgentTicketApiMapperTest {
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
         assertThat(actual.getLaneId()).isNull();
         assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
+        assertThat(actual.getScope()).isEqualTo("automationservice-sox");
+        assertThat(actual.getAgent()).isEqualTo(Agent.ARCHITECT);
         assertThat(actual.getPayload()).isEqualTo(architectPayload);
         verify(this.architectTicketPayloadApiMapper).asArchitectPayload(architectHandoff);
     }
@@ -63,7 +70,11 @@ class AgentTicketApiMapperTest {
     @Test
     void givenCompleteAnalyzerLaneRequestDTO_whenAsQaLeadTicket_thenMapFields() {
         //given
-        final AnalyzerQaLeadHandoffDTO qaLeadHandoff = AnalyzerQaLeadHandoffDTO.builder().build();
+        final AnalyzerQaLeadHandoffDTO qaLeadHandoff = AnalyzerQaLeadHandoffDTO.builder()
+                .task("qa-task")
+                .summary("qa-summary")
+                .scope("backendforfrontendservice-sox")
+                .build();
         final CompleteAnalyzerLaneRequestDTO source = CompleteAnalyzerLaneRequestDTO.builder()
                 .qaLeadHandoff(qaLeadHandoff)
                 .build();
@@ -79,6 +90,8 @@ class AgentTicketApiMapperTest {
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
         assertThat(actual.getLaneId()).isNull();
         assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
+        assertThat(actual.getScope()).isEqualTo("backendforfrontendservice-sox");
+        assertThat(actual.getAgent()).isEqualTo(Agent.QA_LEAD);
         assertThat(actual.getPayload()).isEqualTo(qaLeadPayload);
         verify(this.qaLeadTicketPayloadApiMapper).asQaLeadPayload(qaLeadHandoff);
     }

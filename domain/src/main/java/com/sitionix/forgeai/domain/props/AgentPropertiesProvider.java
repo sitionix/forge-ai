@@ -23,5 +23,7 @@ public interface AgentPropertiesProvider {
         List<Agent> getDependsOn();
 
         List<Agent> getProduces();
+
+        boolean isEnabled();
     }
 }

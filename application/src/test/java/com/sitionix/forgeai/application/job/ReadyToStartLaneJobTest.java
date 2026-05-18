@@ -4,6 +4,7 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
+import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import java.util.List;
 import java.util.UUID;
@@ -36,6 +37,7 @@ class ReadyToStartLaneJobTest {
     void tearDown() {
         for (final Agent value : Agent.values()) {
             value.setExecutor(null);
+            value.setInfo(null);
         }
         verifyNoMoreInteractions(this.ticketRepository);
     }
@@ -44,7 +46,10 @@ class ReadyToStartLaneJobTest {
     void givenReadyLanes_whenRun_thenExecuteEachAgent() {
         //given
         final ExecuteAgent<AgentTicketPayload> analyzerExecutor = mock(ExecuteAgent.class);
+        final AgentPropertiesProvider.AgentConfigView analyzerConfig = mock(AgentPropertiesProvider.AgentConfigView.class);
+        when(analyzerConfig.isEnabled()).thenReturn(true);
         Agent.ANALYZER.setExecutor(analyzerExecutor);
+        Agent.ANALYZER.setInfo(analyzerConfig);
 
         final ReadyToStartLane lane = ReadyToStartLane.builder()
                 .ticketId(UUID.randomUUID())
@@ -60,7 +65,8 @@ class ReadyToStartLaneJobTest {
 
         //then
         verify(this.ticketRepository).findAllReadyToStartLanes();
+        verify(analyzerConfig).isEnabled();
         verify(analyzerExecutor).executeLane(lane);
-        verifyNoMoreInteractions(analyzerExecutor);
+        verifyNoMoreInteractions(analyzerConfig, analyzerExecutor);
     }
 }

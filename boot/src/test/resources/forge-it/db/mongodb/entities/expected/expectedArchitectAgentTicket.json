@@ -1,10 +1,8 @@
 {
   "status": "CREATED",
+  "scope": "automationservice-sox",
+  "agent": "ARCHITECT",
   "payload": {
-    "task": "architect-task",
-    "summary": "architect summary",
-    "scope": "automationservice-sox",
-    "agent": "ARCHITECT",
     "requirements": ["r1"],
     "constraints": ["c1"],
     "nonGoals": ["n1"],

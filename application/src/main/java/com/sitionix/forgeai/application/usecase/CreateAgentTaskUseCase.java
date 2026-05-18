@@ -29,7 +29,7 @@ public class CreateAgentTaskUseCase implements CreateAgentTask {
     @Override
     public <P extends AgentTicketPayload> void create(final AgentTicket<P> agentTicket, final UUID sourceLaneId) {
 
-        final Lane laneToProduce = this.findLaneToProduce(sourceLaneId, agentTicket.getPayload().getScope(), agentTicket.getPayload().getAgent() );
+        final Lane laneToProduce = this.findLaneToProduce(sourceLaneId, agentTicket.getScope(), agentTicket.getAgent());
         this.completeInfo(agentTicket, laneToProduce);
 
         final AgentTicket<P> created = this.agentTicketRepository.save(agentTicket);

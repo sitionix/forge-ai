@@ -12,10 +12,10 @@ import lombok.NoArgsConstructor;
 @Builder(toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor
-public class AgentExecutionInput {
+public class AgentExecutionInput<P> {
     private UUID ticketId;
     private UUID laneId;
-    private String ticket;
+    private P payload;
     private String agentInstruction;
     private ScopeContext scope;
     private ForgeAiContractApi contractApi;
