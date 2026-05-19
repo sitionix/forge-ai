@@ -10,6 +10,7 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
+import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
@@ -39,6 +40,7 @@ public class ForgeAiController implements ForgeAiApi {
     private final AgentTicketApiMapper agentTicketApiMapper;
     private final CreateAgentTask createAgentTask;
     private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
+    private final CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
 
     @Override
     public ResponseEntity<StartForgeResponseDTO> startForge(@Valid final StartForgeRequestDTO startForgeRequestDTO) {
@@ -82,6 +84,7 @@ public class ForgeAiController implements ForgeAiApi {
     @Override
     public ResponseEntity<CompleteApiLaneResponse> completeApiLane(final UUID ticketId, final UUID laneId, @Valid final CompleteApiLaneRequest completeApiLaneRequest) {
         log.info("Received completeApiLane request for ticketId: {}, laneId: {}, with request body: {}", ticketId, laneId, completeApiLaneRequest);
+        this.completeApiLaneOrchestrationUseCase.complete(ticketId, laneId, completeApiLaneRequest);
 
         return ResponseEntity.ok(CompleteApiLaneResponse.builder()
                 .laneId(laneId)

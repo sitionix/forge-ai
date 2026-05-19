@@ -1,0 +1,66 @@
+{
+  "id": "41111111-1111-1111-1111-111111111111",
+  "ticketKey": "SITIONIX-4",
+  "taskDescription": "complete-api-two-be-one-fe",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "OPEN",
+  "lanes": [
+    {
+      "id": "42222222-2222-2222-2222-222222222222",
+      "type": "API",
+      "scope": "GLOBAL",
+      "serviceId": "global",
+      "status": "IN_PROGRESS",
+      "attempt": 0,
+      "inputTaskIds": ["49999999-9999-9999-9999-999999999999"],
+      "dependsOn": []
+    },
+    {
+      "id": "43333333-3333-3333-3333-333333333333",
+      "type": "IMPLEMENT_BE",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "API",
+          "scope": "GLOBAL"
+        }
+      ]
+    },
+    {
+      "id": "44444444-4444-4444-4444-444444444444",
+      "type": "IMPLEMENT_BE",
+      "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "API",
+          "scope": "GLOBAL"
+        }
+      ]
+    },
+    {
+      "id": "45555555-5555-5555-5555-555555555555",
+      "type": "IMPLEMENT_FE",
+      "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "API",
+          "scope": "GLOBAL"
+        }
+      ]
+    }
+  ],
+  "createdAt": "2026-01-01T10:00:00",
+  "updatedAt": "2026-01-01T10:00:00"
+}

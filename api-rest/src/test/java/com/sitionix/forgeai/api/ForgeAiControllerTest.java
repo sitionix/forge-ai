@@ -2,8 +2,11 @@ package com.sitionix.forgeai.api;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
+import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneRequest;
+import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
+import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
@@ -50,6 +53,9 @@ class ForgeAiControllerTest {
     @Mock
     private CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
 
+    @Mock
+    private CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
+
     @BeforeEach
     void setUp() {
         this.forgeAiController = new ForgeAiController(
@@ -58,7 +64,8 @@ class ForgeAiControllerTest {
                 this.terminalTtyResolver,
                 this.agentTicketApiMapper,
                 this.createAgentTask,
-                this.completeArchitectLaneOrchestrationUseCase
+                this.completeArchitectLaneOrchestrationUseCase,
+                this.completeApiLaneOrchestrationUseCase
         );
     }
 
@@ -70,7 +77,8 @@ class ForgeAiControllerTest {
                 this.terminalTtyResolver,
                 this.agentTicketApiMapper,
                 this.createAgentTask,
-                this.completeArchitectLaneOrchestrationUseCase
+                this.completeArchitectLaneOrchestrationUseCase,
+                this.completeApiLaneOrchestrationUseCase
         );
     }
 
@@ -117,5 +125,25 @@ class ForgeAiControllerTest {
                 .laneStatus(HttpStatus.OK.name())
                 .build());
         verify(this.completeArchitectLaneOrchestrationUseCase).complete(ticketId, laneId, request);
+    }
+
+    @Test
+    void givenApiLaneRequest_whenCompleteApiLane_thenReturnOkResponse() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final CompleteApiLaneRequest request = CompleteApiLaneRequest.builder().build();
+
+        //when
+        final ResponseEntity<CompleteApiLaneResponse> actual = this.forgeAiController.completeApiLane(ticketId, laneId, request);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isEqualTo(CompleteApiLaneResponse.builder()
+                .ticketId(ticketId)
+                .laneId(laneId)
+                .laneStatus(HttpStatus.OK.name())
+                .build());
+        verify(this.completeApiLaneOrchestrationUseCase).complete(ticketId, laneId, request);
     }
 }
