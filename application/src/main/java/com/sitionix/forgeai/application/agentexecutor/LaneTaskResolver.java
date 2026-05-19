@@ -2,7 +2,6 @@ package com.sitionix.forgeai.application.agentexecutor;
 
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
-import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneDependency;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
@@ -12,7 +11,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.UUID;
 import lombok.experimental.UtilityClass;
 
 @UtilityClass
@@ -24,54 +22,42 @@ public class LaneTaskResolver {
         if (Objects.isNull(laneState.getInputTaskIds()) || laneState.getInputTaskIds().isEmpty()) {
             throw new IllegalStateException("No input task ids found for laneId=" + laneState.getId());
         }
-        final List<AgentTicket<AgentTicketPayload>> inputTickets = laneState.getInputTaskIds().stream()
-                .map(inputTaskId -> getTicketById(agentTicketRepository, inputTaskId, payloadType))
-                .toList();
+        final List<AgentTicket<AgentTicketPayload>> inputTickets = new ArrayList<>();
+        for (final var inputTaskId : laneState.getInputTaskIds()) {
+            final AgentTicket<? extends AgentTicketPayload> ticket = agentTicketRepository.findById(inputTaskId, payloadType)
+                    .orElseThrow(() -> new IllegalArgumentException("Agent ticket not found with id: " + inputTaskId));
+            inputTickets.add((AgentTicket<AgentTicketPayload>) ticket);
+        }
         if (Objects.isNull(laneState.getDependsOn()) || laneState.getDependsOn().isEmpty()) {
             return inputTickets.stream()
-                    .map(AgentTicket::getPayload)
-                    .collect(LinkedHashSet::new, Set::add, Set::addAll);
+                .map(AgentTicket::getPayload)
+                .collect(LinkedHashSet::new, Set::add, Set::addAll);
         }
 
         final Set<AgentTicketPayload> result = new LinkedHashSet<>();
         for (final LaneDependency dependency : laneState.getDependsOn()) {
-            final List<AgentTicket<AgentTicketPayload>> byScope = findByAgentAndScope(inputTickets, dependency.getType(), dependency.getScope());
+            final String scope = dependency.getScope();
+            final Set<AgentTicketPayload> byScope = inputTickets.stream()
+                    .filter(ticket -> Objects.equals(ticket.getAgent(), dependency.getType()))
+                    .filter(ticket -> Objects.equals(ticket.getScope(), scope))
+                    .map(AgentTicket::getPayload)
+                    .collect(LinkedHashSet::new, Set::add, Set::addAll);
             if (!byScope.isEmpty()) {
-                byScope.stream()
-                        .map(AgentTicket::getPayload)
-                        .forEach(result::add);
+                result.addAll(byScope);
                 continue;
             }
-            final List<AgentTicket<AgentTicketPayload>> byGlobalScope = findByAgentAndScope(inputTickets, dependency.getType(), ScopeMode.GLOBAL_SCOPE);
-            if (!byGlobalScope.isEmpty()) {
-                byGlobalScope.stream()
-                        .map(AgentTicket::getPayload)
-                        .forEach(result::add);
+            final Set<AgentTicketPayload> byGlobal = inputTickets.stream()
+                    .filter(ticket -> Objects.equals(ticket.getAgent(), dependency.getType()))
+                    .filter(ticket -> Objects.equals(ticket.getScope(), ScopeMode.GLOBAL_SCOPE))
+                    .map(AgentTicket::getPayload)
+                    .collect(LinkedHashSet::new, Set::add, Set::addAll);
+            if (!byGlobal.isEmpty()) {
+                result.addAll(byGlobal);
                 continue;
             }
             throw new IllegalStateException("No input task found for laneId=" + laneState.getId()
                     + ", dependencyAgent=" + dependency.getType()
                     + ", dependencyScope=" + dependency.getScope());
-        }
-        return result;
-    }
-
-    private AgentTicket<AgentTicketPayload> getTicketById(final AgentTicketRepository agentTicketRepository,
-                                                          final UUID inputTaskId,
-                                                          final Class<? extends AgentTicketPayload> payloadType) {
-        return agentTicketRepository.findById(inputTaskId, payloadType)
-                .map(value -> (AgentTicket<AgentTicketPayload>) value)
-                .orElseThrow(() -> new IllegalArgumentException("Agent ticket not found with id: " + inputTaskId));
-    }
-
-    private List<AgentTicket<AgentTicketPayload>> findByAgentAndScope(final List<AgentTicket<AgentTicketPayload>> tickets,
-                                                                       final Agent agent,
-                                                                       final String scope) {
-        final List<AgentTicket<AgentTicketPayload>> result = new ArrayList<>();
-        for (final AgentTicket<AgentTicketPayload> ticket : tickets) {
-            if (Objects.equals(ticket.getAgent(), agent) && Objects.equals(ticket.getScope(), scope)) {
-                result.add(ticket);
-            }
         }
         return result;
     }
