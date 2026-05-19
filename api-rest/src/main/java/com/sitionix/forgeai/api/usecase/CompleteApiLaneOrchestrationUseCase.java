@@ -18,7 +18,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -32,9 +31,42 @@ public class CompleteApiLaneOrchestrationUseCase {
     private final ServicePropertiesProvider servicePropertiesProvider;
 
     public void complete(final UUID ticketId, final UUID laneId, final CompleteApiLaneRequest request) {
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> servicesByPath = this.servicePropertiesProvider.getServices().values().stream()
-                .collect(Collectors.toMap(ServicePropertiesProvider.ServiceConfigView::getPath, Function.identity()));
-        final Map<String, String> apiFamilyByScope = servicesByPath.values().stream()
+        final ExecutionContext context = this.buildContext(request);
+        this.findImplementationLanes(laneId).forEach(targetLane -> this.createTaskForTargetLane(ticketId, laneId, request.getSummary(), targetLane, context));
+    }
+
+    private void createTaskForTargetLane(final UUID ticketId,
+                                         final UUID sourceLaneId,
+                                         final String summary,
+                                         final Lane targetLane,
+                                         final ExecutionContext context) {
+        if (Objects.equals(targetLane.getAgent(), Agent.IMPLEMENT_BE)) {
+            final List<ApiLaneContractResult> contracts = context.contractsByScope().getOrDefault(targetLane.getScope(), List.of());
+            if (contracts.isEmpty()) {
+                throw new IllegalStateException("No API contracts found for backend scope=" + targetLane.getScope());
+            }
+            this.createAgentTask.create(this.asImplementBeTicket(ticketId, targetLane.getScope(), summary, contracts), sourceLaneId);
+            return;
+        }
+
+        final String frontendApiFamily = this.apiFamilyByScope(targetLane.getScope(), context.apiFamilyByScope());
+        final List<ApiLaneContractResult> contracts = context.contractsByApiFamily().getOrDefault(frontendApiFamily, List.of());
+        if (contracts.isEmpty()) {
+            throw new IllegalStateException("No API contracts found for frontend scope=" + targetLane.getScope()
+                    + ", apiFamily=" + frontendApiFamily);
+        }
+        this.createAgentTask.create(this.asImplementFeTicket(ticketId, targetLane.getScope(), summary, contracts), sourceLaneId);
+    }
+
+    private List<Lane> findImplementationLanes(final UUID laneId) {
+        return this.laneRepository.findProducedLanes(laneId).stream()
+                .filter(value -> Objects.equals(value.getAgent(), Agent.IMPLEMENT_BE) || Objects.equals(value.getAgent(), Agent.IMPLEMENT_FE))
+                .toList();
+    }
+
+    private ExecutionContext buildContext(final CompleteApiLaneRequest request) {
+        final Map<String, String> apiFamilyByScope = this.servicePropertiesProvider.getServices().values().stream()
+                .filter(value -> Objects.nonNull(value.getPath()))
                 .filter(value -> Objects.nonNull(value.getContractRefs()))
                 .filter(value -> Objects.nonNull(value.getContractRefs().get("api")))
                 .collect(Collectors.toMap(
@@ -46,51 +78,35 @@ public class CompleteApiLaneOrchestrationUseCase {
                 .collect(Collectors.groupingBy(ApiLaneContractResult::getScope));
         final Map<String, List<ApiLaneContractResult>> contractsByApiFamily = request.getContracts().stream()
                 .collect(Collectors.groupingBy(value -> this.apiFamilyByScope(value.getScope(), apiFamilyByScope)));
-
-        this.laneRepository.findProducedLanes(laneId).stream()
-                .filter(value -> Objects.equals(value.getAgent(), Agent.IMPLEMENT_BE) || Objects.equals(value.getAgent(), Agent.IMPLEMENT_FE))
-                .forEach(targetLane -> this.createTaskForTargetLane(ticketId, laneId, request.getSummary(), targetLane, contractsByScope, contractsByApiFamily, apiFamilyByScope));
+        return new ExecutionContext(apiFamilyByScope, contractsByScope, contractsByApiFamily);
     }
 
-    private void createTaskForTargetLane(final UUID ticketId,
-                                         final UUID sourceLaneId,
-                                         final String summary,
-                                         final Lane targetLane,
-                                         final Map<String, List<ApiLaneContractResult>> contractsByScope,
-                                         final Map<String, List<ApiLaneContractResult>> contractsByApiFamily,
-                                         final Map<String, String> apiFamilyByScope) {
-        if (Objects.equals(targetLane.getAgent(), Agent.IMPLEMENT_BE)) {
-            final List<ApiLaneContractResult> contracts = contractsByScope.getOrDefault(targetLane.getScope(), List.of());
-            if (contracts.isEmpty()) {
-                throw new IllegalStateException("No API contracts found for backend scope=" + targetLane.getScope());
-            }
-            final AgentTicket<ImplementBePayload> ticket = AgentTicket.<ImplementBePayload>builder()
-                    .id(UUID.randomUUID())
-                    .ticketId(ticketId)
-                    .status(AgentTicketStatus.CREATED)
-                    .scope(targetLane.getScope())
-                    .agent(Agent.IMPLEMENT_BE)
-                    .payload(this.asImplementBePayload(targetLane.getScope(), summary, contracts))
-                    .build();
-            this.createAgentTask.create(ticket, sourceLaneId);
-            return;
-        }
-
-        final String frontendApiFamily = this.apiFamilyByScope(targetLane.getScope(), apiFamilyByScope);
-        final List<ApiLaneContractResult> contracts = contractsByApiFamily.getOrDefault(frontendApiFamily, List.of());
-        if (contracts.isEmpty()) {
-            throw new IllegalStateException("No API contracts found for frontend scope=" + targetLane.getScope()
-                    + ", apiFamily=" + frontendApiFamily);
-        }
-        final AgentTicket<ImplementFePayload> ticket = AgentTicket.<ImplementFePayload>builder()
+    private AgentTicket<ImplementBePayload> asImplementBeTicket(final UUID ticketId,
+                                                                 final String scope,
+                                                                 final String summary,
+                                                                 final List<ApiLaneContractResult> contracts) {
+        return AgentTicket.<ImplementBePayload>builder()
                 .id(UUID.randomUUID())
                 .ticketId(ticketId)
                 .status(AgentTicketStatus.CREATED)
-                .scope(targetLane.getScope())
-                .agent(Agent.IMPLEMENT_FE)
-                .payload(this.asImplementFePayload(targetLane.getScope(), summary, contracts))
+                .scope(scope)
+                .agent(Agent.IMPLEMENT_BE)
+                .payload(this.asImplementBePayload(scope, summary, contracts))
                 .build();
-        this.createAgentTask.create(ticket, sourceLaneId);
+    }
+
+    private AgentTicket<ImplementFePayload> asImplementFeTicket(final UUID ticketId,
+                                                                 final String scope,
+                                                                 final String summary,
+                                                                 final List<ApiLaneContractResult> contracts) {
+        return AgentTicket.<ImplementFePayload>builder()
+                .id(UUID.randomUUID())
+                .ticketId(ticketId)
+                .status(AgentTicketStatus.CREATED)
+                .scope(scope)
+                .agent(Agent.IMPLEMENT_FE)
+                .payload(this.asImplementFePayload(scope, summary, contracts))
+                .build();
     }
 
     private String apiFamilyByScope(final String scope, final Map<String, String> apiFamilyByScope) {
@@ -177,5 +193,12 @@ public class CompleteApiLaneOrchestrationUseCase {
         final boolean frontendArtifact = Objects.equals(artifact.getKind(), ApiLaneGeneratedArtifact.KindEnum.NPM)
                 || Objects.equals(artifact.getRole(), ApiLaneGeneratedArtifact.RoleEnum.FRONTEND_CONTRACT);
         return frontendOnly == frontendArtifact;
+    }
+
+    private record ExecutionContext(
+            Map<String, String> apiFamilyByScope,
+            Map<String, List<ApiLaneContractResult>> contractsByScope,
+            Map<String, List<ApiLaneContractResult>> contractsByApiFamily
+    ) {
     }
 }
