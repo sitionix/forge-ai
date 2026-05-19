@@ -79,9 +79,9 @@ class AnalyzeAgentExecutorTest {
         final AgentExecutionInput<AgentTicketPayload> enrichedInput = AgentExecutionInput.<AgentTicketPayload>builder()
                 .ticketId(ticketId)
                 .laneId(laneId)
-                .payload(AnalyzerExecutionPayload.builder().ticket("task-description").build())
+                .tasks(Set.of(AnalyzerExecutionPayload.builder().ticket("task-description").build()))
                 .build();
-        when(this.prepareAgentExecutionInputUseCase.enrichWithPayload(eq(lane), eq(baseInput), any(AnalyzerExecutionPayload.class)))
+        when(this.prepareAgentExecutionInputUseCase.enrichWithTasks(eq(lane), eq(baseInput), any(Set.class)))
                 .thenReturn(enrichedInput);
 
         //when
@@ -90,7 +90,7 @@ class AnalyzeAgentExecutorTest {
         //then
         verify(this.prepareAgentExecutionInputUseCase).execute(lane);
         verify(this.ticketRepository).findTicketContentById(ticketId);
-        verify(this.prepareAgentExecutionInputUseCase).enrichWithPayload(eq(lane), eq(baseInput), any(AnalyzerExecutionPayload.class));
+        verify(this.prepareAgentExecutionInputUseCase).enrichWithTasks(eq(lane), eq(baseInput), any(Set.class));
 
         final ArgumentCaptor<AgentExecutionInput> inputCaptor = ArgumentCaptor.forClass(AgentExecutionInput.class);
         verify(this.codexClient).submit(inputCaptor.capture(), eq("/dev/ttys003"));
@@ -98,8 +98,8 @@ class AnalyzeAgentExecutorTest {
 
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
         assertThat(actual.getLaneId()).isEqualTo(laneId);
-        assertThat(actual.getPayload()).isEqualTo(AnalyzerExecutionPayload.builder()
+        assertThat(actual.getTasks()).isEqualTo(Set.of(AnalyzerExecutionPayload.builder()
                 .ticket("task-description")
-                .build());
+                .build()));
     }
 }

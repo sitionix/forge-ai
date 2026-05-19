@@ -11,7 +11,9 @@ import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
-import java.util.UUID;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
 import org.springframework.stereotype.Component;
@@ -33,18 +35,27 @@ public class QaLeadAgentExecutor implements ExecuteAgent<QaLeadPayload> {
         final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.execute(lane);
         final Lane laneState = this.ticketRepository.findByLaneId(lane.getLaneId())
                 .orElseThrow(() -> new IllegalArgumentException("Lane not found with id: " + lane.getLaneId()));
-        final UUID inputTaskId = laneState.singleInputTaskIdForExecution();
+        final Set<AgentTicketPayload> tasks = this.resolveTasks(laneState);
 
-        final AgentTicket<QaLeadPayload> agentTicket = this.agentTicketRepository.findById(inputTaskId, QaLeadPayload.class)
-                .orElseThrow(() -> new IllegalArgumentException("Agent ticket not found with id: " + inputTaskId));
-
-        final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareAgentExecutionInputUseCase.enrichWithPayload(
+        final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareAgentExecutionInputUseCase.enrichWithTasks(
                 lane,
                 input,
-                agentTicket.getPayload()
+                tasks
         );
 
         log.info("Execute qa_lead lane with input: " + enrichedInput);
         this.codexClient.submit(enrichedInput, lane.getSourceTerminalTty());
+    }
+
+    private Set<AgentTicketPayload> resolveTasks(final Lane laneState) {
+        if (Objects.isNull(laneState.getInputTaskIds()) || laneState.getInputTaskIds().isEmpty()) {
+            throw new IllegalStateException("No input task ids found for laneId=" + laneState.getId());
+        }
+        return laneState.getInputTaskIds().stream()
+                .map(inputTaskId -> this.agentTicketRepository.findById(inputTaskId, QaLeadPayload.class)
+                        .orElseThrow(() -> new IllegalArgumentException("Agent ticket not found with id: " + inputTaskId)))
+                .map(AgentTicket::getPayload)
+                .map(value -> (AgentTicketPayload) value)
+                .collect(Collectors.toSet());
     }
 }

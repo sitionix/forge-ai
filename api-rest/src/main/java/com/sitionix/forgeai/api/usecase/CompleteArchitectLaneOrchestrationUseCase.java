@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.api.usecase;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
+import com.sitionix.forgeai.api.ScopeMismatchException;
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
@@ -8,8 +9,10 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
+import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import java.util.Objects;
@@ -24,11 +27,24 @@ public class CompleteArchitectLaneOrchestrationUseCase {
     private final AgentTicketApiMapper agentTicketApiMapper;
     private final CreateAgentTask createAgentTask;
     private final ServicePropertiesProvider servicePropertiesProvider;
+    private final TicketRepository ticketRepository;
 
     public void complete(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
+        this.validateImplementationScope(laneId, request.getImplementationHandoff().getScope());
         this.createImplementationTicket(ticketId, laneId, request);
         this.createApiTicket(ticketId, laneId, request);
         this.createEventTicket(ticketId, laneId, request);
+    }
+
+    private void validateImplementationScope(final UUID laneId, final String requestScope) {
+        final Lane sourceLane = this.ticketRepository.findByLaneId(laneId)
+                .orElseThrow(() -> new IllegalArgumentException("Lane not found with id: " + laneId));
+        if (Objects.equals(sourceLane.getScope(), requestScope)) {
+            return;
+        }
+        throw new ScopeMismatchException("Implementation scope mismatch: laneId=" + laneId
+                + ", laneScope=" + sourceLane.getScope()
+                + ", requestScope=" + requestScope);
     }
 
     private void createImplementationTicket(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
@@ -43,20 +59,12 @@ public class CompleteArchitectLaneOrchestrationUseCase {
     }
 
     private void createApiTicket(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
-        if (Boolean.FALSE.equals(request.getApiRequest().getRequired())) {
-            this.createAgentTask.markAsNotNeeded(laneId, ScopeMode.GLOBAL_SCOPE, Agent.API);
-            return;
-        }
         final AgentTicket<ApiPayload> apiTicket = this.agentTicketApiMapper.asApiTicket(request, ticketId);
         apiTicket.setScope(ScopeMode.GLOBAL_SCOPE);
         this.createAgentTask.create(apiTicket, laneId);
     }
 
     private void createEventTicket(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
-        if (Boolean.FALSE.equals(request.getEventRequest().getRequired())) {
-            this.createAgentTask.markAsNotNeeded(laneId, ScopeMode.GLOBAL_SCOPE, Agent.EVENT);
-            return;
-        }
         final AgentTicket<EventPayload> eventTicket = this.agentTicketApiMapper.asEventTicket(request, ticketId);
         eventTicket.setScope(ScopeMode.GLOBAL_SCOPE);
         this.createAgentTask.create(eventTicket, laneId);

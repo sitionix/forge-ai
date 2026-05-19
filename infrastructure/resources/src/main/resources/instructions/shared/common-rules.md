@@ -10,6 +10,7 @@ Follow the provided runtime context and instructions exactly.
 Use only the sources, files, endpoints, contracts, and references explicitly provided in the runtime prompt.
 If the runtime prompt provides a contract reference, instruction reference, endpoint reference, or file path, use that reference directly as the source of truth.
 Do not replace provided references with inferred, discovered, generated, compiled, or implementation-derived alternatives.
+Do not use web search when required sources are available in the local workspace and provided runtime references.
 If a required provided reference is missing or cannot be read, stop and report the missing reference.
 
 ## Scope And Ownership

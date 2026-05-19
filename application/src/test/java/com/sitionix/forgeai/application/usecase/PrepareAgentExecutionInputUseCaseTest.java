@@ -60,6 +60,7 @@ class PrepareAgentExecutionInputUseCaseTest {
         final UUID laneId = UUID.randomUUID();
         final ReadyToStartLane lane = ReadyToStartLane.builder()
                 .ticketId(ticketId)
+                .ticketKey("SITIONIX-1")
                 .laneId(laneId)
                 .agent(Agent.ANALYZER)
                 .build();
@@ -84,6 +85,7 @@ class PrepareAgentExecutionInputUseCaseTest {
         //then
         final AgentExecutionInput expected = AgentExecutionInput.builder()
                 .ticketId(ticketId)
+                .ticket("SITIONIX-1")
                 .laneId(laneId)
                 .agentInstruction("agent-instruction")
                 .additionalInstructions(Set.of("add-1"))

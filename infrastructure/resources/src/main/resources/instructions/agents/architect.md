@@ -87,6 +87,11 @@ Include only what downstream implementer needs to execute safely:
 - API/event dependency status;
 - acceptance-oriented implementation notes.
 
+API decision rule in this lane:
+
+- If analyzer handoff or scope-local architecture direction indicates synchronous API integration work, boundary API work, or API contract alignment work for this scope, `apiRequest.required` must be `true`.
+- `apiRequest.required=false` is valid only when this scope has no API work for this task.
+
 Do not:
 
 - implement code;

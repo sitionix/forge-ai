@@ -38,4 +38,13 @@ public class ForgeAiExceptionHandler {
                         "message", "Service configuration is incomplete"
                 ));
     }
+
+    @ExceptionHandler(ScopeMismatchException.class)
+    public ResponseEntity<Map<String, String>> handleScopeMismatchException(final ScopeMismatchException exception) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(
+                        "error", "scope_mismatch",
+                        "message", exception.getMessage()
+                ));
+    }
 }

@@ -14,6 +14,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.HashSet;
+import java.util.Set;
+
+import static java.util.Objects.isNull;
 
 @Component
 @RequiredArgsConstructor
@@ -35,6 +38,7 @@ public class PrepareAgentExecutionInputUseCase {
 
         return AgentExecutionInput.<AgentTicketPayload>builder()
                 .ticketId(lane.getTicketId())
+                .ticket(lane.getTicketKey())
                 .laneId(lane.getLaneId())
                 .agentInstruction(instructions.getAgentInstruction())
                 .contractApi(ForgeAiContractApi.builder()
@@ -46,14 +50,24 @@ public class PrepareAgentExecutionInputUseCase {
                 .build();
     }
 
-    public AgentExecutionInput<AgentTicketPayload> enrichWithPayload(
+    public AgentExecutionInput<AgentTicketPayload> enrichWithTasks(
             final ReadyToStartLane lane,
             final AgentExecutionInput<AgentTicketPayload> input,
-            final AgentTicketPayload payload
+            final Set<? extends AgentTicketPayload> tasks
     ) {
         final ServicePropertiesProvider.ServiceConfigView serviceConfigView = this.props.getServices().get(lane.getServiceId());
+
+        if (isNull(serviceConfigView)) {
+            return input.toBuilder()
+                    .tasks(new HashSet<>(tasks))
+                    .scope(ScopeContext.builder()
+                            .scope(lane.getScope())
+                            .build())
+                    .build();
+        }
+
         return input.toBuilder()
-                .payload(payload)
+                .tasks(new HashSet<>(tasks))
                 .scope(ScopeContext.builder()
                         .scope(lane.getScope())
                         .label(serviceConfigView.getLabel())
