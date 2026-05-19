@@ -9,6 +9,7 @@ import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
 import org.springframework.stereotype.Component;
@@ -28,12 +29,12 @@ public class AnalyzeAgentExecutor implements ExecuteAgent<AnalyzerPayload> {
         final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.execute(lane);
         final String ticket = this.ticketRepository.findTicketContentById(lane.getTicketId());
 
-        final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareAgentExecutionInputUseCase.enrichWithPayload(
+        final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareAgentExecutionInputUseCase.enrichWithTasks(
                 lane,
                 input,
-                AnalyzerExecutionPayload.builder()
+                Set.of(AnalyzerExecutionPayload.builder()
                         .ticket(ticket)
-                        .build()
+                        .build())
         );
 
         this.codexClient.submit(enrichedInput, lane.getSourceTerminalTty());

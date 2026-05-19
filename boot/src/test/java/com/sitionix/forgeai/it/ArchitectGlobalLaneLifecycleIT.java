@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
+import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
@@ -8,6 +9,7 @@ import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -89,5 +91,51 @@ class ArchitectGlobalLaneLifecycleIT {
                 .andExpected(value -> value.getLanes().stream()
                         .filter(lane -> Objects.equals(lane.getId(), apiLaneId) || Objects.equals(lane.getId(), eventLaneId))
                         .allMatch(lane -> Objects.equals("READY_TO_START", lane.getStatus().name())));
+    }
+
+    @Test
+    @DisplayName("Should collect API tasks from both architect completions into one global API lane")
+    void givenTwoArchitectLanes_whenCompleteBothArchitects_thenApiLaneContainsTwoInputTasksFromBothArchitects() {
+        //given
+        final UUID ticketId = UUID.fromString("12121212-1212-1212-1212-121212121212");
+        final UUID firstArchitectLaneId = UUID.fromString("aaaaaaaa-1111-1111-1111-111111111111");
+        final UUID secondArchitectLaneId = UUID.fromString("bbbbbbbb-2222-2222-2222-222222222222");
+        final UUID apiLaneId = UUID.fromString("eeeeeeee-5555-5555-5555-555555555555");
+
+        this.testManager.mongo()
+                .create(TicketDocument.class)
+                .body("architectGlobalWaitingSeedTicket.json");
+
+        //when
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.completeArchitectLane())
+                .withRequest("requestCompleteArchitectLaneAutomationApiEventRequired.json")
+                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", firstArchitectLaneId))
+                .assertDefault();
+
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.completeArchitectLane())
+                .withRequest("requestCompleteArchitectLaneBffApiEventRequired.json")
+                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", secondArchitectLaneId))
+                .assertDefault();
+
+        //then
+        this.testManager.mongo()
+                .assertEntities(AgentTicketDocument.class)
+                .hasSize(6);
+
+        this.testManager.mongo()
+                .get(TicketDocument.class)
+                .hasSize(1)
+                .singleElement()
+                .andExpected(value -> {
+                    final Set<UUID> apiInputTaskIds = value.getLanes().stream()
+                            .filter(lane -> Objects.equals(lane.getId(), apiLaneId))
+                            .findFirst()
+                            .orElseThrow()
+                            .getInputTaskIds();
+                    return Objects.nonNull(apiInputTaskIds)
+                            && Objects.equals(apiInputTaskIds.size(), 2);
+                });
     }
 }

@@ -2,9 +2,9 @@
 
 Always complete the API request object according to the provided OpenAPI completion contract.
 
-Use `required: true` when this scope needs any new or changed HTTP/API contract work to deliver its assigned scope task.
+Use `required: true` when this scope needs API work to deliver its assigned scope task.
 
-API contract work includes:
+API work includes:
 
 - public/client-facing API contracts;
 - Workspace-facing/BFF API contracts;
@@ -15,9 +15,10 @@ API contract work includes:
 - response body changes;
 - path/query/header parameter changes;
 - schema changes;
-- client-visible error contract changes.
+- client-visible error contract changes;
+- synchronous API integration work required by this scope.
 
-Do not limit API work only to public or Workspace-facing endpoints.
+For this lane model, make the decision strictly for the assigned scope payload.
 
 If this scope must call another scope synchronously through HTTP/API, and no existing compatible contract is provided, mark API work as required.
 
@@ -50,3 +51,4 @@ Expected `required: false` shape:
   "consumers": [],
   "notes": []
 }
+```

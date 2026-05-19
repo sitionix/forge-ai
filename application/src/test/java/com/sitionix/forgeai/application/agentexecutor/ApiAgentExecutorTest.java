@@ -4,7 +4,7 @@ import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCas
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
@@ -29,7 +29,7 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class QaLeadAgentExecutorTest {
+class ApiAgentExecutorTest {
 
     @Mock
     private PrepareAgentExecutionInputUseCase prepareAgentExecutionInputUseCase;
@@ -43,11 +43,11 @@ class QaLeadAgentExecutorTest {
     @Mock
     private TicketRepository ticketRepository;
 
-    private QaLeadAgentExecutor qaLeadAgentExecutor;
+    private ApiAgentExecutor apiAgentExecutor;
 
     @BeforeEach
     void setUp() {
-        this.qaLeadAgentExecutor = new QaLeadAgentExecutor(
+        this.apiAgentExecutor = new ApiAgentExecutor(
                 this.prepareAgentExecutionInputUseCase,
                 this.codexClient,
                 this.agentTicketRepository,
@@ -61,7 +61,7 @@ class QaLeadAgentExecutorTest {
     }
 
     @Test
-    void givenReadyToStartLane_whenExecuteLane_thenSubmitQaLeadInput() {
+    void givenReadyToStartLane_whenExecuteLane_thenSubmitApiInput() {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
@@ -70,9 +70,9 @@ class QaLeadAgentExecutorTest {
         final ReadyToStartLane lane = ReadyToStartLane.builder()
                 .ticketId(ticketId)
                 .laneId(laneId)
-                .agent(Agent.QA_LEAD)
-                .scope("automationservice-sox")
-                .serviceId("atmssox")
+                .agent(Agent.API)
+                .scope("GLOBAL")
+                .serviceId("global")
                 .sourceTerminalTty("/dev/ttys004")
                 .build();
 
@@ -88,14 +88,15 @@ class QaLeadAgentExecutorTest {
                 .build();
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(laneState));
 
-        final QaLeadPayload payload = QaLeadPayload.builder()
-                .requirements(Set.of("req"))
+        final ApiPayload payload = ApiPayload.builder()
+                .required(Boolean.TRUE)
+                .summary("summary")
                 .build();
-        final AgentTicket<QaLeadPayload> agentTicket = AgentTicket.<QaLeadPayload>builder()
+        final AgentTicket<ApiPayload> agentTicket = AgentTicket.<ApiPayload>builder()
                 .id(inputTaskId)
                 .payload(payload)
                 .build();
-        when(this.agentTicketRepository.findById(inputTaskId, QaLeadPayload.class)).thenReturn(Optional.of(agentTicket));
+        when(this.agentTicketRepository.findById(inputTaskId, ApiPayload.class)).thenReturn(Optional.of(agentTicket));
 
         final AgentExecutionInput<AgentTicketPayload> enrichedInput = AgentExecutionInput.<AgentTicketPayload>builder()
                 .ticketId(ticketId)
@@ -105,12 +106,12 @@ class QaLeadAgentExecutorTest {
         when(this.prepareAgentExecutionInputUseCase.enrichWithTasks(lane, baseInput, Set.of(payload))).thenReturn(enrichedInput);
 
         //when
-        this.qaLeadAgentExecutor.executeLane(lane);
+        this.apiAgentExecutor.executeLane(lane);
 
         //then
         verify(this.prepareAgentExecutionInputUseCase).execute(lane);
         verify(this.ticketRepository).findByLaneId(laneId);
-        verify(this.agentTicketRepository).findById(inputTaskId, QaLeadPayload.class);
+        verify(this.agentTicketRepository).findById(inputTaskId, ApiPayload.class);
         verify(this.prepareAgentExecutionInputUseCase).enrichWithTasks(lane, baseInput, Set.of(payload));
 
         final ArgumentCaptor<AgentExecutionInput> inputCaptor = ArgumentCaptor.forClass(AgentExecutionInput.class);

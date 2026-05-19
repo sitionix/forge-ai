@@ -14,8 +14,9 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class AgentExecutionInput<P> {
     private UUID ticketId;
+    private String ticket;
     private UUID laneId;
-    private P payload;
+    private Set<P> tasks;
     private String agentInstruction;
     private ScopeContext scope;
     private ForgeAiContractApi contractApi;

@@ -2,7 +2,6 @@ package com.sitionix.forgeai.application.agentexecutor;
 
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
-import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
@@ -11,7 +10,7 @@ import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
-import java.util.UUID;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
 import org.springframework.stereotype.Component;
@@ -33,15 +32,12 @@ public class QaLeadAgentExecutor implements ExecuteAgent<QaLeadPayload> {
         final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.execute(lane);
         final Lane laneState = this.ticketRepository.findByLaneId(lane.getLaneId())
                 .orElseThrow(() -> new IllegalArgumentException("Lane not found with id: " + lane.getLaneId()));
-        final UUID inputTaskId = laneState.singleInputTaskIdForExecution();
+        final Set<AgentTicketPayload> tasks = LaneTaskResolver.resolve(laneState, this.agentTicketRepository, QaLeadPayload.class);
 
-        final AgentTicket<QaLeadPayload> agentTicket = this.agentTicketRepository.findById(inputTaskId, QaLeadPayload.class)
-                .orElseThrow(() -> new IllegalArgumentException("Agent ticket not found with id: " + inputTaskId));
-
-        final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareAgentExecutionInputUseCase.enrichWithPayload(
+        final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareAgentExecutionInputUseCase.enrichWithTasks(
                 lane,
                 input,
-                agentTicket.getPayload()
+                tasks
         );
 
         log.info("Execute qa_lead lane with input: " + enrichedInput);

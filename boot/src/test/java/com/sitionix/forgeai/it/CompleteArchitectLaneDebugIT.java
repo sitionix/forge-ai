@@ -55,10 +55,11 @@ class CompleteArchitectLaneDebugIT {
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)
                 .ignoreFields("id", "ticketId", "laneId", "createdAt", "updatedAt")
-                .hasSize(2)
+                .hasSize(3)
                 .containsAllWithJsons(
                         "expectedImplementBeAgentTicket.json",
-                        "expectedApiAgentTicket.json"
+                        "expectedApiAgentTicket.json",
+                        "expectedEventAgentTicket.json"
                 );
     }
 }

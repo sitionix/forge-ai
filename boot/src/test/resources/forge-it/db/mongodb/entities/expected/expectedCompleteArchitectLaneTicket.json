@@ -47,7 +47,7 @@
       "type": "EVENT",
       "scope": "GLOBAL",
       "serviceId": "global",
-      "status": "NOT_NEEDED",
+      "status": "READY_TO_START",
       "attempt": 0,
       "dependsOn": [
         {

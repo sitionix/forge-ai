@@ -3,6 +3,8 @@ package com.sitionix.forgeai.api;
 import com.app_afesox.fgaisox.api_first.api.ForgeAiApi;
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneRequest;
+import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
@@ -59,9 +61,9 @@ public class ForgeAiController implements ForgeAiApi {
         this.createAgentTask.create(qaLeadTicket, laneId);
 
         return ResponseEntity.ok(CompleteAnalyzerLaneResponseDTO.builder()
-                        .laneId(laneId)
-                        .laneStatus(HttpStatus.OK.name())
-                        .ticketId(ticketId)
+                .laneId(laneId)
+                .laneStatus(HttpStatus.OK.name())
+                .ticketId(ticketId)
                 .build());
     }
 
@@ -71,6 +73,17 @@ public class ForgeAiController implements ForgeAiApi {
         this.completeArchitectLaneOrchestrationUseCase.complete(ticketId, laneId, completeArchitectLaneRequest);
 
         return ResponseEntity.ok(CompleteArchitectLaneResponse.builder()
+                .laneId(laneId)
+                .laneStatus(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteApiLaneResponse> completeApiLane(final UUID ticketId, final UUID laneId, @Valid final CompleteApiLaneRequest completeApiLaneRequest) {
+        log.info("Received completeApiLane request for ticketId: {}, laneId: {}, with request body: {}", ticketId, laneId, completeApiLaneRequest);
+
+        return ResponseEntity.ok(CompleteApiLaneResponse.builder()
                 .laneId(laneId)
                 .laneStatus(HttpStatus.OK.name())
                 .ticketId(ticketId)
