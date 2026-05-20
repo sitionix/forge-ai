@@ -43,7 +43,6 @@ public class LaneTaskResolver {
                                                         final List<AgentTicket<AgentTicketPayload>> inputTickets,
                                                         final LaneDependency dependency) {
         final Set<AgentTicketPayload> byScope = inputTickets.stream()
-                .filter(ticket -> Objects.equals(ticket.getAgent(), dependency.getType()))
                 .filter(ticket -> Objects.equals(ticket.getScope(), dependency.getScope()))
                 .map(AgentTicket::getPayload)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
@@ -51,7 +50,6 @@ public class LaneTaskResolver {
             return byScope;
         }
         final Set<AgentTicketPayload> byGlobal = inputTickets.stream()
-                .filter(ticket -> Objects.equals(ticket.getAgent(), dependency.getType()))
                 .filter(ticket -> Objects.equals(ticket.getScope(), ScopeMode.GLOBAL_SCOPE))
                 .map(AgentTicket::getPayload)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
