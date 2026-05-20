@@ -45,7 +45,7 @@ public class CompleteApiLaneOrchestrationUseCase {
             if (contracts.isEmpty()) {
                 throw new IllegalStateException("No API contracts found for backend scope=" + targetLane.getScope());
             }
-            this.createAgentTask.create(this.asImplementBeTicket(ticketId, targetLane.getScope(), summary, contracts), sourceLaneId);
+            this.createAgentTask.create(this.asImplementTicket(ticketId, targetLane.getScope(), summary, contracts, Agent.IMPLEMENT_BE, false), sourceLaneId);
             return;
         }
 
@@ -55,7 +55,7 @@ public class CompleteApiLaneOrchestrationUseCase {
             throw new IllegalStateException("No API contracts found for frontend scope=" + targetLane.getScope()
                     + ", apiFamily=" + frontendApiFamily);
         }
-        this.createAgentTask.create(this.asImplementFeTicket(ticketId, targetLane.getScope(), summary, contracts), sourceLaneId);
+        this.createAgentTask.create(this.asImplementTicket(ticketId, targetLane.getScope(), summary, contracts, Agent.IMPLEMENT_FE, true), sourceLaneId);
     }
 
     private List<Lane> findImplementationLanes(final UUID laneId) {
@@ -81,31 +81,52 @@ public class CompleteApiLaneOrchestrationUseCase {
         return new ExecutionContext(apiFamilyByScope, contractsByScope, contractsByApiFamily);
     }
 
-    private AgentTicket<ImplementBePayload> asImplementBeTicket(final UUID ticketId,
-                                                                 final String scope,
-                                                                 final String summary,
-                                                                 final List<ApiLaneContractResult> contracts) {
-        return AgentTicket.<ImplementBePayload>builder()
-                .id(UUID.randomUUID())
-                .ticketId(ticketId)
-                .status(AgentTicketStatus.CREATED)
-                .scope(scope)
-                .agent(Agent.IMPLEMENT_BE)
-                .payload(this.asImplementBePayload(scope, summary, contracts))
-                .build();
-    }
-
-    private AgentTicket<ImplementFePayload> asImplementFeTicket(final UUID ticketId,
-                                                                 final String scope,
-                                                                 final String summary,
-                                                                 final List<ApiLaneContractResult> contracts) {
+    private AgentTicket<?> asImplementTicket(final UUID ticketId,
+                                             final String scope,
+                                             final String summary,
+                                             final List<ApiLaneContractResult> contracts,
+                                             final Agent agent,
+                                             final boolean frontendOnly) {
+        final PayloadData payloadData = this.asPayloadData(scope, summary, contracts, frontendOnly);
+        if (Objects.equals(agent, Agent.IMPLEMENT_BE)) {
+            return AgentTicket.<ImplementBePayload>builder()
+                    .id(UUID.randomUUID())
+                    .ticketId(ticketId)
+                    .status(AgentTicketStatus.CREATED)
+                    .scope(scope)
+                    .agent(agent)
+                    .payload(ImplementBePayload.builder()
+                            .task(payloadData.task())
+                            .scope(payloadData.scope())
+                            .summary(payloadData.summary())
+                            .requirements(payloadData.requirements())
+                            .constraints(payloadData.constraints())
+                            .nonGoals(Set.of())
+                            .architectureDecision("Use generated API artifacts directly.")
+                            .dependencies(payloadData.dependencies())
+                            .acceptanceNotes(payloadData.acceptanceNotes())
+                            .risks(Set.of())
+                            .build())
+                    .build();
+        }
         return AgentTicket.<ImplementFePayload>builder()
                 .id(UUID.randomUUID())
                 .ticketId(ticketId)
                 .status(AgentTicketStatus.CREATED)
                 .scope(scope)
-                .agent(Agent.IMPLEMENT_FE)
-                .payload(this.asImplementFePayload(scope, summary, contracts))
+                .agent(agent)
+                .payload(ImplementFePayload.builder()
+                        .task(payloadData.task())
+                        .scope(payloadData.scope())
+                        .summary(payloadData.summary())
+                        .requirements(payloadData.requirements())
+                        .constraints(payloadData.constraints())
+                        .nonGoals(Set.of())
+                        .architectureDecision("Use generated API artifacts directly.")
+                        .dependencies(payloadData.dependencies())
+                        .acceptanceNotes(payloadData.acceptanceNotes())
+                        .risks(Set.of())
+                        .build())
                 .build();
     }
 
@@ -117,38 +138,19 @@ public class CompleteApiLaneOrchestrationUseCase {
         return apiFamily;
     }
 
-    private ImplementBePayload asImplementBePayload(final String scope,
-                                                    final String summary,
-                                                    final List<ApiLaneContractResult> contracts) {
-        return ImplementBePayload.builder()
-                .task("Implement API contract integration for " + scope)
-                .scope(scope)
-                .summary(summary)
-                .requirements(this.contractRequirements(contracts))
-                .constraints(this.contractNotes(contracts))
-                .nonGoals(Set.of())
-                .architectureDecision("Use generated API artifacts directly.")
-                .dependencies(this.contractDependencies(contracts, false))
-                .acceptanceNotes(this.contractEvidenceNotes(contracts, false))
-                .risks(Set.of())
-                .build();
-    }
-
-    private ImplementFePayload asImplementFePayload(final String scope,
-                                                    final String summary,
-                                                    final List<ApiLaneContractResult> contracts) {
-        return ImplementFePayload.builder()
-                .task("Implement API contract integration for " + scope)
-                .scope(scope)
-                .summary(summary)
-                .requirements(this.contractRequirements(contracts))
-                .constraints(this.contractNotes(contracts))
-                .nonGoals(Set.of())
-                .architectureDecision("Use generated API artifacts directly.")
-                .dependencies(this.contractDependencies(contracts, true))
-                .acceptanceNotes(this.contractEvidenceNotes(contracts, true))
-                .risks(Set.of())
-                .build();
+    private PayloadData asPayloadData(final String scope,
+                                      final String summary,
+                                      final List<ApiLaneContractResult> contracts,
+                                      final boolean frontendOnly) {
+        return new PayloadData(
+                "Implement API contract integration for " + scope,
+                scope,
+                summary,
+                this.contractRequirements(contracts),
+                this.contractNotes(contracts),
+                this.contractDependencies(contracts, frontendOnly),
+                this.contractEvidenceNotes(contracts, frontendOnly)
+        );
     }
 
     private Set<String> contractRequirements(final List<ApiLaneContractResult> contracts) {
@@ -199,6 +201,17 @@ public class CompleteApiLaneOrchestrationUseCase {
             Map<String, String> apiFamilyByScope,
             Map<String, List<ApiLaneContractResult>> contractsByScope,
             Map<String, List<ApiLaneContractResult>> contractsByApiFamily
+    ) {
+    }
+
+    private record PayloadData(
+            String task,
+            String scope,
+            String summary,
+            Set<String> requirements,
+            Set<String> constraints,
+            Set<String> dependencies,
+            Set<String> acceptanceNotes
     ) {
     }
 }

@@ -3,7 +3,6 @@ package com.sitionix.forgeai.it;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
-import com.sitionix.forgeai.infrastructure.mongodb.entity.LaneDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
@@ -58,20 +57,14 @@ class CompleteApiLaneFlowIT {
                 .get(TicketDocument.class)
                 .hasSize(1)
                 .singleElement()
-                .andExpected(value -> {
-                    final LaneDocument apiLane = value.getLanes().stream()
-                            .filter(lane -> Objects.equals(lane.getId(), apiLaneId))
-                            .findFirst()
-                            .orElseThrow();
-                    final LaneDocument implementBeLane = value.getLanes().stream()
-                            .filter(lane -> Objects.equals(lane.getId(), UUID.fromString("23333333-3333-3333-3333-333333333333")))
-                            .findFirst()
-                            .orElseThrow();
-                    return Objects.equals(apiLane.getStatus().name(), "COMPLETED")
-                            && Objects.equals(implementBeLane.getStatus().name(), "READY_TO_START")
-                            && Objects.nonNull(implementBeLane.getInputTaskIds())
-                            && Objects.equals(implementBeLane.getInputTaskIds().size(), 1);
-                });
+                .andExpected(value -> value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), apiLaneId)
+                                && Objects.equals("COMPLETED", lane.getStatus().name()))
+                        && value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), UUID.fromString("23333333-3333-3333-3333-333333333333"))
+                                && Objects.equals("READY_TO_START", lane.getStatus().name())
+                                && Objects.nonNull(lane.getInputTaskIds())
+                                && Objects.equals(lane.getInputTaskIds().size(), 1)));
     }
 
     @Test
@@ -106,27 +99,19 @@ class CompleteApiLaneFlowIT {
                 .get(TicketDocument.class)
                 .hasSize(1)
                 .singleElement()
-                .andExpected(value -> {
-                    final LaneDocument apiLane = value.getLanes().stream()
-                            .filter(lane -> Objects.equals(lane.getId(), apiLaneId))
-                            .findFirst()
-                            .orElseThrow();
-                    final LaneDocument implementBeAutomationLane = value.getLanes().stream()
-                            .filter(lane -> Objects.equals(lane.getId(), UUID.fromString("33333333-3333-3333-3333-333333333333")))
-                            .findFirst()
-                            .orElseThrow();
-                    final LaneDocument implementBeBffLane = value.getLanes().stream()
-                            .filter(lane -> Objects.equals(lane.getId(), UUID.fromString("34444444-4444-4444-4444-444444444444")))
-                            .findFirst()
-                            .orElseThrow();
-                    return Objects.equals(apiLane.getStatus().name(), "COMPLETED")
-                            && Objects.equals(implementBeAutomationLane.getStatus().name(), "READY_TO_START")
-                            && Objects.equals(implementBeBffLane.getStatus().name(), "READY_TO_START")
-                            && Objects.nonNull(implementBeAutomationLane.getInputTaskIds())
-                            && Objects.equals(implementBeAutomationLane.getInputTaskIds().size(), 1)
-                            && Objects.nonNull(implementBeBffLane.getInputTaskIds())
-                            && Objects.equals(implementBeBffLane.getInputTaskIds().size(), 1);
-                });
+                .andExpected(value -> value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), apiLaneId)
+                                && Objects.equals("COMPLETED", lane.getStatus().name()))
+                        && value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), UUID.fromString("33333333-3333-3333-3333-333333333333"))
+                                && Objects.equals("READY_TO_START", lane.getStatus().name())
+                                && Objects.nonNull(lane.getInputTaskIds())
+                                && Objects.equals(lane.getInputTaskIds().size(), 1))
+                        && value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), UUID.fromString("34444444-4444-4444-4444-444444444444"))
+                                && Objects.equals("READY_TO_START", lane.getStatus().name())
+                                && Objects.nonNull(lane.getInputTaskIds())
+                                && Objects.equals(lane.getInputTaskIds().size(), 1)));
     }
 
     @Test
@@ -162,33 +147,23 @@ class CompleteApiLaneFlowIT {
                 .get(TicketDocument.class)
                 .hasSize(1)
                 .singleElement()
-                .andExpected(value -> {
-                    final LaneDocument apiLane = value.getLanes().stream()
-                            .filter(lane -> Objects.equals(lane.getId(), apiLaneId))
-                            .findFirst()
-                            .orElseThrow();
-                    final LaneDocument implementBeAutomationLane = value.getLanes().stream()
-                            .filter(lane -> Objects.equals(lane.getId(), UUID.fromString("43333333-3333-3333-3333-333333333333")))
-                            .findFirst()
-                            .orElseThrow();
-                    final LaneDocument implementBeBffLane = value.getLanes().stream()
-                            .filter(lane -> Objects.equals(lane.getId(), UUID.fromString("44444444-4444-4444-4444-444444444444")))
-                            .findFirst()
-                            .orElseThrow();
-                    final LaneDocument implementFeLane = value.getLanes().stream()
-                            .filter(lane -> Objects.equals(lane.getId(), UUID.fromString("45555555-5555-5555-5555-555555555555")))
-                            .findFirst()
-                            .orElseThrow();
-                    return Objects.equals(apiLane.getStatus().name(), "COMPLETED")
-                            && Objects.equals(implementBeAutomationLane.getStatus().name(), "READY_TO_START")
-                            && Objects.equals(implementBeBffLane.getStatus().name(), "READY_TO_START")
-                            && Objects.equals(implementFeLane.getStatus().name(), "READY_TO_START")
-                            && Objects.nonNull(implementBeAutomationLane.getInputTaskIds())
-                            && Objects.equals(implementBeAutomationLane.getInputTaskIds().size(), 1)
-                            && Objects.nonNull(implementBeBffLane.getInputTaskIds())
-                            && Objects.equals(implementBeBffLane.getInputTaskIds().size(), 1)
-                            && Objects.nonNull(implementFeLane.getInputTaskIds())
-                            && Objects.equals(implementFeLane.getInputTaskIds().size(), 1);
-                });
+                .andExpected(value -> value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), apiLaneId)
+                                && Objects.equals("COMPLETED", lane.getStatus().name()))
+                        && value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), UUID.fromString("43333333-3333-3333-3333-333333333333"))
+                                && Objects.equals("READY_TO_START", lane.getStatus().name())
+                                && Objects.nonNull(lane.getInputTaskIds())
+                                && Objects.equals(lane.getInputTaskIds().size(), 1))
+                        && value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), UUID.fromString("44444444-4444-4444-4444-444444444444"))
+                                && Objects.equals("READY_TO_START", lane.getStatus().name())
+                                && Objects.nonNull(lane.getInputTaskIds())
+                                && Objects.equals(lane.getInputTaskIds().size(), 1))
+                        && value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), UUID.fromString("45555555-5555-5555-5555-555555555555"))
+                                && Objects.equals("READY_TO_START", lane.getStatus().name())
+                                && Objects.nonNull(lane.getInputTaskIds())
+                                && Objects.equals(lane.getInputTaskIds().size(), 1)));
     }
 }
