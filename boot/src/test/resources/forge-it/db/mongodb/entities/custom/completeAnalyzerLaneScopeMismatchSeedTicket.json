@@ -1,0 +1,91 @@
+{
+  "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "ticketKey": "SITIONIX-1122",
+  "taskDescription": "scope-mismatch-analyzer-complete",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "OPEN",
+  "lanes": [
+    {
+      "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "type": "ANALYZER",
+      "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
+      "status": "IN_PROGRESS",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": []
+    },
+    {
+      "id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      "type": "ANALYZER",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "IN_PROGRESS",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": []
+    },
+    {
+      "id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+      "type": "ARCHITECT",
+      "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+      "type": "QA_LEAD",
+      "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "type": "ARCHITECT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "11111111-2222-3333-4444-555555555555",
+      "type": "QA_LEAD",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "automationservice-sox"
+        }
+      ]
+    }
+  ],
+  "createdAt": "2026-01-01T10:00:00",
+  "updatedAt": "2026-01-01T10:00:00"
+}

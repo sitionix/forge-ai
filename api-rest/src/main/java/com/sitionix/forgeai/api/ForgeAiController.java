@@ -16,8 +16,10 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
+import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
+import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
 import jakarta.validation.Valid;
@@ -39,6 +41,8 @@ public class ForgeAiController implements ForgeAiApi {
     private final TerminalTtyResolver terminalTtyResolver;
     private final AgentTicketApiMapper agentTicketApiMapper;
     private final CreateAgentTask createAgentTask;
+    private final TicketRepository ticketRepository;
+    private final LaneScopeValidator laneScopeValidator;
     private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
     private final CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
 
@@ -55,6 +59,19 @@ public class ForgeAiController implements ForgeAiApi {
     @Override
     public ResponseEntity<CompleteAnalyzerLaneResponseDTO> completeAnalyzerLane(final UUID ticketId, final UUID laneId, @Valid final CompleteAnalyzerLaneRequestDTO completeAnalyzerLaneRequestDTO) {
         log.info("Received completeAnalyzerLane request for ticketId: {}, laneId: {}, with request body: {}", ticketId, laneId, completeAnalyzerLaneRequestDTO);
+        this.laneScopeValidator.validateAnalyzerCallbackScope(
+                laneId,
+                completeAnalyzerLaneRequestDTO.getArchitectHandoff() == null ? null : completeAnalyzerLaneRequestDTO.getArchitectHandoff().getScope(),
+                completeAnalyzerLaneRequestDTO.getQaLeadHandoff() == null ? null : completeAnalyzerLaneRequestDTO.getQaLeadHandoff().getScope()
+        );
+        if (this.isAnalyzerAlreadyCompleted(laneId)) {
+            log.info("Skip duplicate completeAnalyzerLane for already completed laneId: {}", laneId);
+            return ResponseEntity.ok(CompleteAnalyzerLaneResponseDTO.builder()
+                    .laneId(laneId)
+                    .laneStatus(HttpStatus.OK.name())
+                    .ticketId(ticketId)
+                    .build());
+        }
 
         final AgentTicket<ArchitectPayload> architectTicket = this.agentTicketApiMapper.asArchitectTicket(completeAnalyzerLaneRequestDTO, ticketId);
         final AgentTicket<QaLeadPayload> qaLeadTicket = this.agentTicketApiMapper.asQaLeadTicket(completeAnalyzerLaneRequestDTO, ticketId);
@@ -67,6 +84,12 @@ public class ForgeAiController implements ForgeAiApi {
                 .laneStatus(HttpStatus.OK.name())
                 .ticketId(ticketId)
                 .build());
+    }
+
+    private boolean isAnalyzerAlreadyCompleted(final UUID laneId) {
+        return this.ticketRepository.findByLaneId(laneId)
+                .map(lane -> LaneStatus.COMPLETED.equals(lane.getStatus()) || LaneStatus.NOT_NEEDED.equals(lane.getStatus()))
+                .orElse(false);
     }
 
     @Override

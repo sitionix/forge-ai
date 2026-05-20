@@ -9,6 +9,7 @@ import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -54,6 +55,12 @@ class CompleteApiLaneFlowIT {
                 .containsAllWithJsons("expectedApiCompleteImplementBeAutomationTicket.json");
 
         this.testManager.mongo()
+                .get(AgentTicketDocument.class)
+                .hasSize(1)
+                .singleElement()
+                .andExpected(value -> Objects.equals(value.getLaneId(), UUID.fromString("23333333-3333-3333-3333-333333333333")));
+
+        this.testManager.mongo()
                 .get(TicketDocument.class)
                 .hasSize(1)
                 .singleElement()
@@ -94,6 +101,14 @@ class CompleteApiLaneFlowIT {
                         "expectedApiCompleteImplementBeAutomationTicket.json",
                         "expectedApiCompleteImplementBeBffTicket.json"
                 );
+
+        this.testManager.mongo()
+                .get(AgentTicketDocument.class)
+                .hasSize(2)
+                .andExpected(value -> Set.of(
+                                UUID.fromString("33333333-3333-3333-3333-333333333333"),
+                                UUID.fromString("34444444-4444-4444-4444-444444444444")
+                        ).contains(value.getLaneId()));
 
         this.testManager.mongo()
                 .get(TicketDocument.class)
@@ -142,6 +157,15 @@ class CompleteApiLaneFlowIT {
                         "expectedApiCompleteImplementBeBffTicket.json",
                         "expectedApiCompleteImplementFeSpaTicket.json"
                 );
+
+        this.testManager.mongo()
+                .get(AgentTicketDocument.class)
+                .hasSize(3)
+                .andExpected(value -> Set.of(
+                                UUID.fromString("43333333-3333-3333-3333-333333333333"),
+                                UUID.fromString("44444444-4444-4444-4444-444444444444"),
+                                UUID.fromString("45555555-5555-5555-5555-555555555555")
+                        ).contains(value.getLaneId()));
 
         this.testManager.mongo()
                 .get(TicketDocument.class)
