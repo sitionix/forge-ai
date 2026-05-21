@@ -28,7 +28,7 @@ agents:
     produces: [ implement_be ]
 
   - id: qa_lead
-    enabled: false
+    enabled: true
     scope_mode: per_scope
     groups: [ backend, frontend ]
     depends_on: [ analyzer ]

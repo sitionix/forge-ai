@@ -15,8 +15,10 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -42,6 +44,9 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
     private AgentTicketApiMapper agentTicketApiMapper;
 
     @Mock
+    private CompleteAgentTasks completeAgentTasks;
+
+    @Mock
     private CreateAgentTask createAgentTask;
 
     @Mock
@@ -57,6 +62,7 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
     void setUp() {
         this.completeArchitectLaneOrchestrationUseCase = new CompleteArchitectLaneOrchestrationUseCase(
                 this.agentTicketApiMapper,
+                this.completeAgentTasks,
                 this.createAgentTask,
                 this.servicePropertiesProvider,
                 this.laneScopeValidator
@@ -65,7 +71,7 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.agentTicketApiMapper, this.createAgentTask, this.servicePropertiesProvider, this.laneScopeValidator, this.serviceConfigView);
+        verifyNoMoreInteractions(this.agentTicketApiMapper, this.completeAgentTasks, this.createAgentTask, this.servicePropertiesProvider, this.laneScopeValidator, this.serviceConfigView);
     }
 
     @Test
@@ -97,8 +103,8 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
         verify(this.serviceConfigView).getGroup();
         verify(this.agentTicketApiMapper).asImplementBeTicket(request, ticketId);
         verify(this.agentTicketApiMapper).asApiTicket(request, ticketId);
-        verify(this.createAgentTask).create(implementBeTicket, laneId);
-        verify(this.createAgentTask).create(apiTicket, laneId);
+        verify(this.completeAgentTasks).complete(laneId, List.of(implementBeTicket));
+        verify(this.completeAgentTasks).complete(laneId, List.of(apiTicket));
         verify(this.createAgentTask).markAsNotNeeded(laneId, ScopeMode.GLOBAL_SCOPE, Agent.EVENT);
     }
 
@@ -131,8 +137,8 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
         verify(this.serviceConfigView).getGroup();
         verify(this.agentTicketApiMapper).asImplementFeTicket(request, ticketId);
         verify(this.agentTicketApiMapper).asEventTicket(request, ticketId);
-        verify(this.createAgentTask).create(implementFeTicket, laneId);
-        verify(this.createAgentTask).create(eventTicket, laneId);
+        verify(this.completeAgentTasks).complete(laneId, List.of(implementFeTicket));
+        verify(this.completeAgentTasks).complete(laneId, List.of(eventTicket));
         verify(this.createAgentTask).markAsNotNeeded(laneId, ScopeMode.GLOBAL_SCOPE, Agent.API);
     }
 

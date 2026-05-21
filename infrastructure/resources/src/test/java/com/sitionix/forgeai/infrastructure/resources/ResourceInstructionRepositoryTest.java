@@ -24,6 +24,11 @@ class ResourceInstructionRepositoryTest {
         analyzerConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete");
         analyzerConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of("instructions/shared/completion-callback.md")));
 
+        final InstructionResourcesProperties.AgentConfig qaLeadConfig = new InstructionResourcesProperties.AgentConfig();
+        qaLeadConfig.setInstructions("instructions/agents/qa_lead.md");
+        qaLeadConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/qa-lead/complete");
+        qaLeadConfig.setAdditionalInstructions(new LinkedHashSet<>());
+
         final InstructionResourcesProperties.AgentConfig implementBeConfig = new InstructionResourcesProperties.AgentConfig();
         implementBeConfig.setInstructions("instructions/agents/implement_be.md");
         implementBeConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-be/complete");
@@ -33,6 +38,7 @@ class ResourceInstructionRepositoryTest {
 
         final LinkedHashMap<String, InstructionResourcesProperties.AgentConfig> agents = new LinkedHashMap<>();
         agents.put("analyzer", analyzerConfig);
+        agents.put("qa_lead", qaLeadConfig);
         agents.put("implement_be", implementBeConfig);
         properties.setAgents(agents);
         properties.setShared(new LinkedHashSet<>(Set.of("instructions/shared/common-rules.md")));
@@ -73,6 +79,19 @@ class ResourceInstructionRepositoryTest {
         assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-be/complete");
         assertThat(actual.getAdditionalInstructions()).hasSize(1);
         assertThat(actual.getAdditionalInstructions()).anySatisfy(value -> assertThat(value).contains("# Java Style Basics"));
+        assertThat(actual.getSharedInstructions()).hasSize(1);
+        assertThat(actual.getSharedInstructions().iterator().next()).contains("# Common Agent Rules");
+    }
+
+    @Test
+    void givenQaLeadAgent_whenFindInstructionsByAgentId_thenReturnResolvedInstructions() {
+        //when
+        final AgentInstructions actual = this.resourceInstructionRepository.findInstructionsByAgentId("qa_lead");
+
+        //then
+        assertThat(actual.getAgentInstruction()).contains("# QA Lead Instructions");
+        assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/qa-lead/complete");
+        assertThat(actual.getAdditionalInstructions()).isEmpty();
         assertThat(actual.getSharedInstructions()).hasSize(1);
         assertThat(actual.getSharedInstructions().iterator().next()).contains("# Common Agent Rules");
     }

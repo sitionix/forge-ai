@@ -46,6 +46,26 @@ public class LaneScopeValidator {
                 + ", requestScope=" + implementationScope);
     }
 
+    public void validateImplementBeCallbackScope(final UUID laneId, final String implementationScope) {
+        final Lane lane = this.requireLane(laneId, "Implement-be lane not found for laneId=");
+        if (Objects.equals(lane.getScope(), implementationScope)) {
+            return;
+        }
+        throw new ScopeMismatchException("Implement-be scope mismatch: laneId=" + laneId
+                + ", laneScope=" + lane.getScope()
+                + ", requestScope=" + implementationScope);
+    }
+
+    public void validateQaLeadCallbackScope(final UUID laneId, final String testScope) {
+        final Lane lane = this.requireLane(laneId, "Qa-lead lane not found for laneId=");
+        if (Objects.equals(lane.getScope(), testScope)) {
+            return;
+        }
+        throw new ScopeMismatchException("QA lead scope mismatch: laneId=" + laneId
+                + ", laneScope=" + lane.getScope()
+                + ", requestScope=" + testScope);
+    }
+
     public Set<String> resolveRelevantApiScopes(final UUID laneId, final Set<String> contractScopes) {
         final Set<String> implementationScopes = this.laneRepository.findProducedLanes(laneId).stream()
                 .filter(value -> Objects.equals(value.getAgent(), Agent.IMPLEMENT_BE) || Objects.equals(value.getAgent(), Agent.IMPLEMENT_FE))

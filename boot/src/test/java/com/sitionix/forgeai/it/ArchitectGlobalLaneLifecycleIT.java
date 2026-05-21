@@ -4,6 +4,7 @@ import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuild
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
+import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
@@ -58,7 +59,7 @@ class ArchitectGlobalLaneLifecycleIT {
                 .singleElement()
                 .andExpected(value -> value.getLanes().stream()
                         .filter(lane -> Objects.equals(lane.getId(), apiLaneId) || Objects.equals(lane.getId(), eventLaneId))
-                        .allMatch(lane -> Objects.equals("NOT_STARTED", lane.getStatus().name())));
+                        .allMatch(lane -> Objects.equals(LaneStatus.NOT_STARTED, lane.getStatus())));
     }
 
     @Test
@@ -90,7 +91,7 @@ class ArchitectGlobalLaneLifecycleIT {
                 .singleElement()
                 .andExpected(value -> value.getLanes().stream()
                         .filter(lane -> Objects.equals(lane.getId(), apiLaneId) || Objects.equals(lane.getId(), eventLaneId))
-                        .allMatch(lane -> Objects.equals("READY_TO_START", lane.getStatus().name())));
+                        .allMatch(lane -> Objects.equals(LaneStatus.READY_TO_START, lane.getStatus())));
     }
 
     @Test

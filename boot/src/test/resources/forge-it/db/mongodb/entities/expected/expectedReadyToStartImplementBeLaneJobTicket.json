@@ -1,0 +1,62 @@
+{
+  "id": "51111111-1111-1111-1111-111111111111",
+  "ticketKey": "SITIONIX-6",
+  "taskDescription": "complete-implement-be-lane",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "OPEN",
+  "lanes": [
+    {
+      "id": "52222222-2222-2222-2222-222222222222",
+      "type": "IMPLEMENT_BE",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "COMPLETED",
+      "dependsOn": []
+    },
+    {
+      "id": "55555555-5555-5555-5555-555555555555",
+      "type": "QA_LEAD",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "COMPLETED",
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "53333333-3333-3333-3333-333333333333",
+      "type": "TEST_UNIT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "READY_TO_START",
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "54444444-4444-4444-4444-444444444444",
+      "type": "TEST_IT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "READY_TO_START",
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "automationservice-sox"
+        },
+        {
+          "type": "QA_LEAD",
+          "scope": "automationservice-sox"
+        }
+      ]
+    }
+  ],
+  "createdAt": "2026-01-01T10:00:00",
+  "updatedAt": "2026-01-01T10:00:00"
+}

@@ -1,0 +1,38 @@
+{
+  "status": "CREATED",
+  "scope": "automationservice-sox",
+  "agent": "TEST_IT",
+  "payload": {
+    "task": "Write integration tests for backend integration and persistence changes in automationservice-sox",
+    "scope": "automationservice-sox",
+    "summary": "Implemented backend create flow for agent action records.",
+    "integrationFlows": [
+      {
+        "name": "Create Agent Action",
+        "method": "POST",
+        "path": "/",
+        "operationId": "createAgentAction",
+        "summary": "Workspace delegates request to automation backend."
+      },
+      {
+        "name": "Access Validation",
+        "method": "POST",
+        "path": "/",
+        "operationId": "createAgentActionForbidden",
+        "summary": "Unauthorized caller returns controlled forbidden error."
+      }
+    ],
+    "persistenceChanges": [
+      {
+        "type": "TABLE_CREATED",
+        "name": "agent_actions",
+        "summary": "New collection for persisted actions."
+      },
+      {
+        "type": "INDEX_ADDED",
+        "name": "uk_agent_action_id",
+        "summary": "Added unique index on action id."
+      }
+    ]
+  }
+}

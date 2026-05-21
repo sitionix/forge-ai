@@ -1,0 +1,42 @@
+{
+  "scope": "automationservice-sox",
+  "summary": "Implemented backend create flow for agent action records.",
+  "changedFiles": [
+    {
+      "path": "application/src/main/java/com/sitionix/forgeai/application/usecase/CreateAgentActionUseCase.java",
+      "reason": "Added create use case"
+    },
+    {
+      "path": "domain/src/main/java/com/sitionix/forgeai/domain/repository/AgentActionRepository.java",
+      "reason": "Added repository contract"
+    }
+  ],
+  "integrationFlows": [
+    {
+      "name": "Create Agent Action",
+      "operationId": "createAgentAction",
+      "method": "POST",
+      "path": "/",
+      "summary": "Workspace delegates request to automation backend."
+    },
+    {
+      "name": "Access Validation",
+      "operationId": "createAgentActionForbidden",
+      "method": "POST",
+      "path": "/",
+      "summary": "Unauthorized caller returns controlled forbidden error."
+    }
+  ],
+  "persistenceChanges": [
+    {
+      "type": "TABLE_CREATED",
+      "name": "agent_actions",
+      "summary": "New collection for persisted actions."
+    },
+    {
+      "type": "INDEX_ADDED",
+      "name": "uk_agent_action_id",
+      "summary": "Added unique index on action id."
+    }
+  ]
+}

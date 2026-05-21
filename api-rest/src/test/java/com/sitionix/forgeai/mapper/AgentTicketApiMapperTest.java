@@ -7,6 +7,8 @@ import com.app_afesox.fgaisox.api_first.dto.AnalyzerArchitectHandoffDTO;
 import com.app_afesox.fgaisox.api_first.dto.AnalyzerQaLeadHandoffDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
@@ -15,6 +17,8 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -40,7 +44,16 @@ class AgentTicketApiMapperTest {
     private QaLeadTicketPayloadApiMapper qaLeadTicketPayloadApiMapper;
 
     @Mock
+    private QaLeadCompletionTicketPayloadApiMapper qaLeadCompletionTicketPayloadApiMapper;
+
+    @Mock
     private ImplementBeTicketPayloadApiMapper implementBeTicketPayloadApiMapper;
+
+    @Mock
+    private TestUnitTicketPayloadApiMapper testUnitTicketPayloadApiMapper;
+
+    @Mock
+    private TestItTicketPayloadApiMapper testItTicketPayloadApiMapper;
 
     @Mock
     private ImplementFeTicketPayloadApiMapper implementFeTicketPayloadApiMapper;
@@ -93,6 +106,86 @@ class AgentTicketApiMapperTest {
         assertThat(actual.getAgent()).isEqualTo(Agent.QA_LEAD);
         assertThat(actual.getPayload()).isEqualTo(qaLeadPayload);
         verify(this.qaLeadTicketPayloadApiMapper).asQaLeadPayload(qaLeadHandoff);
+    }
+
+    @Test
+    void givenCompleteImplementBeLaneRequestDTO_whenAsTestUnitTicket_thenMapFields() {
+        //given
+        final CompleteImplementBeLaneRequestDTO source = CompleteImplementBeLaneRequestDTO.builder().scope("automationservice-sox").build();
+        final UUID ticketId = UUID.randomUUID();
+        final TestUnitPayload payload = new TestUnitPayload();
+        when(this.testUnitTicketPayloadApiMapper.asTestUnitPayload(source)).thenReturn(payload);
+
+        //when
+        final AgentTicket<TestUnitPayload> actual = this.agentTicketApiMapper.asTestUnitTicket(source, ticketId);
+
+        //then
+        assertThat(actual.getTicketId()).isEqualTo(ticketId);
+        assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
+        assertThat(actual.getScope()).isEqualTo("automationservice-sox");
+        assertThat(actual.getAgent()).isEqualTo(Agent.TEST_UNIT);
+        assertThat(actual.getPayload()).isEqualTo(payload);
+        verify(this.testUnitTicketPayloadApiMapper).asTestUnitPayload(source);
+    }
+
+    @Test
+    void givenCompleteImplementBeLaneRequestDTO_whenAsTestItTicket_thenMapFields() {
+        //given
+        final CompleteImplementBeLaneRequestDTO source = CompleteImplementBeLaneRequestDTO.builder().scope("automationservice-sox").build();
+        final UUID ticketId = UUID.randomUUID();
+        final TestItPayload payload = new TestItPayload();
+        when(this.testItTicketPayloadApiMapper.asTestItPayload(source)).thenReturn(payload);
+
+        //when
+        final AgentTicket<TestItPayload> actual = this.agentTicketApiMapper.asTestItTicket(source, ticketId);
+
+        //then
+        assertThat(actual.getTicketId()).isEqualTo(ticketId);
+        assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
+        assertThat(actual.getScope()).isEqualTo("automationservice-sox");
+        assertThat(actual.getAgent()).isEqualTo(Agent.TEST_IT);
+        assertThat(actual.getPayload()).isEqualTo(payload);
+        verify(this.testItTicketPayloadApiMapper).asTestItPayload(source);
+    }
+
+    @Test
+    void givenCompleteQaLeadLaneRequestDTO_whenAsTestItTicket_thenMapFields() {
+        //given
+        final CompleteQaLeadLaneRequestDTO source = CompleteQaLeadLaneRequestDTO.builder().scope("automationservice-sox").build();
+        final UUID ticketId = UUID.randomUUID();
+        final TestItPayload payload = new TestItPayload();
+        when(this.qaLeadCompletionTicketPayloadApiMapper.asTestItPayload(source)).thenReturn(payload);
+
+        //when
+        final AgentTicket<TestItPayload> actual = this.agentTicketApiMapper.asTestItTicket(source, ticketId);
+
+        //then
+        assertThat(actual.getTicketId()).isEqualTo(ticketId);
+        assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
+        assertThat(actual.getScope()).isEqualTo("automationservice-sox");
+        assertThat(actual.getAgent()).isEqualTo(Agent.TEST_IT);
+        assertThat(actual.getPayload()).isEqualTo(payload);
+        verify(this.qaLeadCompletionTicketPayloadApiMapper).asTestItPayload(source);
+    }
+
+    @Test
+    void givenCompleteQaLeadLaneRequestDTO_whenAsTestUnitTicket_thenMapFields() {
+        //given
+        final CompleteQaLeadLaneRequestDTO source = CompleteQaLeadLaneRequestDTO.builder().scope("backendforfrontendservice-sox").build();
+        final UUID ticketId = UUID.randomUUID();
+        final TestUnitPayload payload = new TestUnitPayload();
+        when(this.qaLeadCompletionTicketPayloadApiMapper.asTestUnitPayload(source)).thenReturn(payload);
+
+        //when
+        final AgentTicket<TestUnitPayload> actual = this.agentTicketApiMapper.asTestUnitTicket(source, ticketId);
+
+        //then
+        assertThat(actual.getTicketId()).isEqualTo(ticketId);
+        assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
+        assertThat(actual.getScope()).isEqualTo("backendforfrontendservice-sox");
+        assertThat(actual.getAgent()).isEqualTo(Agent.TEST_UNIT);
+        assertThat(actual.getPayload()).isEqualTo(payload);
+        verify(this.qaLeadCompletionTicketPayloadApiMapper).asTestUnitPayload(source);
     }
 
     @Test

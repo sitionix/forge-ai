@@ -4,6 +4,7 @@ import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuild
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
+import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
@@ -57,7 +58,7 @@ class ScopeMismatchCallbacksIT {
                 .singleElement()
                 .andExpected(value -> value.getLanes().stream()
                         .anyMatch(lane -> Objects.equals(lane.getId(), architectLaneId)
-                                && Objects.equals("IN_PROGRESS", lane.getStatus().name()))
+                                && Objects.equals(LaneStatus.IN_PROGRESS, lane.getStatus()))
                         && value.getLanes().stream()
                         .filter(lane -> !Objects.equals(lane.getId(), architectLaneId))
                         .allMatch(lane -> Objects.isNull(lane.getInputTaskIds()) || lane.getInputTaskIds().isEmpty()));
@@ -92,7 +93,7 @@ class ScopeMismatchCallbacksIT {
                 .singleElement()
                 .andExpected(value -> value.getLanes().stream()
                         .anyMatch(lane -> Objects.equals(lane.getId(), apiLaneId)
-                                && Objects.equals("IN_PROGRESS", lane.getStatus().name()))
+                                && Objects.equals(LaneStatus.IN_PROGRESS, lane.getStatus()))
                         && value.getLanes().stream()
                         .filter(lane -> !Objects.equals(lane.getId(), apiLaneId))
                         .allMatch(lane -> Objects.isNull(lane.getInputTaskIds()) || lane.getInputTaskIds().isEmpty()));
