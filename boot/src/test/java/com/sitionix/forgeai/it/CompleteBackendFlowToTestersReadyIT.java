@@ -196,24 +196,9 @@ class CompleteBackendFlowToTestersReadyIT {
                 .hasSize(16);
 
         this.testManager.mongo()
-                .get(TicketDocument.class)
+                .assertEntities(TicketDocument.class)
+                .ignoreFields("id", "createdAt", "updatedAt", "attempt", "inputTaskIds")
                 .hasSize(1)
-                .singleElement()
-                .andExpected(value -> value.getLanes().stream().allMatch(lane -> {
-                    if (Objects.equals(lane.getType(), Agent.TEST_UNIT)) {
-                        return Objects.equals("READY_TO_START", lane.getStatus().name())
-                                && Objects.nonNull(lane.getInputTaskIds())
-                                && Objects.equals(lane.getInputTaskIds().size(), 1);
-                    }
-                    if (Objects.equals(lane.getType(), Agent.TEST_IT)) {
-                        return Objects.equals("READY_TO_START", lane.getStatus().name())
-                                && Objects.nonNull(lane.getInputTaskIds())
-                                && Objects.equals(lane.getInputTaskIds().size(), 2);
-                    }
-                    if (Objects.equals(lane.getType(), Agent.EVENT)) {
-                        return Objects.equals("NOT_NEEDED", lane.getStatus().name());
-                    }
-                    return Objects.equals("COMPLETED", lane.getStatus().name());
-                }));
+                .containsWithJsonsStrict("expectedCompleteBackendFlowToTestersReadyTicket.json");
     }
 }

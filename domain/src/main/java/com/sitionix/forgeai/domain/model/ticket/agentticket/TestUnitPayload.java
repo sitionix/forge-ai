@@ -14,4 +14,5 @@ public class TestUnitPayload implements AgentTicketPayload {
     private String scope;
     private String summary;
     private Set<String> changedFiles;
+    private Set<String> unitTestNotes;
 }

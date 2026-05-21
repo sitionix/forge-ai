@@ -20,14 +20,10 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
-import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
-import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
-import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
 import jakarta.validation.Valid;
@@ -38,7 +34,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
 
 @Slf4j
@@ -52,7 +47,6 @@ public class ForgeAiController implements ForgeAiApi {
     private final AgentTicketApiMapper agentTicketApiMapper;
     private final CompleteAgentTasks completeAgentTasks;
     private final LaneScopeValidator laneScopeValidator;
-    private final ServicePropertiesProvider servicePropertiesProvider;
     private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
     private final CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
 
@@ -136,35 +130,14 @@ public class ForgeAiController implements ForgeAiApi {
         log.info("Received completeQaLeadLane request for ticketId: {}, laneId: {}, with request body: {}",
                 ticketId, laneId, completeQaLeadLaneRequestDTO);
         this.laneScopeValidator.validateQaLeadCallbackScope(laneId, completeQaLeadLaneRequestDTO.getScope());
-
-        final Agent qaLeadTargetAgent = this.resolveQaLeadTargetAgent(completeQaLeadLaneRequestDTO.getScope());
-        if (Objects.equals(qaLeadTargetAgent, Agent.TEST_IT)) {
-            final AgentTicket<TestItPayload> testItTicket = this.agentTicketApiMapper.asTestItTicket(completeQaLeadLaneRequestDTO, ticketId);
-            this.completeAgentTasks.complete(laneId, List.of(testItTicket));
-        } else {
-            final AgentTicket<TestUiPayload> testUiTicket = this.agentTicketApiMapper.asTestUiTicket(completeQaLeadLaneRequestDTO, ticketId);
-            this.completeAgentTasks.complete(laneId, List.of(testUiTicket));
-        }
+        final AgentTicket<TestUnitPayload> testUnitTicket = this.agentTicketApiMapper.asTestUnitTicket(completeQaLeadLaneRequestDTO, ticketId);
+        final AgentTicket<TestItPayload> testItTicket = this.agentTicketApiMapper.asTestItTicket(completeQaLeadLaneRequestDTO, ticketId);
+        this.completeAgentTasks.complete(laneId, List.of(testUnitTicket, testItTicket));
 
         return ResponseEntity.ok(CompleteQaLeadLaneResponseDTO.builder()
                 .laneId(laneId)
                 .status(HttpStatus.OK.name())
                 .ticketId(ticketId)
                 .build());
-    }
-
-    private Agent resolveQaLeadTargetAgent(final String scope) {
-        final ServiceGroup serviceGroup = this.servicePropertiesProvider.getServices().values().stream()
-                .filter(value -> Objects.equals(value.getPath(), scope))
-                .map(ServicePropertiesProvider.ServiceConfigView::getGroup)
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Service scope not found: " + scope));
-        if (ServiceGroup.BACKEND.equals(serviceGroup)) {
-            return Agent.TEST_IT;
-        }
-        if (ServiceGroup.FRONTEND.equals(serviceGroup)) {
-            return Agent.TEST_UI;
-        }
-        throw new IllegalArgumentException("Unsupported service group for qa_lead lane: " + serviceGroup);
     }
 }

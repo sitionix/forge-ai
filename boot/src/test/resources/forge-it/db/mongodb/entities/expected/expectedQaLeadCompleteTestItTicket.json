@@ -1,9 +1,10 @@
 {
   "status": "CREATED",
-  "scope": "automationservice-sox",
+  "laneId": "73333333-3333-3333-3333-333333333333",
   "agent": "TEST_IT",
+  "scope": "automationservice-sox",
   "payload": {
-    "task": "Prepare integration test execution context for automationservice-sox",
+    "task": "Prepare integration test execution context",
     "scope": "automationservice-sox",
     "summary": "Prepared integration test cases for backend agent action implementation.",
     "integrationTestCases": [

@@ -34,6 +34,7 @@ class CompleteQaLeadLaneFlowIT {
         //given
         final UUID ticketId = UUID.fromString("71111111-1111-1111-1111-111111111111");
         final UUID qaLeadLaneId = UUID.fromString("72222222-2222-2222-2222-222222222222");
+        final UUID testUnitLaneId = UUID.fromString("76666666-6666-6666-6666-666666666666");
         final UUID testItLaneId = UUID.fromString("73333333-3333-3333-3333-333333333333");
 
         this.testManager.mongo()
@@ -52,61 +53,14 @@ class CompleteQaLeadLaneFlowIT {
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)
                 .ignoreFields("id", "ticketId", "laneId", "createdAt", "updatedAt")
-                .hasSize(1)
-                .containsAllWithJsons("expectedQaLeadCompleteTestItTicket.json");
+                .hasSize(2)
+                .containsWithJsonsStrict("expectedQaLeadCompleteTestItTicket.json", "expectedQaLeadCompleteTestUnitTicket.json");
 
         this.testManager.mongo()
-                .get(TicketDocument.class)
+                .assertEntities(TicketDocument.class)
+                .ignoreFields("createdAt", "updatedAt", "attempt", "inputTaskIds")
                 .hasSize(1)
-                .singleElement()
-                .andExpected(value -> value.getLanes().stream()
-                        .anyMatch(lane -> Objects.equals(lane.getId(), qaLeadLaneId)
-                                && Objects.equals("COMPLETED", lane.getStatus().name()))
-                        && value.getLanes().stream()
-                        .anyMatch(lane -> Objects.equals(lane.getId(), testItLaneId)
-                                && Objects.equals("READY_TO_START", lane.getStatus().name())
-                                && Objects.nonNull(lane.getInputTaskIds())
-                                && Objects.equals(lane.getInputTaskIds().size(), 1)));
+                .containsWithJsonsStrict("expectedQaLeadCompleteTicket.json");
     }
 
-    @Test
-    @DisplayName("Should create test_ui task and complete qa_lead lane for frontend scope")
-    void givenFrontendQaLeadCompletePayload_whenCompleteQaLeadLane_thenCreateTestUiTask() {
-        //given
-        final UUID ticketId = UUID.fromString("81111111-1111-1111-1111-111111111111");
-        final UUID qaLeadLaneId = UUID.fromString("82222222-2222-2222-2222-222222222222");
-        final UUID testUiLaneId = UUID.fromString("83333333-3333-3333-3333-333333333333");
-
-        this.testManager.mongo()
-                .create(TicketDocument.class)
-                .body("completeQaLeadLaneFrontendSeedTicket.json");
-
-        //when then
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeQaLeadLaneFrontend())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", qaLeadLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(qaLeadLaneId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
-                .assertDefault();
-
-        this.testManager.mongo()
-                .assertEntities(AgentTicketDocument.class)
-                .ignoreFields("id", "ticketId", "laneId", "createdAt", "updatedAt")
-                .hasSize(1)
-                .containsAllWithJsons("expectedQaLeadCompleteTestUiTicket.json");
-
-        this.testManager.mongo()
-                .get(TicketDocument.class)
-                .hasSize(1)
-                .singleElement()
-                .andExpected(value -> value.getLanes().stream()
-                        .anyMatch(lane -> Objects.equals(lane.getId(), qaLeadLaneId)
-                                && Objects.equals("COMPLETED", lane.getStatus().name()))
-                        && value.getLanes().stream()
-                        .anyMatch(lane -> Objects.equals(lane.getId(), testUiLaneId)
-                                && Objects.equals("READY_TO_START", lane.getStatus().name())
-                                && Objects.nonNull(lane.getInputTaskIds())
-                                && Objects.equals(lane.getInputTaskIds().size(), 1)));
-    }
 }

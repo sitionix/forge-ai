@@ -3,6 +3,8 @@ package com.sitionix.forgeai.it;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
@@ -61,7 +63,7 @@ class ReadyToStartQaLeadLaneJobIT {
                         UUID.fromString("25222222-2222-2222-2222-222222222222"),
                         AgentTicketStatus.CREATED,
                         "automationservice-sox",
-                        com.sitionix.forgeai.domain.model.ticket.lane.Agent.QA_LEAD,
+                        Agent.QA_LEAD,
                         QaLeadPayload.builder()
                                 .requirements(Set.of("sr1"))
                                 .constraints(Set.of("qc1"))
@@ -108,6 +110,6 @@ class ReadyToStartQaLeadLaneJobIT {
                 .singleElement()
                 .andExpected(value -> value.getLanes().stream()
                         .anyMatch(lane -> Objects.equals(lane.getId(), java.util.UUID.fromString("25222222-2222-2222-2222-222222222222"))
-                                && Objects.equals("IN_PROGRESS", lane.getStatus().name())));
+                                && Objects.equals(LaneStatus.IN_PROGRESS, lane.getStatus())));
     }
 }

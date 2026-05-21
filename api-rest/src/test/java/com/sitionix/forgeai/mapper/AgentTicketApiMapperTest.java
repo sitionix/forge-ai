@@ -18,7 +18,6 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import java.util.UUID;
@@ -170,23 +169,23 @@ class AgentTicketApiMapperTest {
     }
 
     @Test
-    void givenCompleteQaLeadLaneRequestDTO_whenAsTestUiTicket_thenMapFields() {
+    void givenCompleteQaLeadLaneRequestDTO_whenAsTestUnitTicket_thenMapFields() {
         //given
         final CompleteQaLeadLaneRequestDTO source = CompleteQaLeadLaneRequestDTO.builder().scope("backendforfrontendservice-sox").build();
         final UUID ticketId = UUID.randomUUID();
-        final TestUiPayload payload = new TestUiPayload();
-        when(this.qaLeadCompletionTicketPayloadApiMapper.asTestUiPayload(source)).thenReturn(payload);
+        final TestUnitPayload payload = new TestUnitPayload();
+        when(this.qaLeadCompletionTicketPayloadApiMapper.asTestUnitPayload(source)).thenReturn(payload);
 
         //when
-        final AgentTicket<TestUiPayload> actual = this.agentTicketApiMapper.asTestUiTicket(source, ticketId);
+        final AgentTicket<TestUnitPayload> actual = this.agentTicketApiMapper.asTestUnitTicket(source, ticketId);
 
         //then
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
         assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
         assertThat(actual.getScope()).isEqualTo("backendforfrontendservice-sox");
-        assertThat(actual.getAgent()).isEqualTo(Agent.TEST_UI);
+        assertThat(actual.getAgent()).isEqualTo(Agent.TEST_UNIT);
         assertThat(actual.getPayload()).isEqualTo(payload);
-        verify(this.qaLeadCompletionTicketPayloadApiMapper).asTestUiPayload(source);
+        verify(this.qaLeadCompletionTicketPayloadApiMapper).asTestUnitPayload(source);
     }
 
     @Test

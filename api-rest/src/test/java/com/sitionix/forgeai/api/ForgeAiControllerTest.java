@@ -14,14 +14,11 @@ import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
-import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
-import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
@@ -67,12 +64,6 @@ class ForgeAiControllerTest {
     private LaneScopeValidator laneScopeValidator;
 
     @Mock
-    private ServicePropertiesProvider servicePropertiesProvider;
-
-    @Mock
-    private ServicePropertiesProvider.ServiceConfigView serviceConfigView;
-
-    @Mock
     private CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
 
     @Mock
@@ -87,7 +78,6 @@ class ForgeAiControllerTest {
                 this.agentTicketApiMapper,
                 this.completeAgentTasks,
                 this.laneScopeValidator,
-                this.servicePropertiesProvider,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase
         );
@@ -102,8 +92,6 @@ class ForgeAiControllerTest {
                 this.agentTicketApiMapper,
                 this.completeAgentTasks,
                 this.laneScopeValidator,
-                this.servicePropertiesProvider,
-                this.serviceConfigView,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase
         );
@@ -207,10 +195,9 @@ class ForgeAiControllerTest {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final CompleteQaLeadLaneRequestDTO request = CompleteQaLeadLaneRequestDTO.builder().scope("automationservice-sox").build();
+        final AgentTicket<TestUnitPayload> testUnitTicket = AgentTicket.<TestUnitPayload>builder().build();
         final AgentTicket<TestItPayload> testItTicket = AgentTicket.<TestItPayload>builder().build();
-        when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of("atmssox", this.serviceConfigView));
-        when(this.serviceConfigView.getPath()).thenReturn("automationservice-sox");
-        when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.BACKEND);
+        when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
         when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
 
         //when
@@ -224,11 +211,9 @@ class ForgeAiControllerTest {
                 .status(HttpStatus.OK.name())
                 .build());
         verify(this.laneScopeValidator).validateQaLeadCallbackScope(laneId, request.getScope());
-        verify(this.servicePropertiesProvider).getServices();
-        verify(this.serviceConfigView).getPath();
-        verify(this.serviceConfigView).getGroup();
+        verify(this.agentTicketApiMapper).asTestUnitTicket(request, ticketId);
         verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
-        verify(this.completeAgentTasks).complete(laneId, List.<AgentTicket<? extends AgentTicketPayload>>of(testItTicket));
+        verify(this.completeAgentTasks).complete(laneId, List.<AgentTicket<? extends AgentTicketPayload>>of(testUnitTicket, testItTicket));
     }
 
     @Test
@@ -237,11 +222,10 @@ class ForgeAiControllerTest {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final CompleteQaLeadLaneRequestDTO request = CompleteQaLeadLaneRequestDTO.builder().scope("backendforfrontendservice-sox").build();
-        final AgentTicket<TestUiPayload> testUiTicket = AgentTicket.<TestUiPayload>builder().build();
-        when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of("bffssox", this.serviceConfigView));
-        when(this.serviceConfigView.getPath()).thenReturn("backendforfrontendservice-sox");
-        when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.FRONTEND);
-        when(this.agentTicketApiMapper.asTestUiTicket(request, ticketId)).thenReturn(testUiTicket);
+        final AgentTicket<TestUnitPayload> testUnitTicket = AgentTicket.<TestUnitPayload>builder().build();
+        final AgentTicket<TestItPayload> testItTicket = AgentTicket.<TestItPayload>builder().build();
+        when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
+        when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
 
         //when
         final ResponseEntity<CompleteQaLeadLaneResponseDTO> actual = this.forgeAiController.completeQaLeadLane(ticketId, laneId, request);
@@ -254,10 +238,8 @@ class ForgeAiControllerTest {
                 .status(HttpStatus.OK.name())
                 .build());
         verify(this.laneScopeValidator).validateQaLeadCallbackScope(laneId, request.getScope());
-        verify(this.servicePropertiesProvider).getServices();
-        verify(this.serviceConfigView).getPath();
-        verify(this.serviceConfigView).getGroup();
-        verify(this.agentTicketApiMapper).asTestUiTicket(request, ticketId);
-        verify(this.completeAgentTasks).complete(laneId, List.<AgentTicket<? extends AgentTicketPayload>>of(testUiTicket));
+        verify(this.agentTicketApiMapper).asTestUnitTicket(request, ticketId);
+        verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
+        verify(this.completeAgentTasks).complete(laneId, List.<AgentTicket<? extends AgentTicketPayload>>of(testUnitTicket, testItTicket));
     }
 }

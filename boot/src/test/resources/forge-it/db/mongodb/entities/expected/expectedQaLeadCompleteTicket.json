@@ -10,9 +10,7 @@
       "type": "QA_LEAD",
       "scope": "automationservice-sox",
       "serviceId": "atmssox",
-      "status": "IN_PROGRESS",
-      "attempt": 0,
-      "inputTaskIds": [],
+      "status": "COMPLETED",
       "dependsOn": [
         {
           "type": "ANALYZER",
@@ -26,8 +24,6 @@
       "scope": "automationservice-sox",
       "serviceId": "atmssox",
       "status": "COMPLETED",
-      "attempt": 0,
-      "inputTaskIds": ["75555555-5555-5555-5555-555555555555"],
       "dependsOn": [
         {
           "type": "ARCHITECT",
@@ -38,12 +34,9 @@
     {
       "id": "76666666-6666-6666-6666-666666666666",
       "type": "TEST_UNIT",
-      "agent": "TEST_UNIT",
       "scope": "automationservice-sox",
       "serviceId": "atmssox",
-      "status": "NOT_STARTED",
-      "attempt": 0,
-      "inputTaskIds": [],
+      "status": "READY_TO_START",
       "dependsOn": [
         {
           "type": "IMPLEMENT_BE",
@@ -58,12 +51,9 @@
     {
       "id": "73333333-3333-3333-3333-333333333333",
       "type": "TEST_IT",
-      "agent": "TEST_IT",
       "scope": "automationservice-sox",
       "serviceId": "atmssox",
-      "status": "NOT_STARTED",
-      "attempt": 0,
-      "inputTaskIds": [],
+      "status": "READY_TO_START",
       "dependsOn": [
         {
           "type": "IMPLEMENT_BE",
@@ -75,7 +65,5 @@
         }
       ]
     }
-  ],
-  "createdAt": "2026-01-01T10:00:00",
-  "updatedAt": "2026-01-01T10:00:00"
+  ]
 }

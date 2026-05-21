@@ -73,9 +73,9 @@ public interface AgentTicketApiMapper {
     @Mapping(target = "ticketId", source = "ticketId")
     @Mapping(target = "status", constant = "CREATED")
     @Mapping(target = "scope", source = "source.scope")
-    @Mapping(target = "agent", expression = "java(Agent.TEST_IT)")
+    @Mapping(target = "agent", expression = "java(Agent.TEST_UNIT)")
     @Mapping(target = "payload", source = "source")
-    AgentTicket<TestItPayload> asTestItTicket(
+    AgentTicket<TestUnitPayload> asTestUnitTicket(
             CompleteQaLeadLaneRequestDTO source,
             UUID ticketId);
 
@@ -83,9 +83,9 @@ public interface AgentTicketApiMapper {
     @Mapping(target = "ticketId", source = "ticketId")
     @Mapping(target = "status", constant = "CREATED")
     @Mapping(target = "scope", source = "source.scope")
-    @Mapping(target = "agent", expression = "java(Agent.TEST_UI)")
+    @Mapping(target = "agent", expression = "java(Agent.TEST_IT)")
     @Mapping(target = "payload", source = "source")
-    AgentTicket<TestUiPayload> asTestUiTicket(
+    AgentTicket<TestItPayload> asTestItTicket(
             CompleteQaLeadLaneRequestDTO source,
             UUID ticketId);
 

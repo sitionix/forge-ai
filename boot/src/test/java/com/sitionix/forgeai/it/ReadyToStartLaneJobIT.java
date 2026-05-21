@@ -5,6 +5,7 @@ import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuild
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.LaneDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
@@ -50,7 +51,7 @@ class ReadyToStartLaneJobIT {
                 .andExpected(actual -> {
                     final List<LaneDocument> lanes = actual.getLanes();
                     return lanes.stream()
-                            .filter(lane -> Objects.equals("ANALYZER", lane.getType().name()))
+                            .filter(lane -> Objects.equals(Agent.ANALYZER, lane.getType()))
                             .allMatch(lane -> Objects.equals(LaneStatus.READY_TO_START, lane.getStatus())
                                     || Objects.equals(LaneStatus.IN_PROGRESS, lane.getStatus()));
                 });

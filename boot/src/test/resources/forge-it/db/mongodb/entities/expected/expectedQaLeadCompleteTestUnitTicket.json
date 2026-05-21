@@ -1,0 +1,14 @@
+{
+  "status": "CREATED",
+  "laneId": "76666666-6666-6666-6666-666666666666",
+  "agent": "TEST_UNIT",
+  "scope": "automationservice-sox",
+  "payload": {
+    "task": "Prepare unit test execution context",
+    "scope": "automationservice-sox",
+    "summary": "Prepared integration test cases for backend agent action implementation.",
+    "unitTestNotes": [
+      "CreateAgentActionUseCase :: Validate missing title handling"
+    ]
+  }
+}
