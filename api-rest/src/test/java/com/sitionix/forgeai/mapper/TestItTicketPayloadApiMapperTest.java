@@ -1,0 +1,49 @@
+package com.sitionix.forgeai.mapper;
+
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.ImplementBeIntegrationFlowDTO;
+import com.app_afesox.fgaisox.api_first.dto.ImplementBePersistenceChangeDTO;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import java.util.List;
+import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class TestItTicketPayloadApiMapperTest {
+
+    private TestItTicketPayloadApiMapper testItTicketPayloadApiMapper;
+
+    @BeforeEach
+    void setUp() {
+        this.testItTicketPayloadApiMapper = new TestItTicketPayloadApiMapperImpl();
+    }
+
+    @Test
+    void givenCompleteImplementBeLaneRequest_whenAsTestItPayload_thenMapFields() {
+        //given
+        final CompleteImplementBeLaneRequestDTO source = CompleteImplementBeLaneRequestDTO.builder()
+                .scope("automationservice-sox")
+                .summary("summary")
+                .integrationFlows(List.of(
+                        ImplementBeIntegrationFlowDTO.builder().name("n1").method(ImplementBeIntegrationFlowDTO.MethodEnum.POST).path("/").operationId("op1").summary("s1").build()
+                ))
+                .persistenceChanges(List.of(
+                        ImplementBePersistenceChangeDTO.builder().type(ImplementBePersistenceChangeDTO.TypeEnum.TABLE_CREATED).name("tbl").summary("ps").build()
+                ))
+                .build();
+
+        //when
+        final TestItPayload actual = this.testItTicketPayloadApiMapper.asTestItPayload(source);
+
+        //then
+        assertThat(actual).isEqualTo(TestItPayload.builder()
+                .task("Write integration tests for backend integration and persistence changes in automationservice-sox")
+                .scope("automationservice-sox")
+                .summary("summary")
+                .integrationFlows(Set.of("n1 | POST / | op1 | s1"))
+                .persistenceChanges(Set.of("TABLE_CREATED | tbl | ps"))
+                .build());
+    }
+}

@@ -10,9 +10,8 @@
     </parent>
 
     <artifactId>api-rest</artifactId>
-про
     <properties>
-        <fgaisox.api.version>0.0.7</fgaisox.api.version>
+        <fgaisox.api.version>0.0.8</fgaisox.api.version>
     </properties>
 
     <dependencies>

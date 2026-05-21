@@ -121,14 +121,12 @@ public class ForgeAiController implements ForgeAiApi {
     }
 
     @Override
-    public ResponseEntity<CompleteImplementBeLaneResponseDTO> completeImplementBeLane(final String ticketId,
-                                                                                       final String laneId,
+    public ResponseEntity<CompleteImplementBeLaneResponseDTO> completeImplementBeLane(final UUID ticketId,
+                                                                                       final UUID laneId,
                                                                                        @Valid final CompleteImplementBeLaneRequestDTO completeImplementBeLaneRequestDTO) {
         log.info("Received completeImplementBeLane request for ticketId: {}, laneId: {}, with request body: {}",
                 ticketId, laneId, completeImplementBeLaneRequestDTO);
-        final UUID ticketUuid = UUID.fromString(ticketId);
-        final UUID laneUuid = UUID.fromString(laneId);
-        this.completeImplementBeLaneOrchestrationUseCase.complete(ticketUuid, laneUuid, completeImplementBeLaneRequestDTO);
+        this.completeImplementBeLaneOrchestrationUseCase.complete(ticketId, laneId, completeImplementBeLaneRequestDTO);
 
         return ResponseEntity.ok(CompleteImplementBeLaneResponseDTO.builder()
                 .laneId(laneId)

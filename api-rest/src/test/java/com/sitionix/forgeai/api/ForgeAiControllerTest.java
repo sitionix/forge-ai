@@ -174,13 +174,13 @@ class ForgeAiControllerTest {
         final CompleteImplementBeLaneRequestDTO request = CompleteImplementBeLaneRequestDTO.builder().build();
 
         //when
-        final ResponseEntity<CompleteImplementBeLaneResponseDTO> actual = this.forgeAiController.completeImplementBeLane(ticketId.toString(), laneId.toString(), request);
+        final ResponseEntity<CompleteImplementBeLaneResponseDTO> actual = this.forgeAiController.completeImplementBeLane(ticketId, laneId, request);
 
         //then
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(actual.getBody()).isEqualTo(CompleteImplementBeLaneResponseDTO.builder()
-                .ticketId(ticketId.toString())
-                .laneId(laneId.toString())
+                .ticketId(ticketId)
+                .laneId(laneId)
                 .status(HttpStatus.OK.name())
                 .build());
         verify(this.completeImplementBeLaneOrchestrationUseCase).complete(ticketId, laneId, request);
