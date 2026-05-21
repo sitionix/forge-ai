@@ -14,7 +14,9 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -26,6 +28,7 @@ import org.springframework.stereotype.Component;
 public class CompleteArchitectLaneOrchestrationUseCase {
 
     private final AgentTicketApiMapper agentTicketApiMapper;
+    private final CompleteAgentTasks completeAgentTasks;
     private final CreateAgentTask createAgentTask;
     private final ServicePropertiesProvider servicePropertiesProvider;
     private final LaneScopeValidator laneScopeValidator;
@@ -41,11 +44,11 @@ public class CompleteArchitectLaneOrchestrationUseCase {
         final Agent implementationAgent = this.resolveImplementationAgent(request.getImplementationHandoff().getScope());
         if (Agent.IMPLEMENT_BE.equals(implementationAgent)) {
             final AgentTicket<ImplementBePayload> implementBeTicket = this.agentTicketApiMapper.asImplementBeTicket(request, ticketId);
-            this.createAgentTask.create(implementBeTicket, laneId);
+            this.completeAgentTasks.complete(laneId, List.of(implementBeTicket));
             return;
         }
         final AgentTicket<ImplementFePayload> implementFeTicket = this.agentTicketApiMapper.asImplementFeTicket(request, ticketId);
-        this.createAgentTask.create(implementFeTicket, laneId);
+        this.completeAgentTasks.complete(laneId, List.of(implementFeTicket));
     }
 
     private void createApiTicket(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
@@ -82,7 +85,7 @@ public class CompleteArchitectLaneOrchestrationUseCase {
                                        final Agent targetAgent,
                                        final Supplier<AgentTicket<?>> ticketSupplier) {
         if (required) {
-            this.createAgentTask.create(ticketSupplier.get(), laneId);
+            this.completeAgentTasks.complete(laneId, List.of(ticketSupplier.get()));
             return;
         }
         this.createAgentTask.markAsNotNeeded(laneId, scope, targetAgent);

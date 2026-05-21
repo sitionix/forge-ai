@@ -7,6 +7,10 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
@@ -15,11 +19,15 @@ import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
-import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
-import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.service.ServiceGroup;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
-import com.sitionix.forgeai.domain.repository.TicketRepository;
+import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
 import jakarta.validation.Valid;
@@ -29,6 +37,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 @Slf4j
@@ -40,9 +50,9 @@ public class ForgeAiController implements ForgeAiApi {
     private final ForgeAiApiMapper forgeAiApiMapper;
     private final TerminalTtyResolver terminalTtyResolver;
     private final AgentTicketApiMapper agentTicketApiMapper;
-    private final CreateAgentTask createAgentTask;
-    private final TicketRepository ticketRepository;
+    private final CompleteAgentTasks completeAgentTasks;
     private final LaneScopeValidator laneScopeValidator;
+    private final ServicePropertiesProvider servicePropertiesProvider;
     private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
     private final CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
 
@@ -64,32 +74,17 @@ public class ForgeAiController implements ForgeAiApi {
                 completeAnalyzerLaneRequestDTO.getArchitectHandoff() == null ? null : completeAnalyzerLaneRequestDTO.getArchitectHandoff().getScope(),
                 completeAnalyzerLaneRequestDTO.getQaLeadHandoff() == null ? null : completeAnalyzerLaneRequestDTO.getQaLeadHandoff().getScope()
         );
-        if (this.isAnalyzerAlreadyCompleted(laneId)) {
-            log.info("Skip duplicate completeAnalyzerLane for already completed laneId: {}", laneId);
-            return ResponseEntity.ok(CompleteAnalyzerLaneResponseDTO.builder()
-                    .laneId(laneId)
-                    .laneStatus(HttpStatus.OK.name())
-                    .ticketId(ticketId)
-                    .build());
-        }
 
         final AgentTicket<ArchitectPayload> architectTicket = this.agentTicketApiMapper.asArchitectTicket(completeAnalyzerLaneRequestDTO, ticketId);
         final AgentTicket<QaLeadPayload> qaLeadTicket = this.agentTicketApiMapper.asQaLeadTicket(completeAnalyzerLaneRequestDTO, ticketId);
 
-        this.createAgentTask.create(architectTicket, laneId);
-        this.createAgentTask.create(qaLeadTicket, laneId);
+        this.completeAgentTasks.complete(laneId, List.of(architectTicket, qaLeadTicket));
 
         return ResponseEntity.ok(CompleteAnalyzerLaneResponseDTO.builder()
                 .laneId(laneId)
                 .laneStatus(HttpStatus.OK.name())
                 .ticketId(ticketId)
                 .build());
-    }
-
-    private boolean isAnalyzerAlreadyCompleted(final UUID laneId) {
-        return this.ticketRepository.findByLaneId(laneId)
-                .map(lane -> LaneStatus.COMPLETED.equals(lane.getStatus()) || LaneStatus.NOT_NEEDED.equals(lane.getStatus()))
-                .orElse(false);
     }
 
     @Override
@@ -114,5 +109,62 @@ public class ForgeAiController implements ForgeAiApi {
                 .laneStatus(HttpStatus.OK.name())
                 .ticketId(ticketId)
                 .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteImplementBeLaneResponseDTO> completeImplementBeLane(final UUID ticketId,
+                                                                                       final UUID laneId,
+                                                                                       @Valid final CompleteImplementBeLaneRequestDTO completeImplementBeLaneRequestDTO) {
+        log.info("Received completeImplementBeLane request for ticketId: {}, laneId: {}, with request body: {}",
+                ticketId, laneId, completeImplementBeLaneRequestDTO);
+        this.laneScopeValidator.validateImplementBeCallbackScope(laneId, completeImplementBeLaneRequestDTO.getScope());
+        final AgentTicket<TestUnitPayload> testUnitTicket = this.agentTicketApiMapper.asTestUnitTicket(completeImplementBeLaneRequestDTO, ticketId);
+        final AgentTicket<TestItPayload> testItTicket = this.agentTicketApiMapper.asTestItTicket(completeImplementBeLaneRequestDTO, ticketId);
+        this.completeAgentTasks.complete(laneId, List.of(testUnitTicket, testItTicket));
+
+        return ResponseEntity.ok(CompleteImplementBeLaneResponseDTO.builder()
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteQaLeadLaneResponseDTO> completeQaLeadLane(final UUID ticketId,
+                                                                            final UUID laneId,
+                                                                            @Valid final CompleteQaLeadLaneRequestDTO completeQaLeadLaneRequestDTO) {
+        log.info("Received completeQaLeadLane request for ticketId: {}, laneId: {}, with request body: {}",
+                ticketId, laneId, completeQaLeadLaneRequestDTO);
+        this.laneScopeValidator.validateQaLeadCallbackScope(laneId, completeQaLeadLaneRequestDTO.getScope());
+
+        final Agent qaLeadTargetAgent = this.resolveQaLeadTargetAgent(completeQaLeadLaneRequestDTO.getScope());
+        if (Objects.equals(qaLeadTargetAgent, Agent.TEST_IT)) {
+            final AgentTicket<TestItPayload> testItTicket = this.agentTicketApiMapper.asTestItTicket(completeQaLeadLaneRequestDTO, ticketId);
+            this.completeAgentTasks.complete(laneId, List.of(testItTicket));
+        } else {
+            final AgentTicket<TestUiPayload> testUiTicket = this.agentTicketApiMapper.asTestUiTicket(completeQaLeadLaneRequestDTO, ticketId);
+            this.completeAgentTasks.complete(laneId, List.of(testUiTicket));
+        }
+
+        return ResponseEntity.ok(CompleteQaLeadLaneResponseDTO.builder()
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    private Agent resolveQaLeadTargetAgent(final String scope) {
+        final ServiceGroup serviceGroup = this.servicePropertiesProvider.getServices().values().stream()
+                .filter(value -> Objects.equals(value.getPath(), scope))
+                .map(ServicePropertiesProvider.ServiceConfigView::getGroup)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Service scope not found: " + scope));
+        if (ServiceGroup.BACKEND.equals(serviceGroup)) {
+            return Agent.TEST_IT;
+        }
+        if (ServiceGroup.FRONTEND.equals(serviceGroup)) {
+            return Agent.TEST_UI;
+        }
+        throw new IllegalArgumentException("Unsupported service group for qa_lead lane: " + serviceGroup);
     }
 }

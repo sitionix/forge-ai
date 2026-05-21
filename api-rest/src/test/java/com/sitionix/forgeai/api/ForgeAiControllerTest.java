@@ -1,20 +1,33 @@
 package com.sitionix.forgeai.api;
 
-import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
-import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneResponse;
+import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
+import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
+import com.sitionix.forgeai.domain.model.service.ServiceGroup;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
-import com.sitionix.forgeai.domain.repository.TicketRepository;
-import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
+import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,7 +42,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
-import java.util.UUID;
 
 @ExtendWith(MockitoExtension.class)
 class ForgeAiControllerTest {
@@ -49,13 +61,16 @@ class ForgeAiControllerTest {
     private AgentTicketApiMapper agentTicketApiMapper;
 
     @Mock
-    private CreateAgentTask createAgentTask;
-
-    @Mock
-    private TicketRepository ticketRepository;
+    private CompleteAgentTasks completeAgentTasks;
 
     @Mock
     private LaneScopeValidator laneScopeValidator;
+
+    @Mock
+    private ServicePropertiesProvider servicePropertiesProvider;
+
+    @Mock
+    private ServicePropertiesProvider.ServiceConfigView serviceConfigView;
 
     @Mock
     private CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
@@ -70,9 +85,9 @@ class ForgeAiControllerTest {
                 this.forgeAiApiMapper,
                 this.terminalTtyResolver,
                 this.agentTicketApiMapper,
-                this.createAgentTask,
-                this.ticketRepository,
+                this.completeAgentTasks,
                 this.laneScopeValidator,
+                this.servicePropertiesProvider,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase
         );
@@ -85,9 +100,10 @@ class ForgeAiControllerTest {
                 this.forgeAiApiMapper,
                 this.terminalTtyResolver,
                 this.agentTicketApiMapper,
-                this.createAgentTask,
-                this.ticketRepository,
+                this.completeAgentTasks,
                 this.laneScopeValidator,
+                this.servicePropertiesProvider,
+                this.serviceConfigView,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase
         );
@@ -156,5 +172,92 @@ class ForgeAiControllerTest {
                 .laneStatus(HttpStatus.OK.name())
                 .build());
         verify(this.completeApiLaneOrchestrationUseCase).complete(ticketId, laneId, request);
+    }
+
+    @Test
+    void givenImplementBeLaneRequest_whenCompleteImplementBeLane_thenReturnOkResponse() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final CompleteImplementBeLaneRequestDTO request = CompleteImplementBeLaneRequestDTO.builder().scope("automationservice-sox").build();
+        final AgentTicket<TestUnitPayload> testUnitTicket = AgentTicket.<TestUnitPayload>builder().build();
+        final AgentTicket<TestItPayload> testItTicket = AgentTicket.<TestItPayload>builder().build();
+        when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
+        when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
+
+        //when
+        final ResponseEntity<CompleteImplementBeLaneResponseDTO> actual = this.forgeAiController.completeImplementBeLane(ticketId, laneId, request);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isEqualTo(CompleteImplementBeLaneResponseDTO.builder()
+                .ticketId(ticketId)
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .build());
+        verify(this.laneScopeValidator).validateImplementBeCallbackScope(laneId, request.getScope());
+        verify(this.agentTicketApiMapper).asTestUnitTicket(request, ticketId);
+        verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
+        verify(this.completeAgentTasks).complete(laneId, List.<AgentTicket<? extends AgentTicketPayload>>of(testUnitTicket, testItTicket));
+    }
+
+    @Test
+    void givenBackendQaLeadLaneRequest_whenCompleteQaLeadLane_thenReturnOkResponse() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final CompleteQaLeadLaneRequestDTO request = CompleteQaLeadLaneRequestDTO.builder().scope("automationservice-sox").build();
+        final AgentTicket<TestItPayload> testItTicket = AgentTicket.<TestItPayload>builder().build();
+        when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of("atmssox", this.serviceConfigView));
+        when(this.serviceConfigView.getPath()).thenReturn("automationservice-sox");
+        when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.BACKEND);
+        when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
+
+        //when
+        final ResponseEntity<CompleteQaLeadLaneResponseDTO> actual = this.forgeAiController.completeQaLeadLane(ticketId, laneId, request);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isEqualTo(CompleteQaLeadLaneResponseDTO.builder()
+                .ticketId(ticketId)
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .build());
+        verify(this.laneScopeValidator).validateQaLeadCallbackScope(laneId, request.getScope());
+        verify(this.servicePropertiesProvider).getServices();
+        verify(this.serviceConfigView).getPath();
+        verify(this.serviceConfigView).getGroup();
+        verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
+        verify(this.completeAgentTasks).complete(laneId, List.<AgentTicket<? extends AgentTicketPayload>>of(testItTicket));
+    }
+
+    @Test
+    void givenFrontendQaLeadLaneRequest_whenCompleteQaLeadLane_thenReturnOkResponse() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final CompleteQaLeadLaneRequestDTO request = CompleteQaLeadLaneRequestDTO.builder().scope("backendforfrontendservice-sox").build();
+        final AgentTicket<TestUiPayload> testUiTicket = AgentTicket.<TestUiPayload>builder().build();
+        when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of("bffssox", this.serviceConfigView));
+        when(this.serviceConfigView.getPath()).thenReturn("backendforfrontendservice-sox");
+        when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.FRONTEND);
+        when(this.agentTicketApiMapper.asTestUiTicket(request, ticketId)).thenReturn(testUiTicket);
+
+        //when
+        final ResponseEntity<CompleteQaLeadLaneResponseDTO> actual = this.forgeAiController.completeQaLeadLane(ticketId, laneId, request);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isEqualTo(CompleteQaLeadLaneResponseDTO.builder()
+                .ticketId(ticketId)
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .build());
+        verify(this.laneScopeValidator).validateQaLeadCallbackScope(laneId, request.getScope());
+        verify(this.servicePropertiesProvider).getServices();
+        verify(this.serviceConfigView).getPath();
+        verify(this.serviceConfigView).getGroup();
+        verify(this.agentTicketApiMapper).asTestUiTicket(request, ticketId);
+        verify(this.completeAgentTasks).complete(laneId, List.<AgentTicket<? extends AgentTicketPayload>>of(testUiTicket));
     }
 }

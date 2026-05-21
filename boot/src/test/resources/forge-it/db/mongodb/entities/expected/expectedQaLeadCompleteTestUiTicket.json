@@ -1,0 +1,16 @@
+{
+  "status": "CREATED",
+  "scope": "sitionix-spa",
+  "agent": "TEST_UI",
+  "payload": {
+    "task": "Prepare UI test execution context for sitionix-spa",
+    "scope": "sitionix-spa",
+    "summary": "Prepared integration test cases for frontend agent action implementation.",
+    "integrationTestCases": [
+      "title=Create agent action successfully | flow=POST / | given=ticket exists | when=POST request submitted | then=response 200 | dataChecks=agent ticket persisted -> created record | priority=HIGH"
+    ],
+    "unitTestNotes": [
+      "CreateAgentActionUseCase :: Validate missing title handling"
+    ]
+  }
+}

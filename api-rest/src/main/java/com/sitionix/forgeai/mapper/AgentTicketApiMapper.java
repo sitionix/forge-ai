@@ -2,6 +2,8 @@ package com.sitionix.forgeai.mapper;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.*;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
@@ -15,7 +17,10 @@ import java.util.UUID;
         uses = {
                 ArchitectTicketPayloadApiMapper.class,
                 QaLeadTicketPayloadApiMapper.class,
+                QaLeadCompletionTicketPayloadApiMapper.class,
                 ImplementBeTicketPayloadApiMapper.class,
+                TestUnitTicketPayloadApiMapper.class,
+                TestItTicketPayloadApiMapper.class,
                 ImplementFeTicketPayloadApiMapper.class,
                 ApiTicketPayloadApiMapper.class,
                 EventTicketPayloadApiMapper.class
@@ -42,6 +47,46 @@ public interface AgentTicketApiMapper {
     @Mapping(target = "payload", source = "source.qaLeadHandoff")
     AgentTicket<QaLeadPayload> asQaLeadTicket(
             CompleteAnalyzerLaneRequestDTO source,
+            UUID ticketId);
+
+    @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")
+    @Mapping(target = "ticketId", source = "ticketId")
+    @Mapping(target = "status", constant = "CREATED")
+    @Mapping(target = "scope", source = "source.scope")
+    @Mapping(target = "agent", expression = "java(Agent.TEST_UNIT)")
+    @Mapping(target = "payload", source = "source")
+    AgentTicket<TestUnitPayload> asTestUnitTicket(
+            CompleteImplementBeLaneRequestDTO source,
+            UUID ticketId);
+
+    @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")
+    @Mapping(target = "ticketId", source = "ticketId")
+    @Mapping(target = "status", constant = "CREATED")
+    @Mapping(target = "scope", source = "source.scope")
+    @Mapping(target = "agent", expression = "java(Agent.TEST_IT)")
+    @Mapping(target = "payload", source = "source")
+    AgentTicket<TestItPayload> asTestItTicket(
+            CompleteImplementBeLaneRequestDTO source,
+            UUID ticketId);
+
+    @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")
+    @Mapping(target = "ticketId", source = "ticketId")
+    @Mapping(target = "status", constant = "CREATED")
+    @Mapping(target = "scope", source = "source.scope")
+    @Mapping(target = "agent", expression = "java(Agent.TEST_IT)")
+    @Mapping(target = "payload", source = "source")
+    AgentTicket<TestItPayload> asTestItTicket(
+            CompleteQaLeadLaneRequestDTO source,
+            UUID ticketId);
+
+    @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")
+    @Mapping(target = "ticketId", source = "ticketId")
+    @Mapping(target = "status", constant = "CREATED")
+    @Mapping(target = "scope", source = "source.scope")
+    @Mapping(target = "agent", expression = "java(Agent.TEST_UI)")
+    @Mapping(target = "payload", source = "source")
+    AgentTicket<TestUiPayload> asTestUiTicket(
+            CompleteQaLeadLaneRequestDTO source,
             UUID ticketId);
 
     @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")

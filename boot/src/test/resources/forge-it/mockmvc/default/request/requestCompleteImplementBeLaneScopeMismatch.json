@@ -1,0 +1,26 @@
+{
+  "scope": "backendforfrontendservice-sox",
+  "summary": "Implemented backend create flow for agent action records.",
+  "changedFiles": [
+    {
+      "path": "application/src/main/java/com/sitionix/forgeai/application/usecase/CreateAgentActionUseCase.java",
+      "reason": "Added create use case"
+    }
+  ],
+  "integrationFlows": [
+    {
+      "name": "Create Agent Action",
+      "operationId": "createAgentAction",
+      "method": "POST",
+      "path": "/",
+      "summary": "Workspace delegates request to automation backend."
+    }
+  ],
+  "persistenceChanges": [
+    {
+      "type": "TABLE_CREATED",
+      "name": "agent_actions",
+      "summary": "New collection for persisted actions."
+    }
+  ]
+}

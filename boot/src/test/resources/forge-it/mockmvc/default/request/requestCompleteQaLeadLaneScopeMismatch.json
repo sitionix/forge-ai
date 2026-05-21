@@ -1,0 +1,30 @@
+{
+  "scope": "backendforfrontendservice-sox",
+  "summary": "Prepared integration test cases for backend agent action implementation.",
+  "integrationTestCases": [
+    {
+      "title": "Create agent action successfully",
+      "flow": {
+        "name": "Create agent action",
+        "method": "POST",
+        "path": "/"
+      },
+      "given": [
+        "ticket exists"
+      ],
+      "when": [
+        "POST request submitted"
+      ],
+      "then": [
+        "response 200"
+      ],
+      "priority": "HIGH"
+    }
+  ],
+  "unitTestNotes": [
+    {
+      "target": "CreateAgentActionUseCase",
+      "note": "Validate missing title handling"
+    }
+  ]
+}

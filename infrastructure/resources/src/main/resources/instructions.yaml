@@ -20,11 +20,16 @@ forge:
             - instructions/additional-instructions/pr-workflow.md
             - instructions/additional-instructions/generation-workflow.md
             - instructions/additional-instructions/api-generation-rules.md
+        qa_lead:
+          instructions: instructions/agents/qa_lead.md
+          endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/qa-lead/complete
+          additional-instructions: [ ]
         implement_be:
           instructions: instructions/agents/implement_be.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-be/complete
           additional-instructions:
             - instructions/additional-instructions/java-style-basics.md
+            - instructions/additional-instructions/pr-workflow.md
       shared:
         - instructions/shared/common-rules.md
         - instructions/shared/completion-callback.md

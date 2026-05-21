@@ -10,9 +10,9 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
-import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -28,7 +28,7 @@ import org.springframework.stereotype.Component;
 public class CompleteApiLaneOrchestrationUseCase {
 
     private final LaneRepository laneRepository;
-    private final CreateAgentTask createAgentTask;
+    private final CompleteAgentTasks completeAgentTasks;
     private final ServicePropertiesProvider servicePropertiesProvider;
     private final LaneScopeValidator laneScopeValidator;
 
@@ -53,7 +53,7 @@ public class CompleteApiLaneOrchestrationUseCase {
             if (contracts.isEmpty()) {
                 throw new IllegalStateException("No API contracts found for backend scope=" + targetLane.getScope());
             }
-            this.createAgentTask.create(this.asImplementTicket(ticketId, targetLane.getScope(), summary, contracts, Agent.IMPLEMENT_BE, false), sourceLaneId);
+            this.completeAgentTasks.complete(sourceLaneId, List.of(this.asImplementTicket(ticketId, targetLane.getScope(), summary, contracts, Agent.IMPLEMENT_BE, false)));
             return;
         }
 
@@ -63,7 +63,7 @@ public class CompleteApiLaneOrchestrationUseCase {
             throw new IllegalStateException("No API contracts found for frontend scope=" + targetLane.getScope()
                     + ", apiFamily=" + frontendApiFamily);
         }
-        this.createAgentTask.create(this.asImplementTicket(ticketId, targetLane.getScope(), summary, contracts, Agent.IMPLEMENT_FE, true), sourceLaneId);
+        this.completeAgentTasks.complete(sourceLaneId, List.of(this.asImplementTicket(ticketId, targetLane.getScope(), summary, contracts, Agent.IMPLEMENT_FE, true)));
     }
 
     private List<Lane> findImplementationLanes(final UUID laneId) {
