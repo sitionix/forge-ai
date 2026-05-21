@@ -10,9 +10,11 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
-import com.sitionix.forgeai.api.usecase.CompleteImplementBeLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
@@ -29,6 +31,7 @@ import org.springframework.http.ResponseEntity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -66,9 +69,6 @@ class ForgeAiControllerTest {
     @Mock
     private CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
 
-    @Mock
-    private CompleteImplementBeLaneOrchestrationUseCase completeImplementBeLaneOrchestrationUseCase;
-
     @BeforeEach
     void setUp() {
         this.forgeAiController = new ForgeAiController(
@@ -80,8 +80,7 @@ class ForgeAiControllerTest {
                 this.ticketRepository,
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
-                this.completeApiLaneOrchestrationUseCase,
-                this.completeImplementBeLaneOrchestrationUseCase
+                this.completeApiLaneOrchestrationUseCase
         );
     }
 
@@ -96,8 +95,7 @@ class ForgeAiControllerTest {
                 this.ticketRepository,
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
-                this.completeApiLaneOrchestrationUseCase,
-                this.completeImplementBeLaneOrchestrationUseCase
+                this.completeApiLaneOrchestrationUseCase
         );
     }
 
@@ -172,6 +170,10 @@ class ForgeAiControllerTest {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final CompleteImplementBeLaneRequestDTO request = CompleteImplementBeLaneRequestDTO.builder().build();
+        final AgentTicket<TestUnitPayload> testUnitTicket = AgentTicket.<TestUnitPayload>builder().build();
+        final AgentTicket<TestItPayload> testItTicket = AgentTicket.<TestItPayload>builder().build();
+        when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
+        when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
 
         //when
         final ResponseEntity<CompleteImplementBeLaneResponseDTO> actual = this.forgeAiController.completeImplementBeLane(ticketId, laneId, request);
@@ -183,6 +185,9 @@ class ForgeAiControllerTest {
                 .laneId(laneId)
                 .status(HttpStatus.OK.name())
                 .build());
-        verify(this.completeImplementBeLaneOrchestrationUseCase).complete(ticketId, laneId, request);
+        verify(this.laneScopeValidator).validateImplementBeCallbackScope(laneId, request.getScope());
+        verify(this.agentTicketApiMapper).asTestUnitTicket(request, ticketId);
+        verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
+        verify(this.createAgentTask, times(2)).create(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(laneId));
     }
 }
