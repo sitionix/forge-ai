@@ -20,7 +20,7 @@ class QaLeadCompletionTicketPayloadApiMapperTest {
 
     @BeforeEach
     void setUp() {
-        this.qaLeadCompletionTicketPayloadApiMapper = new QaLeadCompletionTicketPayloadApiMapperImpl();
+        this.qaLeadCompletionTicketPayloadApiMapper = new QaLeadCompletionTicketPayloadApiMapperImpl(new QaLeadCompletionTicketPayloadApiMapperSupport());
     }
 
     @Test

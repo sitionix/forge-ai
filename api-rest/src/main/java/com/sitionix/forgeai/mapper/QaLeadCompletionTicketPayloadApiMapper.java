@@ -5,60 +5,37 @@ import com.app_afesox.fgaisox.api_first.dto.QaLeadIntegrationTestCaseDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadUnitTestNoteDTO;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
-import java.util.StringJoiner;
+import org.mapstruct.InjectionStrategy;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
+import org.mapstruct.IterableMapping;
 
-@Mapper(componentModel = "spring")
+@Mapper(
+        componentModel = "spring",
+        uses = QaLeadCompletionTicketPayloadApiMapperSupport.class,
+        injectionStrategy = InjectionStrategy.CONSTRUCTOR
+)
 public interface QaLeadCompletionTicketPayloadApiMapper {
 
     @Mapping(target = "task", expression = "java(\"Prepare unit test execution context\")")
     @Mapping(target = "scope", source = "scope")
     @Mapping(target = "summary", source = "summary")
     @Mapping(target = "changedFiles", ignore = true)
-    @Mapping(target = "unitTestNotes", expression = "java(this.asUnitTestNotes(source.getUnitTestNotes()))")
+    @Mapping(target = "unitTestNotes", source = "unitTestNotes")
     TestUnitPayload asTestUnitPayload(CompleteQaLeadLaneRequestDTO source);
 
     @Mapping(target = "task", expression = "java(\"Prepare integration test execution context\")")
     @Mapping(target = "scope", source = "scope")
     @Mapping(target = "summary", source = "summary")
-    @Mapping(target = "integrationTestCases", expression = "java(this.asIntegrationTestCases(source.getIntegrationTestCases()))")
-    @Mapping(target = "unitTestNotes", expression = "java(this.asUnitTestNotes(source.getUnitTestNotes()))")
+    @Mapping(target = "integrationTestCases", source = "integrationTestCases")
+    @Mapping(target = "unitTestNotes", source = "unitTestNotes")
     TestItPayload asTestItPayload(CompleteQaLeadLaneRequestDTO source);
 
-    default Set<String> asIntegrationTestCases(final List<QaLeadIntegrationTestCaseDTO> source) {
-        return source.stream()
-                .map(this::asIntegrationTestCase)
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-    }
+    @IterableMapping(qualifiedByName = "asIntegrationTestCase")
+    Set<String> asIntegrationTestCases(List<QaLeadIntegrationTestCaseDTO> source);
 
-    default Set<String> asUnitTestNotes(final List<QaLeadUnitTestNoteDTO> source) {
-        return source.stream()
-                .map(this::asUnitTestNote)
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-    }
-
-    default String asIntegrationTestCase(final QaLeadIntegrationTestCaseDTO source) {
-        final StringJoiner joiner = new StringJoiner(" | ");
-        joiner.add("title=" + source.getTitle());
-        joiner.add("flow=" + source.getFlow().getMethod() + " " + source.getFlow().getPath());
-        joiner.add("given=" + String.join(", ", source.getGiven()));
-        joiner.add("when=" + String.join(", ", source.getWhen()));
-        joiner.add("then=" + String.join(", ", source.getThen()));
-        if (Objects.nonNull(source.getDataChecks()) && !source.getDataChecks().isEmpty()) {
-            joiner.add("dataChecks=" + source.getDataChecks().stream()
-                    .map(value -> value.getTarget() + " -> " + value.getExpectation())
-                    .collect(java.util.stream.Collectors.joining("; ")));
-        }
-        joiner.add("priority=" + source.getPriority());
-        return joiner.toString();
-    }
-
-    default String asUnitTestNote(final QaLeadUnitTestNoteDTO source) {
-        return source.getTarget() + " :: " + source.getNote();
-    }
+    @IterableMapping(qualifiedByName = "asUnitTestNote")
+    Set<String> asUnitTestNotes(List<QaLeadUnitTestNoteDTO> source);
 }
