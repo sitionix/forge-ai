@@ -50,6 +50,18 @@ class ReadyToStartImplementBeLaneJobIT {
     @DisplayName("Should execute ready implement_be lane by scheduler job")
     void givenReadyImplementBeLane_whenSchedulerRuns_thenSubmitImplementBeInputAndMoveLaneInProgress() {
         //given
+        final ImplementBePayload payload = new ImplementBePayload();
+        payload.setTask("implement task");
+        payload.setScope("automationservice-sox");
+        payload.setSummary("summary");
+        payload.setRequirements(Set.of("r1"));
+        payload.setConstraints(Set.of("c1"));
+        payload.setNonGoals(Set.of("n1"));
+        payload.setArchitectureDecision("decision");
+        payload.setDependencies(Set.of("d1"));
+        payload.setAcceptanceNotes(Set.of("a1"));
+        payload.setRisks(Set.of("risk1"));
+
         this.testManager.mongo()
                 .create(TicketDocument.class)
                 .body("readyToStartImplementBeJobSeedTicket.json");
@@ -62,18 +74,7 @@ class ReadyToStartImplementBeLaneJobIT {
                         AgentTicketStatus.CREATED,
                         "automationservice-sox",
                         Agent.IMPLEMENT_BE,
-                        ImplementBePayload.builder()
-                                .task("implement task")
-                                .scope("automationservice-sox")
-                                .summary("summary")
-                                .requirements(Set.of("r1"))
-                                .constraints(Set.of("c1"))
-                                .nonGoals(Set.of("n1"))
-                                .architectureDecision("decision")
-                                .dependencies(Set.of("d1"))
-                                .acceptanceNotes(Set.of("a1"))
-                                .risks(Set.of("risk1"))
-                                .build(),
+                        payload,
                         LocalDateTime.parse("2026-01-01T10:00:00"),
                         LocalDateTime.parse("2026-01-01T10:00:00")));
 
@@ -92,18 +93,7 @@ class ReadyToStartImplementBeLaneJobIT {
         verify(this.codexClient, org.mockito.Mockito.atLeastOnce())
                 .submit(inputCaptor.capture(), eq("/dev/ttys999"));
 
-        final ImplementBePayload expectedTask = ImplementBePayload.builder()
-                .task("implement task")
-                .scope("automationservice-sox")
-                .summary("summary")
-                .requirements(Set.of("r1"))
-                .constraints(Set.of("c1"))
-                .nonGoals(Set.of("n1"))
-                .architectureDecision("decision")
-                .dependencies(Set.of("d1"))
-                .acceptanceNotes(Set.of("a1"))
-                .risks(Set.of("risk1"))
-                .build();
+        final ImplementBePayload expectedTask = payload;
         if (inputCaptor.getAllValues().stream().noneMatch(actual -> Objects.equals(actual.getTasks(), Set.of(expectedTask)))) {
             throw new AssertionError("Unexpected implement_be tasks: " + inputCaptor.getAllValues());
         }

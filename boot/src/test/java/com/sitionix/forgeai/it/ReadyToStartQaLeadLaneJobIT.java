@@ -52,6 +52,15 @@ class ReadyToStartQaLeadLaneJobIT {
     @DisplayName("Should execute ready qa_lead lane by scheduler job")
     void givenReadyQaLeadLane_whenSchedulerRuns_thenSubmitQaLeadInputAndMoveLaneInProgress() {
         //given
+        final QaLeadPayload payload = new QaLeadPayload();
+        payload.setRequirements(Set.of("sr1"));
+        payload.setConstraints(Set.of("qc1"));
+        payload.setNonGoals(Set.of("qn1"));
+        payload.setRisks(Set.of("qr1"));
+        payload.setDependencies(Set.of("qd1"));
+        payload.setQualityFocus(Set.of("qf1"));
+        payload.setEdgeConsiderations(Set.of("qe1"));
+
         this.testManager.mongo()
                 .create(TicketDocument.class)
                 .body("readyToStartQaLeadJobSeedTicket.json");
@@ -64,15 +73,7 @@ class ReadyToStartQaLeadLaneJobIT {
                         AgentTicketStatus.CREATED,
                         "automationservice-sox",
                         Agent.QA_LEAD,
-                        QaLeadPayload.builder()
-                                .requirements(Set.of("sr1"))
-                                .constraints(Set.of("qc1"))
-                                .nonGoals(Set.of("qn1"))
-                                .risks(Set.of("qr1"))
-                                .dependencies(Set.of("qd1"))
-                                .qualityFocus(Set.of("qf1"))
-                                .edgeConsiderations(Set.of("qe1"))
-                                .build(),
+                        payload,
                         LocalDateTime.parse("2026-01-01T10:00:00"),
                         LocalDateTime.parse("2026-01-01T10:00:00")));
 
@@ -91,15 +92,7 @@ class ReadyToStartQaLeadLaneJobIT {
         verify(this.codexClient, org.mockito.Mockito.atLeastOnce())
                 .submit(inputCaptor.capture(), eq("/dev/ttys999"));
 
-        final QaLeadPayload expectedTask = QaLeadPayload.builder()
-                .requirements(Set.of("sr1"))
-                .constraints(Set.of("qc1"))
-                .nonGoals(Set.of("qn1"))
-                .risks(Set.of("qr1"))
-                .dependencies(Set.of("qd1"))
-                .qualityFocus(Set.of("qf1"))
-                .edgeConsiderations(Set.of("qe1"))
-                .build();
+        final QaLeadPayload expectedTask = payload;
         if (inputCaptor.getAllValues().stream().noneMatch(actual -> Objects.equals(actual.getTasks(), Set.of(expectedTask)))) {
             throw new AssertionError("Unexpected qa_lead tasks: " + inputCaptor.getAllValues());
         }
