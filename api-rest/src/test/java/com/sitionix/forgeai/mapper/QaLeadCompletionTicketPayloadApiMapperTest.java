@@ -11,7 +11,6 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadIntegrationTes
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadUnitTestNote;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,18 +49,6 @@ class QaLeadCompletionTicketPayloadApiMapperTest {
 
         //then
         assertThat(actual).isEqualTo(this.getExpectedTestUnitPayload());
-    }
-
-    @Test
-    void givenCompleteQaLeadLaneRequest_whenAsTestUiPayload_thenMapFields() {
-        //given
-        final CompleteQaLeadLaneRequestDTO source = this.getSource();
-
-        //when
-        final TestUiPayload actual = this.qaLeadCompletionTicketPayloadApiMapper.asTestUiPayload(source);
-
-        //then
-        assertThat(actual).isEqualTo(this.getExpectedTestUiPayload());
     }
 
     private CompleteQaLeadLaneRequestDTO getSource() {
@@ -110,16 +97,6 @@ class QaLeadCompletionTicketPayloadApiMapperTest {
         payload.setTask("Prepare unit test execution context");
         payload.setScope("automationservice-sox");
         payload.setSummary("summary");
-        payload.setUnitTestNotes(Set.of(this.getExpectedUnitTestNote()));
-        return payload;
-    }
-
-    private TestUiPayload getExpectedTestUiPayload() {
-        final TestUiPayload payload = new TestUiPayload();
-        payload.setTask("Prepare UI test execution context");
-        payload.setScope("automationservice-sox");
-        payload.setSummary("summary");
-        payload.setIntegrationTestCases(Set.of(this.getExpectedIntegrationTestCase()));
         payload.setUnitTestNotes(Set.of(this.getExpectedUnitTestNote()));
         return payload;
     }

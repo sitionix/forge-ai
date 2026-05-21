@@ -33,13 +33,6 @@ public interface QaLeadCompletionTicketPayloadApiMapper {
     @Mapping(target = "unitTestNotes", source = "unitTestNotes")
     TestItPayload asTestItPayload(CompleteQaLeadLaneRequestDTO source);
 
-    @Mapping(target = "task", expression = "java(\"Prepare UI test execution context\")")
-    @Mapping(target = "scope", source = "scope")
-    @Mapping(target = "summary", source = "summary")
-    @Mapping(target = "integrationTestCases", source = "integrationTestCases")
-    @Mapping(target = "unitTestNotes", source = "unitTestNotes")
-    com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload asTestUiPayload(CompleteQaLeadLaneRequestDTO source);
-
     Set<QaLeadIntegrationTestCase> asIntegrationTestCases(List<QaLeadIntegrationTestCaseDTO> source);
 
     Set<QaLeadUnitTestNote> asUnitTestNotes(List<QaLeadUnitTestNoteDTO> source);
