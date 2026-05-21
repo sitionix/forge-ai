@@ -1,5 +1,5 @@
 {
-  "scope": "backendforfrontendservice-sox",
+  "scope": "automationservice-sox",
   "summary": "Prepared integration test cases for backend agent action implementation.",
   "integrationTestCases": [
     {
@@ -17,6 +17,12 @@
       ],
       "then": [
         "response 200"
+      ],
+      "dataChecks": [
+        {
+          "target": "agent ticket persisted",
+          "expectation": "created record"
+        }
       ],
       "priority": "HIGH"
     }

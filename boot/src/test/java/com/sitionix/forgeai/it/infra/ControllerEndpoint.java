@@ -153,18 +153,6 @@ public class ControllerEndpoint {
         );
     }
 
-    public static Endpoint<CompleteQaLeadLaneRequestDTO, CompleteQaLeadLaneResponseDTO> completeQaLeadLaneScopeMismatch() {
-        return Endpoint.createContract(
-                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/qa-lead/complete",
-                HttpMethod.POST,
-                CompleteQaLeadLaneRequestDTO.class,
-                CompleteQaLeadLaneResponseDTO.class,
-                (MockmvcDefault) context -> context
-                        .withRequest("requestCompleteQaLeadLaneScopeMismatch.json")
-                        .expectStatus(HttpStatus.BAD_REQUEST.value())
-        );
-    }
-
     private ControllerEndpoint() {
     }
 }
