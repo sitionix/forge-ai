@@ -1,8 +1,6 @@
 package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
-import com.sitionix.forgeai.domain.model.ticket.AgentTicketStatus;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
@@ -11,19 +9,17 @@ import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuild
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
+import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
+import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.Objects;
-import java.time.LocalDateTime;
-import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 @IntegrationTest(properties = {
         "spring.task.scheduling.enabled=false",
@@ -50,60 +46,36 @@ class ReadyToStartImplementBeLaneJobIT {
     @DisplayName("Should execute ready implement_be lane by scheduler job")
     void givenReadyImplementBeLane_whenSchedulerRuns_thenSubmitImplementBeInputAndMoveLaneInProgress() {
         //given
-        final ImplementBePayload payload = new ImplementBePayload();
-        payload.setTask("implement task");
-        payload.setScope("automationservice-sox");
-        payload.setSummary("summary");
-        payload.setRequirements(Set.of("r1"));
-        payload.setConstraints(Set.of("c1"));
-        payload.setNonGoals(Set.of("n1"));
-        payload.setArchitectureDecision("decision");
-        payload.setDependencies(Set.of("d1"));
-        payload.setAcceptanceNotes(Set.of("a1"));
-        payload.setRisks(Set.of("risk1"));
+        final UUID ticketId = UUID.fromString("51111111-1111-1111-1111-111111111111");
+        final UUID implementBeLaneId = UUID.fromString("52222222-2222-2222-2222-222222222222");
 
         this.testManager.mongo()
                 .create(TicketDocument.class)
-                .body("readyToStartImplementBeJobSeedTicket.json");
-        this.testManager.mongo()
-                .create(AgentTicketDocument.class)
-                .body(new AgentTicketDocument(
-                        UUID.fromString("15333333-3333-3333-3333-333333333333"),
-                        UUID.fromString("15111111-1111-1111-1111-111111111111"),
-                        UUID.fromString("15222222-2222-2222-2222-222222222222"),
-                        AgentTicketStatus.CREATED,
-                        "automationservice-sox",
-                        Agent.IMPLEMENT_BE,
-                        payload,
-                        LocalDateTime.parse("2026-01-01T10:00:00"),
-                        LocalDateTime.parse("2026-01-01T10:00:00")));
+                .body("completeImplementBeLaneSeedTicket.json");
+
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.completeImplementBeLane())
+                .withRequest("requestCompleteImplementBeLane.json")
+                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", implementBeLaneId))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(implementBeLaneId.toString()))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
+                .assertDefault();
 
         this.testManager.mongo()
                 .get(TicketDocument.class)
                 .hasSize(1);
         this.testManager.mongo()
                 .get(AgentTicketDocument.class)
-                .hasSize(1);
-        final ArgumentCaptor<AgentExecutionInput> inputCaptor = ArgumentCaptor.forClass(AgentExecutionInput.class);
+                .hasSize(2);
 
         //when
         this.readyToStartLaneJob.run();
 
         //then
-        verify(this.codexClient, org.mockito.Mockito.atLeastOnce())
-                .submit(inputCaptor.capture(), eq("/dev/ttys999"));
-
-        final ImplementBePayload expectedTask = payload;
-        if (inputCaptor.getAllValues().stream().noneMatch(actual -> Objects.equals(actual.getTasks(), Set.of(expectedTask)))) {
-            throw new AssertionError("Unexpected implement_be tasks: " + inputCaptor.getAllValues());
-        }
-
         this.testManager.mongo()
-                .get(TicketDocument.class)
-                .hasSize(1)
-                .singleElement()
-                .andExpected(value -> value.getLanes().stream()
-                        .anyMatch(lane -> Objects.equals(lane.getId(), java.util.UUID.fromString("15222222-2222-2222-2222-222222222222"))
-                                && Objects.equals(LaneStatus.IN_PROGRESS, lane.getStatus())));
+                .assertEntities(TicketDocument.class)
+                .ignoreFields("id", "createdAt", "updatedAt", "attempt", "inputTaskIds")
+                .containsWithJsonsStrict("expectedReadyToStartImplementBeLaneJobTicket.json");
     }
 }
