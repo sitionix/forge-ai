@@ -13,7 +13,7 @@
         "flow": {
           "name": "Create agent action",
           "method": "POST",
-          "path": "/api/v1/agent-actions"
+          "path": "/"
         },
         "given": [
           "ticket exists"
