@@ -3,6 +3,7 @@ package com.sitionix.forgeai.api.usecase;
 import com.app_afesox.fgaisox.api_first.dto.ApiLaneContractResult;
 import com.app_afesox.fgaisox.api_first.dto.ApiLaneGeneratedArtifact;
 import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneRequest;
+import com.sitionix.forgeai.api.LaneScopeValidator;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
@@ -29,9 +30,16 @@ public class CompleteApiLaneOrchestrationUseCase {
     private final LaneRepository laneRepository;
     private final CreateAgentTask createAgentTask;
     private final ServicePropertiesProvider servicePropertiesProvider;
+    private final LaneScopeValidator laneScopeValidator;
 
     public void complete(final UUID ticketId, final UUID laneId, final CompleteApiLaneRequest request) {
-        final ExecutionContext context = this.buildContext(request);
+        final Set<String> relevantScopes = this.laneScopeValidator.resolveRelevantApiScopes(laneId, request.getContracts().stream()
+                .map(ApiLaneContractResult::getScope)
+                .collect(Collectors.toSet()));
+        final List<ApiLaneContractResult> filteredContracts = request.getContracts().stream()
+                .filter(value -> relevantScopes.contains(value.getScope()))
+                .toList();
+        final ExecutionContext context = this.buildContext(filteredContracts);
         this.findImplementationLanes(laneId).forEach(targetLane -> this.createTaskForTargetLane(ticketId, laneId, request.getSummary(), targetLane, context));
     }
 
@@ -64,7 +72,7 @@ public class CompleteApiLaneOrchestrationUseCase {
                 .toList();
     }
 
-    private ExecutionContext buildContext(final CompleteApiLaneRequest request) {
+    private ExecutionContext buildContext(final List<ApiLaneContractResult> contracts) {
         final Map<String, String> apiFamilyByScope = this.servicePropertiesProvider.getServices().values().stream()
                 .filter(value -> Objects.nonNull(value.getPath()))
                 .filter(value -> Objects.nonNull(value.getContractRefs()))
@@ -74,9 +82,9 @@ public class CompleteApiLaneOrchestrationUseCase {
                         value -> value.getContractRefs().get("api").getApiFamily(),
                         (left, right) -> left
                 ));
-        final Map<String, List<ApiLaneContractResult>> contractsByScope = request.getContracts().stream()
+        final Map<String, List<ApiLaneContractResult>> contractsByScope = contracts.stream()
                 .collect(Collectors.groupingBy(ApiLaneContractResult::getScope));
-        final Map<String, List<ApiLaneContractResult>> contractsByApiFamily = request.getContracts().stream()
+        final Map<String, List<ApiLaneContractResult>> contractsByApiFamily = contracts.stream()
                 .collect(Collectors.groupingBy(value -> this.apiFamilyByScope(value.getScope(), apiFamilyByScope)));
         return new ExecutionContext(apiFamilyByScope, contractsByScope, contractsByApiFamily);
     }

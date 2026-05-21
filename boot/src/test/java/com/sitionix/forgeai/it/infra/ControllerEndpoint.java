@@ -53,6 +53,18 @@ public class ControllerEndpoint {
         );
     }
 
+    public static Endpoint<CompleteAnalyzerLaneRequestDTO, CompleteAnalyzerLaneResponseDTO> completeAnalyzerLaneScopeMismatch() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete",
+                HttpMethod.POST,
+                CompleteAnalyzerLaneRequestDTO.class,
+                CompleteAnalyzerLaneResponseDTO.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteAnalyzerLane.json")
+                        .expectStatus(HttpStatus.BAD_REQUEST.value())
+        );
+    }
+
     public static Endpoint<CompleteArchitectLaneRequest, CompleteArchitectLaneResponse> completeArchitectLane() {
         return Endpoint.createContract(
                 "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/architect/complete",
@@ -65,6 +77,18 @@ public class ControllerEndpoint {
         );
     }
 
+    public static Endpoint<CompleteArchitectLaneRequest, CompleteArchitectLaneResponse> completeArchitectLaneScopeMismatch() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/architect/complete",
+                HttpMethod.POST,
+                CompleteArchitectLaneRequest.class,
+                CompleteArchitectLaneResponse.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteArchitectLaneBffApiEventRequired.json")
+                        .expectStatus(HttpStatus.BAD_REQUEST.value())
+        );
+    }
+
     public static Endpoint<CompleteApiLaneRequest, CompleteApiLaneResponse> completeApiLane() {
         return Endpoint.createContract(
                 "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/api/complete",
@@ -74,6 +98,18 @@ public class ControllerEndpoint {
                 (MockmvcDefault) context -> context
                         .withRequest("requestCompleteApiLane.json")
                         .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<CompleteApiLaneRequest, CompleteApiLaneResponse> completeApiLaneScopeMismatch() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/api/complete",
+                HttpMethod.POST,
+                CompleteApiLaneRequest.class,
+                CompleteApiLaneResponse.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteApiLaneScopeMismatch.json")
+                        .expectStatus(HttpStatus.BAD_REQUEST.value())
         );
     }
 

@@ -4,6 +4,7 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 
@@ -17,7 +18,7 @@ public class Lane {
     private LaneStatus status;
     private int attempt;
     private Set<UUID> inputTaskIds;
-    private Set<LaneDependency> dependsOn;
+    private LinkedHashSet<LaneDependency> dependsOn;
 
     public UUID singleInputTaskIdForExecution() {
         final Set<UUID> ids = this.inputTaskIds == null ? Collections.emptySet() : this.inputTaskIds;

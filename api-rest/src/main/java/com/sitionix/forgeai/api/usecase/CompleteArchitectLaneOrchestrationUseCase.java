@@ -1,7 +1,9 @@
 package com.sitionix.forgeai.api.usecase;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
-import com.sitionix.forgeai.api.ScopeMismatchException;
+import com.app_afesox.fgaisox.api_first.dto.ArchitectApiRequest;
+import com.app_afesox.fgaisox.api_first.dto.ArchitectEventRequest;
+import com.sitionix.forgeai.api.LaneScopeValidator;
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
@@ -9,14 +11,13 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
-import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
-import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -27,24 +28,13 @@ public class CompleteArchitectLaneOrchestrationUseCase {
     private final AgentTicketApiMapper agentTicketApiMapper;
     private final CreateAgentTask createAgentTask;
     private final ServicePropertiesProvider servicePropertiesProvider;
-    private final TicketRepository ticketRepository;
+    private final LaneScopeValidator laneScopeValidator;
 
     public void complete(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
-        this.validateImplementationScope(laneId, request.getImplementationHandoff().getScope());
+        this.laneScopeValidator.validateArchitectCallbackScope(laneId, request.getImplementationHandoff().getScope());
         this.createImplementationTicket(ticketId, laneId, request);
         this.createApiTicket(ticketId, laneId, request);
         this.createEventTicket(ticketId, laneId, request);
-    }
-
-    private void validateImplementationScope(final UUID laneId, final String requestScope) {
-        final Lane sourceLane = this.ticketRepository.findByLaneId(laneId)
-                .orElseThrow(() -> new IllegalArgumentException("Lane not found with id: " + laneId));
-        if (Objects.equals(sourceLane.getScope(), requestScope)) {
-            return;
-        }
-        throw new ScopeMismatchException("Implementation scope mismatch: laneId=" + laneId
-                + ", laneScope=" + sourceLane.getScope()
-                + ", requestScope=" + requestScope);
     }
 
     private void createImplementationTicket(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
@@ -59,15 +49,59 @@ public class CompleteArchitectLaneOrchestrationUseCase {
     }
 
     private void createApiTicket(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
-        final AgentTicket<ApiPayload> apiTicket = this.agentTicketApiMapper.asApiTicket(request, ticketId);
-        apiTicket.setScope(ScopeMode.GLOBAL_SCOPE);
-        this.createAgentTask.create(apiTicket, laneId);
+        this.createOrMarkNotNeeded(
+                this.shouldCreateApiTask(request.getApiRequest()),
+                laneId,
+                ScopeMode.GLOBAL_SCOPE,
+                Agent.API,
+                () -> {
+                    final AgentTicket<ApiPayload> apiTicket = this.agentTicketApiMapper.asApiTicket(request, ticketId);
+                    apiTicket.setScope(ScopeMode.GLOBAL_SCOPE);
+                    return apiTicket;
+                }
+        );
     }
 
     private void createEventTicket(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
-        final AgentTicket<EventPayload> eventTicket = this.agentTicketApiMapper.asEventTicket(request, ticketId);
-        eventTicket.setScope(ScopeMode.GLOBAL_SCOPE);
-        this.createAgentTask.create(eventTicket, laneId);
+        this.createOrMarkNotNeeded(
+                this.shouldCreateEventTask(request.getEventRequest()),
+                laneId,
+                ScopeMode.GLOBAL_SCOPE,
+                Agent.EVENT,
+                () -> {
+                    final AgentTicket<EventPayload> eventTicket = this.agentTicketApiMapper.asEventTicket(request, ticketId);
+                    eventTicket.setScope(ScopeMode.GLOBAL_SCOPE);
+                    return eventTicket;
+                }
+        );
+    }
+
+    private void createOrMarkNotNeeded(final boolean required,
+                                       final UUID laneId,
+                                       final String scope,
+                                       final Agent targetAgent,
+                                       final Supplier<AgentTicket<?>> ticketSupplier) {
+        if (required) {
+            this.createAgentTask.create(ticketSupplier.get(), laneId);
+            return;
+        }
+        this.createAgentTask.markAsNotNeeded(laneId, scope, targetAgent);
+    }
+
+    private boolean shouldCreateApiTask(final ArchitectApiRequest apiRequest) {
+        if (Boolean.TRUE.equals(apiRequest.getRequired())) {
+            return true;
+        }
+        return Objects.nonNull(apiRequest.getOperations()) && !apiRequest.getOperations().isEmpty();
+    }
+
+    private boolean shouldCreateEventTask(final ArchitectEventRequest eventRequest) {
+        if (Boolean.TRUE.equals(eventRequest.getRequired())) {
+            return true;
+        }
+        return (Objects.nonNull(eventRequest.getEventName()) && !eventRequest.getEventName().isBlank())
+                || (Objects.nonNull(eventRequest.getPayloadFields()) && !eventRequest.getPayloadFields().isEmpty())
+                || (Objects.nonNull(eventRequest.getConsumers()) && !eventRequest.getConsumers().isEmpty());
     }
 
     private Agent resolveImplementationAgent(final String scope) {

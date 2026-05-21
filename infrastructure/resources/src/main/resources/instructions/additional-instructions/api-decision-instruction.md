@@ -20,9 +20,9 @@ API work includes:
 
 For this lane model, make the decision strictly for the assigned scope payload.
 
-If this scope must call another scope synchronously through HTTP/API, and no existing compatible contract is provided, mark API work as required.
+If this scope must call another scope synchronously through HTTP/API, mark API work as required.
 
-If another selected scope must call this scope synchronously through HTTP/API, and no existing compatible contract is provided, mark API work as required.
+If another selected scope must call this scope synchronously through HTTP/API, mark API work as required.
 
 Endpoint ownership is not a condition for `required: true`.
 

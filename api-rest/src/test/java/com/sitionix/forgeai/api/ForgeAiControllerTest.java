@@ -10,6 +10,7 @@ import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
@@ -51,6 +52,12 @@ class ForgeAiControllerTest {
     private CreateAgentTask createAgentTask;
 
     @Mock
+    private TicketRepository ticketRepository;
+
+    @Mock
+    private LaneScopeValidator laneScopeValidator;
+
+    @Mock
     private CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
 
     @Mock
@@ -64,6 +71,8 @@ class ForgeAiControllerTest {
                 this.terminalTtyResolver,
                 this.agentTicketApiMapper,
                 this.createAgentTask,
+                this.ticketRepository,
+                this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase
         );
@@ -77,6 +86,8 @@ class ForgeAiControllerTest {
                 this.terminalTtyResolver,
                 this.agentTicketApiMapper,
                 this.createAgentTask,
+                this.ticketRepository,
+                this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase
         );

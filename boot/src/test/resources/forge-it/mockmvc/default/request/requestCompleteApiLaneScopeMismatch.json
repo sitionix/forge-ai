@@ -1,0 +1,22 @@
+{
+  "summary": "API callback with unexpected contract scope",
+  "contracts": [
+    {
+      "scope": "unknown-service-sox",
+      "summary": "Unexpected scope in callback payload.",
+      "operationId": "createAgentAction",
+      "method": "POST",
+      "path": "/api/v1/agent-actions",
+      "clientClass": "AgentActionsApi",
+      "requestDto": "CreateAgentActionRequestDTO",
+      "responseDto": "AgentActionDTO",
+      "artifacts": [],
+      "notes": [
+        "This scope is intentionally invalid for negative IT."
+      ]
+    }
+  ],
+  "notes": [
+    "Negative scenario: contract scope must be one of produced implementation scopes."
+  ]
+}

@@ -58,6 +58,10 @@ public class CreateAgentTaskUseCase implements CreateAgentTask {
     public void markAsNotNeeded(final UUID sourceLaneId, final String scope, final Agent agent) {
         final Lane laneToProduce = this.findLaneToProduceOptional(sourceLaneId, scope, agent)
                 .orElseThrow(() -> this.laneNotFound(sourceLaneId, scope, agent));
+        if (laneToProduce.getInputTaskIds() != null && !laneToProduce.getInputTaskIds().isEmpty()) {
+            this.completeAgentLane.completeAndPrepareAgents(sourceLaneId);
+            return;
+        }
         this.ticketRepository.updateLaneStatus(laneToProduce.getId(), LaneStatus.NOT_NEEDED);
         this.completeAgentLane.completeAndPrepareAgents(sourceLaneId);
     }
