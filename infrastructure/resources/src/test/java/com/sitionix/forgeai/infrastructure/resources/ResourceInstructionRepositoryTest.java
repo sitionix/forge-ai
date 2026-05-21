@@ -24,8 +24,13 @@ class ResourceInstructionRepositoryTest {
         analyzerConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete");
         analyzerConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of("instructions/shared/completion-callback.md")));
 
+        final InstructionResourcesProperties.AgentConfig implementBeConfig = new InstructionResourcesProperties.AgentConfig();
+        implementBeConfig.setInstructions("instructions/agents/implement_be.md");
+        implementBeConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-be/complete");
+
         final LinkedHashMap<String, InstructionResourcesProperties.AgentConfig> agents = new LinkedHashMap<>();
         agents.put("analyzer", analyzerConfig);
+        agents.put("implement_be", implementBeConfig);
         properties.setAgents(agents);
         properties.setShared(new LinkedHashSet<>(Set.of("instructions/shared/common-rules.md")));
 
@@ -53,5 +58,18 @@ class ResourceInstructionRepositoryTest {
         assertThatThrownBy(() -> this.resourceInstructionRepository.findInstructionsByAgentId("unknown"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Agent instruction not found for agentId: unknown");
+    }
+
+    @Test
+    void givenImplementBeAgent_whenFindInstructionsByAgentId_thenReturnResolvedInstructions() {
+        //when
+        final AgentInstructions actual = this.resourceInstructionRepository.findInstructionsByAgentId("implement_be");
+
+        //then
+        assertThat(actual.getAgentInstruction()).contains("# Implement BE Instructions");
+        assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-be/complete");
+        assertThat(actual.getAdditionalInstructions()).isEmpty();
+        assertThat(actual.getSharedInstructions()).hasSize(1);
+        assertThat(actual.getSharedInstructions().iterator().next()).contains("# Common Agent Rules");
     }
 }
