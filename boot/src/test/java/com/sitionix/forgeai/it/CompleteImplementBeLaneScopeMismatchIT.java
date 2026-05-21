@@ -12,6 +12,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
@@ -40,11 +41,13 @@ class CompleteImplementBeLaneScopeMismatchIT {
 
         //when then
         this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeImplementBeLaneScopeMismatch())
+                .ping(ControllerEndpoint.completeImplementBeLane())
+                .withRequest("requestCompleteImplementBeLane.json", request -> request.setScope("backendforfrontendservice-sox"))
                 .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", implementBeLaneId))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("scope_mismatch"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("Implement-be scope mismatch: laneId=62222222-2222-2222-2222-222222222222, laneScope=automationservice-sox, requestScope=backendforfrontendservice-sox"))
-                .assertDefault();
+                .expectStatus(HttpStatus.BAD_REQUEST)
+                .assertAndCreate();
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)

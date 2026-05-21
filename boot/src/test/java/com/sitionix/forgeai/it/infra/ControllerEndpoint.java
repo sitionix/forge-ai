@@ -129,18 +129,6 @@ public class ControllerEndpoint {
         );
     }
 
-    public static Endpoint<CompleteImplementBeLaneRequestDTO, CompleteImplementBeLaneResponseDTO> completeImplementBeLaneScopeMismatch() {
-        return Endpoint.createContract(
-                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-be/complete",
-                HttpMethod.POST,
-                CompleteImplementBeLaneRequestDTO.class,
-                CompleteImplementBeLaneResponseDTO.class,
-                (MockmvcDefault) context -> context
-                        .withRequest("requestCompleteImplementBeLaneScopeMismatch.json")
-                        .expectStatus(HttpStatus.BAD_REQUEST.value())
-        );
-    }
-
     public static Endpoint<CompleteQaLeadLaneRequestDTO, CompleteQaLeadLaneResponseDTO> completeQaLeadLaneBackend() {
         return Endpoint.createContract(
                 "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/qa-lead/complete",
