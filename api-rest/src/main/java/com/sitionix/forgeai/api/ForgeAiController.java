@@ -7,10 +7,13 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
+import com.sitionix.forgeai.api.usecase.CompleteImplementBeLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
@@ -45,6 +48,7 @@ public class ForgeAiController implements ForgeAiApi {
     private final LaneScopeValidator laneScopeValidator;
     private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
     private final CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
+    private final CompleteImplementBeLaneOrchestrationUseCase completeImplementBeLaneOrchestrationUseCase;
 
     @Override
     public ResponseEntity<StartForgeResponseDTO> startForge(@Valid final StartForgeRequestDTO startForgeRequestDTO) {
@@ -112,6 +116,23 @@ public class ForgeAiController implements ForgeAiApi {
         return ResponseEntity.ok(CompleteApiLaneResponse.builder()
                 .laneId(laneId)
                 .laneStatus(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteImplementBeLaneResponseDTO> completeImplementBeLane(final String ticketId,
+                                                                                       final String laneId,
+                                                                                       @Valid final CompleteImplementBeLaneRequestDTO completeImplementBeLaneRequestDTO) {
+        log.info("Received completeImplementBeLane request for ticketId: {}, laneId: {}, with request body: {}",
+                ticketId, laneId, completeImplementBeLaneRequestDTO);
+        final UUID ticketUuid = UUID.fromString(ticketId);
+        final UUID laneUuid = UUID.fromString(laneId);
+        this.completeImplementBeLaneOrchestrationUseCase.complete(ticketUuid, laneUuid, completeImplementBeLaneRequestDTO);
+
+        return ResponseEntity.ok(CompleteImplementBeLaneResponseDTO.builder()
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
                 .ticketId(ticketId)
                 .build());
     }

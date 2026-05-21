@@ -6,6 +6,8 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
@@ -110,6 +112,18 @@ public class ControllerEndpoint {
                 (MockmvcDefault) context -> context
                         .withRequest("requestCompleteApiLaneScopeMismatch.json")
                         .expectStatus(HttpStatus.BAD_REQUEST.value())
+        );
+    }
+
+    public static Endpoint<CompleteImplementBeLaneRequestDTO, CompleteImplementBeLaneResponseDTO> completeImplementBeLane() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-be/complete",
+                HttpMethod.POST,
+                CompleteImplementBeLaneRequestDTO.class,
+                CompleteImplementBeLaneResponseDTO.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteImplementBeLane.json")
+                        .expectStatus(HttpStatus.OK.value())
         );
     }
 

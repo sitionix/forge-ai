@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class LaneScopeValidatorTest {
@@ -66,6 +67,21 @@ class LaneScopeValidatorTest {
     }
 
     @Test
+    void givenImplementBeLaneAndDifferentImplementationScope_whenValidateImplementBeCallbackScope_thenThrowScopeMismatchException() {
+        //given
+        final UUID laneId = UUID.randomUUID();
+        final Lane lane = Lane.builder().id(laneId).scope("automationservice-sox").build();
+        when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
+
+        //when //then
+        assertThatThrownBy(() -> this.laneScopeValidator.validateImplementBeCallbackScope(laneId, "backendforfrontendservice-sox"))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessageContaining("Implement-be scope mismatch");
+
+        verify(this.ticketRepository).findByLaneId(laneId);
+    }
+
+    @Test
     void givenApiLaneProducedImplementationScopesAndUnexpectedContractScope_whenValidateApiCallbackScopes_thenThrowScopeMismatchException() {
         //given
         final UUID laneId = UUID.randomUUID();
@@ -97,11 +113,12 @@ class LaneScopeValidatorTest {
         //when
         this.laneScopeValidator.validateAnalyzerCallbackScope(analyzerLaneId, "automationservice-sox", "automationservice-sox");
         this.laneScopeValidator.validateArchitectCallbackScope(architectLaneId, "automationservice-sox");
+        this.laneScopeValidator.validateImplementBeCallbackScope(architectLaneId, "automationservice-sox");
         this.laneScopeValidator.resolveRelevantApiScopes(apiLaneId, Set.of("automationservice-sox", "backendforfrontendservice-sox"));
 
         //then
         verify(this.ticketRepository).findByLaneId(analyzerLaneId);
-        verify(this.ticketRepository).findByLaneId(architectLaneId);
+        verify(this.ticketRepository, times(2)).findByLaneId(architectLaneId);
         verify(this.laneRepository).findProducedLanes(apiLaneId);
         verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
     }
