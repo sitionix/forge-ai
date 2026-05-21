@@ -3,6 +3,8 @@ package com.sitionix.forgeai.mapper;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementBeIntegrationFlowDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementBePersistenceChangeDTO;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBeIntegrationFlow;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePersistenceChange;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import java.util.List;
 import java.util.Set;
@@ -46,8 +48,8 @@ class TestItTicketPayloadApiMapperTest {
         payload.setTask("Write integration tests for backend integration and persistence changes in automationservice-sox");
         payload.setScope("automationservice-sox");
         payload.setSummary("summary");
-        payload.setIntegrationFlows(Set.of("n1 | POST / | op1 | s1"));
-        payload.setPersistenceChanges(Set.of("TABLE_CREATED | tbl | ps"));
+        payload.setIntegrationFlows(Set.of(new ImplementBeIntegrationFlow("n1", "POST", "/", "op1", "s1")));
+        payload.setPersistenceChanges(Set.of(new ImplementBePersistenceChange("TABLE_CREATED", "tbl", "ps")));
         return payload;
     }
 }

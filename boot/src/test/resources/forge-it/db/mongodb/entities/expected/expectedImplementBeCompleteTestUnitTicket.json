@@ -7,8 +7,14 @@
     "scope": "automationservice-sox",
     "summary": "Implemented backend create flow for agent action records.",
     "changedFiles": [
-      "application/src/main/java/com/sitionix/forgeai/application/usecase/CreateAgentActionUseCase.java :: Added create use case",
-      "domain/src/main/java/com/sitionix/forgeai/domain/repository/AgentActionRepository.java :: Added repository contract"
+      {
+        "path": "application/src/main/java/com/sitionix/forgeai/application/usecase/CreateAgentActionUseCase.java",
+        "reason": "Added create use case"
+      },
+      {
+        "path": "domain/src/main/java/com/sitionix/forgeai/domain/repository/AgentActionRepository.java",
+        "reason": "Added repository contract"
+      }
     ]
   }
 }

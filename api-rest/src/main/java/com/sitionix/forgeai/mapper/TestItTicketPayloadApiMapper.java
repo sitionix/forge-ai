@@ -3,9 +3,12 @@ package com.sitionix.forgeai.mapper;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementBeIntegrationFlowDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementBePersistenceChangeDTO;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBeIntegrationFlow;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePersistenceChange;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
-import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
+import org.mapstruct.IterableMapping;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
@@ -15,23 +18,17 @@ public interface TestItTicketPayloadApiMapper {
     @Mapping(target = "task", expression = "java(\"Write integration tests for backend integration and persistence changes in \" + source.getScope())")
     @Mapping(target = "scope", source = "scope")
     @Mapping(target = "summary", source = "summary")
-    @Mapping(target = "integrationFlows", expression = "java(this.asIntegrationFlows(source.getIntegrationFlows()))")
-    @Mapping(target = "persistenceChanges", expression = "java(this.asPersistenceChanges(source.getPersistenceChanges()))")
+    @Mapping(target = "integrationFlows", source = "integrationFlows")
+    @Mapping(target = "persistenceChanges", source = "persistenceChanges")
     TestItPayload asTestItPayload(CompleteImplementBeLaneRequestDTO source);
 
-    default Set<String> asIntegrationFlows(final java.util.List<ImplementBeIntegrationFlowDTO> source) {
-        return source.stream()
-                .map(value -> value.getName()
-                        + " | " + value.getMethod()
-                        + " " + value.getPath()
-                        + " | " + value.getOperationId()
-                        + " | " + value.getSummary())
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-    }
+    @IterableMapping(elementTargetType = ImplementBeIntegrationFlow.class)
+    Set<ImplementBeIntegrationFlow> asIntegrationFlows(List<ImplementBeIntegrationFlowDTO> source);
 
-    default Set<String> asPersistenceChanges(final java.util.List<ImplementBePersistenceChangeDTO> source) {
-        return source.stream()
-                .map(value -> value.getType() + " | " + value.getName() + " | " + value.getSummary())
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-    }
+    ImplementBeIntegrationFlow asIntegrationFlow(ImplementBeIntegrationFlowDTO source);
+
+    @IterableMapping(elementTargetType = ImplementBePersistenceChange.class)
+    Set<ImplementBePersistenceChange> asPersistenceChanges(List<ImplementBePersistenceChangeDTO> source);
+
+    ImplementBePersistenceChange asPersistenceChange(ImplementBePersistenceChangeDTO source);
 }

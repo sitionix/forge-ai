@@ -4,15 +4,12 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import java.util.Set;
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class TestUnitPayload implements AgentTicketPayload {
-    private String task;
-    private String scope;
+public class ImplementBePersistenceChange implements AgentTicketPayload {
+    private String type;
+    private String name;
     private String summary;
-    private Set<ImplementBeChangedFile> changedFiles;
-    private Set<String> unitTestNotes;
 }

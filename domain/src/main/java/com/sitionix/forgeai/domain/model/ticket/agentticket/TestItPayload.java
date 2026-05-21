@@ -13,8 +13,8 @@ public class TestItPayload implements AgentTicketPayload {
     private String task;
     private String scope;
     private String summary;
-    private Set<String> integrationFlows;
-    private Set<String> persistenceChanges;
+    private Set<ImplementBeIntegrationFlow> integrationFlows;
+    private Set<ImplementBePersistenceChange> persistenceChanges;
     private Set<String> integrationTestCases;
     private Set<String> unitTestNotes;
 }

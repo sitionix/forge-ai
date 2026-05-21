@@ -2,6 +2,7 @@ package com.sitionix.forgeai.mapper;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementBeChangedFileDTO;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBeChangedFile;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import java.util.List;
 import java.util.Set;
@@ -43,7 +44,10 @@ class TestUnitTicketPayloadApiMapperTest {
         payload.setTask("Write unit tests for backend changed files in automationservice-sox");
         payload.setScope("automationservice-sox");
         payload.setSummary("summary");
-        payload.setChangedFiles(Set.of("a.java :: r1", "b.java :: r2"));
+        payload.setChangedFiles(Set.of(
+                new ImplementBeChangedFile("a.java", "r1"),
+                new ImplementBeChangedFile("b.java", "r2")
+        ));
         return payload;
     }
 }
