@@ -13,6 +13,6 @@ public class TestUiPayload implements AgentTicketPayload {
     private String task;
     private String scope;
     private String summary;
-    private Set<String> integrationTestCases;
-    private Set<String> unitTestNotes;
+    private Set<QaLeadIntegrationTestCase> integrationTestCases;
+    private Set<QaLeadUnitTestNote> unitTestNotes;
 }

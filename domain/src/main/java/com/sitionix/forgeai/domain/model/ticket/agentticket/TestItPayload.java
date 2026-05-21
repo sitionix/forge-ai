@@ -15,6 +15,6 @@ public class TestItPayload implements AgentTicketPayload {
     private String summary;
     private Set<ImplementBeIntegrationFlow> integrationFlows;
     private Set<ImplementBePersistenceChange> persistenceChanges;
-    private Set<String> integrationTestCases;
-    private Set<String> unitTestNotes;
+    private Set<QaLeadIntegrationTestCase> integrationTestCases;
+    private Set<QaLeadUnitTestNote> unitTestNotes;
 }

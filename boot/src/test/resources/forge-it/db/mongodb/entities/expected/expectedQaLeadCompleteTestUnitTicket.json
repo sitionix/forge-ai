@@ -8,7 +8,10 @@
     "scope": "automationservice-sox",
     "summary": "Prepared integration test cases for backend agent action implementation.",
     "unitTestNotes": [
-      "CreateAgentActionUseCase :: Validate missing title handling"
+      {
+        "target": "CreateAgentActionUseCase",
+        "note": "Validate missing title handling"
+      }
     ]
   }
 }

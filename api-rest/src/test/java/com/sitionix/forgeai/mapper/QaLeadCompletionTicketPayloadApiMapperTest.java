@@ -5,8 +5,13 @@ import com.app_afesox.fgaisox.api_first.dto.QaLeadDataCheckDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadIntegrationFlowDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadIntegrationTestCaseDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadUnitTestNoteDTO;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadDataCheck;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadIntegrationFlow;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadIntegrationTestCase;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadUnitTestNote;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,7 +25,7 @@ class QaLeadCompletionTicketPayloadApiMapperTest {
 
     @BeforeEach
     void setUp() {
-        this.qaLeadCompletionTicketPayloadApiMapper = new QaLeadCompletionTicketPayloadApiMapperImpl(new QaLeadCompletionTicketPayloadApiMapperSupport());
+        this.qaLeadCompletionTicketPayloadApiMapper = new QaLeadCompletionTicketPayloadApiMapperImpl();
     }
 
     @Test
@@ -45,6 +50,18 @@ class QaLeadCompletionTicketPayloadApiMapperTest {
 
         //then
         assertThat(actual).isEqualTo(this.getExpectedTestUnitPayload());
+    }
+
+    @Test
+    void givenCompleteQaLeadLaneRequest_whenAsTestUiPayload_thenMapFields() {
+        //given
+        final CompleteQaLeadLaneRequestDTO source = this.getSource();
+
+        //when
+        final TestUiPayload actual = this.qaLeadCompletionTicketPayloadApiMapper.asTestUiPayload(source);
+
+        //then
+        assertThat(actual).isEqualTo(this.getExpectedTestUiPayload());
     }
 
     private CompleteQaLeadLaneRequestDTO getSource() {
@@ -83,8 +100,8 @@ class QaLeadCompletionTicketPayloadApiMapperTest {
         payload.setTask("Prepare integration test execution context");
         payload.setScope("automationservice-sox");
         payload.setSummary("summary");
-        payload.setIntegrationTestCases(Set.of("title=Create agent action successfully | flow=POST /api/v1/agent-actions | given=ticket exists | when=POST request submitted | then=response 200 | dataChecks=agent ticket persisted -> created record | priority=HIGH"));
-        payload.setUnitTestNotes(Set.of("CreateAgentActionUseCase :: Validate missing title handling"));
+        payload.setIntegrationTestCases(Set.of(this.getExpectedIntegrationTestCase()));
+        payload.setUnitTestNotes(Set.of(this.getExpectedUnitTestNote()));
         return payload;
     }
 
@@ -93,7 +110,33 @@ class QaLeadCompletionTicketPayloadApiMapperTest {
         payload.setTask("Prepare unit test execution context");
         payload.setScope("automationservice-sox");
         payload.setSummary("summary");
-        payload.setUnitTestNotes(Set.of("CreateAgentActionUseCase :: Validate missing title handling"));
+        payload.setUnitTestNotes(Set.of(this.getExpectedUnitTestNote()));
         return payload;
+    }
+
+    private TestUiPayload getExpectedTestUiPayload() {
+        final TestUiPayload payload = new TestUiPayload();
+        payload.setTask("Prepare UI test execution context");
+        payload.setScope("automationservice-sox");
+        payload.setSummary("summary");
+        payload.setIntegrationTestCases(Set.of(this.getExpectedIntegrationTestCase()));
+        payload.setUnitTestNotes(Set.of(this.getExpectedUnitTestNote()));
+        return payload;
+    }
+
+    private QaLeadIntegrationTestCase getExpectedIntegrationTestCase() {
+        return new QaLeadIntegrationTestCase(
+                "Create agent action successfully",
+                new QaLeadIntegrationFlow("Create agent action", "POST", "/api/v1/agent-actions", null),
+                Set.of("ticket exists"),
+                Set.of("POST request submitted"),
+                Set.of("response 200"),
+                Set.of(new QaLeadDataCheck("agent ticket persisted", "created record")),
+                "HIGH"
+        );
+    }
+
+    private QaLeadUnitTestNote getExpectedUnitTestNote() {
+        return new QaLeadUnitTestNote("CreateAgentActionUseCase", "Validate missing title handling");
     }
 }

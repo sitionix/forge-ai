@@ -7,10 +7,36 @@
     "scope": "sitionix-spa",
     "summary": "Prepared integration test cases for frontend agent action implementation.",
     "integrationTestCases": [
-      "title=Create agent action successfully | flow=POST / | given=ticket exists | when=POST request submitted | then=response 200 | dataChecks=agent ticket persisted -> created record | priority=HIGH"
+      {
+        "title": "Create agent action successfully",
+        "flow": {
+          "name": "Create agent action",
+          "method": "POST",
+          "path": "/api/v1/agent-actions"
+        },
+        "given": [
+          "ticket exists"
+        ],
+        "when": [
+          "POST request submitted"
+        ],
+        "then": [
+          "response 200"
+        ],
+        "dataChecks": [
+          {
+            "target": "agent ticket persisted",
+            "expectation": "created record"
+          }
+        ],
+        "priority": "HIGH"
+      }
     ],
     "unitTestNotes": [
-      "CreateAgentActionUseCase :: Validate missing title handling"
+      {
+        "target": "CreateAgentActionUseCase",
+        "note": "Validate missing title handling"
+      }
     ]
   }
 }

@@ -1,22 +1,22 @@
 package com.sitionix.forgeai.mapper;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.QaLeadDataCheckDTO;
+import com.app_afesox.fgaisox.api_first.dto.QaLeadIntegrationFlowDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadIntegrationTestCaseDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadUnitTestNoteDTO;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadDataCheck;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadIntegrationFlow;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadIntegrationTestCase;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadUnitTestNote;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import java.util.List;
 import java.util.Set;
-import org.mapstruct.InjectionStrategy;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
-import org.mapstruct.IterableMapping;
 
-@Mapper(
-        componentModel = "spring",
-        uses = QaLeadCompletionTicketPayloadApiMapperSupport.class,
-        injectionStrategy = InjectionStrategy.CONSTRUCTOR
-)
+@Mapper(componentModel = "spring")
 public interface QaLeadCompletionTicketPayloadApiMapper {
 
     @Mapping(target = "task", expression = "java(\"Prepare unit test execution context\")")
@@ -33,9 +33,24 @@ public interface QaLeadCompletionTicketPayloadApiMapper {
     @Mapping(target = "unitTestNotes", source = "unitTestNotes")
     TestItPayload asTestItPayload(CompleteQaLeadLaneRequestDTO source);
 
-    @IterableMapping(qualifiedByName = "asIntegrationTestCase")
-    Set<String> asIntegrationTestCases(List<QaLeadIntegrationTestCaseDTO> source);
+    @Mapping(target = "task", expression = "java(\"Prepare UI test execution context\")")
+    @Mapping(target = "scope", source = "scope")
+    @Mapping(target = "summary", source = "summary")
+    @Mapping(target = "integrationTestCases", source = "integrationTestCases")
+    @Mapping(target = "unitTestNotes", source = "unitTestNotes")
+    com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload asTestUiPayload(CompleteQaLeadLaneRequestDTO source);
 
-    @IterableMapping(qualifiedByName = "asUnitTestNote")
-    Set<String> asUnitTestNotes(List<QaLeadUnitTestNoteDTO> source);
+    Set<QaLeadIntegrationTestCase> asIntegrationTestCases(List<QaLeadIntegrationTestCaseDTO> source);
+
+    Set<QaLeadUnitTestNote> asUnitTestNotes(List<QaLeadUnitTestNoteDTO> source);
+
+    QaLeadIntegrationTestCase asIntegrationTestCase(QaLeadIntegrationTestCaseDTO source);
+
+    QaLeadIntegrationFlow asIntegrationFlow(QaLeadIntegrationFlowDTO source);
+
+    Set<QaLeadDataCheck> asDataChecks(List<QaLeadDataCheckDTO> source);
+
+    QaLeadDataCheck asDataCheck(QaLeadDataCheckDTO source);
+
+    QaLeadUnitTestNote asUnitTestNote(QaLeadUnitTestNoteDTO source);
 }
