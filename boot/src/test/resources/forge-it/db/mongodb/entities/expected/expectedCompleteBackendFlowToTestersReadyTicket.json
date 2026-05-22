@@ -142,7 +142,7 @@
       "type": "TEST_UNIT",
       "scope": "automationservice-sox",
       "serviceId": "atmssox",
-      "status": "READY_TO_START",
+      "status": "COMPLETED",
       "dependsOn": [
         {
           "type": "IMPLEMENT_BE",
@@ -154,7 +154,7 @@
       "type": "TEST_UNIT",
       "scope": "backendforfrontendservice-sox",
       "serviceId": "bffssox",
-      "status": "READY_TO_START",
+      "status": "COMPLETED",
       "dependsOn": [
         {
           "type": "IMPLEMENT_BE",
@@ -190,6 +190,32 @@
         },
         {
           "type": "QA_LEAD",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "REVIEWER",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "COMPLETED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "TEST_UNIT",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "REVIEWER",
+      "scope": "backendforfrontendservice-sox",
+      "serviceId": "bffssox",
+      "status": "COMPLETED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "TEST_UNIT",
           "scope": "backendforfrontendservice-sox"
         }
       ]

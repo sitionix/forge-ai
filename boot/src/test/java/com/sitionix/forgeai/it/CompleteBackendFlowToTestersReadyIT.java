@@ -110,6 +110,18 @@ class CompleteBackendFlowToTestersReadyIT {
                 .findFirst()
                 .orElseThrow()
                 .getId();
+        final UUID testUnitAutomationLaneId = ticket.getLanes().stream()
+                .filter(lane -> Objects.equals(lane.getType(), Agent.TEST_UNIT)
+                        && Objects.equals(lane.getScope(), "automationservice-sox"))
+                .findFirst()
+                .orElseThrow()
+                .getId();
+        final UUID testUnitBffLaneId = ticket.getLanes().stream()
+                .filter(lane -> Objects.equals(lane.getType(), Agent.TEST_UNIT)
+                        && Objects.equals(lane.getScope(), "backendforfrontendservice-sox"))
+                .findFirst()
+                .orElseThrow()
+                .getId();
 
         doAnswer(invocation -> {
             final AgentExecutionInput<?> input = invocation.getArgument(0);
@@ -181,6 +193,20 @@ class CompleteBackendFlowToTestersReadyIT {
                         .assertDefault(d -> d.mutateRequest(request -> request.setScope("backendforfrontendservice-sox")));
                 return null;
             }
+            if (Objects.equals(input.getLaneId(), testUnitAutomationLaneId)) {
+                this.testManager.mockMvc()
+                        .ping(ControllerEndpoint.completeUnitTestLane())
+                        .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testUnitAutomationLaneId))
+                        .assertDefault();
+                return null;
+            }
+            if (Objects.equals(input.getLaneId(), testUnitBffLaneId)) {
+                this.testManager.mockMvc()
+                        .ping(ControllerEndpoint.completeUnitTestLane())
+                        .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testUnitBffLaneId))
+                        .assertDefault(d -> d.mutateRequest(request -> request.setScope("backendforfrontendservice-sox")));
+                return null;
+            }
             throw new AssertionError("Unexpected Codex submit laneId=" + input.getLaneId() + ", input=" + input);
         }).when(this.codexClient).submit(any(AgentExecutionInput.class), anyString());
 
@@ -189,11 +215,12 @@ class CompleteBackendFlowToTestersReadyIT {
         this.readyToStartLaneJob.run();
         this.readyToStartLaneJob.run();
         this.readyToStartLaneJob.run();
+        this.readyToStartLaneJob.run();
 
         //then
         this.testManager.mongo()
                 .assertEntities(com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument.class)
-                .hasSize(16);
+                .hasSize(18);
 
         this.testManager.mongo()
                 .assertEntities(TicketDocument.class)

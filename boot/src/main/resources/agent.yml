@@ -53,7 +53,7 @@ agents:
     scope_mode: per_scope
     groups: [ backend ]
     depends_on: [ implement_be ]
-    produces: [ ]
+    produces: [ reviewer ]
 
   - id: test_it
     enabled: true
@@ -67,4 +67,11 @@ agents:
     scope_mode: per_scope
     groups: [ frontend ]
     depends_on: [ implement_fe, qa_lead ]
+    produces: [ ]
+
+  - id: reviewer
+    enabled: true
+    scope_mode: per_scope
+    groups: [ backend ]
+    depends_on: [ test_unit ]
     produces: [ ]

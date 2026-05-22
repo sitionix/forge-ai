@@ -42,8 +42,8 @@ class CompleteQaLeadLaneScopeMismatchIT {
         //when then
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.completeQaLeadLaneBackend())
-                .withRequest("requestCompleteQaLeadLaneBackend.json", request -> request.setScope("backendforfrontendservice-sox"))
                 .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", qaLeadLaneId))
+                .withRequest("requestCompleteQaLeadLaneBackend.json", request -> request.setScope("backendforfrontendservice-sox"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("scope_mismatch"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("QA lead scope mismatch: laneId=92222222-2222-2222-2222-222222222222, laneScope=automationservice-sox, requestScope=backendforfrontendservice-sox"))
                 .expectStatus(HttpStatus.BAD_REQUEST)

@@ -36,10 +36,25 @@ class ResourceInstructionRepositoryTest {
                 "instructions/additional-instructions/java-style-basics.md"
         )));
 
+        final InstructionResourcesProperties.AgentConfig testUnitConfig = new InstructionResourcesProperties.AgentConfig();
+        testUnitConfig.setInstructions("instructions/agents/test_unit.md");
+        testUnitConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-unit/complete");
+        testUnitConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of(
+                "instructions/additional-instructions/java-test-style.md"
+        )));
+
+        final InstructionResourcesProperties.AgentConfig reviewerConfig = new InstructionResourcesProperties.AgentConfig();
+        reviewerConfig.setInstructions("instructions/agents/reviewer.md");
+        reviewerConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of(
+                "instructions/additional-instructions/java-style-basics.md"
+        )));
+
         final LinkedHashMap<String, InstructionResourcesProperties.AgentConfig> agents = new LinkedHashMap<>();
         agents.put("analyzer", analyzerConfig);
         agents.put("qa_lead", qaLeadConfig);
         agents.put("implement_be", implementBeConfig);
+        agents.put("test_unit", testUnitConfig);
+        agents.put("reviewer", reviewerConfig);
         properties.setAgents(agents);
         properties.setShared(new LinkedHashSet<>(Set.of("instructions/shared/common-rules.md")));
 
@@ -92,6 +107,34 @@ class ResourceInstructionRepositoryTest {
         assertThat(actual.getAgentInstruction()).contains("# QA Lead Instructions");
         assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/qa-lead/complete");
         assertThat(actual.getAdditionalInstructions()).isEmpty();
+        assertThat(actual.getSharedInstructions()).hasSize(1);
+        assertThat(actual.getSharedInstructions().iterator().next()).contains("# Common Agent Rules");
+    }
+
+    @Test
+    void givenTestUnitAgent_whenFindInstructionsByAgentId_thenReturnResolvedInstructions() {
+        //when
+        final AgentInstructions actual = this.resourceInstructionRepository.findInstructionsByAgentId("test_unit");
+
+        //then
+        assertThat(actual.getAgentInstruction()).contains("# Test Unit Instructions");
+        assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-unit/complete");
+        assertThat(actual.getAdditionalInstructions()).hasSize(1);
+        assertThat(actual.getAdditionalInstructions().iterator().next()).contains("# Java Test Style");
+        assertThat(actual.getSharedInstructions()).hasSize(1);
+        assertThat(actual.getSharedInstructions().iterator().next()).contains("# Common Agent Rules");
+    }
+
+    @Test
+    void givenReviewerAgent_whenFindInstructionsByAgentId_thenReturnResolvedInstructions() {
+        //when
+        final AgentInstructions actual = this.resourceInstructionRepository.findInstructionsByAgentId("reviewer");
+
+        //then
+        assertThat(actual.getAgentInstruction()).contains("# Reviewer Instructions");
+        assertThat(actual.getEndpoint()).isNull();
+        assertThat(actual.getAdditionalInstructions()).hasSize(1);
+        assertThat(actual.getAdditionalInstructions().iterator().next()).contains("# Java Style Basics");
         assertThat(actual.getSharedInstructions()).hasSize(1);
         assertThat(actual.getSharedInstructions().iterator().next()).contains("# Common Agent Rules");
     }

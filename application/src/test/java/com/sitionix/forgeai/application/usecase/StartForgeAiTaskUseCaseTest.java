@@ -222,6 +222,7 @@ class StartForgeAiTaskUseCaseTest {
         final AgentPropertiesProvider.AgentConfigView testUnit = this.getAgent("test_unit", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.IMPLEMENT_BE));
         final AgentPropertiesProvider.AgentConfigView testIt = this.getAgent("test_it", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.IMPLEMENT_BE, Agent.QA_LEAD));
         final AgentPropertiesProvider.AgentConfigView testUi = this.getAgent("test_ui", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.FRONTEND), List.of(Agent.IMPLEMENT_FE, Agent.QA_LEAD));
+        final AgentPropertiesProvider.AgentConfigView reviewer = this.getAgent("reviewer", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.TEST_UNIT));
 
         this.bind(Agent.ANALYZER, analyzer);
         this.bind(Agent.ARCHITECT, architect);
@@ -233,6 +234,7 @@ class StartForgeAiTaskUseCaseTest {
         this.bind(Agent.TEST_UNIT, testUnit);
         this.bind(Agent.TEST_IT, testIt);
         this.bind(Agent.TEST_UI, testUi);
+        this.bind(Agent.REVIEWER, reviewer);
     }
 
     private void bind(final Agent agent, final AgentPropertiesProvider.AgentConfigView view) {

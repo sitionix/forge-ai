@@ -1,0 +1,37 @@
+{
+  "ticketKey": "SITIONIX-10",
+  "taskDescription": "complete-unit-test-lane",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "OPEN",
+  "lanes": [
+    {
+      "type": "TEST_UNIT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "IN_PROGRESS",
+      "attempt": 0,
+      "inputTaskIds": [
+        "10333333-3333-3333-3333-333333333333"
+      ],
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "REVIEWER",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "TEST_UNIT",
+          "scope": "automationservice-sox"
+        }
+      ]
+    }
+  ]
+}

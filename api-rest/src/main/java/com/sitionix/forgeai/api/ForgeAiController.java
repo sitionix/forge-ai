@@ -11,6 +11,8 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
@@ -19,6 +21,7 @@ import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ReviewerPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
@@ -135,6 +138,23 @@ public class ForgeAiController implements ForgeAiApi {
         this.completeAgentTasks.complete(laneId, List.of(testUnitTicket, testItTicket));
 
         return ResponseEntity.ok(CompleteQaLeadLaneResponseDTO.builder()
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteUnitTestLaneResponseDTO> completeUnitTestLane(final UUID ticketId,
+                                                                                final UUID laneId,
+                                                                                @Valid final CompleteUnitTestLaneRequestDTO completeUnitTestLaneRequestDTO) {
+        log.info("Received completeUnitTestLane request for ticketId: {}, laneId: {}, with request body: {}",
+                ticketId, laneId, completeUnitTestLaneRequestDTO);
+        this.laneScopeValidator.validateUnitTestCallbackScope(laneId, completeUnitTestLaneRequestDTO.getScope());
+        final AgentTicket<ReviewerPayload> reviewerTicket = this.agentTicketApiMapper.asReviewerTicket(completeUnitTestLaneRequestDTO, ticketId);
+        this.completeAgentTasks.complete(laneId, List.of(reviewerTicket));
+
+        return ResponseEntity.ok(CompleteUnitTestLaneResponseDTO.builder()
                 .laneId(laneId)
                 .status(HttpStatus.OK.name())
                 .ticketId(ticketId)

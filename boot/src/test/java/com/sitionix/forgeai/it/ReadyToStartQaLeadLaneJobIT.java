@@ -9,6 +9,7 @@ import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuild
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
+import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
@@ -21,6 +22,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 
 @IntegrationTest(properties = {
         "spring.task.scheduling.enabled=false",
@@ -71,10 +75,29 @@ class ReadyToStartQaLeadLaneJobIT {
                 .get(AgentTicketDocument.class)
                 .hasSize(2);
 
+        doAnswer(invocation -> {
+            final AgentExecutionInput<?> input = invocation.getArgument(0);
+            if (Objects.equals(input.getLaneId(), UUID.fromString("76666666-6666-6666-6666-666666666666"))) {
+                this.testManager.mockMvc()
+                        .ping(ControllerEndpoint.completeUnitTestLane())
+                        .withPathParameters(PathParams.create()
+                                .add("ticketId", ticketId).add("laneId", UUID.fromString("76666666-6666-6666-6666-666666666666")))
+                        .assertDefault();
+                return null;
+            }
+            throw new AssertionError("Unexpected Codex submit laneId=" + input.getLaneId() + ", input=" + input);
+        }).when(this.codexClient).submit(any(AgentExecutionInput.class), anyString());
+
         //when
         this.readyToStartLaneJob.run();
 
         //then
+        this.testManager.mongo()
+                .assertEntities(AgentTicketDocument.class)
+                .ignoreFields("id", "ticketId", "laneId", "createdAt", "updatedAt")
+                .hasSize(3)
+                .containsAllWithJsons("expectedCompleteUnitTestReviewerTicket.json");
+
         this.testManager.mongo()
                 .assertEntities(TicketDocument.class)
                 .ignoreFields("id", "createdAt", "updatedAt", "attempt", "inputTaskIds")

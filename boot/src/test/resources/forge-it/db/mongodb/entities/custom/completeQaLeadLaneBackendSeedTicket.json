@@ -27,7 +27,9 @@
       "serviceId": "atmssox",
       "status": "COMPLETED",
       "attempt": 0,
-      "inputTaskIds": ["75555555-5555-5555-5555-555555555555"],
+      "inputTaskIds": [
+        "75555555-5555-5555-5555-555555555555"
+      ],
       "dependsOn": [
         {
           "type": "ARCHITECT",
@@ -71,6 +73,19 @@
         },
         {
           "type": "QA_LEAD",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "type": "REVIEWER",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "TEST_UNIT",
           "scope": "automationservice-sox"
         }
       ]

@@ -97,6 +97,21 @@ class LaneScopeValidatorTest {
     }
 
     @Test
+    void givenUnitTestLaneAndDifferentTestScope_whenValidateUnitTestCallbackScope_thenThrowScopeMismatchException() {
+        //given
+        final UUID laneId = UUID.randomUUID();
+        final Lane lane = Lane.builder().id(laneId).scope("automationservice-sox").build();
+        when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
+
+        //when //then
+        assertThatThrownBy(() -> this.laneScopeValidator.validateUnitTestCallbackScope(laneId, "backendforfrontendservice-sox"))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessageContaining("Unit-test scope mismatch");
+
+        verify(this.ticketRepository).findByLaneId(laneId);
+    }
+
+    @Test
     void givenApiLaneProducedImplementationScopesAndUnexpectedContractScope_whenValidateApiCallbackScopes_thenThrowScopeMismatchException() {
         //given
         final UUID laneId = UUID.randomUUID();
@@ -130,11 +145,12 @@ class LaneScopeValidatorTest {
         this.laneScopeValidator.validateArchitectCallbackScope(architectLaneId, "automationservice-sox");
         this.laneScopeValidator.validateImplementBeCallbackScope(architectLaneId, "automationservice-sox");
         this.laneScopeValidator.validateQaLeadCallbackScope(architectLaneId, "automationservice-sox");
+        this.laneScopeValidator.validateUnitTestCallbackScope(architectLaneId, "automationservice-sox");
         this.laneScopeValidator.resolveRelevantApiScopes(apiLaneId, Set.of("automationservice-sox", "backendforfrontendservice-sox"));
 
         //then
         verify(this.ticketRepository).findByLaneId(analyzerLaneId);
-        verify(this.ticketRepository, times(3)).findByLaneId(architectLaneId);
+        verify(this.ticketRepository, times(4)).findByLaneId(architectLaneId);
         verify(this.laneRepository).findProducedLanes(apiLaneId);
         verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
     }

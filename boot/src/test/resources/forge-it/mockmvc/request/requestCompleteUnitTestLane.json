@@ -1,0 +1,12 @@
+{
+  "scope": "automationservice-sox",
+  "summary": "Prepared unit test coverage and findings.",
+  "affectedFiles": [
+    "src/test/java/com/example/FooTest.java",
+    "src/test/java/com/example/BarTest.java"
+  ],
+  "sonar": {
+    "coveragePercent": 91.5,
+    "issues": 2
+  }
+}
