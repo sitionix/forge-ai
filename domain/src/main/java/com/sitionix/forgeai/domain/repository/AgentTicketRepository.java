@@ -16,6 +16,4 @@ public interface AgentTicketRepository {
     Optional<AgentTicket<AgentTicketPayload>> findById(UUID id);
 
     <P extends AgentTicketPayload> Optional<AgentTicket<P>> findById(UUID id, Class<P> payloadType);
-
-    Optional<AgentTicket<AgentTicketPayload>> findByLaneId(UUID laneId);
 }

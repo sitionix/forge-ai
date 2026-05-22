@@ -167,10 +167,8 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
-        final String scope = "automationservice-sox";
         final CompleteQaLeadLaneRequestDTO request = mock(CompleteQaLeadLaneRequestDTO.class);
         final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
-        when(request.getScope()).thenReturn(scope);
         when(request.getTestLaneRequirements()).thenReturn(requirements);
         when(requirements.getIntegrationTestRequired()).thenReturn(Boolean.TRUE);
         when(request.getIntegrationTestCases()).thenReturn(List.of());
@@ -179,7 +177,6 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         assertThatThrownBy(() -> this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request))
                 .isInstanceOf(RequestValidationException.class)
                 .hasMessageContaining("integrationTestCases must not be empty");
-
-        verify(this.laneCompletionValidator).validateQaLeadCompletion(ticketId, laneId, scope);
+        verifyNoMoreInteractions(this.laneCompletionValidator, this.createAgentTask, this.agentTicketApiMapper);
     }
 }

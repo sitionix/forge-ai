@@ -22,8 +22,8 @@ public class CompleteQaLeadLaneOrchestrationUseCase {
     private final AgentTicketApiMapper agentTicketApiMapper;
 
     public void complete(final UUID ticketId, final UUID laneId, final CompleteQaLeadLaneRequestDTO request) {
-        this.laneCompletionValidator.validateQaLeadCompletion(ticketId, laneId, request.getScope());
         this.validateRequest(request);
+        this.laneCompletionValidator.validateQaLeadCompletion(ticketId, laneId, request.getScope());
         this.routeTestLanes(ticketId, laneId, request);
     }
 

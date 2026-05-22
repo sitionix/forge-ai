@@ -24,8 +24,8 @@ public class CompleteItTestLaneOrchestrationUseCase {
     private final CompleteAgentLane completeAgentLane;
 
     public void complete(final UUID ticketId, final UUID laneId, final CompleteItTestLaneRequestDTO request) {
-        this.laneCompletionValidator.validateItTestCompletion(ticketId, laneId, request.getScope());
         this.validateCoveredCases(request.getCoveredCases());
+        this.laneCompletionValidator.validateItTestCompletion(ticketId, laneId, request.getScope());
 
         final AgentTicket<TestItCompletionPayload> completionReport = AgentTicket.<TestItCompletionPayload>builder()
                 .id(UUID.randomUUID())

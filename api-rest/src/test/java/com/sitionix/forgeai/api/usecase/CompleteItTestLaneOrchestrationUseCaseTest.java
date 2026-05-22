@@ -99,17 +99,14 @@ class CompleteItTestLaneOrchestrationUseCaseTest {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
-        final String scope = "automationservice-sox";
         final CompleteItTestLaneRequestDTO request = mock(CompleteItTestLaneRequestDTO.class);
-        when(request.getScope()).thenReturn(scope);
         when(request.getCoveredCases()).thenReturn(List.of());
 
         //when //then
         assertThatThrownBy(() -> this.completeItTestLaneOrchestrationUseCase.complete(ticketId, laneId, request))
                 .isInstanceOf(RequestValidationException.class)
                 .hasMessageContaining("coveredCases must not be empty");
-
-        verify(this.laneCompletionValidator).validateItTestCompletion(ticketId, laneId, scope);
+        verifyNoMoreInteractions(this.laneCompletionValidator, this.agentTicketRepository, this.completeAgentLane);
     }
 
     @Test
@@ -117,16 +114,13 @@ class CompleteItTestLaneOrchestrationUseCaseTest {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
-        final String scope = "automationservice-sox";
         final CompleteItTestLaneRequestDTO request = mock(CompleteItTestLaneRequestDTO.class);
-        when(request.getScope()).thenReturn(scope);
         when(request.getCoveredCases()).thenReturn(List.of("Create agent action successfully", " "));
 
         //when //then
         assertThatThrownBy(() -> this.completeItTestLaneOrchestrationUseCase.complete(ticketId, laneId, request))
                 .isInstanceOf(RequestValidationException.class)
                 .hasMessageContaining("coveredCases must not contain blank values");
-
-        verify(this.laneCompletionValidator).validateItTestCompletion(ticketId, laneId, scope);
+        verifyNoMoreInteractions(this.laneCompletionValidator, this.agentTicketRepository, this.completeAgentLane);
     }
 }
