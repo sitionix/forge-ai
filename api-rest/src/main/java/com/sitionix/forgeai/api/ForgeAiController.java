@@ -9,6 +9,8 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
@@ -17,6 +19,8 @@ import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
+import com.sitionix.forgeai.api.usecase.CompleteItTestLaneOrchestrationUseCase;
+import com.sitionix.forgeai.api.usecase.CompleteQaLeadLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteUnitTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
@@ -52,6 +56,8 @@ public class ForgeAiController implements ForgeAiApi {
     private final LaneScopeValidator laneScopeValidator;
     private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
     private final CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
+    private final CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
+    private final CompleteItTestLaneOrchestrationUseCase completeItTestLaneOrchestrationUseCase;
     private final CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
 
     @Override
@@ -131,14 +137,20 @@ public class ForgeAiController implements ForgeAiApi {
     public ResponseEntity<CompleteQaLeadLaneResponseDTO> completeQaLeadLane(final UUID ticketId,
                                                                             final UUID laneId,
                                                                             @Valid final CompleteQaLeadLaneRequestDTO completeQaLeadLaneRequestDTO) {
-        log.info("Received completeQaLeadLane request for ticketId: {}, laneId: {}, with request body: {}",
-                ticketId, laneId, completeQaLeadLaneRequestDTO);
-        this.laneScopeValidator.validateQaLeadCallbackScope(laneId, completeQaLeadLaneRequestDTO.getScope());
-        final AgentTicket<TestUnitPayload> testUnitTicket = this.agentTicketApiMapper.asTestUnitTicket(completeQaLeadLaneRequestDTO, ticketId);
-        final AgentTicket<TestItPayload> testItTicket = this.agentTicketApiMapper.asTestItTicket(completeQaLeadLaneRequestDTO, ticketId);
-        this.completeAgentTasks.complete(laneId, List.of(testUnitTicket, testItTicket));
-
+        this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, completeQaLeadLaneRequestDTO);
         return ResponseEntity.ok(CompleteQaLeadLaneResponseDTO.builder()
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteItTestLaneResponseDTO> completeItTestLane(final UUID ticketId,
+                                                                            final UUID laneId,
+                                                                            @Valid final CompleteItTestLaneRequestDTO completeItTestLaneRequestDTO) {
+        this.completeItTestLaneOrchestrationUseCase.complete(ticketId, laneId, completeItTestLaneRequestDTO);
+        return ResponseEntity.ok(CompleteItTestLaneResponseDTO.builder()
                 .laneId(laneId)
                 .status(HttpStatus.OK.name())
                 .ticketId(ticketId)

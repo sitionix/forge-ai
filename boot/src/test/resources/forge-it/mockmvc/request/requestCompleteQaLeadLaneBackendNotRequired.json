@@ -1,0 +1,12 @@
+{
+  "scope": "automationservice-sox",
+  "summary": "Prepared QA context for backend testing.",
+  "testLaneRequirements": {
+    "unitTestRequired": false,
+    "integrationTestRequired": false,
+    "uiTestRequired": false
+  },
+  "integrationTestCases": [],
+  "unitTestNotes": [],
+  "uiTestNotes": []
+}

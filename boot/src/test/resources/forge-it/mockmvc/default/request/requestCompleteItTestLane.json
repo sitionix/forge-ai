@@ -1,0 +1,8 @@
+{
+  "scope": "automationservice-sox",
+  "summary": "Completed integration tests for backend flow.",
+  "coveredCases": [
+    "Create agent action successfully",
+    "Reject create agent action for unknown agent"
+  ]
+}

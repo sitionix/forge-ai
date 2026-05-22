@@ -1,6 +1,11 @@
 {
   "scope": "automationservice-sox",
   "summary": "Prepared integration test cases for backend agent action implementation.",
+  "testLaneRequirements": {
+    "unitTestRequired": true,
+    "integrationTestRequired": true,
+    "uiTestRequired": false
+  },
   "integrationTestCases": [
     {
       "title": "Create agent action successfully",
@@ -32,5 +37,6 @@
       "target": "CreateAgentActionUseCase",
       "note": "Validate missing title handling"
     }
-  ]
+  ],
+  "uiTestNotes": []
 }

@@ -43,4 +43,12 @@ public class AgentTicketRepositoryImpl implements AgentTicketRepository {
                 .filter(ticket -> payloadType.isInstance(ticket.getPayload()))
                 .map(ticket -> (AgentTicket<P>) ticket);
     }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public Optional<AgentTicket<AgentTicketPayload>> findByLaneId(final UUID laneId) {
+        return this.agentTicketJpaRepository.findFirstByLaneId(laneId)
+                .map(this.agentTicketEntityMapper::asAgentTicket)
+                .map(value -> (AgentTicket<AgentTicketPayload>) value);
+    }
 }

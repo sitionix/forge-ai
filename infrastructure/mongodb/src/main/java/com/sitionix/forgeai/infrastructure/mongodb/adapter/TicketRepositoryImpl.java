@@ -38,6 +38,12 @@ public class TicketRepositoryImpl implements TicketRepository {
     }
 
     @Override
+    public Optional<Ticket> findById(final UUID ticketId) {
+        return this.ticketRepository.findById(ticketId)
+                .map(this.ticketEntityMapper::asTicket);
+    }
+
+    @Override
     public List<ReadyToStartLane> findAllReadyToStartLanes() {
         return this.ticketRepository.findAllReadyToStartLanes().stream()
                 .map(value -> ReadyToStartLane.builder()
