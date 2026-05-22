@@ -15,7 +15,7 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
 @IntegrationTest(properties = {
-        "spring.task.scheduling.enabled=false",
+        "forge-ai.jobs.scheduling-enabled=false",
         "forge-ai.jobs.ready-to-start.fixed-delay-ms=100"
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
