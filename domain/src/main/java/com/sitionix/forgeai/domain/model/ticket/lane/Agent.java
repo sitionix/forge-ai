@@ -19,7 +19,8 @@ public enum Agent {
     IMPLEMENT_FE("implement_fe", "feAgentExecutor"),
     TEST_UNIT("test_unit", "testUnitAgentExecutor"),
     TEST_IT("test_it", "testItAgentExecutor"),
-    TEST_UI("test_ui", "testUiAgentExecutor");
+    TEST_UI("test_ui", "testUiAgentExecutor"),
+    REVIEWER("reviewer", "reviewerAgentExecutor");
 
     private final String id;
     private final String executorBeanName;

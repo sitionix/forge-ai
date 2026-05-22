@@ -4,6 +4,7 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
@@ -33,18 +34,18 @@ class AgentInfoInjectorTest {
 
     @BeforeEach
     void setUp() {
-        this.executorsByBeanName = Map.of(
-                "analyzeAgentExecutor", mock(ExecuteAgent.class),
-                "architectAgentExecutor", mock(ExecuteAgent.class),
-                "apiAgentExecutor", mock(ExecuteAgent.class),
-                "eventAgentExecutor", mock(ExecuteAgent.class),
-                "qaLeadAgentExecutor", mock(ExecuteAgent.class),
-                "beAgentExecutor", mock(ExecuteAgent.class),
-                "feAgentExecutor", mock(ExecuteAgent.class),
-                "testUnitAgentExecutor", mock(ExecuteAgent.class),
-                "testItAgentExecutor", mock(ExecuteAgent.class),
-                "testUiAgentExecutor", mock(ExecuteAgent.class)
-        );
+        this.executorsByBeanName = new LinkedHashMap<>();
+        this.executorsByBeanName.put("analyzeAgentExecutor", mock(ExecuteAgent.class));
+        this.executorsByBeanName.put("architectAgentExecutor", mock(ExecuteAgent.class));
+        this.executorsByBeanName.put("apiAgentExecutor", mock(ExecuteAgent.class));
+        this.executorsByBeanName.put("eventAgentExecutor", mock(ExecuteAgent.class));
+        this.executorsByBeanName.put("qaLeadAgentExecutor", mock(ExecuteAgent.class));
+        this.executorsByBeanName.put("beAgentExecutor", mock(ExecuteAgent.class));
+        this.executorsByBeanName.put("feAgentExecutor", mock(ExecuteAgent.class));
+        this.executorsByBeanName.put("testUnitAgentExecutor", mock(ExecuteAgent.class));
+        this.executorsByBeanName.put("testItAgentExecutor", mock(ExecuteAgent.class));
+        this.executorsByBeanName.put("testUiAgentExecutor", mock(ExecuteAgent.class));
+        this.executorsByBeanName.put("reviewerAgentExecutor", mock(ExecuteAgent.class));
         this.agentInfoInjector = new AgentInfoInjector(this.agentPropertiesProvider, this.executorsByBeanName);
     }
 

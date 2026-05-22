@@ -11,17 +11,20 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
+import com.sitionix.forgeai.api.usecase.CompleteUnitTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
@@ -49,6 +52,7 @@ public class ForgeAiController implements ForgeAiApi {
     private final LaneScopeValidator laneScopeValidator;
     private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
     private final CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
+    private final CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
 
     @Override
     public ResponseEntity<StartForgeResponseDTO> startForge(@Valid final StartForgeRequestDTO startForgeRequestDTO) {
@@ -135,6 +139,21 @@ public class ForgeAiController implements ForgeAiApi {
         this.completeAgentTasks.complete(laneId, List.of(testUnitTicket, testItTicket));
 
         return ResponseEntity.ok(CompleteQaLeadLaneResponseDTO.builder()
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteUnitTestLaneResponseDTO> completeUnitTestLane(final UUID ticketId,
+                                                                                final UUID laneId,
+                                                                                @Valid final CompleteUnitTestLaneRequestDTO completeUnitTestLaneRequestDTO) {
+        log.info("Received completeUnitTestLane request for ticketId: {}, laneId: {}, with request body: {}",
+                ticketId, laneId, completeUnitTestLaneRequestDTO);
+        this.completeUnitTestLaneOrchestrationUseCase.complete(ticketId, laneId, completeUnitTestLaneRequestDTO);
+
+        return ResponseEntity.ok(CompleteUnitTestLaneResponseDTO.builder()
                 .laneId(laneId)
                 .status(HttpStatus.OK.name())
                 .ticketId(ticketId)

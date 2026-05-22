@@ -66,6 +66,16 @@ public class LaneScopeValidator {
                 + ", requestScope=" + testScope);
     }
 
+    public void validateUnitTestCallbackScope(final UUID laneId, final String testScope) {
+        final Lane lane = this.requireLane(laneId, "Unit-test lane not found for laneId=");
+        if (Objects.equals(lane.getScope(), testScope)) {
+            return;
+        }
+        throw new ScopeMismatchException("Unit-test scope mismatch: laneId=" + laneId
+                + ", laneScope=" + lane.getScope()
+                + ", requestScope=" + testScope);
+    }
+
     public Set<String> resolveRelevantApiScopes(final UUID laneId, final Set<String> contractScopes) {
         final Set<String> implementationScopes = this.laneRepository.findProducedLanes(laneId).stream()
                 .filter(value -> Objects.equals(value.getAgent(), Agent.IMPLEMENT_BE) || Objects.equals(value.getAgent(), Agent.IMPLEMENT_FE))

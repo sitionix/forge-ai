@@ -4,6 +4,7 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.*;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
@@ -21,6 +22,7 @@ import java.util.UUID;
                 ImplementBeTicketPayloadApiMapper.class,
                 TestUnitTicketPayloadApiMapper.class,
                 TestItTicketPayloadApiMapper.class,
+                UnitTestCompletionTicketPayloadApiMapper.class,
                 ImplementFeTicketPayloadApiMapper.class,
                 ApiTicketPayloadApiMapper.class,
                 EventTicketPayloadApiMapper.class
@@ -77,6 +79,16 @@ public interface AgentTicketApiMapper {
     @Mapping(target = "payload", source = "source")
     AgentTicket<TestUnitPayload> asTestUnitTicket(
             CompleteQaLeadLaneRequestDTO source,
+            UUID ticketId);
+
+    @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")
+    @Mapping(target = "ticketId", source = "ticketId")
+    @Mapping(target = "status", constant = "CREATED")
+    @Mapping(target = "scope", expression = "java(com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode.GLOBAL_SCOPE)")
+    @Mapping(target = "agent", expression = "java(Agent.REVIEWER)")
+    @Mapping(target = "payload", source = "source")
+    AgentTicket<ReviewerPayload> asReviewerTicket(
+            CompleteUnitTestLaneRequestDTO source,
             UUID ticketId);
 
     @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")

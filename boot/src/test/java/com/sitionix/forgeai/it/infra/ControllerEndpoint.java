@@ -10,6 +10,8 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
@@ -137,6 +139,18 @@ public class ControllerEndpoint {
                 CompleteQaLeadLaneResponseDTO.class,
                 (MockmvcDefault) context -> context
                         .withRequest("requestCompleteQaLeadLaneBackend.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<CompleteUnitTestLaneRequestDTO, CompleteUnitTestLaneResponseDTO> completeUnitTestLane() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-unit/complete",
+                HttpMethod.POST,
+                CompleteUnitTestLaneRequestDTO.class,
+                CompleteUnitTestLaneResponseDTO.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteUnitTestLane.json")
                         .expectStatus(HttpStatus.OK.value())
         );
     }

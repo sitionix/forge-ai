@@ -30,6 +30,15 @@ forge:
           additional-instructions:
             - instructions/additional-instructions/java-style-basics.md
             - instructions/additional-instructions/pr-workflow.md
+        test_unit:
+          instructions: instructions/agents/test_unit.md
+          endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-unit/complete
+          additional-instructions:
+            - instructions/additional-instructions/pr-workflow.md
+        reviewer:
+          instructions: instructions/agents/reviewer.md
+          additional-instructions:
+            - instructions/additional-instructions/java-style-basics.md
       shared:
         - instructions/shared/common-rules.md
         - instructions/shared/completion-callback.md

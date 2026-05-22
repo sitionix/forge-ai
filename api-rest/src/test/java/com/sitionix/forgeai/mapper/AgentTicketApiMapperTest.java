@@ -9,6 +9,8 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.UnitTestSonarDTO;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
@@ -17,8 +19,10 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ReviewerPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.UnitTestSonar;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -54,6 +58,9 @@ class AgentTicketApiMapperTest {
 
     @Mock
     private TestItTicketPayloadApiMapper testItTicketPayloadApiMapper;
+
+    @Mock
+    private UnitTestCompletionTicketPayloadApiMapper unitTestCompletionTicketPayloadApiMapper;
 
     @Mock
     private ImplementFeTicketPayloadApiMapper implementFeTicketPayloadApiMapper;
@@ -186,6 +193,41 @@ class AgentTicketApiMapperTest {
         assertThat(actual.getAgent()).isEqualTo(Agent.TEST_UNIT);
         assertThat(actual.getPayload()).isEqualTo(payload);
         verify(this.qaLeadCompletionTicketPayloadApiMapper).asTestUnitPayload(source);
+    }
+
+    @Test
+    void givenCompleteUnitTestLaneRequestDTO_whenAsReviewerTicket_thenMapFields() {
+        //given
+        final UnitTestSonarDTO sonarDto = UnitTestSonarDTO.builder()
+                .coveragePercent(82.25)
+                .issues(4)
+                .build();
+        final CompleteUnitTestLaneRequestDTO source = CompleteUnitTestLaneRequestDTO.builder()
+                .scope("automationservice-sox")
+                .summary("unit tests completed")
+                .affectedFiles(java.util.List.of("src/main/java/com/example/Foo.java"))
+                .sonar(sonarDto)
+                .build();
+        final UUID ticketId = UUID.randomUUID();
+        final ReviewerPayload payload = new ReviewerPayload(
+                "Prepare reviewer execution context",
+                "GLOBAL",
+                "unit tests completed",
+                java.util.List.of("src/main/java/com/example/Foo.java"),
+                new UnitTestSonar(82.25, 4)
+        );
+        when(this.unitTestCompletionTicketPayloadApiMapper.asReviewerPayload(source)).thenReturn(payload);
+
+        //when
+        final AgentTicket<ReviewerPayload> actual = this.agentTicketApiMapper.asReviewerTicket(source, ticketId);
+
+        //then
+        assertThat(actual.getTicketId()).isEqualTo(ticketId);
+        assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
+        assertThat(actual.getScope()).isEqualTo("GLOBAL");
+        assertThat(actual.getAgent()).isEqualTo(Agent.REVIEWER);
+        assertThat(actual.getPayload()).isEqualTo(payload);
+        verify(this.unitTestCompletionTicketPayloadApiMapper).asReviewerPayload(source);
     }
 
     @Test

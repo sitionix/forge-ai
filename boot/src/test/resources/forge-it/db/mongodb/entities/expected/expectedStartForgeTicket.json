@@ -207,6 +207,23 @@
           "scope": "backendforfrontendservice-sox"
         }
       ]
+    },
+    {
+      "type": "REVIEWER",
+      "scope": "GLOBAL",
+      "serviceId": "global",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "TEST_UNIT",
+          "scope": "automationservice-sox"
+        },
+        {
+          "type": "TEST_UNIT",
+          "scope": "backendforfrontendservice-sox"
+        }
+      ]
     }
   ]
 }

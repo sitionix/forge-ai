@@ -8,20 +8,23 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
-import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
+import com.sitionix.forgeai.api.usecase.CompleteUnitTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -69,6 +72,9 @@ class ForgeAiControllerTest {
     @Mock
     private CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
 
+    @Mock
+    private CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
+
     @BeforeEach
     void setUp() {
         this.forgeAiController = new ForgeAiController(
@@ -79,7 +85,8 @@ class ForgeAiControllerTest {
                 this.completeAgentTasks,
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
-                this.completeApiLaneOrchestrationUseCase
+                this.completeApiLaneOrchestrationUseCase,
+                this.completeUnitTestLaneOrchestrationUseCase
         );
     }
 
@@ -93,7 +100,8 @@ class ForgeAiControllerTest {
                 this.completeAgentTasks,
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
-                this.completeApiLaneOrchestrationUseCase
+                this.completeApiLaneOrchestrationUseCase,
+                this.completeUnitTestLaneOrchestrationUseCase
         );
     }
 
@@ -241,5 +249,25 @@ class ForgeAiControllerTest {
         verify(this.agentTicketApiMapper).asTestUnitTicket(request, ticketId);
         verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
         verify(this.completeAgentTasks).complete(laneId, List.<AgentTicket<? extends AgentTicketPayload>>of(testUnitTicket, testItTicket));
+    }
+
+    @Test
+    void givenUnitTestLaneRequest_whenCompleteUnitTestLane_thenReturnOkResponse() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final CompleteUnitTestLaneRequestDTO request = CompleteUnitTestLaneRequestDTO.builder().scope("automationservice-sox").build();
+
+        //when
+        final ResponseEntity<CompleteUnitTestLaneResponseDTO> actual = this.forgeAiController.completeUnitTestLane(ticketId, laneId, request);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isEqualTo(CompleteUnitTestLaneResponseDTO.builder()
+                .ticketId(ticketId)
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .build());
+        verify(this.completeUnitTestLaneOrchestrationUseCase).complete(ticketId, laneId, request);
     }
 }
