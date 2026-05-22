@@ -51,20 +51,6 @@ public class CompleteQaLeadLaneOrchestrationUseCase {
     }
 
     private void validateRequest(final CompleteQaLeadLaneRequestDTO request) {
-        if (request.getTestLaneRequirements() == null) {
-            throw new RequestValidationException("testLaneRequirements must be provided");
-        }
-        if (request.getTestLaneRequirements().getUnitTestRequired() == null
-                || request.getTestLaneRequirements().getIntegrationTestRequired() == null
-                || request.getTestLaneRequirements().getUiTestRequired() == null) {
-            throw new RequestValidationException("All test lane routing flags must be provided");
-        }
-        if (request.getScope() == null || request.getScope().isBlank()) {
-            throw new RequestValidationException("scope must not be blank");
-        }
-        if (request.getSummary() == null || request.getSummary().isBlank()) {
-            throw new RequestValidationException("summary must not be blank");
-        }
         if (Boolean.TRUE.equals(request.getTestLaneRequirements().getIntegrationTestRequired())
                 && (request.getIntegrationTestCases() == null || request.getIntegrationTestCases().isEmpty())) {
             throw new RequestValidationException("integrationTestCases must not be empty when integrationTestRequired is true");

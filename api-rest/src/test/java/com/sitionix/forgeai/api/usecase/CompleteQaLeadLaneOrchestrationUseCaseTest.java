@@ -70,11 +70,9 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final AgentTicket<TestUnitPayload> testUnitTicket = mock(AgentTicket.class);
         final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
         when(request.getScope()).thenReturn(scope);
-        when(request.getSummary()).thenReturn("Prepared QA context for backend testing.");
         when(request.getTestLaneRequirements()).thenReturn(requirements);
         when(requirements.getUnitTestRequired()).thenReturn(Boolean.TRUE);
         when(requirements.getIntegrationTestRequired()).thenReturn(Boolean.TRUE);
-        when(requirements.getUiTestRequired()).thenReturn(Boolean.FALSE);
         when(request.getIntegrationTestCases()).thenReturn(List.of(integrationTestCase));
         when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
         when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
@@ -100,11 +98,9 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
         final AgentTicket<TestUnitPayload> testUnitTicket = mock(AgentTicket.class);
         when(request.getScope()).thenReturn(scope);
-        when(request.getSummary()).thenReturn("Prepared QA context for backend testing.");
         when(request.getTestLaneRequirements()).thenReturn(requirements);
         when(requirements.getUnitTestRequired()).thenReturn(Boolean.TRUE);
         when(requirements.getIntegrationTestRequired()).thenReturn(Boolean.FALSE);
-        when(requirements.getUiTestRequired()).thenReturn(Boolean.FALSE);
         when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
 
         //when
@@ -128,11 +124,9 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final QaLeadIntegrationTestCaseDTO integrationTestCase = mock(QaLeadIntegrationTestCaseDTO.class);
         final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
         when(request.getScope()).thenReturn(scope);
-        when(request.getSummary()).thenReturn("Prepared QA context for backend testing.");
         when(request.getTestLaneRequirements()).thenReturn(requirements);
         when(requirements.getUnitTestRequired()).thenReturn(Boolean.FALSE);
         when(requirements.getIntegrationTestRequired()).thenReturn(Boolean.TRUE);
-        when(requirements.getUiTestRequired()).thenReturn(Boolean.FALSE);
         when(request.getIntegrationTestCases()).thenReturn(List.of(integrationTestCase));
         when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
 
@@ -155,11 +149,9 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final CompleteQaLeadLaneRequestDTO request = mock(CompleteQaLeadLaneRequestDTO.class);
         final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
         when(request.getScope()).thenReturn(scope);
-        when(request.getSummary()).thenReturn("Prepared QA context for backend testing.");
         when(request.getTestLaneRequirements()).thenReturn(requirements);
         when(requirements.getUnitTestRequired()).thenReturn(Boolean.FALSE);
         when(requirements.getIntegrationTestRequired()).thenReturn(Boolean.FALSE);
-        when(requirements.getUiTestRequired()).thenReturn(Boolean.FALSE);
 
         //when
         this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request);
@@ -179,11 +171,8 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final CompleteQaLeadLaneRequestDTO request = mock(CompleteQaLeadLaneRequestDTO.class);
         final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
         when(request.getScope()).thenReturn(scope);
-        when(request.getSummary()).thenReturn("Prepared QA context for backend testing.");
         when(request.getTestLaneRequirements()).thenReturn(requirements);
-        when(requirements.getUnitTestRequired()).thenReturn(Boolean.TRUE);
         when(requirements.getIntegrationTestRequired()).thenReturn(Boolean.TRUE);
-        when(requirements.getUiTestRequired()).thenReturn(Boolean.FALSE);
         when(request.getIntegrationTestCases()).thenReturn(List.of());
 
         //when //then
