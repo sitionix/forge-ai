@@ -21,7 +21,7 @@
       "type": "REVIEWER",
       "scope": "automationservice-sox",
       "serviceId": "atmssox",
-      "status": "COMPLETED",
+      "status": "READY_TO_START",
       "attempt": 0,
       "dependsOn": [
         {

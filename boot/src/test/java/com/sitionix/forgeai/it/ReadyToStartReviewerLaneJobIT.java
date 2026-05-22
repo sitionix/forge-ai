@@ -37,8 +37,8 @@ class ReadyToStartReviewerLaneJobIT {
     private ReadyToStartLaneJob readyToStartLaneJob;
 
     @Test
-    @DisplayName("Should complete reviewer lane by scheduler job")
-    void givenReadyReviewerLane_whenSchedulerRuns_thenCompleteReviewerLane() {
+    @DisplayName("Should execute reviewer lane by scheduler job")
+    void givenReadyReviewerLane_whenSchedulerRuns_thenExecuteReviewerLane() {
         //given
         this.testManager.mongo()
                 .create(TicketDocument.class)

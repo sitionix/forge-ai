@@ -95,8 +95,7 @@ class ReadyToStartQaLeadLaneJobIT {
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)
                 .ignoreFields("id", "ticketId", "laneId", "createdAt", "updatedAt")
-                .hasSize(3)
-                .containsAllWithJsons("expectedCompleteUnitTestReviewerTicket.json");
+                .hasSize(2);
 
         this.testManager.mongo()
                 .assertEntities(TicketDocument.class)

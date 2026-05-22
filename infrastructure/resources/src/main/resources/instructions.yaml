@@ -34,7 +34,6 @@ forge:
           instructions: instructions/agents/test_unit.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-unit/complete
           additional-instructions:
-            - instructions/additional-instructions/java-test-style.md
             - instructions/additional-instructions/pr-workflow.md
         reviewer:
           instructions: instructions/agents/reviewer.md

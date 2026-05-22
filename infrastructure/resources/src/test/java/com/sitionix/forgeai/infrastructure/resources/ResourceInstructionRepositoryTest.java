@@ -40,7 +40,7 @@ class ResourceInstructionRepositoryTest {
         testUnitConfig.setInstructions("instructions/agents/test_unit.md");
         testUnitConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-unit/complete");
         testUnitConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of(
-                "instructions/additional-instructions/java-test-style.md"
+                "instructions/additional-instructions/pr-workflow.md"
         )));
 
         final InstructionResourcesProperties.AgentConfig reviewerConfig = new InstructionResourcesProperties.AgentConfig();
@@ -120,7 +120,7 @@ class ResourceInstructionRepositoryTest {
         assertThat(actual.getAgentInstruction()).contains("# Test Unit Instructions");
         assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-unit/complete");
         assertThat(actual.getAdditionalInstructions()).hasSize(1);
-        assertThat(actual.getAdditionalInstructions().iterator().next()).contains("# Java Test Style");
+        assertThat(actual.getAdditionalInstructions().iterator().next()).contains("# PR Workflow");
         assertThat(actual.getSharedInstructions()).hasSize(1);
         assertThat(actual.getSharedInstructions().iterator().next()).contains("# Common Agent Rules");
     }

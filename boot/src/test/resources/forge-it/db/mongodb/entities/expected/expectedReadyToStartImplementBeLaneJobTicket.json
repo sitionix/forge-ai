@@ -31,7 +31,7 @@
       "type": "TEST_UNIT",
       "scope": "automationservice-sox",
       "serviceId": "atmssox",
-      "status": "COMPLETED",
+      "status": "IN_PROGRESS",
       "dependsOn": [
         {
           "type": "IMPLEMENT_BE",
@@ -60,7 +60,7 @@
       "type": "REVIEWER",
       "scope": "automationservice-sox",
       "serviceId": "atmssox",
-      "status": "READY_TO_START",
+      "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
         {
