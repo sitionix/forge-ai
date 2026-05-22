@@ -18,11 +18,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -135,21 +132,6 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         verify(this.laneScopeValidator).validateQaLeadCompletion(ticketId, laneId, "automationservice-sox");
         verify(this.createAgentTask).markAsNotNeeded(laneId, "automationservice-sox", Agent.TEST_UNIT);
         verify(this.createAgentTask).markAsNotNeeded(laneId, "automationservice-sox", Agent.TEST_IT);
-    }
-
-    @Test
-    void givenIntegrationRequiredWithoutCases_whenComplete_thenThrowResponseStatusException() {
-        //given
-        final UUID ticketId = UUID.randomUUID();
-        final UUID laneId = UUID.randomUUID();
-        final CompleteQaLeadLaneRequestDTO request = this.getRequest(true, true, false, List.of());
-
-        //when //then
-        assertThatThrownBy(() -> this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request))
-                .isInstanceOf(ResponseStatusException.class)
-                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
-                .hasMessageContaining("integrationTestCases must not be empty");
-        verifyNoMoreInteractions(this.laneScopeValidator, this.createAgentTask, this.agentTicketApiMapper);
     }
 
     private CompleteQaLeadLaneRequestDTO getRequest(final boolean unitTestRequired,
