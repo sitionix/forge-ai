@@ -3,8 +3,7 @@ package com.sitionix.forgeai.api.usecase;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadIntegrationTestCaseDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadTestLaneRequirementsDTO;
-import com.sitionix.forgeai.api.LaneCompletionValidator;
-import com.sitionix.forgeai.api.RequestValidationException;
+import com.sitionix.forgeai.api.LaneScopeValidator;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
@@ -19,7 +18,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -32,7 +34,7 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
     private CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
 
     @Mock
-    private LaneCompletionValidator laneCompletionValidator;
+    private LaneScopeValidator laneScopeValidator;
 
     @Mock
     private CreateAgentTask createAgentTask;
@@ -43,7 +45,7 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
     @BeforeEach
     void setUp() {
         this.completeQaLeadLaneOrchestrationUseCase = new CompleteQaLeadLaneOrchestrationUseCase(
-                this.laneCompletionValidator,
+                this.laneScopeValidator,
                 this.createAgentTask,
                 this.agentTicketApiMapper
         );
@@ -52,7 +54,7 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
     @AfterEach
     void tearDown() {
         verifyNoMoreInteractions(
-                this.laneCompletionValidator,
+                this.laneScopeValidator,
                 this.createAgentTask,
                 this.agentTicketApiMapper
         );
@@ -63,17 +65,9 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
-        final String scope = "automationservice-sox";
-        final CompleteQaLeadLaneRequestDTO request = mock(CompleteQaLeadLaneRequestDTO.class);
-        final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
-        final QaLeadIntegrationTestCaseDTO integrationTestCase = mock(QaLeadIntegrationTestCaseDTO.class);
+        final CompleteQaLeadLaneRequestDTO request = this.getRequest(true, true, false, List.of(this.getIntegrationTestCase()));
         final AgentTicket<TestUnitPayload> testUnitTicket = mock(AgentTicket.class);
         final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
-        when(request.getScope()).thenReturn(scope);
-        when(request.getTestLaneRequirements()).thenReturn(requirements);
-        when(requirements.getUnitTestRequired()).thenReturn(Boolean.TRUE);
-        when(requirements.getIntegrationTestRequired()).thenReturn(Boolean.TRUE);
-        when(request.getIntegrationTestCases()).thenReturn(List.of(integrationTestCase));
         when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
         when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
 
@@ -81,7 +75,7 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request);
 
         //then
-        verify(this.laneCompletionValidator).validateQaLeadCompletion(ticketId, laneId, scope);
+        verify(this.laneScopeValidator).validateQaLeadCompletion(ticketId, laneId, "automationservice-sox");
         verify(this.agentTicketApiMapper).asTestUnitTicket(request, ticketId);
         verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
         verify(this.createAgentTask).create(testUnitTicket, laneId);
@@ -93,24 +87,18 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
-        final String scope = "automationservice-sox";
-        final CompleteQaLeadLaneRequestDTO request = mock(CompleteQaLeadLaneRequestDTO.class);
-        final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
+        final CompleteQaLeadLaneRequestDTO request = this.getRequest(true, false, false, List.of());
         final AgentTicket<TestUnitPayload> testUnitTicket = mock(AgentTicket.class);
-        when(request.getScope()).thenReturn(scope);
-        when(request.getTestLaneRequirements()).thenReturn(requirements);
-        when(requirements.getUnitTestRequired()).thenReturn(Boolean.TRUE);
-        when(requirements.getIntegrationTestRequired()).thenReturn(Boolean.FALSE);
         when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
 
         //when
         this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request);
 
         //then
-        verify(this.laneCompletionValidator).validateQaLeadCompletion(ticketId, laneId, scope);
+        verify(this.laneScopeValidator).validateQaLeadCompletion(ticketId, laneId, "automationservice-sox");
         verify(this.agentTicketApiMapper).asTestUnitTicket(request, ticketId);
         verify(this.createAgentTask).create(testUnitTicket, laneId);
-        verify(this.createAgentTask).markAsNotNeeded(laneId, scope, Agent.TEST_IT);
+        verify(this.createAgentTask).markAsNotNeeded(laneId, "automationservice-sox", Agent.TEST_IT);
     }
 
     @Test
@@ -118,25 +106,18 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
-        final String scope = "automationservice-sox";
-        final CompleteQaLeadLaneRequestDTO request = mock(CompleteQaLeadLaneRequestDTO.class);
-        final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
-        final QaLeadIntegrationTestCaseDTO integrationTestCase = mock(QaLeadIntegrationTestCaseDTO.class);
+        final QaLeadIntegrationTestCaseDTO integrationTestCase = this.getIntegrationTestCase();
+        final CompleteQaLeadLaneRequestDTO request = this.getRequest(false, true, false, List.of(integrationTestCase));
         final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
-        when(request.getScope()).thenReturn(scope);
-        when(request.getTestLaneRequirements()).thenReturn(requirements);
-        when(requirements.getUnitTestRequired()).thenReturn(Boolean.FALSE);
-        when(requirements.getIntegrationTestRequired()).thenReturn(Boolean.TRUE);
-        when(request.getIntegrationTestCases()).thenReturn(List.of(integrationTestCase));
         when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
 
         //when
         this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request);
 
         //then
-        verify(this.laneCompletionValidator).validateQaLeadCompletion(ticketId, laneId, scope);
+        verify(this.laneScopeValidator).validateQaLeadCompletion(ticketId, laneId, "automationservice-sox");
         verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
-        verify(this.createAgentTask).markAsNotNeeded(laneId, scope, Agent.TEST_UNIT);
+        verify(this.createAgentTask).markAsNotNeeded(laneId, "automationservice-sox", Agent.TEST_UNIT);
         verify(this.createAgentTask).create(testItTicket, laneId);
     }
 
@@ -145,38 +126,51 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
-        final String scope = "automationservice-sox";
-        final CompleteQaLeadLaneRequestDTO request = mock(CompleteQaLeadLaneRequestDTO.class);
-        final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
-        when(request.getScope()).thenReturn(scope);
-        when(request.getTestLaneRequirements()).thenReturn(requirements);
-        when(requirements.getUnitTestRequired()).thenReturn(Boolean.FALSE);
-        when(requirements.getIntegrationTestRequired()).thenReturn(Boolean.FALSE);
+        final CompleteQaLeadLaneRequestDTO request = this.getRequest(false, false, false, List.of());
 
         //when
         this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request);
 
         //then
-        verify(this.laneCompletionValidator).validateQaLeadCompletion(ticketId, laneId, scope);
-        verify(this.createAgentTask).markAsNotNeeded(laneId, scope, Agent.TEST_UNIT);
-        verify(this.createAgentTask).markAsNotNeeded(laneId, scope, Agent.TEST_IT);
+        verify(this.laneScopeValidator).validateQaLeadCompletion(ticketId, laneId, "automationservice-sox");
+        verify(this.createAgentTask).markAsNotNeeded(laneId, "automationservice-sox", Agent.TEST_UNIT);
+        verify(this.createAgentTask).markAsNotNeeded(laneId, "automationservice-sox", Agent.TEST_IT);
     }
 
     @Test
-    void givenIntegrationRequiredWithoutCases_whenComplete_thenThrowRequestValidationException() {
+    void givenIntegrationRequiredWithoutCases_whenComplete_thenThrowResponseStatusException() {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
-        final CompleteQaLeadLaneRequestDTO request = mock(CompleteQaLeadLaneRequestDTO.class);
-        final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
-        when(request.getTestLaneRequirements()).thenReturn(requirements);
-        when(requirements.getIntegrationTestRequired()).thenReturn(Boolean.TRUE);
-        when(request.getIntegrationTestCases()).thenReturn(List.of());
+        final CompleteQaLeadLaneRequestDTO request = this.getRequest(true, true, false, List.of());
 
         //when //then
         assertThatThrownBy(() -> this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request))
-                .isInstanceOf(RequestValidationException.class)
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST))
                 .hasMessageContaining("integrationTestCases must not be empty");
-        verifyNoMoreInteractions(this.laneCompletionValidator, this.createAgentTask, this.agentTicketApiMapper);
+        verifyNoMoreInteractions(this.laneScopeValidator, this.createAgentTask, this.agentTicketApiMapper);
+    }
+
+    private CompleteQaLeadLaneRequestDTO getRequest(final boolean unitTestRequired,
+                                                     final boolean integrationTestRequired,
+                                                     final boolean uiTestRequired,
+                                                     final List<QaLeadIntegrationTestCaseDTO> integrationTestCases) {
+        return CompleteQaLeadLaneRequestDTO.builder()
+                .scope("automationservice-sox")
+                .summary("Prepared QA context for backend testing.")
+                .testLaneRequirements(QaLeadTestLaneRequirementsDTO.builder()
+                        .unitTestRequired(unitTestRequired)
+                        .integrationTestRequired(integrationTestRequired)
+                        .uiTestRequired(uiTestRequired)
+                        .build())
+                .integrationTestCases(integrationTestCases)
+                .build();
+    }
+
+    private QaLeadIntegrationTestCaseDTO getIntegrationTestCase() {
+        return QaLeadIntegrationTestCaseDTO.builder()
+                .title("Create agent action successfully")
+                .build();
     }
 }

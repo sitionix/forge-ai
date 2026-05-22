@@ -1,47 +1,32 @@
 package com.sitionix.forgeai.api.usecase;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
-import com.sitionix.forgeai.api.LaneCompletionValidator;
-import com.sitionix.forgeai.api.RequestValidationException;
+import com.sitionix.forgeai.api.LaneScopeValidator;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
-import com.sitionix.forgeai.domain.model.ticket.AgentTicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItCompletionPayload;
-import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentLane;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 @Component
 @RequiredArgsConstructor
 public class CompleteItTestLaneOrchestrationUseCase {
 
-    private final LaneCompletionValidator laneCompletionValidator;
+    private final LaneScopeValidator laneScopeValidator;
+    private final AgentTicketApiMapper agentTicketApiMapper;
     private final AgentTicketRepository agentTicketRepository;
     private final CompleteAgentLane completeAgentLane;
 
     public void complete(final UUID ticketId, final UUID laneId, final CompleteItTestLaneRequestDTO request) {
         this.validateCoveredCases(request.getCoveredCases());
-        this.laneCompletionValidator.validateItTestCompletion(ticketId, laneId, request.getScope());
-
-        final AgentTicket<TestItCompletionPayload> completionReport = AgentTicket.<TestItCompletionPayload>builder()
-                .id(UUID.randomUUID())
-                .ticketId(ticketId)
-                .laneId(laneId)
-                .status(AgentTicketStatus.CONSUMED)
-                .scope(request.getScope())
-                .agent(Agent.TEST_IT)
-                .payload(TestItCompletionPayload.builder()
-                        .scope(request.getScope())
-                        .summary(request.getSummary())
-                        .coveredCases(List.copyOf(request.getCoveredCases()))
-                        .build())
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
-                .build();
+        this.laneScopeValidator.validateItTestCompletion(ticketId, laneId, request.getScope());
+        final AgentTicket<TestItCompletionPayload> completionReport = this.agentTicketApiMapper.asTestItCompletionTicket(request, ticketId, laneId);
 
         this.agentTicketRepository.save(completionReport);
         this.completeAgentLane.completeAndPrepareAgents(laneId);
@@ -49,10 +34,10 @@ public class CompleteItTestLaneOrchestrationUseCase {
 
     private void validateCoveredCases(final List<String> coveredCases) {
         if (coveredCases == null || coveredCases.isEmpty()) {
-            throw new RequestValidationException("coveredCases must not be empty");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "coveredCases must not be empty");
         }
         if (coveredCases.stream().anyMatch(value -> value == null || value.isBlank())) {
-            throw new RequestValidationException("coveredCases must not contain blank values");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "coveredCases must not contain blank values");
         }
     }
 }

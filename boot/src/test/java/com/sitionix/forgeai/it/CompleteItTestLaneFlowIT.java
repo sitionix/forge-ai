@@ -50,15 +50,7 @@ class CompleteItTestLaneFlowIT {
         agentTicketDocument.setStatus(AgentTicketStatus.CREATED);
         agentTicketDocument.setScope("automationservice-sox");
         agentTicketDocument.setAgent(Agent.TEST_IT);
-        agentTicketDocument.setPayload(new TestItPayload(
-                "Prepare integration test execution context",
-                "automationservice-sox",
-                "Prepared integration test cases for backend agent action implementation.",
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of()
-        ));
+        agentTicketDocument.setPayload(this.getSeedTestItPayload());
         agentTicketDocument.setCreatedAt(LocalDateTime.parse("2026-01-01T10:00:00"));
         agentTicketDocument.setUpdatedAt(LocalDateTime.parse("2026-01-01T10:00:00"));
         this.testManager.mongo()
@@ -88,5 +80,17 @@ class CompleteItTestLaneFlowIT {
                 .ignoreFields("id", "createdAt", "updatedAt", "attempt", "inputTaskIds")
                 .hasSize(1)
                 .containsWithJsonsStrict("expectedCompleteItTestLaneTicket.json");
+    }
+
+    private TestItPayload getSeedTestItPayload() {
+        return new TestItPayload(
+                "Prepare integration test execution context",
+                "automationservice-sox",
+                "Prepared integration test cases for backend agent action implementation.",
+                Set.of(),
+                Set.of(),
+                Set.of(),
+                Set.of()
+        );
     }
 }

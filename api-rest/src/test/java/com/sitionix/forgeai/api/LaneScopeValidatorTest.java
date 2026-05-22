@@ -2,6 +2,8 @@ package com.sitionix.forgeai.api;
 
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
+import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import java.util.UUID;
@@ -13,7 +15,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -168,5 +173,103 @@ class LaneScopeValidatorTest {
                 .hasMessageContaining("does not contain contracts for produced implementation scopes");
 
         verify(this.laneRepository).findProducedLanes(laneId);
+    }
+
+    @Test
+    void givenMissingTicket_whenValidateItTestCompletion_thenThrowNotFound() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.empty());
+
+        //when //then
+        assertThatThrownBy(() -> this.laneScopeValidator.validateItTestCompletion(ticketId, laneId, "automationservice-sox"))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+        verify(this.ticketRepository).findById(ticketId);
+        verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
+    }
+
+    @Test
+    void givenWrongLaneType_whenValidateQaLeadCompletion_thenThrowConflict() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final Lane lane = this.getLane(laneId, Agent.TEST_UNIT, "automationservice-sox", LaneStatus.IN_PROGRESS);
+        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.getTicket(ticketId, lane)));
+
+        //when //then
+        assertThatThrownBy(() -> this.laneScopeValidator.validateQaLeadCompletion(ticketId, laneId, "automationservice-sox"))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessageContaining("lane type mismatch");
+        verify(this.ticketRepository).findById(ticketId);
+        verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
+    }
+
+    @Test
+    void givenWrongScope_whenValidateItTestCompletion_thenThrowScopeMismatchException() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final Lane lane = this.getLane(laneId, Agent.TEST_IT, "automationservice-sox", LaneStatus.IN_PROGRESS);
+        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.getTicket(ticketId, lane)));
+
+        //when //then
+        assertThatThrownBy(() -> this.laneScopeValidator.validateItTestCompletion(ticketId, laneId, "backendforfrontendservice-sox"))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessageContaining("IT test scope mismatch");
+        verify(this.ticketRepository).findById(ticketId);
+        verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
+    }
+
+    @Test
+    void givenCompletedLane_whenValidateItTestCompletion_thenThrowConflict() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final Lane lane = this.getLane(laneId, Agent.TEST_IT, "automationservice-sox", LaneStatus.COMPLETED);
+        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.getTicket(ticketId, lane)));
+
+        //when //then
+        assertThatThrownBy(() -> this.laneScopeValidator.validateItTestCompletion(ticketId, laneId, "automationservice-sox"))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessageContaining("lane cannot be completed in current state");
+        verify(this.ticketRepository).findById(ticketId);
+        verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
+    }
+
+    @Test
+    void givenMissingLaneInTicket_whenValidateItTestCompletion_thenThrowNotFound() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.getTicket(ticketId, this.getLane(UUID.randomUUID(), Agent.TEST_IT, "automationservice-sox", LaneStatus.IN_PROGRESS))));
+
+        //when //then
+        assertThatThrownBy(() -> this.laneScopeValidator.validateItTestCompletion(ticketId, laneId, "automationservice-sox"))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+        verify(this.ticketRepository).findById(ticketId);
+        verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
+    }
+
+    private Ticket getTicket(final UUID ticketId, final Lane lane) {
+        return Ticket.builder()
+                .id(ticketId)
+                .ticketKey("ticket-key")
+                .taskDescription("task")
+                .lanes(List.of(lane))
+                .build();
+    }
+
+    private Lane getLane(final UUID laneId, final Agent agent, final String scope, final LaneStatus status) {
+        return Lane.builder()
+                .id(laneId)
+                .agent(agent)
+                .scope(scope)
+                .status(status)
+                .build();
     }
 }

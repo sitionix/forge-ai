@@ -73,50 +73,18 @@ class ForgeAiExceptionHandlerTest {
     }
 
     @Test
-    void givenRequestValidationException_whenHandleRequestValidationException_thenReturnBadRequest() {
+    void givenScopeMismatchException_whenHandleScopeMismatchException_thenReturnBadRequest() {
         //given
-        final RequestValidationException exception = new RequestValidationException("coveredCases must not be empty");
+        final ScopeMismatchException exception = new ScopeMismatchException("scope mismatch");
 
         //when
-        final ResponseEntity<Map<String, String>> actual = this.forgeAiExceptionHandler.handleRequestValidationException(exception);
+        final ResponseEntity<Map<String, String>> actual = this.forgeAiExceptionHandler.handleScopeMismatchException(exception);
 
         //then
         assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(actual.getBody()).isEqualTo(Map.of(
-                "error", "request_validation_failed",
-                "message", "coveredCases must not be empty"
-        ));
-    }
-
-    @Test
-    void givenTicketNotFoundException_whenHandleTicketNotFoundException_thenReturnNotFound() {
-        //given
-        final TicketNotFoundException exception = new TicketNotFoundException("IT test ticket not found for laneId=123");
-
-        //when
-        final ResponseEntity<Map<String, String>> actual = this.forgeAiExceptionHandler.handleTicketNotFoundException(exception);
-
-        //then
-        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-        assertThat(actual.getBody()).isEqualTo(Map.of(
-                "error", "ticket_not_found",
-                "message", "IT test ticket not found for laneId=123"
-        ));
-    }
-
-    @Test
-    void givenLaneConflictException_whenHandleLaneConflictException_thenReturnConflict() {
-        //given
-        final LaneConflictException exception = new LaneConflictException("IT test lane type mismatch");
-
-        //when
-        final ResponseEntity<Map<String, String>> actual = this.forgeAiExceptionHandler.handleLaneConflictException(exception);
-
-        //then
-        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-        assertThat(actual.getBody()).isEqualTo(Map.of(
-                "error", "lane_conflict",
-                "message", "IT test lane type mismatch"
+                "error", "scope_mismatch",
+                "message", "scope mismatch"
         ));
     }
 }
