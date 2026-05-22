@@ -5,16 +5,13 @@ import com.app_afesox.fgaisox.api_first.dto.QaLeadIntegrationTestCaseDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadTestLaneRequirementsDTO;
 import com.sitionix.forgeai.api.LaneCompletionValidator;
 import com.sitionix.forgeai.api.RequestValidationException;
-import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
-import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,19 +40,12 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
     @Mock
     private AgentTicketApiMapper agentTicketApiMapper;
 
-    @Mock
-    private ServicePropertiesProvider servicePropertiesProvider;
-
-    @Mock
-    private ServicePropertiesProvider.ServiceConfigView serviceConfigView;
-
     @BeforeEach
     void setUp() {
         this.completeQaLeadLaneOrchestrationUseCase = new CompleteQaLeadLaneOrchestrationUseCase(
                 this.laneCompletionValidator,
                 this.createAgentTask,
-                this.agentTicketApiMapper,
-                this.servicePropertiesProvider
+                this.agentTicketApiMapper
         );
     }
 
@@ -64,9 +54,7 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         verifyNoMoreInteractions(
                 this.laneCompletionValidator,
                 this.createAgentTask,
-                this.agentTicketApiMapper,
-                this.servicePropertiesProvider,
-                this.serviceConfigView
+                this.agentTicketApiMapper
         );
     }
 
@@ -81,9 +69,6 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final QaLeadIntegrationTestCaseDTO integrationTestCase = mock(QaLeadIntegrationTestCaseDTO.class);
         final AgentTicket<TestUnitPayload> testUnitTicket = mock(AgentTicket.class);
         final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
-        when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of("automationservice-sox", this.serviceConfigView));
-        when(this.serviceConfigView.getPath()).thenReturn(scope);
-        when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.BACKEND);
         when(request.getScope()).thenReturn(scope);
         when(request.getSummary()).thenReturn("Prepared QA context for backend testing.");
         when(request.getTestLaneRequirements()).thenReturn(requirements);
@@ -99,9 +84,6 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
 
         //then
         verify(this.laneCompletionValidator).validateQaLeadCompletion(ticketId, laneId, scope);
-        verify(this.servicePropertiesProvider).getServices();
-        verify(this.serviceConfigView).getPath();
-        verify(this.serviceConfigView).getGroup();
         verify(this.agentTicketApiMapper).asTestUnitTicket(request, ticketId);
         verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
         verify(this.createAgentTask).create(testUnitTicket, laneId);
@@ -117,9 +99,6 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final CompleteQaLeadLaneRequestDTO request = mock(CompleteQaLeadLaneRequestDTO.class);
         final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
         final AgentTicket<TestUnitPayload> testUnitTicket = mock(AgentTicket.class);
-        when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of("automationservice-sox", this.serviceConfigView));
-        when(this.serviceConfigView.getPath()).thenReturn(scope);
-        when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.BACKEND);
         when(request.getScope()).thenReturn(scope);
         when(request.getSummary()).thenReturn("Prepared QA context for backend testing.");
         when(request.getTestLaneRequirements()).thenReturn(requirements);
@@ -133,9 +112,6 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
 
         //then
         verify(this.laneCompletionValidator).validateQaLeadCompletion(ticketId, laneId, scope);
-        verify(this.servicePropertiesProvider).getServices();
-        verify(this.serviceConfigView).getPath();
-        verify(this.serviceConfigView).getGroup();
         verify(this.agentTicketApiMapper).asTestUnitTicket(request, ticketId);
         verify(this.createAgentTask).create(testUnitTicket, laneId);
         verify(this.createAgentTask).markAsNotNeeded(laneId, scope, Agent.TEST_IT);
@@ -151,9 +127,6 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
         final QaLeadIntegrationTestCaseDTO integrationTestCase = mock(QaLeadIntegrationTestCaseDTO.class);
         final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
-        when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of("automationservice-sox", this.serviceConfigView));
-        when(this.serviceConfigView.getPath()).thenReturn(scope);
-        when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.BACKEND);
         when(request.getScope()).thenReturn(scope);
         when(request.getSummary()).thenReturn("Prepared QA context for backend testing.");
         when(request.getTestLaneRequirements()).thenReturn(requirements);
@@ -168,9 +141,6 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
 
         //then
         verify(this.laneCompletionValidator).validateQaLeadCompletion(ticketId, laneId, scope);
-        verify(this.servicePropertiesProvider).getServices();
-        verify(this.serviceConfigView).getPath();
-        verify(this.serviceConfigView).getGroup();
         verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
         verify(this.createAgentTask).markAsNotNeeded(laneId, scope, Agent.TEST_UNIT);
         verify(this.createAgentTask).create(testItTicket, laneId);
@@ -184,9 +154,6 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final String scope = "automationservice-sox";
         final CompleteQaLeadLaneRequestDTO request = mock(CompleteQaLeadLaneRequestDTO.class);
         final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
-        when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of("automationservice-sox", this.serviceConfigView));
-        when(this.serviceConfigView.getPath()).thenReturn(scope);
-        when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.BACKEND);
         when(request.getScope()).thenReturn(scope);
         when(request.getSummary()).thenReturn("Prepared QA context for backend testing.");
         when(request.getTestLaneRequirements()).thenReturn(requirements);
@@ -199,9 +166,6 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
 
         //then
         verify(this.laneCompletionValidator).validateQaLeadCompletion(ticketId, laneId, scope);
-        verify(this.servicePropertiesProvider).getServices();
-        verify(this.serviceConfigView).getPath();
-        verify(this.serviceConfigView).getGroup();
         verify(this.createAgentTask).markAsNotNeeded(laneId, scope, Agent.TEST_UNIT);
         verify(this.createAgentTask).markAsNotNeeded(laneId, scope, Agent.TEST_IT);
     }
@@ -214,9 +178,6 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final String scope = "automationservice-sox";
         final CompleteQaLeadLaneRequestDTO request = mock(CompleteQaLeadLaneRequestDTO.class);
         final QaLeadTestLaneRequirementsDTO requirements = mock(QaLeadTestLaneRequirementsDTO.class);
-        when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of("automationservice-sox", this.serviceConfigView));
-        when(this.serviceConfigView.getPath()).thenReturn(scope);
-        when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.BACKEND);
         when(request.getScope()).thenReturn(scope);
         when(request.getSummary()).thenReturn("Prepared QA context for backend testing.");
         when(request.getTestLaneRequirements()).thenReturn(requirements);
@@ -231,8 +192,5 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
                 .hasMessageContaining("integrationTestCases must not be empty");
 
         verify(this.laneCompletionValidator).validateQaLeadCompletion(ticketId, laneId, scope);
-        verify(this.servicePropertiesProvider).getServices();
-        verify(this.serviceConfigView).getPath();
-        verify(this.serviceConfigView).getGroup();
     }
 }
