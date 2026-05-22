@@ -94,7 +94,7 @@ class LaneCompletionValidatorTest {
     }
 
     @Test
-    void givenWrongScope_whenValidateItTestCompletion_thenThrowLaneConflictException() {
+    void givenWrongScope_whenValidateItTestCompletion_thenThrowScopeMismatchException() {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
@@ -109,7 +109,7 @@ class LaneCompletionValidatorTest {
 
         //when //then
         assertThatThrownBy(() -> this.laneCompletionValidator.validateItTestCompletion(ticketId, laneId, "automationservice-sox"))
-                .isInstanceOf(LaneConflictException.class)
+                .isInstanceOf(ScopeMismatchException.class)
                 .hasMessageContaining("scope mismatch");
 
         verify(this.ticketRepository).findById(ticketId);

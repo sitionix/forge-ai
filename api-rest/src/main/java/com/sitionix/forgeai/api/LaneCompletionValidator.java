@@ -43,7 +43,7 @@ public class LaneCompletionValidator {
                     + ", expectedAgent=" + expectedAgent);
         }
         if (!Objects.equals(lane.getScope(), scope)) {
-            throw new LaneConflictException(laneLabel + " scope mismatch: laneId=" + laneId
+            throw new ScopeMismatchException(laneLabel + " scope mismatch: laneId=" + laneId
                     + ", laneScope=" + lane.getScope()
                     + ", requestScope=" + scope);
         }
