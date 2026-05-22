@@ -84,7 +84,7 @@ public interface AgentTicketApiMapper {
     @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")
     @Mapping(target = "ticketId", source = "ticketId")
     @Mapping(target = "status", constant = "CREATED")
-    @Mapping(target = "scope", source = "source.scope")
+    @Mapping(target = "scope", expression = "java(com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode.GLOBAL_SCOPE)")
     @Mapping(target = "agent", expression = "java(Agent.REVIEWER)")
     @Mapping(target = "payload", source = "source")
     AgentTicket<ReviewerPayload> asReviewerTicket(

@@ -1,10 +1,10 @@
 {
   "status": "CREATED",
-  "scope": "automationservice-sox",
+  "scope": "GLOBAL",
   "agent": "REVIEWER",
   "payload": {
     "task": "Prepare reviewer execution context",
-    "scope": "automationservice-sox",
+    "scope": "GLOBAL",
     "summary": "Prepared unit test coverage and findings.",
     "affectedFiles": [
       "src/test/java/com/example/FooTest.java",

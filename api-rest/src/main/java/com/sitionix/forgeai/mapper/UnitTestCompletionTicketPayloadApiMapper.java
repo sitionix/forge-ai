@@ -11,7 +11,7 @@ import org.mapstruct.Mapping;
 public interface UnitTestCompletionTicketPayloadApiMapper {
 
     @Mapping(target = "task", expression = "java(\"Prepare reviewer execution context\")")
-    @Mapping(target = "scope", source = "scope")
+    @Mapping(target = "scope", expression = "java(com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode.GLOBAL_SCOPE)")
     @Mapping(target = "summary", source = "summary")
     @Mapping(target = "affectedFiles", source = "affectedFiles")
     @Mapping(target = "sonar", source = "sonar")

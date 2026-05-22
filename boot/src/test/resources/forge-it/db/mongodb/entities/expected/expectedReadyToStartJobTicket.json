@@ -210,24 +210,15 @@
     },
     {
       "type": "REVIEWER",
-      "scope": "automationservice-sox",
-      "serviceId": "atmssox",
+      "scope": "GLOBAL",
+      "serviceId": "global",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
         {
           "type": "TEST_UNIT",
           "scope": "automationservice-sox"
-        }
-      ]
-    },
-    {
-      "type": "REVIEWER",
-      "scope": "backendforfrontendservice-sox",
-      "serviceId": "bffssox",
-      "status": "NOT_STARTED",
-      "attempt": 0,
-      "dependsOn": [
+        },
         {
           "type": "TEST_UNIT",
           "scope": "backendforfrontendservice-sox"

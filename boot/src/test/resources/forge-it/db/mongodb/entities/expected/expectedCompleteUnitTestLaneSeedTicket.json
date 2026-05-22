@@ -20,15 +20,15 @@
         }
       ]
     },
-    {
-      "type": "REVIEWER",
-      "scope": "automationservice-sox",
-      "serviceId": "atmssox",
-      "status": "NOT_STARTED",
-      "attempt": 0,
-      "dependsOn": [
-        {
-          "type": "TEST_UNIT",
+  {
+    "type": "REVIEWER",
+    "scope": "GLOBAL",
+    "serviceId": "global",
+    "status": "NOT_STARTED",
+    "attempt": 0,
+    "dependsOn": [
+      {
+        "type": "TEST_UNIT",
           "scope": "automationservice-sox"
         }
       ]

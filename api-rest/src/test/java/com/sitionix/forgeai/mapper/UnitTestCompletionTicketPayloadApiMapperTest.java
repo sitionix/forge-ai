@@ -33,7 +33,7 @@ class UnitTestCompletionTicketPayloadApiMapperTest {
                 .build();
         final ReviewerPayload expected = new ReviewerPayload(
                 "Prepare reviewer execution context",
-                "automationservice-sox",
+                "GLOBAL",
                 "unit summary",
                 java.util.List.of("src/test/java/com/example/FooTest.java"),
                 new UnitTestSonar(91.0, 1)

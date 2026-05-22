@@ -121,6 +121,29 @@ class StartForgeAiTaskUseCaseTest {
     }
 
     @Test
+    void givenStartCommand_whenExecute_thenCreatesSingleGlobalReviewerLane() {
+        //given
+        final ForgeAiStartCommand command = this.getCommand();
+        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.getServiceMap();
+        when(this.props.getServices()).thenReturn(services);
+
+        //when
+        final Ticket actual = this.startForgeAiTask.execute(command);
+
+        //then
+        final List<Lane> reviewerLanes = actual.getLanes().stream()
+                .filter(lane -> lane.getAgent() == Agent.REVIEWER)
+                .toList();
+
+        assertThat(reviewerLanes).hasSize(1);
+        assertThat(reviewerLanes.getFirst().getScope()).isEqualTo("GLOBAL");
+        assertThat(reviewerLanes.getFirst().getDependsOn()).containsExactlyInAnyOrder(
+                this.getDependency(Agent.TEST_UNIT, "automationservice-sox"),
+                this.getDependency(Agent.TEST_UNIT, "backendforfrontendservice-sox")
+        );
+    }
+
+    @Test
     void givenStartCommand_whenExecute_thenImplementBeDependsOnArchitectAndGlobalApiAndGlobalEvent() {
         //given
         final ForgeAiStartCommand command = this.getCommand();
@@ -222,7 +245,7 @@ class StartForgeAiTaskUseCaseTest {
         final AgentPropertiesProvider.AgentConfigView testUnit = this.getAgent("test_unit", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.IMPLEMENT_BE));
         final AgentPropertiesProvider.AgentConfigView testIt = this.getAgent("test_it", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.IMPLEMENT_BE, Agent.QA_LEAD));
         final AgentPropertiesProvider.AgentConfigView testUi = this.getAgent("test_ui", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.FRONTEND), List.of(Agent.IMPLEMENT_FE, Agent.QA_LEAD));
-        final AgentPropertiesProvider.AgentConfigView reviewer = this.getAgent("reviewer", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.TEST_UNIT));
+        final AgentPropertiesProvider.AgentConfigView reviewer = this.getAgent("reviewer", ScopeMode.GLOBAL, Set.of(ServiceGroup.BACKEND), List.of(Agent.TEST_UNIT));
 
         this.bind(Agent.ANALYZER, analyzer);
         this.bind(Agent.ARCHITECT, architect);

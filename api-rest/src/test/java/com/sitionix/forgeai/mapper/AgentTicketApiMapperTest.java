@@ -211,7 +211,7 @@ class AgentTicketApiMapperTest {
         final UUID ticketId = UUID.randomUUID();
         final ReviewerPayload payload = new ReviewerPayload(
                 "Prepare reviewer execution context",
-                "automationservice-sox",
+                "GLOBAL",
                 "unit tests completed",
                 java.util.List.of("src/main/java/com/example/Foo.java"),
                 new UnitTestSonar(82.25, 4)
@@ -224,7 +224,7 @@ class AgentTicketApiMapperTest {
         //then
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
         assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
-        assertThat(actual.getScope()).isEqualTo("automationservice-sox");
+        assertThat(actual.getScope()).isEqualTo("GLOBAL");
         assertThat(actual.getAgent()).isEqualTo(Agent.REVIEWER);
         assertThat(actual.getPayload()).isEqualTo(payload);
         verify(this.unitTestCompletionTicketPayloadApiMapper).asReviewerPayload(source);

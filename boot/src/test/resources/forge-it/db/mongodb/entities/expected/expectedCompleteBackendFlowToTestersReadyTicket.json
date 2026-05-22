@@ -196,24 +196,15 @@
     },
     {
       "type": "REVIEWER",
-      "scope": "automationservice-sox",
-      "serviceId": "atmssox",
+      "scope": "GLOBAL",
+      "serviceId": "global",
       "status": "READY_TO_START",
       "attempt": 0,
       "dependsOn": [
         {
           "type": "TEST_UNIT",
           "scope": "automationservice-sox"
-        }
-      ]
-    },
-    {
-      "type": "REVIEWER",
-      "scope": "backendforfrontendservice-sox",
-      "serviceId": "bffssox",
-      "status": "READY_TO_START",
-      "attempt": 0,
-      "dependsOn": [
+        },
         {
           "type": "TEST_UNIT",
           "scope": "backendforfrontendservice-sox"

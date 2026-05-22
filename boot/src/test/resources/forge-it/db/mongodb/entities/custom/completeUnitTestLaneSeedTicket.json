@@ -24,8 +24,8 @@
     },
     {
       "type": "REVIEWER",
-      "scope": "automationservice-sox",
-      "serviceId": "atmssox",
+      "scope": "GLOBAL",
+      "serviceId": "global",
       "status": "NOT_STARTED",
       "attempt": 0,
       "dependsOn": [
