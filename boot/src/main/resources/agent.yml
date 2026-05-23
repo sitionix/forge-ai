@@ -21,7 +21,7 @@ agents:
     produces: [ implement_be, implement_fe ]
 
   - id: event
-    enabled: true
+    enabled: false
     scope_mode: global
     groups: [ backend ]
     depends_on: [ architect ]
@@ -70,7 +70,7 @@ agents:
     produces: [ ]
 
   - id: reviewer
-    enabled: true
+    enabled: false
     scope_mode: global
     groups: [ backend ]
     depends_on: [ test_unit ]

@@ -4,6 +4,9 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
 import com.sitionix.forgeai.api.LaneScopeValidator;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ReviewerPayload;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import java.util.List;
@@ -33,19 +36,22 @@ class CompleteUnitTestLaneOrchestrationUseCaseTest {
 
     @Mock
     private LaneScopeValidator laneScopeValidator;
+    @Mock
+    private LaneRepository laneRepository;
 
     @BeforeEach
     void setUp() {
         this.completeUnitTestLaneOrchestrationUseCase = new CompleteUnitTestLaneOrchestrationUseCase(
                 this.agentTicketApiMapper,
                 this.completeAgentTasks,
-                this.laneScopeValidator
+                this.laneScopeValidator,
+                this.laneRepository
         );
     }
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.agentTicketApiMapper, this.completeAgentTasks, this.laneScopeValidator);
+        verifyNoMoreInteractions(this.agentTicketApiMapper, this.completeAgentTasks, this.laneScopeValidator, this.laneRepository);
     }
 
     @Test
@@ -56,12 +62,14 @@ class CompleteUnitTestLaneOrchestrationUseCaseTest {
         final CompleteUnitTestLaneRequestDTO request = CompleteUnitTestLaneRequestDTO.builder().scope("automationservice-sox").build();
         final AgentTicket<ReviewerPayload> reviewerTicket = mock(AgentTicket.class);
         when(this.agentTicketApiMapper.asReviewerTicket(request, ticketId)).thenReturn(reviewerTicket);
+        when(this.laneRepository.findProducedLanes(laneId)).thenReturn(List.of(Lane.builder().agent(Agent.REVIEWER).build()));
 
         //when
         this.completeUnitTestLaneOrchestrationUseCase.complete(ticketId, laneId, request);
 
         //then
         verify(this.laneScopeValidator).validateUnitTestCallbackScope(laneId, request.getScope());
+        verify(this.laneRepository).findProducedLanes(laneId);
         verify(this.agentTicketApiMapper).asReviewerTicket(request, ticketId);
         verify(this.completeAgentTasks).complete(laneId, List.of(reviewerTicket));
     }

@@ -13,8 +13,10 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
+import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
@@ -54,6 +56,8 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
 
     @Mock
     private LaneScopeValidator laneScopeValidator;
+    @Mock
+    private LaneRepository laneRepository;
 
     @Mock
     private ServicePropertiesProvider.ServiceConfigView serviceConfigView;
@@ -65,13 +69,14 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
                 this.completeAgentTasks,
                 this.createAgentTask,
                 this.servicePropertiesProvider,
-                this.laneScopeValidator
+                this.laneScopeValidator,
+                this.laneRepository
         );
     }
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.agentTicketApiMapper, this.completeAgentTasks, this.createAgentTask, this.servicePropertiesProvider, this.laneScopeValidator, this.serviceConfigView);
+        verifyNoMoreInteractions(this.agentTicketApiMapper, this.completeAgentTasks, this.createAgentTask, this.servicePropertiesProvider, this.laneScopeValidator, this.serviceConfigView, this.laneRepository);
     }
 
     @Test
@@ -92,6 +97,7 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
         when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.BACKEND);
         when(this.agentTicketApiMapper.asImplementBeTicket(request, ticketId)).thenReturn(implementBeTicket);
         when(this.agentTicketApiMapper.asApiTicket(request, ticketId)).thenReturn(apiTicket);
+        when(this.laneRepository.findProducedLanes(laneId)).thenReturn(List.of(Lane.builder().agent(Agent.EVENT).build()));
 
         //when
         this.completeArchitectLaneOrchestrationUseCase.complete(ticketId, laneId, request);
@@ -101,6 +107,7 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
         verify(this.laneScopeValidator).validateArchitectCallbackScope(laneId, "automationservice-sox");
         verify(this.serviceConfigView).getPath();
         verify(this.serviceConfigView).getGroup();
+        verify(this.laneRepository).findProducedLanes(laneId);
         verify(this.agentTicketApiMapper).asImplementBeTicket(request, ticketId);
         verify(this.agentTicketApiMapper).asApiTicket(request, ticketId);
         verify(this.completeAgentTasks).complete(laneId, List.of(implementBeTicket));
@@ -126,6 +133,7 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
         when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.FRONTEND);
         when(this.agentTicketApiMapper.asImplementFeTicket(request, ticketId)).thenReturn(implementFeTicket);
         when(this.agentTicketApiMapper.asEventTicket(request, ticketId)).thenReturn(eventTicket);
+        when(this.laneRepository.findProducedLanes(laneId)).thenReturn(List.of(Lane.builder().agent(Agent.EVENT).build()));
 
         //when
         this.completeArchitectLaneOrchestrationUseCase.complete(ticketId, laneId, request);
@@ -135,6 +143,7 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
         verify(this.laneScopeValidator).validateArchitectCallbackScope(laneId, "frontendservice-sox");
         verify(this.serviceConfigView).getPath();
         verify(this.serviceConfigView).getGroup();
+        verify(this.laneRepository).findProducedLanes(laneId);
         verify(this.agentTicketApiMapper).asImplementFeTicket(request, ticketId);
         verify(this.agentTicketApiMapper).asEventTicket(request, ticketId);
         verify(this.completeAgentTasks).complete(laneId, List.of(implementFeTicket));
