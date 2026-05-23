@@ -6,6 +6,8 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
@@ -21,6 +23,7 @@ import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
+import com.sitionix.forgeai.api.usecase.CompleteImplementFeLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteItTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteQaLeadLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteUnitTestLaneOrchestrationUseCase;
@@ -81,6 +84,9 @@ class ForgeAiControllerTest {
     private CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
 
     @Mock
+    private CompleteImplementFeLaneOrchestrationUseCase completeImplementFeLaneOrchestrationUseCase;
+
+    @Mock
     private CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
 
     @Mock
@@ -100,6 +106,7 @@ class ForgeAiControllerTest {
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase,
+                this.completeImplementFeLaneOrchestrationUseCase,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
                 this.completeUnitTestLaneOrchestrationUseCase
@@ -117,6 +124,7 @@ class ForgeAiControllerTest {
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase,
+                this.completeImplementFeLaneOrchestrationUseCase,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
                 this.completeUnitTestLaneOrchestrationUseCase
@@ -233,6 +241,29 @@ class ForgeAiControllerTest {
                 .status(HttpStatus.OK.name())
                 .build());
         verify(this.completeQaLeadLaneOrchestrationUseCase).complete(ticketId, laneId, request);
+    }
+
+    @Test
+    void givenImplementFeLaneRequest_whenCompleteImplementFeLane_thenReturnOkResponse() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final CompleteImplementFeLaneRequestDTO request = CompleteImplementFeLaneRequestDTO.builder()
+                .scope("sitionix-spa")
+                .summary("Implemented frontend changes for assigned flow.")
+                .build();
+
+        //when
+        final ResponseEntity<CompleteImplementFeLaneResponseDTO> actual = this.forgeAiController.completeImplementFeLane(ticketId, laneId, request);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isEqualTo(CompleteImplementFeLaneResponseDTO.builder()
+                .ticketId(ticketId)
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .build());
+        verify(this.completeImplementFeLaneOrchestrationUseCase).complete(ticketId, laneId, request);
     }
 
     @Test

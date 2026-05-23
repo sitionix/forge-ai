@@ -9,6 +9,8 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
@@ -19,6 +21,7 @@ import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
+import com.sitionix.forgeai.api.usecase.CompleteImplementFeLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteItTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteQaLeadLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteUnitTestLaneOrchestrationUseCase;
@@ -56,6 +59,7 @@ public class ForgeAiController implements ForgeAiApi {
     private final LaneScopeValidator laneScopeValidator;
     private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
     private final CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
+    private final CompleteImplementFeLaneOrchestrationUseCase completeImplementFeLaneOrchestrationUseCase;
     private final CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
     private final CompleteItTestLaneOrchestrationUseCase completeItTestLaneOrchestrationUseCase;
     private final CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
@@ -127,6 +131,21 @@ public class ForgeAiController implements ForgeAiApi {
         this.completeAgentTasks.complete(laneId, List.of(testUnitTicket, testItTicket));
 
         return ResponseEntity.ok(CompleteImplementBeLaneResponseDTO.builder()
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteImplementFeLaneResponseDTO> completeImplementFeLane(final UUID ticketId,
+                                                                                       final UUID laneId,
+                                                                                       @Valid final CompleteImplementFeLaneRequestDTO completeImplementFeLaneRequestDTO) {
+        log.info("Received completeImplementFeLane request for ticketId: {}, laneId: {}, with request body: {}",
+                ticketId, laneId, completeImplementFeLaneRequestDTO);
+        this.completeImplementFeLaneOrchestrationUseCase.complete(ticketId, laneId, completeImplementFeLaneRequestDTO);
+
+        return ResponseEntity.ok(CompleteImplementFeLaneResponseDTO.builder()
                 .laneId(laneId)
                 .status(HttpStatus.OK.name())
                 .ticketId(ticketId)

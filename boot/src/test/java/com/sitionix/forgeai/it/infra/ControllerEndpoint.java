@@ -8,6 +8,8 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
@@ -129,6 +131,18 @@ public class ControllerEndpoint {
                 CompleteImplementBeLaneResponseDTO.class,
                 (MockmvcDefault) context -> context
                         .withRequest("requestCompleteImplementBeLane.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<CompleteImplementFeLaneRequestDTO, CompleteImplementFeLaneResponseDTO> completeImplementFeLane() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-fe/complete",
+                HttpMethod.POST,
+                CompleteImplementFeLaneRequestDTO.class,
+                CompleteImplementFeLaneResponseDTO.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteImplementFeLane.json")
                         .expectStatus(HttpStatus.OK.value())
         );
     }

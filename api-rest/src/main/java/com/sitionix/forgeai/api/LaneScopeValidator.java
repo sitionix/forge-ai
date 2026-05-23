@@ -88,6 +88,10 @@ public class LaneScopeValidator {
         return this.validateCompletion(ticketId, laneId, scope, Agent.TEST_IT, "IT test");
     }
 
+    public Lane validateImplementFeCompletion(final UUID ticketId, final UUID laneId, final String scope) {
+        return this.validateCompletion(ticketId, laneId, scope, Agent.IMPLEMENT_FE, "Implement-fe");
+    }
+
     public Set<String> resolveRelevantApiScopes(final UUID laneId, final Set<String> contractScopes) {
         final Set<String> implementationScopes = this.laneRepository.findProducedLanes(laneId).stream()
                 .filter(value -> Objects.equals(value.getAgent(), Agent.IMPLEMENT_BE) || Objects.equals(value.getAgent(), Agent.IMPLEMENT_FE))

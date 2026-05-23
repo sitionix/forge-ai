@@ -3,6 +3,7 @@ package com.sitionix.forgeai.mapper;
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
@@ -26,6 +27,7 @@ import java.util.UUID;
                 TestItTicketPayloadApiMapper.class,
                 UnitTestCompletionTicketPayloadApiMapper.class,
                 ImplementFeTicketPayloadApiMapper.class,
+                ImplementFeCompletionTicketPayloadApiMapper.class,
                 ApiTicketPayloadApiMapper.class,
                 EventTicketPayloadApiMapper.class
         },
@@ -144,6 +146,20 @@ public interface AgentTicketApiMapper {
     AgentTicket<ImplementFePayload> asImplementFeTicket(
             CompleteArchitectLaneRequest source,
             UUID ticketId);
+
+    @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")
+    @Mapping(target = "ticketId", source = "ticketId")
+    @Mapping(target = "laneId", source = "laneId")
+    @Mapping(target = "status", constant = "CONSUMED")
+    @Mapping(target = "scope", source = "source.scope")
+    @Mapping(target = "agent", expression = "java(Agent.IMPLEMENT_FE)")
+    @Mapping(target = "payload", source = "source")
+    @Mapping(target = "createdAt", expression = "java(java.time.LocalDateTime.now())")
+    @Mapping(target = "updatedAt", expression = "java(java.time.LocalDateTime.now())")
+    AgentTicket<ImplementFeCompletionPayload> asImplementFeCompletionTicket(
+            CompleteImplementFeLaneRequestDTO source,
+            UUID ticketId,
+            UUID laneId);
 
     @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")
     @Mapping(target = "ticketId", source = "ticketId")

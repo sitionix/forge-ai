@@ -241,6 +241,40 @@ class LaneScopeValidatorTest {
     }
 
     @Test
+    void givenWrongLaneType_whenValidateImplementFeCompletion_thenThrowConflict() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final Lane lane = this.getLane(laneId, Agent.IMPLEMENT_BE, "sitionix-spa", LaneStatus.IN_PROGRESS);
+        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.getTicket(ticketId, lane)));
+
+        //when //then
+        assertThatThrownBy(() -> this.laneScopeValidator.validateImplementFeCompletion(ticketId, laneId, "sitionix-spa"))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessageContaining("lane type mismatch");
+        verify(this.ticketRepository).findById(ticketId);
+        verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
+    }
+
+    @Test
+    void givenCompletedLane_whenValidateImplementFeCompletion_thenThrowConflict() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final Lane lane = this.getLane(laneId, Agent.IMPLEMENT_FE, "sitionix-spa", LaneStatus.COMPLETED);
+        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.getTicket(ticketId, lane)));
+
+        //when //then
+        assertThatThrownBy(() -> this.laneScopeValidator.validateImplementFeCompletion(ticketId, laneId, "sitionix-spa"))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
+                .hasMessageContaining("lane cannot be completed in current state");
+        verify(this.ticketRepository).findById(ticketId);
+        verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
+    }
+
+    @Test
     void givenMissingLaneInTicket_whenValidateItTestCompletion_thenThrowNotFound() {
         //given
         final UUID ticketId = UUID.randomUUID();

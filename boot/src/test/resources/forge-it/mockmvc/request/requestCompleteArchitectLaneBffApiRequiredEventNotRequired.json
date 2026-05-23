@@ -1,0 +1,60 @@
+{
+  "summary": "architect completion bff",
+  "implementationHandoff": {
+    "task": "implement task",
+    "scope": "backendforfrontendservice-sox",
+    "summary": "implement summary",
+    "requirements": ["r1"],
+    "constraints": ["c1"],
+    "nonGoals": ["n1"],
+    "architectureDecision": "decision",
+    "dependencies": ["d1"],
+    "acceptanceNotes": ["a1"],
+    "risks": ["risk1"]
+  },
+  "apiRequest": {
+    "required": true,
+    "reason": "required",
+    "scope": "GLOBAL",
+    "summary": "api summary",
+    "operations": [
+      {
+        "intent": "create",
+        "method": "POST",
+        "path": "/api/v1/agent-actions",
+        "request": {
+          "fields": [
+            {
+              "name": "title",
+              "required": true,
+              "type": "string",
+              "description": "title"
+            }
+          ]
+        },
+        "response": {
+          "fields": [
+            {
+              "name": "id",
+              "required": true,
+              "type": "string",
+              "description": "id"
+            }
+          ]
+        }
+      }
+    ],
+    "consumers": ["backendforfrontendservice-sox", "sitionix-spa"],
+    "notes": ["note1"]
+  },
+  "eventRequest": {
+    "required": false,
+    "reason": "not required",
+    "scope": "GLOBAL",
+    "summary": "event summary",
+    "eventName": "",
+    "payloadFields": [],
+    "consumers": [],
+    "notes": []
+  }
+}
