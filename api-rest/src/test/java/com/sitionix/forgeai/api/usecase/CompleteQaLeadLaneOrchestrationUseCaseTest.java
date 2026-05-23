@@ -4,16 +4,15 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadIntegrationTestCaseDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadTestLaneRequirementsDTO;
 import com.sitionix.forgeai.api.LaneScopeValidator;
-import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
-import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
+import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +25,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -46,7 +46,7 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
     private AgentTicketApiMapper agentTicketApiMapper;
 
     @Mock
-    private ServicePropertiesProvider servicePropertiesProvider;
+    private LaneRepository laneRepository;
 
     @BeforeEach
     void setUp() {
@@ -54,8 +54,9 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
                 this.laneScopeValidator,
                 this.createAgentTask,
                 this.agentTicketApiMapper,
-                this.servicePropertiesProvider
+                this.laneRepository
         );
+        when(this.laneRepository.findLaneToProduceOptional(any(), any(), any())).thenReturn(Optional.empty());
     }
 
     @AfterEach
@@ -63,8 +64,7 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         verifyNoMoreInteractions(
                 this.laneScopeValidator,
                 this.createAgentTask,
-                this.agentTicketApiMapper,
-                this.servicePropertiesProvider
+                this.agentTicketApiMapper
         );
     }
 
@@ -74,7 +74,8 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final CompleteQaLeadLaneRequestDTO request = this.getRequest(true, true, false, List.of(this.getIntegrationTestCase()));
-        this.mockScopeGroup("automationservice-sox", ServiceGroup.BACKEND);
+        this.mockProducedLane(laneId, "automationservice-sox", Agent.TEST_UNIT);
+        this.mockProducedLane(laneId, "automationservice-sox", Agent.TEST_IT);
         final AgentTicket<TestUnitPayload> testUnitTicket = mock(AgentTicket.class);
         final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
         when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
@@ -97,7 +98,8 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final CompleteQaLeadLaneRequestDTO request = this.getRequest(true, false, false, List.of());
-        this.mockScopeGroup("automationservice-sox", ServiceGroup.BACKEND);
+        this.mockProducedLane(laneId, "automationservice-sox", Agent.TEST_UNIT);
+        this.mockProducedLane(laneId, "automationservice-sox", Agent.TEST_IT);
         final AgentTicket<TestUnitPayload> testUnitTicket = mock(AgentTicket.class);
         when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
 
@@ -118,7 +120,8 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final UUID laneId = UUID.randomUUID();
         final QaLeadIntegrationTestCaseDTO integrationTestCase = this.getIntegrationTestCase();
         final CompleteQaLeadLaneRequestDTO request = this.getRequest(false, true, false, List.of(integrationTestCase));
-        this.mockScopeGroup("automationservice-sox", ServiceGroup.BACKEND);
+        this.mockProducedLane(laneId, "automationservice-sox", Agent.TEST_UNIT);
+        this.mockProducedLane(laneId, "automationservice-sox", Agent.TEST_IT);
         final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
         when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
 
@@ -138,7 +141,8 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final CompleteQaLeadLaneRequestDTO request = this.getRequest(false, false, false, List.of());
-        this.mockScopeGroup("automationservice-sox", ServiceGroup.BACKEND);
+        this.mockProducedLane(laneId, "automationservice-sox", Agent.TEST_UNIT);
+        this.mockProducedLane(laneId, "automationservice-sox", Agent.TEST_IT);
 
         //when
         this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request);
@@ -164,7 +168,7 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
                         .build())
                 .integrationTestCases(List.of())
                 .build();
-        this.mockScopeGroup("sitionix-spa", ServiceGroup.FRONTEND);
+        this.mockProducedLane(laneId, "sitionix-spa", Agent.TEST_UI);
 
         //when
         this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request);
@@ -190,22 +194,19 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
                         .build())
                 .integrationTestCases(List.of())
                 .build();
-        this.mockScopeGroup("sitionix-spa", ServiceGroup.FRONTEND);
+        this.mockProducedLane(laneId, "sitionix-spa", Agent.TEST_UI);
 
         //when then
         assertThatThrownBy(() -> this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
-                .hasMessageContaining("UI test routing is not supported yet");
+                .hasMessageContaining("QA lead test lane routing is not supported yet");
 
         verify(this.laneScopeValidator).validateQaLeadCompletion(ticketId, laneId, "sitionix-spa");
     }
 
-    private void mockScopeGroup(final String scope, final ServiceGroup group) {
-        final ServicePropertiesProvider.ServiceConfigView service = mock(ServicePropertiesProvider.ServiceConfigView.class);
-        when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of(scope, service));
-        when(service.getPath()).thenReturn(scope);
-        when(service.getGroup()).thenReturn(group);
+    private void mockProducedLane(final UUID laneId, final String scope, final Agent agent) {
+        when(this.laneRepository.findLaneToProduceOptional(laneId, scope, agent)).thenReturn(Optional.of(mock(com.sitionix.forgeai.domain.model.ticket.lane.Lane.class)));
     }
 
     private CompleteQaLeadLaneRequestDTO getRequest(final boolean unitTestRequired,
