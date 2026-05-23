@@ -23,7 +23,6 @@ import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
-import com.sitionix.forgeai.api.usecase.CompleteImplementFeLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteItTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteQaLeadLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteUnitTestLaneOrchestrationUseCase;
@@ -33,6 +32,7 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
@@ -84,9 +84,6 @@ class ForgeAiControllerTest {
     private CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
 
     @Mock
-    private CompleteImplementFeLaneOrchestrationUseCase completeImplementFeLaneOrchestrationUseCase;
-
-    @Mock
     private CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
 
     @Mock
@@ -106,7 +103,6 @@ class ForgeAiControllerTest {
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase,
-                this.completeImplementFeLaneOrchestrationUseCase,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
                 this.completeUnitTestLaneOrchestrationUseCase
@@ -124,7 +120,6 @@ class ForgeAiControllerTest {
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase,
-                this.completeImplementFeLaneOrchestrationUseCase,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
                 this.completeUnitTestLaneOrchestrationUseCase
@@ -263,7 +258,8 @@ class ForgeAiControllerTest {
                 .laneId(laneId)
                 .status(HttpStatus.OK.name())
                 .build());
-        verify(this.completeImplementFeLaneOrchestrationUseCase).complete(ticketId, laneId, request);
+        verify(this.laneScopeValidator).validateAgentCallbackScope(laneId, request.getScope(), Agent.IMPLEMENT_FE, "Implement-fe");
+        verify(this.completeAgentTasks).complete(laneId, List.of());
     }
 
     @Test

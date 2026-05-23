@@ -75,7 +75,7 @@ class LaneScopeValidatorTest {
     void givenImplementBeLaneAndDifferentImplementationScope_whenValidateImplementBeCallbackScope_thenThrowScopeMismatchException() {
         //given
         final UUID laneId = UUID.randomUUID();
-        final Lane lane = Lane.builder().id(laneId).scope("automationservice-sox").build();
+        final Lane lane = this.getLane(laneId, Agent.IMPLEMENT_BE, "automationservice-sox", LaneStatus.IN_PROGRESS);
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
 
         //when //then
@@ -135,11 +135,20 @@ class LaneScopeValidatorTest {
         //given
         final UUID analyzerLaneId = UUID.randomUUID();
         final UUID architectLaneId = UUID.randomUUID();
+        final UUID implementBeLaneId = UUID.randomUUID();
+        final UUID qaLeadLaneId = UUID.randomUUID();
+        final UUID unitTestLaneId = UUID.randomUUID();
         final UUID apiLaneId = UUID.randomUUID();
         when(this.ticketRepository.findByLaneId(analyzerLaneId))
                 .thenReturn(Optional.of(Lane.builder().id(analyzerLaneId).scope("automationservice-sox").build()));
         when(this.ticketRepository.findByLaneId(architectLaneId))
                 .thenReturn(Optional.of(Lane.builder().id(architectLaneId).scope("automationservice-sox").build()));
+        when(this.ticketRepository.findByLaneId(implementBeLaneId))
+                .thenReturn(Optional.of(this.getLane(implementBeLaneId, Agent.IMPLEMENT_BE, "automationservice-sox", LaneStatus.IN_PROGRESS)));
+        when(this.ticketRepository.findByLaneId(qaLeadLaneId))
+                .thenReturn(Optional.of(this.getLane(qaLeadLaneId, Agent.QA_LEAD, "automationservice-sox", LaneStatus.IN_PROGRESS)));
+        when(this.ticketRepository.findByLaneId(unitTestLaneId))
+                .thenReturn(Optional.of(this.getLane(unitTestLaneId, Agent.TEST_UNIT, "automationservice-sox", LaneStatus.IN_PROGRESS)));
         when(this.laneRepository.findProducedLanes(apiLaneId)).thenReturn(List.of(
                 Lane.builder().id(UUID.randomUUID()).scope("automationservice-sox").agent(Agent.IMPLEMENT_BE).build(),
                 Lane.builder().id(UUID.randomUUID()).scope("backendforfrontendservice-sox").agent(Agent.IMPLEMENT_FE).build()
@@ -148,14 +157,17 @@ class LaneScopeValidatorTest {
         //when
         this.laneScopeValidator.validateAnalyzerCallbackScope(analyzerLaneId, "automationservice-sox", "automationservice-sox");
         this.laneScopeValidator.validateArchitectCallbackScope(architectLaneId, "automationservice-sox");
-        this.laneScopeValidator.validateImplementBeCallbackScope(architectLaneId, "automationservice-sox");
-        this.laneScopeValidator.validateQaLeadCallbackScope(architectLaneId, "automationservice-sox");
-        this.laneScopeValidator.validateUnitTestCallbackScope(architectLaneId, "automationservice-sox");
+        this.laneScopeValidator.validateImplementBeCallbackScope(implementBeLaneId, "automationservice-sox");
+        this.laneScopeValidator.validateQaLeadCallbackScope(qaLeadLaneId, "automationservice-sox");
+        this.laneScopeValidator.validateUnitTestCallbackScope(unitTestLaneId, "automationservice-sox");
         this.laneScopeValidator.resolveRelevantApiScopes(apiLaneId, Set.of("automationservice-sox", "backendforfrontendservice-sox"));
 
         //then
         verify(this.ticketRepository).findByLaneId(analyzerLaneId);
-        verify(this.ticketRepository, times(4)).findByLaneId(architectLaneId);
+        verify(this.ticketRepository).findByLaneId(architectLaneId);
+        verify(this.ticketRepository).findByLaneId(implementBeLaneId);
+        verify(this.ticketRepository).findByLaneId(qaLeadLaneId);
+        verify(this.ticketRepository).findByLaneId(unitTestLaneId);
         verify(this.laneRepository).findProducedLanes(apiLaneId);
         verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
     }
@@ -241,36 +253,46 @@ class LaneScopeValidatorTest {
     }
 
     @Test
-    void givenWrongLaneType_whenValidateImplementFeCompletion_thenThrowConflict() {
+    void givenImplementFeScopeMismatch_whenValidateAgentCallbackScope_thenThrowScopeMismatch() {
         //given
-        final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
-        final Lane lane = this.getLane(laneId, Agent.IMPLEMENT_BE, "sitionix-spa", LaneStatus.IN_PROGRESS);
-        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.getTicket(ticketId, lane)));
+        final Lane lane = this.getLane(laneId, Agent.IMPLEMENT_FE, "sitionix-spa", LaneStatus.IN_PROGRESS);
+        when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
 
         //when //then
-        assertThatThrownBy(() -> this.laneScopeValidator.validateImplementFeCompletion(ticketId, laneId, "sitionix-spa"))
-                .isInstanceOf(ResponseStatusException.class)
-                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
-                .hasMessageContaining("lane type mismatch");
-        verify(this.ticketRepository).findById(ticketId);
+        assertThatThrownBy(() -> this.laneScopeValidator.validateAgentCallbackScope(laneId, "automationservice-sox", Agent.IMPLEMENT_FE, "Implement-fe"))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessageContaining("Implement-fe scope mismatch");
+        verify(this.ticketRepository).findByLaneId(laneId);
         verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
     }
 
     @Test
-    void givenCompletedLane_whenValidateImplementFeCompletion_thenThrowConflict() {
+    void givenWrongLaneType_whenValidateAgentCallbackScope_thenThrowScopeMismatch() {
         //given
-        final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
-        final Lane lane = this.getLane(laneId, Agent.IMPLEMENT_FE, "sitionix-spa", LaneStatus.COMPLETED);
-        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.getTicket(ticketId, lane)));
+        final Lane lane = this.getLane(laneId, Agent.IMPLEMENT_BE, "sitionix-spa", LaneStatus.IN_PROGRESS);
+        when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
 
         //when //then
-        assertThatThrownBy(() -> this.laneScopeValidator.validateImplementFeCompletion(ticketId, laneId, "sitionix-spa"))
-                .isInstanceOf(ResponseStatusException.class)
-                .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode()).isEqualTo(HttpStatus.CONFLICT))
-                .hasMessageContaining("lane cannot be completed in current state");
-        verify(this.ticketRepository).findById(ticketId);
+        assertThatThrownBy(() -> this.laneScopeValidator.validateAgentCallbackScope(laneId, "sitionix-spa", Agent.IMPLEMENT_FE, "Implement-fe"))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessageContaining("lane type mismatch");
+        verify(this.ticketRepository).findByLaneId(laneId);
+        verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
+    }
+
+    @Test
+    void givenMissingLane_whenValidateAgentCallbackScope_thenThrowScopeMismatch() {
+        //given
+        final UUID laneId = UUID.randomUUID();
+        when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.empty());
+
+        //when //then
+        assertThatThrownBy(() -> this.laneScopeValidator.validateAgentCallbackScope(laneId, "sitionix-spa", Agent.IMPLEMENT_FE, "Implement-fe"))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessageContaining("Implement-fe lane not found");
+        verify(this.ticketRepository).findByLaneId(laneId);
         verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
     }
 

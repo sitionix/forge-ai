@@ -51,13 +51,25 @@ public class LaneScopeValidator {
     }
 
     public void validateImplementBeCallbackScope(final UUID laneId, final String implementationScope) {
-        final Lane lane = this.requireLane(laneId, "Implement-be lane not found for laneId=");
-        if (Objects.equals(lane.getScope(), implementationScope)) {
+        this.validateAgentCallbackScope(laneId, implementationScope, Agent.IMPLEMENT_BE, "Implement-be");
+    }
+
+    public void validateAgentCallbackScope(final UUID laneId,
+                                           final String requestScope,
+                                           final Agent expectedAgent,
+                                           final String laneLabel) {
+        final Lane lane = this.requireLane(laneId, laneLabel + " lane not found for laneId=");
+        if (!Objects.equals(lane.getAgent(), expectedAgent)) {
+            throw new ScopeMismatchException(laneLabel + " lane type mismatch: laneId=" + laneId
+                    + ", laneAgent=" + lane.getAgent()
+                    + ", expectedAgent=" + expectedAgent);
+        }
+        if (Objects.equals(lane.getScope(), requestScope)) {
             return;
         }
-        throw new ScopeMismatchException("Implement-be scope mismatch: laneId=" + laneId
+        throw new ScopeMismatchException(laneLabel + " scope mismatch: laneId=" + laneId
                 + ", laneScope=" + lane.getScope()
-                + ", requestScope=" + implementationScope);
+                + ", requestScope=" + requestScope);
     }
 
     public void validateQaLeadCallbackScope(final UUID laneId, final String testScope) {
@@ -86,10 +98,6 @@ public class LaneScopeValidator {
 
     public Lane validateItTestCompletion(final UUID ticketId, final UUID laneId, final String scope) {
         return this.validateCompletion(ticketId, laneId, scope, Agent.TEST_IT, "IT test");
-    }
-
-    public Lane validateImplementFeCompletion(final UUID ticketId, final UUID laneId, final String scope) {
-        return this.validateCompletion(ticketId, laneId, scope, Agent.IMPLEMENT_FE, "Implement-fe");
     }
 
     public Set<String> resolveRelevantApiScopes(final UUID laneId, final Set<String> contractScopes) {

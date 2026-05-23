@@ -8,9 +8,6 @@ import com.app_afesox.fgaisox.api_first.dto.AnalyzerQaLeadHandoffDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
-import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneRequestDTO;
-import com.app_afesox.fgaisox.api_first.dto.ImplementFeAffectedSurfaceDTO;
-import com.app_afesox.fgaisox.api_first.dto.ImplementFeChangedFileDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.UnitTestSonarDTO;
@@ -21,7 +18,6 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFeCompletionPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ReviewerPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
@@ -68,9 +64,6 @@ class AgentTicketApiMapperTest {
 
     @Mock
     private ImplementFeTicketPayloadApiMapper implementFeTicketPayloadApiMapper;
-
-    @Mock
-    private ImplementFeCompletionTicketPayloadApiMapper implementFeCompletionTicketPayloadApiMapper;
 
     @Mock
     private ApiTicketPayloadApiMapper apiTicketPayloadApiMapper;
@@ -277,40 +270,6 @@ class AgentTicketApiMapperTest {
         assertThat(actual.getAgent()).isEqualTo(Agent.IMPLEMENT_FE);
         assertThat(actual.getPayload()).isEqualTo(payload);
         verify(this.implementFeTicketPayloadApiMapper).asImplementFePayload(implementationHandoff);
-    }
-
-    @Test
-    void givenCompleteImplementFeLaneRequest_whenAsImplementFeCompletionTicket_thenMapFields() {
-        //given
-        final CompleteImplementFeLaneRequestDTO source = CompleteImplementFeLaneRequestDTO.builder()
-                .scope("sitionix-spa")
-                .summary("Implemented frontend changes for assigned flow.")
-                .changedFiles(java.util.List.of(ImplementFeChangedFileDTO.builder().path("a").reason("b").build()))
-                .affectedSurfaces(java.util.List.of(ImplementFeAffectedSurfaceDTO.builder()
-                        .type(ImplementFeAffectedSurfaceDTO.TypeEnum.PAGE)
-                        .name("Agent details")
-                        .summary("Updated user-facing behavior on the page.")
-                        .build()))
-                .uiBehavior(java.util.List.of("User can perform the assigned action from the updated UI."))
-                .build();
-        final UUID ticketId = UUID.randomUUID();
-        final UUID laneId = UUID.randomUUID();
-        final ImplementFeCompletionPayload payload = ImplementFeCompletionPayload.builder().build();
-        when(this.implementFeCompletionTicketPayloadApiMapper.asImplementFeCompletionPayload(source)).thenReturn(payload);
-
-        //when
-        final AgentTicket<ImplementFeCompletionPayload> actual = this.agentTicketApiMapper.asImplementFeCompletionTicket(source, ticketId, laneId);
-
-        //then
-        assertThat(actual.getTicketId()).isEqualTo(ticketId);
-        assertThat(actual.getLaneId()).isEqualTo(laneId);
-        assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CONSUMED);
-        assertThat(actual.getScope()).isEqualTo("sitionix-spa");
-        assertThat(actual.getAgent()).isEqualTo(Agent.IMPLEMENT_FE);
-        assertThat(actual.getPayload()).isEqualTo(payload);
-        assertThat(actual.getCreatedAt()).isNotNull();
-        assertThat(actual.getUpdatedAt()).isNotNull();
-        verify(this.implementFeCompletionTicketPayloadApiMapper).asImplementFeCompletionPayload(source);
     }
 
     @Test

@@ -21,7 +21,6 @@ import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
-import com.sitionix.forgeai.api.usecase.CompleteImplementFeLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteItTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteQaLeadLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteUnitTestLaneOrchestrationUseCase;
@@ -32,6 +31,7 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
@@ -59,7 +59,6 @@ public class ForgeAiController implements ForgeAiApi {
     private final LaneScopeValidator laneScopeValidator;
     private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
     private final CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
-    private final CompleteImplementFeLaneOrchestrationUseCase completeImplementFeLaneOrchestrationUseCase;
     private final CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
     private final CompleteItTestLaneOrchestrationUseCase completeItTestLaneOrchestrationUseCase;
     private final CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
@@ -143,7 +142,8 @@ public class ForgeAiController implements ForgeAiApi {
                                                                                        @Valid final CompleteImplementFeLaneRequestDTO completeImplementFeLaneRequestDTO) {
         log.info("Received completeImplementFeLane request for ticketId: {}, laneId: {}, with request body: {}",
                 ticketId, laneId, completeImplementFeLaneRequestDTO);
-        this.completeImplementFeLaneOrchestrationUseCase.complete(ticketId, laneId, completeImplementFeLaneRequestDTO);
+        this.laneScopeValidator.validateAgentCallbackScope(laneId, completeImplementFeLaneRequestDTO.getScope(), Agent.IMPLEMENT_FE, "Implement-fe");
+        this.completeAgentTasks.complete(laneId, List.of());
 
         return ResponseEntity.ok(CompleteImplementFeLaneResponseDTO.builder()
                 .laneId(laneId)
