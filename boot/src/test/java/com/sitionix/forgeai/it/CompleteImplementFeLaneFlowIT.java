@@ -35,7 +35,7 @@ class CompleteImplementFeLaneFlowIT {
     private CodexCliCommandBuilder codexCliCommandBuilder;
 
     @Test
-    @DisplayName("Should store frontend completion report and complete implement_fe lane while marking test_ui not needed")
+    @DisplayName("Should store frontend completion report and complete implement_fe lane")
     void givenCompleteImplementFePayload_whenCompleteImplementFeLane_thenStoreReportAndCompleteLane() {
         //given
         final UUID ticketId = UUID.fromString("a1111111-1111-1111-1111-111111111111");
@@ -85,10 +85,10 @@ class CompleteImplementFeLaneFlowIT {
                     final boolean implementFeCompleted = value.getLanes().stream()
                             .anyMatch(lane -> Objects.equals(lane.getId(), laneId)
                                     && Objects.equals(LaneStatus.COMPLETED, lane.getStatus()));
-                    final boolean testUiNotNeeded = value.getLanes().stream()
+                    final boolean testUiStillDeferred = value.getLanes().stream()
                             .anyMatch(lane -> Objects.equals(lane.getId(), testUiLaneId)
                                     && Objects.equals(LaneStatus.NOT_NEEDED, lane.getStatus()));
-                    return implementFeCompleted && testUiNotNeeded;
+                    return implementFeCompleted && testUiStillDeferred;
                 });
     }
 
