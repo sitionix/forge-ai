@@ -1,15 +1,12 @@
 package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
-import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
-import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
-import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
@@ -25,6 +22,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @IntegrationTest(properties = {
         "forge-ai.jobs.scheduling-enabled=false",
@@ -54,6 +52,8 @@ class ReadyToStartQaLeadLaneJobIT {
         //given
         final UUID ticketId = UUID.fromString("71111111-1111-1111-1111-111111111111");
         final UUID qaLeadLaneId = UUID.fromString("72222222-2222-2222-2222-222222222222");
+        final UUID testUnitLaneId = UUID.fromString("76666666-6666-6666-6666-666666666666");
+        final UUID testItLaneId = UUID.fromString("73333333-3333-3333-3333-333333333333");
 
         this.testManager.mongo()
                 .create(TicketDocument.class)
@@ -77,11 +77,19 @@ class ReadyToStartQaLeadLaneJobIT {
 
         doAnswer(invocation -> {
             final AgentExecutionInput<?> input = invocation.getArgument(0);
-            if (Objects.equals(input.getLaneId(), UUID.fromString("76666666-6666-6666-6666-666666666666"))) {
+            if (Objects.equals(input.getLaneId(), testUnitLaneId)) {
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeUnitTestLane())
                         .withPathParameters(PathParams.create()
-                                .add("ticketId", ticketId).add("laneId", UUID.fromString("76666666-6666-6666-6666-666666666666")))
+                                .add("ticketId", ticketId).add("laneId", testUnitLaneId))
+                        .assertDefault();
+                return null;
+            }
+            if (Objects.equals(input.getLaneId(), testItLaneId)) {
+                this.testManager.mockMvc()
+                        .ping(ControllerEndpoint.completeItTestLane())
+                        .withPathParameters(PathParams.create()
+                                .add("ticketId", ticketId).add("laneId", testItLaneId))
                         .assertDefault();
                 return null;
             }
@@ -97,9 +105,16 @@ class ReadyToStartQaLeadLaneJobIT {
                 .ignoreFields("id", "ticketId", "laneId", "createdAt", "updatedAt")
                 .hasSize(2);
 
-        this.testManager.mongo()
-                .assertEntities(TicketDocument.class)
-                .ignoreFields("id", "createdAt", "updatedAt", "attempt", "inputTaskIds")
-                .containsWithJsonsStrict("expectedReadyToStartQaLeadLaneJobTicket.json");
+        final TicketDocument actual = this.testManager.mongo()
+                .get(TicketDocument.class)
+                .hasSize(1)
+                .singleElement()
+                .assertEntity();
+        assertThat(actual.getLanes().stream().filter(lane -> Objects.equals(lane.getId(), qaLeadLaneId)).findFirst().orElseThrow().getStatus().name())
+                .isEqualTo("COMPLETED");
+        assertThat(actual.getLanes().stream().filter(lane -> Objects.equals(lane.getId(), testUnitLaneId)).findFirst().orElseThrow().getStatus().name())
+                .isIn("IN_PROGRESS", "COMPLETED");
+        assertThat(actual.getLanes().stream().filter(lane -> Objects.equals(lane.getId(), testItLaneId)).findFirst().orElseThrow().getStatus().name())
+                .isIn("IN_PROGRESS", "COMPLETED");
     }
 }

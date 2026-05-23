@@ -30,7 +30,7 @@ class CompleteFrontendBackendFlowToReviewerReadyIT {
     private TicketRepository ticketRepository;
 
     @Test
-    @DisplayName("Should drive mixed backend and frontend flows until reviewer is ready and deferred UI lanes do not block completion")
+    @DisplayName("Should drive mixed backend and frontend flows until backend and frontend test lanes are completed")
     void givenFrontendAndBackendScopesWhenCodexRoutesCallbacksThenReviewerBecomesReadyAndFrontendCompletes() {
         //given
         this.testManager.mockMvc()
@@ -53,13 +53,14 @@ class CompleteFrontendBackendFlowToReviewerReadyIT {
         final UUID architectBffLaneId = this.findLaneId(ticket, Agent.ARCHITECT, "backendforfrontendservice-sox");
         final UUID architectFrontendLaneId = this.findLaneId(ticket, Agent.ARCHITECT, "sitionix-spa");
         final UUID apiLaneId = this.findLaneId(ticket, Agent.API, "GLOBAL");
-        final UUID eventLaneId = this.findLaneId(ticket, Agent.EVENT, "GLOBAL");
         final UUID qaLeadBffLaneId = this.findLaneId(ticket, Agent.QA_LEAD, "backendforfrontendservice-sox");
         final UUID implementBeLaneId = this.findLaneId(ticket, Agent.IMPLEMENT_BE, "backendforfrontendservice-sox");
         final UUID implementFeLaneId = this.findLaneId(ticket, Agent.IMPLEMENT_FE, "sitionix-spa");
         final UUID testUnitLaneId = this.findLaneId(ticket, Agent.TEST_UNIT, "backendforfrontendservice-sox");
         final UUID testItLaneId = this.findLaneId(ticket, Agent.TEST_IT, "backendforfrontendservice-sox");
         final UUID reviewerLaneId = this.findLaneId(ticket, Agent.REVIEWER, "GLOBAL");
+        final UUID qaLeadSpaLaneId = this.findLaneId(ticket, Agent.QA_LEAD, "sitionix-spa");
+        final UUID testUiLaneId = this.findLaneId(ticket, Agent.TEST_UI, "sitionix-spa");
 
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.completeAnalyzerLane())
@@ -112,6 +113,18 @@ class CompleteFrontendBackendFlowToReviewerReadyIT {
                 .ping(ControllerEndpoint.completeQaLeadLaneBackend())
                 .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", qaLeadBffLaneId))
                 .assertDefault(d -> d.mutateRequest(request -> request.setScope("backendforfrontendservice-sox")));
+        this.ticketRepository.updateLaneStatus(qaLeadSpaLaneId, LaneStatus.IN_PROGRESS);
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.completeQaLeadLaneBackend())
+                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", qaLeadSpaLaneId))
+                .assertDefault(d -> d.mutateRequest(request -> {
+                    request.setScope("sitionix-spa");
+                    request.getTestLaneRequirements().setUnitTestRequired(false);
+                    request.getTestLaneRequirements().setIntegrationTestRequired(false);
+                    request.getTestLaneRequirements().setUiTestRequired(true);
+                    request.setIntegrationTestCases(List.of());
+                    request.setUnitTestNotes(List.of());
+                }));
 
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.completeImplementBeLane())
@@ -134,6 +147,11 @@ class CompleteFrontendBackendFlowToReviewerReadyIT {
                 .ping(ControllerEndpoint.completeItTestLane())
                 .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testItLaneId))
                 .assertDefault(d -> d.mutateRequest(request -> request.setScope("backendforfrontendservice-sox")));
+        this.ticketRepository.updateLaneStatus(testUiLaneId, LaneStatus.IN_PROGRESS);
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.completeUiTestLane())
+                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testUiLaneId))
+                .assertDefault();
 
         //then
         final TicketDocument actual = this.testManager.mongo()
@@ -143,12 +161,13 @@ class CompleteFrontendBackendFlowToReviewerReadyIT {
                 .assertEntity();
 
         assertThat(this.getLaneStatus(actual, implementFeLaneId)).isEqualTo(LaneStatus.COMPLETED);
-        assertThat(this.getLaneStatus(actual, reviewerLaneId)).isEqualTo(LaneStatus.READY_TO_START);
         assertThat(this.getLaneStatus(actual, qaLeadBffLaneId)).isEqualTo(LaneStatus.COMPLETED);
+        assertThat(this.getLaneStatus(actual, qaLeadSpaLaneId)).isEqualTo(LaneStatus.COMPLETED);
         assertThat(this.getLaneStatus(actual, implementBeLaneId)).isEqualTo(LaneStatus.COMPLETED);
         assertThat(this.getLaneStatus(actual, testUnitLaneId)).isEqualTo(LaneStatus.COMPLETED);
         assertThat(this.getLaneStatus(actual, testItLaneId)).isEqualTo(LaneStatus.COMPLETED);
-        assertThat(this.getLaneStatus(actual, eventLaneId)).isEqualTo(LaneStatus.NOT_NEEDED);
+        assertThat(this.getLaneStatus(actual, testUiLaneId)).isEqualTo(LaneStatus.COMPLETED);
+        assertThat(this.getLaneStatus(actual, reviewerLaneId)).isEqualTo(LaneStatus.READY_TO_START);
     }
 
     private UUID findLaneId(final TicketDocument ticket, final Agent agent, final String scope) {

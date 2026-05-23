@@ -8,9 +8,10 @@ import com.app_afesox.fgaisox.api_first.dto.QaLeadUnitTestNoteDTO;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadDataCheck;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadIntegrationFlow;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadIntegrationTestCase;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestUiPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadUnitTestNote;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import java.util.List;
 import java.util.Set;
 import org.mapstruct.Mapper;
@@ -22,16 +23,21 @@ public interface QaLeadCompletionTicketPayloadApiMapper {
     @Mapping(target = "task", expression = "java(\"Prepare unit test execution context\")")
     @Mapping(target = "scope", source = "scope")
     @Mapping(target = "summary", source = "summary")
-    @Mapping(target = "changedFiles", ignore = true)
     @Mapping(target = "unitTestNotes", source = "unitTestNotes")
-    TestUnitPayload asTestUnitPayload(CompleteQaLeadLaneRequestDTO source);
+    QaLeadTestUnitPayload asTestUnitPayload(CompleteQaLeadLaneRequestDTO source);
 
     @Mapping(target = "task", expression = "java(\"Prepare integration test execution context\")")
     @Mapping(target = "scope", source = "scope")
     @Mapping(target = "summary", source = "summary")
     @Mapping(target = "integrationTestCases", source = "integrationTestCases")
     @Mapping(target = "unitTestNotes", source = "unitTestNotes")
-    TestItPayload asTestItPayload(CompleteQaLeadLaneRequestDTO source);
+    QaLeadTestItPayload asTestItPayload(CompleteQaLeadLaneRequestDTO source);
+
+    @Mapping(target = "task", expression = "java(\"Prepare UI test execution context\")")
+    @Mapping(target = "scope", source = "scope")
+    @Mapping(target = "summary", source = "summary")
+    @Mapping(target = "unitTestNotes", source = "unitTestNotes")
+    QaLeadTestUiPayload asTestUiPayload(CompleteQaLeadLaneRequestDTO source);
 
     Set<QaLeadIntegrationTestCase> asIntegrationTestCases(List<QaLeadIntegrationTestCaseDTO> source);
 

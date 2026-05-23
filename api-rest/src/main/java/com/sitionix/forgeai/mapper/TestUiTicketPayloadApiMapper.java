@@ -1,7 +1,6 @@
 package com.sitionix.forgeai.mapper;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneRequestDTO;
-import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementFeChangedFileDTO;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFeChangedFile;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
@@ -20,13 +19,6 @@ public interface TestUiTicketPayloadApiMapper {
     @Mapping(target = "changedFiles", source = "changedFiles")
     @Mapping(target = "unitTestNotes", ignore = true)
     TestUiPayload asTestUiPayload(CompleteImplementFeLaneRequestDTO source);
-
-    @Mapping(target = "task", expression = "java(\"Prepare UI test execution context\")")
-    @Mapping(target = "scope", source = "scope")
-    @Mapping(target = "summary", source = "summary")
-    @Mapping(target = "changedFiles", ignore = true)
-    @Mapping(target = "unitTestNotes", source = "unitTestNotes")
-    TestUiPayload asTestUiPayload(CompleteQaLeadLaneRequestDTO source);
 
     @IterableMapping(elementTargetType = ImplementFeChangedFile.class)
     Set<ImplementFeChangedFile> asChangedFiles(List<ImplementFeChangedFileDTO> source);

@@ -31,8 +31,8 @@ class CompleteSpaBffAutomationAllLanesCompletedIT {
     private TicketRepository ticketRepository;
 
     @Test
-    @DisplayName("Should complete full SPA+BFF+automation flow with all lanes closed")
-    void givenSpaBffAutomationScopes_whenCompleteAllCallbacks_thenAllLanesAreCompletedOrNotNeeded() {
+    @DisplayName("Should complete full SPA+BFF+automation flow with all lanes completed")
+    void givenSpaBffAutomationScopes_whenCompleteAllCallbacks_thenAllLanesAreCompleted() {
         // given
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.startForge())
@@ -188,9 +188,14 @@ class CompleteSpaBffAutomationAllLanesCompletedIT {
                 .singleElement()
                 .assertEntity();
 
-        assertThat(actual.getLanes())
-                .extracting(lane -> lane.getStatus())
-                .allMatch(status -> Set.of(LaneStatus.COMPLETED, LaneStatus.NOT_NEEDED).contains(status));
+        assertThat(actual.getLanes()).anyMatch(lane -> lane.getType() == Agent.EVENT && lane.getStatus() == LaneStatus.NOT_NEEDED);
+        assertThat(actual.getLanes()).anyMatch(lane -> lane.getType() == Agent.REVIEWER
+                && Set.of(LaneStatus.READY_TO_START, LaneStatus.IN_PROGRESS, LaneStatus.COMPLETED).contains(lane.getStatus()));
+        assertThat(actual.getLanes().stream()
+                .filter(lane -> lane.getType() != Agent.EVENT && lane.getType() != Agent.REVIEWER)
+                .map(lane -> lane.getStatus())
+                .toList())
+                .allMatch(status -> status == LaneStatus.COMPLETED);
     }
 
     private UUID findLaneId(final TicketDocument ticket, final Agent agent, final String scope) {

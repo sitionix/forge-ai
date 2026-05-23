@@ -5,8 +5,8 @@ import com.app_afesox.fgaisox.api_first.dto.QaLeadIntegrationTestCaseDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadTestLaneRequirementsDTO;
 import com.sitionix.forgeai.api.LaneScopeValidator;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
@@ -70,8 +70,8 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final CompleteQaLeadLaneRequestDTO request = this.getRequest(true, true, false, List.of(this.getIntegrationTestCase()));
-        final AgentTicket<TestUnitPayload> testUnitTicket = mock(AgentTicket.class);
-        final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
+        final AgentTicket<QaLeadTestUnitPayload> testUnitTicket = mock(AgentTicket.class);
+        final AgentTicket<QaLeadTestItPayload> testItTicket = mock(AgentTicket.class);
         when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
         when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
         when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UNIT))
@@ -101,7 +101,7 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final CompleteQaLeadLaneRequestDTO request = this.getRequest(true, false, false, List.of());
-        final AgentTicket<TestUnitPayload> testUnitTicket = mock(AgentTicket.class);
+        final AgentTicket<QaLeadTestUnitPayload> testUnitTicket = mock(AgentTicket.class);
         when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
         when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UNIT))
                 .thenReturn(Optional.of(Lane.builder().agent(Agent.TEST_UNIT).build()));
@@ -130,7 +130,7 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final UUID laneId = UUID.randomUUID();
         final QaLeadIntegrationTestCaseDTO integrationTestCase = this.getIntegrationTestCase();
         final CompleteQaLeadLaneRequestDTO request = this.getRequest(false, true, false, List.of(integrationTestCase));
-        final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
+        final AgentTicket<QaLeadTestItPayload> testItTicket = mock(AgentTicket.class);
         when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
         when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UNIT))
                 .thenReturn(Optional.of(Lane.builder().agent(Agent.TEST_UNIT).build()));
