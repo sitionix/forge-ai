@@ -32,7 +32,6 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
-import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
@@ -258,7 +257,7 @@ class ForgeAiControllerTest {
                 .laneId(laneId)
                 .status(HttpStatus.OK.name())
                 .build());
-        verify(this.laneScopeValidator).validateAgentCallbackScope(laneId, request.getScope(), Agent.IMPLEMENT_FE, "Implement-fe");
+        verify(this.laneScopeValidator).validateImplementFeCallbackScope(laneId, request.getScope());
         verify(this.completeAgentTasks).complete(laneId, List.of());
     }
 

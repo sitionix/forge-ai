@@ -51,23 +51,27 @@ public class LaneScopeValidator {
     }
 
     public void validateImplementBeCallbackScope(final UUID laneId, final String implementationScope) {
-        this.validateAgentCallbackScope(laneId, implementationScope, Agent.IMPLEMENT_BE, "Implement-be");
+        this.validateAgentCallbackScope(laneId, implementationScope, Agent.IMPLEMENT_BE);
+    }
+
+    public void validateImplementFeCallbackScope(final UUID laneId, final String implementationScope) {
+        this.validateAgentCallbackScope(laneId, implementationScope, Agent.IMPLEMENT_FE);
     }
 
     public void validateAgentCallbackScope(final UUID laneId,
                                            final String requestScope,
-                                           final Agent expectedAgent,
-                                           final String laneLabel) {
-        final Lane lane = this.requireLane(laneId, laneLabel + " lane not found for laneId=");
+                                           final Agent expectedAgent) {
+        final String laneIdLabel = expectedAgent.getId();
+        final Lane lane = this.requireLane(laneId, laneIdLabel + " lane not found for laneId=");
         if (!Objects.equals(lane.getAgent(), expectedAgent)) {
-            throw new ScopeMismatchException(laneLabel + " lane type mismatch: laneId=" + laneId
+            throw new ScopeMismatchException(laneIdLabel + " lane type mismatch: laneId=" + laneId
                     + ", laneAgent=" + lane.getAgent()
                     + ", expectedAgent=" + expectedAgent);
         }
         if (Objects.equals(lane.getScope(), requestScope)) {
             return;
         }
-        throw new ScopeMismatchException(laneLabel + " scope mismatch: laneId=" + laneId
+        throw new ScopeMismatchException(laneIdLabel + " scope mismatch: laneId=" + laneId
                 + ", laneScope=" + lane.getScope()
                 + ", requestScope=" + requestScope);
     }

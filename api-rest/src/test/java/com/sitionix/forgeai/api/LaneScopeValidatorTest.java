@@ -81,7 +81,7 @@ class LaneScopeValidatorTest {
         //when //then
         assertThatThrownBy(() -> this.laneScopeValidator.validateImplementBeCallbackScope(laneId, "backendforfrontendservice-sox"))
                 .isInstanceOf(ScopeMismatchException.class)
-                .hasMessageContaining("Implement-be scope mismatch");
+                .hasMessageContaining("implement_be scope mismatch");
 
         verify(this.ticketRepository).findByLaneId(laneId);
     }
@@ -260,9 +260,9 @@ class LaneScopeValidatorTest {
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
 
         //when //then
-        assertThatThrownBy(() -> this.laneScopeValidator.validateAgentCallbackScope(laneId, "automationservice-sox", Agent.IMPLEMENT_FE, "Implement-fe"))
+        assertThatThrownBy(() -> this.laneScopeValidator.validateAgentCallbackScope(laneId, "automationservice-sox", Agent.IMPLEMENT_FE))
                 .isInstanceOf(ScopeMismatchException.class)
-                .hasMessageContaining("Implement-fe scope mismatch");
+                .hasMessageContaining("implement_fe scope mismatch");
         verify(this.ticketRepository).findByLaneId(laneId);
         verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
     }
@@ -275,7 +275,7 @@ class LaneScopeValidatorTest {
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
 
         //when //then
-        assertThatThrownBy(() -> this.laneScopeValidator.validateAgentCallbackScope(laneId, "sitionix-spa", Agent.IMPLEMENT_FE, "Implement-fe"))
+        assertThatThrownBy(() -> this.laneScopeValidator.validateAgentCallbackScope(laneId, "sitionix-spa", Agent.IMPLEMENT_FE))
                 .isInstanceOf(ScopeMismatchException.class)
                 .hasMessageContaining("lane type mismatch");
         verify(this.ticketRepository).findByLaneId(laneId);
@@ -289,9 +289,9 @@ class LaneScopeValidatorTest {
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.empty());
 
         //when //then
-        assertThatThrownBy(() -> this.laneScopeValidator.validateAgentCallbackScope(laneId, "sitionix-spa", Agent.IMPLEMENT_FE, "Implement-fe"))
+        assertThatThrownBy(() -> this.laneScopeValidator.validateAgentCallbackScope(laneId, "sitionix-spa", Agent.IMPLEMENT_FE))
                 .isInstanceOf(ScopeMismatchException.class)
-                .hasMessageContaining("Implement-fe lane not found");
+                .hasMessageContaining("implement_fe lane not found");
         verify(this.ticketRepository).findByLaneId(laneId);
         verifyNoMoreInteractions(this.ticketRepository, this.laneRepository);
     }

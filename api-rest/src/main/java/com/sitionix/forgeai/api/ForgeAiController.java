@@ -31,7 +31,6 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
-import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
@@ -142,7 +141,7 @@ public class ForgeAiController implements ForgeAiApi {
                                                                                        @Valid final CompleteImplementFeLaneRequestDTO completeImplementFeLaneRequestDTO) {
         log.info("Received completeImplementFeLane request for ticketId: {}, laneId: {}, with request body: {}",
                 ticketId, laneId, completeImplementFeLaneRequestDTO);
-        this.laneScopeValidator.validateAgentCallbackScope(laneId, completeImplementFeLaneRequestDTO.getScope(), Agent.IMPLEMENT_FE, "Implement-fe");
+        this.laneScopeValidator.validateImplementFeCallbackScope(laneId, completeImplementFeLaneRequestDTO.getScope());
         this.completeAgentTasks.complete(laneId, List.of());
 
         return ResponseEntity.ok(CompleteImplementFeLaneResponseDTO.builder()
