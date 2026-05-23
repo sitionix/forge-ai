@@ -6,10 +6,12 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ReviewerPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -62,14 +64,15 @@ class CompleteUnitTestLaneOrchestrationUseCaseTest {
         final CompleteUnitTestLaneRequestDTO request = CompleteUnitTestLaneRequestDTO.builder().scope("automationservice-sox").build();
         final AgentTicket<ReviewerPayload> reviewerTicket = mock(AgentTicket.class);
         when(this.agentTicketApiMapper.asReviewerTicket(request, ticketId)).thenReturn(reviewerTicket);
-        when(this.laneRepository.findProducedLanes(laneId)).thenReturn(List.of(Lane.builder().agent(Agent.REVIEWER).build()));
+        when(this.laneRepository.findLaneToProduceOptional(laneId, ScopeMode.GLOBAL_SCOPE, Agent.REVIEWER))
+                .thenReturn(Optional.of(Lane.builder().agent(Agent.REVIEWER).build()));
 
         //when
         this.completeUnitTestLaneOrchestrationUseCase.complete(ticketId, laneId, request);
 
         //then
         verify(this.laneScopeValidator).validateUnitTestCallbackScope(laneId, request.getScope());
-        verify(this.laneRepository).findProducedLanes(laneId);
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, ScopeMode.GLOBAL_SCOPE, Agent.REVIEWER);
         verify(this.agentTicketApiMapper).asReviewerTicket(request, ticketId);
         verify(this.completeAgentTasks).complete(laneId, List.of(reviewerTicket));
     }

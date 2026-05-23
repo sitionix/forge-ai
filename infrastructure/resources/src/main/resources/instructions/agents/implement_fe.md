@@ -30,12 +30,32 @@ The result of this lane is frontend implementation plus a successful `implement-
 
 ---
 
+## Frontend Boundaries
+
+- Keep UI composition, state handling, data-fetch integration, and view mapping responsibilities separated according to existing SPA architecture.
+- Keep transport/client concerns in existing client/adaptor layers.
+- Keep view mapping and normalization in existing mapper/helper layers when the SPA already uses them.
+- Preserve existing behavior unless lane task explicitly requires behavior change.
+- Prefer small explicit implementation over broad refactoring.
+
+---
+
 ## API Context
 
 - Treat API-generated frontend packages and client artifacts as source of truth when the task depends on API integration.
 - Use the provided frontend dependency and evidence notes from the runtime input.
 - Do not invent API operations, fields, hooks, clients, package names, or contract behavior.
 - Do not repeat API artifacts in the completion payload.
+
+---
+
+## Mapping And UI State
+
+- Use existing frontend mappers/transformers for request/response/view-model mapping.
+- Add or extend mapping helpers only when changed code requires it.
+- Keep mapping logic out of page/component rendering code when project already separates it.
+- Keep business/domain decisions out of presentational components.
+- Keep state transitions explicit and consistent with existing SPA patterns.
 
 ---
 
@@ -47,6 +67,32 @@ Before completion:
 - Keep route/page/component behavior consistent with the existing frontend style.
 - Remove stale code related to the replaced frontend behavior.
 - Avoid introducing duplicate UI logic in changed files.
+- Do not introduce new Sonar issues in changed frontend code.
+
+## Sonar Verify
+
+Before completion, wait for SonarCloud result for the frontend PR update.
+
+Use only SonarCloud output for completion metrics.
+
+Do not invent Sonar numbers.
+
+Do not complete the lane with serious new Sonar issues in changed frontend code.
+
+Unacceptable issues include:
+
+- security issues;
+- unused imports;
+- unused variables;
+- dead code;
+- obvious null/undefined safety bugs;
+- duplicated large code blocks;
+- unreadable control flow in changed code;
+- broken behavior-level checks in changed test updates related to this lane.
+
+Only minor style-level issues may be tolerated when they are harmless and consistent with local style.
+
+Coverage and issue metrics in completion payload must come from SonarCloud only.
 
 ## Completion Callback
 
@@ -63,6 +109,7 @@ Allowed payload content:
 - `changedFiles`
 - `affectedSurfaces`
 - `uiBehavior`
+- `sonar`
 
 ### `scope`
 

@@ -8,9 +8,12 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
+import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,13 +41,16 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
 
     @Mock
     private AgentTicketApiMapper agentTicketApiMapper;
+    @Mock
+    private LaneRepository laneRepository;
 
     @BeforeEach
     void setUp() {
         this.completeQaLeadLaneOrchestrationUseCase = new CompleteQaLeadLaneOrchestrationUseCase(
                 this.laneScopeValidator,
                 this.createAgentTask,
-                this.agentTicketApiMapper
+                this.agentTicketApiMapper,
+                this.laneRepository
         );
     }
 
@@ -53,7 +59,8 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         verifyNoMoreInteractions(
                 this.laneScopeValidator,
                 this.createAgentTask,
-                this.agentTicketApiMapper
+                this.agentTicketApiMapper,
+                this.laneRepository
         );
     }
 
@@ -67,12 +74,21 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
         when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
         when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UNIT))
+                .thenReturn(Optional.of(Lane.builder().agent(Agent.TEST_UNIT).build()));
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_IT))
+                .thenReturn(Optional.of(Lane.builder().agent(Agent.TEST_IT).build()));
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UI))
+                .thenReturn(Optional.empty());
 
         //when
         this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request);
 
         //then
         verify(this.laneScopeValidator).validateQaLeadCompletion(ticketId, laneId, "automationservice-sox");
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UNIT);
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_IT);
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UI);
         verify(this.agentTicketApiMapper).asTestUnitTicket(request, ticketId);
         verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
         verify(this.createAgentTask).create(testUnitTicket, laneId);
@@ -87,12 +103,21 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final CompleteQaLeadLaneRequestDTO request = this.getRequest(true, false, false, List.of());
         final AgentTicket<TestUnitPayload> testUnitTicket = mock(AgentTicket.class);
         when(this.agentTicketApiMapper.asTestUnitTicket(request, ticketId)).thenReturn(testUnitTicket);
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UNIT))
+                .thenReturn(Optional.of(Lane.builder().agent(Agent.TEST_UNIT).build()));
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_IT))
+                .thenReturn(Optional.of(Lane.builder().agent(Agent.TEST_IT).build()));
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UI))
+                .thenReturn(Optional.empty());
 
         //when
         this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request);
 
         //then
         verify(this.laneScopeValidator).validateQaLeadCompletion(ticketId, laneId, "automationservice-sox");
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UNIT);
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_IT);
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UI);
         verify(this.agentTicketApiMapper).asTestUnitTicket(request, ticketId);
         verify(this.createAgentTask).create(testUnitTicket, laneId);
         verify(this.createAgentTask).markAsNotNeeded(laneId, "automationservice-sox", Agent.TEST_IT);
@@ -107,12 +132,21 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final CompleteQaLeadLaneRequestDTO request = this.getRequest(false, true, false, List.of(integrationTestCase));
         final AgentTicket<TestItPayload> testItTicket = mock(AgentTicket.class);
         when(this.agentTicketApiMapper.asTestItTicket(request, ticketId)).thenReturn(testItTicket);
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UNIT))
+                .thenReturn(Optional.of(Lane.builder().agent(Agent.TEST_UNIT).build()));
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_IT))
+                .thenReturn(Optional.of(Lane.builder().agent(Agent.TEST_IT).build()));
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UI))
+                .thenReturn(Optional.empty());
 
         //when
         this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request);
 
         //then
         verify(this.laneScopeValidator).validateQaLeadCompletion(ticketId, laneId, "automationservice-sox");
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UNIT);
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_IT);
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UI);
         verify(this.agentTicketApiMapper).asTestItTicket(request, ticketId);
         verify(this.createAgentTask).markAsNotNeeded(laneId, "automationservice-sox", Agent.TEST_UNIT);
         verify(this.createAgentTask).create(testItTicket, laneId);
@@ -124,12 +158,21 @@ class CompleteQaLeadLaneOrchestrationUseCaseTest {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final CompleteQaLeadLaneRequestDTO request = this.getRequest(false, false, false, List.of());
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UNIT))
+                .thenReturn(Optional.of(Lane.builder().agent(Agent.TEST_UNIT).build()));
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_IT))
+                .thenReturn(Optional.of(Lane.builder().agent(Agent.TEST_IT).build()));
+        when(this.laneRepository.findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UI))
+                .thenReturn(Optional.empty());
 
         //when
         this.completeQaLeadLaneOrchestrationUseCase.complete(ticketId, laneId, request);
 
         //then
         verify(this.laneScopeValidator).validateQaLeadCompletion(ticketId, laneId, "automationservice-sox");
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UNIT);
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_IT);
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, "automationservice-sox", Agent.TEST_UI);
         verify(this.createAgentTask).markAsNotNeeded(laneId, "automationservice-sox", Agent.TEST_UNIT);
         verify(this.createAgentTask).markAsNotNeeded(laneId, "automationservice-sox", Agent.TEST_IT);
     }

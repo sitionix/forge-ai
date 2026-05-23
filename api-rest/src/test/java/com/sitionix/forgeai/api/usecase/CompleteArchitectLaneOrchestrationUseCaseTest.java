@@ -22,6 +22,7 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -97,7 +98,8 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
         when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.BACKEND);
         when(this.agentTicketApiMapper.asImplementBeTicket(request, ticketId)).thenReturn(implementBeTicket);
         when(this.agentTicketApiMapper.asApiTicket(request, ticketId)).thenReturn(apiTicket);
-        when(this.laneRepository.findProducedLanes(laneId)).thenReturn(List.of(Lane.builder().agent(Agent.EVENT).build()));
+        when(this.laneRepository.findLaneToProduceOptional(laneId, ScopeMode.GLOBAL_SCOPE, Agent.EVENT))
+                .thenReturn(Optional.of(Lane.builder().agent(Agent.EVENT).build()));
 
         //when
         this.completeArchitectLaneOrchestrationUseCase.complete(ticketId, laneId, request);
@@ -107,7 +109,7 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
         verify(this.laneScopeValidator).validateArchitectCallbackScope(laneId, "automationservice-sox");
         verify(this.serviceConfigView).getPath();
         verify(this.serviceConfigView).getGroup();
-        verify(this.laneRepository).findProducedLanes(laneId);
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, ScopeMode.GLOBAL_SCOPE, Agent.EVENT);
         verify(this.agentTicketApiMapper).asImplementBeTicket(request, ticketId);
         verify(this.agentTicketApiMapper).asApiTicket(request, ticketId);
         verify(this.completeAgentTasks).complete(laneId, List.of(implementBeTicket));
@@ -133,7 +135,8 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
         when(this.serviceConfigView.getGroup()).thenReturn(ServiceGroup.FRONTEND);
         when(this.agentTicketApiMapper.asImplementFeTicket(request, ticketId)).thenReturn(implementFeTicket);
         when(this.agentTicketApiMapper.asEventTicket(request, ticketId)).thenReturn(eventTicket);
-        when(this.laneRepository.findProducedLanes(laneId)).thenReturn(List.of(Lane.builder().agent(Agent.EVENT).build()));
+        when(this.laneRepository.findLaneToProduceOptional(laneId, ScopeMode.GLOBAL_SCOPE, Agent.EVENT))
+                .thenReturn(Optional.of(Lane.builder().agent(Agent.EVENT).build()));
 
         //when
         this.completeArchitectLaneOrchestrationUseCase.complete(ticketId, laneId, request);
@@ -143,7 +146,7 @@ class CompleteArchitectLaneOrchestrationUseCaseTest {
         verify(this.laneScopeValidator).validateArchitectCallbackScope(laneId, "frontendservice-sox");
         verify(this.serviceConfigView).getPath();
         verify(this.serviceConfigView).getGroup();
-        verify(this.laneRepository).findProducedLanes(laneId);
+        verify(this.laneRepository).findLaneToProduceOptional(laneId, ScopeMode.GLOBAL_SCOPE, Agent.EVENT);
         verify(this.agentTicketApiMapper).asImplementFeTicket(request, ticketId);
         verify(this.agentTicketApiMapper).asEventTicket(request, ticketId);
         verify(this.completeAgentTasks).complete(laneId, List.of(implementFeTicket));

@@ -11,7 +11,6 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
-import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
@@ -69,9 +68,9 @@ public class CompleteArchitectLaneOrchestrationUseCase {
     }
 
     private void createEventTicket(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
-        final boolean hasEventLane = this.laneRepository.findProducedLanes(laneId).stream()
-                .map(Lane::getAgent)
-                .anyMatch(Agent.EVENT::equals);
+        final boolean hasEventLane = this.laneRepository
+                .findLaneToProduceOptional(laneId, ScopeMode.GLOBAL_SCOPE, Agent.EVENT)
+                .isPresent();
         if (!hasEventLane) {
             return;
         }

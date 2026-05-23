@@ -1,0 +1,8 @@
+{
+  "scope": "sitionix-spa",
+  "summary": "Completed UI tests for frontend flow.",
+  "coveredCases": [
+    "Render create form",
+    "Submit create action"
+  ]
+}

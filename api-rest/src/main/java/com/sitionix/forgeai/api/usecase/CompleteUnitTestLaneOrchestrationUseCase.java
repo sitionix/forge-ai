@@ -5,7 +5,7 @@ import com.sitionix.forgeai.api.LaneScopeValidator;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ReviewerPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
-import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
@@ -25,9 +25,9 @@ public class CompleteUnitTestLaneOrchestrationUseCase {
 
     public void complete(final UUID ticketId, final UUID laneId, final CompleteUnitTestLaneRequestDTO request) {
         this.laneScopeValidator.validateUnitTestCallbackScope(laneId, request.getScope());
-        final boolean hasReviewerLane = this.laneRepository.findProducedLanes(laneId).stream()
-                .map(Lane::getAgent)
-                .anyMatch(Agent.REVIEWER::equals);
+        final boolean hasReviewerLane = this.laneRepository
+                .findLaneToProduceOptional(laneId, ScopeMode.GLOBAL_SCOPE, Agent.REVIEWER)
+                .isPresent();
         if (!hasReviewerLane) {
             this.completeAgentTasks.complete(laneId, List.of());
             return;

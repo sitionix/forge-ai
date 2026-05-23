@@ -118,6 +118,16 @@ public interface AgentTicketApiMapper {
             CompleteQaLeadLaneRequestDTO source,
             UUID ticketId);
 
+    @Mapping(target = "id", expression = "java(java.util.UUID.randomUUID())")
+    @Mapping(target = "ticketId", source = "ticketId")
+    @Mapping(target = "status", constant = "CREATED")
+    @Mapping(target = "scope", source = "source.scope")
+    @Mapping(target = "agent", expression = "java(Agent.TEST_UI)")
+    @Mapping(target = "payload", source = "source")
+    AgentTicket<TestUiPayload> asTestUiTicket(
+            CompleteQaLeadLaneRequestDTO source,
+            UUID ticketId);
+
     @Mapping(target = "scope", source = "scope")
     @Mapping(target = "summary", source = "summary")
     @Mapping(target = "coveredCases", source = "coveredCases")
