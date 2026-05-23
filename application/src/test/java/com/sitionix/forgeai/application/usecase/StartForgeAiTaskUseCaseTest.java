@@ -202,6 +202,7 @@ class StartForgeAiTaskUseCaseTest {
         assertThat(actual.getLanes().stream().anyMatch(lane -> lane.getAgent() == Agent.IMPLEMENT_FE)).isTrue();
         assertThat(actual.getLanes().stream().noneMatch(lane -> lane.getAgent() == Agent.IMPLEMENT_BE)).isTrue();
         assertThat(actual.getLanes().stream().noneMatch(lane -> lane.getAgent() == Agent.TEST_IT)).isTrue();
+        assertThat(actual.getLanes().stream().noneMatch(lane -> lane.getAgent() == Agent.TEST_UI)).isTrue();
         assertThat(actual.getLanes().stream().noneMatch(lane -> lane.getAgent() == Agent.EVENT)).isTrue();
     }
 
@@ -246,6 +247,7 @@ class StartForgeAiTaskUseCaseTest {
         final AgentPropertiesProvider.AgentConfigView testIt = this.getAgent("test_it", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.IMPLEMENT_BE, Agent.QA_LEAD));
         final AgentPropertiesProvider.AgentConfigView testUi = this.getAgent("test_ui", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.FRONTEND), List.of(Agent.IMPLEMENT_FE, Agent.QA_LEAD));
         final AgentPropertiesProvider.AgentConfigView reviewer = this.getAgent("reviewer", ScopeMode.GLOBAL, Set.of(ServiceGroup.BACKEND), List.of(Agent.TEST_UNIT));
+        when(testUi.isEnabled()).thenReturn(false);
 
         this.bind(Agent.ANALYZER, analyzer);
         this.bind(Agent.ARCHITECT, architect);
@@ -273,6 +275,7 @@ class StartForgeAiTaskUseCaseTest {
         lenient().when(view.getScopeMode()).thenReturn(scopeMode);
         lenient().when(view.getGroups()).thenReturn(groups);
         lenient().when(view.getDependsOn()).thenReturn(mutableDependsOn);
+        lenient().when(view.isEnabled()).thenReturn(true);
         return view;
     }
 }

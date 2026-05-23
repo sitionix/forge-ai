@@ -57,13 +57,11 @@ class CompleteFrontendBackendFlowToReviewerReadyIT {
         final UUID apiLaneId = this.findLaneId(ticket, Agent.API, "GLOBAL");
         final UUID eventLaneId = this.findLaneId(ticket, Agent.EVENT, "GLOBAL");
         final UUID qaLeadBffLaneId = this.findLaneId(ticket, Agent.QA_LEAD, "backendforfrontendservice-sox");
-        final UUID qaLeadFrontendLaneId = this.findLaneId(ticket, Agent.QA_LEAD, "sitionix-spa");
         final UUID implementBeLaneId = this.findLaneId(ticket, Agent.IMPLEMENT_BE, "backendforfrontendservice-sox");
         final UUID implementFeLaneId = this.findLaneId(ticket, Agent.IMPLEMENT_FE, "sitionix-spa");
         final UUID testUnitLaneId = this.findLaneId(ticket, Agent.TEST_UNIT, "backendforfrontendservice-sox");
         final UUID testItLaneId = this.findLaneId(ticket, Agent.TEST_IT, "backendforfrontendservice-sox");
         final UUID reviewerLaneId = this.findLaneId(ticket, Agent.REVIEWER, "GLOBAL");
-        final UUID testUiLaneId = this.findLaneId(ticket, Agent.TEST_UI, "sitionix-spa");
 
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.completeAnalyzerLane())
@@ -92,16 +90,6 @@ class CompleteFrontendBackendFlowToReviewerReadyIT {
         assertThat(this.getLaneStatus(afterAnalyzerCompletion, architectBffLaneId)).isEqualTo(LaneStatus.READY_TO_START);
         assertThat(this.getLaneStatus(afterAnalyzerCompletion, architectFrontendLaneId)).isEqualTo(LaneStatus.READY_TO_START);
         assertThat(this.getLaneStatus(afterAnalyzerCompletion, qaLeadBffLaneId)).isEqualTo(LaneStatus.READY_TO_START);
-        assertThat(this.getLaneStatus(afterAnalyzerCompletion, qaLeadFrontendLaneId)).isEqualTo(LaneStatus.READY_TO_START);
-
-        this.ticketRepository.updateLaneStatus(qaLeadFrontendLaneId, LaneStatus.IN_PROGRESS);
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeQaLeadLaneBackendNotRequired())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", qaLeadFrontendLaneId))
-                .assertDefault(d -> d.mutateRequest(request -> {
-                    request.setScope("sitionix-spa");
-                    request.setSummary("Prepared QA context for deferred UI testing.");
-                }));
 
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.completeArchitectLane())
@@ -157,9 +145,7 @@ class CompleteFrontendBackendFlowToReviewerReadyIT {
                 .assertEntity();
 
         assertThat(this.getLaneStatus(actual, implementFeLaneId)).isEqualTo(LaneStatus.COMPLETED);
-        assertThat(this.getLaneStatus(actual, testUiLaneId)).isEqualTo(LaneStatus.NOT_NEEDED);
         assertThat(this.getLaneStatus(actual, reviewerLaneId)).isEqualTo(LaneStatus.READY_TO_START);
-        assertThat(this.getLaneStatus(actual, qaLeadFrontendLaneId)).isEqualTo(LaneStatus.COMPLETED);
         assertThat(this.getLaneStatus(actual, qaLeadBffLaneId)).isEqualTo(LaneStatus.COMPLETED);
         assertThat(this.getLaneStatus(actual, implementBeLaneId)).isEqualTo(LaneStatus.COMPLETED);
         assertThat(this.getLaneStatus(actual, testUnitLaneId)).isEqualTo(LaneStatus.COMPLETED);

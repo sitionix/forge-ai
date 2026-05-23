@@ -53,6 +53,7 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
                 .map(value -> value.getService().getPath())
                 .toList();
         return Arrays.stream(Agent.values())
+                .filter(agent -> agent.getInfo().isEnabled())
                 .flatMap(agent -> agent.getInfo()
                         .getScopeMode()
                         .laneScopes(selectedScopes)
@@ -69,6 +70,7 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
             final List<SelectedService> services
     ) {
         return agent.getInfo().getDependsOn().stream()
+                .filter(dep -> dep.getInfo().isEnabled())
                 .flatMap(dep -> dep.getInfo()
                         .getScopeMode()
                         .dependencyScopes(selectedScopes, currentScope)

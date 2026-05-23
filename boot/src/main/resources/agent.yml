@@ -63,7 +63,7 @@ agents:
     produces: [ ]
 
   - id: test_ui
-    enabled: true
+    enabled: false
     scope_mode: per_scope
     groups: [ frontend ]
     depends_on: [ implement_fe, qa_lead ]
