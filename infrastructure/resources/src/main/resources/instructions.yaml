@@ -35,6 +35,11 @@ forge:
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-unit/complete
           additional-instructions:
             - instructions/additional-instructions/pr-workflow.md
+        test_it:
+          instructions: instructions/agents/test_it.md
+          endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-it/complete
+          additional-instructions:
+            - instructions/additional-instructions/pr-workflow.md
         reviewer:
           instructions: instructions/agents/reviewer.md
           additional-instructions:

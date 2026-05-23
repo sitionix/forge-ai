@@ -71,4 +71,20 @@ class ForgeAiExceptionHandlerTest {
                 "message", "Unexpected internal error"
         ));
     }
+
+    @Test
+    void givenScopeMismatchException_whenHandleScopeMismatchException_thenReturnBadRequest() {
+        //given
+        final ScopeMismatchException exception = new ScopeMismatchException("scope mismatch");
+
+        //when
+        final ResponseEntity<Map<String, String>> actual = this.forgeAiExceptionHandler.handleScopeMismatchException(exception);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(actual.getBody()).isEqualTo(Map.of(
+                "error", "scope_mismatch",
+                "message", "scope mismatch"
+        ));
+    }
 }

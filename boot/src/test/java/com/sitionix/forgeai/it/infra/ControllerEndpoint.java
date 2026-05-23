@@ -10,6 +10,8 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
@@ -139,6 +141,30 @@ public class ControllerEndpoint {
                 CompleteQaLeadLaneResponseDTO.class,
                 (MockmvcDefault) context -> context
                         .withRequest("requestCompleteQaLeadLaneBackend.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<CompleteQaLeadLaneRequestDTO, CompleteQaLeadLaneResponseDTO> completeQaLeadLaneBackendNotRequired() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/qa-lead/complete",
+                HttpMethod.POST,
+                CompleteQaLeadLaneRequestDTO.class,
+                CompleteQaLeadLaneResponseDTO.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteQaLeadLaneBackendNotRequired.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<CompleteItTestLaneRequestDTO, CompleteItTestLaneResponseDTO> completeItTestLane() {
+        return Endpoint.createContract(
+                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-it/complete",
+                HttpMethod.POST,
+                CompleteItTestLaneRequestDTO.class,
+                CompleteItTestLaneResponseDTO.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestCompleteItTestLane.json")
                         .expectStatus(HttpStatus.OK.value())
         );
     }

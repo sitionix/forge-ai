@@ -1,0 +1,81 @@
+{
+  "id": "81111111-1111-1111-1111-111111111111",
+  "ticketKey": "SITIONIX-11",
+  "taskDescription": "complete-qa-lead-lane-backend-not-required",
+  "sourceTerminalTty": "/dev/ttys999",
+  "status": "OPEN",
+  "lanes": [
+    {
+      "id": "82222222-2222-2222-2222-222222222222",
+      "type": "QA_LEAD",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "IN_PROGRESS",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "ANALYZER",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "84444444-4444-4444-4444-444444444444",
+      "type": "IMPLEMENT_BE",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "COMPLETED",
+      "attempt": 0,
+      "inputTaskIds": [
+        "85555555-5555-5555-5555-555555555555"
+      ],
+      "dependsOn": [
+        {
+          "type": "ARCHITECT",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "86666666-6666-6666-6666-666666666666",
+      "type": "TEST_UNIT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "automationservice-sox"
+        },
+        {
+          "type": "QA_LEAD",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "83333333-3333-3333-3333-333333333333",
+      "type": "TEST_IT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "automationservice-sox"
+        },
+        {
+          "type": "QA_LEAD",
+          "scope": "automationservice-sox"
+        }
+      ]
+    }
+  ],
+  "createdAt": "2026-01-01T10:00:00",
+  "updatedAt": "2026-01-01T10:00:00"
+}

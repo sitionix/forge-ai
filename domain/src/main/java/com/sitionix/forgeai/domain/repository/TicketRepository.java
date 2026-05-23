@@ -15,6 +15,8 @@ public interface TicketRepository {
 
     Ticket save(Ticket ticket);
 
+    Optional<Ticket> findById(UUID ticketId);
+
     List<ReadyToStartLane> findAllReadyToStartLanes();
 
     String findTicketContentById(UUID ticketId);

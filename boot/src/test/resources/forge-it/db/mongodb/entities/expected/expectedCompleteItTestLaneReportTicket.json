@@ -1,0 +1,14 @@
+{
+  "status": "CONSUMED",
+  "laneId": "82222222-2222-2222-2222-222222222222",
+  "agent": "TEST_IT",
+  "scope": "automationservice-sox",
+  "payload": {
+    "scope": "automationservice-sox",
+    "summary": "Completed integration tests for backend flow.",
+    "coveredCases": [
+      "Create agent action successfully",
+      "Reject create agent action for unknown agent"
+    ]
+  }
+}

@@ -1,11 +1,11 @@
 package com.sitionix.forgeai.api;
 
-import com.sitionix.forgeai.domain.exception.ServicePropertyMissingException;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import com.sitionix.forgeai.domain.exception.ServicePropertyMissingException;
 
 @RestControllerAdvice
 public class ForgeAiExceptionHandler {
