@@ -2,15 +2,15 @@ package com.sitionix.forgeai.api.usecase;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.sitionix.forgeai.api.LaneScopeValidator;
-import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
+import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import java.util.UUID;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
-import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 
 @Component
 @RequiredArgsConstructor

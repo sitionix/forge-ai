@@ -5,7 +5,8 @@ import com.sitionix.forgeai.api.LaneScopeValidator;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFeCompletionPayload;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
-import com.sitionix.forgeai.domain.usecase.CompleteAgentLane;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
+import java.util.List;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -37,7 +38,7 @@ class CompleteImplementFeLaneOrchestrationUseCaseTest {
     private AgentTicketRepository agentTicketRepository;
 
     @Mock
-    private CompleteAgentLane completeAgentLane;
+    private CompleteAgentTasks completeAgentTasks;
 
     @BeforeEach
     void setUp() {
@@ -45,7 +46,7 @@ class CompleteImplementFeLaneOrchestrationUseCaseTest {
                 this.laneScopeValidator,
                 this.agentTicketApiMapper,
                 this.agentTicketRepository,
-                this.completeAgentLane
+                this.completeAgentTasks
         );
     }
 
@@ -55,7 +56,7 @@ class CompleteImplementFeLaneOrchestrationUseCaseTest {
                 this.laneScopeValidator,
                 this.agentTicketApiMapper,
                 this.agentTicketRepository,
-                this.completeAgentLane
+                this.completeAgentTasks
         );
     }
 
@@ -79,7 +80,7 @@ class CompleteImplementFeLaneOrchestrationUseCaseTest {
         verify(this.agentTicketApiMapper).asImplementFeCompletionTicket(request, ticketId, laneId);
         final ArgumentCaptor<AgentTicket<ImplementFeCompletionPayload>> reportCaptor = ArgumentCaptor.forClass(AgentTicket.class);
         verify(this.agentTicketRepository).save(reportCaptor.capture());
-        verify(this.completeAgentLane).completeAndPrepareAgents(laneId);
+        verify(this.completeAgentTasks).complete(laneId, List.of());
         assertThat(reportCaptor.getValue()).isEqualTo(completionReport);
     }
 }

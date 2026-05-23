@@ -14,7 +14,6 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.annotation.DirtiesContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -22,7 +21,6 @@ import static org.assertj.core.api.Assertions.assertThat;
         "forge-ai.jobs.scheduling-enabled=false",
         "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000"
 })
-@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class CompleteFrontendBackendFlowToReviewerReadyIT {
 
     @Autowired
