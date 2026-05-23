@@ -14,5 +14,8 @@ public class TestUiPayload implements AgentTicketPayload {
     private String scope;
     private String summary;
     private Set<ImplementFeChangedFile> changedFiles;
+    private Set<ImplementFeAffectedSurface> affectedSurfaces;
+    private Set<String> uiBehavior;
+    private UnitTestSonar sonar;
     private Set<QaLeadUnitTestNote> unitTestNotes;
 }

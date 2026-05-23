@@ -38,5 +38,8 @@
       "name": "uk_agent_action_id",
       "summary": "Added unique index on action id."
     }
-  ]
+  ],
+  "sonar": {
+    "issues": 1
+  }
 }

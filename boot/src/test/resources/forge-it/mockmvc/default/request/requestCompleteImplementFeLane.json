@@ -16,5 +16,8 @@
   ],
   "uiBehavior": [
     "User can perform the assigned action from the updated UI."
-  ]
+  ],
+  "sonar": {
+    "issues": 2
+  }
 }

@@ -3,9 +3,11 @@ package com.sitionix.forgeai.mapper;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementBeIntegrationFlowDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementBePersistenceChangeDTO;
+import com.app_afesox.fgaisox.api_first.dto.ImplementationSonarDTO;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBeIntegrationFlow;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePersistenceChange;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.UnitTestSonar;
 import java.util.List;
 import java.util.Set;
 import org.mapstruct.IterableMapping;
@@ -20,6 +22,7 @@ public interface TestItTicketPayloadApiMapper {
     @Mapping(target = "summary", source = "summary")
     @Mapping(target = "integrationFlows", source = "integrationFlows")
     @Mapping(target = "persistenceChanges", source = "persistenceChanges")
+    @Mapping(target = "sonar", source = "sonar")
     TestItPayload asTestItPayload(CompleteImplementBeLaneRequestDTO source);
 
     @IterableMapping(elementTargetType = ImplementBeIntegrationFlow.class)
@@ -31,4 +34,6 @@ public interface TestItTicketPayloadApiMapper {
     Set<ImplementBePersistenceChange> asPersistenceChanges(List<ImplementBePersistenceChangeDTO> source);
 
     ImplementBePersistenceChange asPersistenceChange(ImplementBePersistenceChangeDTO source);
+
+    UnitTestSonar asUnitTestSonar(ImplementationSonarDTO source);
 }

@@ -1,9 +1,13 @@
 package com.sitionix.forgeai.mapper;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.ImplementFeAffectedSurfaceDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementFeChangedFileDTO;
+import com.app_afesox.fgaisox.api_first.dto.ImplementationSonarDTO;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFeAffectedSurface;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFeChangedFile;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.UnitTestSonar;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,6 +34,13 @@ class TestUiTicketPayloadApiMapperTest {
                         .path("apps/workspace/src/features/agent-details/page.tsx")
                         .reason("Updated frontend behavior")
                         .build()))
+                .affectedSurfaces(List.of(ImplementFeAffectedSurfaceDTO.builder()
+                        .type(ImplementFeAffectedSurfaceDTO.TypeEnum.PAGE)
+                        .name("Agent details")
+                        .summary("Updated page behavior")
+                        .build()))
+                .uiBehavior(List.of("User can submit create form"))
+                .sonar(ImplementationSonarDTO.builder().issues(2).build())
                 .build();
 
         //when
@@ -44,6 +55,13 @@ class TestUiTicketPayloadApiMapperTest {
                 "apps/workspace/src/features/agent-details/page.tsx",
                 "Updated frontend behavior"
         )));
+        expected.setAffectedSurfaces(Set.of(new ImplementFeAffectedSurface(
+                "PAGE",
+                "Agent details",
+                "Updated page behavior"
+        )));
+        expected.setUiBehavior(Set.of("User can submit create form"));
+        expected.setSonar(new UnitTestSonar(null, 2));
         assertThat(actual).isEqualTo(expected);
     }
 }

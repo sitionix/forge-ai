@@ -89,6 +89,7 @@ class CompleteItTestLaneFlowIT {
                 "Prepared integration test cases for backend agent action implementation.",
                 Set.of(),
                 Set.of(),
+                null,
                 Set.of(),
                 Set.of()
         );

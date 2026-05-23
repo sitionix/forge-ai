@@ -31,7 +31,7 @@
       "agent": "TEST_UI",
       "scope": "sitionix-spa",
       "serviceId": "sitionix-spa",
-      "status": "NOT_NEEDED",
+      "status": "NOT_STARTED",
       "attempt": 0,
       "inputTaskIds": [],
       "dependsOn": [

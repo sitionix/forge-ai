@@ -3,6 +3,7 @@ package com.sitionix.forgeai.it;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
+import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
@@ -47,6 +48,12 @@ class CompleteImplementFeLaneFlowIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(laneId.toString()))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
                 .assertDefault();
+
+        this.testManager.mongo()
+                .assertEntities(AgentTicketDocument.class)
+                .ignoreFields("id", "ticketId", "laneId", "createdAt", "updatedAt")
+                .hasSize(1)
+                .containsAllWithJsons("expectedImplementFeCompleteTestUiTicket.json");
 
         this.testManager.mongo()
                 .get(TicketDocument.class)

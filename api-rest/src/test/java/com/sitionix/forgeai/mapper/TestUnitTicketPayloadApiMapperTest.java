@@ -2,8 +2,10 @@ package com.sitionix.forgeai.mapper;
 
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementBeChangedFileDTO;
+import com.app_afesox.fgaisox.api_first.dto.ImplementationSonarDTO;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBeChangedFile;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.UnitTestSonar;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,6 +32,7 @@ class TestUnitTicketPayloadApiMapperTest {
                         ImplementBeChangedFileDTO.builder().path("a.java").reason("r1").build(),
                         ImplementBeChangedFileDTO.builder().path("b.java").reason("r2").build()
                 ))
+                .sonar(ImplementationSonarDTO.builder().issues(3).build())
                 .build();
 
         //when
@@ -48,6 +51,7 @@ class TestUnitTicketPayloadApiMapperTest {
                 new ImplementBeChangedFile("a.java", "r1"),
                 new ImplementBeChangedFile("b.java", "r2")
         ));
+        payload.setSonar(new UnitTestSonar(null, 3));
         return payload;
     }
 }

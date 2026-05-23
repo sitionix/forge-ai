@@ -12,7 +12,7 @@
     <artifactId>api-rest</artifactId>
 
     <properties>
-        <fgaisox.api.version>0.0.11</fgaisox.api.version>
+        <fgaisox.api.version>0.0.13</fgaisox.api.version>
     </properties>
 
     <dependencies>
