@@ -2,6 +2,7 @@ package com.sitionix.forgeai.application.usecase;
 
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentLane;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import java.util.Collection;
@@ -17,10 +18,16 @@ import org.springframework.stereotype.Service;
 public class CompleteAgentTasksUseCase implements CompleteAgentTasks {
 
     private final CreateAgentTask createAgentTask;
+    private final CompleteAgentLane completeAgentLane;
 
     public void complete(final UUID sourceLaneId, final Collection<? extends AgentTicket<? extends AgentTicketPayload>> agentTickets) {
         Objects.requireNonNull(sourceLaneId, "sourceLaneId");
         Objects.requireNonNull(agentTickets, "agentTickets");
+
+        if (agentTickets.isEmpty()) {
+            this.completeAgentLane.completeAndPrepareAgents(sourceLaneId);
+            return;
+        }
 
         for (final AgentTicket<? extends AgentTicketPayload> agentTicket : agentTickets) {
             this.createAgentTask.create(agentTicket, sourceLaneId);

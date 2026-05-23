@@ -45,7 +45,7 @@ class CompleteImplementBeLaneScopeMismatchIT {
                 .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", implementBeLaneId))
                 .withRequest("requestCompleteImplementBeLane.json", request -> request.setScope("backendforfrontendservice-sox"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("scope_mismatch"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("Implement-be scope mismatch: laneId=62222222-2222-2222-2222-222222222222, laneScope=automationservice-sox, requestScope=backendforfrontendservice-sox"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("implement_be scope mismatch: laneId=62222222-2222-2222-2222-222222222222, laneScope=automationservice-sox, requestScope=backendforfrontendservice-sox"))
                 .expectStatus(HttpStatus.BAD_REQUEST)
                 .assertAndCreate();
 

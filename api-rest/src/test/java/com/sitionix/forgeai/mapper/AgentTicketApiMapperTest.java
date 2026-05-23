@@ -8,6 +8,7 @@ import com.app_afesox.fgaisox.api_first.dto.AnalyzerQaLeadHandoffDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.UnitTestSonarDTO;
@@ -19,8 +20,12 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestUiPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ReviewerPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.UnitTestSonar;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
@@ -58,6 +63,9 @@ class AgentTicketApiMapperTest {
 
     @Mock
     private TestItTicketPayloadApiMapper testItTicketPayloadApiMapper;
+
+    @Mock
+    private TestUiTicketPayloadApiMapper testUiTicketPayloadApiMapper;
 
     @Mock
     private UnitTestCompletionTicketPayloadApiMapper unitTestCompletionTicketPayloadApiMapper;
@@ -156,15 +164,35 @@ class AgentTicketApiMapperTest {
     }
 
     @Test
+    void givenCompleteImplementFeLaneRequestDTO_whenAsTestUiTicket_thenMapFields() {
+        //given
+        final CompleteImplementFeLaneRequestDTO source = CompleteImplementFeLaneRequestDTO.builder().scope("sitionix-spa").build();
+        final UUID ticketId = UUID.randomUUID();
+        final TestUiPayload payload = new TestUiPayload();
+        when(this.testUiTicketPayloadApiMapper.asTestUiPayload(source)).thenReturn(payload);
+
+        //when
+        final AgentTicket<TestUiPayload> actual = this.agentTicketApiMapper.asTestUiTicket(source, ticketId);
+
+        //then
+        assertThat(actual.getTicketId()).isEqualTo(ticketId);
+        assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
+        assertThat(actual.getScope()).isEqualTo("sitionix-spa");
+        assertThat(actual.getAgent()).isEqualTo(Agent.TEST_UI);
+        assertThat(actual.getPayload()).isEqualTo(payload);
+        verify(this.testUiTicketPayloadApiMapper).asTestUiPayload(source);
+    }
+
+    @Test
     void givenCompleteQaLeadLaneRequestDTO_whenAsTestItTicket_thenMapFields() {
         //given
         final CompleteQaLeadLaneRequestDTO source = CompleteQaLeadLaneRequestDTO.builder().scope("automationservice-sox").build();
         final UUID ticketId = UUID.randomUUID();
-        final TestItPayload payload = new TestItPayload();
+        final QaLeadTestItPayload payload = new QaLeadTestItPayload();
         when(this.qaLeadCompletionTicketPayloadApiMapper.asTestItPayload(source)).thenReturn(payload);
 
         //when
-        final AgentTicket<TestItPayload> actual = this.agentTicketApiMapper.asTestItTicket(source, ticketId);
+        final AgentTicket<QaLeadTestItPayload> actual = this.agentTicketApiMapper.asTestItTicket(source, ticketId);
 
         //then
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
@@ -180,11 +208,11 @@ class AgentTicketApiMapperTest {
         //given
         final CompleteQaLeadLaneRequestDTO source = CompleteQaLeadLaneRequestDTO.builder().scope("backendforfrontendservice-sox").build();
         final UUID ticketId = UUID.randomUUID();
-        final TestUnitPayload payload = new TestUnitPayload();
+        final QaLeadTestUnitPayload payload = new QaLeadTestUnitPayload();
         when(this.qaLeadCompletionTicketPayloadApiMapper.asTestUnitPayload(source)).thenReturn(payload);
 
         //when
-        final AgentTicket<TestUnitPayload> actual = this.agentTicketApiMapper.asTestUnitTicket(source, ticketId);
+        final AgentTicket<QaLeadTestUnitPayload> actual = this.agentTicketApiMapper.asTestUnitTicket(source, ticketId);
 
         //then
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
@@ -193,6 +221,26 @@ class AgentTicketApiMapperTest {
         assertThat(actual.getAgent()).isEqualTo(Agent.TEST_UNIT);
         assertThat(actual.getPayload()).isEqualTo(payload);
         verify(this.qaLeadCompletionTicketPayloadApiMapper).asTestUnitPayload(source);
+    }
+
+    @Test
+    void givenCompleteQaLeadLaneRequestDTO_whenAsTestUiTicket_thenMapFields() {
+        //given
+        final CompleteQaLeadLaneRequestDTO source = CompleteQaLeadLaneRequestDTO.builder().scope("sitionix-spa").build();
+        final UUID ticketId = UUID.randomUUID();
+        final QaLeadTestUiPayload payload = new QaLeadTestUiPayload();
+        when(this.qaLeadCompletionTicketPayloadApiMapper.asTestUiPayload(source)).thenReturn(payload);
+
+        //when
+        final AgentTicket<QaLeadTestUiPayload> actual = this.agentTicketApiMapper.asTestUiTicket(source, ticketId);
+
+        //then
+        assertThat(actual.getTicketId()).isEqualTo(ticketId);
+        assertThat(actual.getStatus()).isEqualTo(AgentTicketStatus.CREATED);
+        assertThat(actual.getScope()).isEqualTo("sitionix-spa");
+        assertThat(actual.getAgent()).isEqualTo(Agent.TEST_UI);
+        assertThat(actual.getPayload()).isEqualTo(payload);
+        verify(this.qaLeadCompletionTicketPayloadApiMapper).asTestUiPayload(source);
     }
 
     @Test

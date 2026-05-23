@@ -1,0 +1,69 @@
+package com.sitionix.forgeai.it;
+
+import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
+import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
+import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
+import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
+import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.TestManager;
+import com.sitionix.forgeit.core.test.IntegrationTest;
+import com.sitionix.forgeit.mockmvc.api.PathParams;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+
+@IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
+class CompleteQaLeadLaneFrontendFlowIT {
+
+    @Autowired
+    private TestManager testManager;
+
+    @MockBean
+    private TerminalTabLauncher terminalTabLauncher;
+
+    @MockBean
+    private CodexCliCommandBuilder codexCliCommandBuilder;
+
+    @Test
+    @DisplayName("Should create test_ui task and complete qa_lead lane for frontend scope")
+    void givenFrontendQaLeadCompletePayload_whenCompleteQaLeadLane_thenCreateTestUiTask() {
+        //given
+        final UUID ticketId = UUID.fromString("91111111-1111-1111-1111-111111111111");
+        final UUID qaLeadLaneId = UUID.fromString("92222222-2222-2222-2222-222222222222");
+
+        this.testManager.mongo()
+                .create(TicketDocument.class)
+                .body("completeQaLeadLaneFrontendSeedTicket.json");
+
+        //when then
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.completeQaLeadLaneBackend())
+                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", qaLeadLaneId))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(qaLeadLaneId.toString()))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
+                .assertDefault(d -> d.mutateRequest(request -> {
+                    request.setScope("sitionix-spa");
+                    request.getTestLaneRequirements().setUnitTestRequired(false);
+                    request.getTestLaneRequirements().setIntegrationTestRequired(false);
+                    request.getTestLaneRequirements().setUiTestRequired(true);
+                    request.setIntegrationTestCases(List.of());
+                }));
+
+        this.testManager.mongo()
+                .assertEntities(AgentTicketDocument.class)
+                .ignoreFields("id", "ticketId", "laneId", "createdAt", "updatedAt")
+                .hasSize(1)
+                .containsWithJsonsStrict("expectedQaLeadCompleteTestUiTicket.json");
+
+        this.testManager.mongo()
+                .assertEntities(TicketDocument.class)
+                .ignoreFields("createdAt", "updatedAt", "attempt", "inputTaskIds")
+                .hasSize(1)
+                .containsWithJsonsStrict("expectedQaLeadFrontendCompleteTicket.json");
+    }
+}

@@ -1,0 +1,60 @@
+{
+  "summary": "architect completion frontend",
+  "implementationHandoff": {
+    "task": "implement frontend integration task",
+    "scope": "sitionix-spa",
+    "summary": "implement frontend summary",
+    "requirements": ["Use generated frontend package"],
+    "constraints": ["Preserve current route structure"],
+    "nonGoals": ["No backend changes"],
+    "architectureDecision": "Use generated frontend client for SPA route.",
+    "dependencies": ["Frontend package produced by API lane"],
+    "acceptanceNotes": ["Frontend route uses API-generated client integration."],
+    "risks": ["Generated client integration can affect current page state wiring."]
+  },
+  "apiRequest": {
+    "required": true,
+    "reason": "frontend API contract required",
+    "scope": "GLOBAL",
+    "summary": "frontend api summary",
+    "operations": [
+      {
+        "intent": "create",
+        "method": "POST",
+        "path": "/api/v1/agent-actions",
+        "request": {
+          "fields": [
+            {
+              "name": "title",
+              "required": true,
+              "type": "string",
+              "description": "title"
+            }
+          ]
+        },
+        "response": {
+          "fields": [
+            {
+              "name": "id",
+              "required": true,
+              "type": "string",
+              "description": "id"
+            }
+          ]
+        }
+      }
+    ],
+    "consumers": ["sitionix-spa"],
+    "notes": ["frontend contract note"]
+  },
+  "eventRequest": {
+    "required": false,
+    "reason": "not required",
+    "scope": "GLOBAL",
+    "summary": "event summary",
+    "eventName": "",
+    "payloadFields": [],
+    "consumers": [],
+    "notes": []
+  }
+}

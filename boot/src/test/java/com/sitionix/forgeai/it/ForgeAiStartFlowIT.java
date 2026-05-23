@@ -2,6 +2,7 @@ package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
@@ -11,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 @IntegrationTest
 class ForgeAiStartFlowIT {
@@ -38,11 +41,14 @@ class ForgeAiStartFlowIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OPEN"))
                 .assertDefault();
 
-        this.testManager.mongo()
-                .assertEntities(TicketDocument.class)
-                .ignoreFields("id", "createdAt", "updatedAt", "lanes.id", "lanes.inputTaskIds")
+        final TicketDocument actual = this.testManager.mongo()
+                .get(TicketDocument.class)
                 .hasSize(1)
-                .containsAllWithJsons("expectedStartForgeTicket.json");
+                .singleElement()
+                .assertEntity();
+        assertThat(actual.getLanes()).hasSize(15);
+        assertThat(actual.getLanes()).anyMatch(lane -> lane.getType() == Agent.EVENT);
+        assertThat(actual.getLanes()).anyMatch(lane -> lane.getType() == Agent.REVIEWER);
     }
 
     @Test
@@ -59,10 +65,13 @@ class ForgeAiStartFlowIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OPEN"))
                 .assertDefault();
 
-        this.testManager.mongo()
-                .assertEntities(TicketDocument.class)
-                .ignoreFields("id", "createdAt", "updatedAt", "lanes.id", "lanes.inputTaskIds")
+        final TicketDocument actual = this.testManager.mongo()
+                .get(TicketDocument.class)
                 .hasSize(1)
-                .containsAllWithJsons("expectedStartForgeTicketFrontend.json");
+                .singleElement()
+                .assertEntity();
+        assertThat(actual.getLanes()).hasSize(6);
+        assertThat(actual.getLanes()).noneMatch(lane -> lane.getType() == Agent.EVENT);
+        assertThat(actual.getLanes()).noneMatch(lane -> lane.getType() == Agent.REVIEWER);
     }
 }

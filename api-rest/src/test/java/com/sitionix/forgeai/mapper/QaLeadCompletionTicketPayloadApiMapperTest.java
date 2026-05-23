@@ -8,9 +8,9 @@ import com.app_afesox.fgaisox.api_first.dto.QaLeadUnitTestNoteDTO;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadDataCheck;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadIntegrationFlow;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadIntegrationTestCase;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadUnitTestNote;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +33,7 @@ class QaLeadCompletionTicketPayloadApiMapperTest {
         final CompleteQaLeadLaneRequestDTO source = this.getSource();
 
         //when
-        final TestItPayload actual = this.qaLeadCompletionTicketPayloadApiMapper.asTestItPayload(source);
+        final QaLeadTestItPayload actual = this.qaLeadCompletionTicketPayloadApiMapper.asTestItPayload(source);
 
         //then
         assertThat(actual).isEqualTo(this.getExpectedTestItPayload());
@@ -45,7 +45,7 @@ class QaLeadCompletionTicketPayloadApiMapperTest {
         final CompleteQaLeadLaneRequestDTO source = this.getSource();
 
         //when
-        final TestUnitPayload actual = this.qaLeadCompletionTicketPayloadApiMapper.asTestUnitPayload(source);
+        final QaLeadTestUnitPayload actual = this.qaLeadCompletionTicketPayloadApiMapper.asTestUnitPayload(source);
 
         //then
         assertThat(actual).isEqualTo(this.getExpectedTestUnitPayload());
@@ -82,8 +82,8 @@ class QaLeadCompletionTicketPayloadApiMapperTest {
                 .build();
     }
 
-    private TestItPayload getExpectedTestItPayload() {
-        final TestItPayload payload = new TestItPayload();
+    private QaLeadTestItPayload getExpectedTestItPayload() {
+        final QaLeadTestItPayload payload = new QaLeadTestItPayload();
         payload.setTask("Prepare integration test execution context");
         payload.setScope("automationservice-sox");
         payload.setSummary("summary");
@@ -92,8 +92,8 @@ class QaLeadCompletionTicketPayloadApiMapperTest {
         return payload;
     }
 
-    private TestUnitPayload getExpectedTestUnitPayload() {
-        final TestUnitPayload payload = new TestUnitPayload();
+    private QaLeadTestUnitPayload getExpectedTestUnitPayload() {
+        final QaLeadTestUnitPayload payload = new QaLeadTestUnitPayload();
         payload.setTask("Prepare unit test execution context");
         payload.setScope("automationservice-sox");
         payload.setSummary("summary");

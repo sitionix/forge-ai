@@ -74,6 +74,18 @@ Before completion:
 - Do not leave fully qualified class names in changed Java code.
 - Do not introduce new Sonar issues in changed backend code.
 
+## Sonar Verify
+
+Before completion, wait for SonarCloud result for the backend PR update.
+
+Use only SonarCloud output for completion metrics.
+
+Do not invent Sonar numbers.
+
+Do not complete the lane with serious new Sonar issues in changed backend code.
+
+Coverage and issue metrics in completion payload must come from SonarCloud only.
+
 ## Completion Callback
 
 After backend implementation is complete, call the provided `implement-be` completion endpoint.
@@ -89,6 +101,7 @@ Allowed payload content:
 - `changedFiles`
 - `integrationFlows`
 - `persistenceChanges`
+- `sonar`
 
 ### `scope`
 

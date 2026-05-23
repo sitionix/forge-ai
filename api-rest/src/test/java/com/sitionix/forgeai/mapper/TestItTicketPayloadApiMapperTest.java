@@ -3,9 +3,11 @@ package com.sitionix.forgeai.mapper;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementBeIntegrationFlowDTO;
 import com.app_afesox.fgaisox.api_first.dto.ImplementBePersistenceChangeDTO;
+import com.app_afesox.fgaisox.api_first.dto.ImplementationSonarDTO;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBeIntegrationFlow;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePersistenceChange;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.UnitTestSonar;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +36,7 @@ class TestItTicketPayloadApiMapperTest {
                 .persistenceChanges(List.of(
                         ImplementBePersistenceChangeDTO.builder().type(ImplementBePersistenceChangeDTO.TypeEnum.TABLE_CREATED).name("tbl").summary("ps").build()
                 ))
+                .sonar(ImplementationSonarDTO.builder().issues(5).build())
                 .build();
 
         //when
@@ -50,6 +53,7 @@ class TestItTicketPayloadApiMapperTest {
         payload.setSummary("summary");
         payload.setIntegrationFlows(Set.of(new ImplementBeIntegrationFlow("n1", "POST", "/", "op1", "s1")));
         payload.setPersistenceChanges(Set.of(new ImplementBePersistenceChange("TABLE_CREATED", "tbl", "ps")));
+        payload.setSonar(new UnitTestSonar(null, 5));
         return payload;
     }
 }

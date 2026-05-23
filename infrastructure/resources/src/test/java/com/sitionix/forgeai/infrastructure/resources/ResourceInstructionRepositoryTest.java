@@ -43,6 +43,14 @@ class ResourceInstructionRepositoryTest {
                 "instructions/additional-instructions/pr-workflow.md"
         )));
 
+        final InstructionResourcesProperties.AgentConfig implementFeConfig = new InstructionResourcesProperties.AgentConfig();
+        implementFeConfig.setInstructions("instructions/agents/implement_fe.md");
+        implementFeConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-fe/complete");
+        implementFeConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of(
+                "instructions/additional-instructions/preparation-to-work.md",
+                "instructions/additional-instructions/pr-workflow.md"
+        )));
+
         final InstructionResourcesProperties.AgentConfig reviewerConfig = new InstructionResourcesProperties.AgentConfig();
         reviewerConfig.setInstructions("instructions/agents/reviewer.md");
         reviewerConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of(
@@ -53,6 +61,7 @@ class ResourceInstructionRepositoryTest {
         agents.put("analyzer", analyzerConfig);
         agents.put("qa_lead", qaLeadConfig);
         agents.put("implement_be", implementBeConfig);
+        agents.put("implement_fe", implementFeConfig);
         agents.put("test_unit", testUnitConfig);
         agents.put("reviewer", reviewerConfig);
         properties.setAgents(agents);
@@ -107,6 +116,21 @@ class ResourceInstructionRepositoryTest {
         assertThat(actual.getAgentInstruction()).contains("# QA Lead Instructions");
         assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/qa-lead/complete");
         assertThat(actual.getAdditionalInstructions()).isEmpty();
+        assertThat(actual.getSharedInstructions()).hasSize(1);
+        assertThat(actual.getSharedInstructions().iterator().next()).contains("# Common Agent Rules");
+    }
+
+    @Test
+    void givenImplementFeAgent_whenFindInstructionsByAgentId_thenReturnResolvedInstructions() {
+        //when
+        final AgentInstructions actual = this.resourceInstructionRepository.findInstructionsByAgentId("implement_fe");
+
+        //then
+        assertThat(actual.getAgentInstruction()).contains("# Implement FE Instructions");
+        assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-fe/complete");
+        assertThat(actual.getAdditionalInstructions()).hasSize(2);
+        assertThat(actual.getAdditionalInstructions()).anySatisfy(value -> assertThat(value).contains("# Preparation To Work"));
+        assertThat(actual.getAdditionalInstructions()).anySatisfy(value -> assertThat(value).contains("# PR Workflow"));
         assertThat(actual.getSharedInstructions()).hasSize(1);
         assertThat(actual.getSharedInstructions().iterator().next()).contains("# Common Agent Rules");
     }

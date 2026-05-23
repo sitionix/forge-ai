@@ -1,0 +1,12 @@
+{
+  "scope": "sitionix-spa",
+  "summary": "Completed UI tests for frontend flow.",
+  "coveredCases": [
+    "Render create form",
+    "Submit create action"
+  ],
+  "sonar": {
+    "coveragePercent": 94.2,
+    "issues": 1
+  }
+}

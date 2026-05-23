@@ -7,6 +7,7 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBeChangedFile;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadUnitTestNote;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.UnitTestSonar;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
@@ -95,6 +96,7 @@ class TestUnitAgentExecutorTest {
                 "automationservice-sox",
                 "summary",
                 Set.of(new ImplementBeChangedFile("src/main/java/com/example/Foo.java", "reason")),
+                new UnitTestSonar(null, 1),
                 Set.of(new QaLeadUnitTestNote("target", "note"))
         );
         final AgentTicket<TestUnitPayload> agentTicket = AgentTicket.<TestUnitPayload>builder()

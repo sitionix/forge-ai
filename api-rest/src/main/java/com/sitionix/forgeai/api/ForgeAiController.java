@@ -9,10 +9,14 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
@@ -27,6 +31,7 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
@@ -134,6 +139,23 @@ public class ForgeAiController implements ForgeAiApi {
     }
 
     @Override
+    public ResponseEntity<CompleteImplementFeLaneResponseDTO> completeImplementFeLane(final UUID ticketId,
+                                                                                       final UUID laneId,
+                                                                                       @Valid final CompleteImplementFeLaneRequestDTO completeImplementFeLaneRequestDTO) {
+        log.info("Received completeImplementFeLane request for ticketId: {}, laneId: {}, with request body: {}",
+                ticketId, laneId, completeImplementFeLaneRequestDTO);
+        this.laneScopeValidator.validateImplementFeCallbackScope(laneId, completeImplementFeLaneRequestDTO.getScope());
+        final AgentTicket<TestUiPayload> testUiTicket = this.agentTicketApiMapper.asTestUiTicket(completeImplementFeLaneRequestDTO, ticketId);
+        this.completeAgentTasks.complete(laneId, List.of(testUiTicket));
+
+        return ResponseEntity.ok(CompleteImplementFeLaneResponseDTO.builder()
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
     public ResponseEntity<CompleteQaLeadLaneResponseDTO> completeQaLeadLane(final UUID ticketId,
                                                                             final UUID laneId,
                                                                             @Valid final CompleteQaLeadLaneRequestDTO completeQaLeadLaneRequestDTO) {
@@ -151,6 +173,21 @@ public class ForgeAiController implements ForgeAiApi {
                                                                             @Valid final CompleteItTestLaneRequestDTO completeItTestLaneRequestDTO) {
         this.completeItTestLaneOrchestrationUseCase.complete(ticketId, laneId, completeItTestLaneRequestDTO);
         return ResponseEntity.ok(CompleteItTestLaneResponseDTO.builder()
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteUiTestLaneResponseDTO> completeUiTestLane(final UUID ticketId,
+                                                                             final UUID laneId,
+                                                                             @Valid final CompleteUiTestLaneRequestDTO completeUiTestLaneRequestDTO) {
+        log.info("Received completeUiTestLane request for ticketId: {}, laneId: {}, with request body: {}",
+                ticketId, laneId, completeUiTestLaneRequestDTO);
+        this.laneScopeValidator.validateTestUiCallbackScope(laneId, completeUiTestLaneRequestDTO.getScope());
+        this.completeAgentTasks.complete(laneId, List.of());
+        return ResponseEntity.ok(CompleteUiTestLaneResponseDTO.builder()
                 .laneId(laneId)
                 .status(HttpStatus.OK.name())
                 .ticketId(ticketId)

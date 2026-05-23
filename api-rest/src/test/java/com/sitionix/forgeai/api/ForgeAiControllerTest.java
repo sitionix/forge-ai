@@ -6,10 +6,14 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneRequest;
 import com.app_afesox.fgaisox.api_first.dto.CompleteArchitectLaneResponse;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteImplementBeLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteImplementFeLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadDataCheckDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadIntegrationFlowDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadIntegrationTestCaseDTO;
@@ -33,6 +37,7 @@ import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import java.util.List;
 import java.util.UUID;
@@ -233,6 +238,57 @@ class ForgeAiControllerTest {
                 .status(HttpStatus.OK.name())
                 .build());
         verify(this.completeQaLeadLaneOrchestrationUseCase).complete(ticketId, laneId, request);
+    }
+
+    @Test
+    void givenImplementFeLaneRequest_whenCompleteImplementFeLane_thenReturnOkResponse() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final CompleteImplementFeLaneRequestDTO request = CompleteImplementFeLaneRequestDTO.builder()
+                .scope("sitionix-spa")
+                .summary("Implemented frontend changes for assigned flow.")
+                .build();
+        final AgentTicket<TestUiPayload> testUiTicket = AgentTicket.<TestUiPayload>builder().build();
+        when(this.agentTicketApiMapper.asTestUiTicket(request, ticketId)).thenReturn(testUiTicket);
+
+        //when
+        final ResponseEntity<CompleteImplementFeLaneResponseDTO> actual = this.forgeAiController.completeImplementFeLane(ticketId, laneId, request);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isEqualTo(CompleteImplementFeLaneResponseDTO.builder()
+                .ticketId(ticketId)
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .build());
+        verify(this.laneScopeValidator).validateImplementFeCallbackScope(laneId, request.getScope());
+        verify(this.agentTicketApiMapper).asTestUiTicket(request, ticketId);
+        verify(this.completeAgentTasks).complete(laneId, List.<AgentTicket<? extends AgentTicketPayload>>of(testUiTicket));
+    }
+
+    @Test
+    void givenUiTestLaneRequest_whenCompleteUiTestLane_thenReturnOkResponse() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        final CompleteUiTestLaneRequestDTO request = CompleteUiTestLaneRequestDTO.builder()
+                .scope("sitionix-spa")
+                .summary("UI tests completed")
+                .build();
+
+        //when
+        final ResponseEntity<CompleteUiTestLaneResponseDTO> actual = this.forgeAiController.completeUiTestLane(ticketId, laneId, request);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isEqualTo(CompleteUiTestLaneResponseDTO.builder()
+                .ticketId(ticketId)
+                .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .build());
+        verify(this.laneScopeValidator).validateTestUiCallbackScope(laneId, request.getScope());
+        verify(this.completeAgentTasks).complete(laneId, List.of());
     }
 
     @Test

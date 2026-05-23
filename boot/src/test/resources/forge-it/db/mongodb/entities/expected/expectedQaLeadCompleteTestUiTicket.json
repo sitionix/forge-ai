@@ -1,0 +1,17 @@
+{
+  "status": "CREATED",
+  "laneId": "95555555-5555-5555-5555-555555555555",
+  "agent": "TEST_UI",
+  "scope": "sitionix-spa",
+  "payload": {
+    "task": "Prepare UI test execution context",
+    "scope": "sitionix-spa",
+    "summary": "Prepared integration test cases for backend agent action implementation.",
+    "unitTestNotes": [
+      {
+        "target": "CreateAgentActionUseCase",
+        "note": "Validate missing title handling"
+      }
+    ]
+  }
+}

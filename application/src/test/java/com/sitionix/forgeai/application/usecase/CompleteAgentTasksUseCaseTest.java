@@ -3,6 +3,7 @@ package com.sitionix.forgeai.application.usecase;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentLane;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import java.util.List;
 import java.util.UUID;
@@ -22,16 +23,19 @@ class CompleteAgentTasksUseCaseTest {
     @Mock
     private CreateAgentTask createAgentTask;
 
+    @Mock
+    private CompleteAgentLane completeAgentLane;
+
     private CompleteAgentTasksUseCase completeAgentTasksUseCase;
 
     @BeforeEach
     void setUp() {
-        this.completeAgentTasksUseCase = new CompleteAgentTasksUseCase(this.createAgentTask);
+        this.completeAgentTasksUseCase = new CompleteAgentTasksUseCase(this.createAgentTask, this.completeAgentLane);
     }
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.createAgentTask);
+        verifyNoMoreInteractions(this.createAgentTask, this.completeAgentLane);
     }
 
     @Test
@@ -47,5 +51,17 @@ class CompleteAgentTasksUseCaseTest {
         //then
         verify(this.createAgentTask).create(architectTicket, sourceLaneId);
         verify(this.createAgentTask).create(qaLeadTicket, sourceLaneId);
+    }
+
+    @Test
+    void givenNoAgentTickets_whenComplete_thenCompleteSourceLane() {
+        //given
+        final UUID sourceLaneId = UUID.randomUUID();
+
+        //when
+        this.completeAgentTasksUseCase.complete(sourceLaneId, List.of());
+
+        //then
+        verify(this.completeAgentLane).completeAndPrepareAgents(sourceLaneId);
     }
 }
