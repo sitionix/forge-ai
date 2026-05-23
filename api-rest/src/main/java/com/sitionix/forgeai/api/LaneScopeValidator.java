@@ -58,6 +58,10 @@ public class LaneScopeValidator {
         this.validateAgentCallbackScope(laneId, implementationScope, Agent.IMPLEMENT_FE);
     }
 
+    public void validateTestUiCallbackScope(final UUID laneId, final String testScope) {
+        this.validateAgentCallbackScope(laneId, testScope, Agent.TEST_UI);
+    }
+
     public void validateAgentCallbackScope(final UUID laneId,
                                            final String requestScope,
                                            final Agent expectedAgent) {

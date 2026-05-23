@@ -67,6 +67,23 @@
           "scope": "GLOBAL"
         }
       ]
+    },
+    {
+      "type": "TEST_UI",
+      "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_FE",
+          "scope": "sitionix-spa"
+        },
+        {
+          "type": "QA_LEAD",
+          "scope": "sitionix-spa"
+        }
+      ]
     }
   ]
 }
