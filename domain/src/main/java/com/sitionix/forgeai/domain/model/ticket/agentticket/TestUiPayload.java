@@ -10,9 +10,9 @@ import java.util.Set;
 @NoArgsConstructor
 @AllArgsConstructor
 public class TestUiPayload implements AgentTicketPayload {
-    private String task;
     private String scope;
     private String summary;
-    private Set<QaLeadIntegrationTestCase> integrationTestCases;
-    private Set<QaLeadUnitTestNote> unitTestNotes;
+    private Set<ImplementFeChangedFile> changedFiles;
+    private Set<ImplementFeAffectedSurface> affectedSurfaces;
+    private Set<String> uiBehavior;
 }
