@@ -13,7 +13,6 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
-import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
@@ -33,7 +32,6 @@ public class CompleteArchitectLaneOrchestrationUseCase {
     private final CreateAgentTask createAgentTask;
     private final ServicePropertiesProvider servicePropertiesProvider;
     private final LaneScopeValidator laneScopeValidator;
-    private final LaneRepository laneRepository;
 
     public void complete(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
         this.laneScopeValidator.validateArchitectCallbackScope(laneId, request.getImplementationHandoff().getScope());
@@ -68,12 +66,6 @@ public class CompleteArchitectLaneOrchestrationUseCase {
     }
 
     private void createEventTicket(final UUID ticketId, final UUID laneId, final CompleteArchitectLaneRequest request) {
-        final boolean hasEventLane = this.laneRepository
-                .findLaneToProduceOptional(laneId, ScopeMode.GLOBAL_SCOPE, Agent.EVENT)
-                .isPresent();
-        if (!hasEventLane) {
-            return;
-        }
         this.createOrMarkNotNeeded(
                 this.shouldCreateEventTask(request.getEventRequest()),
                 laneId,
