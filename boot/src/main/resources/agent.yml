@@ -73,5 +73,5 @@ agents:
     enabled: true
     scope_mode: global
     groups: [ backend, frontend ]
-    depends_on: [ test_unit, test_it, test_ui ]
+    depends_on: [ ]
     produces: [ ]

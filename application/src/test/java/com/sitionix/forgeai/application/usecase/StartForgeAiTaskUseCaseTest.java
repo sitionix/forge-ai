@@ -137,12 +137,7 @@ class StartForgeAiTaskUseCaseTest {
 
         assertThat(reviewerLanes).hasSize(1);
         assertThat(reviewerLanes.getFirst().getScope()).isEqualTo("GLOBAL");
-        assertThat(reviewerLanes.getFirst().getDependsOn()).containsExactlyInAnyOrder(
-                this.getDependency(Agent.TEST_UNIT, "automationservice-sox"),
-                this.getDependency(Agent.TEST_UNIT, "backendforfrontendservice-sox"),
-                this.getDependency(Agent.TEST_IT, "automationservice-sox"),
-                this.getDependency(Agent.TEST_IT, "backendforfrontendservice-sox")
-        );
+        assertThat(reviewerLanes.getFirst().getDependsOn()).isEmpty();
     }
 
     @Test
@@ -249,7 +244,7 @@ class StartForgeAiTaskUseCaseTest {
         final AgentPropertiesProvider.AgentConfigView testIt = this.getAgent("test_it", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.IMPLEMENT_BE, Agent.QA_LEAD));
         final AgentPropertiesProvider.AgentConfigView testUi = this.getAgent("test_ui", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.FRONTEND), List.of(Agent.IMPLEMENT_FE, Agent.QA_LEAD));
         final AgentPropertiesProvider.AgentConfigView reviewer = this.getAgent("reviewer", ScopeMode.GLOBAL,
-                Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of(Agent.TEST_UNIT, Agent.TEST_IT, Agent.TEST_UI));
+                Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of());
         when(testUi.isEnabled()).thenReturn(false);
 
         this.bind(Agent.ANALYZER, analyzer);
