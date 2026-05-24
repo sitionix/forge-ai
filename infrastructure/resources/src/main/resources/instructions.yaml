@@ -52,6 +52,7 @@ forge:
             - instructions/additional-instructions/pr-workflow.md
         reviewer:
           instructions: instructions/agents/reviewer.md
+          endpoint: /api/v1/forge-ai/tickets/{ticketId}/reviewer/complete
           additional-instructions:
             - instructions/additional-instructions/java-style-basics.md
       shared:

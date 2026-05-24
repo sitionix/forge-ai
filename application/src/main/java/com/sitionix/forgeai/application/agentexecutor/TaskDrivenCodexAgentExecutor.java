@@ -27,11 +27,11 @@ abstract class TaskDrivenCodexAgentExecutor {
         this.ticketRepository = ticketRepository;
     }
 
-    protected void executeWithTasks(final ReadyToStartLane lane, final Class<? extends AgentTicketPayload> payloadType) {
+    protected void executeWithTasks(final ReadyToStartLane lane) {
         final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.execute(lane);
         final Lane laneState = this.ticketRepository.findByLaneId(lane.getLaneId())
                 .orElseThrow(() -> new IllegalArgumentException("Lane not found with id: " + lane.getLaneId()));
-        final Set<AgentTicketPayload> tasks = LaneTaskResolver.resolve(laneState, this.agentTicketRepository, payloadType);
+        final Set<AgentTicketPayload> tasks = LaneTaskResolver.resolve(laneState, this.agentTicketRepository);
         final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareAgentExecutionInputUseCase.enrichWithTasks(
                 lane,
                 input,
@@ -40,4 +40,3 @@ abstract class TaskDrivenCodexAgentExecutor {
         this.codexClient.submit(enrichedInput, lane.getSourceTerminalTty());
     }
 }
-

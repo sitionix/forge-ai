@@ -12,6 +12,7 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteReviewerLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadDataCheckDTO;
@@ -33,6 +34,7 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
+import com.sitionix.forgeai.domain.usecase.CompleteReviewerTask;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
@@ -94,6 +96,9 @@ class ForgeAiControllerTest {
     @Mock
     private CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
 
+    @Mock
+    private CompleteReviewerTask completeReviewerTaskUseCase;
+
     @BeforeEach
     void setUp() {
         this.forgeAiController = new ForgeAiController(
@@ -107,7 +112,8 @@ class ForgeAiControllerTest {
                 this.completeApiLaneOrchestrationUseCase,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
-                this.completeUnitTestLaneOrchestrationUseCase
+                this.completeUnitTestLaneOrchestrationUseCase,
+                this.completeReviewerTaskUseCase
         );
     }
 
@@ -124,8 +130,27 @@ class ForgeAiControllerTest {
                 this.completeApiLaneOrchestrationUseCase,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
-                this.completeUnitTestLaneOrchestrationUseCase
+                this.completeUnitTestLaneOrchestrationUseCase,
+                this.completeReviewerTaskUseCase
         );
+    }
+
+    @Test
+    void givenTicketId_whenCompleteReviewerLane_thenReturnOkResponse() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        when(this.completeReviewerTaskUseCase.complete(ticketId)).thenReturn(UUID.randomUUID());
+
+        //when
+        final ResponseEntity<CompleteReviewerLaneResponseDTO> actual = this.forgeAiController.completeReviewerLane(ticketId);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isEqualTo(CompleteReviewerLaneResponseDTO.builder()
+                .ticketId(ticketId)
+                .status(HttpStatus.OK.name())
+                .build());
+        verify(this.completeReviewerTaskUseCase).complete(ticketId);
     }
 
     @Test

@@ -3,6 +3,11 @@
 ## Goal
 Provide one reusable pull-request lifecycle for API lane contract changes.
 
+## PR Required Before Validation
+- Before validation of lane completion, an open PR for the current branch is required.
+- If no PR exists, agent MUST execute the existing PR workflow (create/update as applicable) before running completion validation gates.
+- Lane validation is incomplete until PR existence is confirmed.
+
 ## When To Create A PR
 - Create or update a PR when this lane changed source-of-truth contract files.
 - Keep one coherent contract change unit per PR.

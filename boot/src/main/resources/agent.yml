@@ -72,6 +72,6 @@ agents:
   - id: reviewer
     enabled: true
     scope_mode: global
-    groups: [ backend ]
-    depends_on: [ test_unit ]
+    groups: [ backend, frontend ]
+    depends_on: [ ]
     produces: [ ]

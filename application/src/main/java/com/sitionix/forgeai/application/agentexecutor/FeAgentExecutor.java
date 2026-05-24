@@ -24,6 +24,6 @@ public class FeAgentExecutor extends TaskDrivenCodexAgentExecutor implements Exe
     @Override
     public void executeLane(final ReadyToStartLane lane) {
         log.info("Execute implement_fe lane: " + lane.getLaneId());
-        this.executeWithTasks(lane, ImplementFePayload.class);
+        this.executeWithTasks(lane);
     }
 }
