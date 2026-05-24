@@ -24,6 +24,6 @@ public class BeAgentExecutor extends TaskDrivenCodexAgentExecutor implements Exe
     @Override
     public void executeLane(final ReadyToStartLane lane) {
         log.info("Execute implement_be lane: " + lane.getLaneId());
-        this.executeWithTasks(lane, ImplementBePayload.class);
+        this.executeWithTasks(lane);
     }
 }

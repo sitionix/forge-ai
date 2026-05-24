@@ -24,6 +24,6 @@ public class ArchitectAgentExecutor extends TaskDrivenCodexAgentExecutor impleme
     @Override
     public void executeLane(final ReadyToStartLane lane) {
         log.info("Execute architect lane: " + lane.getLaneId());
-        this.executeWithTasks(lane, ArchitectPayload.class);
+        this.executeWithTasks(lane);
     }
 }

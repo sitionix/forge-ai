@@ -39,7 +39,7 @@ If `contractApi.path` cannot be read or `contractApi.endpoint` cannot be found, 
 ## Base URL
 
 Use this base URL when constructing the request:
-http://localhost:9099/fgaisox
+http://127.0.0.1:9099/fgaisox
 
 ## Delivery Verification (Mandatory)
 
@@ -57,6 +57,9 @@ Rules:
 - If request fails (connection error, timeout, non-2xx, or mismatched/invalid response body), report callback as failed.
 - On failure, include exact transport evidence (HTTP status or curl error) in the agent output.
 - Never fabricate callback success based on prepared payload only.
+- Execute callback delivery outside sandbox using a host-network-enabled call path.
+- Use this wrapper for every callback attempt:
+  - `bash /forge-ai/scripts/forge-callback-curl.sh ...`
 
 ## Retry Scheme (Mandatory)
 
@@ -81,9 +84,13 @@ Retryable failures:
 Non-retryable failures:
 
 - HTTP `4xx` except `429` (treat as final failure)
+- transport permission errors indicating sandbox/network policy block (for example `Operation not permitted`)
 
 Rules:
 
 - Stop retries immediately on first valid success (2xx + valid body + matching `ticketId` and `laneId`).
+- Do not retry sandbox policy failures (`Operation not permitted`); switch to unsandboxed callback execution immediately.
 - For each failed attempt, record exact evidence (HTTP status or curl error).
 - If all attempts fail, report callback as failed and include all attempt evidences in order.
+- For each attempt, use verbose curl transport logging:
+  - `bash /forge-ai/scripts/forge-callback-curl.sh -v ...`

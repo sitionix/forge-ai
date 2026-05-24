@@ -17,6 +17,9 @@ The result of this lane is frontend implementation plus a successful `implement-
 - If the requested behavior already exists, avoid unnecessary changes.
 - If the required scope context or API dependency is missing, stop and report the exact missing input.
 - Review the final diff before completion and remove unrelated changes.
+- Implement-fe lane MUST NOT add new test classes or new test methods.
+- Implement-fe lane MAY update existing tests only when required for compatibility with changed frontend production code.
+- If behavior validation requires new tests, implement-fe lane MUST hand off to test-unit lane instead of adding tests.
 
 ---
 
@@ -76,6 +79,11 @@ Before completion, wait for SonarCloud result for the frontend PR update.
 Use only SonarCloud output for completion metrics.
 
 Do not invent Sonar numbers.
+
+Sonar verification MUST use active polling of PR checks until SonarCloud result is available or retry budget is exhausted.
+Minimum retries: 5 attempts with backoff (30s, 60s, 90s, 120s, 150s).
+Only infrastructure-level unavailability after retries is a valid reason to stop Sonar verification.
+In that case, report exact evidence and request next user instruction.
 
 Do not complete the lane with serious new Sonar issues in changed frontend code.
 

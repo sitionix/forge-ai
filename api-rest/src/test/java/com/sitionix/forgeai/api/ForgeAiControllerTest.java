@@ -12,6 +12,7 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteReviewerLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.QaLeadDataCheckDTO;
@@ -27,6 +28,7 @@ import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteItTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteQaLeadLaneOrchestrationUseCase;
+import com.sitionix.forgeai.api.usecase.CompleteReviewerLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteUnitTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
@@ -94,6 +96,9 @@ class ForgeAiControllerTest {
     @Mock
     private CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
 
+    @Mock
+    private CompleteReviewerLaneOrchestrationUseCase completeReviewerLaneOrchestrationUseCase;
+
     @BeforeEach
     void setUp() {
         this.forgeAiController = new ForgeAiController(
@@ -107,7 +112,8 @@ class ForgeAiControllerTest {
                 this.completeApiLaneOrchestrationUseCase,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
-                this.completeUnitTestLaneOrchestrationUseCase
+                this.completeUnitTestLaneOrchestrationUseCase,
+                this.completeReviewerLaneOrchestrationUseCase
         );
     }
 
@@ -124,8 +130,27 @@ class ForgeAiControllerTest {
                 this.completeApiLaneOrchestrationUseCase,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
-                this.completeUnitTestLaneOrchestrationUseCase
+                this.completeUnitTestLaneOrchestrationUseCase,
+                this.completeReviewerLaneOrchestrationUseCase
         );
+    }
+
+    @Test
+    void givenTicketId_whenCompleteReviewerLane_thenReturnOkResponse() {
+        //given
+        final UUID ticketId = UUID.randomUUID();
+        when(this.completeReviewerLaneOrchestrationUseCase.complete(ticketId)).thenReturn(UUID.randomUUID());
+
+        //when
+        final ResponseEntity<CompleteReviewerLaneResponseDTO> actual = this.forgeAiController.completeReviewerLane(ticketId);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(actual.getBody()).isEqualTo(CompleteReviewerLaneResponseDTO.builder()
+                .ticketId(ticketId)
+                .status(HttpStatus.OK.name())
+                .build());
+        verify(this.completeReviewerLaneOrchestrationUseCase).complete(ticketId);
     }
 
     @Test

@@ -13,6 +13,7 @@ The result of this lane is unit-test coverage for affected files plus a successf
 - Work only inside the assigned backend scope.
 - Use affected source files from runtime context as the primary test target.
 - Add or update unit tests only for behavior affected by those files.
+- Change only unit-test artifacts (`src/test`, `*Test`); do not change integration-test artifacts (`src/it`, `forge-it`, `*IT`).
 - Keep changes minimal and aligned with existing test style.
 - Process affected files file by file.
 - Reuse existing test patterns from the same service/module when available.

@@ -7,7 +7,8 @@ Reference workflow for scripted repository preparation before Agent Bus lane exe
 Preparation is executed by `agent-bus/scripts/prepare-agent-bus-repos.sh` before lanes start.
 
 ## Repository Preparation
-Before inspecting source/API state:
+Before any lane action (including contract reads, diagnostics,
+callbacks), run full git preflight:
 1. Check current repository state.
 2. Detect local uncommitted changes.
 3. If local changes exist, stash them (`git stash push -u -m "agent-bus-prep-<ticket-id>"`).

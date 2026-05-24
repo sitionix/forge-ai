@@ -24,6 +24,6 @@ public class QaLeadAgentExecutor extends TaskDrivenCodexAgentExecutor implements
     @Override
     public void executeLane(final ReadyToStartLane lane) {
         log.info("Execute qa_lead lane: " + lane.getLaneId());
-        this.executeWithTasks(lane, QaLeadPayload.class);
+        this.executeWithTasks(lane);
     }
 }

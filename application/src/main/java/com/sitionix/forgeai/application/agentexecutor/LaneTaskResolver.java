@@ -14,13 +14,12 @@ import lombok.experimental.UtilityClass;
 public class LaneTaskResolver {
 
     public Set<AgentTicketPayload> resolve(final Lane laneState,
-                                           final AgentTicketRepository agentTicketRepository,
-                                           final Class<? extends AgentTicketPayload> payloadType) {
+                                           final AgentTicketRepository agentTicketRepository) {
         if (Objects.isNull(laneState.getInputTaskIds()) || laneState.getInputTaskIds().isEmpty()) {
             throw new IllegalStateException("No input task ids found for laneId=" + laneState.getId());
         }
         return laneState.getInputTaskIds().stream()
-                .map(inputTaskId -> agentTicketRepository.findById(inputTaskId, payloadType)
+                .map(inputTaskId -> agentTicketRepository.findById(inputTaskId)
                         .orElseThrow(() -> new IllegalArgumentException("Agent ticket not found with id: " + inputTaskId)))
                 .map(ticket -> (AgentTicket<AgentTicketPayload>) ticket)
                 .map(AgentTicket::getPayload)

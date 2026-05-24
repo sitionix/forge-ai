@@ -18,6 +18,9 @@ The result of this lane is backend implementation plus a successful `implement-b
 - If the requested behavior already exists, avoid unnecessary code changes.
 - If required context, contract, or artifact is missing, stop and report the exact missing input.
 - Before completion, review the changed diff and fix violations of these instructions.
+- Implement-be lane MUST NOT add new test classes or new test methods.
+- Implement-be lane MAY update existing tests only when required for compatibility with changed backend production code.
+- If behavior validation requires new tests, implement-be lane MUST hand off to test-unit lane instead of adding tests.
 
 ---
 
@@ -54,7 +57,7 @@ The result of this lane is backend implementation plus a successful `implement-b
 
 ## Persistence
 
-- Add or change persistence only when required by the lane task.
+- Add or change persistencблe only when required by the lane task.
 - Follow the service’s existing persistence conventions.
 - Keep migrations, entities, repositories, and adapters minimal and explicit.
 - Use the service’s existing enum/state persistence style.
@@ -76,24 +79,35 @@ Before completion:
 
 ## Sonar Verify
 
-Before completion, wait for SonarCloud result for the backend PR update.
-
-Use only SonarCloud output for completion metrics.
-
-Do not invent Sonar numbers.
-
-Do not complete the lane with serious new Sonar issues in changed backend code.
-
-Coverage and issue metrics in completion payload must come from SonarCloud only.
+Before completion, the implement-be lane must have a real SonarCloud result for the PR update that contains the backend changes.
+Use only SonarCloud output as the source for `sonar.issues`.
+Do not invent, estimate, default, infer, or locally calculate Sonar issue numbers.
+`sonar.issues = 0` is valid only when SonarCloud explicitly reports zero issues.
+If PR workflow has not created or updated a PR, SonarCloud cannot be considered available.
+If SonarCloud result is not available, do not call the completion endpoint.
+If SonarCloud result cannot be obtained, report the lane as blocked/failed in the final output with exact reason.
+Sonar verification MUST use active polling of PR checks until SonarCloud result is available or retry budget is exhausted.
+Minimum retries: 5 attempts with backoff (30s, 60s, 90s, 120s, 150s).
+Only infrastructure-level unavailability after retries is a valid reason to stop Sonar verification.
+In that case, report exact evidence and request next user instruction.
+The implement-be lane reports only Sonar issues for changed backend production code.
+Do not track, report, or react to coverage in the implement-be lane.
+Do not add tests to satisfy coverage in the implement-be lane.
+If Sonar reports issues caused by changed backend production code, fix the production code before completion.
+Do not complete the lane with serious new Sonar issues in changed backend production code.
+Allowed minor Sonar issues are limited to harmless style-level issues that do not affect correctness, security, maintainability, or runtime behavior.
 
 ## Completion Callback
+To complete the lane you need:
+ - implement new backend behavior as required by the lane task.
+ - mvn clean install with the changed code and ensure all tests pass.
+ - create a PR with the changed code
+ - Poll SonarCloud for the PR until the result is available and contains no new serious issues.
+ - Fix any new serious Sonar issues in changed backend production code before completion.
 
 After backend implementation is complete, call the provided `implement-be` completion endpoint.
-
 Build the request from the provided OpenAPI completion contract reference and runtime values.
-
 The completion payload represents backend implementation facts only.
-
 Allowed payload content:
 
 - `scope`
