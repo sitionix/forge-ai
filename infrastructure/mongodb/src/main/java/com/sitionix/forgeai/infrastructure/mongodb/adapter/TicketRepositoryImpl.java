@@ -3,6 +3,7 @@ package com.sitionix.forgeai.infrastructure.mongodb.adapter;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneDependency;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.infrastructure.mongodb.LaneEntityMapper;
@@ -100,6 +101,12 @@ public class TicketRepositoryImpl implements TicketRepository {
             return false;
         }
         final Lane lane = laneOptional.get();
+        if (Objects.equals(lane.getAgent(), Agent.REVIEWER)) {
+            return ticketDocument.getLanes().stream()
+                    .filter(value -> !Objects.equals(value.getId(), laneId))
+                    .allMatch(value -> Objects.equals(value.getStatus(), LaneStatus.COMPLETED)
+                            || Objects.equals(value.getStatus(), LaneStatus.NOT_NEEDED));
+        }
         if (this.hasNoDependencies(lane)) {
             return true;
         }
