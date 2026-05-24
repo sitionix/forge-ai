@@ -15,4 +15,6 @@ public interface LaneRepository {
     void assignInputTaskId(UUID laneId, UUID inputTaskId);
 
     List<Lane> findProducedLanes(UUID sourceLaneId);
+
+    List<Lane> findAllByLaneId(UUID laneId);
 }

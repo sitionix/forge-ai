@@ -52,6 +52,7 @@ class CompleteAgentUseCaseTest {
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
         when(lane.getId()).thenReturn(laneId);
         when(this.laneRepository.findProducedLanes(laneId)).thenReturn(List.of(architectLane, qaLeadLane));
+        when(this.laneRepository.findAllByLaneId(laneId)).thenReturn(List.of());
         when(architectLane.getInputTaskIds()).thenReturn(Set.of(UUID.randomUUID()));
         when(qaLeadLane.getInputTaskIds()).thenReturn(Set.of(UUID.randomUUID()));
         when(architectLane.getStatus()).thenReturn(LaneStatus.NOT_STARTED);
@@ -72,6 +73,7 @@ class CompleteAgentUseCaseTest {
         verify(this.ticketRepository).isReadyToStart(qaLeadLane.getId());
         verify(this.ticketRepository).updateLaneStatus(architectLane.getId(), LaneStatus.READY_TO_START);
         verify(this.ticketRepository).updateLaneStatus(qaLeadLane.getId(), LaneStatus.READY_TO_START);
+        verify(this.laneRepository).findAllByLaneId(laneId);
         verifyNoMoreInteractions(lane, architectLane, qaLeadLane);
     }
 
@@ -120,6 +122,7 @@ class CompleteAgentUseCaseTest {
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
         when(lane.getId()).thenReturn(laneId);
         when(this.laneRepository.findProducedLanes(laneId)).thenReturn(List.of(apiLane));
+        when(this.laneRepository.findAllByLaneId(laneId)).thenReturn(List.of());
         when(apiLane.getInputTaskIds()).thenReturn(Set.of());
         when(apiLane.getStatus()).thenReturn(LaneStatus.NOT_NEEDED);
 
@@ -129,6 +132,7 @@ class CompleteAgentUseCaseTest {
         //then
         verify(this.ticketRepository).findByLaneId(laneId);
         verify(this.laneRepository).findProducedLanes(laneId);
+        verify(this.laneRepository).findAllByLaneId(laneId);
         verify(this.ticketRepository).updateLaneStatus(laneId, LaneStatus.COMPLETED);
         verifyNoMoreInteractions(lane, apiLane);
     }

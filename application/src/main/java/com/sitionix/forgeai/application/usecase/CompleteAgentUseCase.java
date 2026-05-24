@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.application.usecase;
 
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
@@ -29,6 +30,7 @@ public class CompleteAgentUseCase implements CompleteAgentLane {
         if (this.readyToComplete(producedLanes)) {
             this.ticketRepository.updateLaneStatus(laneId, LaneStatus.COMPLETED);
             this.moveReadyProducedLanes(producedLanes);
+            this.moveReadyTicketLanes(laneId);
         }
     }
 
@@ -41,6 +43,14 @@ public class CompleteAgentUseCase implements CompleteAgentLane {
     private void moveReadyProducedLanes(final List<Lane> producedLanes) {
         producedLanes.stream()
                 .filter(value -> !LaneStatus.NOT_NEEDED.equals(value.getStatus()))
+                .filter(value -> this.ticketRepository.isReadyToStart(value.getId()))
+                .forEach(value -> this.ticketRepository.updateLaneStatus(value.getId(), LaneStatus.READY_TO_START));
+    }
+
+    private void moveReadyTicketLanes(final UUID laneId) {
+        this.laneRepository.findAllByLaneId(laneId).stream()
+                .filter(value -> LaneStatus.NOT_STARTED.equals(value.getStatus()))
+                .filter(value -> Agent.REVIEWER.equals(value.getAgent()))
                 .filter(value -> this.ticketRepository.isReadyToStart(value.getId()))
                 .forEach(value -> this.ticketRepository.updateLaneStatus(value.getId(), LaneStatus.READY_TO_START));
     }
