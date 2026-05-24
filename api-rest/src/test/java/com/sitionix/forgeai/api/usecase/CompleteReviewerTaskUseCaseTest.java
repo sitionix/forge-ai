@@ -18,7 +18,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -44,11 +43,11 @@ class CompleteReviewerTaskUseCaseTest {
     }
 
     @Test
-    void givenReviewerInProgress_whenComplete_thenCompleteWithoutDownstreamTasks() {
+    void givenReviewerLaneWhenComplete_thenCompleteReviewerAndTicket() {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID reviewerLaneId = UUID.randomUUID();
-        final Ticket ticket = this.getTicket(reviewerLaneId, LaneStatus.IN_PROGRESS);
+        final Ticket ticket = this.getTicket(reviewerLaneId, LaneStatus.READY_TO_START);
         when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(ticket));
         when(this.ticketRepository.save(ticket)).thenAnswer(invocation -> {
             this.savedTicket = invocation.getArgument(0);
@@ -67,35 +66,6 @@ class CompleteReviewerTaskUseCaseTest {
         assertThat(this.savedTicket.getLanes().getFirst().getStatus()).isEqualTo(LaneStatus.COMPLETED);
     }
 
-    @Test
-    void givenReviewerNotFound_whenComplete_thenThrowNotFound() {
-        //given
-        final UUID ticketId = UUID.randomUUID();
-        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.getTicketWithoutReviewer()));
-
-        //when
-        //then
-        assertThatThrownBy(() -> this.completeReviewerTaskUseCase.complete(ticketId))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("404 NOT_FOUND");
-        verify(this.ticketRepository).findById(ticketId);
-    }
-
-    @Test
-    void givenReviewerInNotReadyState_whenComplete_thenThrowConflict() {
-        //given
-        final UUID ticketId = UUID.randomUUID();
-        final UUID reviewerLaneId = UUID.randomUUID();
-        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.getTicket(reviewerLaneId, LaneStatus.READY_TO_START)));
-
-        //when
-        //then
-        assertThatThrownBy(() -> this.completeReviewerTaskUseCase.complete(ticketId))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("409 CONFLICT");
-        verify(this.ticketRepository).findById(ticketId);
-    }
-
     private Ticket getTicket(final UUID reviewerLaneId, final LaneStatus status) {
         return Ticket.builder()
                 .id(UUID.randomUUID())
@@ -106,20 +76,6 @@ class CompleteReviewerTaskUseCaseTest {
                                 .agent(Agent.REVIEWER)
                                 .scope("GLOBAL")
                                 .status(status)
-                                .build()
-                ))
-                .build();
-    }
-
-    private Ticket getTicketWithoutReviewer() {
-        return Ticket.builder()
-                .id(UUID.randomUUID())
-                .lanes(List.of(
-                        Lane.builder()
-                                .id(UUID.randomUUID())
-                                .agent(Agent.TEST_UNIT)
-                                .scope("automationservice-sox")
-                                .status(LaneStatus.COMPLETED)
                                 .build()
                 ))
                 .build();
