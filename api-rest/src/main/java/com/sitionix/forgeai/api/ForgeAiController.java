@@ -26,7 +26,7 @@ import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCas
 import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteItTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteQaLeadLaneOrchestrationUseCase;
-import com.sitionix.forgeai.api.usecase.CompleteReviewerLaneOrchestrationUseCase;
+import com.sitionix.forgeai.api.usecase.CompleteReviewerTaskUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteUnitTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
@@ -66,7 +66,7 @@ public class ForgeAiController implements ForgeAiApi {
     private final CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
     private final CompleteItTestLaneOrchestrationUseCase completeItTestLaneOrchestrationUseCase;
     private final CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
-    private final CompleteReviewerLaneOrchestrationUseCase completeReviewerLaneOrchestrationUseCase;
+    private final CompleteReviewerTaskUseCase completeReviewerTaskUseCase;
 
     @Override
     public ResponseEntity<StartForgeResponseDTO> startForge(@Valid final StartForgeRequestDTO startForgeRequestDTO) {
@@ -214,7 +214,7 @@ public class ForgeAiController implements ForgeAiApi {
 
     @Override
     public ResponseEntity<CompleteReviewerLaneResponseDTO> completeReviewerLane(final UUID ticketId) {
-        this.completeReviewerLaneOrchestrationUseCase.complete(ticketId);
+        this.completeReviewerTaskUseCase.complete(ticketId);
         return ResponseEntity.ok(CompleteReviewerLaneResponseDTO.builder()
                 .status(HttpStatus.OK.name())
                 .ticketId(ticketId)

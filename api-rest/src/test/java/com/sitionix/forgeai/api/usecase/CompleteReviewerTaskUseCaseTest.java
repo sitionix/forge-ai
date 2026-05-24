@@ -1,11 +1,11 @@
 package com.sitionix.forgeai.api.usecase;
 
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.model.ticket.TicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
-import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -24,24 +24,23 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class CompleteReviewerLaneOrchestrationUseCaseTest {
+class CompleteReviewerTaskUseCaseTest {
 
     @Mock
     private TicketRepository ticketRepository;
 
-    @Mock
-    private CompleteAgentTasks completeAgentTasks;
+    private Ticket savedTicket;
 
-    private CompleteReviewerLaneOrchestrationUseCase completeReviewerLaneOrchestrationUseCase;
+    private CompleteReviewerTaskUseCase completeReviewerTaskUseCase;
 
     @BeforeEach
     void setUp() {
-        this.completeReviewerLaneOrchestrationUseCase = new CompleteReviewerLaneOrchestrationUseCase(this.ticketRepository, this.completeAgentTasks);
+        this.completeReviewerTaskUseCase = new CompleteReviewerTaskUseCase(this.ticketRepository);
     }
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.ticketRepository, this.completeAgentTasks);
+        verifyNoMoreInteractions(this.ticketRepository);
     }
 
     @Test
@@ -49,15 +48,23 @@ class CompleteReviewerLaneOrchestrationUseCaseTest {
         //given
         final UUID ticketId = UUID.randomUUID();
         final UUID reviewerLaneId = UUID.randomUUID();
-        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.getTicket(reviewerLaneId, LaneStatus.IN_PROGRESS)));
+        final Ticket ticket = this.getTicket(reviewerLaneId, LaneStatus.IN_PROGRESS);
+        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(ticket));
+        when(this.ticketRepository.save(ticket)).thenAnswer(invocation -> {
+            this.savedTicket = invocation.getArgument(0);
+            return this.savedTicket;
+        });
 
         //when
-        final UUID actual = this.completeReviewerLaneOrchestrationUseCase.complete(ticketId);
+        final UUID actual = this.completeReviewerTaskUseCase.complete(ticketId);
 
         //then
         verify(this.ticketRepository).findById(ticketId);
-        verify(this.completeAgentTasks).complete(reviewerLaneId, List.of());
+        verify(this.ticketRepository).save(ticket);
         assertThat(actual).isEqualTo(reviewerLaneId);
+        assertThat(this.savedTicket.getStatus()).isEqualTo(TicketStatus.RESOLVED);
+        assertThat(this.savedTicket.getLanes()).hasSize(1);
+        assertThat(this.savedTicket.getLanes().getFirst().getStatus()).isEqualTo(LaneStatus.COMPLETED);
     }
 
     @Test
@@ -68,7 +75,7 @@ class CompleteReviewerLaneOrchestrationUseCaseTest {
 
         //when
         //then
-        assertThatThrownBy(() -> this.completeReviewerLaneOrchestrationUseCase.complete(ticketId))
+        assertThatThrownBy(() -> this.completeReviewerTaskUseCase.complete(ticketId))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("404 NOT_FOUND");
         verify(this.ticketRepository).findById(ticketId);
@@ -83,7 +90,7 @@ class CompleteReviewerLaneOrchestrationUseCaseTest {
 
         //when
         //then
-        assertThatThrownBy(() -> this.completeReviewerLaneOrchestrationUseCase.complete(ticketId))
+        assertThatThrownBy(() -> this.completeReviewerTaskUseCase.complete(ticketId))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("409 CONFLICT");
         verify(this.ticketRepository).findById(ticketId);
@@ -92,6 +99,7 @@ class CompleteReviewerLaneOrchestrationUseCaseTest {
     private Ticket getTicket(final UUID reviewerLaneId, final LaneStatus status) {
         return Ticket.builder()
                 .id(UUID.randomUUID())
+                .status(TicketStatus.OPEN)
                 .lanes(List.of(
                         Lane.builder()
                                 .id(reviewerLaneId)

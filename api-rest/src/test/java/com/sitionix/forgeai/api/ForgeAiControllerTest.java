@@ -28,7 +28,7 @@ import com.sitionix.forgeai.api.usecase.CompleteApiLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteArchitectLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteItTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteQaLeadLaneOrchestrationUseCase;
-import com.sitionix.forgeai.api.usecase.CompleteReviewerLaneOrchestrationUseCase;
+import com.sitionix.forgeai.api.usecase.CompleteReviewerTaskUseCase;
 import com.sitionix.forgeai.api.usecase.CompleteUnitTestLaneOrchestrationUseCase;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
@@ -97,7 +97,7 @@ class ForgeAiControllerTest {
     private CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
 
     @Mock
-    private CompleteReviewerLaneOrchestrationUseCase completeReviewerLaneOrchestrationUseCase;
+    private CompleteReviewerTaskUseCase completeReviewerTaskUseCase;
 
     @BeforeEach
     void setUp() {
@@ -113,7 +113,7 @@ class ForgeAiControllerTest {
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
                 this.completeUnitTestLaneOrchestrationUseCase,
-                this.completeReviewerLaneOrchestrationUseCase
+                this.completeReviewerTaskUseCase
         );
     }
 
@@ -131,7 +131,7 @@ class ForgeAiControllerTest {
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
                 this.completeUnitTestLaneOrchestrationUseCase,
-                this.completeReviewerLaneOrchestrationUseCase
+                this.completeReviewerTaskUseCase
         );
     }
 
@@ -139,7 +139,7 @@ class ForgeAiControllerTest {
     void givenTicketId_whenCompleteReviewerLane_thenReturnOkResponse() {
         //given
         final UUID ticketId = UUID.randomUUID();
-        when(this.completeReviewerLaneOrchestrationUseCase.complete(ticketId)).thenReturn(UUID.randomUUID());
+        when(this.completeReviewerTaskUseCase.complete(ticketId)).thenReturn(UUID.randomUUID());
 
         //when
         final ResponseEntity<CompleteReviewerLaneResponseDTO> actual = this.forgeAiController.completeReviewerLane(ticketId);
@@ -150,7 +150,7 @@ class ForgeAiControllerTest {
                 .ticketId(ticketId)
                 .status(HttpStatus.OK.name())
                 .build());
-        verify(this.completeReviewerLaneOrchestrationUseCase).complete(ticketId);
+        verify(this.completeReviewerTaskUseCase).complete(ticketId);
     }
 
     @Test

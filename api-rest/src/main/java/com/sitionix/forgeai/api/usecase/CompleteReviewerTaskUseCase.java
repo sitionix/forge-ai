@@ -1,11 +1,11 @@
 package com.sitionix.forgeai.api.usecase;
 
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.model.ticket.TicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
-import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -17,10 +17,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Component
 @RequiredArgsConstructor
-public class CompleteReviewerLaneOrchestrationUseCase {
+public class CompleteReviewerTaskUseCase {
 
     private final TicketRepository ticketRepository;
-    private final CompleteAgentTasks completeAgentTasks;
 
     public UUID complete(final UUID ticketId) {
         final Ticket ticket = this.ticketRepository.findById(ticketId)
@@ -46,7 +45,9 @@ public class CompleteReviewerLaneOrchestrationUseCase {
                     "Reviewer lane cannot be completed in current state: laneId=" + reviewerLane.getId()
                             + ", laneStatus=" + reviewerLane.getStatus());
         }
-        this.completeAgentTasks.complete(reviewerLane.getId(), List.of());
+        reviewerLane.setStatus(LaneStatus.COMPLETED);
+        ticket.setStatus(TicketStatus.RESOLVED);
+        this.ticketRepository.save(ticket);
         return reviewerLane.getId();
     }
 }
