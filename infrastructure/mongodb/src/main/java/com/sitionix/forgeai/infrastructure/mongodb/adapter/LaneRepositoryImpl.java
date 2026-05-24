@@ -66,15 +66,6 @@ public class LaneRepositoryImpl implements LaneRepository {
                 .toList();
     }
 
-    @Override
-    public List<Lane> findAllByLaneId(final UUID laneId) {
-        final TicketDocument ticket = this.laneJpaRepository.findTicketByLaneId(laneId)
-                .orElseThrow(() -> new IllegalArgumentException("Lane not found with id: " + laneId));
-        return ticket.getLanes().stream()
-                .map(this.laneEntityMapper::asLane)
-                .toList();
-    }
-
     private boolean dependsOnSourceLane(final LaneDocument lane, final LaneDocument sourceLane) {
         if (Objects.isNull(lane.getDependsOn())) {
             return false;

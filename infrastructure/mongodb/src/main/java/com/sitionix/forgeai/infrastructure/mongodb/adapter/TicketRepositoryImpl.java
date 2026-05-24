@@ -115,6 +115,38 @@ public class TicketRepositoryImpl implements TicketRepository {
                 .allMatch(dependency -> this.isDependencyCompleted(ticketDocument, dependency));
     }
 
+    @Override
+    public void moveReviewerToReadyToStartIfPossible(final UUID laneId) {
+        final Query query = Query.query(Criteria.where("lanes._id").is(laneId));
+        final TicketDocument ticketDocument = this.mongoTemplate.findOne(query, TicketDocument.class);
+        if (ticketDocument == null || ticketDocument.getLanes() == null) {
+            return;
+        }
+
+        final Optional<UUID> reviewerLaneIdOptional = ticketDocument.getLanes().stream()
+                .filter(Objects::nonNull)
+                .filter(value -> Objects.equals(value.getType(), Agent.REVIEWER))
+                .filter(value -> Objects.equals(value.getStatus(), LaneStatus.NOT_STARTED))
+                .filter(value -> Objects.nonNull(value.getId()))
+                .map(value -> value.getId())
+                .findFirst();
+        if (reviewerLaneIdOptional.isEmpty()) {
+            return;
+        }
+
+        final UUID reviewerLaneId = reviewerLaneIdOptional.get();
+        final boolean allOtherLanesTerminal = ticketDocument.getLanes().stream()
+                .filter(Objects::nonNull)
+                .filter(value -> !Objects.equals(value.getId(), reviewerLaneId))
+                .allMatch(value -> Objects.equals(value.getStatus(), LaneStatus.COMPLETED)
+                        || Objects.equals(value.getStatus(), LaneStatus.NOT_NEEDED));
+        if (!allOtherLanesTerminal) {
+            return;
+        }
+
+        this.updateLaneStatus(reviewerLaneId, LaneStatus.READY_TO_START);
+    }
+
     private Optional<Lane> findLane(final TicketDocument ticketDocument, final UUID laneId) {
         return ticketDocument.getLanes().stream()
                 .filter(value -> Objects.equals(value.getId(), laneId))
