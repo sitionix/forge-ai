@@ -53,7 +53,7 @@ forge:
         reviewer:
           instructions: instructions/agents/reviewer.md
           additional-instructions:
-            - instructions/additional-instructions/java-style-basics.md
+            - instructions/additional-instructions/instruction-ownership-map.md
       shared:
         - instructions/shared/common-rules.md
         - instructions/shared/completion-callback.md
