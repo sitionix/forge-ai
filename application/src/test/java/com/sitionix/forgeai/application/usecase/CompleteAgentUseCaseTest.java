@@ -72,6 +72,7 @@ class CompleteAgentUseCaseTest {
         verify(this.ticketRepository).isReadyToStart(qaLeadLane.getId());
         verify(this.ticketRepository).updateLaneStatus(architectLane.getId(), LaneStatus.READY_TO_START);
         verify(this.ticketRepository).updateLaneStatus(qaLeadLane.getId(), LaneStatus.READY_TO_START);
+        verify(this.ticketRepository).moveReviewerToReadyToStartIfPossible(laneId);
         verifyNoMoreInteractions(lane, architectLane, qaLeadLane);
     }
 
@@ -130,6 +131,7 @@ class CompleteAgentUseCaseTest {
         verify(this.ticketRepository).findByLaneId(laneId);
         verify(this.laneRepository).findProducedLanes(laneId);
         verify(this.ticketRepository).updateLaneStatus(laneId, LaneStatus.COMPLETED);
+        verify(this.ticketRepository).moveReviewerToReadyToStartIfPossible(laneId);
         verifyNoMoreInteractions(lane, apiLane);
     }
 }

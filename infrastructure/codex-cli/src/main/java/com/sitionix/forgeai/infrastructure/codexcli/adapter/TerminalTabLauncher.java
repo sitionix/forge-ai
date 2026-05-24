@@ -12,14 +12,10 @@ import org.springframework.stereotype.Component;
 public class TerminalTabLauncher {
 
     private static final String ITERM_SCRIPT_PATH = "scripts/open-in-iterm.applescript";
-    private static final String TERMINAL_SCRIPT_PATH = "scripts/open-in-terminal.applescript";
 
     public void launch(final String command, final String sourceTerminalTty) {
-        if (this.runOsaScript(this.loadScript(ITERM_SCRIPT_PATH), command, sourceTerminalTty, false)) {
-            return;
-        }
-        if (!this.runOsaScript(this.loadScript(TERMINAL_SCRIPT_PATH), command, sourceTerminalTty, true)) {
-            throw new IllegalStateException("Failed to open iTerm and Terminal tabs for Codex execution");
+        if (!this.runOsaScript(this.loadScript(ITERM_SCRIPT_PATH), command, sourceTerminalTty, true)) {
+            throw new IllegalStateException("Failed to open iTerm tab for Codex execution");
         }
     }
 

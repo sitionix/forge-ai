@@ -14,6 +14,7 @@ The result of this lane is covered QA Lead integration test cases plus a success
 - Use QA Lead `integrationTestCases` as the primary test target.
 - Use Implement BE completion context as factual implementation context.
 - Implement integration tests only for the assigned scope and relevant backend flows.
+- Change only integration-test artifacts (`src/it`, `forge-it`, `*IT`); do not change unit-test artifacts (`src/test`, `*Test`).
 - Keep changes aligned with existing service-local integration-test style.
 - Reuse existing endpoint helpers, ForgeIT support interfaces, DB contracts, fixtures, and test utilities.
 - If a QA case is duplicate, unsafe, impossible, or outside the assigned scope, do not pretend it was covered; report the exact reason in final output.
@@ -64,6 +65,24 @@ Common ForgeIT entrypoints:
 
 Do not create ad-hoc infrastructure setup when ForgeIT support already exists for the needed feature.
 
+ForgeIT style is mandatory (no alternatives):
+
+- Use `@IntegrationTest` on backend IT classes.
+- Use service-local Forge support (`forgeit`/`testManager`) as the single entry point for infra features.
+- Keep HTTP execution in Forge MockMvc DSL (`forgeit.mockMvc().ping(...)` and service endpoint contracts).
+- Keep fixture-driven requests/responses in `src/test/resources/forge-it/**`.
+- Use Forge PostgreSQL support for setup/verification (`forgeit.postgresql()`).
+- Rely on Forge cleanup lifecycle (`@IntegrationTest` cleanup); do not add ad-hoc cleanup logic.
+
+If an existing test is not in ForgeIT style, refactor it to ForgeIT style as part of the lane before reporting success.
+
+Global composition rules:
+
+- Keep `@Autowired` fields minimal: only one Forge entry point/manager per IT class.
+- Do not autowire extra application beans in IT tests.
+- Use mocks only for true external dependencies that cannot be validated through Forge runtime boundaries.
+- Do not mock internal application collaborators when the flow is testable through ForgeIT.
+
 ---
 
 ## HTTP / MockMvc Flow
@@ -85,6 +104,13 @@ For REST/API flows, assert:
 - persistence, outbox, external call, or projection side effects when relevant.
 
 Do not assert internal implementation details.
+Do not introduce non-Forge HTTP execution style in new or updated tests.
+
+Request execution discipline:
+
+- Use a single `ping(...)` call for a test whenever one request is sufficient.
+- Add additional `ping(...)` calls only when the scenario requires an explicit sequential workflow.
+- Do not build setup through unnecessary HTTP chains when equivalent test data can be prepared directly via Forge PostgreSQL contracts/entities.
 
 ---
 
@@ -112,6 +138,7 @@ Use existing assertion style:
 - relation fetching only when relation content is relevant.
 
 Do not add manual cleanup when ForgeIT cleanup already handles the test lifecycle.
+Do not bypass Forge PostgreSQL support with custom SQL/probing utilities when Forge contracts/entities cover the scenario.
 
 ---
 
@@ -213,6 +240,23 @@ Keep each test focused on one behavior or risk.
 
 Do not over-test implementation internals.
 
+Verification discipline:
+
+- Do not use `ArgumentCaptor` in IT tests.
+- Prefer direct observable assertions (HTTP response, DB state, outbox/inbox/event side effects).
+- When a mock is allowed, verify interactions directly without captors.
+
+---
+
+## Test Independence Rule
+
+Integration tests are independent units.
+
+- Keep setup and assertions inside each test method.
+- Do not introduce private support/helper methods for scenario setup, request execution, or assertions.
+- Do not extract reusable test logic/classes for IT flows.
+- The only allowed reuse is endpoint/default contract reuse (for example `assertDefault`, `applyDefault`, and default fixture contracts).
+
 ---
 
 ## Negative Cases
@@ -244,6 +288,15 @@ Add concurrency, ordering, retry, or repeated-call tests only when the QA case o
 Do not make concurrency tests a default baseline.
 
 Keep them bounded and deterministic.
+
+---
+
+## Strict Prohibitions
+
+- Do not start Spring contexts manually outside `@IntegrationTest`.
+- Do not use MockMvc standalone setup/builders for IT lane tests.
+- Do not introduce custom test harnesses that duplicate ForgeIT behavior.
+- Do not mix unit-test style controller mocking into IT lane classes.
 
 ---
 

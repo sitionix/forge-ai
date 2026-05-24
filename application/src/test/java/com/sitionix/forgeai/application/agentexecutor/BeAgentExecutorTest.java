@@ -100,11 +100,11 @@ class BeAgentExecutorTest {
                 .acceptanceNotes(Set.of("a1"))
                 .risks(Set.of("risk1"))
                 .build();
-        final AgentTicket<ImplementBePayload> agentTicket = AgentTicket.<ImplementBePayload>builder()
+        final AgentTicket<AgentTicketPayload> agentTicket = AgentTicket.<AgentTicketPayload>builder()
                 .id(inputTaskId)
                 .payload(payload)
                 .build();
-        when(this.agentTicketRepository.findById(inputTaskId, ImplementBePayload.class)).thenReturn(Optional.of(agentTicket));
+        when(this.agentTicketRepository.findById(inputTaskId)).thenReturn(Optional.of(agentTicket));
 
         final AgentExecutionInput<AgentTicketPayload> enrichedInput = AgentExecutionInput.<AgentTicketPayload>builder()
                 .ticketId(ticketId)
@@ -119,7 +119,7 @@ class BeAgentExecutorTest {
         //then
         verify(this.prepareAgentExecutionInputUseCase).execute(lane);
         verify(this.ticketRepository).findByLaneId(laneId);
-        verify(this.agentTicketRepository).findById(inputTaskId, ImplementBePayload.class);
+        verify(this.agentTicketRepository).findById(inputTaskId);
         verify(this.prepareAgentExecutionInputUseCase).enrichWithTasks(lane, baseInput, Set.of(payload));
 
         final ArgumentCaptor<AgentExecutionInput> inputCaptor = ArgumentCaptor.forClass(AgentExecutionInput.class);

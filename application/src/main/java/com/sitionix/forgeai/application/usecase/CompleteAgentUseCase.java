@@ -29,6 +29,7 @@ public class CompleteAgentUseCase implements CompleteAgentLane {
         if (this.readyToComplete(producedLanes)) {
             this.ticketRepository.updateLaneStatus(laneId, LaneStatus.COMPLETED);
             this.moveReadyProducedLanes(producedLanes);
+            this.ticketRepository.moveReviewerToReadyToStartIfPossible(laneId);
         }
     }
 

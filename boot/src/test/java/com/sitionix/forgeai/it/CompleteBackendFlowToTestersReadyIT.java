@@ -4,6 +4,10 @@ import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestUnitPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
@@ -135,6 +139,11 @@ class CompleteBackendFlowToTestersReadyIT {
                 .findFirst()
                 .orElseThrow()
                 .getId();
+        final UUID reviewerLaneId = ticket.getLanes().stream()
+                .filter(lane -> Objects.equals(lane.getType(), Agent.REVIEWER))
+                .findFirst()
+                .orElseThrow()
+                .getId();
 
         doAnswer(invocation -> {
             final AgentExecutionInput<?> input = invocation.getArgument(0);
@@ -207,6 +216,9 @@ class CompleteBackendFlowToTestersReadyIT {
                 return null;
             }
             if (Objects.equals(input.getLaneId(), testUnitAutomationLaneId)) {
+                assertThat(input.getTasks()).isNotNull();
+                assertThat(input.getTasks()).anyMatch(TestUnitPayload.class::isInstance);
+                assertThat(input.getTasks()).anyMatch(QaLeadTestUnitPayload.class::isInstance);
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeUnitTestLane())
                         .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testUnitAutomationLaneId))
@@ -214,6 +226,9 @@ class CompleteBackendFlowToTestersReadyIT {
                 return null;
             }
             if (Objects.equals(input.getLaneId(), testUnitBffLaneId)) {
+                assertThat(input.getTasks()).isNotNull();
+                assertThat(input.getTasks()).anyMatch(TestUnitPayload.class::isInstance);
+                assertThat(input.getTasks()).anyMatch(QaLeadTestUnitPayload.class::isInstance);
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeUnitTestLane())
                         .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testUnitBffLaneId))
@@ -221,6 +236,9 @@ class CompleteBackendFlowToTestersReadyIT {
                 return null;
             }
             if (Objects.equals(input.getLaneId(), testItAutomationLaneId)) {
+                assertThat(input.getTasks()).isNotNull();
+                assertThat(input.getTasks()).anyMatch(TestItPayload.class::isInstance);
+                assertThat(input.getTasks()).anyMatch(QaLeadTestItPayload.class::isInstance);
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeItTestLane())
                         .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testItAutomationLaneId))
@@ -228,10 +246,16 @@ class CompleteBackendFlowToTestersReadyIT {
                 return null;
             }
             if (Objects.equals(input.getLaneId(), testItBffLaneId)) {
+                assertThat(input.getTasks()).isNotNull();
+                assertThat(input.getTasks()).anyMatch(TestItPayload.class::isInstance);
+                assertThat(input.getTasks()).anyMatch(QaLeadTestItPayload.class::isInstance);
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeItTestLane())
                         .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testItBffLaneId))
                         .assertDefault(d -> d.mutateRequest(request -> request.setScope("backendforfrontendservice-sox")));
+                return null;
+            }
+            if (Objects.equals(input.getLaneId(), reviewerLaneId)) {
                 return null;
             }
             throw new AssertionError("Unexpected Codex submit laneId=" + input.getLaneId() + ", input=" + input);

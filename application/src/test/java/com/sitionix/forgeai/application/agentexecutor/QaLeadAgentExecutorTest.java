@@ -91,11 +91,11 @@ class QaLeadAgentExecutorTest {
         final QaLeadPayload payload = QaLeadPayload.builder()
                 .requirements(Set.of("req"))
                 .build();
-        final AgentTicket<QaLeadPayload> agentTicket = AgentTicket.<QaLeadPayload>builder()
+        final AgentTicket<AgentTicketPayload> agentTicket = AgentTicket.<AgentTicketPayload>builder()
                 .id(inputTaskId)
                 .payload(payload)
                 .build();
-        when(this.agentTicketRepository.findById(inputTaskId, QaLeadPayload.class)).thenReturn(Optional.of(agentTicket));
+        when(this.agentTicketRepository.findById(inputTaskId)).thenReturn(Optional.of(agentTicket));
 
         final AgentExecutionInput<AgentTicketPayload> enrichedInput = AgentExecutionInput.<AgentTicketPayload>builder()
                 .ticketId(ticketId)
@@ -110,7 +110,7 @@ class QaLeadAgentExecutorTest {
         //then
         verify(this.prepareAgentExecutionInputUseCase).execute(lane);
         verify(this.ticketRepository).findByLaneId(laneId);
-        verify(this.agentTicketRepository).findById(inputTaskId, QaLeadPayload.class);
+        verify(this.agentTicketRepository).findById(inputTaskId);
         verify(this.prepareAgentExecutionInputUseCase).enrichWithTasks(lane, baseInput, Set.of(payload));
 
         final ArgumentCaptor<AgentExecutionInput> inputCaptor = ArgumentCaptor.forClass(AgentExecutionInput.class);

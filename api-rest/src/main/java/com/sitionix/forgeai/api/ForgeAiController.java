@@ -15,6 +15,7 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteReviewerLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
@@ -35,6 +36,7 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
+import com.sitionix.forgeai.domain.usecase.CompleteReviewerTask;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
@@ -64,6 +66,7 @@ public class ForgeAiController implements ForgeAiApi {
     private final CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
     private final CompleteItTestLaneOrchestrationUseCase completeItTestLaneOrchestrationUseCase;
     private final CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
+    private final CompleteReviewerTask completeReviewerTaskUseCase;
 
     @Override
     public ResponseEntity<StartForgeResponseDTO> startForge(@Valid final StartForgeRequestDTO startForgeRequestDTO) {
@@ -204,6 +207,15 @@ public class ForgeAiController implements ForgeAiApi {
 
         return ResponseEntity.ok(CompleteUnitTestLaneResponseDTO.builder()
                 .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteReviewerLaneResponseDTO> completeReviewerLane(final UUID ticketId) {
+        this.completeReviewerTaskUseCase.complete(ticketId);
+        return ResponseEntity.ok(CompleteReviewerLaneResponseDTO.builder()
                 .status(HttpStatus.OK.name())
                 .ticketId(ticketId)
                 .build());

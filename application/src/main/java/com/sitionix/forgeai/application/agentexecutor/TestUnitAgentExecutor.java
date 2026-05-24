@@ -24,6 +24,6 @@ public class TestUnitAgentExecutor extends TaskDrivenCodexAgentExecutor implemen
     @Override
     public void executeLane(final ReadyToStartLane lane) {
         log.info("Execute test_unit lane: " + lane.getLaneId());
-        this.executeWithTasks(lane, TestUnitPayload.class);
+        this.executeWithTasks(lane);
     }
 }
