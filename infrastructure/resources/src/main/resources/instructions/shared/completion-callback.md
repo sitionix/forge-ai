@@ -58,8 +58,22 @@ Rules:
 - On failure, include exact transport evidence (HTTP status or curl error) in the agent output.
 - Never fabricate callback success based on prepared payload only.
 - Execute callback delivery outside sandbox using a host-network-enabled call path.
-- Use this wrapper for every callback attempt:
-  - `bash /forge-ai/scripts/forge-callback-curl.sh ...`
+- Use callback curl wrapper for every callback attempt.
+
+## Callback Wrapper Resolution (Mandatory)
+
+Before first callback attempt, resolve wrapper path in this order:
+
+1. `/forge-ai/scripts/forge-callback-curl.sh`
+2. `forge-ai/scripts/forge-callback-curl.sh` from current workspace
+
+Rules:
+
+- Use the first existing executable path from the list above.
+- If none exists, stop callback attempts and report explicit transport blocker:
+  - `callback_wrapper_not_found`
+  - include all checked paths in the error details.
+- Do not run retries when wrapper is missing; this is a preflight failure, not a transient HTTP failure.
 
 ## Retry Scheme (Mandatory)
 
@@ -93,4 +107,4 @@ Rules:
 - For each failed attempt, record exact evidence (HTTP status or curl error).
 - If all attempts fail, report callback as failed and include all attempt evidences in order.
 - For each attempt, use verbose curl transport logging:
-  - `bash /forge-ai/scripts/forge-callback-curl.sh -v ...`
+  - `bash <resolved-wrapper-path> -v ...`

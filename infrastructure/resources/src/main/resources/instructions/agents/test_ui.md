@@ -124,11 +124,37 @@ Coverage is a hard gate.
 
 If coverage is below `90.0`, add or improve UI tests and wait for a new SonarCloud result.
 
+Do not stop after the first SonarCloud failure if coverage is below `90.0`.
+
+You must continue an iterative test-improvement loop (update tests -> update PR -> wait for SonarCloud) until either:
+
+- coverage reaches at least `90.0`; or
+- a real blocker is hit (for example missing dependency, environment failure, or required context gap) and reported explicitly.
+
+Coverage below `90.0` without a blocker is not a terminal state and completion callback is forbidden in this state.
+
 Do not invent Sonar numbers.
 
 Completion metrics must be copied from SonarCloud output only.
 
 ---
+
+
+## Local Verification Gate
+
+Before completion callback, run a full frontend dependency and test verification in the assigned SPA scope.
+
+Required gate:
+- execute package installation with the repository package manager (`npm install`/`pnpm install`/`yarn install` based on the SPA);
+- execute the SPA test command used in that scope;
+- completion is forbidden if install or tests fail.
+
+If install/tests cannot be executed because of missing dependencies/environment constraints, report exact blocker and do not call completion.
+
+Push and callback ordering rule:
+- run this verification after the final local code change for the lane and before `git push`;
+- do not push commits if verification failed;
+- do not call completion callback unless verification is still valid for the pushed commit (no new commits after verification).
 
 ## Completion Callback
 

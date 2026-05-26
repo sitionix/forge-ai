@@ -1,10 +1,14 @@
 package com.sitionix.forgeai.api;
 
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.FieldError;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import com.sitionix.forgeai.domain.exception.ServicePropertyMissingException;
 
 @RestControllerAdvice
@@ -46,5 +50,28 @@ public class ForgeAiExceptionHandler {
                         "error", "scope_mismatch",
                         "message", exception.getMessage()
                 ));
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleMethodArgumentNotValidException(final MethodArgumentNotValidException exception) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(
+                        "code", HttpStatus.BAD_REQUEST.value(),
+                        "title", "VALIDATION_FAILED",
+                        "details", this.buildValidationDetails(exception.getBindingResult().getFieldErrors())
+                ));
+    }
+
+    private String buildValidationDetails(final List<FieldError> fieldErrors) {
+        if (fieldErrors.isEmpty()) {
+            return "Validation failed";
+        }
+        return fieldErrors.stream()
+                .map(fieldError -> String.format(
+                        "%s %s (rejected: %s)",
+                        fieldError.getField(),
+                        fieldError.getDefaultMessage(),
+                        fieldError.getRejectedValue()))
+                .collect(Collectors.joining("; "));
     }
 }

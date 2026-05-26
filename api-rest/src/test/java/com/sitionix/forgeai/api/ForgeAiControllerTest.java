@@ -204,6 +204,7 @@ class ForgeAiControllerTest {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final CompleteApiLaneRequest request = CompleteApiLaneRequest.builder().build();
+        when(this.laneScopeValidator.validateApiCompletion(laneId)).thenReturn(true);
 
         //when
         final ResponseEntity<CompleteApiLaneResponse> actual = this.forgeAiController.completeApiLane(ticketId, laneId, request);
@@ -215,6 +216,7 @@ class ForgeAiControllerTest {
                 .laneId(laneId)
                 .laneStatus(HttpStatus.OK.name())
                 .build());
+        verify(this.laneScopeValidator).validateApiCompletion(laneId);
         verify(this.completeApiLaneOrchestrationUseCase).complete(ticketId, laneId, request);
     }
 

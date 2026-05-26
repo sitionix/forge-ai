@@ -1,11 +1,17 @@
 package com.sitionix.forgeai.api;
 
 import com.sitionix.forgeai.domain.exception.ServicePropertyMissingException;
+import jakarta.validation.Valid;
+import java.lang.reflect.Method;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.core.MethodParameter;
+import org.springframework.validation.BeanPropertyBindingResult;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -86,5 +92,33 @@ class ForgeAiExceptionHandlerTest {
                 "error", "scope_mismatch",
                 "message", "scope mismatch"
         ));
+    }
+
+    @Test
+    void givenMethodArgumentNotValidException_whenHandleMethodArgumentNotValidException_thenReturnBadRequestWithValidationDetails() throws NoSuchMethodException {
+        //given
+        final Object requestBody = new Object();
+        final BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(requestBody, "completeQaLeadLaneRequestDTO");
+        bindingResult.addError(new FieldError("completeQaLeadLaneRequestDTO", "integrationTestCases[0].flow.path", "api/v1/agents/invalid", false, null, null, "must match \"^/\""));
+        final Method method = TestController.class.getDeclaredMethod("completeQaLeadLane", Object.class);
+        final MethodParameter methodParameter = new MethodParameter(method, 0);
+        final MethodArgumentNotValidException exception = new MethodArgumentNotValidException(methodParameter, bindingResult);
+
+        //when
+        final ResponseEntity<Map<String, Object>> actual = this.forgeAiExceptionHandler.handleMethodArgumentNotValidException(exception);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(actual.getBody()).isEqualTo(Map.of(
+                "code", HttpStatus.BAD_REQUEST.value(),
+                "title", "VALIDATION_FAILED",
+                "details", "integrationTestCases[0].flow.path must match \"^/\" (rejected: api/v1/agents/invalid)"
+        ));
+    }
+
+    private static final class TestController {
+        private void completeQaLeadLane(@Valid final Object body) {
+            // no-op
+        }
     }
 }

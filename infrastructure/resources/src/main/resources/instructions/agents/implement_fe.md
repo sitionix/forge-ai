@@ -48,6 +48,9 @@ The result of this lane is frontend implementation plus a successful `implement-
 - Treat API-generated frontend packages and client artifacts as source of truth when the task depends on API integration.
 - Use the provided frontend dependency and evidence notes from the runtime input.
 - Do not invent API operations, fields, hooks, clients, package names, or contract behavior.
+- If a generated frontend API package/client for the required flow is provided in runtime context, use it for BFF calls.
+- Do not implement manual API clients, manual fetch wrappers, or contract-shaped DTOs for that flow when generated artifacts already exist.
+- If generated artifacts exist but cannot be used due to a concrete technical mismatch, stop and report blocker evidence instead of implementing a parallel manual API path.
 - Do not repeat API artifacts in the completion payload.
 
 ---
@@ -79,6 +82,11 @@ Before completion, wait for SonarCloud result for the frontend PR update.
 Use only SonarCloud output for completion metrics.
 
 Do not invent Sonar numbers.
+Use only SonarCloud output as the source for `sonar.issues`.
+`sonar.issues = 0` is valid only when SonarCloud explicitly reports zero issues.
+If PR workflow has not created or updated a PR, SonarCloud cannot be considered available.
+If SonarCloud result is not available, do not call the completion endpoint.
+If SonarCloud result cannot be obtained, report the lane as blocked/failed in the final output with exact reason.
 
 Sonar verification MUST use active polling of PR checks until SonarCloud result is available or retry budget is exhausted.
 Minimum retries: 5 attempts with backoff (30s, 60s, 90s, 120s, 150s).
@@ -102,7 +110,28 @@ Only minor style-level issues may be tolerated when they are harmless and consis
 
 Coverage and issue metrics in completion payload must come from SonarCloud only.
 
+Sonar duplication gate:
+
+- `sonar.duplications` for changed frontend production code must be `< 3.0%`.
+- If duplication is `>= 3.0%`, reduce duplication in changed code and wait for a new SonarCloud result.
+
+## Git Connectivity Gate
+
+Before push, PR update, or Sonar polling, verify git remote connectivity/auth works for the current repository.
+
+Rules:
+
+- If git remote/auth is unavailable (for example auth denied, host unreachable, TLS/SSH failure), stop the lane as blocked.
+- Do not call completion callback without successful push/PR update.
+- Report exact git transport evidence in final output.
+
 ## Completion Callback
+To complete the lane you need:
+- implement new frontend behavior as required by the lane task.
+- run frontend-local verification required by lane rules.
+- create or update a PR with the changed code.
+- poll SonarCloud for the PR until the result is available and contains no new serious issues.
+- keep Sonar duplication for changed frontend production code below `3.0%`.
 
 After frontend implementation is complete, call the provided `implement-fe` completion endpoint.
 

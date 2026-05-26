@@ -21,10 +21,12 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.java.Log;
 import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
+@Log
 public class CompleteApiLaneOrchestrationUseCase {
 
     private final LaneRepository laneRepository;
@@ -51,7 +53,8 @@ public class CompleteApiLaneOrchestrationUseCase {
         if (Objects.equals(targetLane.getAgent(), Agent.IMPLEMENT_BE)) {
             final List<ApiLaneContractResult> contracts = context.contractsByScope().getOrDefault(targetLane.getScope(), List.of());
             if (contracts.isEmpty()) {
-                throw new IllegalStateException("No API contracts found for backend scope=" + targetLane.getScope());
+                log.info("Skipping API task creation for backend scope=%s: no API contracts in callback payload".formatted(targetLane.getScope()));
+                return;
             }
             this.completeAgentTasks.complete(sourceLaneId, List.of(this.asImplementTicket(ticketId, targetLane.getScope(), summary, contracts, Agent.IMPLEMENT_BE, false)));
             return;
@@ -60,8 +63,9 @@ public class CompleteApiLaneOrchestrationUseCase {
         final String frontendApiFamily = this.apiFamilyByScope(targetLane.getScope(), context.apiFamilyByScope());
         final List<ApiLaneContractResult> contracts = context.contractsByApiFamily().getOrDefault(frontendApiFamily, List.of());
         if (contracts.isEmpty()) {
-            throw new IllegalStateException("No API contracts found for frontend scope=" + targetLane.getScope()
-                    + ", apiFamily=" + frontendApiFamily);
+            log.info("Skipping API task creation for frontend scope=%s, apiFamily=%s: no API contracts in callback payload"
+                    .formatted(targetLane.getScope(), frontendApiFamily));
+            return;
         }
         this.completeAgentTasks.complete(sourceLaneId, List.of(this.asImplementTicket(ticketId, targetLane.getScope(), summary, contracts, Agent.IMPLEMENT_FE, true)));
     }

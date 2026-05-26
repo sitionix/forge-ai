@@ -300,6 +300,23 @@ Keep them bounded and deterministic.
 
 ---
 
+
+## Local Verification Gate
+
+Before completion callback, run a full backend verification build in the assigned service scope.
+
+Required gate:
+- execute `mvn clean install` (or repository-approved wrapper equivalent) in the assigned backend scope;
+- do not skip tests;
+- completion is forbidden if this command fails.
+
+Push and callback ordering rule:
+- run this verification after the final local code change for the lane and before `git push`;
+- do not push commits if verification failed;
+- do not call completion callback unless verification is still valid for the pushed commit (no new commits after verification).
+
+If the command cannot be executed because of missing dependencies/environment constraints, report exact blocker and do not push and do not call completion.
+
 ## Completion Callback
 
 After IT tests are implemented and verified, call the provided `test-it` completion endpoint.

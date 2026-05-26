@@ -96,6 +96,19 @@ Do not add tests to satisfy coverage in the implement-be lane.
 If Sonar reports issues caused by changed backend production code, fix the production code before completion.
 Do not complete the lane with serious new Sonar issues in changed backend production code.
 Allowed minor Sonar issues are limited to harmless style-level issues that do not affect correctness, security, maintainability, or runtime behavior.
+Sonar duplication gate:
+- `sonar.duplications` for changed backend production code must be `< 3.0%`.
+- If duplication is `>= 3.0%`, reduce duplication in changed code and wait for a new SonarCloud result.
+
+## Git Connectivity Gate
+
+Before push, PR update, or Sonar polling, verify git remote connectivity/auth works for the current repository.
+
+Rules:
+
+- If git remote/auth is unavailable (for example auth denied, host unreachable, TLS/SSH failure), stop the lane as blocked.
+- Do not call completion callback without successful push/PR update.
+- Report exact git transport evidence in final output.
 
 ## Completion Callback
 To complete the lane you need:

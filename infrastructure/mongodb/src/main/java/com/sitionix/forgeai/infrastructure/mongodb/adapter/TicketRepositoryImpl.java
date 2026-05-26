@@ -89,6 +89,15 @@ public class TicketRepositoryImpl implements TicketRepository {
     }
 
     @Override
+    public boolean moveLaneToInProgressIfReady(final UUID laneId) {
+        final Query query = Query.query(Criteria.where("lanes").elemMatch(
+                Criteria.where("_id").is(laneId).and("status").is(LaneStatus.READY_TO_START)
+        ));
+        final Update update = new Update().set("lanes.$.status", LaneStatus.IN_PROGRESS);
+        return this.mongoTemplate.updateFirst(query, update, TicketDocument.class).getModifiedCount() > 0;
+    }
+
+    @Override
     public boolean isReadyToStart(final UUID laneId) {
         final Query query = Query.query(Criteria.where("lanes._id").is(laneId));
         final TicketDocument ticketDocument = this.mongoTemplate.findOne(query, TicketDocument.class);
