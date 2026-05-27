@@ -4,7 +4,6 @@ import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.codex.ForgeAiContractApi;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.AgentInstructions;
-import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
@@ -20,6 +19,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -78,6 +78,7 @@ class PrepareAgentExecutionInputUseCaseTest {
                 .sharedInstructions(Set.of("shared-1", "shared-2"))
                 .build();
         when(this.instructionRepository.findInstructionsByAgentId("analyzer")).thenReturn(instructions);
+        when(this.ticketRepository.moveLaneToInProgressIfReady(laneId)).thenReturn(true);
 
         //when
         final AgentExecutionInput actual = this.prepareAgentExecutionInputUseCase.execute(lane);
@@ -102,7 +103,39 @@ class PrepareAgentExecutionInputUseCaseTest {
         verify(serviceConfigView).getContractRefs();
         verify(contractRefView).getRoot();
         verify(this.instructionRepository).findInstructionsByAgentId("analyzer");
-        verify(this.ticketRepository).updateLaneStatus(laneId, LaneStatus.IN_PROGRESS);
+        verify(this.ticketRepository).moveLaneToInProgressIfReady(laneId);
+        verifyNoMoreInteractions(serviceConfigView, contractRefView);
+    }
+
+    @Test
+    void givenNotReadyLane_whenExecute_thenThrowExceptionAndDoNotBuildInput() {
+        //given
+        final UUID laneId = UUID.randomUUID();
+        final ReadyToStartLane lane = ReadyToStartLane.builder()
+                .ticketId(UUID.randomUUID())
+                .ticketKey("SITIONIX-1")
+                .laneId(laneId)
+                .agent(Agent.ANALYZER)
+                .build();
+
+        final ServicePropertiesProvider.ServiceConfigView serviceConfigView = mock(ServicePropertiesProvider.ServiceConfigView.class);
+        final ServicePropertiesProvider.ContractRefView contractRefView = mock(ServicePropertiesProvider.ContractRefView.class);
+        when(serviceConfigView.getContractRefs()).thenReturn(Map.of("api", contractRefView));
+        when(this.props.getServices()).thenReturn(Map.of("forge-ai", serviceConfigView));
+        when(this.instructionRepository.findInstructionsByAgentId("analyzer"))
+                .thenReturn(AgentInstructions.builder().agentInstruction("agent").endpoint("/e").build());
+        when(this.ticketRepository.moveLaneToInProgressIfReady(laneId)).thenReturn(false);
+
+        //when
+        //then
+        assertThatThrownBy(() -> this.prepareAgentExecutionInputUseCase.execute(lane))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Lane is not ready to start or already started: laneId=" + laneId);
+
+        verify(this.props).getServices();
+        verify(serviceConfigView).getContractRefs();
+        verify(this.instructionRepository).findInstructionsByAgentId("analyzer");
+        verify(this.ticketRepository).moveLaneToInProgressIfReady(laneId);
         verifyNoMoreInteractions(serviceConfigView, contractRefView);
     }
 }

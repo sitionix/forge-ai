@@ -16,6 +16,8 @@ import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -144,9 +146,11 @@ class CompleteBackendFlowToTestersReadyIT {
                 .findFirst()
                 .orElseThrow()
                 .getId();
+        final ConcurrentHashMap<UUID, AtomicInteger> submissionCounters = new ConcurrentHashMap<>();
 
         doAnswer(invocation -> {
             final AgentExecutionInput<?> input = invocation.getArgument(0);
+            submissionCounters.computeIfAbsent(input.getLaneId(), ignored -> new AtomicInteger(0)).incrementAndGet();
             if (Objects.equals(input.getLaneId(), analyzerAutomationLaneId)) {
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeAnalyzerLane())
@@ -272,6 +276,11 @@ class CompleteBackendFlowToTestersReadyIT {
         this.testManager.mongo()
                 .assertEntities(com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument.class)
                 .hasSize(18);
+
+        assertThat(submissionCounters.get(testUnitAutomationLaneId).get()).isEqualTo(1);
+        assertThat(submissionCounters.get(testUnitBffLaneId).get()).isEqualTo(1);
+        assertThat(submissionCounters.get(testItAutomationLaneId).get()).isEqualTo(1);
+        assertThat(submissionCounters.get(testItBffLaneId).get()).isEqualTo(1);
 
         final TicketDocument actual = this.testManager.mongo()
                 .get(TicketDocument.class)

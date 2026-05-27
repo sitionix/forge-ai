@@ -5,7 +5,6 @@ import com.sitionix.forgeai.domain.model.codex.ForgeAiContractApi;
 import com.sitionix.forgeai.domain.model.codex.ScopeContext;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.AgentInstructions;
-import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
@@ -34,7 +33,9 @@ public class PrepareAgentExecutionInputUseCase {
         final ServicePropertiesProvider.ContractRefView contractRefs = serviceConfigView.getContractRefs().get(API_KEY);
 
         final AgentInstructions instructions = this.instructionRepository.findInstructionsByAgentId(lane.getAgent().getId());
-        this.ticketRepository.updateLaneStatus(lane.getLaneId(), LaneStatus.IN_PROGRESS);
+        if (!this.ticketRepository.moveLaneToInProgressIfReady(lane.getLaneId())) {
+            throw new IllegalStateException("Lane is not ready to start or already started: laneId=" + lane.getLaneId());
+        }
 
         return AgentExecutionInput.<AgentTicketPayload>builder()
                 .ticketId(lane.getTicketId())

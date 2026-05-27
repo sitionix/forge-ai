@@ -114,7 +114,10 @@ public class ForgeAiController implements ForgeAiApi {
     @Override
     public ResponseEntity<CompleteApiLaneResponse> completeApiLane(final UUID ticketId, final UUID laneId, @Valid final CompleteApiLaneRequest completeApiLaneRequest) {
         log.info("Received completeApiLane request for ticketId: {}, laneId: {}, with request body: {}", ticketId, laneId, completeApiLaneRequest);
-        this.completeApiLaneOrchestrationUseCase.complete(ticketId, laneId, completeApiLaneRequest);
+        final boolean apiLaneRequiresCompletion = this.laneScopeValidator.validateApiCompletion(laneId);
+        if (apiLaneRequiresCompletion) {
+            this.completeApiLaneOrchestrationUseCase.complete(ticketId, laneId, completeApiLaneRequest);
+        }
 
         return ResponseEntity.ok(CompleteApiLaneResponse.builder()
                 .laneId(laneId)
