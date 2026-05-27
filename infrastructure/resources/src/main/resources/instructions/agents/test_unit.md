@@ -33,7 +33,7 @@ Execute steps in order.
     - `additional-instructions/java-style-basics.md`
 
 4. Local verification  
-   Read `lane-instructions/test_unit/local-verification.md`.
+   Read `additional-instructions/backend-maven-verification.md`.
 
 5. Pull request and coverage Sonar gate  
    Read:

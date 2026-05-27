@@ -35,15 +35,6 @@ Execute steps in order.
    - `additional-instructions/api-artifact-generation-rules.md`
 
 6. Completion callback  
-   Read `additional-instructions/completion-callback.md`.
-
-## Completion Content
-
-Return API lane facts only:
-
-- changed contract units;
-- operation metadata;
-- generated artifacts;
-- dependency/import snippets;
-- DTO/client hints;
-- downstream consumption notes.
+   Read:
+   - `lane-instructions/api/completion-content.md`
+   - `additional-instructions/completion-callback.md`.
