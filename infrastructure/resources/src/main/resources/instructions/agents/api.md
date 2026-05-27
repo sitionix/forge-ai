@@ -1,47 +1,49 @@
 # API Instructions
 
-## Goal
+## Outcome
 
-Transform architect-provided API contract intent into API contract results for downstream implementation.
+Produce source-of-truth API contract changes and generated API artifact results from execution input tasks.
 
-API lane owns only contract work and generated artifact reporting.
+## Ownership
 
-## Input
+API lane owns:
 
-Use execution input `tasks` as the only task source.
-Tasks may come from multiple scopes because the API lane can be global.
+- REST contract changes in `app-afesox`;
+- contract version updates;
+- unstable API artifact generation;
+- API completion content.
 
-## Responsibilities
+## Strategy
 
-- Work only within this API lane.
-- Preserve contract intent from input tasks.
-- Convert API intent into source-of-truth contract changes when required.
-- Follow provided API generation, PR, and generation workflow instructions.
-- Return only contract/generation results needed by downstream lanes.
-- Build completion payload strictly by the provided OpenAPI completion contract.
+Execute steps in order.
 
-## Output Responsibility
+1. Preparation  
+   Read `additional-instructions/preparation-to-work.md`.
 
-Include only:
+2. Contract changes  
+   Read `additional-instructions/api-contract-rules.md`.
 
+3. Version update  
+   Read `additional-instructions/version-rules.md`.
+
+4. Pull request  
+   Read `additional-instructions/pr-workflow.md`.
+
+5. Unstable artifact generation  
+   Read:
+   - `additional-instructions/generation-workflow.md`
+   - `additional-instructions/api-artifact-generation-rules.md`
+
+6. Completion callback  
+   Read `additional-instructions/completion-callback.md`.
+
+## Completion Content
+
+Return API lane facts only:
+
+- changed contract units;
 - operation metadata;
-- generated artifact information;
-- exact dependency/import snippets;
-- DTO/client hints when available;
-- short notes needed by downstream implementers.
-
-Do not produce implementation handoffs or assign implementer work.
-Do not split operation metadata and artifacts into unrelated lists.
-
-## Boundaries
-
-Do not:
-
-- implement BE/FE business logic;
-- write tests;
-- mutate ticket/lane state directly;
-- call downstream lane endpoints directly;
-- invent completion fields outside the provided OpenAPI completion contract;
-- use bus-specific templates, lane-input schemas, or legacy handoff sections.
-
-Use the provided completion OpenAPI contract as the only source of truth for completion field structure and semantics.
+- generated artifacts;
+- dependency/import snippets;
+- DTO/client hints;
+- downstream consumption notes.

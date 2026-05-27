@@ -1,33 +1,31 @@
 # Generation Workflow
 
-## Goal
-Provide one reusable contract-generation lifecycle for API lane work.
+Use generation workflow evidence for artifact coordinates.
+When changed contract surfaces require generated artifacts, generation is part of the API lane result.
 
-## Shared Lifecycle
-1. Read required contract requests from execution input tasks.
-2. Update source-of-truth contract files for the requested surface.
-3. Apply versioning rules for changed contract surfaces.
-4. Ensure PR exists (create/update) for that contract change.
-5. Wait for required PR checks before generation trigger.
-6. Resolve exact generation targets from authoritative metadata.
-7. Trigger generation for resolved targets (parallel comments are allowed when targets are independent).
-8. Capture run ids for triggered workflows and wait addressably per run (`gh run watch <run-id>`), not by periodic global list polling.
-9. Return traceable generation outcome in completion payload fields.
+## Flow
 
-## Mandatory Rules
+1. Confirm PR identity for the changed contract unit.
+2. Wait for required PR checks.
+3. Resolve generation targets from authoritative metadata.
+4. Trigger generation for resolved targets.
+5. Capture workflow run ids.
+6. Watch each run by id:
 
-- Resolve target names only from metadata source of truth.
-- Never use empty or invented target names for generation.
-- If generation is required for the task, do not skip it.
+`gh run watch <run-id>`
 
-## Blocking Conditions
+7. Collect generated artifact evidence.
+8. Return traceable generation result:
 
-- Missing authoritative target mapping.
-- Missing required PR identity/ticket context for generation trigger.
-- Generation workflow failed.
-- No generated coordinates produced after successful trigger.
+`request -> target -> artifact`
 
-## Output Expectations
+## Result
 
-- Keep generation results traceable: request -> target -> artifact.
-- Keep only scope-relevant artifact notes; avoid unrelated artifact noise.
+Keep these facts for completion content:
+
+- contract request;
+- generation target;
+- workflow run id;
+- workflow run URL;
+- generated artifact;
+- artifact evidence.
