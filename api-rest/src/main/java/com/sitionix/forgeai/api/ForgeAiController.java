@@ -131,7 +131,7 @@ public class ForgeAiController implements ForgeAiApi {
                     .map(ApiLaneContractResult::getScope)
                     .filter(Objects::nonNull)
                     .collect(Collectors.toSet());
-            this.validateApiLaneEvidence.validate(laneId, callbackScopes, this.apiLaneEvidencePayloadApiMapper.asApiLaneEvidencePayloadOrEmpty(completeApiLaneRequest));
+            this.validateApiLaneEvidence.validate(laneId, callbackScopes, this.apiLaneEvidencePayloadApiMapper.asApiLaneEvidencePayload(completeApiLaneRequest));
             this.completeApiLaneOrchestrationUseCase.complete(ticketId, laneId, completeApiLaneRequest);
         }
 

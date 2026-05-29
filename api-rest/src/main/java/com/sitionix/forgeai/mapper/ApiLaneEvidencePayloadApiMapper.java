@@ -19,17 +19,6 @@ public interface ApiLaneEvidencePayloadApiMapper {
     @Mapping(target = "dependencies", source = "contracts", qualifiedByName = "toDependencies")
     ApiLaneEvidencePayload asApiLaneEvidencePayload(CompleteApiLaneRequest source);
 
-    default ApiLaneEvidencePayload asApiLaneEvidencePayloadOrEmpty(final CompleteApiLaneRequest source) {
-        if (source == null) {
-            return ApiLaneEvidencePayload.builder()
-                    .prUrl(null)
-                    .repo(null)
-                    .dependencies(List.of())
-                    .build();
-        }
-        return this.asApiLaneEvidencePayload(source);
-    }
-
     @Named("toDependencies")
     default List<ApiLaneEvidenceDependency> toDependencies(final List<ApiLaneContractResult> contracts) {
         if (contracts == null) {

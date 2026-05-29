@@ -229,7 +229,7 @@ class ForgeAiControllerTest {
                 .laneStatus(HttpStatus.OK.name())
                 .build());
         verify(this.laneScopeValidator).validateApiCompletion(laneId);
-        verify(this.apiLaneEvidencePayloadApiMapper).asApiLaneEvidencePayloadOrEmpty(request);
+        verify(this.apiLaneEvidencePayloadApiMapper).asApiLaneEvidencePayload(request);
         verify(this.validateApiLaneEvidence).validate(
                 org.mockito.ArgumentMatchers.eq(laneId),
                 org.mockito.ArgumentMatchers.anySet(),
