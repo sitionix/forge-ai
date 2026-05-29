@@ -88,6 +88,9 @@ class ForgeAiControllerTest {
     private CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
 
     @Mock
+    private ApiLaneEvidenceValidator apiLaneEvidenceValidator;
+
+    @Mock
     private CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
 
     @Mock
@@ -110,6 +113,7 @@ class ForgeAiControllerTest {
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase,
+                this.apiLaneEvidenceValidator,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
                 this.completeUnitTestLaneOrchestrationUseCase,
@@ -128,6 +132,7 @@ class ForgeAiControllerTest {
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase,
+                this.apiLaneEvidenceValidator,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
                 this.completeUnitTestLaneOrchestrationUseCase,
@@ -217,6 +222,7 @@ class ForgeAiControllerTest {
                 .laneStatus(HttpStatus.OK.name())
                 .build());
         verify(this.laneScopeValidator).validateApiCompletion(laneId);
+        verify(this.apiLaneEvidenceValidator).validateRequiredScopeDependencies(laneId, request);
         verify(this.completeApiLaneOrchestrationUseCase).complete(ticketId, laneId, request);
     }
 

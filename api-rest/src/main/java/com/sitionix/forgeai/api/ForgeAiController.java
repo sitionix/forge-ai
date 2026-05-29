@@ -63,6 +63,7 @@ public class ForgeAiController implements ForgeAiApi {
     private final LaneScopeValidator laneScopeValidator;
     private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
     private final CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
+    private final ApiLaneEvidenceValidator apiLaneEvidenceValidator;
     private final CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
     private final CompleteItTestLaneOrchestrationUseCase completeItTestLaneOrchestrationUseCase;
     private final CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
@@ -116,6 +117,7 @@ public class ForgeAiController implements ForgeAiApi {
         log.info("Received completeApiLane request for ticketId: {}, laneId: {}, with request body: {}", ticketId, laneId, completeApiLaneRequest);
         final boolean apiLaneRequiresCompletion = this.laneScopeValidator.validateApiCompletion(laneId);
         if (apiLaneRequiresCompletion) {
+            this.apiLaneEvidenceValidator.validateRequiredScopeDependencies(laneId, completeApiLaneRequest);
             this.completeApiLaneOrchestrationUseCase.complete(ticketId, laneId, completeApiLaneRequest);
         }
 
