@@ -33,13 +33,6 @@ public interface ApiLaneEvidencePayloadApiMapper {
     }
 
     default ApiLaneEvidenceDependency asApiLaneEvidenceDependency(final String scope, final ApiLaneGeneratedArtifact source) {
-        if (source == null) {
-            return ApiLaneEvidenceDependency.builder()
-                    .scope(scope)
-                    .role(null)
-                    .runId(null)
-                    .build();
-        }
         return ApiLaneEvidenceDependency.builder()
                 .scope(scope)
                 .role(source.getRole() == null ? null : source.getRole().getValue())
