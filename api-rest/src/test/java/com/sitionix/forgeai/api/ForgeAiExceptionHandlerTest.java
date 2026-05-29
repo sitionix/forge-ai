@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.api;
 
 import com.sitionix.forgeai.domain.exception.ServicePropertyMissingException;
+import com.sitionix.forgeai.domain.exception.ApiLaneEvidenceValidationException;
 import jakarta.validation.Valid;
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -91,6 +92,27 @@ class ForgeAiExceptionHandlerTest {
         assertThat(actual.getBody()).isEqualTo(Map.of(
                 "error", "scope_mismatch",
                 "message", "scope mismatch"
+        ));
+    }
+
+    @Test
+    void givenApiLaneEvidenceValidationException_whenHandle_thenReturnBadRequestWithHint() {
+        //given
+        final ApiLaneEvidenceValidationException exception = new ApiLaneEvidenceValidationException(
+                "api_evidence_dependency_missing",
+                "missing generated dependency evidence",
+                "Run /generate and provide runId"
+        );
+
+        //when
+        final ResponseEntity<Map<String, String>> actual = this.forgeAiExceptionHandler.handleApiLaneEvidenceValidationException(exception);
+
+        //then
+        assertThat(actual.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(actual.getBody()).isEqualTo(Map.of(
+                "error", "api_evidence_dependency_missing",
+                "message", "missing generated dependency evidence",
+                "hint", "Run /generate and provide runId"
         ));
     }
 

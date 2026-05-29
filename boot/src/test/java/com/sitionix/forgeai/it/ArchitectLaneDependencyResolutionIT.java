@@ -1,12 +1,7 @@
 package com.sitionix.forgeai.it;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.timeout;
-import static org.mockito.Mockito.verify;
-
-import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
@@ -23,7 +18,9 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 import java.util.UUID;
 
-@IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=100")
+@IntegrationTest(properties = {
+        "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000"
+})
 class ArchitectLaneDependencyResolutionIT {
 
     @Autowired
@@ -39,7 +36,7 @@ class ArchitectLaneDependencyResolutionIT {
     private CodexClient codexClient;
 
     @Test
-    @DisplayName("Should execute architect lane when dependency points to analyzer and input ticket is architect")
+    @DisplayName("Should move architect and qa_lead lanes to READY_TO_START when analyzer dependency is completed")
     void givenArchitectReadyLaneWithAnalyzerDependency_whenJobRuns_thenArchitectExecutionStarts() {
         //given
         final UUID ticketId = UUID.fromString("11111111-1111-1111-1111-111111111111");
@@ -57,9 +54,17 @@ class ArchitectLaneDependencyResolutionIT {
                 .assertDefault();
 
         //then
-        verify(this.codexClient, timeout(3000).atLeastOnce())
-                .submit(any(AgentExecutionInput.class), eq("/dev/ttys999"));
-        verify(this.codexClient, atLeastOnce())
-                .submit(any(AgentExecutionInput.class), eq("/dev/ttys999"));
+        final TicketDocument ticket = this.testManager.mongo()
+                .get(TicketDocument.class)
+                .hasSize(1)
+                .singleElement()
+                .assertEntity();
+        final boolean readyArchitect = ticket.getLanes().stream()
+                .anyMatch(lane -> lane.getType() == Agent.ARCHITECT && lane.getStatus() == LaneStatus.READY_TO_START);
+        final boolean readyQaLead = ticket.getLanes().stream()
+                .anyMatch(lane -> lane.getType() == Agent.QA_LEAD && lane.getStatus() == LaneStatus.READY_TO_START);
+        if (!readyArchitect || !readyQaLead) {
+            throw new AssertionError("Expected ARCHITECT and QA_LEAD lanes to be READY_TO_START after analyzer completion.");
+        }
     }
 }

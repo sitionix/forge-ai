@@ -14,6 +14,16 @@ REST/API-specific rules for API lane contract work.
 
 If concrete contract surface ownership cannot be resolved, report the missing surface information in completion notes instead of inventing a target.
 
+## Schema Composition
+All objects must have DTO in their name, e.g., `UserDTO`.
+For DTO object schemas in REST contracts, do not use:
+
+- `allOf`
+- `anyOf`
+- `oneOf`
+
+Describe DTO fields explicitly via `properties`.
+
 ## Version Rules
 
 - Compare changed REST surface version in the current branch/PR against `develop`.

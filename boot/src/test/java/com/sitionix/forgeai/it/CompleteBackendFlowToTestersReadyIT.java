@@ -15,6 +15,7 @@ import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -188,7 +189,10 @@ class CompleteBackendFlowToTestersReadyIT {
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeApiLane())
                         .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                        .assertDefault();
+                        .assertDefault(d -> d.mutateRequest(request -> {
+                            request.setPrUrl("https://github.com/sitionix/app-afesox/pull/143");
+                            request.setRepo("sitionix/app-afesox");
+                        }));
                 return null;
             }
             if (Objects.equals(input.getLaneId(), qaLeadAutomationLaneId)) {

@@ -1,34 +1,25 @@
 # PR Workflow
 
-## Goal
-Provide one reusable pull-request lifecycle for API lane contract changes.
+## Flow
 
-## PR Required Before Validation
-- Before validation of lane completion, an open PR for the current branch is required.
-- If no PR exists, agent MUST execute the existing PR workflow (create/update as applicable) before running completion validation gates.
-- Lane validation is incomplete until PR existence is confirmed.
+1. Check current branch.
+2. Review changed files.
+3. Commit lane-owned changes.
+4. Push branch.
+5. Create or update PR for the current work unit.
+6. Wait for required PR checks used by the active lane.
+7. Keep PR reference for completion content.
 
-## When To Create A PR
-- Create or update a PR when this lane changed source-of-truth contract files.
-- Keep one coherent contract change unit per PR.
+## PR Unit
 
-## When To Update An Existing PR
-- Update existing PR when continuing the same contract unit.
-- Do not split into multiple PRs unless explicitly required.
+One PR contains one coherent work unit.
 
-## PR Unit Discipline
-- Do not mix unrelated scopes or unrelated contract surfaces.
-- Do not reuse a branch/PR that belongs to another work unit.
+Use current ticket branch and ticket identity.
 
-## Branch And Base Rules
-- Start from the correct base branch for the target repository.
-- Create/update the branch from that base.
+Keep these facts for later steps:
 
-## Safety Rules
-- Do not create/update PR without relevant file changes.
-- Do not invent ticket or target identifiers.
-- If workflow-required branch/ticket identity is missing, surface explicit blocker in completion notes.
-
-## Evidence Requirements
-- Include PR reference and branch in completion content where relevant.
-- Include generation trigger/reference context when used.
+- branch;
+- commit hash;
+- PR number;
+- PR URL;
+- required check result.
