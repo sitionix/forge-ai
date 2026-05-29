@@ -19,7 +19,10 @@
           "packageName": "",
           "version": "0.0.41",
           "dependency": "<dependency>\n  <groupId>com.afesox</groupId>\n  <artifactId>app-afesox-bffssox-api-first-sitionix-1222-unstable</artifactId>\n  <version>0.0.41</version>\n</dependency>",
-          "notes": ["Evidence: PR #143 workflow run https://github.com/sitionix/app-afesox/actions/runs/26088670378"]
+          "notes": [
+            "Evidence: PR #143 workflow run https://github.com/sitionix/app-afesox/actions/runs/26088670378"
+          ],
+          "runId": 1
         },
         {
           "kind": "NPM",
@@ -29,7 +32,10 @@
           "packageName": "@sitionix/app-afesox-bffssox-frontend-sitionix-1222-unstable",
           "version": "0.0.41",
           "dependency": "pnpm add @sitionix/app-afesox-bffssox-frontend-sitionix-1222-unstable@0.0.41",
-          "notes": ["Evidence: PR #143 workflow run https://github.com/sitionix/app-afesox/actions/runs/26088669620"]
+          "notes": [
+            "Evidence: PR #143 workflow run https://github.com/sitionix/app-afesox/actions/runs/26088669620"
+          ],
+          "runId": 1
         }
       ],
       "notes": [
@@ -54,7 +60,10 @@
           "packageName": "@sitionix/app-afesox-bffssox-frontend-sitionix-139-unstable",
           "version": "0.0.1",
           "dependency": "pnpm add @sitionix/app-afesox-bffssox-frontend-sitionix-139-unstable@0.0.1",
-          "notes": ["Evidence: synthetic test fixture for partial-scope API callback"]
+          "notes": [
+            "Evidence: synthetic test fixture for partial-scope API callback"
+          ],
+          "runId": 1
         }
       ],
       "notes": [
@@ -64,5 +73,7 @@
   ],
   "notes": [
     "Partial scope callback fixture for global API lane."
-  ]
+  ],
+  "prUrl": "https://github.com/sitionix/app-afesox/pull/143",
+  "repo": "sitionix/app-afesox"
 }

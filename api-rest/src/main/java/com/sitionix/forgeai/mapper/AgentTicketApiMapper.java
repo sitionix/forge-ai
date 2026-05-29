@@ -29,7 +29,8 @@ import java.util.UUID;
                 UnitTestCompletionTicketPayloadApiMapper.class,
                 ImplementFeTicketPayloadApiMapper.class,
                 ApiTicketPayloadApiMapper.class,
-                EventTicketPayloadApiMapper.class
+                EventTicketPayloadApiMapper.class,
+                ApiLaneEvidencePayloadApiMapper.class
         },
         imports = {
                 Agent.class,

@@ -78,8 +78,12 @@ class ScopeMismatchCallbacksIT {
         //when
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.completeApiLaneScopeMismatch())
+                .withRequest("requestCompleteApiLaneScopeMismatch.json", request -> {
+                    request.setPrUrl("https://github.com/sitionix/app-afesox/pull/164");
+                    request.setRepo("sitionix/app-afesox");
+                })
                 .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("scope_mismatch"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("api_evidence_dependency_missing"))
                 .assertDefault();
 
         //then
@@ -97,5 +101,66 @@ class ScopeMismatchCallbacksIT {
                         && value.getLanes().stream()
                         .filter(lane -> !Objects.equals(lane.getId(), apiLaneId))
                         .allMatch(lane -> Objects.isNull(lane.getInputTaskIds()) || lane.getInputTaskIds().isEmpty()));
+    }
+
+    @Test
+    @DisplayName("Should fail api completion when required scope dependency evidence is missing")
+    void givenApiLane_whenCompleteApiWithoutRequiredDependencyEvidence_thenReturnBadRequestWithHint() {
+        //given
+        final UUID ticketId = UUID.fromString("21111111-1111-1111-1111-111111111111");
+        final UUID apiLaneId = UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        this.testManager.mongo()
+                .create(TicketDocument.class)
+                .body("completeApiLaneOneBeSeedTicket.json");
+
+        //when
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.completeApiLaneMissingRequiredDependencyEvidence())
+                .withRequest("requestCompleteApiLaneMissingRequiredDependencyEvidence.json", request -> {
+                    request.setPrUrl("https://github.com/sitionix/app-afesox/pull/164");
+                    request.setRepo("sitionix/app-afesox");
+                    request.getContracts().removeIf(value -> Objects.equals(value.getScope(), "automationservice-sox"));
+                })
+                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("scope_mismatch"))
+                .assertDefault();
+
+        //then
+        this.testManager.mongo()
+                .assertEntities(AgentTicketDocument.class)
+                .hasSize(0);
+
+        this.testManager.mongo()
+                .get(TicketDocument.class)
+                .hasSize(1)
+                .singleElement()
+                .andExpected(value -> value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), apiLaneId)
+                                && Objects.equals(LaneStatus.IN_PROGRESS, lane.getStatus())));
+    }
+
+    @Test
+    @DisplayName("Should fail api completion when evidence repo format is invalid")
+    void givenApiLane_whenCompleteApiWithInvalidRepoFormat_thenReturnBadRequestWithHint() {
+        //given
+        final UUID ticketId = UUID.fromString("21111111-1111-1111-1111-111111111111");
+        final UUID apiLaneId = UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        this.testManager.mongo()
+                .create(TicketDocument.class)
+                .body("completeApiLaneOneBeSeedTicket.json");
+
+        //when
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.completeApiLaneMissingRequiredDependencyEvidence())
+                .withRequest("requestCompleteApiLaneMissingRequiredDependencyEvidence.json", request -> {
+                    request.setPrUrl("https://github.com/sitionix/app-afesox/pull/164");
+                    request.setRepo("app-afesox");
+                })
+                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("api_evidence_repo_format_invalid"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.hint").value("Set repo in owner/repo format (for example: sitionix/app-afesox)."))
+                .assertDefault();
     }
 }

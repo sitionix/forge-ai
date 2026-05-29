@@ -3,6 +3,7 @@ package com.sitionix.forgeai.api;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import com.sitionix.forgeai.domain.exception.ApiLaneEvidenceValidationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -49,6 +50,16 @@ public class ForgeAiExceptionHandler {
                 .body(Map.of(
                         "error", "scope_mismatch",
                         "message", exception.getMessage()
+                ));
+    }
+
+    @ExceptionHandler(ApiLaneEvidenceValidationException.class)
+    public ResponseEntity<Map<String, String>> handleApiLaneEvidenceValidationException(final ApiLaneEvidenceValidationException exception) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(
+                        "error", exception.getCode(),
+                        "message", exception.getMessage(),
+                        "hint", exception.getHint()
                 ));
     }
 

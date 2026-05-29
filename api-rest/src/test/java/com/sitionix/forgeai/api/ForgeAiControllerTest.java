@@ -36,7 +36,9 @@ import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.CompleteReviewerTask;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
+import com.sitionix.forgeai.domain.usecase.ValidateApiLaneEvidence;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
+import com.sitionix.forgeai.mapper.ApiLaneEvidencePayloadApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
@@ -76,6 +78,9 @@ class ForgeAiControllerTest {
     private AgentTicketApiMapper agentTicketApiMapper;
 
     @Mock
+    private ApiLaneEvidencePayloadApiMapper apiLaneEvidencePayloadApiMapper;
+
+    @Mock
     private CompleteAgentTasks completeAgentTasks;
 
     @Mock
@@ -88,7 +93,7 @@ class ForgeAiControllerTest {
     private CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
 
     @Mock
-    private ApiLaneEvidenceValidator apiLaneEvidenceValidator;
+    private ValidateApiLaneEvidence validateApiLaneEvidence;
 
     @Mock
     private CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
@@ -109,11 +114,12 @@ class ForgeAiControllerTest {
                 this.forgeAiApiMapper,
                 this.terminalTtyResolver,
                 this.agentTicketApiMapper,
+                this.apiLaneEvidencePayloadApiMapper,
                 this.completeAgentTasks,
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase,
-                this.apiLaneEvidenceValidator,
+                this.validateApiLaneEvidence,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
                 this.completeUnitTestLaneOrchestrationUseCase,
@@ -128,11 +134,12 @@ class ForgeAiControllerTest {
                 this.forgeAiApiMapper,
                 this.terminalTtyResolver,
                 this.agentTicketApiMapper,
+                this.apiLaneEvidencePayloadApiMapper,
                 this.completeAgentTasks,
                 this.laneScopeValidator,
                 this.completeArchitectLaneOrchestrationUseCase,
                 this.completeApiLaneOrchestrationUseCase,
-                this.apiLaneEvidenceValidator,
+                this.validateApiLaneEvidence,
                 this.completeQaLeadLaneOrchestrationUseCase,
                 this.completeItTestLaneOrchestrationUseCase,
                 this.completeUnitTestLaneOrchestrationUseCase,
@@ -222,7 +229,12 @@ class ForgeAiControllerTest {
                 .laneStatus(HttpStatus.OK.name())
                 .build());
         verify(this.laneScopeValidator).validateApiCompletion(laneId);
-        verify(this.apiLaneEvidenceValidator).validateRequiredScopeDependencies(laneId, request);
+        verify(this.apiLaneEvidencePayloadApiMapper).asApiLaneEvidencePayloadOrEmpty(request);
+        verify(this.validateApiLaneEvidence).validate(
+                org.mockito.ArgumentMatchers.eq(laneId),
+                org.mockito.ArgumentMatchers.anySet(),
+                org.mockito.ArgumentMatchers.any()
+        );
         verify(this.completeApiLaneOrchestrationUseCase).complete(ticketId, laneId, request);
     }
 
