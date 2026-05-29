@@ -2,19 +2,15 @@ package com.sitionix.forgeai.application.usecase;
 
 import com.sitionix.forgeai.domain.exception.ApiLaneEvidenceValidationException;
 import com.sitionix.forgeai.domain.model.github.GithubCheckStatus;
-import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiLaneEvidenceDependency;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiLaneEvidencePayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.port.GithubEvidencePort;
-import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.ValidateApiLaneEvidence;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -26,14 +22,11 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
     private static final Pattern GITHUB_REPOSITORY_PATTERN = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
 
     private final TicketRepository ticketRepository;
-    private final AgentTicketRepository agentTicketRepository;
     private final GithubEvidencePort githubEvidencePort;
 
     public ValidateApiLaneEvidenceUseCase(final TicketRepository ticketRepository,
-                                          final AgentTicketRepository agentTicketRepository,
                                           final GithubEvidencePort githubEvidencePort) {
         this.ticketRepository = ticketRepository;
-        this.agentTicketRepository = agentTicketRepository;
         this.githubEvidencePort = githubEvidencePort;
     }
 
@@ -45,7 +38,14 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
                         "API evidence validation failed: lane not found for laneId=" + laneId,
                         "Retry lane execution after lane is created and in progress."
                 ));
-        final Set<String> architectRequiredScopes = this.requiredScopesFromArchitectApiTasks(lane);
+        final UUID resolvedLaneId = lane.getId();
+        if (resolvedLaneId == null) {
+            throw new ApiLaneEvidenceValidationException(
+                    "api_evidence_lane_not_found",
+                    "API evidence validation failed: lane is invalid for laneId=" + laneId,
+                    "Retry lane execution after lane is created and in progress."
+            );
+        }
         final Set<String> callbackScopes = callbackContractScopes == null
                 ? Set.of()
                 : callbackContractScopes.stream()
@@ -53,9 +53,7 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
                 .map(String::trim)
                 .filter(value -> !value.isEmpty())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-        final Set<String> requiredScopes = new LinkedHashSet<>();
-        requiredScopes.addAll(architectRequiredScopes);
-        requiredScopes.addAll(callbackScopes);
+        final Set<String> requiredScopes = callbackScopes;
         if (requiredScopes.isEmpty()) {
             return;
         }
@@ -152,23 +150,5 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
                     "Run /generate and provide existing GitHub Actions runId for each required scope."
             );
         }
-    }
-
-    private Set<String> requiredScopesFromArchitectApiTasks(final Lane lane) {
-        if (lane.getInputTaskIds() == null || lane.getInputTaskIds().isEmpty()) {
-            return Set.of();
-        }
-        return lane.getInputTaskIds().stream()
-                .map(inputTaskId -> this.agentTicketRepository.findById(inputTaskId, ApiPayload.class))
-                .flatMap(Optional::stream)
-                .map(AgentTicket::getPayload)
-                .filter(Objects::nonNull)
-                .filter(payload -> Boolean.TRUE.equals(payload.getRequired()))
-                .map(ApiPayload::getScope)
-                .filter(Objects::nonNull)
-                .map(String::trim)
-                .filter(scope -> !scope.isEmpty())
-                .filter(scope -> !"GLOBAL".equalsIgnoreCase(scope))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 }

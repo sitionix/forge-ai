@@ -5,13 +5,10 @@ import com.sitionix.forgeai.domain.model.github.GithubCheckStatus;
 import com.sitionix.forgeai.domain.model.github.GithubPullRequestCheckResult;
 import com.sitionix.forgeai.domain.model.github.GithubRepositoryCheckResult;
 import com.sitionix.forgeai.domain.model.github.GithubWorkflowRunCheckResult;
-import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiLaneEvidenceDependency;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiLaneEvidencePayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.port.GithubEvidencePort;
-import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import java.util.List;
 import java.util.Optional;
@@ -37,9 +34,6 @@ class ValidateApiLaneEvidenceUseCaseTest {
     private TicketRepository ticketRepository;
 
     @Mock
-    private AgentTicketRepository agentTicketRepository;
-
-    @Mock
     private GithubEvidencePort githubEvidencePort;
 
     private ValidateApiLaneEvidenceUseCase useCase;
@@ -48,7 +42,6 @@ class ValidateApiLaneEvidenceUseCaseTest {
     void setUp() {
         this.useCase = new ValidateApiLaneEvidenceUseCase(
                 this.ticketRepository,
-                this.agentTicketRepository,
                 this.githubEvidencePort
         );
         lenient().when(this.githubEvidencePort.checkPullRequest(anyString())).thenReturn(
@@ -65,10 +58,7 @@ class ValidateApiLaneEvidenceUseCaseTest {
     @Test
     void givenMissingRequiredScopeEvidence_whenValidate_thenThrow() {
         final UUID laneId = UUID.randomUUID();
-        final UUID inputTaskId = UUID.randomUUID();
-        final Lane lane = Lane.builder().id(laneId).inputTaskIds(Set.of(inputTaskId)).build();
-        final ApiPayload payload = ApiPayload.builder().required(true).scope("backendforfrontendservice-sox").build();
-        final AgentTicket<ApiPayload> ticket = AgentTicket.<ApiPayload>builder().payload(payload).build();
+        final Lane lane = Lane.builder().id(laneId).build();
         final ApiLaneEvidencePayload evidence = ApiLaneEvidencePayload.builder()
                 .prUrl("https://github.com/sitionix/app-afesox/pull/164")
                 .repo("sitionix/app-afesox")
@@ -76,7 +66,6 @@ class ValidateApiLaneEvidenceUseCaseTest {
                 .build();
 
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
-        when(this.agentTicketRepository.findById(inputTaskId, ApiPayload.class)).thenReturn(Optional.of(ticket));
 
         assertThatThrownBy(() -> this.useCase.validate(laneId, Set.of("backendforfrontendservice-sox"), evidence))
                 .isInstanceOf(ApiLaneEvidenceValidationException.class)
@@ -86,10 +75,7 @@ class ValidateApiLaneEvidenceUseCaseTest {
     @Test
     void givenRequiredScopeEvidencePresentWithExtraScopes_whenValidate_thenPass() {
         final UUID laneId = UUID.randomUUID();
-        final UUID inputTaskId = UUID.randomUUID();
-        final Lane lane = Lane.builder().id(laneId).inputTaskIds(Set.of(inputTaskId)).build();
-        final ApiPayload payload = ApiPayload.builder().required(true).scope("backendforfrontendservice-sox").build();
-        final AgentTicket<ApiPayload> ticket = AgentTicket.<ApiPayload>builder().payload(payload).build();
+        final Lane lane = Lane.builder().id(laneId).build();
         final ApiLaneEvidencePayload evidence = ApiLaneEvidencePayload.builder()
                 .prUrl("https://github.com/sitionix/app-afesox/pull/164")
                 .repo("sitionix/app-afesox")
@@ -100,7 +86,6 @@ class ValidateApiLaneEvidenceUseCaseTest {
                 .build();
 
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
-        when(this.agentTicketRepository.findById(inputTaskId, ApiPayload.class)).thenReturn(Optional.of(ticket));
 
         assertThatCode(() -> this.useCase.validate(laneId, Set.of("backendforfrontendservice-sox"), evidence)).doesNotThrowAnyException();
     }
@@ -108,10 +93,7 @@ class ValidateApiLaneEvidenceUseCaseTest {
     @Test
     void givenArchitectRequiredPresentButCallbackScopeMissingInEvidence_whenValidate_thenThrow() {
         final UUID laneId = UUID.randomUUID();
-        final UUID inputTaskId = UUID.randomUUID();
-        final Lane lane = Lane.builder().id(laneId).inputTaskIds(Set.of(inputTaskId)).build();
-        final ApiPayload payload = ApiPayload.builder().required(true).scope("backendforfrontendservice-sox").build();
-        final AgentTicket<ApiPayload> ticket = AgentTicket.<ApiPayload>builder().payload(payload).build();
+        final Lane lane = Lane.builder().id(laneId).build();
         final ApiLaneEvidencePayload evidence = ApiLaneEvidencePayload.builder()
                 .prUrl("https://github.com/sitionix/app-afesox/pull/164")
                 .repo("sitionix/app-afesox")
@@ -121,7 +103,6 @@ class ValidateApiLaneEvidenceUseCaseTest {
                 .build();
 
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
-        when(this.agentTicketRepository.findById(inputTaskId, ApiPayload.class)).thenReturn(Optional.of(ticket));
 
         assertThatThrownBy(() -> this.useCase.validate(laneId, Set.of("automationservice-sox"), evidence))
                 .isInstanceOf(ApiLaneEvidenceValidationException.class)
@@ -131,10 +112,7 @@ class ValidateApiLaneEvidenceUseCaseTest {
     @Test
     void givenArchitectScopeIsGlobal_whenValidate_thenGlobalIsNotRequiredDependency() {
         final UUID laneId = UUID.randomUUID();
-        final UUID inputTaskId = UUID.randomUUID();
-        final Lane lane = Lane.builder().id(laneId).inputTaskIds(Set.of(inputTaskId)).build();
-        final ApiPayload payload = ApiPayload.builder().required(true).scope("GLOBAL").build();
-        final AgentTicket<ApiPayload> ticket = AgentTicket.<ApiPayload>builder().payload(payload).build();
+        final Lane lane = Lane.builder().id(laneId).build();
         final ApiLaneEvidencePayload evidence = ApiLaneEvidencePayload.builder()
                 .prUrl("https://github.com/sitionix/app-afesox/pull/164")
                 .repo("sitionix/app-afesox")
@@ -142,7 +120,6 @@ class ValidateApiLaneEvidenceUseCaseTest {
                 .build();
 
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
-        when(this.agentTicketRepository.findById(inputTaskId, ApiPayload.class)).thenReturn(Optional.of(ticket));
 
         assertThatCode(() -> this.useCase.validate(laneId, Set.of("backendforfrontendservice-sox"), evidence))
                 .doesNotThrowAnyException();
@@ -151,10 +128,7 @@ class ValidateApiLaneEvidenceUseCaseTest {
     @Test
     void givenRepositoryWithoutOwner_whenValidate_thenThrow() {
         final UUID laneId = UUID.randomUUID();
-        final UUID inputTaskId = UUID.randomUUID();
-        final Lane lane = Lane.builder().id(laneId).inputTaskIds(Set.of(inputTaskId)).build();
-        final ApiPayload payload = ApiPayload.builder().required(true).scope("backendforfrontendservice-sox").build();
-        final AgentTicket<ApiPayload> ticket = AgentTicket.<ApiPayload>builder().payload(payload).build();
+        final Lane lane = Lane.builder().id(laneId).build();
         final ApiLaneEvidencePayload evidence = ApiLaneEvidencePayload.builder()
                 .prUrl("https://github.com/sitionix/app-afesox/pull/164")
                 .repo("app-afesox")
@@ -162,7 +136,6 @@ class ValidateApiLaneEvidenceUseCaseTest {
                 .build();
 
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
-        when(this.agentTicketRepository.findById(inputTaskId, ApiPayload.class)).thenReturn(Optional.of(ticket));
 
         assertThatThrownBy(() -> this.useCase.validate(laneId, Set.of("backendforfrontendservice-sox"), evidence))
                 .isInstanceOf(ApiLaneEvidenceValidationException.class)
@@ -172,10 +145,7 @@ class ValidateApiLaneEvidenceUseCaseTest {
     @Test
     void givenRepositoryDoesNotExist_whenValidate_thenThrow() {
         final UUID laneId = UUID.randomUUID();
-        final UUID inputTaskId = UUID.randomUUID();
-        final Lane lane = Lane.builder().id(laneId).inputTaskIds(Set.of(inputTaskId)).build();
-        final ApiPayload payload = ApiPayload.builder().required(true).scope("backendforfrontendservice-sox").build();
-        final AgentTicket<ApiPayload> ticket = AgentTicket.<ApiPayload>builder().payload(payload).build();
+        final Lane lane = Lane.builder().id(laneId).build();
         final ApiLaneEvidencePayload evidence = ApiLaneEvidencePayload.builder()
                 .prUrl("https://github.com/sitionix/app-afesox/pull/164")
                 .repo("sitionix/not-existing-repo")
@@ -183,7 +153,6 @@ class ValidateApiLaneEvidenceUseCaseTest {
                 .build();
 
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
-        when(this.agentTicketRepository.findById(inputTaskId, ApiPayload.class)).thenReturn(Optional.of(ticket));
         when(this.githubEvidencePort.checkRepository("sitionix/not-existing-repo"))
                 .thenReturn(GithubRepositoryCheckResult.builder().status(GithubCheckStatus.NOT_FOUND).details("not found").build());
 
