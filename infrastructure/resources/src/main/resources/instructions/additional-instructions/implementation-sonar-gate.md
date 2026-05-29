@@ -32,3 +32,6 @@ When duplication is `>= 3.0%`, reduce duplication in changed production code and
 Implementation lanes do not use coverage as a gate.
 Do not add tests to satisfy coverage from an implementation lane.
 Do not report implementation-lane coverage unless the provided OpenAPI completion contract explicitly requires it.
+
+Coverage conditions from Sonar quality gate are informational for implementation lanes.
+Implementation lanes continue Sonar remediation by fixing issue conditions only.

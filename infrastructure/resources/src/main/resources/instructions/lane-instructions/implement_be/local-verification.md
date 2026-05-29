@@ -8,6 +8,7 @@ Required command:
 
 `mvn clean install`
 
+Check if application can start ApplicationContext successfully, and all beans can be created without exceptions.
 Use repository-approved wrapper equivalent only when that is the local convention.
 Do not skip tests.
 

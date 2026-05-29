@@ -26,6 +26,28 @@ Implementation lanes never use coverage as a gate, decision, failure reason, or 
 If coverage-like fields exist in the completion contract, they must not influence implementation behavior.
 Do not add/modify tests for coverage.
 
+Sonar failure handling flow for `implement_fe`:
+- Sonar fails -> parse failed conditions.
+- If issue condition fails -> fix code in changed production files and rerun Sonar.
+- If coverage condition fails -> document coverage condition and continue implement-fe completion path.
+
+## Self-Review Loop (Mandatory)
+
+Before commit and again before completion callback, run a self-review loop and do not stop on fixable gaps.
+
+Loop:
+1. run style/quality checks for changed production files;
+2. if any fixable gap is found, fix it immediately;
+3. rerun the same checks;
+4. repeat until all checks are `PASS`.
+
+Rules:
+- Do not finish lane work while self-review has fixable failures.
+- Do not ask user what to do for fixable style/quality gaps owned by this lane.
+- Do not send completion callback until the latest self-review loop is fully `PASS`.
+- Do not pass without all strategy steps(except callback) fully completed, need evidence about style/pr/Sonar issues fixes.
+
+
 ## Boundary
 
 Do not include test results, reviewer notes, backend persistence details, unrelated PR commentary, duplicated API contract data, or invented metrics.

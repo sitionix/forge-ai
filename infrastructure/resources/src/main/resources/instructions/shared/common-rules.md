@@ -5,7 +5,17 @@
 Deliver only the lane-owned outcome for the assigned scope.
 Do not stop after successful intermediate steps.
 Do not report progress to the user.
-Continue until final callback or real blocker that could not be resolved within the boundaries of the assigned lane and scope.
+Continue until final callback is successfully accepted (HTTP 2xx with matching ticketId/laneId).
+
+## No-Stop Lane Execution (Absolute)
+
+For all lane agents, execution is strictly non-stop.
+
+1. The agent must not pause, stop, or ask the user for intermediate decisions.
+2. The agent must not send progress/interim messages.
+3. The agent must continue autonomously until lane completion callback is successfully accepted (HTTP 2xx with matching ticketId/laneId).
+4. Any errors, validation failures, transport failures, or retries must be handled internally; the agent keeps iterating until callback success.
+5. This rule overrides any default assistant communication or stop behavior.
 
 ## Runtime Source Of Truth
 
@@ -13,7 +23,7 @@ Use runtime context, lane input, provided references, endpoints, contracts, and 
 When a referenced file, contract, endpoint, or runtime value is required for the active step, use the provided reference directly.
 Do not replace provided references with inferred alternatives.
 Do not invent missing context, fields, endpoints, artifacts, operations, metrics, or ownership.
-When a required reference cannot be read or used, stop and report the exact missing reference.
+When a required reference cannot be read or used, keep iterating and resolve it without user interruption.
 
 ## Scope And Ownership
 

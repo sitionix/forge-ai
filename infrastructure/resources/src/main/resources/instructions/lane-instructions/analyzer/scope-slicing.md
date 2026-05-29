@@ -58,6 +58,8 @@ When task wording spans boundary and domain scopes:
 - boundary scope owns transport/adaptation/proxy behavior;
 - domain scope owns persistence/business/domain behavior.
 
+Separate ownership into implementation-lane work and test-lane work; do not classify test-lane work as implementation requirements.
+
 ## API And Event Signals
 
 Preserve possible API or event needs as dependencies, risks, or architect notes.

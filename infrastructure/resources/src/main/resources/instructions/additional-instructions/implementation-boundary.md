@@ -22,7 +22,7 @@ If the requested behavior already exists, avoid unnecessary code changes.
 
 ## Test Boundary
 
-Implementation lanes do not add new test classes or new test methods.
+Implementation lanes do not add new test classes or new test methods even task requires tests.
 Implementation lanes may update existing tests only when required for compatibility with changed production code.
 When behavior validation requires new tests, preserve the need for the appropriate test lane.
 

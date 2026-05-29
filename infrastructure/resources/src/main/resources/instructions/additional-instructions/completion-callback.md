@@ -69,6 +69,14 @@ If none exists, report:
 
 Include all checked paths.
 
+## Sandbox Escalation Rule (Loopback)
+
+When callback target is loopback (`127.0.0.1` or `localhost`):
+
+- if callback attempt fails with `Operation not permitted` or curl exit code `7`, do not continue repeated retries in sandbox;
+- immediately rerun the same callback command with escalated execution (`sandbox_permissions=require_escalated`);
+- after escalation, continue normal result handling (success verification, or retry scheme for retryable HTTP/transport failures).
+
 ## Retry Scheme
 
 If callback delivery fails, retry using this scheme.
