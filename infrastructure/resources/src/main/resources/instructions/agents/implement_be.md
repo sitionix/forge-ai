@@ -47,14 +47,3 @@ Execute steps in order.
    Read:
    - `lane-instructions/implement_be/completion-content.md`
    - `additional-instructions/completion-callback.md`.
-
-## Completion Content
-
-Return implement-be lane facts only:
-
-- scope;
-- summary;
-- changed backend production files;
-- integration flows;
-- persistence changes;
-- Sonar result.

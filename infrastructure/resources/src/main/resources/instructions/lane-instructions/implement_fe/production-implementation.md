@@ -2,86 +2,48 @@
 
 ## Work
 
-Implement the requested frontend behavior in the assigned frontend scope.
-
-Use:
-
-- lane task;
-- runtime context;
-- architect handoff;
-- provided API contract results;
-- provided generated frontend packages, clients, DTOs, hooks, types, and artifact coordinates;
-- existing frontend module structure.
-
-Keep the change minimal, direct, and aligned with existing frontend code.
-If the requested behavior already exists, avoid unnecessary code changes.
+Implement requested frontend behavior in assigned frontend scope using lane task, runtime context, architect handoff, provided API contract results, and provided generated frontend artifacts.
 
 ## Frontend Structure
 
-Follow the existing frontend module structure in the assigned scope.
-Preserve existing conventions for:
+Preserve existing structure and responsibilities across:
 
-- routes;
-- pages;
-- components;
-- hooks;
-- clients;
-- state;
-- mappers;
-- styles;
-- UI primitives.
+- route/page;
+- component;
+- hook/state;
+- client/adapter;
+- mapper/helper;
+- style/UI primitives.
 
-Reuse existing mappers, hooks, clients, UI primitives, and helpers where they fit the requested behavior.
-Prefer small explicit implementation over broad refactoring.
-
-## Frontend Boundaries
-
-Keep responsibilities separated according to the existing SPA architecture:
-
-- route/page code owns screen composition and navigation-level behavior;
-- component code owns local rendering and user interaction;
-- hook/state code owns UI state transitions and data-loading state;
-- client/adapter code owns transport and API integration;
-- mapper/helper code owns request, response, and view-model mapping;
-- style code owns presentation details.
-
-Keep transport/client concerns in existing client or adapter layers.
-Keep mapping and normalization out of page/component rendering code when the project already separates it.
-Keep business/domain decisions out of presentational components.
-Preserve existing behavior unless the lane task explicitly requires a behavior change.
+Keep route/page composition, component interaction, state transitions, transport concerns, mapping, and presentation concerns in their existing layers.
 
 ## API And Generated Artifacts
 
-Treat API-generated frontend packages and client artifacts as source of truth when the task depends on API integration.
-Use provided frontend dependency and evidence notes from runtime input.
-Use generated frontend artifacts for BFF calls when they are provided for the required flow.
-Use existing frontend-local adapters only when they are already the local integration pattern and do not conflict with provided generated artifacts.
+When task depends on API integration, treat generated frontend packages/client artifacts as source of truth.
+
+Use generated artifacts for BFF calls when provided for the required flow.
 Do not invent API operations, fields, hooks, clients, package names, endpoint paths, payload shapes, enum values, or contract behavior.
-Do not implement manual API clients, manual fetch wrappers, or contract-shaped DTOs for a flow when generated artifacts already exist.
-If generated artifacts exist but cannot be used because of a concrete technical mismatch, keep exact mismatch evidence for completion context instead of implementing a parallel manual API path.
-Do not repeat API artifacts in the completion payload.
+Do not implement manual API clients/fetch wrappers/contract-shaped DTOs when generated artifacts already exist.
+If generated artifacts cannot be used, keep exact mismatch evidence.
 
 ## Mapping And UI State
 
-Use existing frontend mappers, transformers, and helpers for request, response, and view-model mapping.
-Add or extend mapping helpers when changed code needs mapping.
-Keep state transitions explicit and consistent with existing SPA patterns.
-Keep loading, empty, error, validation, and success states consistent with local UI conventions.
-Keep user-visible behavior clear and traceable to the lane task.
+Use existing frontend mappers/transformers/helpers for request/response/view-model mapping.
+Add or extend mapping helpers only when needed.
+Keep mapping/normalization out of rendering code where project already separates it.
+Keep business/domain decisions out of presentational components.
+Keep loading/empty/error/validation/success state behavior consistent with local UI conventions.
 
 ## Test Boundary
 
-Implement FE lane does not add new test classes, new test files, or new test methods.
-Implement FE lane may update existing tests only when required for compatibility with changed frontend production code.
-When behavior validation requires new tests, preserve the need for `test_ui` lane instead of adding tests here.
+Do not add new test classes, files, or methods.
+Only compatibility updates to existing tests are allowed when required by changed frontend production code.
+If behavior validation needs new tests, hand off to `test_ui`.
 
-## Code Quality
+## FE Code Quality
 
 Before local verification:
 
-- review changed diff;
-- remove unrelated changes;
-- remove stale code related to the replaced frontend flow;
-- keep route/page/component/hook/client/state/mapper/style boundaries clean;
-- keep changed code consistent with existing frontend style;
+- keep frontend boundaries clean;
+- remove stale code from replaced frontend flow;
 - reduce new duplication in changed frontend code.

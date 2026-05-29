@@ -46,14 +46,3 @@ Execute steps in order.
    Read:
     - `lane-instructions/implement_fe/completion-content.md`
     - `additional-instructions/completion-callback.md`.
-
-## Completion Content
-
-Return implement-fe lane facts only:
-
-- scope;
-- summary;
-- changed frontend source files;
-- affected frontend surfaces;
-- user-visible UI behavior;
-- Sonar result.

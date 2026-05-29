@@ -2,32 +2,21 @@
 
 ## Flow
 
-Run frontend verification after the final local production code change.
-Use the assigned frontend scope.
-Detect the repository package manager from the assigned frontend workspace:
+Run frontend verification after the final local production code change, before push/PR update/callback.
 
-- `pnpm` when `pnpm-lock.yaml` or workspace config is used;
-- `yarn` when `yarn.lock` is used;
-- `npm` when `package-lock.json` is used.
+Detect package manager from assigned frontend workspace:
 
-Run dependency installation using the detected package manager.
-Run the frontend verification commands used by the assigned scope.
-Prefer existing package scripts and local conventions, such as:
+- `pnpm` for `pnpm-lock.yaml` or workspace config;
+- `yarn` for `yarn.lock`;
+- `npm` for `package-lock.json`.
 
-- build;
-- typecheck;
-- lint;
-- test only when existing compatibility tests were updated by this lane or local conventions require tests for production verification.
-
-Do not invent new verification scripts.
-
-Use only scripts already present in the assigned frontend workspace.
+Use detected package manager to install dependencies.
+Run existing frontend verification scripts used by the assigned scope (for example build/typecheck/lint, and tests only when compatibility tests were updated or local conventions require them).
+Do not invent new scripts.
 
 ## Ordering
 
-Run local verification:
-
-1. after the final local code change;
+1. after final local code change;
 2. before `git push`;
 3. before PR update;
 4. before completion callback.

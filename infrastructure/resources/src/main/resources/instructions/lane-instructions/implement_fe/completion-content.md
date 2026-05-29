@@ -1,14 +1,10 @@
 # Implement FE Completion Content
 
-## Scope
-
-Completion payload represents frontend implementation facts only.
-Build final callback payload from the provided OpenAPI completion contract.
-Use this file only for semantic content selection.
+Use only lane facts that match fields supported by the provided completion contract.
 
 ## Allowed Content
 
-Use only these semantic content groups when the OpenAPI completion contract supports them:
+Use only these semantic groups when supported:
 
 - `scope`;
 - `summary`;
@@ -17,61 +13,19 @@ Use only these semantic content groups when the OpenAPI completion contract supp
 - `uiBehavior`;
 - `sonar`.
 
-## `scope`
+## Field Semantics
 
-Use assigned frontend scope from runtime context.
+- `scope`: assigned frontend scope from runtime context.
+- `summary`: short factual summary of implemented frontend production behavior.
+- `changedFiles`: frontend source files changed by this lane (compatibility-only test updates only when contract supports them).
+- `affectedSurfaces`: user-facing or frontend-technical surfaces changed by this lane.
+- `uiBehavior`: factual user-visible behaviors implemented by this lane.
+- `sonar`: aggregated Sonar result from implementation Sonar gate;
 
-## `summary`
+Implementation lanes never use coverage as a gate, decision, failure reason, or work item.
+If coverage-like fields exist in the completion contract, they must not influence implementation behavior.
+Do not add/modify tests for coverage.
 
-Short factual summary of implemented frontend production behavior.
-Mention only behavior implemented by this lane.
+## Boundary
 
-## `changedFiles`
-
-List frontend source files changed by this lane.
-Each changed file fact should explain why the file changed.
-Include compatibility-only test updates only when the OpenAPI contract supports them and they were required by production code compatibility.
-Do not report new test classes, new test files, or new test methods.
-
-## `affectedSurfaces`
-
-Describe user-facing or frontend-technical surfaces changed by this lane.
-Use only surfaces supported by the OpenAPI completion contract.
-Relevant surfaces may include:
-
-- route;
-- page;
-- component;
-- hook;
-- client;
-- state;
-- mapper;
-- style;
-- package;
-- API integration.
-
-Each affected surface should contain:
-
-- type;
-- name;
-- summary.
-
-## `uiBehavior`
-
-List user-visible behaviors implemented by this lane.
-Use factual behavior descriptions.
-Do not include:
-
-- test results;
-- reviewer notes;
-- backend persistence details;
-- duplicated API contract data;
-- generated artifact lists already provided by API lane;
-- invented Sonar metrics.
-
-## `sonar`
-
-Use the real SonarCloud result collected by the implementation Sonar gate.
-Report only metrics supported by the OpenAPI completion contract.
-For implement-fe, Sonar content is about changed frontend production code.
-Do not include coverage unless the OpenAPI completion contract explicitly requires it.
+Do not include test results, reviewer notes, backend persistence details, unrelated PR commentary, duplicated API contract data, or invented metrics.

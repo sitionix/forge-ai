@@ -3,6 +3,9 @@
 ## Mission
 
 Deliver only the lane-owned outcome for the assigned scope.
+Do not stop after successful intermediate steps.
+Do not report progress to the user.
+Continue until final callback or real blocker that could not be resolved within the boundaries of the assigned lane and scope.
 
 ## Runtime Source Of Truth
 

@@ -44,12 +44,3 @@ Execute steps in order.
    Read:
     - `lane-instructions/test_ui/completion-content.md`
     - `additional-instructions/completion-callback.md`.
-
-## Completion Content
-
-Return test-ui lane facts only:
-
-- scope;
-- summary;
-- covered UI behavior cases;
-- Sonar result.

@@ -2,57 +2,25 @@
 
 ## Scope
 
-Completion payload represents unit-test lane facts only.
-Build final callback payload from the provided OpenAPI completion contract.
-Use this file only for semantic content selection.
+Completion payload represents test-unit lane facts only.
+If sonar coverage is less then 90%, you need to cover more to satisfy sonar
 
 ## Allowed Content
 
-Use only these semantic content groups when the OpenAPI completion contract supports them:
+Use only these content groups when supported by the OpenAPI completion contract:
 
 - `scope`;
 - `summary`;
 - `affectedFiles`;
 - `sonar`.
 
-## `scope`
+## Field Semantics
 
-Use assigned backend service scope from runtime context.
+- `scope`: assigned backend service scope from runtime context.
+- `summary`: short factual unit-test work summary.
+- `affectedFiles`: affected backend source files covered or checked by this lane (source files only, never test files).
+- `sonar`: one aggregated lane Sonar object from real SonarCloud result.
 
-## `summary`
+## Forbidden Content
 
-Short factual summary of completed unit-test work.
-Mention only unit-test work completed by this lane.
-
-## `affectedFiles`
-
-List affected backend source files covered or checked by this lane.
-`affectedFiles` contains source files, not test files.
-For each affected source file, include the unit-test outcome when the OpenAPI contract supports it:
-
-- covered by new or updated unit tests;
-- already covered by existing unit tests;
-- checked and not suitable for unit testing with exact reason.
-
-Do not report integration-test files.
-Do not report UI-test files.
-Do not report reviewer notes.
-
-## `sonar`
-
-Use the real SonarCloud result collected by the test coverage Sonar gate.
-`sonar` is one aggregated object for the lane, not per file.
-Report only metrics supported by the OpenAPI completion contract.
-For test-unit, Sonar content is about changed unit-test code and coverage.
-
-## Boundary
-
-Do not include:
-
-- integration-test reports;
-- UI-test reports;
-- backend implementation handoff;
-- reviewer status;
-- PR commentary unrelated to completion fields;
-- invented metrics;
-- generated artifact lists already reported by API lane.
+Do not include integration-test or UI-test reports, production implementation handoff, reviewer status, unrelated PR commentary, or invented metrics.

@@ -1,75 +1,40 @@
 # Test Unit Context
 
-## Source
+## Inputs
 
-Use:
+Use lane task, runtime context, assigned backend scope, scope context, Implement BE completion facts, affected backend source files, and repository evidence from the assigned backend service.
 
-- lane task;
-- runtime context;
-- assigned backend scope;
-- scope context;
-- Implement BE completion facts;
-- affected backend source files from runtime context;
-- provided API/event/generated artifact facts when the affected source files use them;
-- repository evidence from the assigned backend service.
+Affected source files are the primary test target.
 
-Use affected source files as the primary unit-test target.
-Use Implement BE completion facts as factual implementation context.
-Use runtime context as source of truth for assigned scope, ticket, lane, contract references, and callback references.
+## Discovery
 
-## Scope
+For each affected source file, identify:
 
-Work inside the assigned backend service scope.
+- class kind: controller/API adapter, mapper/helper, usecase/service/validator/security/application, or other;
+- existing unit-test file and local test style in the same module;
+- collaborators used by the class;
+- generated DTO/client/contract/event artifacts used by the class.
 
-Identify:
+## Coverage Decision
 
-- backend service path;
-- affected source files;
-- affected class or classes under test;
-- existing unit-test files for those source files;
-- existing unit-test style in the same service/module;
-- collaborators used by the affected source files;
-- generated DTOs, clients, producers, consumers, or contract types used by the affected code;
-- behavior changes that need unit-level coverage.
+For each affected source file, choose one:
 
-## Test Target
+- update existing unit test;
+- add new unit test;
+- keep existing coverage when changed behavior is already covered;
+- mark not suitable for unit testing with exact reason.
 
-Process affected source files file by file.
-For each affected source file, decide whether to:
+Common not-suitable cases: generated file, pure DTO without behavior, configuration-only file, behavior owned by integration tests.
 
-- update an existing unit test;
-- add a new unit test file;
-- confirm existing unit coverage already covers the changed behavior.
+## Conditional Packs
 
-Create unit tests only for behavior affected by this lane.
-If an affected file is not suitable for unit testing, keep the exact reason for completion content.
+Load only needed implementation packs:
 
-Examples:
+- `unit-test-controller.md`
+- `unit-test-mapper.md`
+- `unit-test-usecase-service.md`
+- `unit-test-generated-artifacts.md`
 
-- configuration-only file;
-- generated file;
-- pure DTO with no behavior;
-- class already fully covered by existing unit tests;
-- behavior belongs to integration testing.
+## Completion Facts
 
-## Unit Boundary
-
-Unit tests validate class-level behavior.
-
-Unit tests isolate the class under test.
-
-Integration behavior belongs to `test_it`, not `test_unit`.
-
-Do not use QA Lead integration cases as primary input for this lane.
-
-## Result
-
-Keep these facts for later steps:
-
-- assigned backend scope;
-- affected source files;
-- source files covered by unit tests;
-- source files checked but not changed;
-- unit test files changed;
-- generated artifact inputs used by tests;
-- local verification command.
+Keep: scope; affected source files covered/checked; source files checked but unchanged; changed unit-test files; generated artifact evidence when relevant; local verification evidence.

@@ -103,4 +103,8 @@ For each failed attempt, keep exact evidence:
 
 Use verbose curl transport logging:
 
+400 same request is not retryable.
+400 validation feedback can be actionable.
+If fixable inside lane boundaries, fix root cause and submit callback again.
+
 `bash <resolved-wrapper-path> -v ...`

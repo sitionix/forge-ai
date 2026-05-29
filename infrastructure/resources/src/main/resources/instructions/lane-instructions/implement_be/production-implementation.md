@@ -2,90 +2,50 @@
 
 ## Work
 
-Implement the requested backend behavior in the assigned backend scope.
-
-Use:
-
-- lane task;
-- runtime context;
-- architect handoff;
-- provided API/event specifications;
-- provided generated DTOs, clients, producers, consumers, and artifact coordinates;
-- existing service structure.
-
-Keep the change minimal, direct, and aligned with existing code.
+Implement requested backend behavior in assigned backend scope using lane task, runtime context, architect handoff, and provided contract/generated artifact inputs.
 
 ## Backend Structure
 
 Keep responsibilities separated:
 
-- controllers accept requests, delegate to application/use cases, and return mapped responses;
-- application/use-case code handles orchestration and transactional application behavior;
-- domain code owns business rules and domain state transitions;
-- infrastructure code owns persistence, external clients, messaging adapters, and technical integrations;
-- boot code owns runtime wiring and composition.
-
-Preserve existing behavior unless the lane task explicitly requires a behavior change.
-
-Prefer small explicit implementation over broad refactoring.
+- controllers: request handling, delegation, mapped responses;
+- application/use-case: orchestration and transactional behavior;
+- domain: business rules and state transitions;
+- infrastructure: persistence, external clients, messaging adapters, technical integrations;
+- boot: runtime wiring/composition.
 
 ## Contracts And Generated Artifacts
 
 Treat provided API/event specifications as source of truth for implemented boundaries.
 
-Use generated artifacts exactly as provided.
-
-Implement relevant backend boundaries according to the specification:
-
-- controllers;
-- clients;
-- consumers;
-- producers.
-
-Use generated DTOs, clients, event wrappers, and artifact coordinates from provided evidence.
+Use generated artifacts exactly as provided for controllers, clients, consumers, and producers.
 
 Do not invent fields, endpoints, payload shapes, enum values, topics, or artifact coordinates.
 
 ## Mapping
 
-Use existing mappers for request, response, domain, persistence, client, and event mapping.
+Use existing mappers for request/response/domain/persistence/client/event mapping.
+Add or extend mappers only when needed.
 
-Add or extend a mapper when changed code needs mapping.
-
-Keep field mapping out of:
-
-- controllers;
-- clients;
-- consumers;
-- producers;
-- repositories.
-
+Keep field mapping out of controllers, clients, consumers, producers, and repositories.
 Keep business decisions out of mappers.
 
 ## Persistence
 
-Add or change persistence only when required by the lane task.
+Change persistence only when required by lane task.
+Keep migrations/entities/repositories/adapters/persistence mappers minimal and explicit.
+Use existing service enum/state persistence style.
 
-Follow the service’s existing persistence conventions.
+## Test Boundary
 
-Keep these minimal and explicit:
+Do not add new test classes or new test methods.
+Only compatibility updates to existing tests are allowed when required by changed backend production code.
+If behavior validation needs new tests, hand off to `test_unit`.
 
-- migrations;
-- entities;
-- repositories;
-- adapters;
-- persistence mappers.
-
-Use the service’s existing enum and state persistence style.
-
-Remove stale persistence code only when the lane task replaces that flow.
-
-## Code Quality
+## BE Code Quality
 
 Before local verification:
 
-- keep changed code consistent with existing service style;
-- keep controller/application/domain/infrastructure/boot boundaries clean;
-- reduce new duplication in changed backend code;
-- use imports instead of fully qualified class names;
-- keep Java code aligned with `java-style-basics.md`.
+- keep backend layer boundaries clean;
+- remove stale code from replaced backend flow;
+- reduce new duplication in changed backend code.

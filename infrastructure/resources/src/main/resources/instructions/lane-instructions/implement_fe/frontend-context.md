@@ -12,47 +12,47 @@ Use:
 - API contract results and generated frontend artifact facts when present;
 - repository evidence from the assigned frontend scope.
 
-Use architect handoff as the primary implementation direction.
-Use lane task and runtime context as factual source of truth.
+Use architect handoff as primary implementation direction.
 
-## Scope
-
-Work inside the assigned frontend scope.
+## Scope Discovery
 
 Identify:
 
-- SPA app or frontend package path;
+- frontend app/package path;
 - owned frontend behavior;
-- relevant route, page, component, hook, client, state, mapper, or style area;
+- affected route/page/component/hook/client/state/mapper/style area;
 - API-generated frontend package inputs when present;
 - expected user-visible behavior;
 - non-goals and constraints.
 
 ## Architecture Escalation
 
-Do not read architecture files by default.
-Use architect handoff, scope context, and repository structure first.
+Do not read architecture files by default. Use architect handoff, scope context, and repository evidence first.
 
-Read `architecture/architecture-rules.md` only when frontend/backend ownership, BFF dependency, generated artifact source, or cross-boundary execution order is unclear.
-Read `architecture/system-architecture.md` only when the browser-to-BFF-to-service runtime path is unclear after checking architect handoff, scope context, and repository evidence.
+Read only when still unclear:
 
-Use the smallest architecture context needed for the current frontend implementation decision.
+- `architecture/architecture-rules.md` for frontend/backend ownership, BFF dependency, generated artifact source, or cross-boundary execution order;
+- `architecture/system-architecture.md` for browser-to-BFF-to-service runtime path.
 
-## Backend And API Boundary
+Use the smallest architecture file needed.
 
-Frontend implementation follows existing backend contracts.
-When frontend behavior depends on backend payloads or endpoints, use provided contract or generated frontend artifact facts.
-When the task only changes frontend rendering, UI-local mapping, or UI-local state without backend behavior changes, implement inside the frontend scope directly.
-When required backend payloads, endpoints, or generated frontend artifacts are missing, keep that fact for completion context instead of creating local backend-shaped substitutes.
+## Backend/API Boundary Detection
 
-## Result
+Detect whether task is:
 
-Keep these facts for later steps:
+- frontend-only (rendering/UI-local mapping/UI-local state), or
+- API/generated-artifact dependent.
+
+If required backend payloads/endpoints/generated artifacts are missing, keep exact evidence for completion context.
+
+## Result Facts
+
+Keep for later steps:
 
 - assigned frontend scope;
-- affected frontend app or package;
-- affected route, page, component, hook, client, state, mapper, or style area;
+- affected frontend app/package;
+- affected route/page/component/hook/client/state/mapper/style area;
 - provided generated frontend artifact inputs;
 - user-visible behavior to implement;
 - compatibility-only test updates, if any;
-- test-ui handoff need, if behavior validation requires new tests.
+- `test_ui` handoff need when behavior validation requires new tests.
