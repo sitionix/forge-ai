@@ -116,7 +116,7 @@ class ScopeMismatchCallbacksIT {
 
         //when
         this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeApiLaneMissingRequiredDependencyEvidence())
+                .ping(ControllerEndpoint.completeApiLaneScopeMismatch())
                 .withRequest("requestCompleteApiLaneMissingRequiredDependencyEvidence.json", request -> {
                     request.setPrUrl("https://github.com/sitionix/app-afesox/pull/164");
                     request.setRepo("sitionix/app-afesox");
@@ -153,7 +153,7 @@ class ScopeMismatchCallbacksIT {
 
         //when
         this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeApiLaneMissingRequiredDependencyEvidence())
+                .ping(ControllerEndpoint.completeApiLaneScopeMismatch())
                 .withRequest("requestCompleteApiLaneMissingRequiredDependencyEvidence.json", request -> {
                     request.setPrUrl("https://github.com/sitionix/app-afesox/pull/164");
                     request.setRepo("app-afesox");

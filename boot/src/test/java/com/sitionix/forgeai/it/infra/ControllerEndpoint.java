@@ -125,18 +125,6 @@ public class ControllerEndpoint {
         );
     }
 
-    public static Endpoint<CompleteApiLaneRequest, CompleteApiLaneResponse> completeApiLaneMissingRequiredDependencyEvidence() {
-        return Endpoint.createContract(
-                "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/api/complete",
-                HttpMethod.POST,
-                CompleteApiLaneRequest.class,
-                CompleteApiLaneResponse.class,
-                (MockmvcDefault) context -> context
-                        .withRequest("requestCompleteApiLaneMissingRequiredDependencyEvidence.json")
-                        .expectStatus(HttpStatus.BAD_REQUEST.value())
-        );
-    }
-
     public static Endpoint<CompleteImplementBeLaneRequestDTO, CompleteImplementBeLaneResponseDTO> completeImplementBeLane() {
         return Endpoint.createContract(
                 "/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-be/complete",
