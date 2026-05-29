@@ -3,10 +3,10 @@ package com.sitionix.forgeai.it;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
+import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
@@ -23,7 +23,10 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 import java.util.UUID;
 
-@IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=100")
+@IntegrationTest(properties = {
+        "forge-ai.jobs.scheduling-enabled=false",
+        "forge-ai.jobs.ready-to-start.fixed-delay-ms=100"
+})
 class ArchitectLaneDependencyResolutionIT {
 
     @Autowired
@@ -37,6 +40,9 @@ class ArchitectLaneDependencyResolutionIT {
 
     @MockBean
     private CodexClient codexClient;
+
+    @Autowired
+    private ReadyToStartLaneJob readyToStartLaneJob;
 
     @Test
     @DisplayName("Should execute architect lane when dependency points to analyzer and input ticket is architect")
@@ -56,9 +62,9 @@ class ArchitectLaneDependencyResolutionIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(analyzerLaneId.toString()))
                 .assertDefault();
 
+        this.readyToStartLaneJob.run();
+
         //then
-        verify(this.codexClient, timeout(3000).atLeastOnce())
-                .submit(any(AgentExecutionInput.class), eq("/dev/ttys999"));
         verify(this.codexClient, atLeastOnce())
                 .submit(any(AgentExecutionInput.class), eq("/dev/ttys999"));
     }
