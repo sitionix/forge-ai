@@ -16,21 +16,17 @@ public class LaneStepPromptBuilder {
 
     private final ObjectMapper objectMapper;
 
-    public String initialPrompt(final ReadyToStartLane lane, final LaneStrategy strategy) {
-        return "Supervised lane session started.\n"
+    public String startStepPrompt(final ReadyToStartLane lane,
+                                  final LaneStrategy strategy,
+                                  final LaneStrategyStep step,
+                                  final int index,
+                                  final int total,
+                                  final Set<AgentTicketPayload> tasks) {
+        final StringBuilder prompt = new StringBuilder("Supervised lane session started.\n"
                 + "ticketId: " + lane.getTicketId() + "\n"
                 + "laneId: " + lane.getLaneId() + "\n"
                 + "agent: " + strategy.getAgentId() + "\n"
-                + "Wait for step prompts and execute one step at a time.\n"
-                + "Only this completion schema is accepted:\n"
-                + "{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"<activeStepId>\",\"summary\":\"...\",\"evidence\":{}}";
-    }
-
-    public String stepPrompt(final LaneStrategyStep step,
-                             final int index,
-                             final int total,
-                             final Set<AgentTicketPayload> tasks) {
-        final StringBuilder prompt = new StringBuilder("You are executing lane step " + index + "/" + total + ".\n"
+                + "You are executing lane step " + index + "/" + total + ".\n"
                 + "Step id: " + step.getId() + "\n"
                 + "Step title: " + step.getTitle() + "\n"
                 + "Instruction refs for this step only:\n- " + String.join("\n- ", step.getInstructionRefs()) + "\n"
@@ -40,16 +36,16 @@ public class LaneStepPromptBuilder {
                     .append(this.serializeTasks(tasks))
                     .append("\n");
         }
-        prompt.append("Return only valid JSON:\n")
-                .append("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"")
+        prompt.append("Follow LANE_STEP_DONE schema from shared/common-rules.md.\n")
+                .append("Return only LANE_STEP_DONE JSON for active step id `")
                 .append(step.getId())
-                .append("\",\"summary\":\"...\",\"evidence\":{}}");
+                .append("` as defined in shared/common-rules.md.");
         return prompt.toString();
     }
 
     public String correctionPrompt(final String stepId) {
-        return "Your previous response did not match schema. Return only JSON:\n"
-                + "{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + stepId + "\",\"summary\":\"...\",\"evidence\":{}}";
+        return "Your previous response did not match the LANE_STEP_DONE schema from shared/common-rules.md. "
+                + "Return only LANE_STEP_DONE JSON for active step id `" + stepId + "`.";
     }
 
     private String serializeTasks(final Set<AgentTicketPayload> tasks) {

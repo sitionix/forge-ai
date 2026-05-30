@@ -37,8 +37,16 @@ public class SupervisedLaneExecutionUseCase {
                         final AgentExecutionInput<AgentTicketPayload> input,
                         final int correctionAttempts) {
         final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(lane.getAgent().getId());
+        final LaneStrategyStep firstStep = strategy.getSteps().getFirst();
         final String sessionId = this.codexSessionRepository.start(
-                this.promptBuilder.initialPrompt(lane, strategy),
+                this.promptBuilder.startStepPrompt(
+                        lane,
+                        strategy,
+                        firstStep,
+                        1,
+                        strategy.getSteps().size(),
+                        input.getTasks()
+                ),
                 lane.getSourceTerminalTty()
         );
         LaneExecution execution = this.createExecution(lane, strategy, sessionId);
@@ -47,7 +55,9 @@ public class SupervisedLaneExecutionUseCase {
             for (int i = 0; i < strategy.getSteps().size(); i++) {
                 final LaneStrategyStep step = strategy.getSteps().get(i);
                 execution = this.updateCurrentStep(execution, step.getId());
-                this.sendStepPrompt(lane, sessionId, input, step, i + 1, strategy.getSteps().size());
+                if (i > 0) {
+                    this.sendStepPrompt(lane, sessionId, input, strategy, step, i + 1, strategy.getSteps().size());
+                }
                 final LaneStepDoneResult doneResult = this.awaitStepDoneWithCorrections(lane, sessionId, step, correctionAttempts);
                 if (doneResult == null) {
                     return;
@@ -84,12 +94,13 @@ public class SupervisedLaneExecutionUseCase {
     private void sendStepPrompt(final ReadyToStartLane lane,
                                 final String sessionId,
                                 final AgentExecutionInput<AgentTicketPayload> input,
+                                final LaneStrategy strategy,
                                 final LaneStrategyStep step,
                                 final int stepIndex,
                                 final int totalSteps) {
         this.codexSessionRepository.send(
                 sessionId,
-                this.promptBuilder.stepPrompt(step, stepIndex, totalSteps, input.getTasks()),
+                this.promptBuilder.startStepPrompt(lane, strategy, step, stepIndex, totalSteps, input.getTasks()),
                 lane.getSourceTerminalTty()
         );
     }

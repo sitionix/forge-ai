@@ -23,6 +23,10 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
     public String start(final String initialPrompt, final String sourceTerminalTty) {
         final String sessionId = UUID.randomUUID().toString();
         this.outputs.put(sessionId, new ConcurrentLinkedQueue<>());
+        final String stepId = this.extractStepId(initialPrompt);
+        if (stepId != null) {
+            this.outputs.get(sessionId).add("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + stepId + "\",\"summary\":\"done\",\"evidence\":{}}");
+        }
         return sessionId;
     }
 
