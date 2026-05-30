@@ -1,0 +1,98 @@
+package com.sitionix.forgeai.infrastructure.resources.lanestrategy;
+
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
+import jakarta.annotation.PostConstruct;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import lombok.RequiredArgsConstructor;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.ResourceLoader;
+import org.springframework.stereotype.Component;
+
+@Component
+@RequiredArgsConstructor
+@EnableConfigurationProperties(LaneStrategiesProperties.class)
+public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
+
+    private final LaneStrategiesProperties properties;
+    private final ResourceLoader resourceLoader;
+    private Map<String, LaneStrategy> strategies;
+
+    @PostConstruct
+    public void init() {
+        this.strategies = new HashMap<>();
+        this.properties.getConfigs().forEach((agentId, cfg) -> {
+            this.validateAgent(agentId);
+            this.validateSteps(agentId, cfg);
+            final List<LaneStrategyStep> steps = new ArrayList<>();
+            for (int i = 0; i < cfg.getSteps().size(); i++) {
+                final LaneStrategiesProperties.StepConfig step = cfg.getSteps().get(i);
+                steps.add(LaneStrategyStep.builder()
+                        .id(step.getId())
+                        .title(step.getTitle())
+                        .order(i + 1)
+                        .instructionRefs(List.copyOf(step.getInstructionRefs()))
+                        .build());
+            }
+            this.strategies.put(agentId, LaneStrategy.builder()
+                    .agentId(agentId)
+                    .version(cfg.getVersion())
+                    .sessionMode(cfg.getSessionMode())
+                    .steps(steps)
+                    .build());
+        });
+    }
+
+    @Override
+    public LaneStrategy findByAgentId(final String agentId) {
+        final LaneStrategy strategy = this.strategies.get(agentId);
+        if (strategy == null) {
+            throw new IllegalArgumentException("Lane strategy not found for agentId: " + agentId);
+        }
+        return strategy;
+    }
+
+    private void validateAgent(final String agentId) {
+        Agent.byId(agentId);
+    }
+
+    private void validateSteps(final String agentId, final LaneStrategiesProperties.StrategyConfig cfg) {
+        if (cfg.getSteps() == null || cfg.getSteps().isEmpty()) {
+            throw new IllegalStateException("Lane strategy has no steps for agentId=" + agentId);
+        }
+        final Set<String> stepIds = new HashSet<>();
+        for (LaneStrategiesProperties.StepConfig step : cfg.getSteps()) {
+            if (!stepIds.add(step.getId())) {
+                throw new IllegalStateException("Duplicate step id '" + step.getId() + "' for agentId=" + agentId);
+            }
+            final Set<String> refs = new HashSet<>();
+            for (String ref : step.getInstructionRefs()) {
+                if (!refs.add(ref)) {
+                    throw new IllegalStateException("Duplicate instruction ref '" + ref + "' in step='" + step.getId() + "'");
+                }
+                this.validateInstructionRef(ref);
+            }
+        }
+    }
+
+    private void validateInstructionRef(final String ref) {
+        final String normalized = ref.startsWith("instructions/") ? ref : "instructions/" + ref;
+        final Resource resource = this.resourceLoader.getResource("classpath:" + normalized);
+        try {
+            if (!resource.exists() || resource.getInputStream().readAllBytes().length == 0) {
+                throw new IllegalStateException("Instruction ref not found or empty: " + ref);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read instruction ref: " + ref, e);
+        }
+    }
+}

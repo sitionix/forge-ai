@@ -5,7 +5,7 @@ server:
     context-path: /fgaisox
 spring:
   config:
-    import: optional:classpath:services.yaml,optional:classpath:agent.yml,optional:classpath:instructions.yaml
+    import: optional:classpath:services.yaml,optional:classpath:agent.yml,optional:classpath:instructions.yaml,optional:classpath:lane-strategies.yml
   data:
     mongodb:
       uri: ${MONGODB_URI:mongodb://localhost:27019/forge_ai}

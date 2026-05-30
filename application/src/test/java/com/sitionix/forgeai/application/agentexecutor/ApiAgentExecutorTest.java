@@ -1,6 +1,8 @@
 package com.sitionix.forgeai.application.agentexecutor;
 
+import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
+import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
@@ -43,6 +45,12 @@ class ApiAgentExecutorTest {
     @Mock
     private TicketRepository ticketRepository;
 
+    @Mock
+    private SupervisedExecutionProperties supervisedExecutionProperties;
+
+    @Mock
+    private SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase;
+
     private ApiAgentExecutor apiAgentExecutor;
 
     @BeforeEach
@@ -51,13 +59,22 @@ class ApiAgentExecutorTest {
                 this.prepareAgentExecutionInputUseCase,
                 this.codexClient,
                 this.agentTicketRepository,
-                this.ticketRepository
+                this.ticketRepository,
+                this.supervisedExecutionProperties,
+                this.supervisedLaneExecutionUseCase
         );
     }
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.prepareAgentExecutionInputUseCase, this.codexClient, this.agentTicketRepository, this.ticketRepository);
+        verifyNoMoreInteractions(
+                this.prepareAgentExecutionInputUseCase,
+                this.codexClient,
+                this.agentTicketRepository,
+                this.ticketRepository,
+                this.supervisedExecutionProperties,
+                this.supervisedLaneExecutionUseCase
+        );
     }
 
     @Test
@@ -104,6 +121,7 @@ class ApiAgentExecutorTest {
                 .tasks(Set.of(payload))
                 .build();
         when(this.prepareAgentExecutionInputUseCase.enrichWithTasks(lane, baseInput, Set.of(payload))).thenReturn(enrichedInput);
+        when(this.supervisedExecutionProperties.isSupervisedAgent("api")).thenReturn(false);
 
         //when
         this.apiAgentExecutor.executeLane(lane);
@@ -118,5 +136,28 @@ class ApiAgentExecutorTest {
         verify(this.codexClient).submit(inputCaptor.capture(), eq("/dev/ttys004"));
         final AgentExecutionInput actual = inputCaptor.getValue();
         assertThat(actual).isEqualTo(enrichedInput);
+    }
+
+    @Test
+    void givenSupervisedEnabledForApi_whenExecuteLane_thenUseSupervisor() {
+        // given
+        final ReadyToStartLane lane = ReadyToStartLane.builder()
+                .ticketId(UUID.randomUUID())
+                .laneId(UUID.randomUUID())
+                .agent(Agent.API)
+                .scope("automationservice-sox")
+                .serviceId("atmssox")
+                .sourceTerminalTty("/dev/ttys004")
+                .build();
+        when(this.supervisedExecutionProperties.isSupervisedAgent("api")).thenReturn(true);
+        when(this.supervisedExecutionProperties.getCorrectionAttempts()).thenReturn(2);
+
+        // when
+        this.apiAgentExecutor.executeLane(lane);
+
+        // then
+        verify(this.supervisedExecutionProperties).isSupervisedAgent("api");
+        verify(this.supervisedExecutionProperties).getCorrectionAttempts();
+        verify(this.supervisedLaneExecutionUseCase).execute(lane, 2);
     }
 }

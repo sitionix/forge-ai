@@ -1,5 +1,7 @@
 package com.sitionix.forgeai.application.agentexecutor;
 
+import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
+import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
@@ -14,16 +16,27 @@ import org.springframework.stereotype.Component;
 @Component("apiAgentExecutor")
 public class ApiAgentExecutor extends TaskDrivenCodexAgentExecutor implements ExecuteAgent<ApiPayload> {
 
+    private final SupervisedExecutionProperties supervisedExecutionProperties;
+    private final SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase;
+
     public ApiAgentExecutor(final PrepareAgentExecutionInputUseCase prepareAgentExecutionInputUseCase,
                             final CodexClient codexClient,
                             final AgentTicketRepository agentTicketRepository,
-                            final TicketRepository ticketRepository) {
+                            final TicketRepository ticketRepository,
+                            final SupervisedExecutionProperties supervisedExecutionProperties,
+                            final SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase) {
         super(prepareAgentExecutionInputUseCase, codexClient, agentTicketRepository, ticketRepository);
+        this.supervisedExecutionProperties = supervisedExecutionProperties;
+        this.supervisedLaneExecutionUseCase = supervisedLaneExecutionUseCase;
     }
 
     @Override
     public void executeLane(final ReadyToStartLane lane) {
         log.info("Execute api lane: " + lane.getLaneId());
+        if (this.supervisedExecutionProperties.isSupervisedAgent(lane.getAgent().getId())) {
+            this.supervisedLaneExecutionUseCase.execute(lane, this.supervisedExecutionProperties.getCorrectionAttempts());
+            return;
+        }
         this.executeWithTasks(lane);
     }
 }
