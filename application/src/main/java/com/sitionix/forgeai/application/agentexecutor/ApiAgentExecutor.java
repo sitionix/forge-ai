@@ -3,6 +3,8 @@ package com.sitionix.forgeai.application.agentexecutor;
 import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
+import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
@@ -33,10 +35,11 @@ public class ApiAgentExecutor extends TaskDrivenCodexAgentExecutor implements Ex
     @Override
     public void executeLane(final ReadyToStartLane lane) {
         log.info("Execute api lane: " + lane.getLaneId());
+        final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareInputWithOptionalTasks(lane);
         if (this.supervisedExecutionProperties.isSupervisedAgent(lane.getAgent().getId())) {
-            this.supervisedLaneExecutionUseCase.execute(lane, this.supervisedExecutionProperties.getCorrectionAttempts());
+            this.supervisedLaneExecutionUseCase.execute(lane, enrichedInput, this.supervisedExecutionProperties.getCorrectionAttempts());
             return;
         }
-        this.executeWithTasks(lane);
+        this.codexClient.submit(enrichedInput, lane.getSourceTerminalTty());
     }
 }

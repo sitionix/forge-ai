@@ -141,14 +141,23 @@ class ApiAgentExecutorTest {
     @Test
     void givenSupervisedEnabledForApi_whenExecuteLane_thenUseSupervisor() {
         // given
+        final UUID laneId = UUID.randomUUID();
         final ReadyToStartLane lane = ReadyToStartLane.builder()
                 .ticketId(UUID.randomUUID())
-                .laneId(UUID.randomUUID())
+                .laneId(laneId)
                 .agent(Agent.API)
                 .scope("automationservice-sox")
                 .serviceId("atmssox")
                 .sourceTerminalTty("/dev/ttys004")
                 .build();
+        final AgentExecutionInput<AgentTicketPayload> baseInput = AgentExecutionInput.<AgentTicketPayload>builder()
+                .ticketId(lane.getTicketId())
+                .laneId(laneId)
+                .build();
+        when(this.prepareAgentExecutionInputUseCase.execute(lane)).thenReturn(baseInput);
+        when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(Lane.builder().id(laneId).inputTaskIds(Set.of()).build()));
+        final AgentExecutionInput<AgentTicketPayload> enrichedInput = baseInput.toBuilder().tasks(Set.of()).build();
+        when(this.prepareAgentExecutionInputUseCase.enrichWithTasks(lane, baseInput, Set.of())).thenReturn(enrichedInput);
         when(this.supervisedExecutionProperties.isSupervisedAgent("api")).thenReturn(true);
         when(this.supervisedExecutionProperties.getCorrectionAttempts()).thenReturn(2);
 
@@ -156,8 +165,11 @@ class ApiAgentExecutorTest {
         this.apiAgentExecutor.executeLane(lane);
 
         // then
+        verify(this.prepareAgentExecutionInputUseCase).execute(lane);
+        verify(this.ticketRepository).findByLaneId(laneId);
+        verify(this.prepareAgentExecutionInputUseCase).enrichWithTasks(lane, baseInput, Set.of());
         verify(this.supervisedExecutionProperties).isSupervisedAgent("api");
         verify(this.supervisedExecutionProperties).getCorrectionAttempts();
-        verify(this.supervisedLaneExecutionUseCase).execute(lane, 2);
+        verify(this.supervisedLaneExecutionUseCase).execute(lane, enrichedInput, 2);
     }
 }

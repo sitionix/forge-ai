@@ -3,11 +3,13 @@ package com.sitionix.forgeai.application.usecase;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
+import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepDoneResult;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
@@ -28,11 +30,33 @@ public class SupervisedLaneExecutionUseCase {
     private final CodexSessionRepository codexSessionRepository;
     private final LaneStepDoneResultParser parser;
     private final ObjectMapper objectMapper;
+    private static final long STEP_OUTPUT_TIMEOUT_MS = 120_000L;
 
-    public void execute(final ReadyToStartLane lane, final int correctionAttempts) {
+    public void execute(final ReadyToStartLane lane,
+                        final AgentExecutionInput<AgentTicketPayload> input,
+                        final int correctionAttempts) {
         final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(lane.getAgent().getId());
         final String sessionId = this.codexSessionRepository.start(this.initialPrompt(lane, strategy), lane.getSourceTerminalTty());
-        LaneExecution execution = this.laneExecutionRepository.saveExecution(LaneExecution.builder()
+        LaneExecution execution = this.createExecution(lane, strategy, sessionId);
+
+        try {
+            for (int i = 0; i < strategy.getSteps().size(); i++) {
+                final LaneStrategyStep step = strategy.getSteps().get(i);
+                execution = this.updateCurrentStep(execution, step.getId());
+                this.sendStepPrompt(lane, sessionId, input, step, i + 1, strategy.getSteps().size());
+                final LaneStepDoneResult doneResult = this.awaitStepDoneWithCorrections(lane, sessionId, step, correctionAttempts);
+                if (doneResult == null) {
+                    return;
+                }
+                this.persistStep(execution.getId(), step, doneResult);
+            }
+        } finally {
+            this.codexSessionRepository.close(sessionId);
+        }
+    }
+
+    private LaneExecution createExecution(final ReadyToStartLane lane, final LaneStrategy strategy, final String sessionId) {
+        return this.laneExecutionRepository.saveExecution(LaneExecution.builder()
                 .id(UUID.randomUUID())
                 .ticketId(lane.getTicketId())
                 .laneId(lane.getLaneId())
@@ -45,38 +69,48 @@ public class SupervisedLaneExecutionUseCase {
                 .startedAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
                 .build());
+    }
 
-        try {
-            for (int i = 0; i < strategy.getSteps().size(); i++) {
-                final LaneStrategyStep step = strategy.getSteps().get(i);
-                execution = execution.toBuilder().currentStepId(step.getId()).updatedAt(LocalDateTime.now()).build();
-                this.laneExecutionRepository.updateCurrentStep(execution);
+    private LaneExecution updateCurrentStep(final LaneExecution execution, final String stepId) {
+        final LaneExecution updated = execution.toBuilder().currentStepId(stepId).updatedAt(LocalDateTime.now()).build();
+        this.laneExecutionRepository.updateCurrentStep(updated);
+        return updated;
+    }
 
-                this.codexSessionRepository.send(sessionId, this.stepPrompt(lane, step, i + 1, strategy.getSteps().size()), lane.getSourceTerminalTty());
+    private void sendStepPrompt(final ReadyToStartLane lane,
+                                final String sessionId,
+                                final AgentExecutionInput<AgentTicketPayload> input,
+                                final LaneStrategyStep step,
+                                final int stepIndex,
+                                final int totalSteps) {
+        this.codexSessionRepository.send(
+                sessionId,
+                this.stepPrompt(step, stepIndex, totalSteps, input.getTasks()),
+                lane.getSourceTerminalTty()
+        );
+    }
 
-                boolean done = false;
-                for (int attempt = 0; attempt <= correctionAttempts; attempt++) {
-                    final String output = this.codexSessionRepository.waitForOutput(sessionId, 120_000L);
-                    try {
-                        final LaneStepDoneResult result = this.parser.parse(output, step.getId());
-                        this.persistStep(execution.getId(), step, result);
-                        done = true;
-                        break;
-                    } catch (IllegalArgumentException ex) {
-                        if (attempt == correctionAttempts) {
-                            log.warning("Step validation exhausted for step=" + step.getId() + " lane=" + lane.getLaneId() + " reason=" + ex.getMessage());
-                            return;
-                        }
-                        this.codexSessionRepository.send(sessionId, this.correctionPrompt(step.getId()), lane.getSourceTerminalTty());
-                    }
+    private LaneStepDoneResult awaitStepDoneWithCorrections(final ReadyToStartLane lane,
+                                                            final String sessionId,
+                                                            final LaneStrategyStep step,
+                                                            final int correctionAttempts) {
+        int attemptsLeft = correctionAttempts + 1;
+        while (attemptsLeft > 0) {
+            final String output = this.codexSessionRepository.waitForOutput(sessionId, STEP_OUTPUT_TIMEOUT_MS);
+            try {
+                return this.parser.parse(output, step.getId());
+            } catch (IllegalArgumentException ex) {
+                attemptsLeft--;
+                if (attemptsLeft == 0) {
+                    log.warning("Step validation exhausted for step=" + step.getId()
+                            + " lane=" + lane.getLaneId()
+                            + " reason=" + ex.getMessage());
+                    return null;
                 }
-                if (!done) {
-                    return;
-                }
+                this.codexSessionRepository.send(sessionId, this.correctionPrompt(step.getId()), lane.getSourceTerminalTty());
             }
-        } finally {
-            this.codexSessionRepository.close(sessionId);
         }
+        return null;
     }
 
     private void persistStep(final UUID executionId, final LaneStrategyStep step, final LaneStepDoneResult result) {
@@ -98,26 +132,42 @@ public class SupervisedLaneExecutionUseCase {
     }
 
     private String initialPrompt(final ReadyToStartLane lane, final LaneStrategy strategy) {
-        return "You are in supervised lane session. TicketId=" + lane.getTicketId()
-                + ", LaneId=" + lane.getLaneId()
-                + ", Agent=" + lane.getAgent().getId()
-                + ", Scope=" + lane.getScope()
-                + ". Supervisor will send steps one by one. Wait for step prompt."
-                + " Only LANE_STEP_DONE JSON is valid step completion signal. Strategy=" + strategy.getAgentId();
+        return "Supervised lane session started.\n"
+                + "ticketId: " + lane.getTicketId() + "\n"
+                + "laneId: " + lane.getLaneId() + "\n"
+                + "agent: " + strategy.getAgentId() + "\n"
+                + "Wait for step prompts and execute one step at a time.\n"
+                + "Only this completion schema is accepted:\n"
+                + "{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"<activeStepId>\",\"summary\":\"...\",\"evidence\":{}}";
     }
 
-    private String stepPrompt(final ReadyToStartLane lane, final LaneStrategyStep step, final int index, final int total) {
-        return "You are executing lane step " + index + "/" + total + ".\n"
-                + "TicketId: " + lane.getTicketId() + "\n"
-                + "LaneId: " + lane.getLaneId() + "\n"
-                + "Agent: " + lane.getAgent().getId() + "\n"
-                + "Scope: " + lane.getScope() + "\n"
+    private String stepPrompt(final LaneStrategyStep step,
+                              final int index,
+                              final int total,
+                              final java.util.Set<AgentTicketPayload> tasks) {
+        final StringBuilder prompt = new StringBuilder("You are executing lane step " + index + "/" + total + ".\n"
                 + "Step id: " + step.getId() + "\n"
                 + "Step title: " + step.getTitle() + "\n"
                 + "Instruction refs for this step only:\n- " + String.join("\n- ", step.getInstructionRefs()) + "\n"
-                + "Do not execute later steps yet.\n"
-                + "Return only valid JSON:\n"
-                + "{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + step.getId() + "\",\"summary\":\"...\",\"evidence\":{}}";
+                + "Do not execute later steps yet.\n");
+        if (tasks != null && !tasks.isEmpty()) {
+            prompt.append("Task payloads for this lane:\n")
+                    .append(this.serializeTasks(tasks))
+                    .append("\n");
+        }
+        prompt.append("Return only valid JSON:\n")
+                .append("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"")
+                .append(step.getId())
+                .append("\",\"summary\":\"...\",\"evidence\":{}}");
+        return prompt.toString();
+    }
+
+    private String serializeTasks(final java.util.Set<AgentTicketPayload> tasks) {
+        try {
+            return this.objectMapper.writeValueAsString(tasks);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize task payloads for step prompt", e);
+        }
     }
 
     private String correctionPrompt(final String stepId) {

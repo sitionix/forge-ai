@@ -13,7 +13,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
 
 @IntegrationTest(properties = {
         "forge-ai.jobs.scheduling-enabled=false",
@@ -47,6 +50,6 @@ class SupervisedApiFeatureFlagOffIT {
 
         // then
         this.testManager.mongo().get(LaneExecutionDocument.class).hasSize(0);
-        verifyNoInteractions(this.codexClient);
+        verify(this.codexClient, atLeastOnce()).submit(any(), anyString());
     }
 }

@@ -2,10 +2,12 @@ package com.sitionix.forgeai.application.usecase;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
+import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
@@ -19,6 +21,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -80,7 +83,10 @@ class SupervisedLaneExecutionUseCaseTest {
                 .thenReturn("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"preparation\",\"summary\":\"done\",\"evidence\":{}}")
                 .thenReturn("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"contract_update\",\"summary\":\"done\",\"evidence\":{}}");
 
-        this.useCase.execute(lane, 1);
+        final AgentExecutionInput<AgentTicketPayload> input = AgentExecutionInput.<AgentTicketPayload>builder()
+                .tasks(Set.of())
+                .build();
+        this.useCase.execute(lane, input, 1);
 
         final var order = inOrder(this.codexSessionRepository);
         order.verify(this.codexSessionRepository).start(any(), eq("/dev/ttys001"));
@@ -116,7 +122,10 @@ class SupervisedLaneExecutionUseCaseTest {
                 .thenReturn("not-json")
                 .thenReturn("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"preparation\",\"summary\":\"done\",\"evidence\":{}}");
 
-        this.useCase.execute(lane, 2);
+        final AgentExecutionInput<AgentTicketPayload> input = AgentExecutionInput.<AgentTicketPayload>builder()
+                .tasks(Set.of())
+                .build();
+        this.useCase.execute(lane, input, 2);
 
         final ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(this.codexSessionRepository, atLeastOnce()).send(eq("session-1"), promptCaptor.capture(), eq("/dev/ttys001"));
