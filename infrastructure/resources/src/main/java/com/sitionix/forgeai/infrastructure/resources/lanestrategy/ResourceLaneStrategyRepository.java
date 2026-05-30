@@ -6,12 +6,12 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.IntStream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.core.io.Resource;
@@ -33,16 +33,17 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
         this.properties.getConfigs().forEach((agentId, cfg) -> {
             this.validateAgent(agentId);
             this.validateSteps(agentId, cfg);
-            final List<LaneStrategyStep> steps = new ArrayList<>();
-            for (int i = 0; i < cfg.getSteps().size(); i++) {
-                final LaneStrategiesProperties.StepConfig step = cfg.getSteps().get(i);
-                steps.add(LaneStrategyStep.builder()
-                        .id(step.getId())
-                        .title(step.getTitle())
-                        .order(i + 1)
-                        .instructionRefs(List.copyOf(step.getInstructionRefs()))
-                        .build());
-            }
+            final List<LaneStrategyStep> steps = IntStream.range(0, cfg.getSteps().size())
+                    .mapToObj(i -> {
+                        final LaneStrategiesProperties.StepConfig step = cfg.getSteps().get(i);
+                        return LaneStrategyStep.builder()
+                                .id(step.getId())
+                                .title(step.getTitle())
+                                .order(i + 1)
+                                .instructionRefs(List.copyOf(step.getInstructionRefs()))
+                                .build();
+                    })
+                    .toList();
             this.strategies.put(agentId, LaneStrategy.builder()
                     .agentId(agentId)
                     .version(cfg.getVersion())
@@ -70,18 +71,18 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
             throw new IllegalStateException("Lane strategy has no steps for agentId=" + agentId);
         }
         final Set<String> stepIds = new HashSet<>();
-        for (LaneStrategiesProperties.StepConfig step : cfg.getSteps()) {
+        cfg.getSteps().forEach(step -> {
             if (!stepIds.add(step.getId())) {
                 throw new IllegalStateException("Duplicate step id '" + step.getId() + "' for agentId=" + agentId);
             }
             final Set<String> refs = new HashSet<>();
-            for (String ref : step.getInstructionRefs()) {
+            step.getInstructionRefs().forEach(ref -> {
                 if (!refs.add(ref)) {
                     throw new IllegalStateException("Duplicate instruction ref '" + ref + "' in step='" + step.getId() + "'");
                 }
                 this.validateInstructionRef(ref);
-            }
-        }
+            });
+        });
     }
 
     private void validateInstructionRef(final String ref) {

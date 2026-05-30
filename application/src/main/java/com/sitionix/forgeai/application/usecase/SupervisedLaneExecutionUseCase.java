@@ -17,6 +17,8 @@ import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.logging.Logger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.IntStream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -47,21 +49,54 @@ public class SupervisedLaneExecutionUseCase {
         LaneExecution execution = this.createExecution(lane, strategy, sessionId);
 
         try {
-            for (int i = 0; i < strategy.getSteps().size(); i++) {
-                final LaneStrategyStep step = strategy.getSteps().get(i);
-                execution = this.updateCurrentStep(execution, step.getId());
-                if (i > 0) {
-                    this.sendStepPrompt(lane, sessionId, input, step, i + 1, strategy.getSteps().size());
-                }
-                final LaneStepDoneResult doneResult = this.awaitStepDoneWithCorrections(lane, sessionId, step, correctionAttempts);
-                if (doneResult == null) {
-                    return;
-                }
-                this.persistStep(execution.getId(), step, doneResult);
-            }
+            execution = this.runSteps(lane, input, strategy, sessionId, execution, correctionAttempts);
         } finally {
             this.codexSessionRepository.close(sessionId);
         }
+    }
+
+    private LaneExecution runSteps(final ReadyToStartLane lane,
+                                   final AgentExecutionInput<AgentTicketPayload> input,
+                                   final LaneStrategy strategy,
+                                   final String sessionId,
+                                   final LaneExecution initialExecution,
+                                   final int correctionAttempts) {
+        final AtomicReference<LaneExecution> executionRef = new AtomicReference<>(initialExecution);
+        try {
+            IntStream.range(0, strategy.getSteps().size())
+                    .forEach(index -> executionRef.set(this.executeStep(
+                            lane,
+                            input,
+                            strategy,
+                            sessionId,
+                            executionRef.get(),
+                            index,
+                            correctionAttempts
+                    )));
+        } catch (StopSupervisedExecutionException ignored) {
+            return executionRef.get();
+        }
+        return executionRef.get();
+    }
+
+    private LaneExecution executeStep(final ReadyToStartLane lane,
+                                      final AgentExecutionInput<AgentTicketPayload> input,
+                                      final LaneStrategy strategy,
+                                      final String sessionId,
+                                      final LaneExecution execution,
+                                      final int index,
+                                      final int correctionAttempts) {
+        final LaneStrategyStep step = strategy.getSteps().get(index);
+        final LaneExecution updatedExecution = this.updateCurrentStep(execution, step.getId());
+        if (index > 0) {
+            this.sendStepPrompt(lane, sessionId, input, step, index + 1, strategy.getSteps().size());
+        }
+        final LaneStepDoneResult doneResult = this.awaitStepDoneWithCorrections(lane, sessionId, step, correctionAttempts);
+        if (doneResult == null) {
+            throw new StopSupervisedExecutionException();
+        }
+        this.persistStep(updatedExecution.getId(), step, doneResult);
+        return updatedExecution;
     }
 
     private LaneExecution createExecution(final ReadyToStartLane lane, final LaneStrategy strategy, final String sessionId) {
@@ -146,5 +181,8 @@ public class SupervisedLaneExecutionUseCase {
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             throw new IllegalStateException("Failed to persist step evidence json", e);
         }
+    }
+
+    private static final class StopSupervisedExecutionException extends RuntimeException {
     }
 }
