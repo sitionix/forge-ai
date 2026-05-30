@@ -1,10 +1,12 @@
 package com.sitionix.forgeai.it.infra;
 
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -15,6 +17,7 @@ import org.springframework.stereotype.Component;
 public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
 
     private final Map<String, ConcurrentLinkedQueue<String>> outputs = new ConcurrentHashMap<>();
+    private final List<String> sentMessages = new CopyOnWriteArrayList<>();
 
     @Override
     public String start(final String initialPrompt, final String sourceTerminalTty) {
@@ -25,6 +28,7 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
 
     @Override
     public void send(final String sessionId, final String message, final String sourceTerminalTty) {
+        this.sentMessages.add(message);
         final String stepId = this.extractStepId(message);
         if (stepId != null) {
             this.outputs.get(sessionId).add("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + stepId + "\",\"summary\":\"done\",\"evidence\":{}}");
@@ -48,6 +52,14 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
     @Override
     public void close(final String sessionId) {
         this.outputs.remove(sessionId);
+    }
+
+    public List<String> sentMessages() {
+        return List.copyOf(this.sentMessages);
+    }
+
+    public void clearSentMessages() {
+        this.sentMessages.clear();
     }
 
     private String extractStepId(final String message) {

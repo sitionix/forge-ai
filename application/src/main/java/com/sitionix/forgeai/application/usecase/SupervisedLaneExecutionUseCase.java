@@ -1,7 +1,7 @@
 package com.sitionix.forgeai.application.usecase;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.application.laneexecution.LaneStepPromptBuilder;
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
@@ -29,6 +29,7 @@ public class SupervisedLaneExecutionUseCase {
     private final LaneExecutionRepository laneExecutionRepository;
     private final CodexSessionRepository codexSessionRepository;
     private final LaneStepDoneResultParser parser;
+    private final LaneStepPromptBuilder promptBuilder;
     private final ObjectMapper objectMapper;
     private static final long STEP_OUTPUT_TIMEOUT_MS = 120_000L;
 
@@ -36,7 +37,10 @@ public class SupervisedLaneExecutionUseCase {
                         final AgentExecutionInput<AgentTicketPayload> input,
                         final int correctionAttempts) {
         final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(lane.getAgent().getId());
-        final String sessionId = this.codexSessionRepository.start(this.initialPrompt(lane, strategy), lane.getSourceTerminalTty());
+        final String sessionId = this.codexSessionRepository.start(
+                this.promptBuilder.initialPrompt(lane, strategy),
+                lane.getSourceTerminalTty()
+        );
         LaneExecution execution = this.createExecution(lane, strategy, sessionId);
 
         try {
@@ -85,7 +89,7 @@ public class SupervisedLaneExecutionUseCase {
                                 final int totalSteps) {
         this.codexSessionRepository.send(
                 sessionId,
-                this.stepPrompt(step, stepIndex, totalSteps, input.getTasks()),
+                this.promptBuilder.stepPrompt(step, stepIndex, totalSteps, input.getTasks()),
                 lane.getSourceTerminalTty()
         );
     }
@@ -107,71 +111,35 @@ public class SupervisedLaneExecutionUseCase {
                             + " reason=" + ex.getMessage());
                     return null;
                 }
-                this.codexSessionRepository.send(sessionId, this.correctionPrompt(step.getId()), lane.getSourceTerminalTty());
+                this.codexSessionRepository.send(
+                        sessionId,
+                        this.promptBuilder.correctionPrompt(step.getId()),
+                        lane.getSourceTerminalTty()
+                );
             }
         }
         return null;
     }
 
     private void persistStep(final UUID executionId, final LaneStrategyStep step, final LaneStepDoneResult result) {
+        this.laneExecutionRepository.saveStepExecution(LaneStepExecution.builder()
+                .id(UUID.randomUUID())
+                .executionId(executionId)
+                .stepId(step.getId())
+                .stepOrder(step.getOrder())
+                .startedAt(LocalDateTime.now())
+                .completedAt(LocalDateTime.now())
+                .done(true)
+                .resultJson(result.getRawJson())
+                .evidenceJson(this.serializeEvidence(result))
+                .build());
+    }
+
+    private String serializeEvidence(final LaneStepDoneResult result) {
         try {
-            this.laneExecutionRepository.saveStepExecution(LaneStepExecution.builder()
-                    .id(UUID.randomUUID())
-                    .executionId(executionId)
-                    .stepId(step.getId())
-                    .stepOrder(step.getOrder())
-                    .startedAt(LocalDateTime.now())
-                    .completedAt(LocalDateTime.now())
-                    .done(true)
-                    .resultJson(result.getRawJson())
-                    .evidenceJson(this.objectMapper.writeValueAsString(result.getEvidence()))
-                    .build());
-        } catch (JsonProcessingException e) {
+            return this.objectMapper.writeValueAsString(result.getEvidence());
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             throw new IllegalStateException("Failed to persist step evidence json", e);
         }
-    }
-
-    private String initialPrompt(final ReadyToStartLane lane, final LaneStrategy strategy) {
-        return "Supervised lane session started.\n"
-                + "ticketId: " + lane.getTicketId() + "\n"
-                + "laneId: " + lane.getLaneId() + "\n"
-                + "agent: " + strategy.getAgentId() + "\n"
-                + "Wait for step prompts and execute one step at a time.\n"
-                + "Only this completion schema is accepted:\n"
-                + "{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"<activeStepId>\",\"summary\":\"...\",\"evidence\":{}}";
-    }
-
-    private String stepPrompt(final LaneStrategyStep step,
-                              final int index,
-                              final int total,
-                              final java.util.Set<AgentTicketPayload> tasks) {
-        final StringBuilder prompt = new StringBuilder("You are executing lane step " + index + "/" + total + ".\n"
-                + "Step id: " + step.getId() + "\n"
-                + "Step title: " + step.getTitle() + "\n"
-                + "Instruction refs for this step only:\n- " + String.join("\n- ", step.getInstructionRefs()) + "\n"
-                + "Do not execute later steps yet.\n");
-        if (tasks != null && !tasks.isEmpty()) {
-            prompt.append("Task payloads for this lane:\n")
-                    .append(this.serializeTasks(tasks))
-                    .append("\n");
-        }
-        prompt.append("Return only valid JSON:\n")
-                .append("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"")
-                .append(step.getId())
-                .append("\",\"summary\":\"...\",\"evidence\":{}}");
-        return prompt.toString();
-    }
-
-    private String serializeTasks(final java.util.Set<AgentTicketPayload> tasks) {
-        try {
-            return this.objectMapper.writeValueAsString(tasks);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize task payloads for step prompt", e);
-        }
-    }
-
-    private String correctionPrompt(final String stepId) {
-        return "Your previous response did not match schema. Return only JSON:\n"
-                + "{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + stepId + "\",\"summary\":\"...\",\"evidence\":{}}";
     }
 }

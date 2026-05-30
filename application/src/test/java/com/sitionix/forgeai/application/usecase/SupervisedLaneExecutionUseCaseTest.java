@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.application.usecase;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.application.laneexecution.LaneStepPromptBuilder;
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
@@ -51,6 +52,7 @@ class SupervisedLaneExecutionUseCaseTest {
                 this.laneExecutionRepository,
                 this.codexSessionRepository,
                 new LaneStepDoneResultParser(new ObjectMapper()),
+                new LaneStepPromptBuilder(new ObjectMapper()),
                 new ObjectMapper()
         );
     }
