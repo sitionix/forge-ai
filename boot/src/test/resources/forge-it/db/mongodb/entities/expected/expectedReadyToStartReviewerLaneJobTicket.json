@@ -21,7 +21,7 @@
       "type": "REVIEWER",
       "scope": "GLOBAL",
       "serviceId": "global",
-      "status": "READY_TO_START",
+      "status": "IN_PROGRESS",
       "attempt": 0,
       "dependsOn": [
         {

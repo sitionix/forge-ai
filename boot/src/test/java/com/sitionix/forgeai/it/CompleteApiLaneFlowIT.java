@@ -191,4 +191,62 @@ class CompleteApiLaneFlowIT {
                                 && Objects.nonNull(lane.getInputTaskIds())
                                 && Objects.equals(lane.getInputTaskIds().size(), 1)));
     }
+
+    @Test
+    @DisplayName("Should skip missing backend scope contracts and create tasks only for provided scopes in global API lane")
+    void givenGlobalApiLaneWithPartialContracts_whenCompleteApiLane_thenCreateTasksOnlyForProvidedScopes() {
+        //given
+        final UUID ticketId = UUID.fromString("51111111-1111-1111-1111-111111111111");
+        final UUID apiLaneId = UUID.fromString("52222222-2222-2222-2222-222222222222");
+        final UUID automationLaneId = UUID.fromString("53333333-3333-3333-3333-333333333333");
+        final UUID bffLaneId = UUID.fromString("54444444-4444-4444-4444-444444444444");
+        final UUID frontendLaneId = UUID.fromString("55555555-5555-5555-5555-555555555555");
+
+        this.testManager.mongo()
+                .create(TicketDocument.class)
+                .body("completeApiLaneTwoBeOneFePartialContractsSeedTicket.json");
+
+        //when then
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.completeApiLane())
+                .withRequest("requestCompleteApiLanePartialScopes.json")
+                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(apiLaneId.toString()))
+                .assertDefault();
+
+        this.testManager.mongo()
+                .assertEntities(AgentTicketDocument.class)
+                .ignoreFields("id", "ticketId", "laneId", "createdAt", "updatedAt")
+                .hasSize(2);
+
+        this.testManager.mongo()
+                .get(AgentTicketDocument.class)
+                .hasSize(2)
+                .andExpected(value -> Set.of(bffLaneId, frontendLaneId).contains(value.getLaneId()));
+
+        this.testManager.mongo()
+                .get(TicketDocument.class)
+                .hasSize(1)
+                .singleElement()
+                .andExpected(value -> value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), apiLaneId)
+                                && Objects.equals(LaneStatus.COMPLETED, lane.getStatus()))
+                        && value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), automationLaneId)
+                                && Objects.equals(LaneStatus.NOT_STARTED, lane.getStatus())
+                                && Objects.nonNull(lane.getInputTaskIds())
+                                && Objects.equals(lane.getInputTaskIds().size(), 1))
+                        && value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), bffLaneId)
+                                && Objects.equals(LaneStatus.READY_TO_START, lane.getStatus())
+                                && Objects.nonNull(lane.getInputTaskIds())
+                                && Objects.equals(lane.getInputTaskIds().size(), 1))
+                        && value.getLanes().stream()
+                        .anyMatch(lane -> Objects.equals(lane.getId(), frontendLaneId)
+                                && Objects.equals(LaneStatus.READY_TO_START, lane.getStatus())
+                                && Objects.nonNull(lane.getInputTaskIds())
+                                && Objects.equals(lane.getInputTaskIds().size(), 1)));
+    }
+
 }

@@ -1,0 +1,79 @@
+{
+  "summary": "Added and generated create agent action REST contracts for BFF and SPA surfaces only.",
+  "contracts": [
+    {
+      "scope": "backendforfrontendservice-sox",
+      "summary": "BFF create agent action operation for SPA-facing contract.",
+      "operationId": "createAgentAction",
+      "method": "POST",
+      "path": "/api/v1/agent-actions",
+      "clientClass": "AgentActionsApi",
+      "requestDto": "CreateAgentActionRequestDTO",
+      "responseDto": "AgentActionDTO",
+      "artifacts": [
+        {
+          "kind": "MAVEN",
+          "role": "API_FIRST",
+          "groupId": "com.afesox",
+          "artifactId": "app-afesox-bffssox-api-first-sitionix-1222-unstable",
+          "packageName": "",
+          "version": "0.0.41",
+          "dependency": "<dependency>\n  <groupId>com.afesox</groupId>\n  <artifactId>app-afesox-bffssox-api-first-sitionix-1222-unstable</artifactId>\n  <version>0.0.41</version>\n</dependency>",
+          "notes": [
+            "Evidence: PR #143 workflow run https://github.com/sitionix/app-afesox/actions/runs/26088670378"
+          ],
+          "runId": 1
+        },
+        {
+          "kind": "NPM",
+          "role": "FRONTEND_CONTRACT",
+          "groupId": "",
+          "artifactId": "",
+          "packageName": "@sitionix/app-afesox-bffssox-frontend-sitionix-1222-unstable",
+          "version": "0.0.41",
+          "dependency": "pnpm add @sitionix/app-afesox-bffssox-frontend-sitionix-1222-unstable@0.0.41",
+          "notes": [
+            "Evidence: PR #143 workflow run https://github.com/sitionix/app-afesox/actions/runs/26088669620"
+          ],
+          "runId": 1
+        }
+      ],
+      "notes": [
+        "Path and schemas added in bffssox REST surface; version bumped to 0.0.41."
+      ]
+    },
+    {
+      "scope": "sitionix-spa <-> bffssox",
+      "summary": "SPA contract alignment for BFF conversation submit/details payload.",
+      "operationId": "submitConversationExecution",
+      "method": "POST",
+      "path": "/api/v1/conversations/{conversationId}/executions",
+      "clientClass": "ConversationExecutionsApi",
+      "requestDto": "SubmitConversationExecutionRequestDTO",
+      "responseDto": "SubmitConversationExecutionResponseDTO",
+      "artifacts": [
+        {
+          "kind": "NPM",
+          "role": "FRONTEND_CONTRACT",
+          "groupId": "",
+          "artifactId": "",
+          "packageName": "@sitionix/app-afesox-bffssox-frontend-sitionix-139-unstable",
+          "version": "0.0.1",
+          "dependency": "pnpm add @sitionix/app-afesox-bffssox-frontend-sitionix-139-unstable@0.0.1",
+          "notes": [
+            "Evidence: synthetic test fixture for partial-scope API callback"
+          ],
+          "runId": 1
+        }
+      ],
+      "notes": [
+        "Scope intentionally excludes automationservice-sox to validate partial global API callback handling."
+      ]
+    }
+  ],
+  "notes": [
+    "Partial scope callback fixture for global API lane."
+  ],
+  "prUrl": "https://github.com/sitionix/app-afesox/pull/143",
+  "repo": "sitionix/app-afesox"
+}

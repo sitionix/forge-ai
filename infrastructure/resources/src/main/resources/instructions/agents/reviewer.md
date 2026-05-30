@@ -172,6 +172,12 @@ Do not solve runtime behavior through prompts.
 
 Do not assign work to the wrong lane.
 
+When shortening or deleting existing instruction text, preserve semantics:
+
+- deletion is allowed only when the same rule remains explicitly enforced elsewhere in the same owner scope;
+- do not remove hard gates, required checks, or stop conditions unless they are replaced by equivalent or stronger wording;
+- after edit, verify that the owner file still contains all previously required behavior constraints.
+
 ---
 
 ## Rule Writing Rules

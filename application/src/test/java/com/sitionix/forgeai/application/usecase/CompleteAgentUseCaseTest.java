@@ -72,6 +72,7 @@ class CompleteAgentUseCaseTest {
         verify(this.ticketRepository).isReadyToStart(qaLeadLane.getId());
         verify(this.ticketRepository).updateLaneStatus(architectLane.getId(), LaneStatus.READY_TO_START);
         verify(this.ticketRepository).updateLaneStatus(qaLeadLane.getId(), LaneStatus.READY_TO_START);
+        verify(this.ticketRepository).moveReviewerToReadyToStartIfPossible(laneId);
         verifyNoMoreInteractions(lane, architectLane, qaLeadLane);
     }
 
@@ -130,6 +131,30 @@ class CompleteAgentUseCaseTest {
         verify(this.ticketRepository).findByLaneId(laneId);
         verify(this.laneRepository).findProducedLanes(laneId);
         verify(this.ticketRepository).updateLaneStatus(laneId, LaneStatus.COMPLETED);
+        verify(this.ticketRepository).moveReviewerToReadyToStartIfPossible(laneId);
         verifyNoMoreInteractions(lane, apiLane);
+    }
+
+    @Test
+    void givenProducedLaneAlreadyInProgress_whenCompleteAgent_thenDoNotMoveItBackToReadyToStart() {
+        //given
+        final UUID laneId = UUID.randomUUID();
+        final Lane lane = mock(Lane.class);
+        final Lane testLane = mock(Lane.class);
+        when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
+        when(lane.getId()).thenReturn(laneId);
+        when(this.laneRepository.findProducedLanes(laneId)).thenReturn(List.of(testLane));
+        when(testLane.getInputTaskIds()).thenReturn(Set.of(UUID.randomUUID()));
+        when(testLane.getStatus()).thenReturn(LaneStatus.IN_PROGRESS);
+
+        //when
+        this.completeAgentUseCase.completeAndPrepareAgents(laneId);
+
+        //then
+        verify(this.ticketRepository).findByLaneId(laneId);
+        verify(this.laneRepository).findProducedLanes(laneId);
+        verify(this.ticketRepository).updateLaneStatus(laneId, LaneStatus.COMPLETED);
+        verify(this.ticketRepository).moveReviewerToReadyToStartIfPossible(laneId);
+        verifyNoMoreInteractions(lane, testLane);
     }
 }

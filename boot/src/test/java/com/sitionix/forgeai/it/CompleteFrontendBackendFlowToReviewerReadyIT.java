@@ -105,8 +105,11 @@ class CompleteFrontendBackendFlowToReviewerReadyIT {
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.completeApiLane())
                 .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                .assertDefault(d -> d.mutateRequest(request ->
-                        request.getContracts().removeIf(value -> Objects.equals(value.getScope(), "automationservice-sox"))));
+                .assertDefault(d -> d.mutateRequest(request -> {
+                    request.getContracts().removeIf(value -> Objects.equals(value.getScope(), "automationservice-sox"));
+                    request.setPrUrl("https://github.com/sitionix/app-afesox/pull/143");
+                    request.setRepo("sitionix/app-afesox");
+                }));
 
         this.ticketRepository.updateLaneStatus(qaLeadBffLaneId, LaneStatus.IN_PROGRESS);
         this.testManager.mockMvc()

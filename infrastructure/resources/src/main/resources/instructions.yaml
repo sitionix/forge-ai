@@ -6,55 +6,52 @@ forge:
           instructions: instructions/agents/analyzer.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete
           additional-instructions: [ ]
+
         architect:
           instructions: instructions/agents/architect.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/architect/complete
-          additional-instructions:
-            - instructions/additional-instructions/preparation-to-work.md
-            - instructions/additional-instructions/api-decision-instruction.md
-            - instructions/additional-instructions/event-decision-instruction.md
+          additional-instructions: [ ]
+
         api:
           instructions: instructions/agents/api.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/api/complete
-          additional-instructions:
-            - instructions/additional-instructions/pr-workflow.md
-            - instructions/additional-instructions/generation-workflow.md
-            - instructions/additional-instructions/api-generation-rules.md
+          additional-instructions: [ ]
+
         qa_lead:
           instructions: instructions/agents/qa_lead.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/qa-lead/complete
           additional-instructions: [ ]
+
         implement_be:
           instructions: instructions/agents/implement_be.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-be/complete
-          additional-instructions:
-            - instructions/additional-instructions/java-style-basics.md
-            - instructions/additional-instructions/pr-workflow.md
+          additional-instructions: [ ]
+
         implement_fe:
           instructions: instructions/agents/implement_fe.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-fe/complete
-          additional-instructions:
-            - instructions/additional-instructions/pr-workflow.md
+          additional-instructions: [ ]
+
         test_unit:
           instructions: instructions/agents/test_unit.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-unit/complete
-          additional-instructions:
-            - instructions/additional-instructions/pr-workflow.md
+          additional-instructions: [ ]
+
         test_it:
           instructions: instructions/agents/test_it.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-it/complete
-          additional-instructions:
-            - instructions/additional-instructions/pr-workflow.md
+          additional-instructions: [ ]
+
         test_ui:
           instructions: instructions/agents/test_ui.md
           endpoint: /api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-ui/complete
-          additional-instructions:
-            - instructions/additional-instructions/pr-workflow.md
+          additional-instructions: [ ]
+
         reviewer:
           instructions: instructions/agents/reviewer.md
-          additional-instructions:
-            - instructions/additional-instructions/instruction-ownership-map.md
+          endpoint: /api/v1/forge-ai/tickets/{ticketId}/reviewer/complete
+          additional-instructions: [ ]
+
       shared:
         - instructions/shared/common-rules.md
-        - instructions/shared/completion-callback.md
-        - instructions/shared/scope-context-usage.md
+        - instructions/shared/lazy-instruction-strategy.md

@@ -111,7 +111,10 @@ class CompleteSpaBffAutomationAllLanesCompletedIT {
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.completeApiLane())
                 .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                .assertDefault();
+                .assertDefault(d -> d.mutateRequest(request -> {
+                    request.setPrUrl("https://github.com/sitionix/app-afesox/pull/143");
+                    request.setRepo("sitionix/app-afesox");
+                }));
 
         this.ticketRepository.updateLaneStatus(qaLeadAutomationLaneId, LaneStatus.IN_PROGRESS);
         this.testManager.mockMvc()

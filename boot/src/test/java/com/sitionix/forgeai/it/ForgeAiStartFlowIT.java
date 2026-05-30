@@ -70,8 +70,8 @@ class ForgeAiStartFlowIT {
                 .hasSize(1)
                 .singleElement()
                 .assertEntity();
-        assertThat(actual.getLanes()).hasSize(6);
+        assertThat(actual.getLanes()).hasSize(7);
         assertThat(actual.getLanes()).noneMatch(lane -> lane.getType() == Agent.EVENT);
-        assertThat(actual.getLanes()).noneMatch(lane -> lane.getType() == Agent.REVIEWER);
+        assertThat(actual.getLanes()).anyMatch(lane -> lane.getType() == Agent.REVIEWER);
     }
 }

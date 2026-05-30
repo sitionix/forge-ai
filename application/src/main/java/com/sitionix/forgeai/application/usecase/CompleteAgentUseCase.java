@@ -29,6 +29,7 @@ public class CompleteAgentUseCase implements CompleteAgentLane {
         if (this.readyToComplete(producedLanes)) {
             this.ticketRepository.updateLaneStatus(laneId, LaneStatus.COMPLETED);
             this.moveReadyProducedLanes(producedLanes);
+            this.ticketRepository.moveReviewerToReadyToStartIfPossible(laneId);
         }
     }
 
@@ -41,6 +42,7 @@ public class CompleteAgentUseCase implements CompleteAgentLane {
     private void moveReadyProducedLanes(final List<Lane> producedLanes) {
         producedLanes.stream()
                 .filter(value -> !LaneStatus.NOT_NEEDED.equals(value.getStatus()))
+                .filter(value -> LaneStatus.NOT_STARTED.equals(value.getStatus()))
                 .filter(value -> this.ticketRepository.isReadyToStart(value.getId()))
                 .forEach(value -> this.ticketRepository.updateLaneStatus(value.getId(), LaneStatus.READY_TO_START));
     }

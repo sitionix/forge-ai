@@ -24,6 +24,6 @@ public class ApiAgentExecutor extends TaskDrivenCodexAgentExecutor implements Ex
     @Override
     public void executeLane(final ReadyToStartLane lane) {
         log.info("Execute api lane: " + lane.getLaneId());
-        this.executeWithTasks(lane, ApiPayload.class);
+        this.executeWithTasks(lane);
     }
 }

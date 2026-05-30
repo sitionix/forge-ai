@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.api;
 
 import com.app_afesox.fgaisox.api_first.api.ForgeAiApi;
+import com.app_afesox.fgaisox.api_first.dto.ApiLaneContractResult;
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteAnalyzerLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteApiLaneRequest;
@@ -15,6 +16,7 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteItTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteQaLeadLaneResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.CompleteReviewerLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUiTestLaneResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
@@ -35,8 +37,11 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
+import com.sitionix.forgeai.domain.usecase.CompleteReviewerTask;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
+import com.sitionix.forgeai.domain.usecase.ValidateApiLaneEvidence;
 import com.sitionix.forgeai.mapper.AgentTicketApiMapper;
+import com.sitionix.forgeai.mapper.ApiLaneEvidencePayloadApiMapper;
 import com.sitionix.forgeai.mapper.ForgeAiApiMapper;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -46,7 +51,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @RestController
@@ -57,13 +65,16 @@ public class ForgeAiController implements ForgeAiApi {
     private final ForgeAiApiMapper forgeAiApiMapper;
     private final TerminalTtyResolver terminalTtyResolver;
     private final AgentTicketApiMapper agentTicketApiMapper;
+    private final ApiLaneEvidencePayloadApiMapper apiLaneEvidencePayloadApiMapper;
     private final CompleteAgentTasks completeAgentTasks;
     private final LaneScopeValidator laneScopeValidator;
     private final CompleteArchitectLaneOrchestrationUseCase completeArchitectLaneOrchestrationUseCase;
     private final CompleteApiLaneOrchestrationUseCase completeApiLaneOrchestrationUseCase;
+    private final ValidateApiLaneEvidence validateApiLaneEvidence;
     private final CompleteQaLeadLaneOrchestrationUseCase completeQaLeadLaneOrchestrationUseCase;
     private final CompleteItTestLaneOrchestrationUseCase completeItTestLaneOrchestrationUseCase;
     private final CompleteUnitTestLaneOrchestrationUseCase completeUnitTestLaneOrchestrationUseCase;
+    private final CompleteReviewerTask completeReviewerTaskUseCase;
 
     @Override
     public ResponseEntity<StartForgeResponseDTO> startForge(@Valid final StartForgeRequestDTO startForgeRequestDTO) {
@@ -111,7 +122,18 @@ public class ForgeAiController implements ForgeAiApi {
     @Override
     public ResponseEntity<CompleteApiLaneResponse> completeApiLane(final UUID ticketId, final UUID laneId, @Valid final CompleteApiLaneRequest completeApiLaneRequest) {
         log.info("Received completeApiLane request for ticketId: {}, laneId: {}, with request body: {}", ticketId, laneId, completeApiLaneRequest);
-        this.completeApiLaneOrchestrationUseCase.complete(ticketId, laneId, completeApiLaneRequest);
+        final boolean apiLaneRequiresCompletion = this.laneScopeValidator.validateApiCompletion(laneId);
+        if (apiLaneRequiresCompletion) {
+            final Set<String> callbackScopes = completeApiLaneRequest.getContracts() == null
+                    ? Set.of()
+                    : completeApiLaneRequest.getContracts().stream()
+                    .filter(Objects::nonNull)
+                    .map(ApiLaneContractResult::getScope)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            this.validateApiLaneEvidence.validate(laneId, callbackScopes, this.apiLaneEvidencePayloadApiMapper.asApiLaneEvidencePayload(completeApiLaneRequest));
+            this.completeApiLaneOrchestrationUseCase.complete(ticketId, laneId, completeApiLaneRequest);
+        }
 
         return ResponseEntity.ok(CompleteApiLaneResponse.builder()
                 .laneId(laneId)
@@ -204,6 +226,15 @@ public class ForgeAiController implements ForgeAiApi {
 
         return ResponseEntity.ok(CompleteUnitTestLaneResponseDTO.builder()
                 .laneId(laneId)
+                .status(HttpStatus.OK.name())
+                .ticketId(ticketId)
+                .build());
+    }
+
+    @Override
+    public ResponseEntity<CompleteReviewerLaneResponseDTO> completeReviewerLane(final UUID ticketId) {
+        this.completeReviewerTaskUseCase.complete(ticketId);
+        return ResponseEntity.ok(CompleteReviewerLaneResponseDTO.builder()
                 .status(HttpStatus.OK.name())
                 .ticketId(ticketId)
                 .build());

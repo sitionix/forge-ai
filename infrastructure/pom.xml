@@ -16,5 +16,6 @@
         <module>mongodb</module>
         <module>codex-cli</module>
         <module>resources</module>
+        <module>github-cli</module>
     </modules>
 </project>

@@ -4,6 +4,10 @@ import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestUnitPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
@@ -11,7 +15,10 @@ import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
+import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -135,9 +142,16 @@ class CompleteBackendFlowToTestersReadyIT {
                 .findFirst()
                 .orElseThrow()
                 .getId();
+        final UUID reviewerLaneId = ticket.getLanes().stream()
+                .filter(lane -> Objects.equals(lane.getType(), Agent.REVIEWER))
+                .findFirst()
+                .orElseThrow()
+                .getId();
+        final ConcurrentHashMap<UUID, AtomicInteger> submissionCounters = new ConcurrentHashMap<>();
 
         doAnswer(invocation -> {
             final AgentExecutionInput<?> input = invocation.getArgument(0);
+            submissionCounters.computeIfAbsent(input.getLaneId(), ignored -> new AtomicInteger(0)).incrementAndGet();
             if (Objects.equals(input.getLaneId(), analyzerAutomationLaneId)) {
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeAnalyzerLane())
@@ -175,7 +189,10 @@ class CompleteBackendFlowToTestersReadyIT {
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeApiLane())
                         .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                        .assertDefault();
+                        .assertDefault(d -> d.mutateRequest(request -> {
+                            request.setPrUrl("https://github.com/sitionix/app-afesox/pull/143");
+                            request.setRepo("sitionix/app-afesox");
+                        }));
                 return null;
             }
             if (Objects.equals(input.getLaneId(), qaLeadAutomationLaneId)) {
@@ -207,6 +224,9 @@ class CompleteBackendFlowToTestersReadyIT {
                 return null;
             }
             if (Objects.equals(input.getLaneId(), testUnitAutomationLaneId)) {
+                assertThat(input.getTasks()).isNotNull();
+                assertThat(input.getTasks()).anyMatch(TestUnitPayload.class::isInstance);
+                assertThat(input.getTasks()).anyMatch(QaLeadTestUnitPayload.class::isInstance);
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeUnitTestLane())
                         .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testUnitAutomationLaneId))
@@ -214,6 +234,9 @@ class CompleteBackendFlowToTestersReadyIT {
                 return null;
             }
             if (Objects.equals(input.getLaneId(), testUnitBffLaneId)) {
+                assertThat(input.getTasks()).isNotNull();
+                assertThat(input.getTasks()).anyMatch(TestUnitPayload.class::isInstance);
+                assertThat(input.getTasks()).anyMatch(QaLeadTestUnitPayload.class::isInstance);
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeUnitTestLane())
                         .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testUnitBffLaneId))
@@ -221,6 +244,9 @@ class CompleteBackendFlowToTestersReadyIT {
                 return null;
             }
             if (Objects.equals(input.getLaneId(), testItAutomationLaneId)) {
+                assertThat(input.getTasks()).isNotNull();
+                assertThat(input.getTasks()).anyMatch(TestItPayload.class::isInstance);
+                assertThat(input.getTasks()).anyMatch(QaLeadTestItPayload.class::isInstance);
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeItTestLane())
                         .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testItAutomationLaneId))
@@ -228,10 +254,16 @@ class CompleteBackendFlowToTestersReadyIT {
                 return null;
             }
             if (Objects.equals(input.getLaneId(), testItBffLaneId)) {
+                assertThat(input.getTasks()).isNotNull();
+                assertThat(input.getTasks()).anyMatch(TestItPayload.class::isInstance);
+                assertThat(input.getTasks()).anyMatch(QaLeadTestItPayload.class::isInstance);
                 this.testManager.mockMvc()
                         .ping(ControllerEndpoint.completeItTestLane())
                         .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testItBffLaneId))
                         .assertDefault(d -> d.mutateRequest(request -> request.setScope("backendforfrontendservice-sox")));
+                return null;
+            }
+            if (Objects.equals(input.getLaneId(), reviewerLaneId)) {
                 return null;
             }
             throw new AssertionError("Unexpected Codex submit laneId=" + input.getLaneId() + ", input=" + input);
@@ -248,6 +280,11 @@ class CompleteBackendFlowToTestersReadyIT {
         this.testManager.mongo()
                 .assertEntities(com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument.class)
                 .hasSize(18);
+
+        assertThat(submissionCounters.get(testUnitAutomationLaneId).get()).isEqualTo(1);
+        assertThat(submissionCounters.get(testUnitBffLaneId).get()).isEqualTo(1);
+        assertThat(submissionCounters.get(testItAutomationLaneId).get()).isEqualTo(1);
+        assertThat(submissionCounters.get(testItBffLaneId).get()).isEqualTo(1);
 
         final TicketDocument actual = this.testManager.mongo()
                 .get(TicketDocument.class)

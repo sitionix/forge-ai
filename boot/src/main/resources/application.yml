@@ -8,7 +8,7 @@ spring:
     import: optional:classpath:services.yaml,optional:classpath:agent.yml,optional:classpath:instructions.yaml
   data:
     mongodb:
-      uri: ${MONGODB_URI:mongodb://localhost:27018/forge_ai}
+      uri: ${MONGODB_URI:mongodb://localhost:27019/forge_ai}
       uuid-representation: standard
 management:
   endpoint:
@@ -28,7 +28,7 @@ management:
 forge:
   ai:
     launcher:
-      default-base-url: http://localhost:9099/fgaisox
+      default-base-url: http://127.0.0.1:9099/fgaisox
       services-config-resource: classpath:services.yaml
 forge-ai:
   jobs:

@@ -22,7 +22,7 @@ class ResourceInstructionRepositoryTest {
         final InstructionResourcesProperties.AgentConfig analyzerConfig = new InstructionResourcesProperties.AgentConfig();
         analyzerConfig.setInstructions("instructions/agents/analyzer.md");
         analyzerConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete");
-        analyzerConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of("instructions/shared/completion-callback.md")));
+        analyzerConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of("instructions/additional-instructions/completion-callback.md")));
 
         final InstructionResourcesProperties.AgentConfig qaLeadConfig = new InstructionResourcesProperties.AgentConfig();
         qaLeadConfig.setInstructions("instructions/agents/qa_lead.md");

@@ -80,6 +80,22 @@ public class LaneScopeValidator {
                 + ", requestScope=" + requestScope);
     }
 
+    public boolean validateApiCompletion(final UUID laneId) {
+        final Lane lane = this.requireLane(laneId, "Api lane not found for laneId=");
+        if (!Objects.equals(lane.getAgent(), Agent.API)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Api lane type mismatch: laneId=" + laneId
+                            + ", laneAgent=" + lane.getAgent()
+                            + ", expectedAgent=" + Agent.API);
+        }
+        if (Objects.equals(lane.getStatus(), LaneStatus.COMPLETED)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "api lane cannot be completed in current state: laneId=" + laneId
+                            + ", laneStatus=" + lane.getStatus());
+        }
+        return true;
+    }
+
     public void validateQaLeadCallbackScope(final UUID laneId, final String testScope) {
         final Lane lane = this.requireLane(laneId, "Qa-lead lane not found for laneId=");
         if (Objects.equals(lane.getScope(), testScope)) {
@@ -158,11 +174,16 @@ public class LaneScopeValidator {
                     + ", laneScope=" + lane.getScope()
                     + ", requestScope=" + scope);
         }
-        if (!Objects.equals(lane.getStatus(), LaneStatus.IN_PROGRESS)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    laneLabel + " lane cannot be completed in current state: laneId=" + laneId
-                            + ", laneStatus=" + lane.getStatus());
-        }
+        this.validateInProgressStatus(laneId, lane, laneLabel);
         return lane;
+    }
+
+    private void validateInProgressStatus(final UUID laneId, final Lane lane, final String laneLabel) {
+        if (Objects.equals(lane.getStatus(), LaneStatus.IN_PROGRESS)) {
+            return;
+        }
+        throw new ResponseStatusException(HttpStatus.CONFLICT,
+                laneLabel + " lane cannot be completed in current state: laneId=" + laneId
+                        + ", laneStatus=" + lane.getStatus());
     }
 }

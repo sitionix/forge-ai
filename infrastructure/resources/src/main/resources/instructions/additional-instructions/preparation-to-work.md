@@ -1,53 +1,31 @@
-# Preparation To Work Workflow
+# Preparation To Work
 
-## Purpose
-Reference workflow for scripted repository preparation before Agent Bus lane execution.
+## Flow
 
-## Applies To
-Preparation is executed by `agent-bus/scripts/prepare-agent-bus-repos.sh` before lanes start.
-
-## Repository Preparation
-Before inspecting source/API state:
 1. Check current repository state.
 2. Detect local uncommitted changes.
-3. If local changes exist, stash them (`git stash push -u -m "agent-bus-prep-<ticket-id>"`).
-4. Switch to `develop`.
+3. Stash unrelated local changes when present.
+4. Checkout `develop`.
 5. Pull latest `develop`.
-6. Checkout `feature/<ticket-id>` if it exists, otherwise create it from `develop`.
-7. Inspect repository state from that ticket branch.
+6. Checkout existing `feature/<ticket-id>` or create it from `develop`.
+7. Inspect repository state from the ticket branch.
 
-## Branch Naming
+## Branch
+
 Use:
 
-```text
-feature/<ticket-id>
-```
+`feature/<ticket-id>`
 
 Example:
 
-```text
-feature/SITIONIX-135
-```
-
-Do not invent a different branch name unless the task explicitly provides one.
+`feature/SITIONIX-135`
 
 ## Commit Message
-Architect does not commit or create PRs in this workflow.
 
 Use:
 
-```text
-[<ticket-id>] - <message>
-```
+`[<ticket-id>] - <message>`
 
 Example:
 
-```text
-[SITIONIX-135] - Add owner summary API contract
-```
-
-## Safety Rules
-- Do not overwrite unrelated local changes.
-- Do not work on stale `develop`.
-- Do not reuse an unrelated feature branch.
-- Do not mix unrelated task changes into the same PR.
+`[SITIONIX-135] - Add owner summary API contract`
