@@ -92,6 +92,7 @@ class SupervisedLaneExecutionUseCaseTest {
 
         final var order = inOrder(this.codexSessionRepository);
         order.verify(this.codexSessionRepository).start(any(), eq("/dev/ttys001"));
+        order.verify(this.codexSessionRepository).send(eq("session-1"), any(), eq("/dev/ttys001"));
         order.verify(this.codexSessionRepository).waitForOutput(eq("session-1"), anyLong());
         order.verify(this.codexSessionRepository).send(eq("session-1"), any(), eq("/dev/ttys001"));
         order.verify(this.codexSessionRepository).waitForOutput(eq("session-1"), anyLong());
