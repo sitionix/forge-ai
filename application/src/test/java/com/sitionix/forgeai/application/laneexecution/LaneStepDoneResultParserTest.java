@@ -35,7 +35,7 @@ class LaneStepDoneResultParserTest {
                 "\"stepId\":\"preparation\",\"summary\":\"ok\",\"evidence\":{}" +
                 "}", "preparation"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Missing required field: type");
+                .hasMessageContaining("Invalid LANE_STEP_DONE JSON payload");
     }
 
     @Test
@@ -62,7 +62,7 @@ class LaneStepDoneResultParserTest {
                 "\"type\":\"LANE_STEP_DONE\",\"stepId\":\"preparation\",\"summary\":\"ok\",\"evidence\":{},\"status\":\"DONE\"" +
                 "}", "preparation"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Forbidden field present: status");
+                .hasMessageContaining("Invalid LANE_STEP_DONE JSON payload");
     }
 
     @Test
@@ -71,7 +71,7 @@ class LaneStepDoneResultParserTest {
                 "\"type\":\"LANE_STEP_DONE\",\"stepId\":\"preparation\",\"summary\":\"ok\",\"evidence\":{},\"failed\":true" +
                 "}", "preparation"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Forbidden field present: failed");
+                .hasMessageContaining("Invalid LANE_STEP_DONE JSON payload");
     }
 
     @Test
@@ -80,6 +80,6 @@ class LaneStepDoneResultParserTest {
                 "\"type\":\"LANE_STEP_DONE\",\"stepId\":\"preparation\",\"summary\":\"ok\",\"evidence\":{},\"x\":1" +
                 "}", "preparation"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Unexpected field present: x");
+                .hasMessageContaining("Invalid LANE_STEP_DONE JSON payload");
     }
 }
