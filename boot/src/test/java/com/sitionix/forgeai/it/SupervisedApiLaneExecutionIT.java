@@ -8,6 +8,7 @@ import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.laneexecution.LaneExecutionDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.laneexecution.LaneStepExecutionDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.repository.laneexecution.LaneStepExecutionJpaRepository;
+import com.sitionix.forgeai.it.infra.ItCodexSessionRepositoryStub;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import org.junit.jupiter.api.DisplayName;
@@ -34,6 +35,9 @@ class SupervisedApiLaneExecutionIT {
     @Autowired
     private LaneStepExecutionJpaRepository laneStepExecutionJpaRepository;
 
+    @Autowired
+    private ItCodexSessionRepositoryStub codexSessionRepositoryStub;
+
     @MockBean
     private TerminalTabLauncher terminalTabLauncher;
 
@@ -47,6 +51,7 @@ class SupervisedApiLaneExecutionIT {
     @DisplayName("Should execute API lane via supervised strategy and persist step DONE markers")
     void givenReadyApiLane_whenSupervisorEnabled_thenPersistLaneAndStepExecutions() {
         // given
+        this.codexSessionRepositoryStub.clearStartedMessages();
         this.testManager.mongo().create(TicketDocument.class).body("readyToStartApiOnlySeedTicket.json");
 
         // when
@@ -68,6 +73,9 @@ class SupervisedApiLaneExecutionIT {
         assertThat(steps).allMatch(LaneStepExecutionDocument::isDone);
         assertThat(steps.stream().map(LaneStepExecutionDocument::getStepId).toList())
                 .containsExactlyInAnyOrder("preparation", "contract_changes", "version_update", "pr", "generation", "completion");
+        assertThat(this.codexSessionRepositoryStub.startedMessages())
+                .anyMatch(message -> message.contains("Shared instruction refs:\n- instructions/shared/common-rules.md")
+                        && message.contains("instructions/shared/lazy-instruction-strategy.md"));
 
         verifyNoInteractions(this.codexClient);
     }

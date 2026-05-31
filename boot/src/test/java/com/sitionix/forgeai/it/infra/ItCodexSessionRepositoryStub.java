@@ -18,11 +18,13 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
 
     private final Map<String, ConcurrentLinkedQueue<String>> outputs = new ConcurrentHashMap<>();
     private final List<String> sentMessages = new CopyOnWriteArrayList<>();
+    private final List<String> startedMessages = new CopyOnWriteArrayList<>();
 
     @Override
     public String start(final String initialPrompt, final String sourceTerminalTty) {
         final String sessionId = UUID.randomUUID().toString();
         this.outputs.put(sessionId, new ConcurrentLinkedQueue<>());
+        this.startedMessages.add(initialPrompt);
         final String stepId = this.extractStepId(initialPrompt);
         if (stepId != null) {
             this.outputs.get(sessionId).add("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + stepId + "\",\"summary\":\"done\",\"evidence\":{}}");
@@ -64,6 +66,14 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
 
     public void clearSentMessages() {
         this.sentMessages.clear();
+    }
+
+    public List<String> startedMessages() {
+        return List.copyOf(this.startedMessages);
+    }
+
+    public void clearStartedMessages() {
+        this.startedMessages.clear();
     }
 
     private String extractStepId(final String message) {
