@@ -12,6 +12,7 @@ import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
+import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import java.time.LocalDateTime;
@@ -30,6 +31,7 @@ public class SupervisedLaneExecutionUseCase {
     private final LaneStrategyRepository laneStrategyRepository;
     private final LaneExecutionRepository laneExecutionRepository;
     private final CodexSessionRepository codexSessionRepository;
+    private final InstructionRepository instructionRepository;
     private final LaneStepDoneResultParser parser;
     private final LaneStepPromptBuilder promptBuilder;
     private final ObjectMapper objectMapper;
@@ -40,8 +42,9 @@ public class SupervisedLaneExecutionUseCase {
                         final int correctionAttempts) {
         final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(lane.getAgent().getId());
         final LaneStrategyStep firstStep = strategy.getSteps().getFirst();
+        final var sharedInstructionRefs = this.instructionRepository.findSharedInstructionRefs();
         final String sessionId = this.codexSessionRepository.start(
-                this.promptBuilder.startPrompt(lane, strategy)
+                this.promptBuilder.startPrompt(lane, strategy, sharedInstructionRefs)
                         + "\n\n"
                         + this.promptBuilder.stepPrompt(firstStep, 1, strategy.getSteps().size(), input.getTasks()),
                 lane.getSourceTerminalTty()

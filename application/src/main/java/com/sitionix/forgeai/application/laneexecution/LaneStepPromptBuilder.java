@@ -18,11 +18,15 @@ public class LaneStepPromptBuilder {
     private final ObjectMapper objectMapper;
     private static final String TASKS_PLACEHOLDER = "{{TASKS_JSON}}";
 
-    public String startPrompt(final ReadyToStartLane lane, final LaneStrategy strategy) {
+    public String startPrompt(final ReadyToStartLane lane,
+                              final LaneStrategy strategy,
+                              final Set<String> sharedInstructionRefs) {
+        final String sharedRefs = String.join("\n- ", sharedInstructionRefs);
         return "Supervised lane session started.\n"
                 + "ticketId: " + lane.getTicketId() + "\n"
                 + "laneId: " + lane.getLaneId() + "\n"
-                + "agent: " + strategy.getAgentId();
+                + "agent: " + strategy.getAgentId() + "\n"
+                + "Shared instruction refs:\n- " + sharedRefs;
     }
 
     public String stepPrompt(final LaneStrategyStep step,

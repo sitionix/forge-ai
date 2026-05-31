@@ -25,6 +25,7 @@ public class ResourceInstructionRepository implements InstructionRepository {
 
     private Map<String, AgentInstructions> agentInstructions;
     private Set<String> sharedInstructions;
+    private Set<String> sharedInstructionRefs;
 
     @PostConstruct
     public void init() {
@@ -40,6 +41,7 @@ public class ResourceInstructionRepository implements InstructionRepository {
 
         this.sharedInstructions = new LinkedHashSet<>();
         this.properties.getShared().forEach(path -> this.sharedInstructions.add(this.readClasspathText(path)));
+        this.sharedInstructionRefs = new LinkedHashSet<>(this.properties.getShared());
     }
 
     @Override
@@ -54,6 +56,11 @@ public class ResourceInstructionRepository implements InstructionRepository {
                 .additionalInstructions(new LinkedHashSet<>(instruction.getAdditionalInstructions()))
                 .sharedInstructions(new LinkedHashSet<>(this.sharedInstructions))
                 .build();
+    }
+
+    @Override
+    public Set<String> findSharedInstructionRefs() {
+        return new LinkedHashSet<>(this.sharedInstructionRefs);
     }
 
     private Set<String> readClasspathTexts(final Set<String> paths) {

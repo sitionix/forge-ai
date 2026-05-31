@@ -12,6 +12,7 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
+import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +43,8 @@ class SupervisedLaneExecutionUseCaseTest {
     private LaneExecutionRepository laneExecutionRepository;
     @Mock
     private CodexSessionRepository codexSessionRepository;
+    @Mock
+    private InstructionRepository instructionRepository;
 
     private SupervisedLaneExecutionUseCase useCase;
 
@@ -51,6 +54,7 @@ class SupervisedLaneExecutionUseCaseTest {
                 this.laneStrategyRepository,
                 this.laneExecutionRepository,
                 this.codexSessionRepository,
+                this.instructionRepository,
                 new LaneStepDoneResultParser(new ObjectMapper()),
                 new LaneStepPromptBuilder(new ObjectMapper()),
                 new ObjectMapper()
@@ -79,6 +83,7 @@ class SupervisedLaneExecutionUseCaseTest {
                 .build();
 
         when(this.laneStrategyRepository.findByAgentId("api")).thenReturn(strategy);
+        when(this.instructionRepository.findSharedInstructionRefs()).thenReturn(Set.of("instructions/shared/common-rules.md"));
         when(this.codexSessionRepository.start(any(), eq("/dev/ttys001"))).thenReturn("session-1");
         when(this.laneExecutionRepository.saveExecution(any(LaneExecution.class))).thenAnswer(inv -> inv.getArgument(0));
         when(this.codexSessionRepository.waitForOutput(eq("session-1"), anyLong()))
@@ -117,6 +122,7 @@ class SupervisedLaneExecutionUseCaseTest {
                 .steps(List.of(LaneStrategyStep.builder().id("preparation").title("Preparation").order(1).instructionRefs(List.of("a.md")).build()))
                 .build();
         when(this.laneStrategyRepository.findByAgentId("api")).thenReturn(strategy);
+        when(this.instructionRepository.findSharedInstructionRefs()).thenReturn(Set.of("instructions/shared/common-rules.md"));
         when(this.codexSessionRepository.start(any(), eq("/dev/ttys001"))).thenReturn("session-1");
         when(this.laneExecutionRepository.saveExecution(any(LaneExecution.class))).thenAnswer(inv -> inv.getArgument(0));
         when(this.codexSessionRepository.waitForOutput(eq("session-1"), anyLong()))
