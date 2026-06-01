@@ -1,6 +1,8 @@
 package com.sitionix.forgeai.application.agentexecutor;
 
+import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
+import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
@@ -47,6 +49,10 @@ class TestUnitAgentExecutorTest {
 
     @Mock
     private TicketRepository ticketRepository;
+    @Mock
+    private SupervisedExecutionProperties supervisedExecutionProperties;
+    @Mock
+    private SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase;
 
     @BeforeEach
     void setUp() {
@@ -54,13 +60,22 @@ class TestUnitAgentExecutorTest {
                 this.prepareAgentExecutionInputUseCase,
                 this.codexClient,
                 this.agentTicketRepository,
-                this.ticketRepository
+                this.ticketRepository,
+                this.supervisedExecutionProperties,
+                this.supervisedLaneExecutionUseCase
         );
     }
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.prepareAgentExecutionInputUseCase, this.codexClient, this.agentTicketRepository, this.ticketRepository);
+        verifyNoMoreInteractions(
+                this.prepareAgentExecutionInputUseCase,
+                this.codexClient,
+                this.agentTicketRepository,
+                this.ticketRepository,
+                this.supervisedExecutionProperties,
+                this.supervisedLaneExecutionUseCase
+        );
     }
 
     @Test
@@ -111,6 +126,7 @@ class TestUnitAgentExecutorTest {
                 .tasks(Set.of(payload))
                 .build();
         when(this.prepareAgentExecutionInputUseCase.enrichWithTasks(lane, baseInput, Set.of(payload))).thenReturn(enrichedInput);
+        when(this.supervisedExecutionProperties.isSupervisedAgent("test_unit")).thenReturn(false);
 
         //when
         this.testUnitAgentExecutor.executeLane(lane);
@@ -120,6 +136,7 @@ class TestUnitAgentExecutorTest {
         verify(this.ticketRepository).findByLaneId(laneId);
         verify(this.agentTicketRepository).findById(inputTaskId);
         verify(this.prepareAgentExecutionInputUseCase).enrichWithTasks(lane, baseInput, Set.of(payload));
+        verify(this.supervisedExecutionProperties).isSupervisedAgent("test_unit");
 
         final ArgumentCaptor<AgentExecutionInput> inputCaptor = ArgumentCaptor.forClass(AgentExecutionInput.class);
         verify(this.codexClient).submit(inputCaptor.capture(), eq("/dev/ttys004"));

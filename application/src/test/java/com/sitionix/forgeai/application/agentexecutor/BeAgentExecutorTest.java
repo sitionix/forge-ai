@@ -1,6 +1,8 @@
 package com.sitionix.forgeai.application.agentexecutor;
 
+import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
+import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
@@ -44,6 +46,10 @@ class BeAgentExecutorTest {
 
     @Mock
     private TicketRepository ticketRepository;
+    @Mock
+    private SupervisedExecutionProperties supervisedExecutionProperties;
+    @Mock
+    private SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase;
 
     @BeforeEach
     void setUp() {
@@ -51,13 +57,22 @@ class BeAgentExecutorTest {
                 this.prepareAgentExecutionInputUseCase,
                 this.codexClient,
                 this.agentTicketRepository,
-                this.ticketRepository
+                this.ticketRepository,
+                this.supervisedExecutionProperties,
+                this.supervisedLaneExecutionUseCase
         );
     }
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.prepareAgentExecutionInputUseCase, this.codexClient, this.agentTicketRepository, this.ticketRepository);
+        verifyNoMoreInteractions(
+                this.prepareAgentExecutionInputUseCase,
+                this.codexClient,
+                this.agentTicketRepository,
+                this.ticketRepository,
+                this.supervisedExecutionProperties,
+                this.supervisedLaneExecutionUseCase
+        );
     }
 
     @Test
@@ -112,6 +127,7 @@ class BeAgentExecutorTest {
                 .tasks(Set.of(payload))
                 .build();
         when(this.prepareAgentExecutionInputUseCase.enrichWithTasks(lane, baseInput, Set.of(payload))).thenReturn(enrichedInput);
+        when(this.supervisedExecutionProperties.isSupervisedAgent("implement_be")).thenReturn(false);
 
         //when
         this.beAgentExecutor.executeLane(lane);
@@ -121,10 +137,46 @@ class BeAgentExecutorTest {
         verify(this.ticketRepository).findByLaneId(laneId);
         verify(this.agentTicketRepository).findById(inputTaskId);
         verify(this.prepareAgentExecutionInputUseCase).enrichWithTasks(lane, baseInput, Set.of(payload));
+        verify(this.supervisedExecutionProperties).isSupervisedAgent("implement_be");
 
         final ArgumentCaptor<AgentExecutionInput> inputCaptor = ArgumentCaptor.forClass(AgentExecutionInput.class);
         verify(this.codexClient).submit(inputCaptor.capture(), eq("/dev/ttys004"));
         final AgentExecutionInput actual = inputCaptor.getValue();
         assertThat(actual).isEqualTo(enrichedInput);
+    }
+
+    @Test
+    void givenSupervisedEnabled_whenExecuteLane_thenUseSupervisor() {
+        final UUID laneId = UUID.randomUUID();
+        final UUID inputTaskId = UUID.randomUUID();
+        final ReadyToStartLane lane = ReadyToStartLane.builder()
+                .ticketId(UUID.randomUUID())
+                .laneId(laneId)
+                .agent(Agent.IMPLEMENT_BE)
+                .scope("automationservice-sox")
+                .serviceId("atmssox")
+                .sourceTerminalTty("/dev/ttys004")
+                .build();
+        final AgentExecutionInput<AgentTicketPayload> baseInput = AgentExecutionInput.<AgentTicketPayload>builder()
+                .ticketId(lane.getTicketId())
+                .laneId(laneId)
+                .build();
+        when(this.prepareAgentExecutionInputUseCase.execute(lane)).thenReturn(baseInput);
+        when(this.ticketRepository.findByLaneId(laneId))
+                .thenReturn(Optional.of(Lane.builder().id(laneId).inputTaskIds(Set.of(inputTaskId)).build()));
+
+        final ImplementBePayload payload = ImplementBePayload.builder().summary("summary").build();
+        when(this.agentTicketRepository.findById(inputTaskId))
+                .thenReturn(Optional.of(AgentTicket.<AgentTicketPayload>builder().id(inputTaskId).payload(payload).build()));
+        final AgentExecutionInput<AgentTicketPayload> enrichedInput = baseInput.toBuilder().tasks(Set.of(payload)).build();
+        when(this.prepareAgentExecutionInputUseCase.enrichWithTasks(lane, baseInput, Set.of(payload))).thenReturn(enrichedInput);
+        when(this.supervisedExecutionProperties.isSupervisedAgent("implement_be")).thenReturn(true);
+        when(this.supervisedExecutionProperties.getCorrectionAttempts()).thenReturn(2);
+
+        this.beAgentExecutor.executeLane(lane);
+
+        verify(this.supervisedExecutionProperties).isSupervisedAgent("implement_be");
+        verify(this.supervisedExecutionProperties).getCorrectionAttempts();
+        verify(this.supervisedLaneExecutionUseCase).execute(lane, enrichedInput, 2);
     }
 }

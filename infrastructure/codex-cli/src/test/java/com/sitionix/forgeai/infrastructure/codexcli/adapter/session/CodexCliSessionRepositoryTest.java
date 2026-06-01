@@ -32,12 +32,14 @@ class CodexCliSessionRepositoryTest {
         final CodexCliSessionRepository repository = this.repository(List.of(
                 "bash", "--noprofile", "--norc", "-c", "echo \"PID:$$\"; while IFS= read -r line; do echo \"PID:$$:$line\"; done"
         ));
-        final String sessionId = repository.start("step-1", null);
+        final String sessionId = repository.start("", null);
+        final String initial = repository.waitForOutput(sessionId, 3_000);
+        repository.send(sessionId, "step-1", null);
         final String first = repository.waitForOutput(sessionId, 3_000);
         repository.send(sessionId, "step-2", null);
         final String second = repository.waitForOutput(sessionId, 3_000);
 
-        final String pid = first.lines()
+        final String pid = initial.lines()
                 .filter(line -> line.startsWith("PID:"))
                 .findFirst()
                 .orElseThrow();

@@ -1,5 +1,7 @@
 package com.sitionix.forgeai.application.agentexecutor;
 
+import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
+import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.codex.AnalyzerExecutionPayload;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
@@ -23,6 +25,8 @@ public class AnalyzeAgentExecutor implements ExecuteAgent<AnalyzerPayload> {
     private final CodexClient codexClient;
 
     private final TicketRepository ticketRepository;
+    private final SupervisedExecutionProperties supervisedExecutionProperties;
+    private final SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase;
 
     @Override
     public void executeLane(final ReadyToStartLane lane) {
@@ -36,7 +40,10 @@ public class AnalyzeAgentExecutor implements ExecuteAgent<AnalyzerPayload> {
                         .ticket(ticket)
                         .build())
         );
-
+        if (this.supervisedExecutionProperties.isSupervisedAgent(lane.getAgent().getId())) {
+            this.supervisedLaneExecutionUseCase.execute(lane, enrichedInput, this.supervisedExecutionProperties.getCorrectionAttempts());
+            return;
+        }
         this.codexClient.submit(enrichedInput, lane.getSourceTerminalTty());
     }
 }
