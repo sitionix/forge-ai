@@ -1,0 +1,45 @@
+{
+  "id": "cccccccc-3333-3333-3333-333333333333",
+  "ticketId": "aaaaaaaa-1111-1111-1111-111111111111",
+  "laneId": "bbbbbbbb-2222-2222-2222-222222222222",
+  "status": "CREATED",
+  "scope": "GLOBAL",
+  "agent": "API",
+  "payload": {
+    "required": true,
+    "reason": "required",
+    "scope": "GLOBAL",
+    "summary": "api summary",
+    "operations": [
+      {
+        "intent": "create",
+        "method": "POST",
+        "path": "/api/v1/agent-actions",
+        "request": {
+          "fields": [
+            {
+              "name": "title",
+              "required": true,
+              "type": "string",
+              "description": "title"
+            }
+          ]
+        },
+        "response": {
+          "fields": [
+            {
+              "name": "id",
+              "required": true,
+              "type": "string",
+              "description": "id"
+            }
+          ]
+        }
+      }
+    ],
+    "consumers": ["backendforfrontendservice-sox"],
+    "notes": ["note1"]
+  },
+  "createdAt": "2026-01-01T10:00:00",
+  "updatedAt": "2026-01-01T10:00:00"
+}

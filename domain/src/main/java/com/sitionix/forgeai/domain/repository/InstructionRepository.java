@@ -14,4 +14,11 @@ public interface InstructionRepository {
      * @return agent instruction + shared instructions
      */
     AgentInstructions findInstructionsByAgentId(String agentId);
+
+    /**
+     * Returns shared instruction refs from configuration (for example: instructions/shared/common-rules.md).
+     *
+     * @return shared instruction refs
+     */
+    java.util.Set<String> findSharedInstructionRefs();
 }

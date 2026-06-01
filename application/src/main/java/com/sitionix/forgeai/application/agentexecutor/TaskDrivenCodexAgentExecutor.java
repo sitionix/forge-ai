@@ -8,6 +8,8 @@ import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
+import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 
 abstract class TaskDrivenCodexAgentExecutor {
@@ -28,15 +30,32 @@ abstract class TaskDrivenCodexAgentExecutor {
     }
 
     protected void executeWithTasks(final ReadyToStartLane lane) {
+        final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareInputWithTasks(lane);
+        this.codexClient.submit(enrichedInput, lane.getSourceTerminalTty());
+    }
+
+    protected AgentExecutionInput<AgentTicketPayload> prepareInputWithTasks(final ReadyToStartLane lane) {
         final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.execute(lane);
         final Lane laneState = this.ticketRepository.findByLaneId(lane.getLaneId())
                 .orElseThrow(() -> new IllegalArgumentException("Lane not found with id: " + lane.getLaneId()));
         final Set<AgentTicketPayload> tasks = LaneTaskResolver.resolve(laneState, this.agentTicketRepository);
-        final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareAgentExecutionInputUseCase.enrichWithTasks(
+        return this.prepareAgentExecutionInputUseCase.enrichWithTasks(
                 lane,
                 input,
                 tasks
         );
-        this.codexClient.submit(enrichedInput, lane.getSourceTerminalTty());
+    }
+
+    protected AgentExecutionInput<AgentTicketPayload> prepareInputWithOptionalTasks(final ReadyToStartLane lane) {
+        final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.execute(lane);
+        final Lane laneState = this.ticketRepository.findByLaneId(lane.getLaneId())
+                .orElseThrow(() -> new IllegalArgumentException("Lane not found with id: " + lane.getLaneId()));
+        final Set<AgentTicketPayload> tasks;
+        if (Objects.isNull(laneState.getInputTaskIds()) || laneState.getInputTaskIds().isEmpty()) {
+            tasks = new LinkedHashSet<>();
+        } else {
+            tasks = LaneTaskResolver.resolve(laneState, this.agentTicketRepository);
+        }
+        return this.prepareAgentExecutionInputUseCase.enrichWithTasks(lane, input, tasks);
     }
 }

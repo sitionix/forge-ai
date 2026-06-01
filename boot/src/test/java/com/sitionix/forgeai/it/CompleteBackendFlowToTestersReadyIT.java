@@ -10,6 +10,7 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
+import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
@@ -278,7 +279,7 @@ class CompleteBackendFlowToTestersReadyIT {
 
         //then
         this.testManager.mongo()
-                .assertEntities(com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument.class)
+                .assertEntities(AgentTicketDocument.class)
                 .hasSize(18);
 
         assertThat(submissionCounters.get(testUnitAutomationLaneId).get()).isEqualTo(1);

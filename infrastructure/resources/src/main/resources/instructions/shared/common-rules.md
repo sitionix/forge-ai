@@ -69,3 +69,22 @@ Do not create API or event contracts unless the assigned lane owns contract work
 Do not start other agents.
 Do not mutate ticket state directly.
 Do not call endpoints that are not provided in runtime context.
+
+## Step Completion Protocol
+
+When supervised execution is active, the only valid step completion output is a JSON object with type `LANE_STEP_DONE`.
+Return only JSON and no surrounding text.
+Use current active step id as `stepId`.
+Required fields are `type`, `stepId`, `summary`, `evidence`.
+Do not send `status` or any negative outcome fields.
+
+Expected shape:
+
+```json
+{
+  "type": "LANE_STEP_DONE",
+  "stepId": "<activeStepId>",
+  "summary": "...",
+  "evidence": {}
+}
+```
