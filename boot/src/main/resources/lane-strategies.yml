@@ -1,0 +1,39 @@
+forge:
+  ai:
+    lane-strategies:
+      configs:
+        api:
+          version: 1
+          session-mode: single_session
+          steps:
+            - id: preparation
+              title: Preparation
+              instruction-refs:
+                - additional-instructions/preparation-to-work.md
+            - id: contract_changes
+              title: Contract Changes
+              instruction-refs:
+                - additional-instructions/api-contract-rules.md
+            - id: version_update
+              title: Version Update
+              instruction-refs:
+                - additional-instructions/version-rules.md
+            - id: pr
+              title: Pull Request
+              instruction-refs:
+                - additional-instructions/pr-workflow.md
+            - id: generation
+              title: Generation
+              instruction-refs:
+                - additional-instructions/generation-workflow.md
+                - additional-instructions/api-artifact-generation-rules.md
+            - id: completion
+              title: Completion
+              instruction-refs:
+                - lane-instructions/api/completion-content.md
+                - additional-instructions/completion-callback.md
+    supervised-execution:
+      enabled: false
+      agents:
+        - api
+      correction-attempts: 2

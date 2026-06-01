@@ -3,6 +3,7 @@ package com.sitionix.forgeai.it;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
+import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
@@ -35,7 +36,7 @@ class CompleteImplementFeLaneScopeMismatchIT {
         final UUID laneId = UUID.fromString("b2222222-2222-2222-2222-222222222222");
 
         this.testManager.mongo()
-                .create(com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument.class)
+                .create(TicketDocument.class)
                 .body("completeImplementFeLaneScopeMismatchSeedTicket.json");
 
         //when then
