@@ -16,6 +16,7 @@ import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import java.time.LocalDateTime;
+import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Logger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -42,7 +43,7 @@ public class SupervisedLaneExecutionUseCase {
                         final int correctionAttempts) {
         final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(lane.getAgent().getId());
         final LaneStrategyStep firstStep = strategy.getSteps().getFirst();
-        final var sharedInstructionRefs = this.instructionRepository.findSharedInstructionRefs();
+        final Set<String> sharedInstructionRefs = this.instructionRepository.findSharedInstructionRefs();
         final String sessionId = this.codexSessionRepository.start(
                 this.promptBuilder.startPrompt(lane, strategy, sharedInstructionRefs)
                         + "\n\n"

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -95,7 +96,7 @@ class SupervisedLaneExecutionUseCaseTest {
                 .build();
         this.useCase.execute(lane, input, 1);
 
-        final var order = inOrder(this.codexSessionRepository);
+        final InOrder order = inOrder(this.codexSessionRepository);
         order.verify(this.codexSessionRepository).start(any(), eq("/dev/ttys001"));
         order.verify(this.codexSessionRepository).waitForOutput(eq("session-1"), anyLong());
         order.verify(this.codexSessionRepository).send(eq("session-1"), any(), eq("/dev/ttys001"));

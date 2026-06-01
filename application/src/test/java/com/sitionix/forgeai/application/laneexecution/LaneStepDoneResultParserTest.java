@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.application.laneexecution;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStepDoneResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -22,7 +23,7 @@ class LaneStepDoneResultParserTest {
                 {"type":"LANE_STEP_DONE","stepId":"preparation","summary":"ok","evidence":{}}
                 """;
 
-        final var result = this.parser.parse(output, "preparation");
+        final LaneStepDoneResult result = this.parser.parse(output, "preparation");
 
         assertThat(result.getStepId()).isEqualTo("preparation");
         assertThat(result.getSummary()).isEqualTo("ok");

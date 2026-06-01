@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.infrastructure.resources.lanestrategy;
 
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.DefaultResourceLoader;
 
@@ -22,7 +23,7 @@ class ResourceLaneStrategyRepositoryTest {
         final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
         repository.init();
 
-        final var strategy = repository.findByAgentId("api");
+        final LaneStrategy strategy = repository.findByAgentId("api");
         assertThat(strategy.getSteps()).hasSize(2);
         assertThat(strategy.getSteps().get(0).getId()).isEqualTo("preparation");
         assertThat(strategy.getSteps().get(1).getId()).isEqualTo("contract_update");

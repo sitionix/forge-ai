@@ -16,6 +16,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -69,7 +71,7 @@ class SupervisedApiLaneExecutionIT {
                 .get(LaneStepExecutionDocument.class)
                 .hasSize(6);
 
-        final var steps = this.laneStepExecutionJpaRepository.findAll();
+        final List<LaneStepExecutionDocument> steps = this.laneStepExecutionJpaRepository.findAll();
         assertThat(steps).allMatch(LaneStepExecutionDocument::isDone);
         assertThat(steps.stream().map(LaneStepExecutionDocument::getStepId).toList())
                 .containsExactlyInAnyOrder("preparation", "contract_changes", "version_update", "pr", "generation", "completion");
