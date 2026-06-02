@@ -6,6 +6,7 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -40,6 +41,7 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
                                 .id(step.getId())
                                 .title(step.getTitle())
                                 .order(i + 1)
+                                .taskPlaceholder(step.getTaskPlaceholder())
                                 .instructionRefs(List.copyOf(step.getInstructionRefs()))
                                 .build();
                     })
@@ -51,6 +53,7 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
                     .steps(steps)
                     .build());
         });
+        this.validateRequiredStrategies();
     }
 
     @Override
@@ -95,5 +98,16 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
         } catch (IOException e) {
             throw new IllegalStateException("Failed to read instruction ref: " + ref, e);
         }
+    }
+
+    private void validateRequiredStrategies() {
+        Arrays.stream(Agent.values())
+                .map(Agent::getId)
+                .filter(agentId -> !Agent.REVIEWER.getId().equals(agentId) && !Agent.EVENT.getId().equals(agentId))
+                .forEach(agentId -> {
+                    if (!this.strategies.containsKey(agentId)) {
+                        throw new IllegalStateException("Missing lane strategy for executable agentId=" + agentId);
+                    }
+                });
     }
 }

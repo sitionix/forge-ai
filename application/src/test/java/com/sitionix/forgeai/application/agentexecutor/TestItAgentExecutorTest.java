@@ -6,7 +6,14 @@ import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadDataCheck;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadIntegrationFlow;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBeIntegrationFlow;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePersistenceChange;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadIntegrationTestCase;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadUnitTestNote;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.UnitTestSonar;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
@@ -30,9 +37,7 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class BeAgentExecutorTest {
-
-    private BeAgentExecutor beAgentExecutor;
+class TestItAgentExecutorTest {
 
     @Mock
     private PrepareAgentExecutionInputUseCase prepareAgentExecutionInputUseCase;
@@ -47,11 +52,12 @@ class BeAgentExecutorTest {
     private SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase;
 
     private final SupervisedExecutionProperties supervisedExecutionProperties = new SupervisedExecutionProperties();
+    private TestItAgentExecutor testItAgentExecutor;
 
     @BeforeEach
     void setUp() {
         this.supervisedExecutionProperties.setCorrectionAttempts(2);
-        this.beAgentExecutor = new BeAgentExecutor(
+        this.testItAgentExecutor = new TestItAgentExecutor(
                 this.prepareAgentExecutionInputUseCase,
                 this.agentTicketRepository,
                 this.ticketRepository,
@@ -79,7 +85,7 @@ class BeAgentExecutorTest {
         final ReadyToStartLane lane = ReadyToStartLane.builder()
                 .ticketId(ticketId)
                 .laneId(laneId)
-                .agent(Agent.IMPLEMENT_BE)
+                .agent(Agent.TEST_IT)
                 .scope("automationservice-sox")
                 .serviceId("atmssox")
                 .sourceTerminalTty("/dev/ttys004")
@@ -97,18 +103,24 @@ class BeAgentExecutorTest {
                 .build();
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(laneState));
 
-        final ImplementBePayload payload = ImplementBePayload.builder()
-                .task("implement task")
-                .scope("automationservice-sox")
-                .summary("summary")
-                .requirements(Set.of("r1"))
-                .constraints(Set.of("c1"))
-                .nonGoals(Set.of("n1"))
-                .architectureDecision("decision")
-                .dependencies(Set.of("d1"))
-                .acceptanceNotes(Set.of("a1"))
-                .risks(Set.of("risk1"))
-                .build();
+        final TestItPayload payload = new TestItPayload(
+                "task",
+                "automationservice-sox",
+                "summary",
+                Set.of(new ImplementBeIntegrationFlow("flow", "GET", "/health", "health_check", "summary")),
+                Set.of(new ImplementBePersistenceChange("type", "change", "summary")),
+                new UnitTestSonar(null, 1),
+                Set.of(new QaLeadIntegrationTestCase(
+                        "case",
+                        new QaLeadIntegrationFlow("flow", "GET", "/health", "health_check"),
+                        Set.of("given"),
+                        Set.of("when"),
+                        Set.of("then"),
+                        Set.of(new QaLeadDataCheck("target", "expected")),
+                        "P1"
+                )),
+                Set.of(new QaLeadUnitTestNote("note", "detail"))
+        );
         final AgentTicket<AgentTicketPayload> agentTicket = AgentTicket.<AgentTicketPayload>builder()
                 .id(inputTaskId)
                 .payload(payload)
@@ -122,7 +134,7 @@ class BeAgentExecutorTest {
                 .build();
         when(this.prepareAgentExecutionInputUseCase.enrichWithTasks(lane, baseInput, Set.of(payload))).thenReturn(enrichedInput);
 
-        this.beAgentExecutor.executeLane(lane);
+        this.testItAgentExecutor.executeLane(lane);
 
         verify(this.prepareAgentExecutionInputUseCase).execute(lane);
         verify(this.ticketRepository).findByLaneId(laneId);

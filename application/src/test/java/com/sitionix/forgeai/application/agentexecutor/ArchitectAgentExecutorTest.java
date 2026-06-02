@@ -6,7 +6,7 @@ import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementBePayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
@@ -30,9 +30,7 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class BeAgentExecutorTest {
-
-    private BeAgentExecutor beAgentExecutor;
+class ArchitectAgentExecutorTest {
 
     @Mock
     private PrepareAgentExecutionInputUseCase prepareAgentExecutionInputUseCase;
@@ -47,11 +45,12 @@ class BeAgentExecutorTest {
     private SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase;
 
     private final SupervisedExecutionProperties supervisedExecutionProperties = new SupervisedExecutionProperties();
+    private ArchitectAgentExecutor architectAgentExecutor;
 
     @BeforeEach
     void setUp() {
         this.supervisedExecutionProperties.setCorrectionAttempts(2);
-        this.beAgentExecutor = new BeAgentExecutor(
+        this.architectAgentExecutor = new ArchitectAgentExecutor(
                 this.prepareAgentExecutionInputUseCase,
                 this.agentTicketRepository,
                 this.ticketRepository,
@@ -79,7 +78,7 @@ class BeAgentExecutorTest {
         final ReadyToStartLane lane = ReadyToStartLane.builder()
                 .ticketId(ticketId)
                 .laneId(laneId)
-                .agent(Agent.IMPLEMENT_BE)
+                .agent(Agent.ARCHITECT)
                 .scope("automationservice-sox")
                 .serviceId("atmssox")
                 .sourceTerminalTty("/dev/ttys004")
@@ -97,17 +96,12 @@ class BeAgentExecutorTest {
                 .build();
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(laneState));
 
-        final ImplementBePayload payload = ImplementBePayload.builder()
-                .task("implement task")
-                .scope("automationservice-sox")
-                .summary("summary")
-                .requirements(Set.of("r1"))
-                .constraints(Set.of("c1"))
-                .nonGoals(Set.of("n1"))
-                .architectureDecision("decision")
-                .dependencies(Set.of("d1"))
-                .acceptanceNotes(Set.of("a1"))
-                .risks(Set.of("risk1"))
+        final ArchitectPayload payload = ArchitectPayload.builder()
+                .requirements(Set.of("req"))
+                .constraints(Set.of("constraint"))
+                .nonGoals(Set.of("non-goal"))
+                .risks(Set.of("risk"))
+                .dependencies(Set.of("dependency"))
                 .build();
         final AgentTicket<AgentTicketPayload> agentTicket = AgentTicket.<AgentTicketPayload>builder()
                 .id(inputTaskId)
@@ -122,7 +116,7 @@ class BeAgentExecutorTest {
                 .build();
         when(this.prepareAgentExecutionInputUseCase.enrichWithTasks(lane, baseInput, Set.of(payload))).thenReturn(enrichedInput);
 
-        this.beAgentExecutor.executeLane(lane);
+        this.architectAgentExecutor.executeLane(lane);
 
         verify(this.prepareAgentExecutionInputUseCase).execute(lane);
         verify(this.ticketRepository).findByLaneId(laneId);

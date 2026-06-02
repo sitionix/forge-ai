@@ -8,6 +8,7 @@ forge:
           steps:
             - id: scope_slicing
               title: Scope Slicing
+              task-placeholder: TASKS
               instruction-refs:
                 - additional-instructions/scope-context-usage.md
                 - lane-instructions/analyzer/scope-slicing.md
@@ -23,6 +24,36 @@ forge:
               title: Completion
               instruction-refs:
                 - additional-instructions/completion-callback.md
+
+        architect:
+          version: 1
+          session-mode: single_session
+          steps:
+            - id: input_normalization
+              title: Input Normalization
+              instruction-refs:
+                - lane-instructions/architect/input-normalization.md
+            - id: architecture_direction
+              title: Architecture Direction
+              instruction-refs:
+                - lane-instructions/architect/architecture-direction.md
+            - id: api_decision
+              title: API Decision
+              instruction-refs:
+                - lane-instructions/architect/api-decision.md
+            - id: event_decision
+              title: Event Decision
+              instruction-refs:
+                - lane-instructions/architect/event-decision.md
+            - id: implementation_handoff
+              title: Implementation Handoff
+              instruction-refs:
+                - lane-instructions/architect/implementation-handoff.md
+            - id: completion
+              title: Completion
+              instruction-refs:
+                - additional-instructions/completion-callback.md
+
         api:
           version: 1
           session-mode: single_session
@@ -33,6 +64,7 @@ forge:
                 - additional-instructions/preparation-to-work.md
             - id: contract_changes
               title: Contract Changes
+              task-placeholder: TASKS
               instruction-refs:
                 - additional-instructions/api-contract-rules.md
             - id: version_update
@@ -53,8 +85,171 @@ forge:
               instruction-refs:
                 - lane-instructions/api/completion-content.md
                 - additional-instructions/completion-callback.md
-    supervised-execution:
-      enabled: false
-      agents:
-        - api
-      correction-attempts: 2
+
+        qa_lead:
+          version: 1
+          session-mode: single_session
+          steps:
+            - id: qa_context
+              title: QA Context
+              instruction-refs:
+                - lane-instructions/qa_lead/qa-context.md
+            - id: qa_focus
+              title: QA Focus
+              instruction-refs:
+                - lane-instructions/qa_lead/qa-focus.md
+            - id: test_case_design
+              title: Test Case Design
+              instruction-refs:
+                - lane-instructions/qa_lead/test-case-design.md
+            - id: unit_test_notes
+              title: Unit Test Notes
+              instruction-refs:
+                - lane-instructions/qa_lead/unit-test-notes.md
+            - id: completion
+              title: Completion
+              instruction-refs:
+                - lane-instructions/qa_lead/completion-content.md
+                - additional-instructions/completion-callback.md
+
+        implement_be:
+          version: 1
+          session-mode: single_session
+          steps:
+            - id: backend_context
+              title: Backend Context
+              instruction-refs:
+                - lane-instructions/implement_be/backend-context.md
+            - id: production_implementation
+              title: Production Implementation
+              instruction-refs:
+                - lane-instructions/implement_be/production-implementation.md
+            - id: local_verification
+              title: Local Verification
+              instruction-refs:
+                - lane-instructions/implement_be/local-verification.md
+            - id: completion
+              title: Completion
+              instruction-refs:
+                - lane-instructions/implement_be/completion-content.md
+                - additional-instructions/completion-callback.md
+
+        implement_fe:
+          version: 1
+          session-mode: single_session
+          steps:
+            - id: frontend_context
+              title: Frontend Context
+              instruction-refs:
+                - lane-instructions/implement_fe/frontend-context.md
+            - id: production_implementation
+              title: Production Implementation
+              instruction-refs:
+                - lane-instructions/implement_fe/production-implementation.md
+            - id: local_verification
+              title: Local Verification
+              instruction-refs:
+                - lane-instructions/implement_fe/local-verification.md
+            - id: completion
+              title: Completion
+              instruction-refs:
+                - lane-instructions/implement_fe/completion-content.md
+                - additional-instructions/completion-callback.md
+
+        test_unit:
+          version: 1
+          session-mode: single_session
+          steps:
+            - id: unit_test_context
+              title: Unit Test Context
+              instruction-refs:
+                - lane-instructions/test_unit/unit-test-context.md
+            - id: unit_test_usecase_service
+              title: Unit Test Use Case Service
+              instruction-refs:
+                - lane-instructions/test_unit/unit-test-usecase-service.md
+            - id: unit_test_core
+              title: Unit Test Core
+              instruction-refs:
+                - lane-instructions/test_unit/unit-test-core.md
+            - id: unit_test_mapper
+              title: Unit Test Mapper
+              instruction-refs:
+                - lane-instructions/test_unit/unit-test-mapper.md
+            - id: unit_test_controller
+              title: Unit Test Controller
+              instruction-refs:
+                - lane-instructions/test_unit/unit-test-controller.md
+            - id: unit_test_generated_artifacts
+              title: Unit Test Generated Artifacts
+              instruction-refs:
+                - lane-instructions/test_unit/unit-test-generated-artifacts.md
+            - id: completion
+              title: Completion
+              instruction-refs:
+                - lane-instructions/test_unit/completion-content.md
+                - additional-instructions/completion-callback.md
+
+        test_it:
+          version: 1
+          session-mode: single_session
+          steps:
+            - id: it_test_context
+              title: IT Test Context
+              instruction-refs:
+                - lane-instructions/test_it/it-test-context.md
+            - id: forge_it_setup
+              title: Forge IT Setup
+              instruction-refs:
+                - lane-instructions/test_it/forge-it-setup.md
+            - id: fixtures
+              title: Fixtures
+              instruction-refs:
+                - lane-instructions/test_it/fixtures.md
+            - id: case_implementation
+              title: Case Implementation
+              instruction-refs:
+                - lane-instructions/test_it/case-implementation.md
+            - id: http_mvc_flow
+              title: HTTP MVC Flow
+              instruction-refs:
+                - lane-instructions/test_it/http-mockmvc-flow.md
+            - id: kafka_flow
+              title: Kafka Flow
+              instruction-refs:
+                - lane-instructions/test_it/kafka-flow.md
+            - id: postgresql_flow
+              title: PostgreSQL Flow
+              instruction-refs:
+                - lane-instructions/test_it/postgresql-flow.md
+            - id: wiremock_flow
+              title: WireMock Flow
+              instruction-refs:
+                - lane-instructions/test_it/wiremock-flow.md
+            - id: completion
+              title: Completion
+              instruction-refs:
+                - lane-instructions/test_it/completion-content.md
+                - additional-instructions/completion-callback.md
+
+        test_ui:
+          version: 1
+          session-mode: single_session
+          steps:
+            - id: ui_test_context
+              title: UI Test Context
+              instruction-refs:
+                - lane-instructions/test_ui/ui-test-context.md
+            - id: ui_test_implementation
+              title: UI Test Implementation
+              instruction-refs:
+                - lane-instructions/test_ui/ui-test-implementation.md
+            - id: local_verification
+              title: Local Verification
+              instruction-refs:
+                - lane-instructions/test_ui/local-verification.md
+            - id: completion
+              title: Completion
+              instruction-refs:
+                - lane-instructions/test_ui/completion-content.md
+                - additional-instructions/completion-callback.md

@@ -28,6 +28,7 @@ public class LaneStrategiesProperties {
     public static class StepConfig {
         private String id;
         private String title;
+        private String taskPlaceholder;
         private List<String> instructionRefs = new ArrayList<>();
     }
 }

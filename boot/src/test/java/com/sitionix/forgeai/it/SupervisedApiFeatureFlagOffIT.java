@@ -1,11 +1,11 @@
 package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
-import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.laneexecution.LaneExecutionDocument;
+import com.sitionix.forgeai.it.infra.ItCodexSessionRepositoryStub;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import org.junit.jupiter.api.DisplayName;
@@ -13,14 +13,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.verify;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @IntegrationTest(properties = {
-        "forge-ai.jobs.scheduling-enabled=false",
-        "forge.ai.supervised-execution.enabled=false"
+        "forge-ai.jobs.scheduling-enabled=false"
 })
 class SupervisedApiFeatureFlagOffIT {
 
@@ -30,26 +26,29 @@ class SupervisedApiFeatureFlagOffIT {
     @Autowired
     private ReadyToStartLaneJob readyToStartLaneJob;
 
+    @Autowired
+    private ItCodexSessionRepositoryStub codexSessionRepositoryStub;
+
     @MockBean
     private TerminalTabLauncher terminalTabLauncher;
 
     @MockBean
     private CodexCliCommandBuilder codexCliCommandBuilder;
 
-    @MockBean
-    private CodexClient codexClient;
-
     @Test
-    @DisplayName("Should not create supervised execution records when supervised execution is disabled")
-    void givenReadyApiLane_whenSupervisorDisabled_thenNoSupervisedExecutionRecordsCreated() {
-        // given
+    @DisplayName("Should execute API lane via supervised session without a feature flag")
+    void givenReadyApiLane_whenSchedulerRuns_thenPersistSupervisedExecutionRecords() {
+        this.codexSessionRepositoryStub.clearStartedMessages();
         this.testManager.mongo().create(TicketDocument.class).body("readyToStartApiOnlySeedTicket.json");
 
-        // when
         this.readyToStartLaneJob.run();
 
-        // then
-        this.testManager.mongo().get(LaneExecutionDocument.class).hasSize(0);
-        verify(this.codexClient, atLeastOnce()).submit(any(), anyString());
+        this.testManager.mongo()
+                .get(LaneExecutionDocument.class)
+                .hasSize(1);
+        assertThat(this.codexSessionRepositoryStub.startedMessages()).hasSize(1);
+        assertThat(this.codexSessionRepositoryStub.startedMessages().getFirst())
+                .contains("START_PROMPT")
+                .contains("STEP_PROMPT");
     }
 }

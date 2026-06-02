@@ -90,13 +90,13 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
     }
 
     private String extractStepId(final String message) {
-        final String marker = "Step id:";
-        final int markerIndex = message.indexOf(marker);
-        if (markerIndex >= 0) {
-            final int start = markerIndex + marker.length();
-            final int lineEnd = message.indexOf('\n', start);
-            final String value = lineEnd >= 0 ? message.substring(start, lineEnd) : message.substring(start);
-            return value.trim();
+        final String fromBlock = this.extractFromMultilineLabel(message, "stepId:");
+        if (fromBlock != null) {
+            return fromBlock;
+        }
+        final String fromFallbackBlock = this.extractFromMultilineLabel(message, "Step id:");
+        if (fromFallbackBlock != null) {
+            return fromFallbackBlock;
         }
         final String jsonMarker = "\"stepId\":\"";
         final int jsonIndex = message.indexOf(jsonMarker);
@@ -108,5 +108,38 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
             }
         }
         return null;
+    }
+
+    private String extractFromMultilineLabel(final String message, final String label) {
+        final int labelIndex = message.indexOf(label);
+        if (labelIndex < 0) {
+            return null;
+        }
+        int cursor = labelIndex + label.length();
+        while (cursor < message.length()) {
+            final char current = message.charAt(cursor);
+            if (current == '\n' || current == '\r') {
+                cursor++;
+                continue;
+            }
+            break;
+        }
+        final int lineEnd = this.findLineEnd(message, cursor);
+        if (cursor >= lineEnd) {
+            return null;
+        }
+        return message.substring(cursor, lineEnd).trim();
+    }
+
+    private int findLineEnd(final String message, final int startIndex) {
+        int index = startIndex;
+        while (index < message.length()) {
+            final char current = message.charAt(index);
+            if (current == '\n' || current == '\r') {
+                break;
+            }
+            index++;
+        }
+        return index;
     }
 }

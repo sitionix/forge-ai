@@ -1,12 +1,13 @@
 package com.sitionix.forgeai.application.agentexecutor;
 
+import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
+import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.codex.AnalyzerExecutionPayload;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
-import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import java.util.Set;
 import java.util.UUID;
@@ -34,28 +35,31 @@ class AnalyzeAgentExecutorTest {
     private PrepareAgentExecutionInputUseCase prepareAgentExecutionInputUseCase;
 
     @Mock
-    private CodexClient codexClient;
+    private SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase;
 
     @Mock
     private TicketRepository ticketRepository;
 
+    private final SupervisedExecutionProperties supervisedExecutionProperties = new SupervisedExecutionProperties();
+
     @BeforeEach
     void setUp() {
+        this.supervisedExecutionProperties.setCorrectionAttempts(2);
         this.analyzeAgentExecutor = new AnalyzeAgentExecutor(
                 this.prepareAgentExecutionInputUseCase,
-                this.codexClient,
+                this.supervisedLaneExecutionUseCase,
+                this.supervisedExecutionProperties,
                 this.ticketRepository
         );
     }
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.prepareAgentExecutionInputUseCase, this.codexClient, this.ticketRepository);
+        verifyNoMoreInteractions(this.prepareAgentExecutionInputUseCase, this.supervisedLaneExecutionUseCase, this.ticketRepository);
     }
 
     @Test
-    void givenReadyLane_whenExecute_thenSubmitEnrichedInputToCodex() {
-        //given
+    void givenReadyLane_whenExecute_thenUseSupervisorWithTicketPayload() {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final ReadyToStartLane lane = ReadyToStartLane.builder()
@@ -84,16 +88,14 @@ class AnalyzeAgentExecutorTest {
         when(this.prepareAgentExecutionInputUseCase.enrichWithTasks(eq(lane), eq(baseInput), any(Set.class)))
                 .thenReturn(enrichedInput);
 
-        //when
         this.analyzeAgentExecutor.executeLane(lane);
 
-        //then
         verify(this.prepareAgentExecutionInputUseCase).execute(lane);
         verify(this.ticketRepository).findTicketContentById(ticketId);
         verify(this.prepareAgentExecutionInputUseCase).enrichWithTasks(eq(lane), eq(baseInput), any(Set.class));
 
         final ArgumentCaptor<AgentExecutionInput> inputCaptor = ArgumentCaptor.forClass(AgentExecutionInput.class);
-        verify(this.codexClient).submit(inputCaptor.capture(), eq("/dev/ttys003"));
+        verify(this.supervisedLaneExecutionUseCase).execute(eq(lane), inputCaptor.capture(), eq(2));
         final AgentExecutionInput actual = inputCaptor.getValue();
 
         assertThat(actual.getTicketId()).isEqualTo(ticketId);
@@ -101,5 +103,6 @@ class AnalyzeAgentExecutorTest {
         assertThat(actual.getTasks()).isEqualTo(Set.of(AnalyzerExecutionPayload.builder()
                 .ticket("task-description")
                 .build()));
+        assertThat(actual).isEqualTo(enrichedInput);
     }
 }

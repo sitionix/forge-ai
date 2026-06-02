@@ -87,8 +87,3 @@ Do not send `status` or any negative outcome fields.
 }
 <<<END_LANE_STEP_DONE_JSON>>>
 ```
-
-## Runtime Placeholders
-
-Use `{{TASKS}}` or `{{TASK}}` when the current lane task payloads should be injected at runtime.
-`{{TASKS_JSON}}` is accepted as a compatibility alias for the same runtime task payload content.

@@ -54,4 +54,3 @@ forge:
 
       shared:
         - instructions/shared/common-rules.md
-        - instructions/shared/lazy-instruction-strategy.md

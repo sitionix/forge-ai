@@ -1,11 +1,11 @@
 package com.sitionix.forgeai.infrastructure.resources.lanestrategy;
 
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
-import org.junit.jupiter.api.Test;
-import org.springframework.core.io.DefaultResourceLoader;
-
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.Test;
+import org.springframework.core.io.DefaultResourceLoader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -13,11 +13,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ResourceLaneStrategyRepositoryTest {
 
     @Test
-    void givenValidApiStrategy_whenInit_thenLoadAndKeepOrder() {
-        final LaneStrategiesProperties properties = new LaneStrategiesProperties();
-        properties.setConfigs(Map.of("api", strategy(
-                step("preparation", List.of("additional-instructions/preparation-to-work.md")),
-                step("contract_update", List.of("additional-instructions/api-contract-rules.md", "additional-instructions/version-rules.md"))
+    void givenValidStrategiesForAllExecutableNonReviewerAgents_whenInit_thenLoadAndKeepOrder() {
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setConfigs(new LinkedHashMap<>(Map.of(
+                "analyzer", strategy(step("scope_slicing", "Scope Slicing", null, List.of("additional-instructions/scope-context-usage.md", "lane-instructions/analyzer/scope-slicing.md"))),
+                "architect", strategy(step("input_normalization", "Input Normalization", null, List.of("lane-instructions/architect/input-normalization.md"))),
+                "api", strategy(
+                        step("preparation", "Preparation", null, List.of("additional-instructions/preparation-to-work.md")),
+                        step("contract_changes", "Contract Changes", "TASKS", List.of("additional-instructions/api-contract-rules.md"))
+                ),
+                "qa_lead", strategy(step("qa_context", "QA Context", null, List.of("lane-instructions/qa_lead/qa-context.md"))),
+                "implement_be", strategy(step("backend_context", "Backend Context", null, List.of("lane-instructions/implement_be/backend-context.md"))),
+                "implement_fe", strategy(step("frontend_context", "Frontend Context", null, List.of("lane-instructions/implement_fe/frontend-context.md"))),
+                "test_unit", strategy(step("unit_test_context", "Unit Test Context", null, List.of("lane-instructions/test_unit/unit-test-context.md"))),
+                "test_it", strategy(step("it_test_context", "IT Test Context", null, List.of("lane-instructions/test_it/it-test-context.md"))),
+                "test_ui", strategy(step("ui_test_context", "UI Test Context", null, List.of("lane-instructions/test_ui/ui-test-context.md")))
         )));
 
         final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
@@ -26,16 +36,32 @@ class ResourceLaneStrategyRepositoryTest {
         final LaneStrategy strategy = repository.findByAgentId("api");
         assertThat(strategy.getSteps()).hasSize(2);
         assertThat(strategy.getSteps().get(0).getId()).isEqualTo("preparation");
-        assertThat(strategy.getSteps().get(1).getId()).isEqualTo("contract_update");
+        assertThat(strategy.getSteps().get(1).getId()).isEqualTo("contract_changes");
+        assertThat(strategy.getSteps().get(1).getTaskPlaceholder()).isEqualTo("TASKS");
+    }
+
+    @Test
+    void givenMissingRequiredAgentStrategy_whenInit_thenReject() {
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setConfigs(new LinkedHashMap<>(Map.of(
+                "api", strategy(step("preparation", "Preparation", null, List.of("additional-instructions/preparation-to-work.md")))
+        )));
+
+        final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
+
+        assertThatThrownBy(repository::init)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Missing lane strategy");
     }
 
     @Test
     void givenDuplicateStepIds_whenInit_thenReject() {
-        final LaneStrategiesProperties properties = new LaneStrategiesProperties();
-        properties.setConfigs(Map.of("api", strategy(
-                step("preparation", List.of("additional-instructions/preparation-to-work.md")),
-                step("preparation", List.of("additional-instructions/version-rules.md"))
-        )));
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
+        properties.getConfigs().put("api", strategy(
+                step("preparation", "Preparation", null, List.of("additional-instructions/preparation-to-work.md")),
+                step("preparation", "Preparation", null, List.of("additional-instructions/version-rules.md"))
+        ));
 
         final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
 
@@ -46,10 +72,11 @@ class ResourceLaneStrategyRepositoryTest {
 
     @Test
     void givenMissingInstructionRef_whenInit_thenReject() {
-        final LaneStrategiesProperties properties = new LaneStrategiesProperties();
-        properties.setConfigs(Map.of("api", strategy(
-                step("preparation", List.of("additional-instructions/does-not-exist.md"))
-        )));
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
+        properties.getConfigs().put("api", strategy(
+                step("preparation", "Preparation", null, List.of("additional-instructions/does-not-exist.md"))
+        ));
 
         final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
 
@@ -60,13 +87,14 @@ class ResourceLaneStrategyRepositoryTest {
 
     @Test
     void givenDuplicateInstructionRefInsideStep_whenInit_thenReject() {
-        final LaneStrategiesProperties properties = new LaneStrategiesProperties();
-        properties.setConfigs(Map.of("api", strategy(
-                step("preparation", List.of(
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
+        properties.getConfigs().put("api", strategy(
+                step("preparation", "Preparation", null, List.of(
                         "additional-instructions/preparation-to-work.md",
                         "additional-instructions/preparation-to-work.md"
                 ))
-        )));
+        ));
         final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
 
         assertThatThrownBy(repository::init)
@@ -76,18 +104,38 @@ class ResourceLaneStrategyRepositoryTest {
 
     @Test
     void givenEmptySteps_whenInit_thenReject() {
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
         final LaneStrategiesProperties.StrategyConfig config = new LaneStrategiesProperties.StrategyConfig();
         config.setVersion(1);
         config.setSessionMode("single_session");
-
-        final LaneStrategiesProperties properties = new LaneStrategiesProperties();
-        properties.setConfigs(Map.of("api", config));
+        properties.getConfigs().put("api", config);
 
         final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
 
         assertThatThrownBy(repository::init)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("no steps");
+    }
+
+    private LaneStrategiesProperties baseProperties() {
+        final LaneStrategiesProperties properties = new LaneStrategiesProperties();
+        properties.setConfigs(new LinkedHashMap<>());
+        return properties;
+    }
+
+    private Map<String, LaneStrategiesProperties.StrategyConfig> baseStrategyMap() {
+        final Map<String, LaneStrategiesProperties.StrategyConfig> configs = new LinkedHashMap<>();
+        configs.put("analyzer", strategy(step("scope_slicing", "Scope Slicing", null, List.of("additional-instructions/scope-context-usage.md", "lane-instructions/analyzer/scope-slicing.md"))));
+        configs.put("architect", strategy(step("input_normalization", "Input Normalization", null, List.of("lane-instructions/architect/input-normalization.md"))));
+        configs.put("api", strategy(step("preparation", "Preparation", null, List.of("additional-instructions/preparation-to-work.md"))));
+        configs.put("qa_lead", strategy(step("qa_context", "QA Context", null, List.of("lane-instructions/qa_lead/qa-context.md"))));
+        configs.put("implement_be", strategy(step("backend_context", "Backend Context", null, List.of("lane-instructions/implement_be/backend-context.md"))));
+        configs.put("implement_fe", strategy(step("frontend_context", "Frontend Context", null, List.of("lane-instructions/implement_fe/frontend-context.md"))));
+        configs.put("test_unit", strategy(step("unit_test_context", "Unit Test Context", null, List.of("lane-instructions/test_unit/unit-test-context.md"))));
+        configs.put("test_it", strategy(step("it_test_context", "IT Test Context", null, List.of("lane-instructions/test_it/it-test-context.md"))));
+        configs.put("test_ui", strategy(step("ui_test_context", "UI Test Context", null, List.of("lane-instructions/test_ui/ui-test-context.md"))));
+        return configs;
     }
 
     private static LaneStrategiesProperties.StrategyConfig strategy(final LaneStrategiesProperties.StepConfig... steps) {
@@ -98,10 +146,14 @@ class ResourceLaneStrategyRepositoryTest {
         return config;
     }
 
-    private static LaneStrategiesProperties.StepConfig step(final String id, final List<String> refs) {
+    private static LaneStrategiesProperties.StepConfig step(final String id,
+                                                            final String title,
+                                                            final String taskPlaceholder,
+                                                            final List<String> refs) {
         final LaneStrategiesProperties.StepConfig step = new LaneStrategiesProperties.StepConfig();
         step.setId(id);
-        step.setTitle(id);
+        step.setTitle(title);
+        step.setTaskPlaceholder(taskPlaceholder);
         step.setInstructionRefs(refs);
         return step;
     }

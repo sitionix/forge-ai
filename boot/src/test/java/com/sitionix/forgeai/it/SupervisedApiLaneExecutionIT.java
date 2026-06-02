@@ -22,9 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 @IntegrationTest(properties = {
-        "forge-ai.jobs.scheduling-enabled=false",
-        "forge.ai.supervised-execution.enabled=true",
-        "forge.ai.supervised-execution.agents[0]=api"
+        "forge-ai.jobs.scheduling-enabled=false"
 })
 class SupervisedApiLaneExecutionIT {
 
@@ -78,9 +76,11 @@ class SupervisedApiLaneExecutionIT {
         assertThat(this.codexSessionRepositoryStub.startedMessages())
                 .singleElement()
                 .satisfies(message -> {
-                    assertThat(message).contains("Supervised lane session started.");
-                    assertThat(message).contains("Agent instruction:");
+                    assertThat(message).contains("START_PROMPT");
+                    assertThat(message).contains("STEP_PROMPT");
+                    assertThat(message).contains("stepId:");
                     assertThat(message).contains("# Common Agent Rules");
+                    assertThat(message).doesNotContain("contract_changes");
                 });
 
         verifyNoInteractions(this.codexClient);

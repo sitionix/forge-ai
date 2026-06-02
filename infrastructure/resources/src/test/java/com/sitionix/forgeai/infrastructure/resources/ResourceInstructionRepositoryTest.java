@@ -90,7 +90,7 @@ class ResourceInstructionRepositoryTest {
         final String actual = this.resourceInstructionRepository.findInstructionTextByRef("lane-instructions/analyzer/scope-slicing.md");
 
         assertThat(actual).contains("# Analyzer Scope Slicing");
-        assertThat(actual).contains("{{TASKS}}");
+        assertThat(actual).doesNotContain("{{TASKS}}");
     }
 
     @Test

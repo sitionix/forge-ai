@@ -10,5 +10,6 @@ public class LaneStrategyStep {
     String id;
     String title;
     int order;
+    String taskPlaceholder;
     List<String> instructionRefs;
 }

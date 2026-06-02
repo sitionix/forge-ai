@@ -3,10 +3,13 @@ package com.sitionix.forgeai.application.laneexecution;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
+import com.sitionix.forgeai.domain.model.codex.ScopeContext;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -21,70 +24,62 @@ import org.springframework.stereotype.Component;
 public class LaneStepPromptBuilder {
 
     private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{([A-Za-z0-9_]+)\\}\\}");
-    private static final String TASKS_JSON_PLACEHOLDER = "TASKS_JSON";
-    private static final String TASKS_PLACEHOLDER = "TASKS";
-    private static final String TASK_PLACEHOLDER = "TASK";
 
     private final ObjectMapper objectMapper;
     private final InstructionRepository instructionRepository;
 
-    public String startPrompt(final ReadyToStartLane lane,
-                              final AgentExecutionInput<AgentTicketPayload> input,
-                              final int totalSteps) {
-        final Map<String, String> values = this.runtimeValues(lane, input, null, 0, totalSteps);
-        return new StringBuilder()
-                .append("Supervised lane session started.\n")
-                .append("ticketId: ").append(lane.getTicketId()).append('\n')
-                .append("laneId: ").append(lane.getLaneId()).append('\n')
-                .append("agentId: ").append(lane.getAgent().getId()).append('\n')
-                .append("scope: ").append(this.scopeValue(input)).append("\n\n")
-                .append("Agent instruction:\n")
-                .append(this.renderPlaceholders(Objects.toString(input.getAgentInstruction(), ""), values)).append("\n\n")
-                .append("Additional instructions:\n")
-                .append(this.renderInstructionBlock(input.getAdditionalInstructions(), values)).append("\n\n")
-                .append("Shared instructions:\n")
-                .append(this.renderInstructionBlock(input.getSharedInstructions(), values))
-                .toString();
+    public String buildStartPrompt(final ReadyToStartLane lane,
+                                   final LaneStrategy strategy,
+                                   final AgentExecutionInput<AgentTicketPayload> input) {
+        final StringBuilder builder = new StringBuilder("START_PROMPT\n");
+        this.appendSection(builder, "ticketId", Objects.toString(lane.getTicketId(), ""));
+        this.appendSection(builder, "ticketKey", Objects.toString(lane.getTicketKey(), ""));
+        this.appendSection(builder, "laneId", Objects.toString(lane.getLaneId(), ""));
+        this.appendSection(builder, "agentId", Objects.toString(lane.getAgent().getId(), ""));
+        this.appendSection(builder, "scope", Objects.toString(lane.getScope(), ""));
+        this.appendSection(builder, "strategyId", Objects.toString(strategy.getAgentId(), ""));
+        this.appendSection(builder, "strategyVersion", Integer.toString(strategy.getVersion()));
+        this.appendSection(builder, "workspaceRoot", this.workspaceRoot());
+        this.appendSection(builder, "scopeContext", this.serializeScopeContext(input.getScope()));
+        this.appendSection(builder, "contractApi", this.serializeContractApi(input));
+        this.appendSection(builder, "commonRules", this.renderCommonRules());
+        return builder.toString().trim();
     }
 
-    public String stepPrompt(final ReadyToStartLane lane,
-                             final LaneStrategyStep step,
-                             final int index,
-                             final int total,
-                             final AgentExecutionInput<AgentTicketPayload> input) {
-        final Map<String, String> values = this.runtimeValues(lane, input, step, index, total);
-        return new StringBuilder()
-                .append("Step ").append(index).append('/').append(total).append('\n')
-                .append("Step id: ").append(step.getId()).append('\n')
-                .append("Step title: ").append(step.getTitle()).append('\n')
-                .append("Instruction refs:\n")
-                .append(this.renderInstructionRefs(step.getInstructionRefs(), values)).append("\n\n")
-                .append("Task payloads for this lane:\n")
-                .append(this.renderPlaceholders(this.serializeTasks(this.safeTasks(input.getTasks())), values)).append('\n')
-                .append("Active step id: ").append(step.getId()).append('\n')
-                .append("When the step is complete, return the common LANE_STEP_DONE result block for this step id.")
-                .toString();
+    public String buildStepPrompt(final LaneStrategyStep step,
+                                  final int index,
+                                  final int total) {
+        return this.buildStepPrompt(step, index, total, null, null, null);
     }
 
-    public String correctionPrompt(final String stepId) {
-        return "Your previous response did not contain a valid LANE_STEP_DONE result for stepId=" + stepId + ".\n"
+    public String buildStepPrompt(final LaneStrategyStep step,
+                                  final int index,
+                                  final int total,
+                                  final ReadyToStartLane lane,
+                                  final LaneStrategy strategy,
+                                  final AgentExecutionInput<AgentTicketPayload> input) {
+        final Map<String, String> values = this.stepValues(step, input);
+        final StringBuilder builder = new StringBuilder("STEP_PROMPT\n");
+        this.appendSection(builder, "stepIndex", index + "/" + total);
+        this.appendSection(builder, "stepId", step.getId());
+        this.appendSection(builder, "stepTitle", step.getTitle());
+        if (step.getTaskPlaceholder() != null && !step.getTaskPlaceholder().isBlank()) {
+            this.appendSection(builder, "taskPayloads", this.serializeTasks(this.safeTasks(input == null ? null : input.getTasks())));
+        }
+        this.appendSection(builder, "activeInstructions", this.renderInstructionRefs(step.getInstructionRefs(), values));
+        builder.append("Return the common LANE_STEP_DONE result block for this step id.");
+        return builder.toString().trim();
+    }
+
+    public String buildCorrectionPrompt(final String stepId) {
+        return "CORRECTION_PROMPT\n"
+                + "Your previous response did not contain a valid LANE_STEP_DONE result for stepId=" + stepId + ".\n"
                 + "Return one valid marked LANE_STEP_DONE JSON block for the current step.\n"
                 + "Do not continue to another step.";
     }
 
-    private String renderInstructionBlock(final Set<String> instructions, final Map<String, String> values) {
-        if (instructions == null || instructions.isEmpty()) {
-            return "";
-        }
-        final StringBuilder builder = new StringBuilder();
-        int index = 0;
-        for (final String instruction : instructions) {
-            if (index++ > 0) {
-                builder.append("\n\n---\n\n");
-            }
-            builder.append(this.renderPlaceholders(instruction, values));
-        }
-        return builder.toString();
+    private String renderCommonRules() {
+        return this.instructionRepository.findInstructionTextByRef("shared/common-rules.md");
     }
 
     private String renderInstructionRefs(final Iterable<String> refs, final Map<String, String> values) {
@@ -99,27 +94,15 @@ public class LaneStepPromptBuilder {
         return builder.toString();
     }
 
-    private Map<String, String> runtimeValues(final ReadyToStartLane lane,
-                                              final AgentExecutionInput<AgentTicketPayload> input,
-                                              final LaneStrategyStep step,
-                                              final int index,
-                                              final int total) {
+    private Map<String, String> stepValues(final LaneStrategyStep step,
+                                           final AgentExecutionInput<AgentTicketPayload> input) {
         final Map<String, String> values = new LinkedHashMap<>();
-        values.put(TASKS_JSON_PLACEHOLDER, this.serializeTasks(this.safeTasks(input.getTasks())));
-        values.put(TASKS_PLACEHOLDER, values.get(TASKS_JSON_PLACEHOLDER));
-        values.put(TASK_PLACEHOLDER, values.get(TASKS_JSON_PLACEHOLDER));
-        values.put(TASKS_JSON_PLACEHOLDER.toLowerCase(), values.get(TASKS_JSON_PLACEHOLDER));
-        values.put(TASKS_PLACEHOLDER.toLowerCase(), values.get(TASKS_JSON_PLACEHOLDER));
-        values.put(TASK_PLACEHOLDER.toLowerCase(), values.get(TASKS_JSON_PLACEHOLDER));
-        values.put("TICKET_ID", Objects.toString(lane.getTicketId(), ""));
-        values.put("LANE_ID", Objects.toString(lane.getLaneId(), ""));
-        values.put("AGENT_ID", Objects.toString(lane.getAgent().getId(), ""));
-        values.put("SCOPE", this.scopeValue(input));
-        values.put("STEP_INDEX", Integer.toString(index));
-        values.put("STEP_TOTAL", Integer.toString(total));
-        if (step != null) {
-            values.put("STEP_ID", Objects.toString(step.getId(), ""));
-            values.put("STEP_TITLE", Objects.toString(step.getTitle(), ""));
+        values.put("STEP_ID", Objects.toString(step.getId(), ""));
+        values.put("STEP_TITLE", Objects.toString(step.getTitle(), ""));
+        if (step.getTaskPlaceholder() != null && !step.getTaskPlaceholder().isBlank() && input != null) {
+            values.put("TASKS_JSON", this.serializeTasks(this.safeTasks(input.getTasks())));
+            values.put("TASKS", values.get("TASKS_JSON"));
+            values.put("TASK", values.get("TASKS_JSON"));
         }
         final Map<String, String> aliases = new LinkedHashMap<>();
         values.forEach((key, value) -> aliases.putIfAbsent(key.toLowerCase(), value));
@@ -142,19 +125,52 @@ public class LaneStepPromptBuilder {
         return buffer.toString();
     }
 
-    private String scopeValue(final AgentExecutionInput<AgentTicketPayload> input) {
-        if (input.getScope() == null || input.getScope().getScope() == null) {
-            return "";
+    private void appendSection(final StringBuilder builder, final String label, final String value) {
+        if (value == null || value.isBlank()) {
+            return;
         }
-        return input.getScope().getScope();
+        if (builder.charAt(builder.length() - 1) != '\n') {
+            builder.append('\n');
+        }
+        builder.append(label).append(":\n").append(value.trim()).append("\n\n");
     }
 
     private String serializeTasks(final Set<AgentTicketPayload> tasks) {
         try {
             return this.objectMapper.writeValueAsString(tasks);
-        } catch (JsonProcessingException e) {
+        } catch (final JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize task payloads for step prompt", e);
         }
+    }
+
+    private String serializeScopeContext(final ScopeContext scopeContext) {
+        if (scopeContext == null) {
+            return "";
+        }
+        try {
+            return this.objectMapper.writeValueAsString(scopeContext);
+        } catch (final JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize scope context", e);
+        }
+    }
+
+    private String serializeContractApi(final AgentExecutionInput<AgentTicketPayload> input) {
+        if (input.getContractApi() == null) {
+            return "";
+        }
+        try {
+            return this.objectMapper.writeValueAsString(input.getContractApi());
+        } catch (final JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize contract api", e);
+        }
+    }
+
+    private String workspaceRoot() {
+        final String envWorkspaceRoot = System.getenv("WORKSPACE_ROOT");
+        if (envWorkspaceRoot != null && !envWorkspaceRoot.isBlank()) {
+            return Path.of(envWorkspaceRoot).toAbsolutePath().normalize().toString();
+        }
+        return Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize().toString();
     }
 
     private Set<AgentTicketPayload> safeTasks(final Set<AgentTicketPayload> tasks) {
