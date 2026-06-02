@@ -1,21 +1,12 @@
 package com.sitionix.forgeai.application.laneexecution;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
-import com.sitionix.forgeai.domain.model.codex.ScopeContext;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
-import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyPromptConfig;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
-import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.List;
 import java.util.Objects;
-import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -23,14 +14,11 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class LaneStepPromptBuilder {
 
-    private static final Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\{\\{([A-Za-z0-9_]+)\\}\\}");
-
-    private final ObjectMapper objectMapper;
-    private final InstructionRepository instructionRepository;
+    private final LaneStrategyPromptConfig laneStrategyPromptConfig;
 
     public String buildStartPrompt(final ReadyToStartLane lane,
                                    final LaneStrategy strategy,
-                                   final AgentExecutionInput<AgentTicketPayload> input) {
+                                   final Path startContextPath) {
         final StringBuilder builder = new StringBuilder("START_PROMPT\n");
         this.appendSection(builder, "ticketId", Objects.toString(lane.getTicketId(), ""));
         this.appendSection(builder, "ticketKey", Objects.toString(lane.getTicketKey(), ""));
@@ -40,89 +28,35 @@ public class LaneStepPromptBuilder {
         this.appendSection(builder, "strategyId", Objects.toString(strategy.getAgentId(), ""));
         this.appendSection(builder, "strategyVersion", Integer.toString(strategy.getVersion()));
         this.appendSection(builder, "workspaceRoot", this.workspaceRoot());
-        this.appendSection(builder, "scopeContext", this.serializeScopeContext(input.getScope()));
-        this.appendSection(builder, "contractApi", this.serializeContractApi(input));
-        this.appendSection(builder, "commonRules", this.renderCommonRules());
+        this.appendSection(builder, "startContext", this.relativePath(startContextPath));
+        this.appendSection(builder, "commonInstructionRefs", this.formatRefs(this.laneStrategyPromptConfig.getCommonInstructionRefs()));
+        builder.append("Read the runtime context file before proceeding.");
         return builder.toString().trim();
-    }
-
-    public String buildStepPrompt(final LaneStrategyStep step,
-                                  final int index,
-                                  final int total) {
-        return this.buildStepPrompt(step, index, total, null, null, null);
     }
 
     public String buildStepPrompt(final LaneStrategyStep step,
                                   final int index,
                                   final int total,
-                                  final ReadyToStartLane lane,
-                                  final LaneStrategy strategy,
-                                  final AgentExecutionInput<AgentTicketPayload> input) {
-        final Map<String, String> values = this.stepValues(step, input);
+                                  final Path runtimeStepPath) {
         final StringBuilder builder = new StringBuilder("STEP_PROMPT\n");
         this.appendSection(builder, "stepIndex", index + "/" + total);
         this.appendSection(builder, "stepId", step.getId());
         this.appendSection(builder, "stepTitle", step.getTitle());
-        if (step.getTaskPlaceholder() != null && !step.getTaskPlaceholder().isBlank()) {
-            this.appendSection(builder, "taskPayloads", this.serializeTasks(this.safeTasks(input == null ? null : input.getTasks())));
-        }
-        this.appendSection(builder, "activeInstructions", this.renderInstructionRefs(step.getInstructionRefs(), values));
-        builder.append("Return the common LANE_STEP_DONE result block for this step id.");
+        this.appendSection(builder, "runtimeStepFile", this.relativePath(runtimeStepPath));
+        builder.append("Return one valid LANE_STEP_DONE result for this step.");
         return builder.toString().trim();
     }
 
-    public String buildCorrectionPrompt(final String stepId) {
-        return "CORRECTION_PROMPT\n"
+    public String buildCorrectionPrompt(final String stepId, final Path runtimeStepPath) {
+        return ("CORRECTION_PROMPT\n"
                 + "Your previous response did not contain a valid LANE_STEP_DONE result for stepId=" + stepId + ".\n"
-                + "Return one valid marked LANE_STEP_DONE JSON block for the current step.\n"
-                + "Do not continue to another step.";
+                + "Read the active step instruction again:\n"
+                + this.relativePath(runtimeStepPath) + "\n"
+                + "Return one valid LANE_STEP_DONE result.").trim();
     }
 
-    private String renderCommonRules() {
-        return this.instructionRepository.findInstructionTextByRef("shared/common-rules.md");
-    }
-
-    private String renderInstructionRefs(final Iterable<String> refs, final Map<String, String> values) {
-        final StringBuilder builder = new StringBuilder();
-        int index = 0;
-        for (final String ref : refs) {
-            if (index++ > 0) {
-                builder.append("\n\n---\n\n");
-            }
-            builder.append(this.renderPlaceholders(this.instructionRepository.findInstructionTextByRef(ref), values));
-        }
-        return builder.toString();
-    }
-
-    private Map<String, String> stepValues(final LaneStrategyStep step,
-                                           final AgentExecutionInput<AgentTicketPayload> input) {
-        final Map<String, String> values = new LinkedHashMap<>();
-        values.put("STEP_ID", Objects.toString(step.getId(), ""));
-        values.put("STEP_TITLE", Objects.toString(step.getTitle(), ""));
-        if (step.getTaskPlaceholder() != null && !step.getTaskPlaceholder().isBlank() && input != null) {
-            values.put("TASKS_JSON", this.serializeTasks(this.safeTasks(input.getTasks())));
-            values.put("TASKS", values.get("TASKS_JSON"));
-            values.put("TASK", values.get("TASKS_JSON"));
-        }
-        final Map<String, String> aliases = new LinkedHashMap<>();
-        values.forEach((key, value) -> aliases.putIfAbsent(key.toLowerCase(), value));
-        values.putAll(aliases);
-        return values;
-    }
-
-    private String renderPlaceholders(final String template, final Map<String, String> values) {
-        if (template == null || template.isEmpty()) {
-            return "";
-        }
-        final Matcher matcher = PLACEHOLDER_PATTERN.matcher(template);
-        final StringBuffer buffer = new StringBuffer();
-        while (matcher.find()) {
-            final String key = matcher.group(1);
-            final String replacement = values.get(key);
-            matcher.appendReplacement(buffer, Matcher.quoteReplacement(replacement == null ? matcher.group(0) : replacement));
-        }
-        matcher.appendTail(buffer);
-        return buffer.toString();
+    public List<String> commonInstructionRefs() {
+        return List.copyOf(this.laneStrategyPromptConfig.getCommonInstructionRefs());
     }
 
     private void appendSection(final StringBuilder builder, final String label, final String value) {
@@ -135,34 +69,30 @@ public class LaneStepPromptBuilder {
         builder.append(label).append(":\n").append(value.trim()).append("\n\n");
     }
 
-    private String serializeTasks(final Set<AgentTicketPayload> tasks) {
-        try {
-            return this.objectMapper.writeValueAsString(tasks);
-        } catch (final JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize task payloads for step prompt", e);
-        }
-    }
-
-    private String serializeScopeContext(final ScopeContext scopeContext) {
-        if (scopeContext == null) {
+    private String formatRefs(final List<String> refs) {
+        if (refs == null || refs.isEmpty()) {
             return "";
         }
-        try {
-            return this.objectMapper.writeValueAsString(scopeContext);
-        } catch (final JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize scope context", e);
+        final StringBuilder builder = new StringBuilder();
+        for (final String ref : refs) {
+            if (builder.length() > 0) {
+                builder.append('\n');
+            }
+            builder.append("- ").append(ref);
         }
+        return builder.toString();
     }
 
-    private String serializeContractApi(final AgentExecutionInput<AgentTicketPayload> input) {
-        if (input.getContractApi() == null) {
+    private String relativePath(final Path path) {
+        if (path == null) {
             return "";
         }
-        try {
-            return this.objectMapper.writeValueAsString(input.getContractApi());
-        } catch (final JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize contract api", e);
+        final Path normalizedPath = path.toAbsolutePath().normalize();
+        final Path workspaceRoot = Path.of(this.workspaceRoot()).toAbsolutePath().normalize();
+        if (normalizedPath.startsWith(workspaceRoot)) {
+            return workspaceRoot.relativize(normalizedPath).toString();
         }
+        return path.toString();
     }
 
     private String workspaceRoot() {
@@ -171,9 +101,5 @@ public class LaneStepPromptBuilder {
             return Path.of(envWorkspaceRoot).toAbsolutePath().normalize().toString();
         }
         return Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize().toString();
-    }
-
-    private Set<AgentTicketPayload> safeTasks(final Set<AgentTicketPayload> tasks) {
-        return Objects.requireNonNullElseGet(tasks, Set::of);
     }
 }

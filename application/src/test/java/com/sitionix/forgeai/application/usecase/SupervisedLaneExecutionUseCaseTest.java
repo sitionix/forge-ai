@@ -3,12 +3,15 @@ package com.sitionix.forgeai.application.usecase;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
 import com.sitionix.forgeai.application.laneexecution.LaneStepPromptBuilder;
+import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
+import com.sitionix.forgeai.application.laneexecution.SupervisedPromptArtifactWriter;
 import com.sitionix.forgeai.application.laneexecution.support.FakeInteractiveCodexSessionRepository;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.codex.ScopeContext;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyPromptConfig;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
@@ -18,6 +21,8 @@ import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -28,6 +33,7 @@ import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -38,11 +44,17 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class SupervisedLaneExecutionUseCaseTest {
 
+    @TempDir
+    Path tempDir;
+
     @Mock
     private LaneStrategyRepository laneStrategyRepository;
 
     @Mock
     private InstructionRepository instructionRepository;
+
+    private LaneStrategyPromptConfig laneStrategyPromptConfig;
+    private SupervisedExecutionProperties supervisedExecutionProperties;
 
     private InMemoryLaneExecutionRepository laneExecutionRepository;
     private FakeInteractiveCodexSessionRepository codexSessionRepository;
@@ -51,6 +63,10 @@ class SupervisedLaneExecutionUseCaseTest {
     @BeforeEach
     void setUp() {
         this.laneExecutionRepository = new InMemoryLaneExecutionRepository();
+        this.laneStrategyPromptConfig = () -> List.of("shared/common-rules.md");
+        this.supervisedExecutionProperties = new SupervisedExecutionProperties();
+        this.supervisedExecutionProperties.setRuntimeRoot(this.tempDir.resolve("runtime").toString());
+        this.supervisedExecutionProperties.setMaxOutgoingPromptChars(1500);
         this.stubInstructionRefs();
     }
 
@@ -71,40 +87,65 @@ class SupervisedLaneExecutionUseCaseTest {
         assertThat(serviceMessages).hasSize(4);
         assertThat(serviceMessages.getFirst())
                 .startsWith("service:START_PROMPT")
-                .contains("commonRules:")
-                .contains("# Common Agent Rules")
-                .contains("single LANE_STEP_DONE response")
+                .contains("startContext:")
+                .contains("commonInstructionRefs:")
+                .contains("shared/common-rules.md")
                 .contains("STEP_PROMPT")
                 .contains("scope_slicing")
-                .doesNotContain("Agent instruction.")
+                .contains("runtimeStepFile:")
                 .doesNotContain("Lazy Instruction Strategy")
                 .doesNotContain("architect_handoff")
                 .doesNotContain("qa_lead_handoff")
                 .doesNotContain("completion-callback.md")
-                .doesNotContain("<<<LANE_STEP_DONE_JSON>>>");
+                .doesNotContain("# Common Agent Rules")
+                .doesNotContain("agentInstruction:")
+                .doesNotContain("taskPayloads:")
+                .doesNotContain("contractApi:")
+                .doesNotContain("scopeContext:")
+                .doesNotContain("additionalInstructions:");
 
         assertThat(serviceMessages.get(1))
                 .contains("STEP_PROMPT")
                 .contains("architect_handoff")
-                .doesNotContain("ticketId:")
-                .doesNotContain("scopeContext:")
+                .contains("runtimeStepFile:")
                 .doesNotContain("scope_slicing")
                 .doesNotContain("qa_lead_handoff")
-                .doesNotContain("completion-callback.md");
+                .doesNotContain("completion-callback.md")
+                .doesNotContain("ticketId:")
+                .doesNotContain("scopeContext:")
+                .doesNotContain("commonInstructionRefs:")
+                .doesNotContain("taskPayloads:");
         assertThat(serviceMessages.get(2))
                 .contains("STEP_PROMPT")
                 .contains("qa_lead_handoff")
-                .doesNotContain("ticketId:")
                 .doesNotContain("scope_slicing")
                 .doesNotContain("architect_handoff")
-                .doesNotContain("completion-callback.md");
+                .doesNotContain("completion-callback.md")
+                .doesNotContain("ticketId:")
+                .doesNotContain("commonInstructionRefs:");
         assertThat(serviceMessages.get(3))
                 .contains("STEP_PROMPT")
                 .contains("completion")
-                .doesNotContain("ticketId:")
                 .doesNotContain("scope_slicing")
                 .doesNotContain("architect_handoff")
-                .doesNotContain("qa_lead_handoff");
+                .doesNotContain("qa_lead_handoff")
+                .doesNotContain("ticketId:")
+                .doesNotContain("commonInstructionRefs:");
+
+        assertThat(serviceMessages.stream().mapToInt(String::length).max().orElse(0)).isLessThan(1500);
+
+        final UUID executionId = this.laneExecutionRepository.savedExecutions().getFirst().getId();
+        final Path runtimeRoot = this.tempDir.resolve("runtime");
+        assertThat(runtimeRoot.resolve("SITIONIX-1").resolve(lane.getLaneId().toString()).resolve(executionId.toString()).resolve("start-context.json"))
+                .exists();
+        assertThat(runtimeRoot.resolve("SITIONIX-1").resolve(lane.getLaneId().toString()).resolve(executionId.toString()).resolve("steps").resolve("1-scope_slicing.md"))
+                .exists();
+        assertThat(runtimeRoot.resolve("SITIONIX-1").resolve(lane.getLaneId().toString()).resolve(executionId.toString()).resolve("steps").resolve("2-architect_handoff.md"))
+                .exists();
+        assertThat(runtimeRoot.resolve("SITIONIX-1").resolve(lane.getLaneId().toString()).resolve(executionId.toString()).resolve("steps").resolve("3-qa_lead_handoff.md"))
+                .exists();
+        assertThat(runtimeRoot.resolve("SITIONIX-1").resolve(lane.getLaneId().toString()).resolve(executionId.toString()).resolve("steps").resolve("4-completion.md"))
+                .exists();
 
         assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("scope_slicing")));
         assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("architect_handoff")));
@@ -132,6 +173,7 @@ class SupervisedLaneExecutionUseCaseTest {
                 .filter(value -> value.startsWith("service:"))
                 .toList();
         assertThat(serviceMessages).hasSize(5);
+        assertThat(serviceMessages.stream().mapToInt(String::length).max().orElse(0)).isLessThan(1500);
         assertThat(serviceMessages.getFirst()).contains("START_PROMPT").contains("scope_slicing");
         assertThat(serviceMessages.get(1)).startsWith("service:CORRECTION_PROMPT");
         assertThat(serviceMessages.get(1)).contains("stepId=scope_slicing");
@@ -279,13 +321,21 @@ class SupervisedLaneExecutionUseCaseTest {
 
     private SupervisedLaneExecutionUseCase buildUseCase(final Function<String, List<String>> responsePlanner) {
         this.codexSessionRepository = new FakeInteractiveCodexSessionRepository(responsePlanner);
-        final LaneStepPromptBuilder promptBuilder = new LaneStepPromptBuilder(new ObjectMapper(), this.instructionRepository);
+        final LaneStepPromptBuilder promptBuilder = new LaneStepPromptBuilder(this.laneStrategyPromptConfig);
+        final SupervisedPromptArtifactWriter promptArtifactWriter = new SupervisedPromptArtifactWriter(
+                new ObjectMapper(),
+                this.instructionRepository,
+                this.laneStrategyPromptConfig,
+                this.supervisedExecutionProperties
+        );
         return new SupervisedLaneExecutionUseCase(
                 this.laneStrategyRepository,
                 this.laneExecutionRepository,
                 this.codexSessionRepository,
                 new LaneStepDoneResultParser(new ObjectMapper()),
                 promptBuilder,
+                promptArtifactWriter,
+                this.supervisedExecutionProperties,
                 new ObjectMapper()
         );
     }

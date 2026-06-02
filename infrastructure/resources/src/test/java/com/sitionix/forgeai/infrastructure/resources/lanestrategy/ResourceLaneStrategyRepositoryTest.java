@@ -55,6 +55,19 @@ class ResourceLaneStrategyRepositoryTest {
     }
 
     @Test
+    void givenMissingCommonInstructionRefs_whenInit_thenReject() {
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setCommonInstructionRefs(List.of());
+        properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
+
+        final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
+
+        assertThatThrownBy(repository::init)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("common instruction refs");
+    }
+
+    @Test
     void givenDuplicateStepIds_whenInit_thenReject() {
         final LaneStrategiesProperties properties = baseProperties();
         properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
@@ -120,6 +133,7 @@ class ResourceLaneStrategyRepositoryTest {
 
     private LaneStrategiesProperties baseProperties() {
         final LaneStrategiesProperties properties = new LaneStrategiesProperties();
+        properties.setCommonInstructionRefs(List.of("shared/common-rules.md"));
         properties.setConfigs(new LinkedHashMap<>());
         return properties;
     }

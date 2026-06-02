@@ -1,6 +1,8 @@
 forge:
   ai:
     lane-strategies:
+      common-instruction-refs:
+        - shared/common-rules.md
       configs:
         analyzer:
           version: 1

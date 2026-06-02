@@ -12,4 +12,6 @@ import org.springframework.stereotype.Component;
 public class SupervisedExecutionProperties {
 
     private int correctionAttempts = 2;
+    private int maxOutgoingPromptChars = 1500;
+    private String runtimeRoot = ".forge-ai/runtime";
 }

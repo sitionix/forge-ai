@@ -79,6 +79,13 @@ class ReadyToStartImplementBeLaneJobIT {
                 .allSatisfy(message -> {
                     assertThat(message).contains("START_PROMPT");
                     assertThat(message).contains("STEP_PROMPT");
+                    assertThat(message).contains("startContext:");
+                    assertThat(message).contains("commonInstructionRefs:");
+                    assertThat(message).contains("shared/common-rules.md");
+                    assertThat(message).contains("runtimeStepFile:");
+                    assertThat(message).doesNotContain("# Common Agent Rules");
+                    assertThat(message).doesNotContain("Lazy Instruction Strategy");
+                    assertThat(message).hasSizeLessThan(1500);
                 });
     }
 }

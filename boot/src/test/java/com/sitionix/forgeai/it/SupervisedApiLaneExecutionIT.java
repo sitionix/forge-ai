@@ -78,9 +78,15 @@ class SupervisedApiLaneExecutionIT {
                 .satisfies(message -> {
                     assertThat(message).contains("START_PROMPT");
                     assertThat(message).contains("STEP_PROMPT");
+                    assertThat(message).contains("startContext:");
+                    assertThat(message).contains("commonInstructionRefs:");
+                    assertThat(message).contains("shared/common-rules.md");
+                    assertThat(message).contains("runtimeStepFile:");
                     assertThat(message).contains("stepId:");
-                    assertThat(message).contains("# Common Agent Rules");
+                    assertThat(message).doesNotContain("# Common Agent Rules");
+                    assertThat(message).doesNotContain("Lazy Instruction Strategy");
                     assertThat(message).doesNotContain("contract_changes");
+                    assertThat(message.length()).isLessThan(1500);
                 });
 
         verifyNoInteractions(this.codexClient);

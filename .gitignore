@@ -9,3 +9,6 @@
 # Build output
 target/
 **/target/
+
+# Runtime supervised prompt artifacts
+.forge-ai/runtime/

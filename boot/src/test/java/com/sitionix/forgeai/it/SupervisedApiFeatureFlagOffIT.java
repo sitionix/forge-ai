@@ -49,6 +49,13 @@ class SupervisedApiFeatureFlagOffIT {
         assertThat(this.codexSessionRepositoryStub.startedMessages()).hasSize(1);
         assertThat(this.codexSessionRepositoryStub.startedMessages().getFirst())
                 .contains("START_PROMPT")
-                .contains("STEP_PROMPT");
+                .contains("STEP_PROMPT")
+                .contains("startContext:")
+                .contains("commonInstructionRefs:")
+                .contains("shared/common-rules.md")
+                .contains("runtimeStepFile:")
+                .doesNotContain("# Common Agent Rules")
+                .doesNotContain("Lazy Instruction Strategy")
+                .hasSizeLessThan(1500);
     }
 }

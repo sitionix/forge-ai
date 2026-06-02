@@ -31,6 +31,7 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
     @PostConstruct
     public void init() {
         this.strategies = new HashMap<>();
+        this.validateCommonInstructionRefs();
         this.properties.getConfigs().forEach((agentId, cfg) -> {
             this.validateAgent(agentId);
             this.validateSteps(agentId, cfg);
@@ -85,6 +86,19 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
                 }
                 this.validateInstructionRef(ref);
             });
+        });
+    }
+
+    private void validateCommonInstructionRefs() {
+        if (this.properties.getCommonInstructionRefs() == null || this.properties.getCommonInstructionRefs().isEmpty()) {
+            throw new IllegalStateException("Missing common instruction refs for lane strategies");
+        }
+        final Set<String> refs = new HashSet<>();
+        this.properties.getCommonInstructionRefs().forEach(ref -> {
+            if (!refs.add(ref)) {
+                throw new IllegalStateException("Duplicate common instruction ref '" + ref + "'");
+            }
+            this.validateInstructionRef(ref);
         });
     }
 
