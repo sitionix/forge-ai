@@ -1,7 +1,5 @@
 package com.sitionix.forgeai.it;
 
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
@@ -20,13 +18,6 @@ class ForgeAiStartFlowIT {
 
     @Autowired
     private TestManager testManager;
-
-    @MockBean
-    private TerminalTabLauncher terminalTabLauncher;
-
-    @MockBean
-    private CodexCliCommandBuilder codexCliCommandBuilder;
-
     @Test
     @DisplayName("Should build Codex payload and persist ticket")
     void givenStartForgeRequest_whenStartForge_thenBuildPromptAndPersistTicket() {

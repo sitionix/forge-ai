@@ -13,22 +13,24 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ResourceLaneStrategyRepositoryTest {
 
     @Test
-    void givenValidStrategiesForAllExecutableNonReviewerAgents_whenInit_thenLoadAndKeepOrder() {
+    void givenValidStrategiesForAllExecutableAgents_whenInit_thenLoadAndKeepOrder() {
         final LaneStrategiesProperties properties = baseProperties();
-        properties.setConfigs(new LinkedHashMap<>(Map.of(
-                "analyzer", strategy(step("scope_slicing", "Scope Slicing", null, List.of("additional-instructions/scope-context-usage.md", "lane-instructions/analyzer/scope-slicing.md"))),
-                "architect", strategy(step("input_normalization", "Input Normalization", null, List.of("lane-instructions/architect/input-normalization.md"))),
-                "api", strategy(
-                        step("preparation", "Preparation", null, List.of("additional-instructions/preparation-to-work.md")),
-                        step("contract_changes", "Contract Changes", "TASKS", List.of("additional-instructions/api-contract-rules.md"))
-                ),
-                "qa_lead", strategy(step("qa_context", "QA Context", null, List.of("lane-instructions/qa_lead/qa-context.md"))),
-                "implement_be", strategy(step("backend_context", "Backend Context", null, List.of("lane-instructions/implement_be/backend-context.md"))),
-                "implement_fe", strategy(step("frontend_context", "Frontend Context", null, List.of("lane-instructions/implement_fe/frontend-context.md"))),
-                "test_unit", strategy(step("unit_test_context", "Unit Test Context", null, List.of("lane-instructions/test_unit/unit-test-context.md"))),
-                "test_it", strategy(step("it_test_context", "IT Test Context", null, List.of("lane-instructions/test_it/it-test-context.md"))),
-                "test_ui", strategy(step("ui_test_context", "UI Test Context", null, List.of("lane-instructions/test_ui/ui-test-context.md")))
-        )));
+        final Map<String, LaneStrategiesProperties.StrategyConfig> configs = new LinkedHashMap<>();
+        configs.put("analyzer", strategy(step("scope_slicing", "Scope Slicing", null, List.of("additional-instructions/scope-context-usage.md", "lane-instructions/analyzer/scope-slicing.md"))));
+        configs.put("architect", strategy(step("input_normalization", "Input Normalization", null, List.of("lane-instructions/architect/input-normalization.md"))));
+        configs.put("api", strategy(
+                step("preparation", "Preparation", null, List.of("additional-instructions/preparation-to-work.md")),
+                step("contract_changes", "Contract Changes", "TASKS", List.of("additional-instructions/api-contract-rules.md"))
+        ));
+        configs.put("qa_lead", strategy(step("qa_context", "QA Context", null, List.of("lane-instructions/qa_lead/qa-context.md"))));
+        configs.put("implement_be", strategy(step("backend_context", "Backend Context", null, List.of("lane-instructions/implement_be/backend-context.md"))));
+        configs.put("implement_fe", strategy(step("frontend_context", "Frontend Context", null, List.of("lane-instructions/implement_fe/frontend-context.md"))));
+        configs.put("test_unit", strategy(step("unit_test_context", "Unit Test Context", null, List.of("lane-instructions/test_unit/unit-test-context.md"))));
+        configs.put("test_it", strategy(step("it_test_context", "IT Test Context", null, List.of("lane-instructions/test_it/it-test-context.md"))));
+        configs.put("test_ui", strategy(step("ui_test_context", "UI Test Context", null, List.of("lane-instructions/test_ui/ui-test-context.md"))));
+        configs.put("reviewer", strategy(step("review_context", "Review Context", null, List.of("lane-instructions/reviewer/review-context.md"))));
+        configs.put("event", strategy(step("event_context", "Event Context", null, List.of("lane-instructions/event/event-context.md"))));
+        properties.setConfigs(new LinkedHashMap<>(configs));
 
         final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
         repository.init();
@@ -149,6 +151,8 @@ class ResourceLaneStrategyRepositoryTest {
         configs.put("test_unit", strategy(step("unit_test_context", "Unit Test Context", null, List.of("lane-instructions/test_unit/unit-test-context.md"))));
         configs.put("test_it", strategy(step("it_test_context", "IT Test Context", null, List.of("lane-instructions/test_it/it-test-context.md"))));
         configs.put("test_ui", strategy(step("ui_test_context", "UI Test Context", null, List.of("lane-instructions/test_ui/ui-test-context.md"))));
+        configs.put("reviewer", strategy(step("review_context", "Review Context", null, List.of("lane-instructions/reviewer/review-context.md"))));
+        configs.put("event", strategy(step("event_context", "Event Context", null, List.of("lane-instructions/event/event-context.md"))));
         return configs;
     }
 

@@ -2,11 +2,15 @@ package com.sitionix.forgeai.application.usecase;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.application.laneexecution.LaneCompletionDispatcher;
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
 import com.sitionix.forgeai.application.laneexecution.LaneStepPromptBuilder;
 import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
-import com.sitionix.forgeai.application.laneexecution.SupervisedPromptArtifactWriter;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
+import com.sitionix.forgeai.domain.model.codex.CodexSession;
+import com.sitionix.forgeai.domain.model.codex.CodexSessionStartCommand;
+import com.sitionix.forgeai.domain.model.codex.CodexTurnCommand;
+import com.sitionix.forgeai.domain.model.codex.CodexTurnResponse;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepDoneResult;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepExecution;
@@ -17,7 +21,6 @@ import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
-import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -33,14 +36,13 @@ import org.springframework.stereotype.Service;
 public class SupervisedLaneExecutionUseCase {
 
     private static final Logger log = Logger.getLogger(SupervisedLaneExecutionUseCase.class.getName());
-    private static final long STEP_OUTPUT_TIMEOUT_MS = 120_000L;
 
     private final LaneStrategyRepository laneStrategyRepository;
     private final LaneExecutionRepository laneExecutionRepository;
     private final CodexSessionRepository codexSessionRepository;
-    private final LaneStepDoneResultParser parser;
     private final LaneStepPromptBuilder promptBuilder;
-    private final SupervisedPromptArtifactWriter promptArtifactWriter;
+    private final LaneStepDoneResultParser resultParser;
+    private final LaneCompletionDispatcher laneCompletionDispatcher;
     private final SupervisedExecutionProperties supervisedExecutionProperties;
     private final ObjectMapper objectMapper;
 
@@ -48,48 +50,45 @@ public class SupervisedLaneExecutionUseCase {
                         final AgentExecutionInput<AgentTicketPayload> input,
                         final int correctionAttempts) {
         final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(lane.getAgent().getId());
-        final LaneStrategyStep firstStep = strategy.getSteps().getFirst();
         final UUID executionId = UUID.randomUUID();
-        final Path startContextPath = this.promptArtifactWriter.writeStartContext(lane, strategy, input, executionId);
-        final Path firstStepPath = this.promptArtifactWriter.writeStepInstructionFile(lane, firstStep, input, executionId);
-        final String startPrompt = this.promptBuilder.buildStartPrompt(lane, strategy, startContextPath);
-        final String firstStepPrompt = this.promptBuilder.buildStepPrompt(firstStep, 1, strategy.getSteps().size(), firstStepPath);
-        final String initialPrompt = startPrompt
-                + "\n\n"
-                + firstStepPrompt;
-        this.ensureWithinLimit("START_PROMPT", initialPrompt, lane, executionId, null, firstStep.getId());
-        final String sessionId = this.codexSessionRepository.start(initialPrompt, lane.getSourceTerminalTty());
-        final LaneExecution execution = this.createExecution(lane, strategy, sessionId, executionId);
+        final CodexSession session = this.codexSessionRepository.openSession(CodexSessionStartCommand.builder()
+                .workspaceRoot(java.nio.file.Path.of("").toAbsolutePath().normalize().toString())
+                .sourceTerminalTty(lane.getSourceTerminalTty())
+                .ticketKey(lane.getTicketKey())
+                .agentId(lane.getAgent().getId())
+                .scope(lane.getScope())
+                .build());
+        final LaneExecution execution = this.createExecution(lane, strategy, session.id(), executionId);
+        boolean completed = false;
 
-        this.logPromptSent("START_PROMPT", startPrompt, lane, execution.getId(), sessionId, firstStep.getId(), true);
-        this.logPromptSent("STEP_PROMPT", firstStepPrompt, lane, execution.getId(), sessionId, firstStep.getId(), true);
-        this.logBoundarySet("START_PROMPT", initialPrompt, lane, execution.getId(), sessionId, firstStep.getId(), true);
-        this.logEvent("supervised.execution.started", lane, execution.getId(), sessionId, null);
-        this.logEvent("codex.session.started", lane, execution.getId(), sessionId, null);
+        this.logEvent("supervised.execution.started", lane, execution.getId(), session.id(), null);
+        this.logEvent("codex.session.started", lane, execution.getId(), session.id(), null);
 
         try {
-            this.runSteps(lane, input, strategy, execution, sessionId, initialPrompt, firstStepPath, correctionAttempts);
-            this.logEvent("supervised.execution.steps.completed", lane, execution.getId(), sessionId, null);
+            completed = this.runSteps(lane, input, strategy, execution, session.id(), correctionAttempts);
+            if (completed) {
+                this.logEvent("supervised.execution.steps.completed", lane, execution.getId(), session.id(), null);
+            } else {
+                this.logEvent("codex.session.left_open", lane, execution.getId(), session.id(), null);
+            }
         } finally {
-            this.codexSessionRepository.close(sessionId);
-            this.logEvent("codex.session.closed", lane, execution.getId(), sessionId, null);
+            if (completed) {
+                this.codexSessionRepository.closeSession(session.id());
+                this.logEvent("codex.session.closed", lane, execution.getId(), session.id(), null);
+            }
         }
     }
 
-    private void runSteps(final ReadyToStartLane lane,
-                          final AgentExecutionInput<AgentTicketPayload> input,
-                          final LaneStrategy strategy,
-                          final LaneExecution execution,
-                          final String sessionId,
-                          final String initialPrompt,
-                          final Path firstStepPath,
-                          final int correctionAttempts) {
+    private boolean runSteps(final ReadyToStartLane lane,
+                             final AgentExecutionInput<AgentTicketPayload> input,
+                             final LaneStrategy strategy,
+                             final LaneExecution execution,
+                             final String sessionId,
+                             final int correctionAttempts) {
         LaneExecution currentExecution = execution;
         for (int index = 0; index < strategy.getSteps().size(); index++) {
             final LaneStrategyStep step = strategy.getSteps().get(index);
-            final Path runtimeStepPath = index == 0
-                    ? firstStepPath
-                    : this.promptArtifactWriter.writeStepInstructionFile(lane, step, input, execution.getId());
+            final boolean finalStep = index == strategy.getSteps().size() - 1;
             currentExecution = currentExecution.toBuilder()
                     .currentStepId(step.getId())
                     .updatedAt(LocalDateTime.now())
@@ -97,79 +96,86 @@ public class SupervisedLaneExecutionUseCase {
             this.laneExecutionRepository.updateCurrentStep(currentExecution);
             this.logEvent("supervised.step.started", lane, currentExecution.getId(), sessionId, step.getId());
 
-            String outboundPrompt = initialPrompt;
-            if (index > 0) {
-                outboundPrompt = this.promptBuilder.buildStepPrompt(step, index + 1, strategy.getSteps().size(), runtimeStepPath);
-                this.ensureWithinLimit("STEP_PROMPT", outboundPrompt, lane, currentExecution.getId(), sessionId, step.getId());
-                this.logPromptSent("STEP_PROMPT", outboundPrompt, lane, currentExecution.getId(), sessionId, step.getId(), false);
-                this.logBoundarySet("STEP_PROMPT", outboundPrompt, lane, currentExecution.getId(), sessionId, step.getId(), false);
-                this.codexSessionRepository.send(sessionId, outboundPrompt, lane.getSourceTerminalTty());
-            }
+            final String prompt = index == 0
+                    ? this.promptBuilder.buildStartPrompt(lane, strategy, input) + "\n\n" + this.promptBuilder.buildStepPrompt(lane, strategy, step, input, index + 1, strategy.getSteps().size())
+                    : this.promptBuilder.buildStepPrompt(lane, strategy, step, input, index + 1, strategy.getSteps().size());
 
-            final LaneStepDoneResult result = this.awaitValidStepResult(lane, currentExecution.getId(), sessionId, step, runtimeStepPath, outboundPrompt, correctionAttempts);
+            this.logPromptSize("STEP_PROMPT", prompt, lane, currentExecution.getId(), sessionId, step.getId(), index == 0);
+
+            final LaneStepDoneResult result;
+            try {
+                result = this.awaitValidStepResult(lane, currentExecution.getId(), sessionId, step, prompt, correctionAttempts, finalStep);
+            } catch (final IllegalStateException ex) {
+                if (this.isTurnTimeout(ex)) {
+                    this.logEvent("supervised.step.result.timeout", lane, currentExecution.getId(), sessionId, step.getId());
+                    return false;
+                }
+                throw ex;
+            }
             if (result == null) {
-                return;
+                return false;
             }
 
-            this.logEvent("supervised.step.done.parsed", lane, currentExecution.getId(), sessionId, step.getId());
+            this.logEvent("supervised.step.result.validated", lane, currentExecution.getId(), sessionId, step.getId());
             this.persistStep(currentExecution.getId(), step, result);
             this.logEvent("supervised.step.persisted", lane, currentExecution.getId(), sessionId, step.getId());
-            this.logEvent("supervised.step.completed", lane, currentExecution.getId(), sessionId, step.getId());
+            if (finalStep) {
+                this.laneCompletionDispatcher.completeLane(lane, result.getEvidence());
+                this.logEvent("supervised.lane.completed", lane, currentExecution.getId(), sessionId, step.getId());
+            }
         }
+        return true;
     }
 
     private LaneStepDoneResult awaitValidStepResult(final ReadyToStartLane lane,
                                                     final UUID executionId,
                                                     final String sessionId,
                                                     final LaneStrategyStep step,
-                                                    final Path runtimeStepPath,
-                                                    final String outboundPrompt,
-                                                    final int correctionAttempts) {
+                                                    final String prompt,
+                                                    final int correctionAttempts,
+                                                    final boolean finalStep) {
         int correctionsLeft = correctionAttempts;
-        String currentOutboundPrompt = outboundPrompt;
-        boolean promptBoundarySeen = false;
+        String response = this.submitTurn(lane, executionId, sessionId, step.getId(), prompt, "STEP_PROMPT");
         while (true) {
-            final String rawOutput = this.codexSessionRepository.waitForOutput(sessionId, STEP_OUTPUT_TIMEOUT_MS);
-            String output = rawOutput;
-            final boolean containsResultMarker = this.containsLaneStepDone(rawOutput);
-            if (rawOutput.contains(currentOutboundPrompt)) {
-                promptBoundarySeen = true;
-                output = this.extractResponseAfterPromptBoundary(rawOutput, currentOutboundPrompt);
-                if (output.isBlank()) {
-                    this.logEvent("codex.session.prompt.echo.ignored", lane, executionId, sessionId, step.getId());
-                    this.logOutputClassification(lane, executionId, sessionId, step.getId(), rawOutput, output, "PROMPT_ECHO");
-                    continue;
-                }
-                this.logEvent("codex.session.prompt.echo.ignored", lane, executionId, sessionId, step.getId());
-                this.logOutputClassification(lane, executionId, sessionId, step.getId(), rawOutput, output, "PROMPT_ECHO_WITH_RESPONSE");
-            } else if (!promptBoundarySeen && !containsResultMarker) {
-                this.logOutputClassification(lane, executionId, sessionId, step.getId(), rawOutput, "", "NO_PROMPT_BOUNDARY_YET");
-                continue;
-            } else if (!promptBoundarySeen && containsResultMarker) {
-                promptBoundarySeen = true;
-            }
-            if (output.isBlank()) {
-                this.logOutputClassification(lane, executionId, sessionId, step.getId(), rawOutput, output, "EMPTY_AFTER_ECHO_STRIP");
-                continue;
-            }
-            final boolean containsLaneStepDone = this.containsLaneStepDone(output);
-            this.logEvent("codex.session.real_output.received", lane, executionId, sessionId, step.getId());
-            this.logOutputClassification(lane, executionId, sessionId, step.getId(), rawOutput, output, containsLaneStepDone ? "STEP_RESULT_CANDIDATE" : "NON_RESULT_OUTPUT");
             try {
-                return this.parser.parse(output, step.getId());
+                final LaneStepDoneResult result = this.resultParser.parse(response, step.getId());
+                if (finalStep) {
+                    this.laneCompletionDispatcher.validateFinalCompletionPayload(lane, result.getEvidence());
+                }
+                return result;
             } catch (final IllegalArgumentException ex) {
                 if (correctionsLeft <= 0) {
                     return null;
                 }
                 correctionsLeft--;
-                final String smallCorrectionPrompt = this.promptBuilder.buildCorrectionPrompt(step.getId(), runtimeStepPath);
-                this.ensureWithinLimit("CORRECTION_PROMPT", smallCorrectionPrompt, lane, executionId, sessionId, step.getId());
-                this.logPromptSent("CORRECTION_PROMPT", smallCorrectionPrompt, lane, executionId, sessionId, step.getId(), false);
-                this.logBoundarySet("CORRECTION_PROMPT", smallCorrectionPrompt, lane, executionId, sessionId, step.getId(), false);
-                this.codexSessionRepository.send(sessionId, smallCorrectionPrompt, lane.getSourceTerminalTty());
-                currentOutboundPrompt = smallCorrectionPrompt;
+                final String correctionPrompt = this.promptBuilder.buildCorrectionPrompt(lane, step, ex.getMessage(), finalStep);
+                this.logPromptSize("CORRECTION_PROMPT", correctionPrompt, lane, executionId, sessionId, step.getId(), false);
+                response = this.submitTurn(lane, executionId, sessionId, step.getId(), correctionPrompt, "CORRECTION_PROMPT");
             }
         }
+    }
+
+    private String submitTurn(final ReadyToStartLane lane,
+                              final UUID executionId,
+                              final String sessionId,
+                              final String stepId,
+                              final String prompt,
+                              final String promptType) {
+        this.logEvent("supervised.step.turn.sent", lane, executionId, sessionId, stepId);
+        final CodexTurnResponse response = this.codexSessionRepository.submitTurn(sessionId, CodexTurnCommand.builder()
+                .prompt(prompt)
+                .timeout(this.supervisedExecutionProperties.getTurnTimeout())
+                .promptType(promptType)
+                .stepId(stepId)
+                .build());
+        this.logEvent("supervised.step.turn.response.received", lane, executionId, sessionId, stepId);
+        final String assistantResponse = response == null ? null : response.assistantResponse();
+        log.info(this.baseLog("supervised.step.turn.response.received", lane, executionId, sessionId, stepId)
+                + " promptType=" + promptType
+                + " responseChars=" + (assistantResponse == null ? 0 : assistantResponse.length())
+                + " responseHash=" + this.promptHash(assistantResponse == null ? "" : assistantResponse)
+                + " turnId=" + (response == null ? "" : response.turnId()));
+        return assistantResponse;
     }
 
     private LaneExecution createExecution(final ReadyToStartLane lane, final LaneStrategy strategy, final String sessionId, final UUID executionId) {
@@ -186,25 +192,6 @@ public class SupervisedLaneExecutionUseCase {
                 .startedAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
                 .build());
-    }
-
-    private void ensureWithinLimit(final String promptType,
-                                   final String prompt,
-                                   final ReadyToStartLane lane,
-                                   final UUID executionId,
-                                   final String sessionId,
-                                   final String stepId) {
-        if (prompt.length() <= this.supervisedExecutionProperties.getMaxOutgoingPromptChars()) {
-            return;
-        }
-        log.severe(this.baseLog("supervised.prompt.too.large", lane, executionId, sessionId, stepId)
-                + " promptType=" + promptType
-                + " chars=" + prompt.length()
-                + " maxChars=" + this.supervisedExecutionProperties.getMaxOutgoingPromptChars()
-                + " hash=" + this.promptHash(prompt));
-        throw new IllegalStateException("Outgoing supervised prompt exceeds max size: promptType=" + promptType
-                + ", chars=" + prompt.length()
-                + ", maxChars=" + this.supervisedExecutionProperties.getMaxOutgoingPromptChars());
     }
 
     private void persistStep(final UUID executionId, final LaneStrategyStep step, final LaneStepDoneResult result) {
@@ -229,47 +216,34 @@ public class SupervisedLaneExecutionUseCase {
         }
     }
 
-    private void logPromptSent(final String promptType,
+    private void logPromptSize(final String promptType,
                                final String prompt,
                                final ReadyToStartLane lane,
                                final UUID executionId,
                                final String sessionId,
                                final String stepId,
                                final boolean combinedInitialSend) {
-        log.info(this.baseLog("supervised.prompt.sent", lane, executionId, sessionId, stepId)
+        final Integer warningThreshold = this.supervisedExecutionProperties.getOutgoingPromptWarningChars();
+        final Integer failThreshold = this.supervisedExecutionProperties.getOutgoingPromptFailChars();
+        final boolean warningTriggered = warningThreshold != null && prompt.length() > warningThreshold;
+        final boolean failTriggered = failThreshold != null && prompt.length() > failThreshold;
+        final String action = failTriggered ? "fail" : warningTriggered ? "warning_only" : "sent";
+        final java.util.logging.Level level = failTriggered ? java.util.logging.Level.SEVERE
+                : warningTriggered ? java.util.logging.Level.WARNING
+                : java.util.logging.Level.INFO;
+        log.log(level, this.baseLog("supervised.prompt.size", lane, executionId, sessionId, stepId)
                 + " promptType=" + promptType
                 + " chars=" + prompt.length()
                 + " hash=" + this.promptHash(prompt)
+                + " action=" + action
+                + (warningThreshold == null ? "" : " warningThreshold=" + warningThreshold)
+                + (failThreshold == null ? "" : " failThreshold=" + failThreshold)
                 + " combinedInitialSend=" + combinedInitialSend);
-    }
-
-    private void logBoundarySet(final String promptType,
-                                final String prompt,
-                                final ReadyToStartLane lane,
-                                final UUID executionId,
-                                final String sessionId,
-                                final String stepId,
-                                final boolean combinedInitialSend) {
-        log.info(this.baseLog("codex.session.output.boundary.set", lane, executionId, sessionId, stepId)
-                + " promptType=" + promptType
-                + " chars=" + prompt.length()
-                + " hash=" + this.promptHash(prompt)
-                + " combinedInitialSend=" + combinedInitialSend);
-    }
-
-    private void logOutputClassification(final ReadyToStartLane lane,
-                                         final UUID executionId,
-                                         final String sessionId,
-                                         final String stepId,
-                                         final String rawOutput,
-                                         final String classifiedOutput,
-                                         final String classification) {
-        log.info(this.baseLog("codex.session.output.classified", lane, executionId, sessionId, stepId)
-                + " classification=" + classification
-                + " rawChars=" + rawOutput.length()
-                + " rawHash=" + this.promptHash(rawOutput)
-                + " chars=" + classifiedOutput.length()
-                + " hash=" + this.promptHash(classifiedOutput));
+        if (failTriggered) {
+            throw new IllegalStateException("Outgoing supervised prompt exceeds configured fail threshold: promptType=" + promptType
+                    + ", chars=" + prompt.length()
+                    + ", failThreshold=" + failThreshold);
+        }
     }
 
     private void logEvent(final String event,
@@ -302,24 +276,6 @@ public class SupervisedLaneExecutionUseCase {
         return builder.toString();
     }
 
-    private boolean containsLaneStepDone(final String output) {
-        return output.contains("LANE_STEP_DONE") || output.contains("<<<LANE_STEP_DONE_JSON>>>");
-    }
-
-    private String extractResponseAfterPromptBoundary(final String output, final String prompt) {
-        if (output == null || output.isBlank()) {
-            return null;
-        }
-        if (prompt == null || prompt.isBlank()) {
-            return output;
-        }
-        final int boundaryIndex = output.lastIndexOf(prompt);
-        if (boundaryIndex < 0) {
-            return null;
-        }
-        return output.substring(boundaryIndex + prompt.length()).stripLeading();
-    }
-
     private String promptHash(final String value) {
         try {
             final MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -328,5 +284,9 @@ public class SupervisedLaneExecutionUseCase {
         } catch (final NoSuchAlgorithmException e) {
             return Integer.toHexString(value.hashCode());
         }
+    }
+
+    private boolean isTurnTimeout(final IllegalStateException ex) {
+        return ex.getMessage() != null && ex.getMessage().startsWith("Timed out");
     }
 }

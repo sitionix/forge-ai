@@ -48,10 +48,8 @@ Execute steps in order.
 7. Pull request  
    Read `additional-instructions/pr-workflow.md`.
 
-8. Completion callback  
-   Read:
-    - `lane-instructions/test_it/completion-content.md`
-    - `additional-instructions/completion-callback.md`.
+8. Completion content  
+   Read `lane-instructions/test_it/completion-content.md`.
 
 ## Completion Content
 

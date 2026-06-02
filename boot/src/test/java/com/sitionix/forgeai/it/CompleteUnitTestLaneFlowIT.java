@@ -1,8 +1,5 @@
 package com.sitionix.forgeai.it;
 
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
-import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
@@ -21,16 +18,6 @@ class CompleteUnitTestLaneFlowIT {
 
     @Autowired
     private TestManager testManager;
-
-    @MockBean
-    private TerminalTabLauncher terminalTabLauncher;
-
-    @MockBean
-    private CodexCliCommandBuilder codexCliCommandBuilder;
-
-    @MockBean
-    private CodexClient codexClient;
-
     @Test
     @DisplayName("Should create reviewer task and complete test_unit lane")
     void givenCompleteUnitTestPayload_whenCompleteUnitTestLane_thenCreateReviewerTask() {

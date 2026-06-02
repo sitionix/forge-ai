@@ -1,8 +1,6 @@
 package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.laneexecution.LaneExecutionDocument;
 import com.sitionix.forgeai.it.infra.ItCodexSessionRepositoryStub;
@@ -11,13 +9,14 @@ import com.sitionix.forgeit.core.test.IntegrationTest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.annotation.DirtiesContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @IntegrationTest(properties = {
         "forge-ai.jobs.scheduling-enabled=false"
 })
+@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class SupervisedApiFeatureFlagOffIT {
 
     @Autowired
@@ -28,17 +27,11 @@ class SupervisedApiFeatureFlagOffIT {
 
     @Autowired
     private ItCodexSessionRepositoryStub codexSessionRepositoryStub;
-
-    @MockBean
-    private TerminalTabLauncher terminalTabLauncher;
-
-    @MockBean
-    private CodexCliCommandBuilder codexCliCommandBuilder;
-
     @Test
-    @DisplayName("Should execute API lane via supervised session without a feature flag")
+    @DisplayName("Should execute API lane via supervised session by default")
     void givenReadyApiLane_whenSchedulerRuns_thenPersistSupervisedExecutionRecords() {
         this.codexSessionRepositoryStub.clearStartedMessages();
+        this.codexSessionRepositoryStub.clearSentMessages();
         this.testManager.mongo().create(TicketDocument.class).body("readyToStartApiOnlySeedTicket.json");
 
         this.readyToStartLaneJob.run();
@@ -46,16 +39,12 @@ class SupervisedApiFeatureFlagOffIT {
         this.testManager.mongo()
                 .get(LaneExecutionDocument.class)
                 .hasSize(1);
-        assertThat(this.codexSessionRepositoryStub.startedMessages()).hasSize(1);
-        assertThat(this.codexSessionRepositoryStub.startedMessages().getFirst())
+        assertThat(this.codexSessionRepositoryStub.sentMessages()).isNotEmpty();
+        assertThat(this.codexSessionRepositoryStub.sentMessages().getFirst())
                 .contains("START_PROMPT")
                 .contains("STEP_PROMPT")
-                .contains("startContext:")
-                .contains("commonInstructionRefs:")
-                .contains("shared/common-rules.md")
-                .contains("runtimeStepFile:")
-                .doesNotContain("# Common Agent Rules")
-                .doesNotContain("Lazy Instruction Strategy")
-                .hasSizeLessThan(1500);
+                .contains("- stepId: preparation")
+                .contains("- agentId: api")
+                .contains("JSON result contract:");
     }
 }

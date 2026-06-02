@@ -1,11 +1,13 @@
 package com.sitionix.forgeai.application.laneexecution;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepDoneResult;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Component;
@@ -18,8 +20,6 @@ public class LaneStepDoneResultParser {
     private static final String SUMMARY_FIELD = "summary";
     private static final String EVIDENCE_FIELD = "evidence";
     private static final String EXPECTED_TYPE = "LANE_STEP_DONE";
-    private static final String SENTINEL_START = "<<<LANE_STEP_DONE_JSON>>>";
-    private static final String SENTINEL_END = "<<<END_LANE_STEP_DONE_JSON>>>";
     private static final Set<String> ALLOWED_FIELDS = Set.of(TYPE_FIELD, STEP_ID_FIELD, SUMMARY_FIELD, EVIDENCE_FIELD);
     private static final Set<String> FORBIDDEN_TOP_LEVEL_FIELDS = Set.of("status", "failed", "blocked", "skipped", "needsFix", "error");
 
@@ -29,8 +29,8 @@ public class LaneStepDoneResultParser {
         this.objectMapper = objectMapper;
     }
 
-    public LaneStepDoneResult parse(final String output, final String currentStepId) {
-        final String json = this.extractPayloadJson(output);
+    public LaneStepDoneResult parse(final String responseText, final String currentStepId) {
+        final String json = this.requireStrictJsonObject(responseText);
         final JsonNode root = this.readRoot(json);
         this.validateTopLevelFields(root);
         final String type = this.readRequiredText(root, TYPE_FIELD);
@@ -59,81 +59,29 @@ public class LaneStepDoneResultParser {
                 .build();
     }
 
-    private String extractPayloadJson(final String output) {
-        if (output == null || output.isBlank()) {
-            throw new IllegalArgumentException("Missing Codex output");
+    private String requireStrictJsonObject(final String responseText) {
+        if (responseText == null || responseText.isBlank()) {
+            throw new IllegalArgumentException("Missing assistant response");
         }
-        final String sentinelJson = this.extractSentinelJson(output);
-        if (sentinelJson != null) {
-            return sentinelJson;
+        final String trimmed = responseText.trim();
+        if (trimmed.startsWith("```") || !trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+            throw new IllegalArgumentException("Assistant response must be a single JSON object only");
         }
-        final String balancedJson = this.extractLastBalancedJsonObject(output);
-        if (balancedJson != null) {
-            return balancedJson;
-        }
-        throw new IllegalArgumentException("Missing LANE_STEP_DONE JSON payload in Codex output");
-    }
-
-    private String extractSentinelJson(final String output) {
-        final int start = output.lastIndexOf(SENTINEL_START);
-        if (start < 0) {
-            return null;
-        }
-        final int contentStart = start + SENTINEL_START.length();
-        final int end = output.indexOf(SENTINEL_END, contentStart);
-        if (end < 0 || end <= contentStart) {
-            throw new IllegalArgumentException("Incomplete LANE_STEP_DONE sentinel block");
-        }
-        return output.substring(contentStart, end).trim();
-    }
-
-    private String extractLastBalancedJsonObject(final String output) {
-        int candidateStart = -1;
-        int depth = 0;
-        boolean inString = false;
-        boolean escaped = false;
-        final StringBuilder candidate = new StringBuilder();
-        String lastBalanced = null;
-        for (int index = 0; index < output.length(); index++) {
-            final char ch = output.charAt(index);
-            if (candidateStart < 0) {
-                if (ch == '{') {
-                    candidateStart = index;
-                    candidate.setLength(0);
-                    candidate.append(ch);
-                    depth = 1;
-                    inString = false;
-                    escaped = false;
-                }
-                continue;
+        try {
+            final JsonParser parser = this.objectMapper.createParser(trimmed);
+            final JsonNode root = this.objectMapper.readTree(parser);
+            if (!root.isObject()) {
+                throw new IllegalArgumentException("Assistant response must be a JSON object");
             }
-            candidate.append(ch);
-            if (inString) {
-                if (escaped) {
-                    escaped = false;
-                } else if (ch == '\\') {
-                    escaped = true;
-                } else if (ch == '"') {
-                    inString = false;
-                }
-                continue;
+            if (parser.nextToken() != null) {
+                throw new IllegalArgumentException("Assistant response must contain exactly one JSON object");
             }
-            if (ch == '"') {
-                inString = true;
-                continue;
-            }
-            if (ch == '{') {
-                depth++;
-            } else if (ch == '}') {
-                depth--;
-                if (depth == 0) {
-                    lastBalanced = candidate.toString().trim();
-                    candidateStart = -1;
-                    candidate.setLength(0);
-                }
-            }
+        } catch (final JsonProcessingException e) {
+            throw new IllegalArgumentException("Invalid LANE_STEP_DONE JSON payload", e);
+        } catch (final java.io.IOException e) {
+            throw new IllegalArgumentException("Invalid LANE_STEP_DONE JSON payload", e);
         }
-        return lastBalanced;
+        return trimmed;
     }
 
     private JsonNode readRoot(final String json) {

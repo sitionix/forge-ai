@@ -117,7 +117,6 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
     private void validateRequiredStrategies() {
         Arrays.stream(Agent.values())
                 .map(Agent::getId)
-                .filter(agentId -> !Agent.REVIEWER.getId().equals(agentId) && !Agent.EVENT.getId().equals(agentId))
                 .forEach(agentId -> {
                     if (!this.strategies.containsKey(agentId)) {
                         throw new IllegalStateException("Missing lane strategy for executable agentId=" + agentId);

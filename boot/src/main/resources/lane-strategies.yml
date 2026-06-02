@@ -25,7 +25,7 @@ forge:
             - id: completion
               title: Completion
               instruction-refs:
-                - additional-instructions/completion-callback.md
+                - lane-instructions/analyzer/completion-content.md
 
         architect:
           version: 1
@@ -54,7 +54,7 @@ forge:
             - id: completion
               title: Completion
               instruction-refs:
-                - additional-instructions/completion-callback.md
+                - lane-instructions/architect/completion-content.md
 
         api:
           version: 1
@@ -86,7 +86,6 @@ forge:
               title: Completion
               instruction-refs:
                 - lane-instructions/api/completion-content.md
-                - additional-instructions/completion-callback.md
 
         qa_lead:
           version: 1
@@ -112,7 +111,6 @@ forge:
               title: Completion
               instruction-refs:
                 - lane-instructions/qa_lead/completion-content.md
-                - additional-instructions/completion-callback.md
 
         implement_be:
           version: 1
@@ -134,7 +132,6 @@ forge:
               title: Completion
               instruction-refs:
                 - lane-instructions/implement_be/completion-content.md
-                - additional-instructions/completion-callback.md
 
         implement_fe:
           version: 1
@@ -156,7 +153,6 @@ forge:
               title: Completion
               instruction-refs:
                 - lane-instructions/implement_fe/completion-content.md
-                - additional-instructions/completion-callback.md
 
         test_unit:
           version: 1
@@ -190,7 +186,6 @@ forge:
               title: Completion
               instruction-refs:
                 - lane-instructions/test_unit/completion-content.md
-                - additional-instructions/completion-callback.md
 
         test_it:
           version: 1
@@ -232,7 +227,6 @@ forge:
               title: Completion
               instruction-refs:
                 - lane-instructions/test_it/completion-content.md
-                - additional-instructions/completion-callback.md
 
         test_ui:
           version: 1
@@ -254,4 +248,37 @@ forge:
               title: Completion
               instruction-refs:
                 - lane-instructions/test_ui/completion-content.md
-                - additional-instructions/completion-callback.md
+
+        reviewer:
+          version: 1
+          session-mode: single_session
+          steps:
+            - id: review_context
+              title: Review Context
+              instruction-refs:
+                - lane-instructions/reviewer/review-context.md
+            - id: review_execution
+              title: Review Execution
+              instruction-refs:
+                - lane-instructions/reviewer/review-execution.md
+            - id: completion
+              title: Completion
+              instruction-refs:
+                - lane-instructions/reviewer/completion-content.md
+
+        event:
+          version: 1
+          session-mode: single_session
+          steps:
+            - id: event_context
+              title: Event Context
+              instruction-refs:
+                - lane-instructions/event/event-context.md
+            - id: event_delivery
+              title: Event Delivery
+              instruction-refs:
+                - lane-instructions/event/event-delivery.md
+            - id: completion
+              title: Completion
+              instruction-refs:
+                - lane-instructions/event/completion-content.md

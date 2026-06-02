@@ -1,7 +1,5 @@
 package com.sitionix.forgeai.it;
 
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
@@ -21,13 +19,6 @@ class ArchitectGlobalRequiredTrueThenFalseIT {
 
     @Autowired
     private TestManager testManager;
-
-    @MockBean
-    private TerminalTabLauncher terminalTabLauncher;
-
-    @MockBean
-    private CodexCliCommandBuilder codexCliCommandBuilder;
-
     @Test
     @DisplayName("Should keep one global API and EVENT task when required true then false")
     void givenApiAndEventRequiredThenNotRequired_whenCompleteBothArchitects_thenGlobalLanesHaveSingleInputTask() {

@@ -1,7 +1,5 @@
 package com.sitionix.forgeai.it;
 
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
@@ -20,13 +18,6 @@ class CompleteQaLeadLaneNotRequiredFlowIT {
 
     @Autowired
     private TestManager testManager;
-
-    @MockBean
-    private TerminalTabLauncher terminalTabLauncher;
-
-    @MockBean
-    private CodexCliCommandBuilder codexCliCommandBuilder;
-
     @Test
     @DisplayName("Should mark test_unit and test_it as not needed when QA lead marks backend tests as optional")
     void givenBackendQaLeadNotRequiredPayload_whenCompleteQaLeadLane_thenMarkBackendTestLanesNotNeeded() {

@@ -34,7 +34,5 @@ Execute steps in order.
    - `additional-instructions/generation-workflow.md`
    - `additional-instructions/api-artifact-generation-rules.md`
 
-6. Completion callback  
-   Read:
-   - `lane-instructions/api/completion-content.md`
-   - `additional-instructions/completion-callback.md`.
+6. Completion content  
+   Read `lane-instructions/api/completion-content.md`.

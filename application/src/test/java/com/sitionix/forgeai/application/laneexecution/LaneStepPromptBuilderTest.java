@@ -1,124 +1,74 @@
 package com.sitionix.forgeai.application.laneexecution;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
+import com.sitionix.forgeai.domain.model.codex.ScopeContext;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
-import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyPromptConfig;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
-import java.nio.file.Path;
+import com.sitionix.forgeai.domain.model.ticket.lane.AgentInstructions;
+import com.sitionix.forgeai.domain.repository.InstructionRepository;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class LaneStepPromptBuilderTest {
 
-    private LaneStepPromptBuilder laneStepPromptBuilder;
+    private final LaneStepPromptBuilder laneStepPromptBuilder = new LaneStepPromptBuilder(
+            () -> List.of("shared/common-rules.md"),
+            new FakeInstructionRepository(),
+            new ObjectMapper()
+    );
 
-    @BeforeEach
-    void setUp() {
-        final LaneStrategyPromptConfig promptConfig = () -> List.of("shared/common-rules.md", "additional-instructions/completion-callback.md");
-        this.laneStepPromptBuilder = new LaneStepPromptBuilder(promptConfig);
+    @Test
+    void buildStartPrompt_includesMetadataTasksScopeAndResolvedCommonInstructions() {
+        final String prompt = this.laneStepPromptBuilder.buildStartPrompt(this.lane(), this.strategy(), this.input());
+
+        assertThat(prompt).contains("START_PROMPT");
+        assertThat(prompt).contains("ticketId:");
+        assertThat(prompt).contains("ticketKey:");
+        assertThat(prompt).contains("laneId:");
+        assertThat(prompt).contains("agentId:");
+        assertThat(prompt).contains("scope:");
+        assertThat(prompt).contains("Task payloads:");
+        assertThat(prompt).contains("Scope context:");
+        assertThat(prompt).contains("### shared/common-rules.md");
+        assertThat(prompt).contains("resolved::shared/common-rules.md");
+        assertThat(prompt).contains("Return exactly one JSON object");
     }
 
     @Test
-    void givenLaneAndStrategy_whenBuildStartPrompt_thenUseOnlyMetadataAndRuntimeRefs() {
-        final String prompt = this.laneStepPromptBuilder.buildStartPrompt(
-                this.readyToStartLane(),
-                this.strategy(),
-                Path.of(".forge-ai/runtime/SITIONIX-1/lane-id/execution-id/start-context.json")
-        );
+    void buildStepPrompt_usesYamlStepAndResolvedInstructionText() {
+        final String prompt = this.laneStepPromptBuilder.buildStepPrompt(this.lane(), this.strategy(), this.strategy().getSteps().getFirst(), this.input(), 1, 3);
 
-        assertThat(prompt).startsWith("START_PROMPT");
-        assertThat(prompt.length()).isLessThan(1500);
-        assertThat(prompt)
-                .contains("ticketId:")
-                .contains("ticketKey:")
-                .contains("laneId:")
-                .contains("agentId:")
-                .contains("scope:")
-                .contains("strategyId:")
-                .contains("strategyVersion:")
-                .contains("workspaceRoot:")
-                .contains("startContext:")
-                .contains(".forge-ai/runtime/SITIONIX-1/lane-id/execution-id/start-context.json")
-                .contains("commonInstructionRefs:")
-                .contains("- shared/common-rules.md")
-                .contains("- additional-instructions/completion-callback.md");
-        assertThat(prompt)
-                .doesNotContain("# Common Agent Rules")
-                .doesNotContain("agentInstruction:")
-                .doesNotContain("additionalInstructions:")
-                .doesNotContain("sharedInstructions:")
-                .doesNotContain("Lazy Instruction Strategy")
-                .doesNotContain("architect-handoff.md")
-                .doesNotContain("qa-lead-handoff.md")
-                .doesNotContain("completion-callback.md\n#")
-                .doesNotContain("taskPayloads:")
-                .doesNotContain("{{TASK}}")
-                .doesNotContain("{{TASKS}}");
+        assertThat(prompt).contains("STEP_PROMPT");
+        assertThat(prompt).contains("stepIndex: 1");
+        assertThat(prompt).contains("stepId: scope_slicing");
+        assertThat(prompt).contains("### lane-instructions/analyzer/scope-slicing.md");
+        assertThat(prompt).contains("resolved::lane-instructions/analyzer/scope-slicing.md");
+        assertThat(prompt).doesNotContain("architect-handoff.md");
+        assertThat(prompt).doesNotContain("qa-lead-handoff.md");
     }
 
     @Test
-    void givenStep_whenBuildStepPrompt_thenUseOnlyActiveRuntimeFile() {
-        final String prompt = this.laneStepPromptBuilder.buildStepPrompt(
-                this.step("architect_handoff", "Architect Handoff", 2, null, List.of("lane-instructions/analyzer/architect-handoff.md")),
-                2,
-                4,
-                Path.of(".forge-ai/runtime/SITIONIX-1/lane-id/execution-id/steps/2-architect_handoff.md")
-        );
+    void buildCorrectionPrompt_forFinalStep_includesCompletionContract() {
+        final LaneStrategyStep completionStep = this.strategy().getSteps().getLast();
+        final String prompt = this.laneStepPromptBuilder.buildCorrectionPrompt(this.lane(), completionStep, "summary must be non-empty", true);
 
-        assertThat(prompt).startsWith("STEP_PROMPT");
-        assertThat(prompt.length()).isLessThan(1500);
-        assertThat(prompt)
-                .contains("stepIndex:")
-                .contains("2/4")
-                .contains("stepId:")
-                .contains("architect_handoff")
-                .contains("stepTitle:")
-                .contains("Architect Handoff")
-                .contains("runtimeStepFile:")
-                .contains(".forge-ai/runtime/SITIONIX-1/lane-id/execution-id/steps/2-architect_handoff.md");
-        assertThat(prompt)
-                .doesNotContain("ticketId:")
-                .doesNotContain("ticketKey:")
-                .doesNotContain("laneId:")
-                .doesNotContain("agentId:")
-                .doesNotContain("scope:")
-                .doesNotContain("commonInstructionRefs:")
-                .doesNotContain("architect-handoff.md\n#")
-                .doesNotContain("taskPayloads:")
-                .doesNotContain("Lazy Instruction Strategy");
+        assertThat(prompt).contains("CORRECTION_PROMPT");
+        assertThat(prompt).contains("Active step id: completion");
+        assertThat(prompt).contains("Validation error: summary must be non-empty");
+        assertThat(prompt).contains("completionPayload");
     }
 
-    @Test
-    void givenStep_whenBuildCorrectionPrompt_thenUseOnlyActiveRuntimeFile() {
-        final String prompt = this.laneStepPromptBuilder.buildCorrectionPrompt(
-                "scope_slicing",
-                Path.of(".forge-ai/runtime/SITIONIX-1/lane-id/execution-id/steps/1-scope_slicing.md")
-        );
-
-        assertThat(prompt).startsWith("CORRECTION_PROMPT");
-        assertThat(prompt.length()).isLessThan(1500);
-        assertThat(prompt)
-                .contains("stepId=scope_slicing")
-                .contains(".forge-ai/runtime/SITIONIX-1/lane-id/execution-id/steps/1-scope_slicing.md");
-        assertThat(prompt)
-                .doesNotContain("ticketId:")
-                .doesNotContain("laneId:")
-                .doesNotContain("commonInstructionRefs:")
-                .doesNotContain("Lazy Instruction Strategy");
-    }
-
-    @Test
-    void givenConfiguredCommonRefs_whenQueryCommonInstructionRefs_thenReturnYamlBackedRefs() {
-        assertThat(this.laneStepPromptBuilder.commonInstructionRefs())
-                .containsExactly("shared/common-rules.md", "additional-instructions/completion-callback.md");
-    }
-
-    private ReadyToStartLane readyToStartLane() {
+    private ReadyToStartLane lane() {
         return ReadyToStartLane.builder()
                 .ticketId(UUID.randomUUID())
                 .ticketKey("SITIONIX-1")
@@ -137,25 +87,39 @@ class LaneStepPromptBuilderTest {
                 .version(1)
                 .sessionMode("single_session")
                 .steps(List.of(
-                        this.step("scope_slicing", "Scope Slicing", 1, "TASKS", List.of("lane-instructions/analyzer/scope-slicing.md")),
-                        this.step("architect_handoff", "Architect Handoff", 2, null, List.of("lane-instructions/analyzer/architect-handoff.md")),
-                        this.step("qa_lead_handoff", "QA Lead Handoff", 3, null, List.of("lane-instructions/analyzer/qa-lead-handoff.md")),
-                        this.step("completion", "Completion", 4, null, List.of("additional-instructions/completion-callback.md"))
+                        LaneStrategyStep.builder().id("scope_slicing").title("Scope Slicing").order(1).instructionRefs(List.of("lane-instructions/analyzer/scope-slicing.md")).build(),
+                        LaneStrategyStep.builder().id("architect_handoff").title("Architect Handoff").order(2).instructionRefs(List.of("lane-instructions/analyzer/architect-handoff.md")).build(),
+                        LaneStrategyStep.builder().id("completion").title("Completion").order(3).instructionRefs(List.of("lane-instructions/analyzer/completion-content.md")).build()
                 ))
                 .build();
     }
 
-    private LaneStrategyStep step(final String id,
-                                  final String title,
-                                  final int order,
-                                  final String taskPlaceholder,
-                                  final List<String> instructionRefs) {
-        return LaneStrategyStep.builder()
-                .id(id)
-                .title(title)
-                .order(order)
-                .taskPlaceholder(taskPlaceholder)
-                .instructionRefs(instructionRefs)
+    private AgentExecutionInput<AgentTicketPayload> input() {
+        final ApiPayload task = ApiPayload.builder()
+                .scope("backendforfrontendservice-sox")
+                .summary("Implement analyzer task payload support.")
                 .build();
+        return AgentExecutionInput.<AgentTicketPayload>builder()
+                .tasks(new LinkedHashSet<>(Set.of(task)))
+                .scope(ScopeContext.builder().scope("backendforfrontendservice-sox").build())
+                .build();
+    }
+
+    private static final class FakeInstructionRepository implements InstructionRepository {
+
+        @Override
+        public AgentInstructions findInstructionsByAgentId(final String agentId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String findInstructionTextByRef(final String instructionRef) {
+            return "resolved::" + instructionRef;
+        }
+
+        @Override
+        public Set<String> findSharedInstructionRefs() {
+            return Set.of("shared/common-rules.md");
+        }
     }
 }

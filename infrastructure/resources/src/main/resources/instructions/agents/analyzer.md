@@ -28,8 +28,8 @@ Execute steps in order.
 3. QA lead handoff  
    Read `lane-instructions/analyzer/qa-lead-handoff.md`.
 
-4. Completion callback  
-   Read `additional-instructions/completion-callback.md`.
+4. Completion content  
+   Read `lane-instructions/analyzer/completion-content.md`.
 
 ## Completion Content
 

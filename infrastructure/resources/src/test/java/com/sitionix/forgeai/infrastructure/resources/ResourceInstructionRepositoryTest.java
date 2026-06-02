@@ -22,7 +22,7 @@ class ResourceInstructionRepositoryTest {
         final InstructionResourcesProperties.AgentConfig analyzerConfig = new InstructionResourcesProperties.AgentConfig();
         analyzerConfig.setInstructions("instructions/agents/analyzer.md");
         analyzerConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete");
-        analyzerConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of("instructions/additional-instructions/completion-callback.md")));
+        analyzerConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of("instructions/additional-instructions/scope-context-usage.md")));
 
         final InstructionResourcesProperties.AgentConfig qaLeadConfig = new InstructionResourcesProperties.AgentConfig();
         qaLeadConfig.setInstructions("instructions/agents/qa_lead.md");
@@ -80,7 +80,7 @@ class ResourceInstructionRepositoryTest {
         assertThat(actual.getAgentInstruction()).contains("# Analyzer Instructions");
         assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete");
         assertThat(actual.getAdditionalInstructions()).hasSize(1);
-        assertThat(actual.getAdditionalInstructions().iterator().next()).contains("# Completion Callback Rules");
+        assertThat(actual.getAdditionalInstructions().iterator().next()).contains("# Scope Context Usage");
         assertThat(actual.getSharedInstructions()).hasSize(1);
         assertThat(actual.getSharedInstructions().iterator().next()).contains("# Common Agent Rules");
     }

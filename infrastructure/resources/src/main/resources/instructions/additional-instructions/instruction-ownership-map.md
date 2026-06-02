@@ -50,7 +50,6 @@ Shared instructions contain rules used by all or most agents.
 | File | Owns |
 |---|---|
 | `instructions/shared/common-rules.md` | universal lane behavior, scope discipline, ownership boundaries |
-| `instructions/shared/completion-callback.md` | callback mechanics, OpenAPI callback contract reading, HTTP delivery, retry, verification |
 | `instructions/shared/scope-context-usage.md` | how to interpret scope context and ownership metadata |
 
 Use shared files only for cross-agent rules.
@@ -288,7 +287,6 @@ Example:
 
 Owner:
 
-- `instructions/shared/completion-callback.md`
 
 ---
 

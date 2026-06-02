@@ -61,7 +61,6 @@
                         <configuration>
                             <excludes>
                                 <exclude>**/com/sitionix/forgeai/Application.class</exclude>
-                                <exclude>**/com/sitionix/forgeai/infrastructure/codexcli/adapter/TerminalTabLauncher.class</exclude>
                             </excludes>
                         </configuration>
                     </execution>

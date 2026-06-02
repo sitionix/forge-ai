@@ -1,9 +1,11 @@
 package com.sitionix.forgeai.application.laneexecution.support;
 
+import com.sitionix.forgeai.domain.model.codex.CodexSession;
+import com.sitionix.forgeai.domain.model.codex.CodexSessionStartCommand;
+import com.sitionix.forgeai.domain.model.codex.CodexTurnCommand;
+import com.sitionix.forgeai.domain.model.codex.CodexTurnResponse;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,50 +14,42 @@ import java.util.function.Function;
 
 public class FakeInteractiveCodexSessionRepository implements CodexSessionRepository {
 
-    private final Function<String, List<String>> responsePlanner;
-    private final Map<String, Deque<String>> outputsBySession = new LinkedHashMap<>();
+    private final Function<CodexTurnCommand, String> responsePlanner;
     private final Map<String, List<String>> historyBySession = new LinkedHashMap<>();
+    private final List<String> submittedPrompts = new ArrayList<>();
 
-    public FakeInteractiveCodexSessionRepository(final Function<String, List<String>> responsePlanner) {
+    public FakeInteractiveCodexSessionRepository(final Function<CodexTurnCommand, String> responsePlanner) {
         this.responsePlanner = responsePlanner;
     }
 
     @Override
-    public String start(final String initialPrompt, final String sourceTerminalTty) {
+    public CodexSession openSession(final CodexSessionStartCommand command) {
         final String sessionId = UUID.randomUUID().toString();
-        this.outputsBySession.put(sessionId, new ArrayDeque<>());
+        final String threadId = "thread-" + sessionId;
         this.historyBySession.put(sessionId, new ArrayList<>());
-        this.recordServiceMessage(sessionId, initialPrompt);
-        this.enqueueResponses(sessionId, initialPrompt);
-        return sessionId;
+        return CodexSession.builder().id(sessionId).threadId(threadId).build();
     }
 
     @Override
-    public void send(final String sessionId, final String message, final String sourceTerminalTty) {
+    public CodexTurnResponse submitTurn(final String sessionId, final CodexTurnCommand command) {
         this.ensureSession(sessionId);
-        this.recordServiceMessage(sessionId, message);
-        this.enqueueResponses(sessionId, message);
-    }
-
-    @Override
-    public String waitForOutput(final String sessionId, final long timeoutMs) {
-        this.ensureSession(sessionId);
-        final String output = this.outputsBySession.get(sessionId).pollFirst();
-        if (output == null) {
-            throw new IllegalStateException("No Codex output queued for sessionId=" + sessionId);
+        this.historyBySession.get(sessionId).add("service:" + command.prompt());
+        this.submittedPrompts.add(command.prompt());
+        final String response = this.responsePlanner.apply(command);
+        if (response != null) {
+            this.historyBySession.get(sessionId).add("assistant:" + response);
         }
-        this.historyBySession.get(sessionId).add("output:" + output);
-        return output;
+        return CodexTurnResponse.builder()
+                .sessionId(sessionId)
+                .threadId("thread-" + sessionId)
+                .turnId(UUID.randomUUID().toString())
+                .assistantResponse(response)
+                .build();
     }
 
     @Override
-    public boolean isAlive(final String sessionId) {
-        return this.outputsBySession.containsKey(sessionId);
-    }
-
-    @Override
-    public void close(final String sessionId) {
-        this.outputsBySession.remove(sessionId);
+    public void closeSession(final String sessionId) {
+        this.historyBySession.remove(sessionId);
     }
 
     public List<String> history(final String sessionId) {
@@ -66,23 +60,12 @@ public class FakeInteractiveCodexSessionRepository implements CodexSessionReposi
         return List.copyOf(this.historyBySession.keySet());
     }
 
-    private void enqueueResponses(final String sessionId, final String message) {
-        final List<String> responses = this.responsePlanner.apply(message);
-        if (responses == null) {
-            return;
-        }
-        responses.forEach(response -> {
-            this.outputsBySession.get(sessionId).addLast(response);
-            this.historyBySession.get(sessionId).add("codex:" + response);
-        });
-    }
-
-    private void recordServiceMessage(final String sessionId, final String message) {
-        this.historyBySession.get(sessionId).add("service:" + message);
+    public List<String> submittedPrompts() {
+        return List.copyOf(this.submittedPrompts);
     }
 
     private void ensureSession(final String sessionId) {
-        if (!this.outputsBySession.containsKey(sessionId)) {
+        if (!this.historyBySession.containsKey(sessionId)) {
             throw new IllegalStateException("Unknown fake sessionId=" + sessionId);
         }
     }

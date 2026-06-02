@@ -45,7 +45,5 @@ Execute steps in order.
    - `additional-instructions/sonar-cloud-base.md`
    - `additional-instructions/test-coverage-sonar-gate.md`
 
-6. Completion callback  
-   Read:
-   - `lane-instructions/test_unit/completion-content.md`
-   - `additional-instructions/completion-callback.md`.
+6. Completion content  
+   Read `lane-instructions/test_unit/completion-content.md`.

@@ -37,8 +37,8 @@ Execute steps in order.
 5. Implementation handoff  
    Read `lane-instructions/architect/implementation-handoff.md`.
 
-6. Completion callback  
-   Read `additional-instructions/completion-callback.md`.
+6. Completion content  
+   Read `lane-instructions/architect/completion-content.md`.
 
 ## Completion Content
 

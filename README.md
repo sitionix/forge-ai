@@ -118,20 +118,16 @@ Classes:
 `AnalyzeAgentExecutor` is special:
 - uses original ticket text as analyzer task payload.
 
-### 6.3 Send payload to Codex CLI
-`CodexCliJsonClient`:
-- serializes `AgentExecutionInput` to JSON;
-- writes temp file;
-- launches terminal command via `CodexCliCommandBuilder` + `TerminalTabLauncher`;
-- `run-codex-with-prompt-file.sh` reads JSON and executes:
-  - `codex --no-alt-screen -C <workspace_root> "<json-prompt>"`.
+### 6.3 Send payload to Codex
+Normal production execution uses a supervised Codex session adapter:
+- opens one Codex app-server session per lane execution;
+- submits one logical turn per strategy step;
+- waits for the assistant response for that exact turn;
+- persists the accepted step result before the next step starts.
 
-Classes/scripts:
-- `infrastructure/codex-cli/src/main/java/com/sitionix/forgeai/infrastructure/codexcli/adapter/CodexCliJsonClient.java`
-- `infrastructure/codex-cli/src/main/java/com/sitionix/forgeai/infrastructure/codexcli/adapter/CodexCliCommandBuilder.java`
-- `infrastructure/codex-cli/src/main/resources/scripts/run-codex-with-prompt-file.sh`
-- `infrastructure/codex-cli/src/main/resources/scripts/open-in-iterm.applescript`
-- `infrastructure/codex-cli/src/main/resources/scripts/open-in-terminal.applescript`
+Classes:
+- `infrastructure/codex-cli/src/main/java/com/sitionix/forgeai/infrastructure/codexcli/adapter/appserver/CodexAppServerSessionRepository.java`
+- `infrastructure/codex-cli/src/main/java/com/sitionix/forgeai/infrastructure/codexcli/adapter/appserver/CodexJsonRpcClient.java`
 
 ## 7. Instruction System (How instructions are loaded)
 
@@ -289,9 +285,7 @@ Repository scripts:
 - `scripts/forge-ai-start.sh` - local start helper.
 - `scripts/forge-callback-curl.sh` - callback wrapper used by agent instructions.
 
-Codex CLI scripts (infra module):
-- `run-codex-with-prompt-file.sh`
-- terminal launcher scripts (`open-in-iterm.applescript`, `open-in-terminal.applescript`).
+Codex CLI transport is handled through the app-server JSON-RPC adapter. No prompt-file launcher scripts remain in the normal runtime.
 
 ## 15. Testing Layout
 
@@ -336,9 +330,8 @@ Instruction system:
 - `infrastructure/resources/src/main/java/com/sitionix/forgeai/infrastructure/resources/ResourceInstructionRepository.java`
 - `infrastructure/resources/src/main/resources/instructions/**`
 
-Codex launcher:
-- `infrastructure/codex-cli/src/main/java/com/sitionix/forgeai/infrastructure/codexcli/adapter/CodexCliJsonClient.java`
-- `infrastructure/codex-cli/src/main/resources/scripts/run-codex-with-prompt-file.sh`
+Codex transport:
+- `infrastructure/codex-cli/src/main/java/com/sitionix/forgeai/infrastructure/codexcli/adapter/appserver/CodexAppServerSessionRepository.java`
 
 Persistence:
 - `infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/adapter/TicketRepositoryImpl.java`
@@ -349,4 +342,3 @@ Config:
 - `boot/src/main/resources/application.yml`
 - `boot/src/main/resources/agent.yml`
 - `boot/src/main/resources/services.yaml`
-

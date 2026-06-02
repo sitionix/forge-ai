@@ -35,10 +35,8 @@ Execute steps in order.
 4. Unit test notes  
    Read `lane-instructions/qa_lead/unit-test-notes.md`.
 
-5. Completion callback  
-   Read:
-    - `lane-instructions/qa_lead/completion-content.md`
-    - `additional-instructions/completion-callback.md`.
+5. Completion content  
+   Read `lane-instructions/qa_lead/completion-content.md`.
 
 ## Completion Content
 

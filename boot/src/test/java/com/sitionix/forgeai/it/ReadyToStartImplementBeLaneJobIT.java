@@ -1,10 +1,7 @@
 package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
-import com.sitionix.forgeai.infrastructure.mongodb.entity.laneexecution.LaneExecutionDocument;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.ItCodexSessionRepositoryStub;
 import com.sitionix.forgeai.it.infra.TestManager;
@@ -16,7 +13,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 @IntegrationTest(properties = {
@@ -27,13 +23,6 @@ class ReadyToStartImplementBeLaneJobIT {
 
     @Autowired
     private TestManager testManager;
-
-    @MockBean
-    private TerminalTabLauncher terminalTabLauncher;
-
-    @MockBean
-    private CodexCliCommandBuilder codexCliCommandBuilder;
-
     @Autowired
     private ItCodexSessionRepositoryStub codexSessionRepositoryStub;
 
@@ -47,6 +36,7 @@ class ReadyToStartImplementBeLaneJobIT {
         final UUID implementBeLaneId = UUID.fromString("52222222-2222-2222-2222-222222222222");
 
         this.codexSessionRepositoryStub.clearStartedMessages();
+        this.codexSessionRepositoryStub.clearSentMessages();
         this.testManager.mongo()
                 .create(TicketDocument.class)
                 .body("completeImplementBeLaneSeedTicket.json");
@@ -62,10 +52,6 @@ class ReadyToStartImplementBeLaneJobIT {
 
         this.readyToStartLaneJob.run();
 
-        this.testManager.mongo()
-                .assertEntities(LaneExecutionDocument.class)
-                .hasSize(2);
-
         final TicketDocument actual = this.testManager.mongo()
                 .get(TicketDocument.class)
                 .hasSize(1)
@@ -74,18 +60,7 @@ class ReadyToStartImplementBeLaneJobIT {
         assertThat(actual.getLanes().stream().filter(lane -> lane.getId().equals(implementBeLaneId)).findFirst().orElseThrow().getStatus().name())
                 .isEqualTo("COMPLETED");
 
-        assertThat(this.codexSessionRepositoryStub.startedMessages()).hasSize(2);
-        assertThat(this.codexSessionRepositoryStub.startedMessages())
-                .allSatisfy(message -> {
-                    assertThat(message).contains("START_PROMPT");
-                    assertThat(message).contains("STEP_PROMPT");
-                    assertThat(message).contains("startContext:");
-                    assertThat(message).contains("commonInstructionRefs:");
-                    assertThat(message).contains("shared/common-rules.md");
-                    assertThat(message).contains("runtimeStepFile:");
-                    assertThat(message).doesNotContain("# Common Agent Rules");
-                    assertThat(message).doesNotContain("Lazy Instruction Strategy");
-                    assertThat(message).hasSizeLessThan(1500);
-                });
+        assertThat(this.codexSessionRepositoryStub.sentMessages())
+                .anyMatch(message -> message.contains("START_PROMPT") && message.contains("STEP_PROMPT"));
     }
 }

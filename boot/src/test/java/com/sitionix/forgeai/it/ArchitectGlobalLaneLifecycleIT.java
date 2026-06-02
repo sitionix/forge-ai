@@ -1,8 +1,6 @@
 package com.sitionix.forgeai.it;
 
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
@@ -23,13 +21,6 @@ class ArchitectGlobalLaneLifecycleIT {
 
     @Autowired
     private TestManager testManager;
-
-    @MockBean
-    private TerminalTabLauncher terminalTabLauncher;
-
-    @MockBean
-    private CodexCliCommandBuilder codexCliCommandBuilder;
-
     @Test
     @DisplayName("Should keep API and EVENT NOT_STARTED when one of architect dependencies is still IN_PROGRESS")
     void givenTwoArchitectDependenciesAndSecondArchitectInProgress_whenCompleteFirstArchitect_thenApiAndEventStayNotStarted() {

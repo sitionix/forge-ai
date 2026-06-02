@@ -1,5 +1,8 @@
 package com.sitionix.forgeai.application.laneexecution.support;
 
+import com.sitionix.forgeai.domain.model.codex.CodexSessionStartCommand;
+import com.sitionix.forgeai.domain.model.codex.CodexTurnCommand;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -7,29 +10,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FakeInteractiveCodexSessionRepositoryTest {
 
     @Test
-    void givenResponsePlanner_whenSendAndWait_thenReturnOutputsInSameSession() {
-        final FakeInteractiveCodexSessionRepository repository = new FakeInteractiveCodexSessionRepository(message -> {
-            if (message.contains("step-1")) {
-                return java.util.List.of("response-1");
-            }
-            if (message.contains("step-2")) {
-                return java.util.List.of("response-2");
-            }
-            return java.util.List.of();
-        });
+    void givenSubmittedTurn_whenResponsePlannerReturnsJson_thenHistoryRecordsAssistantResponse() {
+        final FakeInteractiveCodexSessionRepository repository = new FakeInteractiveCodexSessionRepository(command -> """
+                {
+                  "type": "LANE_STEP_DONE",
+                  "stepId": "scope_slicing",
+                  "summary": "done",
+                  "evidence": {}
+                }
+                """);
 
-        final String sessionId = repository.start("initial prompt", "/dev/ttys001");
-        repository.send(sessionId, "step-1 prompt", "/dev/ttys001");
-        repository.send(sessionId, "step-2 prompt", "/dev/ttys001");
+        final String sessionId = repository.openSession(CodexSessionStartCommand.builder().workspaceRoot(".").build()).id();
+        final String response = repository.submitTurn(sessionId, CodexTurnCommand.builder()
+                        .prompt("STEP_PROMPT step=scope_slicing")
+                        .timeout(Duration.ofSeconds(1))
+                        .build())
+                .assistantResponse();
 
-        assertThat(repository.sessionIds()).containsExactly(sessionId);
-        assertThat(repository.waitForOutput(sessionId, 1000)).isEqualTo("response-1");
-        assertThat(repository.waitForOutput(sessionId, 1000)).isEqualTo("response-2");
-        assertThat(repository.history(sessionId))
-                .contains("service:initial prompt")
-                .contains("service:step-1 prompt")
-                .contains("service:step-2 prompt")
-                .contains("output:response-1")
-                .contains("output:response-2");
+        assertThat(response).contains("\"stepId\": \"scope_slicing\"");
+        assertThat(repository.history(sessionId)).containsExactly(
+                "service:STEP_PROMPT step=scope_slicing",
+                "assistant:" + response
+        );
+        assertThat(repository.submittedPrompts()).containsExactly("STEP_PROMPT step=scope_slicing");
     }
 }

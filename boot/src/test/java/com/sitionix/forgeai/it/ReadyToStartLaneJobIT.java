@@ -1,8 +1,5 @@
 package com.sitionix.forgeai.it;
 
-import com.sitionix.forgeai.domain.port.CodexClient;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.LaneDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
@@ -13,7 +10,6 @@ import com.sitionix.forgeit.core.test.IntegrationTest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 import java.util.List;
@@ -24,16 +20,6 @@ class ReadyToStartLaneJobIT {
 
     @Autowired
     private TestManager testManager;
-
-    @MockBean
-    private TerminalTabLauncher terminalTabLauncher;
-
-    @MockBean
-    private CodexCliCommandBuilder codexCliCommandBuilder;
-
-    @MockBean
-    private CodexClient codexClient;
-
     @Test
     @DisplayName("Should move analyzer lanes to in progress by scheduler job")
     void givenStartForgeRequest_whenSchedulerRuns_thenMoveAnalyzerLanesToInProgress() {

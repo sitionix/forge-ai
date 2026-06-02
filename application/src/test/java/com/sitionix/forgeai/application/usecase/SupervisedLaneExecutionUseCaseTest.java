@@ -1,272 +1,133 @@
 package com.sitionix.forgeai.application.usecase;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.application.laneexecution.LaneCompletionDispatcher;
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
 import com.sitionix.forgeai.application.laneexecution.LaneStepPromptBuilder;
 import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
-import com.sitionix.forgeai.application.laneexecution.SupervisedPromptArtifactWriter;
 import com.sitionix.forgeai.application.laneexecution.support.FakeInteractiveCodexSessionRepository;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
+import com.sitionix.forgeai.domain.model.codex.CodexSession;
+import com.sitionix.forgeai.domain.model.codex.CodexSessionStartCommand;
+import com.sitionix.forgeai.domain.model.codex.CodexTurnCommand;
+import com.sitionix.forgeai.domain.model.codex.CodexTurnResponse;
 import com.sitionix.forgeai.domain.model.codex.ScopeContext;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
-import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyPromptConfig;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.lane.AgentInstructions;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class SupervisedLaneExecutionUseCaseTest {
 
-    @TempDir
-    Path tempDir;
-
     @Mock
     private LaneStrategyRepository laneStrategyRepository;
-
     @Mock
-    private InstructionRepository instructionRepository;
+    private LaneCompletionDispatcher laneCompletionDispatcher;
 
-    private LaneStrategyPromptConfig laneStrategyPromptConfig;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private LaneExecutionRepository laneExecutionRepository;
     private SupervisedExecutionProperties supervisedExecutionProperties;
-
-    private InMemoryLaneExecutionRepository laneExecutionRepository;
-    private FakeInteractiveCodexSessionRepository codexSessionRepository;
-    private SupervisedLaneExecutionUseCase useCase;
 
     @BeforeEach
     void setUp() {
         this.laneExecutionRepository = new InMemoryLaneExecutionRepository();
-        this.laneStrategyPromptConfig = () -> List.of("shared/common-rules.md");
         this.supervisedExecutionProperties = new SupervisedExecutionProperties();
-        this.supervisedExecutionProperties.setRuntimeRoot(this.tempDir.resolve("runtime").toString());
-        this.supervisedExecutionProperties.setMaxOutgoingPromptChars(1500);
-        this.stubInstructionRefs();
+        this.supervisedExecutionProperties.setTurnTimeout(Duration.ofSeconds(1));
     }
 
     @Test
-    void givenValidOutputs_whenExecute_thenSendStartAndStepPromptsInOrder() {
-        final ReadyToStartLane lane = this.readyToStartLane();
-        final LaneStrategy strategy = this.strategy();
-        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(strategy);
-        this.useCase = this.buildUseCase(this.happyPathPlanner());
+    void givenValidResponses_whenExecute_thenPersistEveryStepAndDispatchFinalCompletion() {
+        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(this.strategy());
+        final FakeInteractiveCodexSessionRepository sessions = new FakeInteractiveCodexSessionRepository(command -> this.validResult(this.stepIdFromPrompt(command.prompt())));
+        final SupervisedLaneExecutionUseCase useCase = this.useCase(sessions);
 
-        this.useCase.execute(lane, this.inputWithTasks(), 1);
+        useCase.execute(this.lane(), this.input(), 1);
 
-        final List<String> history = this.codexSessionRepository.history(this.codexSessionRepository.sessionIds().getFirst());
-        final List<String> serviceMessages = history.stream()
-                .filter(value -> value.startsWith("service:"))
-                .toList();
-
-        assertThat(serviceMessages).hasSize(4);
-        assertThat(serviceMessages.getFirst())
-                .startsWith("service:START_PROMPT")
-                .contains("startContext:")
-                .contains("commonInstructionRefs:")
-                .contains("shared/common-rules.md")
-                .contains("STEP_PROMPT")
-                .contains("scope_slicing")
-                .contains("runtimeStepFile:")
-                .doesNotContain("Lazy Instruction Strategy")
-                .doesNotContain("architect_handoff")
-                .doesNotContain("qa_lead_handoff")
-                .doesNotContain("completion-callback.md")
-                .doesNotContain("# Common Agent Rules")
-                .doesNotContain("agentInstruction:")
-                .doesNotContain("taskPayloads:")
-                .doesNotContain("contractApi:")
-                .doesNotContain("scopeContext:")
-                .doesNotContain("additionalInstructions:");
-
-        assertThat(serviceMessages.get(1))
-                .contains("STEP_PROMPT")
-                .contains("architect_handoff")
-                .contains("runtimeStepFile:")
-                .doesNotContain("scope_slicing")
-                .doesNotContain("qa_lead_handoff")
-                .doesNotContain("completion-callback.md")
-                .doesNotContain("ticketId:")
-                .doesNotContain("scopeContext:")
-                .doesNotContain("commonInstructionRefs:")
-                .doesNotContain("taskPayloads:");
-        assertThat(serviceMessages.get(2))
-                .contains("STEP_PROMPT")
-                .contains("qa_lead_handoff")
-                .doesNotContain("scope_slicing")
-                .doesNotContain("architect_handoff")
-                .doesNotContain("completion-callback.md")
-                .doesNotContain("ticketId:")
-                .doesNotContain("commonInstructionRefs:");
-        assertThat(serviceMessages.get(3))
-                .contains("STEP_PROMPT")
-                .contains("completion")
-                .doesNotContain("scope_slicing")
-                .doesNotContain("architect_handoff")
-                .doesNotContain("qa_lead_handoff")
-                .doesNotContain("ticketId:")
-                .doesNotContain("commonInstructionRefs:");
-
-        assertThat(serviceMessages.stream().mapToInt(String::length).max().orElse(0)).isLessThan(1500);
-
-        final UUID executionId = this.laneExecutionRepository.savedExecutions().getFirst().getId();
-        final Path runtimeRoot = this.tempDir.resolve("runtime");
-        assertThat(runtimeRoot.resolve("SITIONIX-1").resolve(lane.getLaneId().toString()).resolve(executionId.toString()).resolve("start-context.json"))
-                .exists();
-        assertThat(runtimeRoot.resolve("SITIONIX-1").resolve(lane.getLaneId().toString()).resolve(executionId.toString()).resolve("steps").resolve("1-scope_slicing.md"))
-                .exists();
-        assertThat(runtimeRoot.resolve("SITIONIX-1").resolve(lane.getLaneId().toString()).resolve(executionId.toString()).resolve("steps").resolve("2-architect_handoff.md"))
-                .exists();
-        assertThat(runtimeRoot.resolve("SITIONIX-1").resolve(lane.getLaneId().toString()).resolve(executionId.toString()).resolve("steps").resolve("3-qa_lead_handoff.md"))
-                .exists();
-        assertThat(runtimeRoot.resolve("SITIONIX-1").resolve(lane.getLaneId().toString()).resolve(executionId.toString()).resolve("steps").resolve("4-completion.md"))
-                .exists();
-
-        assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("scope_slicing")));
-        assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("architect_handoff")));
-        assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("qa_lead_handoff")));
-        assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("completion")));
-        assertThat(history).noneMatch(value -> value.contains("CORRECTION_PROMPT"));
-
-        assertThat(this.laneExecutionRepository.savedExecutions()).hasSize(1);
-        assertThat(this.laneExecutionRepository.savedStepExecutions()).extracting(LaneStepExecution::getStepId)
-                .containsExactly("scope_slicing", "architect_handoff", "qa_lead_handoff", "completion");
-        assertThat(this.laneExecutionRepository.savedStepExecutions()).allMatch(LaneStepExecution::isDone);
+        assertThat(sessions.submittedPrompts()).hasSize(3);
+        assertThat(((InMemoryLaneExecutionRepository) this.laneExecutionRepository).savedStepExecutions())
+                .extracting(LaneStepExecution::getStepId)
+                .containsExactly("scope_slicing", "architect_handoff", "completion");
+        verify(this.laneCompletionDispatcher).validateFinalCompletionPayload(eq(this.lane()), any());
+        verify(this.laneCompletionDispatcher).completeLane(eq(this.lane()), any());
     }
 
     @Test
-    void givenInvalidThenValidOutput_whenExecute_thenSendCorrectionAndProceed() {
-        final ReadyToStartLane lane = this.readyToStartLane();
-        final LaneStrategy strategy = this.strategy();
-        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(strategy);
-        this.useCase = this.buildUseCase(this.invalidThenValidPlanner());
+    void givenInvalidFirstResponse_whenExecute_thenSendCorrectionForSameStep() {
+        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(this.strategy());
+        final AtomicBoolean invalidReturned = new AtomicBoolean(false);
+        final FakeInteractiveCodexSessionRepository sessions = new FakeInteractiveCodexSessionRepository(command -> {
+            if (!invalidReturned.getAndSet(true)) {
+                return "not json";
+            }
+            return this.validResult(this.stepIdFromPrompt(command.prompt()));
+        });
+        final SupervisedLaneExecutionUseCase useCase = this.useCase(sessions);
 
-        this.useCase.execute(lane, this.inputWithTasks(), 1);
+        useCase.execute(this.lane(), this.input(), 1);
 
-        final List<String> history = this.codexSessionRepository.history(this.codexSessionRepository.sessionIds().getFirst());
-        final List<String> serviceMessages = history.stream()
-                .filter(value -> value.startsWith("service:"))
-                .toList();
-        assertThat(serviceMessages).hasSize(5);
-        assertThat(serviceMessages.stream().mapToInt(String::length).max().orElse(0)).isLessThan(1500);
-        assertThat(serviceMessages.getFirst()).contains("START_PROMPT").contains("scope_slicing");
-        assertThat(serviceMessages.get(1)).startsWith("service:CORRECTION_PROMPT");
-        assertThat(serviceMessages.get(1)).contains("stepId=scope_slicing");
-        assertThat(serviceMessages).anyMatch(value -> value.contains("architect_handoff"));
-        assertThat(serviceMessages).anyMatch(value -> value.contains("qa_lead_handoff"));
-        assertThat(serviceMessages).anyMatch(value -> value.contains("completion"));
-        assertThat(history).anyMatch(value -> value.equals("codex:" + this.invalidOutput()));
-        assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("scope_slicing")));
-        assertThat(this.laneExecutionRepository.savedStepExecutions()).extracting(LaneStepExecution::getStepId)
-                .containsExactly("scope_slicing", "architect_handoff", "qa_lead_handoff", "completion");
+        assertThat(sessions.submittedPrompts()).anyMatch(prompt -> prompt.contains("CORRECTION_PROMPT"));
+        assertThat(((InMemoryLaneExecutionRepository) this.laneExecutionRepository).savedStepExecutions()).isNotEmpty();
     }
 
     @Test
-    void givenNoisyOutputWithValidMarker_whenExecute_thenParseAndProceed() {
-        final ReadyToStartLane lane = this.readyToStartLane();
-        final LaneStrategy strategy = this.strategy();
-        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(strategy);
-        this.useCase = this.buildUseCase(this.noisyPlanner());
+    void givenTimeout_whenExecute_thenDoNotPersistOrCompleteLane() {
+        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(this.strategy());
+        final SupervisedLaneExecutionUseCase useCase = this.useCase(new TimeoutCodexSessionRepository());
 
-        this.useCase.execute(lane, this.inputWithTasks(), 1);
+        useCase.execute(this.lane(), this.input(), 1);
 
-        assertThat(this.laneExecutionRepository.savedStepExecutions()).isNotEmpty();
-        final List<String> history = this.codexSessionRepository.history(this.codexSessionRepository.sessionIds().getFirst());
-        assertThat(history).anyMatch(value -> value.startsWith("service:STEP_PROMPT"));
-        assertThat(history).anyMatch(value -> value.contains("architect_handoff"));
-        assertThat(history).anyMatch(value -> value.contains("prose-before-marker"));
-        assertThat(history).anyMatch(value -> value.equals("codex:" + this.noisyStepResult("architect_handoff")));
+        assertThat(((InMemoryLaneExecutionRepository) this.laneExecutionRepository).savedStepExecutions()).isEmpty();
+        verify(this.laneCompletionDispatcher, never()).completeLane(any(), any());
     }
 
-    @Test
-    void givenEchoedPromptBeforeRealResult_whenExecute_thenIgnoreEchoAndPersist() {
-        final ReadyToStartLane lane = this.readyToStartLane();
-        final LaneStrategy strategy = this.strategy();
-        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(strategy);
-        this.useCase = this.buildUseCase(this.echoThenValidPlanner());
-
-        this.useCase.execute(lane, this.inputWithTasks(), 1);
-
-        final List<String> history = this.codexSessionRepository.history(this.codexSessionRepository.sessionIds().getFirst());
-        assertThat(history).anyMatch(value -> value.startsWith("codex:START_PROMPT"));
-        assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("scope_slicing")));
-        assertThat(history).noneMatch(value -> value.contains("CORRECTION_PROMPT"));
-        assertThat(this.laneExecutionRepository.savedStepExecutions()).extracting(LaneStepExecution::getStepId)
-                .contains("scope_slicing", "architect_handoff", "qa_lead_handoff", "completion");
+    private SupervisedLaneExecutionUseCase useCase(final CodexSessionRepository sessions) {
+        return new SupervisedLaneExecutionUseCase(
+                this.laneStrategyRepository,
+                this.laneExecutionRepository,
+                sessions,
+                new LaneStepPromptBuilder(() -> List.of("shared/common-rules.md"), new FakeInstructionRepository(), this.objectMapper),
+                new LaneStepDoneResultParser(this.objectMapper),
+                this.laneCompletionDispatcher,
+                this.supervisedExecutionProperties,
+                this.objectMapper
+        );
     }
 
-    @Test
-    void givenStartupNoiseBeforePromptBoundary_whenExecute_thenIgnoreNoiseAndPersist() {
-        final ReadyToStartLane lane = this.readyToStartLane();
-        final LaneStrategy strategy = this.strategy();
-        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(strategy);
-        this.useCase = this.buildUseCase(this.startupNoisePlanner());
-
-        this.useCase.execute(lane, this.inputWithTasks(), 1);
-
-        final List<String> history = this.codexSessionRepository.history(this.codexSessionRepository.sessionIds().getFirst());
-        assertThat(history).anyMatch(value -> value.equals("codex:Last login: Mon Jun  2 09:00:00 on ttys001"));
-        assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("scope_slicing")));
-        assertThat(history).noneMatch(value -> value.contains("CORRECTION_PROMPT"));
-    }
-
-    @Test
-    void givenInvalidAfterCorrectionAttempts_whenExecute_thenStopWithoutPersistingStep() {
-        final ReadyToStartLane lane = this.readyToStartLane();
-        final LaneStrategy strategy = LaneStrategy.builder()
-                .agentId("analyzer")
-                .version(1)
-                .sessionMode("single_session")
-                .steps(List.of(
-                        LaneStrategyStep.builder().id("scope_slicing").title("Scope Slicing").order(1).taskPlaceholder("TASKS").instructionRefs(List.of("lane-instructions/analyzer/scope-slicing.md")).build(),
-                        LaneStrategyStep.builder().id("architect_handoff").title("Architect Handoff").order(2).instructionRefs(List.of("lane-instructions/analyzer/architect-handoff.md")).build()
-                ))
-                .build();
-        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(strategy);
-        this.useCase = this.buildUseCase(this.alwaysInvalidPlanner());
-
-        this.useCase.execute(lane, this.inputWithTasks(), 1);
-
-        final List<String> history = this.codexSessionRepository.history(this.codexSessionRepository.sessionIds().getFirst());
-        final List<String> serviceMessages = history.stream()
-                .filter(value -> value.startsWith("service:"))
-                .toList();
-        assertThat(serviceMessages).hasSize(2);
-        assertThat(serviceMessages.get(1)).startsWith("service:CORRECTION_PROMPT");
-        assertThat(history).anyMatch(value -> value.startsWith("service:CORRECTION_PROMPT"));
-        assertThat(this.laneExecutionRepository.savedStepExecutions()).isEmpty();
-    }
-
-    private ReadyToStartLane readyToStartLane() {
+    private ReadyToStartLane lane() {
         return ReadyToStartLane.builder()
-                .ticketId(UUID.randomUUID())
+                .ticketId(UUID.fromString("11111111-1111-1111-1111-111111111111"))
                 .ticketKey("SITIONIX-1")
-                .laneId(UUID.randomUUID())
+                .laneId(UUID.fromString("22222222-2222-2222-2222-222222222222"))
                 .agent(Agent.ANALYZER)
                 .scope("backendforfrontendservice-sox")
                 .serviceId("bffssox")
@@ -281,176 +142,82 @@ class SupervisedLaneExecutionUseCaseTest {
                 .version(1)
                 .sessionMode("single_session")
                 .steps(List.of(
-                        LaneStrategyStep.builder().id("scope_slicing").title("Scope Slicing").order(1).taskPlaceholder("TASKS").instructionRefs(List.of("lane-instructions/analyzer/scope-slicing.md")).build(),
+                        LaneStrategyStep.builder().id("scope_slicing").title("Scope Slicing").order(1).instructionRefs(List.of("lane-instructions/analyzer/scope-slicing.md")).build(),
                         LaneStrategyStep.builder().id("architect_handoff").title("Architect Handoff").order(2).instructionRefs(List.of("lane-instructions/analyzer/architect-handoff.md")).build(),
-                        LaneStrategyStep.builder().id("qa_lead_handoff").title("QA Lead Handoff").order(3).instructionRefs(List.of("lane-instructions/analyzer/qa-lead-handoff.md")).build(),
-                        LaneStrategyStep.builder().id("completion").title("Completion").order(4).instructionRefs(List.of("additional-instructions/completion-callback.md")).build()
+                        LaneStrategyStep.builder().id("completion").title("Completion").order(3).instructionRefs(List.of("lane-instructions/analyzer/completion-content.md")).build()
                 ))
                 .build();
     }
 
-    private AgentExecutionInput<AgentTicketPayload> inputWithTasks() {
-        final ApiPayload task = ApiPayload.builder()
-                .scope("backendforfrontendservice-sox")
-                .summary("Implement analyzer task payload support.")
-                .build();
+    private AgentExecutionInput<AgentTicketPayload> input() {
+        final ApiPayload task = ApiPayload.builder().scope("backendforfrontendservice-sox").summary("summary").build();
         return AgentExecutionInput.<AgentTicketPayload>builder()
                 .tasks(new LinkedHashSet<>(Set.of(task)))
                 .scope(ScopeContext.builder().scope("backendforfrontendservice-sox").build())
                 .build();
     }
 
-    private void stubInstructionRefs() {
-        when(this.instructionRepository.findInstructionTextByRef(anyString())).thenAnswer(invocation -> {
-            final String ref = invocation.getArgument(0);
-            return switch (ref) {
-                case "shared/common-rules.md" -> """
-                        # Common Agent Rules
-                        
-                        When supervised execution is active, return a single LANE_STEP_DONE response for the current step.
-                        Include type, stepId, summary, and evidence fields.
-                        """;
-                case "lane-instructions/analyzer/scope-slicing.md" -> "# Analyzer Scope Slicing\n\nScope slicing instructions.";
-                case "lane-instructions/analyzer/architect-handoff.md" -> "# Analyzer Architect Handoff\n\nArchitect handoff instructions.";
-                case "lane-instructions/analyzer/qa-lead-handoff.md" -> "# Analyzer QA Lead Handoff\n\nQA lead handoff instructions.";
-                case "additional-instructions/completion-callback.md" -> "# Completion Callback Rules\n\nCompletion instructions.";
-                default -> "Instruction for " + ref;
-            };
-        });
+    private String stepIdFromPrompt(final String prompt) {
+        if (prompt.contains("scope_slicing")) {
+            return "scope_slicing";
+        }
+        if (prompt.contains("architect_handoff")) {
+            return "architect_handoff";
+        }
+        return "completion";
     }
 
-    private SupervisedLaneExecutionUseCase buildUseCase(final Function<String, List<String>> responsePlanner) {
-        this.codexSessionRepository = new FakeInteractiveCodexSessionRepository(responsePlanner);
-        final LaneStepPromptBuilder promptBuilder = new LaneStepPromptBuilder(this.laneStrategyPromptConfig);
-        final SupervisedPromptArtifactWriter promptArtifactWriter = new SupervisedPromptArtifactWriter(
-                new ObjectMapper(),
-                this.instructionRepository,
-                this.laneStrategyPromptConfig,
-                this.supervisedExecutionProperties
-        );
-        return new SupervisedLaneExecutionUseCase(
-                this.laneStrategyRepository,
-                this.laneExecutionRepository,
-                this.codexSessionRepository,
-                new LaneStepDoneResultParser(new ObjectMapper()),
-                promptBuilder,
-                promptArtifactWriter,
-                this.supervisedExecutionProperties,
-                new ObjectMapper()
-        );
+    private String validResult(final String stepId) {
+        final String evidence = "completion".equals(stepId)
+                ? "\"completionPayload\":{\"architectHandoff\":{\"scope\":\"backendforfrontendservice-sox\",\"requirements\":[],\"constraints\":[],\"nonGoals\":[],\"risks\":[],\"dependencies\":[]},\"qaLeadHandoff\":{\"scope\":\"backendforfrontendservice-sox\",\"requirements\":[],\"constraints\":[],\"nonGoals\":[],\"risks\":[],\"dependencies\":[],\"qualityFocus\":[],\"edgeConsiderations\":[]}}"
+                : "\"detail\":\"ok\"";
+        return """
+                {
+                  "type": "LANE_STEP_DONE",
+                  "stepId": "%s",
+                  "summary": "done",
+                  "evidence": { %s }
+                }
+                """.formatted(stepId, evidence);
     }
 
-    private String validStepResult(final String stepId) {
-        return "<<<LANE_STEP_DONE_JSON>>>\n"
-                + "{"
-                + "\"type\":\"LANE_STEP_DONE\","
-                + "\"stepId\":\"" + stepId + "\","
-                + "\"summary\":\"done\","
-                + "\"evidence\":{\"detail\":\"ok\"}"
-                + "}\n"
-                + "<<<END_LANE_STEP_DONE_JSON>>>";
+    private static final class FakeInstructionRepository implements InstructionRepository {
+        @Override
+        public AgentInstructions findInstructionsByAgentId(final String agentId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String findInstructionTextByRef(final String instructionRef) {
+            return "resolved::" + instructionRef;
+        }
+
+        @Override
+        public Set<String> findSharedInstructionRefs() {
+            return Set.of("shared/common-rules.md");
+        }
     }
 
-    private String invalidOutput() {
-        return "<<<LANE_STEP_DONE_JSON>>>\n"
-                + "{"
-                + "\"type\":\"LANE_STEP_DONE\","
-                + "\"stepId\":\"wrong_step\","
-                + "\"summary\":\"bad\","
-                + "\"evidence\":{}"
-                + "}\n"
-                + "<<<END_LANE_STEP_DONE_JSON>>>";
-    }
+    private static final class TimeoutCodexSessionRepository implements CodexSessionRepository {
+        @Override
+        public CodexSession openSession(final CodexSessionStartCommand command) {
+            return CodexSession.builder().id("session").threadId("thread").build();
+        }
 
-    private String noisyStepResult(final String stepId) {
-        return "prose-before-marker\n"
-                + validStepResult(stepId)
-                + "\nprose-after-marker";
-    }
+        @Override
+        public CodexTurnResponse submitTurn(final String sessionId, final CodexTurnCommand command) {
+            throw new IllegalStateException("Timed out waiting for Codex turn");
+        }
 
-    private Function<String, List<String>> happyPathPlanner() {
-        return message -> {
-            if (message.contains("stepId:\nscope_slicing")) {
-                return List.of(validStepResult("scope_slicing"));
-            }
-            if (message.contains("stepId:\narchitect_handoff")) {
-                return List.of(validStepResult("architect_handoff"));
-            }
-            if (message.contains("stepId:\nqa_lead_handoff")) {
-                return List.of(validStepResult("qa_lead_handoff"));
-            }
-            if (message.contains("stepId:\ncompletion")) {
-                return List.of(validStepResult("completion"));
-            }
-            return List.of();
-        };
-    }
-
-    private Function<String, List<String>> invalidThenValidPlanner() {
-        return message -> {
-            if (message.startsWith("CORRECTION_PROMPT")) {
-                return List.of(validStepResult("scope_slicing"));
-            }
-            if (message.contains("stepId:\nscope_slicing")) {
-                return List.of(invalidOutput());
-            }
-            return happyPathPlanner().apply(message);
-        };
-    }
-
-    private Function<String, List<String>> noisyPlanner() {
-        return message -> {
-            if (message.contains("stepId:\narchitect_handoff")) {
-                return List.of(noisyStepResult("architect_handoff"));
-            }
-            return happyPathPlanner().apply(message);
-        };
-    }
-
-    private Function<String, List<String>> echoThenValidPlanner() {
-        return message -> {
-            if (message.contains("stepId:\nscope_slicing")) {
-                return List.of(message, validStepResult("scope_slicing"));
-            }
-            if (message.contains("stepId:\narchitect_handoff")) {
-                return List.of(message, validStepResult("architect_handoff"));
-            }
-            if (message.contains("stepId:\nqa_lead_handoff")) {
-                return List.of(message, validStepResult("qa_lead_handoff"));
-            }
-            if (message.contains("stepId:\ncompletion")) {
-                return List.of(message, validStepResult("completion"));
-            }
-            return List.of();
-        };
-    }
-
-    private Function<String, List<String>> startupNoisePlanner() {
-        return message -> {
-            if (message.contains("stepId:\nscope_slicing")) {
-                return List.of("Last login: Mon Jun  2 09:00:00 on ttys001", validStepResult("scope_slicing"));
-            }
-            return happyPathPlanner().apply(message);
-        };
-    }
-
-    private Function<String, List<String>> alwaysInvalidPlanner() {
-        return message -> {
-            if (message.contains("stepId:\nscope_slicing")) {
-                return List.of(invalidOutput());
-            }
-            if (message.startsWith("CORRECTION_PROMPT")) {
-                return List.of(invalidOutput());
-            }
-            return List.of();
-        };
+        @Override
+        public void closeSession(final String sessionId) {
+        }
     }
 
     private static final class InMemoryLaneExecutionRepository implements LaneExecutionRepository {
-
         private final List<LaneExecution> savedExecutions = new ArrayList<>();
-        private final List<LaneExecution> updatedExecutions = new ArrayList<>();
         private final List<LaneStepExecution> savedStepExecutions = new ArrayList<>();
+        private final List<LaneExecution> updatedExecutions = new ArrayList<>();
 
         @Override
         public LaneExecution saveExecution(final LaneExecution execution) {
@@ -469,15 +236,11 @@ class SupervisedLaneExecutionUseCaseTest {
         }
 
         List<LaneExecution> savedExecutions() {
-            return List.copyOf(this.savedExecutions);
+            return this.savedExecutions;
         }
 
         List<LaneStepExecution> savedStepExecutions() {
-            return List.copyOf(this.savedStepExecutions);
-        }
-
-        List<LaneExecution> updatedExecutions() {
-            return List.copyOf(this.updatedExecutions);
+            return this.savedStepExecutions;
         }
     }
 }
