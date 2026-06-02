@@ -71,19 +71,9 @@ Do not call endpoints that are not provided in runtime context.
 
 ## Step Completion Protocol
 
-When supervised execution is active, the only valid step completion output is the marked JSON block below.
-Return exactly one marked result block and no extra top-level fields.
+When supervised execution is active, the only valid step completion output is a single `LANE_STEP_DONE` response for the current active step.
 Use the current active step id as `stepId`.
-Top-level fields must be `type`, `stepId`, `summary`, and `evidence`.
+Required fields: `type`, `stepId`, `summary`, and `evidence`.
 Do not send `status` or any negative outcome fields.
-
-```
-<<<LANE_STEP_DONE_JSON>>>
-{
-  "type": "LANE_STEP_DONE",
-  "stepId": "<activeStepId>",
-  "summary": "...",
-  "evidence": {}
-}
-<<<END_LANE_STEP_DONE_JSON>>>
-```
+Do not copy any example literally from this file.
+Do not include a literal JSON example or sentinel block in this document.

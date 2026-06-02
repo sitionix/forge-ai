@@ -73,14 +73,15 @@ class SupervisedLaneExecutionUseCaseTest {
                 .startsWith("service:START_PROMPT")
                 .contains("commonRules:")
                 .contains("# Common Agent Rules")
-                .contains("<<<LANE_STEP_DONE_JSON>>>")
+                .contains("single LANE_STEP_DONE response")
                 .contains("STEP_PROMPT")
                 .contains("scope_slicing")
                 .doesNotContain("Agent instruction.")
                 .doesNotContain("Lazy Instruction Strategy")
                 .doesNotContain("architect_handoff")
                 .doesNotContain("qa_lead_handoff")
-                .doesNotContain("completion-callback.md");
+                .doesNotContain("completion-callback.md")
+                .doesNotContain("<<<LANE_STEP_DONE_JSON>>>");
 
         assertThat(serviceMessages.get(1))
                 .contains("STEP_PROMPT")
@@ -137,7 +138,7 @@ class SupervisedLaneExecutionUseCaseTest {
         assertThat(serviceMessages).anyMatch(value -> value.contains("architect_handoff"));
         assertThat(serviceMessages).anyMatch(value -> value.contains("qa_lead_handoff"));
         assertThat(serviceMessages).anyMatch(value -> value.contains("completion"));
-        assertThat(history).anyMatch(value -> value.equals("codex:invalid-output"));
+        assertThat(history).anyMatch(value -> value.equals("codex:" + this.invalidOutput()));
         assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("scope_slicing")));
         assertThat(this.laneExecutionRepository.savedStepExecutions()).extracting(LaneStepExecution::getStepId)
                 .containsExactly("scope_slicing", "architect_handoff", "qa_lead_handoff", "completion");
@@ -158,6 +159,38 @@ class SupervisedLaneExecutionUseCaseTest {
         assertThat(history).anyMatch(value -> value.contains("architect_handoff"));
         assertThat(history).anyMatch(value -> value.contains("prose-before-marker"));
         assertThat(history).anyMatch(value -> value.equals("codex:" + this.noisyStepResult("architect_handoff")));
+    }
+
+    @Test
+    void givenEchoedPromptBeforeRealResult_whenExecute_thenIgnoreEchoAndPersist() {
+        final ReadyToStartLane lane = this.readyToStartLane();
+        final LaneStrategy strategy = this.strategy();
+        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(strategy);
+        this.useCase = this.buildUseCase(this.echoThenValidPlanner());
+
+        this.useCase.execute(lane, this.inputWithTasks(), 1);
+
+        final List<String> history = this.codexSessionRepository.history(this.codexSessionRepository.sessionIds().getFirst());
+        assertThat(history).anyMatch(value -> value.startsWith("codex:START_PROMPT"));
+        assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("scope_slicing")));
+        assertThat(history).noneMatch(value -> value.contains("CORRECTION_PROMPT"));
+        assertThat(this.laneExecutionRepository.savedStepExecutions()).extracting(LaneStepExecution::getStepId)
+                .contains("scope_slicing", "architect_handoff", "qa_lead_handoff", "completion");
+    }
+
+    @Test
+    void givenStartupNoiseBeforePromptBoundary_whenExecute_thenIgnoreNoiseAndPersist() {
+        final ReadyToStartLane lane = this.readyToStartLane();
+        final LaneStrategy strategy = this.strategy();
+        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(strategy);
+        this.useCase = this.buildUseCase(this.startupNoisePlanner());
+
+        this.useCase.execute(lane, this.inputWithTasks(), 1);
+
+        final List<String> history = this.codexSessionRepository.history(this.codexSessionRepository.sessionIds().getFirst());
+        assertThat(history).anyMatch(value -> value.equals("codex:Last login: Mon Jun  2 09:00:00 on ttys001"));
+        assertThat(history).anyMatch(value -> value.equals("codex:" + this.validStepResult("scope_slicing")));
+        assertThat(history).noneMatch(value -> value.contains("CORRECTION_PROMPT"));
     }
 
     @Test
@@ -231,15 +264,9 @@ class SupervisedLaneExecutionUseCaseTest {
             return switch (ref) {
                 case "shared/common-rules.md" -> """
                         # Common Agent Rules
-
-                        <<<LANE_STEP_DONE_JSON>>>
-                        {
-                          "type": "LANE_STEP_DONE",
-                          "stepId": "<activeStepId>",
-                          "summary": "...",
-                          "evidence": {}
-                        }
-                        <<<END_LANE_STEP_DONE_JSON>>>
+                        
+                        When supervised execution is active, return a single LANE_STEP_DONE response for the current step.
+                        Include type, stepId, summary, and evidence fields.
                         """;
                 case "lane-instructions/analyzer/scope-slicing.md" -> "# Analyzer Scope Slicing\n\nScope slicing instructions.";
                 case "lane-instructions/analyzer/architect-handoff.md" -> "# Analyzer Architect Handoff\n\nArchitect handoff instructions.";
@@ -275,7 +302,14 @@ class SupervisedLaneExecutionUseCaseTest {
     }
 
     private String invalidOutput() {
-        return "invalid-output";
+        return "<<<LANE_STEP_DONE_JSON>>>\n"
+                + "{"
+                + "\"type\":\"LANE_STEP_DONE\","
+                + "\"stepId\":\"wrong_step\","
+                + "\"summary\":\"bad\","
+                + "\"evidence\":{}"
+                + "}\n"
+                + "<<<END_LANE_STEP_DONE_JSON>>>";
     }
 
     private String noisyStepResult(final String stepId) {
@@ -318,6 +352,33 @@ class SupervisedLaneExecutionUseCaseTest {
         return message -> {
             if (message.contains("stepId:\narchitect_handoff")) {
                 return List.of(noisyStepResult("architect_handoff"));
+            }
+            return happyPathPlanner().apply(message);
+        };
+    }
+
+    private Function<String, List<String>> echoThenValidPlanner() {
+        return message -> {
+            if (message.contains("stepId:\nscope_slicing")) {
+                return List.of(message, validStepResult("scope_slicing"));
+            }
+            if (message.contains("stepId:\narchitect_handoff")) {
+                return List.of(message, validStepResult("architect_handoff"));
+            }
+            if (message.contains("stepId:\nqa_lead_handoff")) {
+                return List.of(message, validStepResult("qa_lead_handoff"));
+            }
+            if (message.contains("stepId:\ncompletion")) {
+                return List.of(message, validStepResult("completion"));
+            }
+            return List.of();
+        };
+    }
+
+    private Function<String, List<String>> startupNoisePlanner() {
+        return message -> {
+            if (message.contains("stepId:\nscope_slicing")) {
+                return List.of("Last login: Mon Jun  2 09:00:00 on ttys001", validStepResult("scope_slicing"));
             }
             return happyPathPlanner().apply(message);
         };

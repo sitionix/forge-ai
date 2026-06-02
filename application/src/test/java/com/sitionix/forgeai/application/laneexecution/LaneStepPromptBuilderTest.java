@@ -41,15 +41,9 @@ class LaneStepPromptBuilderTest {
             return switch (ref) {
                 case "shared/common-rules.md" -> """
                         # Common Agent Rules
-
-                        <<<LANE_STEP_DONE_JSON>>>
-                        {
-                          "type": "LANE_STEP_DONE",
-                          "stepId": "<activeStepId>",
-                          "summary": "...",
-                          "evidence": {}
-                        }
-                        <<<END_LANE_STEP_DONE_JSON>>>
+                        
+                        When supervised execution is active, return a single LANE_STEP_DONE response for the current step.
+                        Include type, stepId, summary, and evidence fields.
                         """;
                 case "lane-instructions/analyzer/scope-slicing.md" -> "# Analyzer Scope Slicing\n\nScope slicing instructions.";
                 case "lane-instructions/analyzer/architect-handoff.md" -> "# Analyzer Architect Handoff\n\nArchitect handoff instructions.";
@@ -78,8 +72,10 @@ class LaneStepPromptBuilderTest {
                 .contains("contractApi:")
                 .contains("commonRules:")
                 .contains("# Common Agent Rules")
-                .contains("<<<LANE_STEP_DONE_JSON>>>")
-                .contains("\"type\": \"LANE_STEP_DONE\"");
+                .contains("single LANE_STEP_DONE response")
+                .contains("type, stepId, summary, and evidence fields");
+        assertThat(prompt).doesNotContain("<<<LANE_STEP_DONE_JSON>>>");
+        assertThat(prompt).doesNotContain("<<<END_LANE_STEP_DONE_JSON>>>");
         assertThat(prompt).doesNotContain("agentInstruction:");
         assertThat(prompt).doesNotContain("additionalInstructions:");
         assertThat(prompt).doesNotContain("sharedInstructions:");
