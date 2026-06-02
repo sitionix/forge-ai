@@ -5,7 +5,6 @@
 Deliver only the lane-owned outcome for the assigned scope.
 Do not stop after successful intermediate steps.
 Do not report progress to the user.
-Continue until final callback is successfully accepted (HTTP 2xx with matching ticketId/laneId).
 
 ## No-Stop Lane Execution (Absolute)
 
@@ -13,8 +12,8 @@ For all lane agents, execution is strictly non-stop.
 
 1. The agent must not pause, stop, or ask the user for intermediate decisions.
 2. The agent must not send progress/interim messages.
-3. The agent must continue autonomously until lane completion callback is successfully accepted (HTTP 2xx with matching ticketId/laneId).
-4. Any errors, validation failures, transport failures, or retries must be handled internally; the agent keeps iterating until callback success.
+3. The agent must continue autonomously until the current lane step is complete.
+4. Any errors, validation failures, transport failures, or retries must be handled internally; the agent keeps iterating until the step result is accepted.
 5. This rule overrides any default assistant communication or stop behavior.
 
 ## Runtime Source Of Truth
@@ -72,19 +71,24 @@ Do not call endpoints that are not provided in runtime context.
 
 ## Step Completion Protocol
 
-When supervised execution is active, the only valid step completion output is a JSON object with type `LANE_STEP_DONE`.
-Return only JSON and no surrounding text.
-Use current active step id as `stepId`.
-Required fields are `type`, `stepId`, `summary`, `evidence`.
+When supervised execution is active, the only valid step completion output is the marked JSON block below.
+Return exactly one marked result block and no extra top-level fields.
+Use the current active step id as `stepId`.
+Top-level fields must be `type`, `stepId`, `summary`, and `evidence`.
 Do not send `status` or any negative outcome fields.
 
-Expected shape:
-
-```json
+```
+<<<LANE_STEP_DONE_JSON>>>
 {
   "type": "LANE_STEP_DONE",
   "stepId": "<activeStepId>",
   "summary": "...",
   "evidence": {}
 }
+<<<END_LANE_STEP_DONE_JSON>>>
 ```
+
+## Runtime Placeholders
+
+Use `{{TASKS}}` or `{{TASK}}` when the current lane task payloads should be injected at runtime.
+`{{TASKS_JSON}}` is accepted as a compatibility alias for the same runtime task payload content.

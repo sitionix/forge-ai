@@ -2,6 +2,27 @@ forge:
   ai:
     lane-strategies:
       configs:
+        analyzer:
+          version: 1
+          session-mode: single_session
+          steps:
+            - id: scope_slicing
+              title: Scope Slicing
+              instruction-refs:
+                - additional-instructions/scope-context-usage.md
+                - lane-instructions/analyzer/scope-slicing.md
+            - id: architect_handoff
+              title: Architect Handoff
+              instruction-refs:
+                - lane-instructions/analyzer/architect-handoff.md
+            - id: qa_lead_handoff
+              title: QA Lead Handoff
+              instruction-refs:
+                - lane-instructions/analyzer/qa-lead-handoff.md
+            - id: completion
+              title: Completion
+              instruction-refs:
+                - additional-instructions/completion-callback.md
         api:
           version: 1
           session-mode: single_session

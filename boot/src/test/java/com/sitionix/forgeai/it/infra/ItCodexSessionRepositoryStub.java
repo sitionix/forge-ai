@@ -19,15 +19,20 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
     private final Map<String, ConcurrentLinkedQueue<String>> outputs = new ConcurrentHashMap<>();
     private final List<String> sentMessages = new CopyOnWriteArrayList<>();
     private final List<String> startedMessages = new CopyOnWriteArrayList<>();
+    private final Map<String, List<String>> history = new ConcurrentHashMap<>();
 
     @Override
     public String start(final String initialPrompt, final String sourceTerminalTty) {
         final String sessionId = UUID.randomUUID().toString();
         this.outputs.put(sessionId, new ConcurrentLinkedQueue<>());
+        this.history.put(sessionId, new CopyOnWriteArrayList<>());
+        this.history.get(sessionId).add("service:" + initialPrompt);
         this.startedMessages.add(initialPrompt);
         final String stepId = this.extractStepId(initialPrompt);
         if (stepId != null) {
-            this.outputs.get(sessionId).add("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + stepId + "\",\"summary\":\"done\",\"evidence\":{}}");
+            final String output = "{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + stepId + "\",\"summary\":\"done\",\"evidence\":{}}";
+            this.outputs.get(sessionId).add(output);
+            this.history.get(sessionId).add("codex:" + output);
         }
         return sessionId;
     }
@@ -35,9 +40,12 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
     @Override
     public void send(final String sessionId, final String message, final String sourceTerminalTty) {
         this.sentMessages.add(message);
+        this.history.computeIfAbsent(sessionId, key -> new CopyOnWriteArrayList<>()).add("service:" + message);
         final String stepId = this.extractStepId(message);
         if (stepId != null) {
-            this.outputs.get(sessionId).add("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + stepId + "\",\"summary\":\"done\",\"evidence\":{}}");
+            final String output = "{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + stepId + "\",\"summary\":\"done\",\"evidence\":{}}";
+            this.outputs.get(sessionId).add(output);
+            this.history.get(sessionId).add("codex:" + output);
         }
     }
 
@@ -47,6 +55,7 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
         if (output == null) {
             throw new IllegalStateException("No output queued for sessionId=" + sessionId);
         }
+        this.history.get(sessionId).add("wait:" + output);
         return output;
     }
 
@@ -58,6 +67,10 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
     @Override
     public void close(final String sessionId) {
         this.outputs.remove(sessionId);
+    }
+
+    public List<String> history(final String sessionId) {
+        return List.copyOf(this.history.getOrDefault(sessionId, List.of()));
     }
 
     public List<String> sentMessages() {

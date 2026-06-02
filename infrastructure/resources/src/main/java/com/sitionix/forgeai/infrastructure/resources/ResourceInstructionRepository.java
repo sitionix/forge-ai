@@ -59,6 +59,11 @@ public class ResourceInstructionRepository implements InstructionRepository {
     }
 
     @Override
+    public String findInstructionTextByRef(final String instructionRef) {
+        return this.readClasspathText(this.normalizeInstructionRef(instructionRef));
+    }
+
+    @Override
     public Set<String> findSharedInstructionRefs() {
         return new LinkedHashSet<>(this.sharedInstructionRefs);
     }
@@ -76,5 +81,14 @@ public class ResourceInstructionRepository implements InstructionRepository {
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to read instruction resource: " + classpathResourcePath, exception);
         }
+    }
+
+    private String normalizeInstructionRef(final String instructionRef) {
+        if (instructionRef == null || instructionRef.isBlank()) {
+            throw new IllegalArgumentException("Instruction ref must not be blank");
+        }
+        return instructionRef.startsWith("instructions/")
+                ? instructionRef
+                : "instructions/" + instructionRef;
     }
 }

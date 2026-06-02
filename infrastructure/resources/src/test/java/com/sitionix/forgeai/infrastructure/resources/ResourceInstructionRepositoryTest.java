@@ -86,6 +86,14 @@ class ResourceInstructionRepositoryTest {
     }
 
     @Test
+    void givenInstructionRef_whenFindInstructionTextByRef_thenReturnResolvedText() {
+        final String actual = this.resourceInstructionRepository.findInstructionTextByRef("lane-instructions/analyzer/scope-slicing.md");
+
+        assertThat(actual).contains("# Analyzer Scope Slicing");
+        assertThat(actual).contains("{{TASKS}}");
+    }
+
+    @Test
     void givenUnknownAgent_whenFindInstructionsByAgentId_thenThrowIllegalArgumentException() {
         //when then
         assertThatThrownBy(() -> this.resourceInstructionRepository.findInstructionsByAgentId("unknown"))

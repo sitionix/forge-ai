@@ -76,8 +76,12 @@ class SupervisedApiLaneExecutionIT {
         assertThat(steps.stream().map(LaneStepExecutionDocument::getStepId).toList())
                 .containsExactlyInAnyOrder("preparation", "contract_changes", "version_update", "pr", "generation", "completion");
         assertThat(this.codexSessionRepositoryStub.startedMessages())
-                .anyMatch(message -> message.contains("Shared instruction refs:\n- instructions/shared/common-rules.md")
-                        && message.contains("instructions/shared/lazy-instruction-strategy.md"));
+                .singleElement()
+                .satisfies(message -> {
+                    assertThat(message).contains("Supervised lane session started.");
+                    assertThat(message).contains("Agent instruction:");
+                    assertThat(message).contains("# Common Agent Rules");
+                });
 
         verifyNoInteractions(this.codexClient);
     }
