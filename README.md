@@ -8,7 +8,7 @@ This document describes the current Forge AI project from architecture to runtim
 
 At a high level it does three things:
 - builds a lane graph per ticket (`analyzer`, `architect`, `api`, `implement_*`, `test_*`, `reviewer`, etc.);
-- schedules/starts ready lanes and sends execution input to Codex CLI;
+- schedules/starts ready lanes and sends execution input to the headless Codex app-server runtime;
 - accepts lane completion callbacks, creates downstream tasks, and advances lane/ticket state.
 
 ## 2. Module Structure (Maven Multi-Module)
@@ -19,7 +19,7 @@ Root modules:
 - `api-rest` - REST controller, callback orchestration use cases, API mappers, validators.
 - `infrastructure/resources` - instruction repository + instruction resources (`instructions/*.md`, `instructions.yaml`).
 - `infrastructure/mongodb` - Mongo adapters and repositories.
-- `infrastructure/codex-cli` - adapter that serializes prompt payload and launches `codex` CLI.
+- `infrastructure/codex-cli` - Codex app-server JSON-RPC transport adapter for supervised lane execution.
 - `boot` - Spring Boot entrypoint and runtime configuration binding.
 - `jacoco-report` - reporting module.
 
@@ -107,12 +107,13 @@ Main class:
 - `application/src/main/java/com/sitionix/forgeai/application/usecase/PrepareAgentExecutionInputUseCase.java`
 
 ### 6.2 Resolve tasks for non-analyzer lanes
-`TaskDrivenCodexAgentExecutor`:
-- loads source lane from repository;
-- resolves input task payloads via `LaneTaskResolver` from `inputTaskIds`.
+Codex-backed executors:
+- load source lane from repository;
+- resolve input task payloads via `LaneTaskResolver` from `inputTaskIds`;
+- hand the prepared execution input to the supervised strategy-driven runner.
 
 Classes:
-- `application/src/main/java/com/sitionix/forgeai/application/agentexecutor/TaskDrivenCodexAgentExecutor.java`
+- `application/src/main/java/com/sitionix/forgeai/application/agentexecutor/SupervisedTaskDrivenAgentExecutor.java`
 - `application/src/main/java/com/sitionix/forgeai/application/agentexecutor/LaneTaskResolver.java`
 
 `AnalyzeAgentExecutor` is special:
@@ -128,6 +129,64 @@ Normal production execution uses a supervised Codex session adapter:
 Classes:
 - `infrastructure/codex-cli/src/main/java/com/sitionix/forgeai/infrastructure/codexcli/adapter/appserver/CodexAppServerSessionRepository.java`
 - `infrastructure/codex-cli/src/main/java/com/sitionix/forgeai/infrastructure/codexcli/adapter/appserver/CodexJsonRpcClient.java`
+
+## 14. Operator Runtime Visibility
+
+The headless Codex runtime stays headless. Codex transport is still app-server JSON-RPC over stdio, but operator visibility is exposed separately:
+- Spring Boot progress logger: `com.sitionix.forgeai.codex.progress`
+- ticket-scoped operator watcher terminal:
+  - `scripts/forge-ai-open-ticket-terminal.sh`
+  - `scripts/forge-ai-watch-ticket.sh`
+
+The local start helper opens **one operator terminal per created ticket**, not per lane and not per Codex session.
+The real local entrypoint is:
+
+```bash
+just forge-ai-start
+```
+
+That command delegates to `forge-ai/scripts/forge-ai-start.sh`, which creates the ticket and opens the watcher terminal. If local scripts are bypassed, server-side fallback can be enabled with:
+
+```yaml
+forge:
+  ai:
+    operator:
+      ticket-terminal:
+        auto-open-on-ticket-start: true
+        launcher: auto
+```
+
+Useful ticket-scoped operator endpoints:
+- `GET /fgaisox/api/v1/forge-ai/operator/tickets/active`
+- `GET /fgaisox/api/v1/forge-ai/operator/tickets/{ticketId}`
+- `GET /fgaisox/api/v1/forge-ai/operator/tickets/{ticketId}/stream?watcherId=...&verbosity=minimal`
+- `POST /fgaisox/api/v1/forge-ai/operator/tickets/{ticketId}/watchers/{watcherId}/heartbeat`
+- `POST /fgaisox/api/v1/forge-ai/operator/tickets/{ticketId}/interrupt`
+
+Optional execution-scoped endpoints still exist for direct diagnostics:
+- `GET /fgaisox/api/v1/forge-ai/operator/executions`
+- `GET /fgaisox/api/v1/forge-ai/operator/executions/active`
+- `GET /fgaisox/api/v1/forge-ai/operator/executions/{executionId}`
+- `POST /fgaisox/api/v1/forge-ai/operator/executions/{executionId}/interrupt`
+
+Local commands:
+
+```bash
+curl -s http://localhost:9099/fgaisox/api/v1/forge-ai/operator/tickets/active | jq
+curl -s http://localhost:9099/fgaisox/api/v1/forge-ai/operator/tickets/<ticketId> | jq
+curl -s -X POST http://localhost:9099/fgaisox/api/v1/forge-ai/operator/tickets/<ticketId>/interrupt | jq
+
+scripts/forge-ai-watch-ticket.sh <ticketId> http://localhost:9099/fgaisox <watcherId> minimal
+scripts/forge-ai-open-ticket-terminal.sh <ticketId> http://localhost:9099/fgaisox <watcherId> minimal
+```
+
+App-server diagnostics:
+
+```bash
+codex --version
+codex doctor
+codex debug app-server send-message-v2 ping
+```
 
 ## 7. Instruction System (How instructions are loaded)
 

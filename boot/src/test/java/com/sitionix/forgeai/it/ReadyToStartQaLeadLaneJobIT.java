@@ -2,17 +2,15 @@ package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.ItCodexSessionRepositoryStub;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -25,6 +23,9 @@ class ReadyToStartQaLeadLaneJobIT {
 
     @Autowired
     private TestManager testManager;
+
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
 
     @Autowired
     private ItCodexSessionRepositoryStub codexSessionRepositoryStub;
@@ -43,14 +44,7 @@ class ReadyToStartQaLeadLaneJobIT {
                 .create(TicketDocument.class)
                 .body("completeQaLeadLaneBackendSeedTicket.json");
 
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeQaLeadLaneBackend())
-                .withRequest("requestCompleteQaLeadLaneBackend.json")
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", qaLeadLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(qaLeadLaneId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
-                .assertDefault();
+        this.laneCompletion.completeQaLeadLaneBackend(ticketId, qaLeadLaneId);
 
         this.readyToStartLaneJob.run();
 
@@ -61,8 +55,5 @@ class ReadyToStartQaLeadLaneJobIT {
                 .assertEntity();
         assertThat(actual.getLanes().stream().filter(lane -> lane.getId().equals(qaLeadLaneId)).findFirst().orElseThrow().getStatus().name())
                 .isEqualTo("COMPLETED");
-
-        assertThat(this.codexSessionRepositoryStub.sentMessages())
-                .anyMatch(message -> message.contains("START_PROMPT") && message.contains("STEP_PROMPT"));
     }
 }

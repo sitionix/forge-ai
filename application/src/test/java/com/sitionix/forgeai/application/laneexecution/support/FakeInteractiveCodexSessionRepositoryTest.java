@@ -3,6 +3,7 @@ package com.sitionix.forgeai.application.laneexecution.support;
 import com.sitionix.forgeai.domain.model.codex.CodexSessionStartCommand;
 import com.sitionix.forgeai.domain.model.codex.CodexTurnCommand;
 import java.time.Duration;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -20,7 +21,12 @@ class FakeInteractiveCodexSessionRepositoryTest {
                 }
                 """);
 
-        final String sessionId = repository.openSession(CodexSessionStartCommand.builder().workspaceRoot(".").build()).id();
+        final String sessionId = repository.openSession(CodexSessionStartCommand.builder()
+                .executionId(UUID.randomUUID())
+                .ticketId(UUID.randomUUID())
+                .laneId(UUID.randomUUID())
+                .workspaceRoot(".")
+                .build()).id();
         final String response = repository.submitTurn(sessionId, CodexTurnCommand.builder()
                         .prompt("STEP_PROMPT step=scope_slicing")
                         .timeout(Duration.ofSeconds(1))

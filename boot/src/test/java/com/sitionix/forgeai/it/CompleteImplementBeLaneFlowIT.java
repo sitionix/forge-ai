@@ -3,23 +3,23 @@ package com.sitionix.forgeai.it;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.Objects;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
 class CompleteImplementBeLaneFlowIT {
 
     @Autowired
     private TestManager testManager;
+
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
     @Test
     @DisplayName("Should create test_unit and test_it tasks when implement_be callback has changed files and integration changes")
     void givenImplementBeCompletePayload_whenCompleteImplementBeLane_thenCreateTestUnitAndTestItTasks() {
@@ -32,13 +32,7 @@ class CompleteImplementBeLaneFlowIT {
                 .body("completeImplementBeLaneSeedTicket.json");
 
         //when then
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeImplementBeLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", implementBeLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(implementBeLaneId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
-                .assertDefault();
+        this.laneCompletion.completeImplementBeLane(ticketId, implementBeLaneId);
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)

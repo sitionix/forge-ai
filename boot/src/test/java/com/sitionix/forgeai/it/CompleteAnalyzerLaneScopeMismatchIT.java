@@ -1,23 +1,27 @@
 package com.sitionix.forgeai.it;
 
+import com.sitionix.forgeai.api.ScopeMismatchException;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
 class CompleteAnalyzerLaneScopeMismatchIT {
 
     @Autowired
     private TestManager testManager;
+
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
+
     @Test
     @DisplayName("Should fail analyzer completion when callback payload scope does not match lane scope")
     void givenBffAnalyzerLane_whenCompleteAnalyzerWithAutomationScope_thenReturnBadRequestAndDoNotCreateTasks() {
@@ -30,11 +34,9 @@ class CompleteAnalyzerLaneScopeMismatchIT {
                 .body("completeAnalyzerLaneScopeMismatchSeedTicket.json");
 
         //when
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeAnalyzerLaneScopeMismatch())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", bffAnalyzerLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("scope_mismatch"))
-                .assertDefault();
+        assertThatThrownBy(() -> this.laneCompletion.completeAnalyzerLane(ticketId, bffAnalyzerLaneId))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessage("Analyzer callback scope mismatch: payload scope=automationservice-sox, laneScope=backendforfrontendservice-sox, laneId=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
 
         //then
         this.testManager.mongo()

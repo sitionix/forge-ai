@@ -4,10 +4,10 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.Objects;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -24,6 +24,9 @@ class CompleteBackendFlowToTestersReadyIT {
 
     @Autowired
     private TestManager testManager;
+
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
 
     @Autowired
     private TicketRepository ticketRepository;
@@ -56,60 +59,32 @@ class CompleteBackendFlowToTestersReadyIT {
         final UUID testItBffLaneId = this.findLaneId(ticket, Agent.TEST_IT, "backendforfrontendservice-sox");
         final UUID reviewerLaneId = this.findLaneId(ticket, Agent.REVIEWER, "GLOBAL");
 
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeAnalyzerLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", analyzerBffLaneId))
-                .assertDefault(d -> d.mutateRequest(request -> {
+        this.laneCompletion.completeAnalyzerLane(ticketId, analyzerBffLaneId, request -> {
                     request.getArchitectHandoff().setScope("backendforfrontendservice-sox");
                     request.getQaLeadHandoff().setScope("backendforfrontendservice-sox");
-                }));
+                });
 
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeAnalyzerLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", analyzerAutomationLaneId))
-                .assertDefault();
+        this.laneCompletion.completeAnalyzerLane(ticketId, analyzerAutomationLaneId);
 
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeArchitectLane())
-                .withRequest("requestCompleteArchitectLaneAutomationApiEventNotRequired.json")
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", architectAutomationLaneId))
-                .assertDefault();
+        this.laneCompletion.completeArchitectLane(ticketId, architectAutomationLaneId, "requestCompleteArchitectLaneAutomationApiEventNotRequired.json", request -> { });
 
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeArchitectLane())
-                .withRequest("requestCompleteArchitectLaneBffApiRequiredEventNotRequired.json")
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", architectBffLaneId))
-                .assertDefault();
+        this.laneCompletion.completeArchitectLane(ticketId, architectBffLaneId, "requestCompleteArchitectLaneBffApiRequiredEventNotRequired.json", request -> { });
 
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeApiLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                .assertDefault(d -> d.mutateRequest(request -> {
-                    request.setPrUrl("https://github.com/sitionix/app-afesox/pull/143");
-                    request.setRepo("sitionix/app-afesox");
-                }));
+        this.laneCompletion.completeApiLane(ticketId, apiLaneId, request -> {
+            request.setPrUrl("https://github.com/sitionix/app-afesox/pull/143");
+            request.setRepo("sitionix/app-afesox");
+        });
 
         this.ticketRepository.updateLaneStatus(qaLeadAutomationLaneId, LaneStatus.IN_PROGRESS);
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeQaLeadLaneBackend())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", qaLeadAutomationLaneId))
-                .assertDefault();
+        this.laneCompletion.completeQaLeadLaneBackend(ticketId, qaLeadAutomationLaneId);
 
         this.ticketRepository.updateLaneStatus(qaLeadBffLaneId, LaneStatus.IN_PROGRESS);
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeQaLeadLaneBackend())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", qaLeadBffLaneId))
-                .assertDefault(d -> d.mutateRequest(request -> request.setScope("backendforfrontendservice-sox")));
+        this.laneCompletion.completeQaLeadLaneBackend(ticketId, qaLeadBffLaneId, request -> request.setScope("backendforfrontendservice-sox"));
 
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeImplementBeLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", implementBeAutomationLaneId))
-                .assertDefault();
+        this.laneCompletion.completeImplementBeLane(ticketId, implementBeAutomationLaneId);
 
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeImplementBeLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", implementBeBffLaneId))
-                .assertDefault(d -> d.mutateRequest(request -> request.setScope("backendforfrontendservice-sox")));
+        this.laneCompletion.completeImplementBeLane(ticketId, implementBeBffLaneId,
+                request -> request.setScope("backendforfrontendservice-sox"));
 
         final TicketDocument actual = this.testManager.mongo()
                 .get(TicketDocument.class)

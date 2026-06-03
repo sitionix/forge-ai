@@ -2,22 +2,22 @@ package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
 class CompleteUnitTestLaneFlowIT {
 
     @Autowired
     private TestManager testManager;
+
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
     @Test
     @DisplayName("Should create reviewer task and complete test_unit lane")
     void givenCompleteUnitTestPayload_whenCompleteUnitTestLane_thenCreateReviewerTask() {
@@ -30,13 +30,7 @@ class CompleteUnitTestLaneFlowIT {
                 .body("completeUnitTestLaneSeedTicket.json");
 
         //when then
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeUnitTestLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", testUnitLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(testUnitLaneId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
-                .assertDefault();
+        this.laneCompletion.completeUnitTestLane(ticketId, testUnitLaneId);
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)

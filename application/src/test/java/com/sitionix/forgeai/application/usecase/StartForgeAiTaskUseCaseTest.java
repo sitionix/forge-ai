@@ -1,5 +1,7 @@
 package com.sitionix.forgeai.application.usecase;
 
+import com.sitionix.forgeai.application.operator.TicketOperatorRunService;
+import com.sitionix.forgeai.application.operator.TicketOperatorTerminalAutoOpenService;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
@@ -27,6 +29,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -41,10 +44,19 @@ class StartForgeAiTaskUseCaseTest {
 
     @Mock
     private ServicePropertiesProvider props;
+    @Mock
+    private TicketOperatorRunService ticketOperatorRunService;
+    @Mock
+    private TicketOperatorTerminalAutoOpenService ticketOperatorTerminalAutoOpenService;
 
     @BeforeEach
     void setUp() {
-        this.startForgeAiTask = new StartForgeAiTaskUseCase(this.ticketRepository, this.props);
+        this.startForgeAiTask = new StartForgeAiTaskUseCase(
+                this.ticketRepository,
+                this.props,
+                this.ticketOperatorRunService,
+                this.ticketOperatorTerminalAutoOpenService
+        );
         this.configureAgents();
         lenient().when(this.ticketRepository.save(any(Ticket.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
@@ -77,6 +89,7 @@ class StartForgeAiTaskUseCaseTest {
         assertThat(analyzerLanes.stream().map(Lane::getStatus).collect(Collectors.toSet()))
                 .containsExactly(LaneStatus.READY_TO_START);
         assertThat(analyzerLanes.stream().allMatch(lane -> lane.getDependsOn().isEmpty())).isTrue();
+        verify(this.ticketOperatorTerminalAutoOpenService).openIfConfigured(actual);
     }
 
     @Test

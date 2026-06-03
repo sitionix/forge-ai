@@ -5,6 +5,8 @@ import com.sitionix.forgeai.domain.model.codex.CodexSessionStartCommand;
 import com.sitionix.forgeai.domain.model.codex.CodexTurnCommand;
 import com.sitionix.forgeai.domain.model.codex.CodexTurnResponse;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,7 +29,15 @@ public class FakeInteractiveCodexSessionRepository implements CodexSessionReposi
         final String sessionId = UUID.randomUUID().toString();
         final String threadId = "thread-" + sessionId;
         this.historyBySession.put(sessionId, new ArrayList<>());
-        return CodexSession.builder().id(sessionId).threadId(threadId).build();
+        return CodexSession.builder()
+                .id(sessionId)
+                .threadId(threadId)
+                .processPid(12345L)
+                .command(List.of("codex", "app-server", "--stdio"))
+                .cwd(System.getProperty("user.dir"))
+                .startedAt(Instant.now())
+                .codexVersion("fake")
+                .build();
     }
 
     @Override
@@ -50,6 +60,12 @@ public class FakeInteractiveCodexSessionRepository implements CodexSessionReposi
     @Override
     public void closeSession(final String sessionId) {
         this.historyBySession.remove(sessionId);
+    }
+
+    @Override
+    public void interruptTurn(final String sessionId, final String turnId, final Duration timeout) {
+        this.ensureSession(sessionId);
+        this.historyBySession.get(sessionId).add("interrupt:" + turnId);
     }
 
     public List<String> history(final String sessionId) {

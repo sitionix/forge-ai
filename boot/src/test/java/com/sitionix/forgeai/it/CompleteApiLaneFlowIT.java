@@ -3,24 +3,24 @@ package com.sitionix.forgeai.it;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
 class CompleteApiLaneFlowIT {
 
     @Autowired
     private TestManager testManager;
+
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
     @Test
     @DisplayName("Should create one implement_be task when one backend scope is produced by API lane")
     void givenOneBackendProducedLane_whenCompleteApiLane_thenCreateOneImplementBeTask() {
@@ -33,12 +33,7 @@ class CompleteApiLaneFlowIT {
                 .body("completeApiLaneOneBeSeedTicket.json");
 
         //when then
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeApiLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(apiLaneId.toString()))
-                .assertDefault();
+        this.laneCompletion.completeApiLane(ticketId, apiLaneId);
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)
@@ -78,12 +73,7 @@ class CompleteApiLaneFlowIT {
                 .body("completeApiLaneTwoBeSeedTicket.json");
 
         //when then
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeApiLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(apiLaneId.toString()))
-                .assertDefault();
+        this.laneCompletion.completeApiLane(ticketId, apiLaneId);
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)
@@ -133,12 +123,7 @@ class CompleteApiLaneFlowIT {
                 .body("completeApiLaneTwoBeOneFeSeedTicket.json");
 
         //when then
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeApiLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(apiLaneId.toString()))
-                .assertDefault();
+        this.laneCompletion.completeApiLane(ticketId, apiLaneId);
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)
@@ -198,13 +183,7 @@ class CompleteApiLaneFlowIT {
                 .body("completeApiLaneTwoBeOneFePartialContractsSeedTicket.json");
 
         //when then
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeApiLane())
-                .withRequest("requestCompleteApiLanePartialScopes.json")
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(apiLaneId.toString()))
-                .assertDefault();
+        this.laneCompletion.completeApiLane(ticketId, apiLaneId, "requestCompleteApiLanePartialScopes.json", request -> { });
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)

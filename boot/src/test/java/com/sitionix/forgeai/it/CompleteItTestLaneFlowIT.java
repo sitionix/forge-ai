@@ -5,24 +5,24 @@ import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.TestItPayload;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.time.LocalDateTime;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
 class CompleteItTestLaneFlowIT {
 
     @Autowired
     private TestManager testManager;
+
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
     @Test
     @DisplayName("Should store integration test report and complete test_it lane")
     void givenCompleteItTestPayload_whenCompleteItTestLane_thenStoreReportAndCompleteLane() {
@@ -49,13 +49,7 @@ class CompleteItTestLaneFlowIT {
                 .body(agentTicketDocument);
 
         //when then
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeItTestLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", laneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(laneId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
-                .assertDefault();
+        this.laneCompletion.completeItTestLane(ticketId, laneId);
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)

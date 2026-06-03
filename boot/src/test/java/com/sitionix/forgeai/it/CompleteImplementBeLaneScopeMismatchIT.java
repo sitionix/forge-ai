@@ -1,24 +1,27 @@
 package com.sitionix.forgeai.it;
 
+import com.sitionix.forgeai.api.ScopeMismatchException;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
 class CompleteImplementBeLaneScopeMismatchIT {
 
     @Autowired
     private TestManager testManager;
+
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
+
     @Test
     @DisplayName("Should fail implement_be completion callback on scope mismatch")
     void givenImplementBeScopeMismatch_whenCompleteImplementBeLane_thenReturnBadRequest() {
@@ -31,14 +34,10 @@ class CompleteImplementBeLaneScopeMismatchIT {
                 .body("completeImplementBeLaneScopeMismatchSeedTicket.json");
 
         //when then
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeImplementBeLane())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", implementBeLaneId))
-                .withRequest("requestCompleteImplementBeLane.json", request -> request.setScope("backendforfrontendservice-sox"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("scope_mismatch"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("implement_be scope mismatch: laneId=62222222-2222-2222-2222-222222222222, laneScope=automationservice-sox, requestScope=backendforfrontendservice-sox"))
-                .expectStatus(HttpStatus.BAD_REQUEST)
-                .assertAndCreate();
+        assertThatThrownBy(() -> this.laneCompletion.completeImplementBeLane(ticketId, implementBeLaneId,
+                request -> request.setScope("backendforfrontendservice-sox")))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessage("implement_be scope mismatch: laneId=62222222-2222-2222-2222-222222222222, laneScope=automationservice-sox, requestScope=backendforfrontendservice-sox");
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)

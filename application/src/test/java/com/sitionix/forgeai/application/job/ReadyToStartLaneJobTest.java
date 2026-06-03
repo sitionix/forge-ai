@@ -6,17 +6,20 @@ import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
+import com.sitionix.forgeai.domain.usecase.ManageTicketOperatorRuns;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.core.task.TaskExecutor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
@@ -27,10 +30,14 @@ class ReadyToStartLaneJobTest {
 
     @Mock
     private TicketRepository ticketRepository;
+    @Mock
+    private ManageTicketOperatorRuns manageTicketOperatorRuns;
+    private TaskExecutor taskExecutor;
 
     @BeforeEach
     void setUp() {
-        this.readyToStartLaneJob = new ReadyToStartLaneJob(this.ticketRepository);
+        this.taskExecutor = Runnable::run;
+        this.readyToStartLaneJob = new ReadyToStartLaneJob(this.ticketRepository, this.manageTicketOperatorRuns, this.taskExecutor);
     }
 
     @AfterEach
@@ -59,14 +66,16 @@ class ReadyToStartLaneJobTest {
                 .serviceId("atmssox")
                 .build();
         when(this.ticketRepository.findAllReadyToStartLanes()).thenReturn(List.of(lane));
+        when(this.manageTicketOperatorRuns.isExecutionBlocked(lane.getTicketId())).thenReturn(false);
 
         //when
         this.readyToStartLaneJob.run();
 
         //then
         verify(this.ticketRepository).findAllReadyToStartLanes();
+        verify(this.manageTicketOperatorRuns, times(2)).isExecutionBlocked(lane.getTicketId());
         verify(analyzerConfig).isEnabled();
         verify(analyzerExecutor).executeLane(lane);
-        verifyNoMoreInteractions(analyzerConfig, analyzerExecutor);
+        verifyNoMoreInteractions(analyzerConfig, analyzerExecutor, this.manageTicketOperatorRuns);
     }
 }

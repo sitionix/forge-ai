@@ -1,25 +1,30 @@
 package com.sitionix.forgeai.it;
 
+import com.sitionix.forgeai.api.ScopeMismatchException;
+import com.sitionix.forgeai.domain.exception.ApiLaneEvidenceValidationException;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.Objects;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
 class ScopeMismatchCallbacksIT {
 
     @Autowired
     private TestManager testManager;
+
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
+
     @Test
     @DisplayName("Should fail architect completion when implementation scope does not match lane scope")
     void givenArchitectLane_whenCompleteArchitectWithMismatchedScope_thenReturnBadRequestAndDoNotCreateTasks() {
@@ -32,11 +37,13 @@ class ScopeMismatchCallbacksIT {
                 .body("completeArchitectLaneSeedTicket.json");
 
         //when
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeArchitectLaneScopeMismatch())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", architectLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("scope_mismatch"))
-                .assertDefault();
+        assertThatThrownBy(() -> this.laneCompletion.completeArchitectLane(
+                ticketId,
+                architectLaneId,
+                "requestCompleteArchitectLane.json",
+                request -> request.getImplementationHandoff().setScope("backendforfrontendservice-sox")))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessage("Implementation scope mismatch: laneId=66666666-6666-6666-6666-666666666666, laneScope=automationservice-sox, requestScope=backendforfrontendservice-sox");
 
         //then
         this.testManager.mongo()
@@ -67,15 +74,12 @@ class ScopeMismatchCallbacksIT {
                 .body("completeApiLaneTwoBeSeedTicket.json");
 
         //when
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeApiLaneScopeMismatch())
-                .withRequest("requestCompleteApiLaneScopeMismatch.json", request -> {
+        assertThatThrownBy(() -> this.laneCompletion.completeApiLane(ticketId, apiLaneId, "requestCompleteApiLaneScopeMismatch.json", request -> {
                     request.setPrUrl("https://github.com/sitionix/app-afesox/pull/164");
                     request.setRepo("sitionix/app-afesox");
-                })
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("api_evidence_dependency_missing"))
-                .assertDefault();
+                }))
+                .isInstanceOf(ApiLaneEvidenceValidationException.class)
+                .hasMessageContaining("missing generated dependency evidence");
 
         //then
         this.testManager.mongo()
@@ -106,16 +110,13 @@ class ScopeMismatchCallbacksIT {
                 .body("completeApiLaneOneBeSeedTicket.json");
 
         //when
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeApiLaneScopeMismatch())
-                .withRequest("requestCompleteApiLaneMissingRequiredDependencyEvidence.json", request -> {
+        assertThatThrownBy(() -> this.laneCompletion.completeApiLane(ticketId, apiLaneId, "requestCompleteApiLaneMissingRequiredDependencyEvidence.json", request -> {
                     request.setPrUrl("https://github.com/sitionix/app-afesox/pull/164");
                     request.setRepo("sitionix/app-afesox");
                     request.getContracts().removeIf(value -> Objects.equals(value.getScope(), "automationservice-sox"));
-                })
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("scope_mismatch"))
-                .assertDefault();
+                }))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessageContaining("API callback does not contain contracts for produced implementation scopes");
 
         //then
         this.testManager.mongo()
@@ -143,15 +144,11 @@ class ScopeMismatchCallbacksIT {
                 .body("completeApiLaneOneBeSeedTicket.json");
 
         //when
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeApiLaneScopeMismatch())
-                .withRequest("requestCompleteApiLaneMissingRequiredDependencyEvidence.json", request -> {
+        assertThatThrownBy(() -> this.laneCompletion.completeApiLane(ticketId, apiLaneId, "requestCompleteApiLaneMissingRequiredDependencyEvidence.json", request -> {
                     request.setPrUrl("https://github.com/sitionix/app-afesox/pull/164");
                     request.setRepo("app-afesox");
-                })
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", apiLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("api_evidence_repo_format_invalid"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.hint").value("Set repo in owner/repo format (for example: sitionix/app-afesox)."))
-                .assertDefault();
+                }))
+                .isInstanceOf(ApiLaneEvidenceValidationException.class)
+                .hasMessageContaining("repo");
     }
 }

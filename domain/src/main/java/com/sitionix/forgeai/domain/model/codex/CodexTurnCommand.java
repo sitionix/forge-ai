@@ -8,6 +8,8 @@ public record CodexTurnCommand(
         String prompt,
         Duration timeout,
         String promptType,
-        String stepId
+        String stepId,
+        Integer stepOrder,
+        String stepTitle
 ) {
 }

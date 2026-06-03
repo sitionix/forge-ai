@@ -2,10 +2,12 @@ package com.sitionix.forgeai.application.usecase;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.application.laneexecution.LaneCompletionDispatcher;
+import com.sitionix.forgeai.application.laneexecution.LaneExecutionProgressService;
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
 import com.sitionix.forgeai.application.laneexecution.LaneStepPromptBuilder;
 import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
 import com.sitionix.forgeai.application.laneexecution.support.FakeInteractiveCodexSessionRepository;
+import com.sitionix.forgeai.application.operator.TicketOperatorRunService;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.codex.CodexSession;
 import com.sitionix.forgeai.domain.model.codex.CodexSessionStartCommand;
@@ -13,9 +15,12 @@ import com.sitionix.forgeai.domain.model.codex.CodexTurnCommand;
 import com.sitionix.forgeai.domain.model.codex.CodexTurnResponse;
 import com.sitionix.forgeai.domain.model.codex.ScopeContext;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneExecutionStatus;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.operator.TicketOperatorRun;
+import com.sitionix.forgeai.domain.model.operator.TicketOperatorRunStatus;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
@@ -25,10 +30,13 @@ import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
+import com.sitionix.forgeai.domain.usecase.ManageTicketOperatorRuns;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -42,6 +50,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -53,16 +62,27 @@ class SupervisedLaneExecutionUseCaseTest {
     private LaneStrategyRepository laneStrategyRepository;
     @Mock
     private LaneCompletionDispatcher laneCompletionDispatcher;
+    @Mock
+    private TicketOperatorRunService ticketOperatorRunService;
+    @Mock
+    private ManageTicketOperatorRuns manageTicketOperatorRuns;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private LaneExecutionRepository laneExecutionRepository;
     private SupervisedExecutionProperties supervisedExecutionProperties;
+    private LaneExecutionProgressService laneExecutionProgressService;
 
     @BeforeEach
     void setUp() {
         this.laneExecutionRepository = new InMemoryLaneExecutionRepository();
         this.supervisedExecutionProperties = new SupervisedExecutionProperties();
         this.supervisedExecutionProperties.setTurnTimeout(Duration.ofSeconds(1));
+        this.laneExecutionProgressService = new LaneExecutionProgressService(this.laneExecutionRepository, this.ticketOperatorRunService);
+        when(this.manageTicketOperatorRuns.isExecutionBlocked(any())).thenReturn(false);
+        lenient().when(this.ticketOperatorRunService.markCompletedIfTerminal(any())).thenReturn(TicketOperatorRun.builder()
+                .ticketId(UUID.fromString("11111111-1111-1111-1111-111111111111"))
+                .status(TicketOperatorRunStatus.WATCHING)
+                .build());
     }
 
     @Test
@@ -118,8 +138,10 @@ class SupervisedLaneExecutionUseCaseTest {
                 new LaneStepPromptBuilder(() -> List.of("shared/common-rules.md"), new FakeInstructionRepository(), this.objectMapper),
                 new LaneStepDoneResultParser(this.objectMapper),
                 this.laneCompletionDispatcher,
+                this.laneExecutionProgressService,
                 this.supervisedExecutionProperties,
-                this.objectMapper
+                this.objectMapper,
+                this.manageTicketOperatorRuns
         );
     }
 
@@ -201,7 +223,15 @@ class SupervisedLaneExecutionUseCaseTest {
     private static final class TimeoutCodexSessionRepository implements CodexSessionRepository {
         @Override
         public CodexSession openSession(final CodexSessionStartCommand command) {
-            return CodexSession.builder().id("session").threadId("thread").build();
+            return CodexSession.builder()
+                    .id("session")
+                    .threadId("thread")
+                    .processPid(42L)
+                    .command(List.of("codex", "app-server", "--stdio"))
+                    .cwd(System.getProperty("user.dir"))
+                    .startedAt(Instant.now())
+                    .codexVersion("fake")
+                    .build();
         }
 
         @Override
@@ -211,6 +241,10 @@ class SupervisedLaneExecutionUseCaseTest {
 
         @Override
         public void closeSession(final String sessionId) {
+        }
+
+        @Override
+        public void interruptTurn(final String sessionId, final String turnId, final Duration timeout) {
         }
     }
 
@@ -233,6 +267,28 @@ class SupervisedLaneExecutionUseCaseTest {
         @Override
         public void updateCurrentStep(final LaneExecution execution) {
             this.updatedExecutions.add(execution);
+        }
+
+        @Override
+        public Optional<LaneExecution> findExecution(final UUID executionId) {
+            return this.savedExecutions.stream()
+                    .filter(execution -> executionId.equals(execution.getId()))
+                    .reduce((first, second) -> second);
+        }
+
+        @Override
+        public List<LaneExecution> findActiveExecutions() {
+            return this.savedExecutions.stream()
+                    .filter(execution -> execution.getStatus() == null || !execution.getStatus().isTerminal())
+                    .toList();
+        }
+
+        @Override
+        public List<LaneExecution> findActiveExecutionsByTicketId(final UUID ticketId) {
+            return this.savedExecutions.stream()
+                    .filter(execution -> ticketId.equals(execution.getTicketId()))
+                    .filter(execution -> execution.getStatus() == null || !execution.getStatus().isTerminal())
+                    .toList();
         }
 
         List<LaneExecution> savedExecutions() {

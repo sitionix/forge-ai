@@ -1,24 +1,27 @@
 package com.sitionix.forgeai.it;
 
+import com.sitionix.forgeai.api.ScopeMismatchException;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
 class CompleteQaLeadLaneScopeMismatchIT {
 
     @Autowired
     private TestManager testManager;
+
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
+
     @Test
     @DisplayName("Should fail qa_lead completion callback on scope mismatch")
     void givenQaLeadScopeMismatch_whenCompleteQaLeadLane_thenReturnBadRequest() {
@@ -31,14 +34,10 @@ class CompleteQaLeadLaneScopeMismatchIT {
                 .body("completeQaLeadLaneScopeMismatchSeedTicket.json");
 
         //when then
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeQaLeadLaneBackend())
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", qaLeadLaneId))
-                .withRequest("requestCompleteQaLeadLaneBackend.json", request -> request.setScope("backendforfrontendservice-sox"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.error").value("scope_mismatch"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("QA lead scope mismatch: laneId=92222222-2222-2222-2222-222222222222, laneScope=automationservice-sox, requestScope=backendforfrontendservice-sox"))
-                .expectStatus(HttpStatus.BAD_REQUEST)
-                .assertAndCreate();
+        assertThatThrownBy(() -> this.laneCompletion.completeQaLeadLaneBackend(ticketId, qaLeadLaneId,
+                request -> request.setScope("backendforfrontendservice-sox")))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessage("QA lead scope mismatch: laneId=92222222-2222-2222-2222-222222222222, laneScope=automationservice-sox, requestScope=backendforfrontendservice-sox");
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)

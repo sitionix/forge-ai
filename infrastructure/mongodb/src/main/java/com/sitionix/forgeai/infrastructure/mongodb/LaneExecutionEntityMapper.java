@@ -11,5 +11,7 @@ public interface LaneExecutionEntityMapper {
 
     LaneExecutionDocument asLaneExecutionDocument(LaneExecution source);
 
+    LaneExecution asLaneExecution(LaneExecutionDocument source);
+
     LaneStepExecutionDocument asLaneStepExecutionDocument(LaneStepExecution source);
 }

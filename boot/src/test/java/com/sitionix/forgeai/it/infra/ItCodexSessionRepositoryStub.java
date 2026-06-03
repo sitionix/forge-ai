@@ -5,6 +5,8 @@ import com.sitionix.forgeai.domain.model.codex.CodexSessionStartCommand;
 import com.sitionix.forgeai.domain.model.codex.CodexTurnCommand;
 import com.sitionix.forgeai.domain.model.codex.CodexTurnResponse;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -29,12 +31,21 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
     private final Function<CodexTurnCommand, String> responsePlanner = this::defaultResponseFor;
     private final Map<String, List<String>> history = new ConcurrentHashMap<>();
     private final List<String> submittedPrompts = new CopyOnWriteArrayList<>();
+    private final List<String> interruptedTurns = new CopyOnWriteArrayList<>();
 
     @Override
     public CodexSession openSession(final CodexSessionStartCommand command) {
         final String sessionId = UUID.randomUUID().toString();
         this.history.put(sessionId, new CopyOnWriteArrayList<>());
-        return CodexSession.builder().id(sessionId).threadId("thread-" + sessionId).build();
+        return CodexSession.builder()
+                .id(sessionId)
+                .threadId("thread-" + sessionId)
+                .processPid(91342L)
+                .command(List.of("codex", "app-server", "--stdio"))
+                .cwd(System.getProperty("user.dir"))
+                .startedAt(Instant.now())
+                .codexVersion("fake")
+                .build();
     }
 
     @Override
@@ -55,6 +66,12 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
     @Override
     public void closeSession(final String sessionId) {
         this.history.remove(sessionId);
+    }
+
+    @Override
+    public void interruptTurn(final String sessionId, final String turnId, final Duration timeout) {
+        this.history.computeIfAbsent(sessionId, ignored -> new CopyOnWriteArrayList<>());
+        this.interruptedTurns.add(turnId);
     }
 
     public List<String> history(final String sessionId) {
@@ -82,6 +99,10 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
     }
 
     public void clearStartedMessages() {
+    }
+
+    public List<String> interruptedTurns() {
+        return List.copyOf(this.interruptedTurns);
     }
 
     private String defaultResponseFor(final CodexTurnCommand command) {

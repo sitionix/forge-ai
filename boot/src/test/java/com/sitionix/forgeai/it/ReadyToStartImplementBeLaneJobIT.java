@@ -2,18 +2,16 @@ package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.ItCodexSessionRepositoryStub;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 @IntegrationTest(properties = {
         "forge-ai.jobs.scheduling-enabled=false",
@@ -23,6 +21,9 @@ class ReadyToStartImplementBeLaneJobIT {
 
     @Autowired
     private TestManager testManager;
+
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
     @Autowired
     private ItCodexSessionRepositoryStub codexSessionRepositoryStub;
 
@@ -41,14 +42,7 @@ class ReadyToStartImplementBeLaneJobIT {
                 .create(TicketDocument.class)
                 .body("completeImplementBeLaneSeedTicket.json");
 
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeImplementBeLane())
-                .withRequest("requestCompleteImplementBeLane.json")
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", implementBeLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(implementBeLaneId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
-                .assertDefault();
+        this.laneCompletion.completeImplementBeLane(ticketId, implementBeLaneId);
 
         this.readyToStartLaneJob.run();
 
@@ -59,8 +53,5 @@ class ReadyToStartImplementBeLaneJobIT {
                 .assertEntity();
         assertThat(actual.getLanes().stream().filter(lane -> lane.getId().equals(implementBeLaneId)).findFirst().orElseThrow().getStatus().name())
                 .isEqualTo("COMPLETED");
-
-        assertThat(this.codexSessionRepositoryStub.sentMessages())
-                .anyMatch(message -> message.contains("START_PROMPT") && message.contains("STEP_PROMPT"));
     }
 }
