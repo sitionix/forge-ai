@@ -77,7 +77,7 @@ class AnalyzeAgentExecutorTest {
                 .agentInstruction("instruction")
                 .sharedInstructions(Set.of("shared"))
                 .build();
-        when(this.prepareAgentExecutionInputUseCase.execute(lane)).thenReturn(baseInput);
+        when(this.prepareAgentExecutionInputUseCase.executeClaimed(lane)).thenReturn(baseInput);
 
         when(this.ticketRepository.findTicketContentById(ticketId)).thenReturn("task-description");
         final AgentExecutionInput<AgentTicketPayload> enrichedInput = AgentExecutionInput.<AgentTicketPayload>builder()
@@ -90,7 +90,7 @@ class AnalyzeAgentExecutorTest {
 
         this.analyzeAgentExecutor.executeLane(lane);
 
-        verify(this.prepareAgentExecutionInputUseCase).execute(lane);
+        verify(this.prepareAgentExecutionInputUseCase).executeClaimed(lane);
         verify(this.ticketRepository).findTicketContentById(ticketId);
         verify(this.prepareAgentExecutionInputUseCase).enrichWithTasks(eq(lane), eq(baseInput), any(Set.class));
 

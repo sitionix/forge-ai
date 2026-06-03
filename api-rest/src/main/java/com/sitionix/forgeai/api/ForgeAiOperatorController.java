@@ -1,86 +1,47 @@
 package com.sitionix.forgeai.api;
 
-import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
+import com.app_afesox.fgaisox.api_first.api.ForgeAiOperatorExecutionApi;
+import com.app_afesox.fgaisox.api_first.dto.OperatorExecutionDTO;
+import com.app_afesox.fgaisox.api_first.dto.OperatorExecutionsResponseDTO;
 import com.sitionix.forgeai.domain.usecase.ManageLaneExecutions;
-import java.util.List;
+import com.sitionix.forgeai.mapper.ForgeAiOperatorApiMapper;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/forge-ai/operator/executions")
-public class ForgeAiOperatorController {
+public class ForgeAiOperatorController implements ForgeAiOperatorExecutionApi {
 
     private final ManageLaneExecutions manageLaneExecutions;
+    private final ForgeAiOperatorApiMapper forgeAiOperatorApiMapper;
 
-    @GetMapping
-    public ResponseEntity<List<OperatorExecutionResponse>> executions() {
-        return ResponseEntity.ok(this.manageLaneExecutions.findActiveExecutions().stream()
-                .map(this::asResponse)
-                .toList());
+    @Override
+    public ResponseEntity<OperatorExecutionsResponseDTO> getOperatorExecutions() {
+        return ResponseEntity.ok(this.forgeAiOperatorApiMapper.asOperatorExecutionsResponse(
+                this.manageLaneExecutions.findActiveExecutions().stream()
+                        .map(this.forgeAiOperatorApiMapper::asOperatorExecution)
+                        .toList()
+        ));
     }
 
-    @GetMapping("/active")
-    public ResponseEntity<List<OperatorExecutionResponse>> activeExecutions() {
-        return this.executions();
+    @Override
+    public ResponseEntity<OperatorExecutionsResponseDTO> getActiveOperatorExecutions() {
+        return this.getOperatorExecutions();
     }
 
-    @GetMapping("/{executionId}")
-    public ResponseEntity<OperatorExecutionResponse> execution(@PathVariable final UUID executionId) {
-        return ResponseEntity.ok(this.asResponse(this.manageLaneExecutions.getExecution(executionId)));
+    @Override
+    public ResponseEntity<OperatorExecutionDTO> getOperatorExecution(final UUID executionId) {
+        return ResponseEntity.ok(this.forgeAiOperatorApiMapper.asOperatorExecution(
+                this.manageLaneExecutions.getExecution(executionId)
+        ));
     }
 
-    @PostMapping("/{executionId}/interrupt")
-    public ResponseEntity<OperatorExecutionResponse> interrupt(@PathVariable final UUID executionId) {
-        return ResponseEntity.ok(this.asResponse(this.manageLaneExecutions.interrupt(executionId)));
-    }
-
-    private OperatorExecutionResponse asResponse(final LaneExecution execution) {
-        return new OperatorExecutionResponse(
-                execution.getId(),
-                execution.getTicketId(),
-                execution.getLaneId(),
-                execution.getAgentId(),
-                execution.getScope(),
-                execution.getStatus() == null ? null : execution.getStatus().name(),
-                execution.getProcessPid(),
-                execution.getSessionId(),
-                execution.getThreadId(),
-                execution.getActiveTurnId(),
-                execution.getCurrentStepId(),
-                execution.getCurrentStepOrder(),
-                execution.getCurrentStepTitle(),
-                execution.getLastProgressEvent(),
-                execution.getLastProgressAt(),
-                "just forge-ai-stop-execution " + execution.getId(),
-                execution.getStderrTail() == null ? List.of() : execution.getStderrTail()
-        );
-    }
-
-    private record OperatorExecutionResponse(
-            UUID executionId,
-            UUID ticketId,
-            UUID laneId,
-            String agentId,
-            String scope,
-            String status,
-            Long processPid,
-            String codexSessionId,
-            String codexThreadId,
-            String activeTurnId,
-            String activeStepId,
-            Integer activeStepOrder,
-            String activeStepTitle,
-            String lastProgressEvent,
-            java.time.LocalDateTime lastProgressAt,
-            String stopCommand,
-            List<String> stderrTail
-    ) {
+    @Override
+    public ResponseEntity<OperatorExecutionDTO> interruptOperatorExecution(final UUID executionId) {
+        return ResponseEntity.ok(this.forgeAiOperatorApiMapper.asOperatorExecution(
+                this.manageLaneExecutions.interrupt(executionId)
+        ));
     }
 }

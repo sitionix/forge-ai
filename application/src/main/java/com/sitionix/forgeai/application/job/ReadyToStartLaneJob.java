@@ -42,6 +42,12 @@ public class ReadyToStartLaneJob {
                     + lane.getLaneId() + ", agent=" + lane.getAgent().getId());
             return;
         }
+        if (!this.ticketRepository.moveLaneToInProgressIfReady(lane.getLaneId())) {
+            log.info("Skipping ready lane because it is no longer ready to start: laneId="
+                    + lane.getLaneId() + ", agent=" + lane.getAgent().getId());
+            this.dispatchingLaneIds.remove(lane.getLaneId());
+            return;
+        }
         this.laneExecutionTaskExecutor.execute(() -> this.executeLaneSafely(lane));
     }
 

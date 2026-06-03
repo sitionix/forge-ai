@@ -118,12 +118,6 @@ class PrepareAgentExecutionInputUseCaseTest {
                 .agent(Agent.ANALYZER)
                 .build();
 
-        final ServicePropertiesProvider.ServiceConfigView serviceConfigView = mock(ServicePropertiesProvider.ServiceConfigView.class);
-        final ServicePropertiesProvider.ContractRefView contractRefView = mock(ServicePropertiesProvider.ContractRefView.class);
-        when(serviceConfigView.getContractRefs()).thenReturn(Map.of("api", contractRefView));
-        when(this.props.getServices()).thenReturn(Map.of("forge-ai", serviceConfigView));
-        when(this.instructionRepository.findInstructionsByAgentId("analyzer"))
-                .thenReturn(AgentInstructions.builder().agentInstruction("agent").endpoint("/e").build());
         when(this.ticketRepository.moveLaneToInProgressIfReady(laneId)).thenReturn(false);
 
         //when
@@ -132,10 +126,7 @@ class PrepareAgentExecutionInputUseCaseTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Lane is not ready to start or already started: laneId=" + laneId);
 
-        verify(this.props).getServices();
-        verify(serviceConfigView).getContractRefs();
-        verify(this.instructionRepository).findInstructionsByAgentId("analyzer");
         verify(this.ticketRepository).moveLaneToInProgressIfReady(laneId);
-        verifyNoMoreInteractions(serviceConfigView, contractRefView);
+        verifyNoMoreInteractions(this.props, this.instructionRepository);
     }
 }

@@ -66,6 +66,7 @@ class ReadyToStartLaneJobTest {
                 .serviceId("atmssox")
                 .build();
         when(this.ticketRepository.findAllReadyToStartLanes()).thenReturn(List.of(lane));
+        when(this.ticketRepository.moveLaneToInProgressIfReady(lane.getLaneId())).thenReturn(true);
         when(this.manageTicketOperatorRuns.isExecutionBlocked(lane.getTicketId())).thenReturn(false);
 
         //when
@@ -73,6 +74,7 @@ class ReadyToStartLaneJobTest {
 
         //then
         verify(this.ticketRepository).findAllReadyToStartLanes();
+        verify(this.ticketRepository).moveLaneToInProgressIfReady(lane.getLaneId());
         verify(this.manageTicketOperatorRuns, times(2)).isExecutionBlocked(lane.getTicketId());
         verify(analyzerConfig).isEnabled();
         verify(analyzerExecutor).executeLane(lane);

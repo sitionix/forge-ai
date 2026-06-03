@@ -29,14 +29,16 @@ public class PrepareAgentExecutionInputUseCase {
     private final ServicePropertiesProvider props;
 
     public AgentExecutionInput<AgentTicketPayload> execute(final ReadyToStartLane lane) {
-        final ServicePropertiesProvider.ServiceConfigView serviceConfigView = this.props.getServices().get(FORGE_AI_ID);
-        final ServicePropertiesProvider.ContractRefView contractRefs = serviceConfigView.getContractRefs().get(API_KEY);
-
-        final AgentInstructions instructions = this.instructionRepository.findInstructionsByAgentId(lane.getAgent().getId());
         if (!this.ticketRepository.moveLaneToInProgressIfReady(lane.getLaneId())) {
             throw new IllegalStateException("Lane is not ready to start or already started: laneId=" + lane.getLaneId());
         }
+        return this.executeClaimed(lane);
+    }
 
+    public AgentExecutionInput<AgentTicketPayload> executeClaimed(final ReadyToStartLane lane) {
+        final ServicePropertiesProvider.ServiceConfigView serviceConfigView = this.props.getServices().get(FORGE_AI_ID);
+        final ServicePropertiesProvider.ContractRefView contractRefs = serviceConfigView.getContractRefs().get(API_KEY);
+        final AgentInstructions instructions = this.instructionRepository.findInstructionsByAgentId(lane.getAgent().getId());
         return AgentExecutionInput.<AgentTicketPayload>builder()
                 .ticketId(lane.getTicketId())
                 .ticket(lane.getTicketKey())

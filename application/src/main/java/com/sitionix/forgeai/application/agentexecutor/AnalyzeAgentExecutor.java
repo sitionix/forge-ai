@@ -26,7 +26,7 @@ public class AnalyzeAgentExecutor implements ExecuteAgent<AnalyzerPayload> {
 
     @Override
     public void executeLane(final ReadyToStartLane lane) {
-        final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.execute(lane);
+        final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.executeClaimed(lane);
         final String ticket = this.ticketRepository.findTicketContentById(lane.getTicketId());
 
         final AgentExecutionInput<AgentTicketPayload> enrichedInput = this.prepareAgentExecutionInputUseCase.enrichWithTasks(

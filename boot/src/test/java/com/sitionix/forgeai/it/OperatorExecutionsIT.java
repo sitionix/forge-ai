@@ -55,8 +55,7 @@ class OperatorExecutionsIT {
                 .andExpect(jsonPath("$.codexSessionId").value("session-" + executionId))
                 .andExpect(jsonPath("$.codexThreadId").value("thr-" + executionId))
                 .andExpect(jsonPath("$.activeTurnId").value("turn-" + executionId))
-                .andExpect(jsonPath("$.activeStepId").value("scope_slicing"))
-                .andExpect(jsonPath("$.stopCommand").value("just forge-ai-stop-execution " + executionId));
+                .andExpect(jsonPath("$.activeStepId").value("scope_slicing"));
     }
 
     @Test

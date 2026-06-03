@@ -62,7 +62,7 @@ class ReviewerAgentExecutorTest {
                 .ticketId(ticketId)
                 .laneId(laneId)
                 .build();
-        when(this.prepareAgentExecutionInputUseCase.execute(lane)).thenReturn(baseInput);
+        when(this.prepareAgentExecutionInputUseCase.executeClaimed(lane)).thenReturn(baseInput);
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(Lane.builder().id(laneId).inputTaskIds(Set.of(inputTaskId)).build()));
         final ReviewerPayload payload = new ReviewerPayload("review", "GLOBAL", "summary", List.of("file"), null);
         when(this.agentTicketRepository.findById(inputTaskId)).thenReturn(Optional.of(AgentTicket.<AgentTicketPayload>builder().id(inputTaskId).payload(payload).build()));

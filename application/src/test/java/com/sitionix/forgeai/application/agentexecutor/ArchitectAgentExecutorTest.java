@@ -88,7 +88,7 @@ class ArchitectAgentExecutorTest {
                 .ticketId(ticketId)
                 .laneId(laneId)
                 .build();
-        when(this.prepareAgentExecutionInputUseCase.execute(lane)).thenReturn(baseInput);
+        when(this.prepareAgentExecutionInputUseCase.executeClaimed(lane)).thenReturn(baseInput);
 
         final Lane laneState = Lane.builder()
                 .id(laneId)
@@ -118,7 +118,7 @@ class ArchitectAgentExecutorTest {
 
         this.architectAgentExecutor.executeLane(lane);
 
-        verify(this.prepareAgentExecutionInputUseCase).execute(lane);
+        verify(this.prepareAgentExecutionInputUseCase).executeClaimed(lane);
         verify(this.ticketRepository).findByLaneId(laneId);
         verify(this.agentTicketRepository).findById(inputTaskId);
         verify(this.prepareAgentExecutionInputUseCase).enrichWithTasks(lane, baseInput, Set.of(payload));

@@ -12,7 +12,8 @@
     <artifactId>api-rest</artifactId>
 
     <properties>
-        <fgaisox.api.version>0.0.17</fgaisox.api.version>
+        <fgaisox.api.version>0.0.18</fgaisox.api.version>
+        <fgaisox.api.artifactId>app-afesox-fgaisox-api-first-stable</fgaisox.api.artifactId>
     </properties>
 
     <dependencies>
@@ -23,7 +24,7 @@
         </dependency>
         <dependency>
             <groupId>com.afesox</groupId>
-            <artifactId>app-afesox-fgaisox-api-first-stable</artifactId>
+            <artifactId>${fgaisox.api.artifactId}</artifactId>
             <version>${fgaisox.api.version}</version>
         </dependency>
         <dependency>

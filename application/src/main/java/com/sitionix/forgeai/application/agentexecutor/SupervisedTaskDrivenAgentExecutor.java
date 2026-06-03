@@ -39,7 +39,7 @@ abstract class SupervisedTaskDrivenAgentExecutor {
     }
 
     protected AgentExecutionInput<AgentTicketPayload> prepareInputWithOptionalTasks(final ReadyToStartLane lane) {
-        final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.execute(lane);
+        final AgentExecutionInput<AgentTicketPayload> input = this.prepareAgentExecutionInputUseCase.executeClaimed(lane);
         final Lane laneState = this.ticketRepository.findByLaneId(lane.getLaneId())
                 .orElseThrow(() -> new IllegalArgumentException("Lane not found with id: " + lane.getLaneId()));
         final Set<AgentTicketPayload> tasks;
