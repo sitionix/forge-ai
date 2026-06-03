@@ -3,6 +3,7 @@ package com.sitionix.forgeai.domain.model.ticket.lane;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import java.util.Arrays;
+import java.util.Map;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
@@ -50,6 +51,73 @@ public enum Agent {
             return;
         }
         this.getExecutor().executeLane(lane);
+    }
+
+    public void completeLane(final LaneCompletionRouter router,
+                             final ReadyToStartLane lane,
+                             final Map<String, Object> completionPayload) {
+        switch (this) {
+            case ANALYZER -> router.completeAnalyzer(lane, completionPayload);
+            case ARCHITECT -> router.completeArchitect(lane, completionPayload);
+            case API -> router.completeApi(lane, completionPayload);
+            case QA_LEAD -> router.completeQaLead(lane, completionPayload);
+            case IMPLEMENT_BE -> router.completeImplementBe(lane, completionPayload);
+            case IMPLEMENT_FE -> router.completeImplementFe(lane, completionPayload);
+            case TEST_UNIT -> router.completeTestUnit(lane, completionPayload);
+            case TEST_IT -> router.completeTestIt(lane, completionPayload);
+            case TEST_UI -> router.completeTestUi(lane, completionPayload);
+            case REVIEWER -> router.completeReviewer(lane, completionPayload);
+            case EVENT -> router.completeEvent(lane, completionPayload);
+        }
+    }
+
+    public void validateLaneCompletion(final LaneCompletionValidationRouter router,
+                                       final ReadyToStartLane lane,
+                                       final Map<String, Object> completionPayload) {
+        switch (this) {
+            case ANALYZER -> router.validateAnalyzer(lane, completionPayload);
+            case ARCHITECT -> router.validateArchitect(lane, completionPayload);
+            case API -> router.validateApi(lane, completionPayload);
+            case QA_LEAD -> router.validateQaLead(lane, completionPayload);
+            case IMPLEMENT_BE, IMPLEMENT_FE, TEST_UI, TEST_UNIT, EVENT, REVIEWER, TEST_IT ->
+                    router.validateScope(lane, completionPayload);
+        }
+    }
+
+    public interface LaneCompletionRouter {
+        void completeAnalyzer(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void completeArchitect(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void completeApi(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void completeQaLead(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void completeImplementBe(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void completeImplementFe(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void completeTestUnit(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void completeTestIt(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void completeTestUi(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void completeReviewer(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void completeEvent(ReadyToStartLane lane, Map<String, Object> completionPayload);
+    }
+
+    public interface LaneCompletionValidationRouter {
+        void validateAnalyzer(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void validateArchitect(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void validateApi(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void validateQaLead(ReadyToStartLane lane, Map<String, Object> completionPayload);
+
+        void validateScope(ReadyToStartLane lane, Map<String, Object> completionPayload);
     }
 
 }

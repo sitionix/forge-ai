@@ -68,31 +68,12 @@ public class LaneCompletionDispatcher {
 
     public void validateFinalCompletionPayload(final ReadyToStartLane lane, final Map<String, Object> evidence) {
         final Map<String, Object> completionPayload = this.requireCompletionPayload(evidence);
-        switch (lane.getAgent()) {
-            case ANALYZER -> this.validateAnalyzerPayload(lane, completionPayload);
-            case ARCHITECT -> this.validateArchitectPayload(lane, completionPayload);
-            case API -> this.validateApiPayload(lane, completionPayload);
-            case QA_LEAD -> this.validateQaLeadPayload(lane, completionPayload);
-            case IMPLEMENT_BE, IMPLEMENT_FE, TEST_UI, TEST_UNIT, EVENT, REVIEWER -> this.validateScopePayload(lane, completionPayload);
-            case TEST_IT -> this.validateScopePayload(lane, completionPayload);
-        }
+        lane.getAgent().validateLaneCompletion(new ValidationRouter(), lane, completionPayload);
     }
 
     public void completeLane(final ReadyToStartLane lane, final Map<String, Object> evidence) {
         final Map<String, Object> completionPayload = this.requireCompletionPayload(evidence);
-        switch (lane.getAgent()) {
-            case ANALYZER -> this.completeAnalyzer(lane, completionPayload);
-            case ARCHITECT -> this.completeArchitect(lane, completionPayload);
-            case API -> this.completeApi(lane, completionPayload);
-            case QA_LEAD -> this.completeQaLead(lane, completionPayload);
-            case IMPLEMENT_BE -> this.completeImplementBe(lane, completionPayload);
-            case IMPLEMENT_FE -> this.completeImplementFe(lane, completionPayload);
-            case TEST_UNIT -> this.completeTestUnit(lane, completionPayload);
-            case TEST_IT -> this.completeTestIt(lane, completionPayload);
-            case TEST_UI -> this.completeAgentTasks.complete(lane.getLaneId(), List.of());
-            case REVIEWER -> this.completeReviewerTask.complete(lane.getTicketId());
-            case EVENT -> this.completeAgentLane.completeAndPrepareAgents(lane.getLaneId());
-        }
+        lane.getAgent().completeLane(new CompletionRouter(), lane, completionPayload);
     }
 
     private void completeAnalyzer(final ReadyToStartLane lane, final Map<String, Object> payload) {
@@ -540,6 +521,90 @@ public class LaneCompletionDispatcher {
         private static final String GLOBAL_SCOPE = ScopeMode.GLOBAL_SCOPE;
 
         private ScopeModeHolder() {
+        }
+    }
+
+    private final class CompletionRouter implements Agent.LaneCompletionRouter {
+        @Override
+        public void completeAnalyzer(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.completeAnalyzer(lane, completionPayload);
+        }
+
+        @Override
+        public void completeArchitect(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.completeArchitect(lane, completionPayload);
+        }
+
+        @Override
+        public void completeApi(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.completeApi(lane, completionPayload);
+        }
+
+        @Override
+        public void completeQaLead(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.completeQaLead(lane, completionPayload);
+        }
+
+        @Override
+        public void completeImplementBe(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.completeImplementBe(lane, completionPayload);
+        }
+
+        @Override
+        public void completeImplementFe(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.completeImplementFe(lane, completionPayload);
+        }
+
+        @Override
+        public void completeTestUnit(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.completeTestUnit(lane, completionPayload);
+        }
+
+        @Override
+        public void completeTestIt(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.completeTestIt(lane, completionPayload);
+        }
+
+        @Override
+        public void completeTestUi(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.completeAgentTasks.complete(lane.getLaneId(), List.of());
+        }
+
+        @Override
+        public void completeReviewer(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.completeReviewerTask.complete(lane.getTicketId());
+        }
+
+        @Override
+        public void completeEvent(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.completeAgentLane.completeAndPrepareAgents(lane.getLaneId());
+        }
+    }
+
+    private final class ValidationRouter implements Agent.LaneCompletionValidationRouter {
+        @Override
+        public void validateAnalyzer(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.validateAnalyzerPayload(lane, completionPayload);
+        }
+
+        @Override
+        public void validateArchitect(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.validateArchitectPayload(lane, completionPayload);
+        }
+
+        @Override
+        public void validateApi(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.validateApiPayload(lane, completionPayload);
+        }
+
+        @Override
+        public void validateQaLead(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.validateQaLeadPayload(lane, completionPayload);
+        }
+
+        @Override
+        public void validateScope(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
+            LaneCompletionDispatcher.this.validateScopePayload(lane, completionPayload);
         }
     }
 }
