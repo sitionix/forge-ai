@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.api;
 
+import com.sitionix.forgeai.domain.model.lanecompletion.ScopeMismatchException;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;

@@ -1,6 +1,6 @@
 package com.sitionix.forgeai.it;
 
-import com.sitionix.forgeai.api.ScopeMismatchException;
+import com.sitionix.forgeai.domain.model.lanecompletion.ScopeMismatchException;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;

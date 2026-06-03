@@ -2,6 +2,7 @@ package com.sitionix.forgeai.api;
 
 import com.sitionix.forgeai.domain.exception.ServicePropertyMissingException;
 import com.sitionix.forgeai.domain.exception.ApiLaneEvidenceValidationException;
+import com.sitionix.forgeai.domain.model.lanecompletion.ScopeMismatchException;
 import jakarta.validation.Valid;
 import java.lang.reflect.Method;
 import java.util.Map;

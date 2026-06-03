@@ -1,4 +1,4 @@
-package com.sitionix.forgeai.api;
+package com.sitionix.forgeai.domain.model.lanecompletion;
 
 public class ScopeMismatchException extends RuntimeException {
 
