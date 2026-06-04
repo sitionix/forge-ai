@@ -246,7 +246,88 @@ Each `Agent` delegates completion behavior to its bound executor:
 
 There are no lane-completion REST endpoints in the normal supervised flow.
 
-### 9.3 Reviewer completion
+### 9.3 Adding a new agent
+To add a new agent that participates in the ticket flow out of the box, keep the lane graph and payload routing driven by `agent.yml`. Do not add scheduler, dispatcher, readiness, or hardcoded downstream-agent changes for a normal agent.
+
+Required steps:
+- Add the agent to `domain/src/main/java/com/sitionix/forgeai/domain/model/ticket/lane/Agent.java` with its stable `id` and executor bean name.
+- Add the agent config to `boot/src/main/resources/agent.yml`.
+- Set `enabled`, `scope_mode`, and `groups` so lane creation can derive the correct scopes.
+- Set `depends_on` so readiness is computed from YAML, not from code.
+- Set `produces` for downstream lanes this agent may feed.
+- For every source agent that can produce input for this agent, add `input_payloads.<source_agent_id>`.
+- For every target agent in this agent's `produces`, ensure the target has a matching `input_payloads.<this_agent_id>` entry.
+- Configure `completion` only when the default behavior is not enough, for example `requires_api_evidence`, `writes_produced_lane_outputs`, `requires_output_for_every_target`, or `report_payload`.
+- Add typed payload classes under `domain/src/main/java/com/sitionix/forgeai/domain/model/ticket/agentticket`.
+- Register every new payload id in `AgentTicketPayloadType` so YAML payload ids resolve to Java payload classes.
+- Add a Spring executor under `application/src/main/java/com/sitionix/forgeai/application/agentexecutor`.
+- For a normal supervised Codex lane, extend `SupervisedTaskDrivenAgentExecutor`, implement `ExecuteAgent<YourPayload>`, and call `executeWithSupervisor(lane)` from `executeLane(...)`.
+- Implement `validateFinalCompletionPayload(...)` in the executor. Start with generic `LaneCompletionSupport` validation, then add only agent-specific validation.
+- Implement `completeLane(...)` in the executor. Use `LaneCompletionSupport.completeProducedLaneInputs(...)` for downstream output routing unless the agent intentionally has no produced outputs or writes a completion report.
+- Add the agent instruction file under `infrastructure/resources/src/main/resources/instructions/agents`.
+- Add step instruction files under `infrastructure/resources/src/main/resources/instructions/lane-instructions/<agent_id>`.
+- Register instruction routing in `infrastructure/resources/src/main/resources/instructions.yaml`.
+- Add the agent strategy and ordered steps to `boot/src/main/resources/lane-strategies.yml`.
+
+Validation pattern:
+
+```java
+@Override
+public void validateFinalCompletionPayload(final ReadyToStartLane lane,
+                                           final Map<String, Object> completionPayload) {
+    this.laneCompletionSupport.validateProducedLaneInputs(lane, completionPayload);
+    this.validateAgentSpecificRules(lane, completionPayload);
+}
+
+@Override
+public void completeLane(final ReadyToStartLane lane,
+                         final Map<String, Object> completionPayload) {
+    this.laneCompletionSupport.completeProducedLaneInputs(lane, completionPayload);
+}
+```
+
+If the agent must not produce downstream tasks, validate that explicitly:
+
+```java
+@Override
+public void validateFinalCompletionPayload(final ReadyToStartLane lane,
+                                           final Map<String, Object> completionPayload) {
+    this.laneCompletionSupport.validateNoOutputs(completionPayload);
+}
+
+@Override
+public void completeLane(final ReadyToStartLane lane,
+                         final Map<String, Object> completionPayload) {
+    this.completeAgentTasks.complete(lane.getLaneId(), List.of());
+}
+```
+
+Rules:
+- `agent.yml` remains the source of truth for dependencies, produced lanes, target scopes, and payload contracts.
+- Executors may validate their own completion payloads, but they must not hardcode the whole lane chain.
+- Codex does not choose payload types. The server renders the expected payload shape into the final-step prompt and validates the returned JSON against the YAML-backed contract.
+- `validateFinalCompletionPayload(...)` must not create tasks or mutate lane state.
+- `completeLane(...)` is the only executor completion method that may create downstream tasks, mark targets `NOT_NEEDED`, write a completion report, or finish the lane.
+- Adding a new agent should not require changes to `ReadyToStartLaneJob`, `LaneCompletionDispatcher`, `LaneCompletionSupport`, readiness calculation, lane status semantics, or ticket resolution rules.
+
+Minimum tests:
+- Unit test the new executor validation and completion behavior.
+- Add/update config tests proving `agent.yml` has valid `produces` and `input_payloads` contracts.
+- Add/update `LaneStrategiesConfigurationIT` expectations so the new strategy exists and step order is valid.
+- Add an integration test proving the lane is created from `agent.yml`.
+- Add an integration test proving dependencies make the lane ready only after required upstream lanes are terminal.
+- Add an integration test proving the final completion payload creates expected downstream tasks or marks expected target lanes `NOT_NEEDED`.
+- Add at least one full-flow integration test that includes the new agent and reaches reviewer/ticket completion when applicable.
+
+Verification commands:
+
+```bash
+mvn -pl application -am test
+mvn -pl boot -am verify
+mvn -f pom.xml clean install
+```
+
+### 9.4 Reviewer completion
 `CompleteReviewerTaskUseCase`:
 - finds reviewer lane;
 - sets reviewer lane `COMPLETED`;
