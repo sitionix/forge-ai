@@ -19,7 +19,6 @@ public class AgentExecutionInput<P> {
     private Set<P> tasks;
     private String agentInstruction;
     private ScopeContext scope;
-    private ForgeAiContractApi contractApi;
     private Set<String> additionalInstructions;
     private Set<String> sharedInstructions;
 }

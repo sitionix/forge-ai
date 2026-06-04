@@ -1,7 +1,6 @@
 package com.sitionix.forgeai.application.usecase;
 
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
-import com.sitionix.forgeai.domain.model.codex.ForgeAiContractApi;
 import com.sitionix.forgeai.domain.model.codex.ScopeContext;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.AgentInstructions;
@@ -21,9 +20,6 @@ import static java.util.Objects.isNull;
 @RequiredArgsConstructor
 public class PrepareAgentExecutionInputUseCase {
 
-    private static final String FORGE_AI_ID = "forge-ai";
-    private static final String API_KEY = "api";
-
     private final InstructionRepository instructionRepository;
     private final TicketRepository ticketRepository;
     private final ServicePropertiesProvider props;
@@ -36,18 +32,12 @@ public class PrepareAgentExecutionInputUseCase {
     }
 
     public AgentExecutionInput<AgentTicketPayload> executeClaimed(final ReadyToStartLane lane) {
-        final ServicePropertiesProvider.ServiceConfigView serviceConfigView = this.props.getServices().get(FORGE_AI_ID);
-        final ServicePropertiesProvider.ContractRefView contractRefs = serviceConfigView.getContractRefs().get(API_KEY);
         final AgentInstructions instructions = this.instructionRepository.findInstructionsByAgentId(lane.getAgent().getId());
         return AgentExecutionInput.<AgentTicketPayload>builder()
                 .ticketId(lane.getTicketId())
                 .ticket(lane.getTicketKey())
                 .laneId(lane.getLaneId())
                 .agentInstruction(instructions.getAgentInstruction())
-                .contractApi(ForgeAiContractApi.builder()
-                        .path(contractRefs.getRoot())
-                        .endpoint(instructions.getEndpoint())
-                        .build())
                 .additionalInstructions(instructions.getAdditionalInstructions())
                 .sharedInstructions(instructions.getSharedInstructions())
                 .build();

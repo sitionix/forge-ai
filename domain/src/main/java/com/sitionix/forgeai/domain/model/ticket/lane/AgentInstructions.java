@@ -12,7 +12,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class AgentInstructions {
     private String agentInstruction;
-    private String endpoint;
     private Set<String> additionalInstructions;
     private Set<String> sharedInstructions;
 }

@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.application.usecase;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.application.agentexecutor.LaneCompletionContractResolver;
 import com.sitionix.forgeai.application.laneexecution.LaneCompletionDispatcher;
 import com.sitionix.forgeai.application.laneexecution.LaneExecutionProgressService;
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
@@ -29,6 +30,7 @@ import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
+import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import com.sitionix.forgeai.domain.usecase.ManageTicketOperatorRuns;
 import java.time.Duration;
@@ -63,6 +65,8 @@ class SupervisedLaneExecutionUseCaseTest {
     @Mock
     private LaneCompletionDispatcher laneCompletionDispatcher;
     @Mock
+    private LaneRepository laneRepository;
+    @Mock
     private TicketOperatorRunService ticketOperatorRunService;
     @Mock
     private ManageTicketOperatorRuns manageTicketOperatorRuns;
@@ -79,6 +83,7 @@ class SupervisedLaneExecutionUseCaseTest {
         this.supervisedExecutionProperties.setTurnTimeout(Duration.ofSeconds(1));
         this.laneExecutionProgressService = new LaneExecutionProgressService(this.laneExecutionRepository, this.ticketOperatorRunService);
         when(this.manageTicketOperatorRuns.isExecutionBlocked(any())).thenReturn(false);
+        lenient().when(this.laneRepository.findProducedLanes(any())).thenReturn(List.of());
         lenient().when(this.ticketOperatorRunService.markCompletedIfTerminal(any())).thenReturn(TicketOperatorRun.builder()
                 .ticketId(UUID.fromString("11111111-1111-1111-1111-111111111111"))
                 .status(TicketOperatorRunStatus.WATCHING)
@@ -135,7 +140,13 @@ class SupervisedLaneExecutionUseCaseTest {
                 this.laneStrategyRepository,
                 this.laneExecutionRepository,
                 sessions,
-                new LaneStepPromptBuilder(() -> List.of("shared/common-rules.md"), new FakeInstructionRepository(), this.objectMapper),
+                new LaneStepPromptBuilder(
+                        () -> List.of("shared/common-rules.md"),
+                        new FakeInstructionRepository(),
+                        this.laneRepository,
+                        new FakeLaneCompletionContractResolver(),
+                        this.objectMapper
+                ),
                 new LaneStepDoneResultParser(this.objectMapper),
                 this.laneCompletionDispatcher,
                 this.laneExecutionProgressService,
@@ -191,7 +202,7 @@ class SupervisedLaneExecutionUseCaseTest {
 
     private String validResult(final String stepId) {
         final String evidence = "completion".equals(stepId)
-                ? "\"completionPayload\":{\"architectHandoff\":{\"scope\":\"backendforfrontendservice-sox\",\"requirements\":[],\"constraints\":[],\"nonGoals\":[],\"risks\":[],\"dependencies\":[]},\"qaLeadHandoff\":{\"scope\":\"backendforfrontendservice-sox\",\"requirements\":[],\"constraints\":[],\"nonGoals\":[],\"risks\":[],\"dependencies\":[],\"qualityFocus\":[],\"edgeConsiderations\":[]}}"
+                ? "\"completionPayload\":{\"outputs\":[]}"
                 : "\"detail\":\"ok\"";
         return """
                 {
@@ -206,7 +217,11 @@ class SupervisedLaneExecutionUseCaseTest {
     private static final class FakeInstructionRepository implements InstructionRepository {
         @Override
         public AgentInstructions findInstructionsByAgentId(final String agentId) {
-            throw new UnsupportedOperationException();
+            return AgentInstructions.builder()
+                    .agentInstruction("resolved::" + agentId)
+                    .additionalInstructions(Set.of())
+                    .sharedInstructions(Set.of())
+                    .build();
         }
 
         @Override
@@ -217,6 +232,34 @@ class SupervisedLaneExecutionUseCaseTest {
         @Override
         public Set<String> findSharedInstructionRefs() {
             return Set.of("shared/common-rules.md");
+        }
+    }
+
+    private static final class FakeLaneCompletionContractResolver implements LaneCompletionContractResolver {
+
+        @Override
+        public Class<? extends AgentTicketPayload> inputPayloadType(final Agent sourceAgent, final Agent targetAgent) {
+            return AgentTicketPayload.class;
+        }
+
+        @Override
+        public boolean writesProducedLaneOutputs(final Agent agent) {
+            return true;
+        }
+
+        @Override
+        public boolean requiresApiCompletionEvidence(final Agent agent) {
+            return false;
+        }
+
+        @Override
+        public boolean requiresCompletionOutputForEveryTarget(final Agent agent) {
+            return true;
+        }
+
+        @Override
+        public Optional<Class<? extends AgentTicketPayload>> completionReportPayloadType(final Agent agent) {
+            return Optional.empty();
         }
     }
 

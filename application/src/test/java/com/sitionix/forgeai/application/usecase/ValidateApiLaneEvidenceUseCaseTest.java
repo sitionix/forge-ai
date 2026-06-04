@@ -91,7 +91,7 @@ class ValidateApiLaneEvidenceUseCaseTest {
     }
 
     @Test
-    void givenArchitectRequiredPresentButCallbackScopeMissingInEvidence_whenValidate_thenThrow() {
+    void givenRequiredContractScopeMissingInEvidence_whenValidate_thenThrow() {
         final UUID laneId = UUID.randomUUID();
         final Lane lane = Lane.builder().id(laneId).build();
         final ApiLaneEvidencePayload evidence = ApiLaneEvidencePayload.builder()

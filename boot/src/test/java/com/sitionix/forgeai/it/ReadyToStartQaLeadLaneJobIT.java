@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "forge-ai.jobs.ready-to-start.fixed-delay-ms=100"
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
-class ReadyToStartQaLeadLaneJobIT {
+class ReadyToStartQaLeadLaneJobIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;

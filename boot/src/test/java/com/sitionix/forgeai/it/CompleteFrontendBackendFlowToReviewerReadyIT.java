@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "forge-ai.jobs.scheduling-enabled=false",
         "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000"
 })
-class CompleteFrontendBackendFlowToReviewerReadyIT {
+class CompleteFrontendBackendFlowToReviewerReadyIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;
@@ -34,7 +34,7 @@ class CompleteFrontendBackendFlowToReviewerReadyIT {
 
     @Test
     @DisplayName("Should drive mixed backend and frontend flows until backend and frontend test lanes are completed")
-    void givenFrontendAndBackendScopesWhenCodexRoutesCallbacksThenReviewerBecomesReadyAndFrontendCompletes() {
+    void givenFrontendAndBackendScopesWhenLaneCompletionsRouteOutputsThenReviewerBecomesReadyAndFrontendCompletes() {
         //given
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.startForge())

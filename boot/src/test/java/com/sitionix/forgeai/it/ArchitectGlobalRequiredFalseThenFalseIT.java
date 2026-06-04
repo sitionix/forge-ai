@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
-class ArchitectGlobalRequiredFalseThenFalseIT {
+class ArchitectGlobalRequiredFalseThenFalseIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;

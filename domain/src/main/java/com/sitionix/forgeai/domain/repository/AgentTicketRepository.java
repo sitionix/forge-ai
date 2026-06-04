@@ -7,7 +7,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Persists agent tickets generated from lane completion callbacks.
+ * Persists agent tickets generated from lane completion.
  */
 public interface AgentTicketRepository {
 

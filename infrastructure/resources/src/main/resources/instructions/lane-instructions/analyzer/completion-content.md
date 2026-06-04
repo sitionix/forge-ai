@@ -10,5 +10,5 @@ Use factual analyzer outputs only:
 - risks;
 - dependencies.
 
-Do not include callback transport mechanics.
+Do not include completion transport mechanics.
 Do not include future lane work beyond the handoff payloads.

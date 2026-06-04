@@ -2,17 +2,25 @@ package com.sitionix.forgeai.application.laneexecution;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.application.agentexecutor.LaneCompletionContractResolver;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyPromptConfig;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
+import com.sitionix.forgeai.domain.repository.LaneRepository;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +51,8 @@ public class LaneStepPromptBuilder {
 
     private final LaneStrategyPromptConfig laneStrategyPromptConfig;
     private final InstructionRepository instructionRepository;
+    private final LaneRepository laneRepository;
+    private final LaneCompletionContractResolver laneCompletionContractResolver;
     private final ObjectMapper objectMapper;
 
     public String buildStartPrompt(final ReadyToStartLane lane,
@@ -112,7 +122,7 @@ public class LaneStepPromptBuilder {
         if (stepIndex == totalSteps) {
             prompt.append('\n')
                     .append("Final-step completion payload contract:\n")
-                    .append(this.finalCompletionPayloadContract(lane.getAgent()))
+                    .append(this.finalCompletionPayloadContract(lane))
                     .append('\n');
         }
         prompt.append('\n')
@@ -135,7 +145,7 @@ public class LaneStepPromptBuilder {
             prompt.append('\n')
                     .append('\n')
                     .append("Final-step completion payload contract:\n")
-                    .append(this.finalCompletionPayloadContract(lane.getAgent()));
+                    .append(this.finalCompletionPayloadContract(lane));
         }
         return prompt.toString().trim();
     }
@@ -172,174 +182,119 @@ public class LaneStepPromptBuilder {
         }
     }
 
-    private String finalCompletionPayloadContract(final Agent agent) {
-        return switch (agent) {
-            case ANALYZER -> """
-                    evidence.completionPayload must be:
+    private String finalCompletionPayloadContract(final ReadyToStartLane lane) {
+        final StringBuilder builder = new StringBuilder()
+                .append("evidence.completionPayload must be a JSON object with this shape:\n")
+                .append("{\n")
+                .append("  \"outputs\": [\n")
+                .append(this.renderProducedOutputContracts(lane))
+                .append("  ]");
+        if (this.requiresApiCompletionEvidence(lane.getAgent())) {
+            builder.append(",\n")
+                    .append("  \"apiEvidence\": {\n")
+                    .append("    \"summary\": \"...\",\n")
+                    .append("    \"prUrl\": \"https://github.com/owner/repo/pull/123\",\n")
+                    .append("    \"repo\": \"owner/repo\",\n")
+                    .append("    \"contracts\": []\n")
+                    .append("  }");
+        }
+        if (this.completionReportPayloadType(lane.getAgent()).isPresent()) {
+            builder.append(",\n")
+                    .append("  \"report\": ")
+                    .append(this.renderPayloadShape(this.completionReportPayloadType(lane.getAgent()).get()));
+        }
+        builder.append("\n}\n\n")
+                .append("Output rules:\n")
+                .append(this.outputRuleFor(lane))
+                .append("- agent and scope must exactly match the produced lane.\n")
+                .append("- required=false marks that produced lane as not needed.\n")
+                .append("- required=true requires payload to match the listed payload type.\n")
+                .append("- do not invent agents or scopes that are not listed.");
+        return builder.toString().trim();
+    }
+
+    private String outputRuleFor(final ReadyToStartLane lane) {
+        final List<Lane> producedLanes = this.laneRepository.findCompletionTargetLanes(lane.getLaneId());
+        if (producedLanes.isEmpty() || !this.writesProducedLaneOutputs(lane.getAgent())) {
+            return "- outputs must be an empty array for this lane.\n";
+        }
+        if (!this.requiresCompletionOutputForEveryTarget(lane.getAgent())) {
+            return "- outputs may contain entries only for produced lanes that need downstream input from this completion.\n";
+        }
+        return "- outputs must contain exactly one entry for every produced lane listed below.\n";
+    }
+
+    private String renderProducedOutputContracts(final ReadyToStartLane lane) {
+        final List<Lane> producedLanes = this.laneRepository.findCompletionTargetLanes(lane.getLaneId());
+        if (producedLanes.isEmpty() || !this.writesProducedLaneOutputs(lane.getAgent())) {
+            return "";
+        }
+        return producedLanes.stream()
+                .map(targetLane -> this.renderProducedOutputContract(lane.getAgent(), targetLane))
+                .collect(Collectors.joining(",\n"));
+    }
+
+    private String renderProducedOutputContract(final Agent sourceAgent, final Lane targetLane) {
+        final Class<? extends AgentTicketPayload> payloadType =
+                this.laneCompletionContractResolver.inputPayloadType(sourceAgent, targetLane.getAgent());
+        return """
                     {
-                      "architectHandoff": {
-                        "scope": "<lane scope>",
-                        "requirements": [],
-                        "constraints": [],
-                        "nonGoals": [],
-                        "risks": [],
-                        "dependencies": []
-                      },
-                      "qaLeadHandoff": {
-                        "scope": "<lane scope>",
-                        "requirements": [],
-                        "constraints": [],
-                        "nonGoals": [],
-                        "risks": [],
-                        "dependencies": [],
-                        "qualityFocus": [],
-                        "edgeConsiderations": []
-                      }
-                    }
-                    """.trim();
-            case ARCHITECT -> """
-                    evidence.completionPayload must be:
-                    {
-                      "implementationScope": "<lane scope>",
-                      "implementationHandoff": {
-                        "scope": "<lane scope>",
-                        "task": "...",
-                        "summary": "...",
-                        "requirements": [],
-                        "constraints": [],
-                        "nonGoals": [],
-                        "architectureDecision": "...",
-                        "dependencies": [],
-                        "acceptanceNotes": [],
-                        "risks": []
-                      },
-                      "apiRequired": true,
-                      "apiRequest": {
-                        "required": true,
-                        "reason": "...",
-                        "scope": "GLOBAL",
-                        "summary": "...",
-                        "operations": [],
-                        "consumers": [],
-                        "notes": []
-                      },
-                      "eventRequired": true,
-                      "eventRequest": {
-                        "required": true,
-                        "reason": "...",
-                        "scope": "GLOBAL",
-                        "summary": "...",
-                        "eventName": "...",
-                        "payloadFields": [],
-                        "consumers": [],
-                        "notes": []
-                      }
-                    }
-                    If apiRequired is false, omit apiRequest.
-                    If eventRequired is false, omit eventRequest.
-                    """.trim();
-            case API -> """
-                    evidence.completionPayload must be:
-                    {
-                      "summary": "...",
-                      "prUrl": "https://github.com/owner/repo/pull/123",
-                      "repo": "owner/repo",
-                      "contracts": [
-                        {
-                          "scope": "<implementation scope>",
-                          "method": "GET",
-                          "path": "/resource",
-                          "operationId": "operationId",
-                          "notes": [],
-                          "artifacts": [
-                            {
-                              "kind": "MAVEN|NPM|OTHER",
-                              "role": "BACKEND_CONTRACT|FRONTEND_CONTRACT|OTHER",
-                              "dependency": "...",
-                              "runId": 123456,
-                              "notes": []
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                    """.trim();
-            case QA_LEAD -> """
-                    evidence.completionPayload must be:
-                    {
-                      "scope": "<lane scope>",
-                      "unitTestRequired": true,
-                      "testUnitPayload": {...},
-                      "integrationTestRequired": true,
-                      "testItPayload": {...},
-                      "uiTestRequired": false
-                    }
-                    Use payload objects that match the current lane facts for test-unit / test-it / test-ui handoff.
-                    Omit the payload object for lanes that are not required.
-                    """.trim();
-            case IMPLEMENT_BE -> """
-                    evidence.completionPayload must be:
-                    {
-                      "scope": "<lane scope>",
-                      "task": "...",
-                      "summary": "...",
-                      "changedFiles": [],
-                      "integrationFlows": [],
-                      "persistenceChanges": [],
-                      "sonar": {}
-                    }
-                    """.trim();
-            case IMPLEMENT_FE -> """
-                    evidence.completionPayload must be:
-                    {
-                      "scope": "<lane scope>",
-                      "task": "...",
-                      "summary": "...",
-                      "changedFiles": [],
-                      "affectedSurfaces": [],
-                      "uiBehavior": [],
-                      "sonar": {}
-                    }
-                    """.trim();
-            case TEST_UNIT -> """
-                    evidence.completionPayload must be:
-                    {
-                      "scope": "<lane scope>",
-                      "task": "...",
-                      "summary": "...",
-                      "affectedFiles": [],
-                      "sonar": {}
-                    }
-                    """.trim();
-            case TEST_IT -> """
-                    evidence.completionPayload must be:
-                    {
-                      "scope": "<lane scope>",
-                      "summary": "...",
-                      "coveredCases": []
-                    }
-                    """.trim();
-            case TEST_UI -> """
-                    evidence.completionPayload must be:
-                    {
-                      "scope": "<lane scope>",
-                      "summary": "...",
-                      "coveredCases": [],
-                      "sonar": {}
-                    }
-                    """.trim();
-            case REVIEWER -> """
-                    evidence.completionPayload must be:
-                    {
-                      "scope": "GLOBAL"
-                    }
-                    """.trim();
-            case EVENT -> """
-                    evidence.completionPayload must be:
-                    {
-                      "scope": "GLOBAL"
-                    }
-                    """.trim();
-        };
+                      "agent": "%s",
+                      "scope": "%s",
+                      "required": true,
+                      "payload": %s
+                    }""".formatted(
+                targetLane.getAgent().getId(),
+                targetLane.getScope(),
+                this.renderPayloadShape(payloadType)
+        );
+    }
+
+    private boolean writesProducedLaneOutputs(final Agent agent) {
+        return this.laneCompletionContractResolver.writesProducedLaneOutputs(agent);
+    }
+
+    private boolean requiresApiCompletionEvidence(final Agent agent) {
+        return this.laneCompletionContractResolver.requiresApiCompletionEvidence(agent);
+    }
+
+    private boolean requiresCompletionOutputForEveryTarget(final Agent agent) {
+        return this.laneCompletionContractResolver.requiresCompletionOutputForEveryTarget(agent);
+    }
+
+    private Optional<Class<? extends AgentTicketPayload>> completionReportPayloadType(final Agent agent) {
+        return this.laneCompletionContractResolver.completionReportPayloadType(agent);
+    }
+
+    private String renderPayloadShape(final Class<? extends AgentTicketPayload> payloadType) {
+        final Map<String, Object> fields = Arrays.stream(payloadType.getDeclaredFields())
+                .filter(field -> !Modifier.isStatic(field.getModifiers()))
+                .collect(Collectors.toMap(
+                        Field::getName,
+                        this::sampleValueFor,
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+        try {
+            return this.objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(fields);
+        } catch (final JsonProcessingException e) {
+            throw new IllegalStateException("Failed to render payload shape for " + payloadType.getName(), e);
+        }
+    }
+
+    private Object sampleValueFor(final Field field) {
+        if (String.class.equals(field.getType())) {
+            return "...";
+        }
+        if (Boolean.class.equals(field.getType()) || boolean.class.equals(field.getType())) {
+            return true;
+        }
+        if (Number.class.isAssignableFrom(field.getType()) || field.getType().isPrimitive()) {
+            return 0;
+        }
+        if (Set.class.isAssignableFrom(field.getType()) || Iterable.class.isAssignableFrom(field.getType())) {
+            return List.of();
+        }
+        return Map.of();
     }
 }

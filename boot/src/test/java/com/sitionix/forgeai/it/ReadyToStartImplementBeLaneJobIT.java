@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "forge-ai.jobs.scheduling-enabled=false",
         "forge-ai.jobs.ready-to-start.fixed-delay-ms=100"
 })
-class ReadyToStartImplementBeLaneJobIT {
+class ReadyToStartImplementBeLaneJobIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;

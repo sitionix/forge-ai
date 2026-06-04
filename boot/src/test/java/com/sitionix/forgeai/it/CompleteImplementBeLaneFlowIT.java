@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
-class CompleteImplementBeLaneFlowIT {
+class CompleteImplementBeLaneFlowIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;
@@ -21,7 +21,7 @@ class CompleteImplementBeLaneFlowIT {
     @Autowired
     private LaneCompletionTestFacade laneCompletion;
     @Test
-    @DisplayName("Should create test_unit and test_it tasks when implement_be callback has changed files and integration changes")
+    @DisplayName("Should create test_unit and test_it tasks when implement_be completion has changed files and integration changes")
     void givenImplementBeCompletePayload_whenCompleteImplementBeLane_thenCreateTestUnitAndTestItTasks() {
         //given
         final UUID ticketId = UUID.fromString("51111111-1111-1111-1111-111111111111");

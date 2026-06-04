@@ -2,7 +2,7 @@
 
 ## Flow
 
-Run frontend verification after the final local production code change, before push/PR update/callback.
+Run frontend verification after the final local production code change, before push/PR update/final completion response.
 
 Detect package manager from assigned frontend workspace:
 
@@ -19,7 +19,7 @@ Do not invent new scripts.
 1. after final local code change;
 2. before `git push`;
 3. before PR update;
-4. before completion callback.
+4. before the final completion response.
 
 If a new commit is added after verification, run verification again.
 Keep verification result facts for completion context.

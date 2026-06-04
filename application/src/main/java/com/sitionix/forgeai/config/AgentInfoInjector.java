@@ -40,5 +40,25 @@ public class AgentInfoInjector {
             agent.setInfo(config);
             agent.setExecutor(executor);
         }
+        this.validateProducedPayloadContracts();
+    }
+
+    private void validateProducedPayloadContracts() {
+        for (final Agent sourceAgent : Agent.values()) {
+            if (!sourceAgent.getInfo().isEnabled()
+                    || !sourceAgent.getInfo().writesProducedLaneOutputs()
+                    || sourceAgent.getInfo().getProduces() == null) {
+                continue;
+            }
+            for (final Agent targetAgent : sourceAgent.getInfo().getProduces()) {
+                if (targetAgent == null || !targetAgent.getInfo().isEnabled()) {
+                    continue;
+                }
+                if (!targetAgent.getInfo().getInputPayloadTypes().containsKey(sourceAgent)) {
+                    throw new IllegalStateException("Missing input_payloads config in agent.yml: target="
+                            + targetAgent.getId() + ", source=" + sourceAgent.getId());
+                }
+            }
+        }
     }
 }

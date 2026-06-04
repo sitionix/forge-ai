@@ -69,7 +69,7 @@ public class TicketRepositoryImpl implements TicketRepository {
 
     @Override
     public Optional<Lane> findByLaneId(final UUID laneId) {
-        final Query query = Query.query(Criteria.where("lanes._id").is(laneId));
+        final Query query = this.laneIdQuery(laneId);
         final TicketDocument ticketDocument = this.mongoTemplate.findOne(query, TicketDocument.class);
         if (ticketDocument == null || ticketDocument.getLanes() == null) {
             return Optional.empty();
@@ -83,23 +83,21 @@ public class TicketRepositoryImpl implements TicketRepository {
 
     @Override
     public void updateLaneStatus(final UUID laneId, final LaneStatus laneStatus) {
-        final Query query = Query.query(Criteria.where("lanes._id").is(laneId));
+        final Query query = this.laneElementQuery(laneId);
         final Update update = new Update().set("lanes.$.status", laneStatus);
         this.mongoTemplate.updateFirst(query, update, TicketDocument.class);
     }
 
     @Override
     public boolean moveLaneToInProgressIfReady(final UUID laneId) {
-        final Query query = Query.query(Criteria.where("lanes").elemMatch(
-                Criteria.where("_id").is(laneId).and("status").is(LaneStatus.READY_TO_START)
-        ));
+        final Query query = this.laneElementQuery(laneId, LaneStatus.READY_TO_START);
         final Update update = new Update().set("lanes.$.status", LaneStatus.IN_PROGRESS);
         return this.mongoTemplate.updateFirst(query, update, TicketDocument.class).getModifiedCount() > 0;
     }
 
     @Override
     public boolean isReadyToStart(final UUID laneId) {
-        final Query query = Query.query(Criteria.where("lanes._id").is(laneId));
+        final Query query = this.laneIdQuery(laneId);
         final TicketDocument ticketDocument = this.mongoTemplate.findOne(query, TicketDocument.class);
         if (ticketDocument == null || ticketDocument.getLanes() == null) {
             return false;
@@ -126,7 +124,7 @@ public class TicketRepositoryImpl implements TicketRepository {
 
     @Override
     public void moveReviewerToReadyToStartIfPossible(final UUID laneId) {
-        final Query query = Query.query(Criteria.where("lanes._id").is(laneId));
+        final Query query = this.laneIdQuery(laneId);
         final TicketDocument ticketDocument = this.mongoTemplate.findOne(query, TicketDocument.class);
         if (ticketDocument == null || ticketDocument.getLanes() == null) {
             return;
@@ -154,6 +152,35 @@ public class TicketRepositoryImpl implements TicketRepository {
         }
 
         this.updateLaneStatus(reviewerLaneId, LaneStatus.READY_TO_START);
+    }
+
+    private Query laneIdQuery(final UUID laneId) {
+        return Query.query(new Criteria().orOperator(
+                Criteria.where("lanes._id").is(laneId),
+                Criteria.where("lanes._id").is(laneId.toString()),
+                Criteria.where("lanes.id").is(laneId),
+                Criteria.where("lanes.id").is(laneId.toString())
+        ));
+    }
+
+    private Query laneElementQuery(final UUID laneId) {
+        return Query.query(Criteria.where("lanes").elemMatch(this.laneElementIdCriteria(laneId)));
+    }
+
+    private Query laneElementQuery(final UUID laneId, final LaneStatus laneStatus) {
+        return Query.query(Criteria.where("lanes").elemMatch(new Criteria().andOperator(
+                this.laneElementIdCriteria(laneId),
+                Criteria.where("status").is(laneStatus)
+        )));
+    }
+
+    private Criteria laneElementIdCriteria(final UUID laneId) {
+        return new Criteria().orOperator(
+                Criteria.where("_id").is(laneId),
+                Criteria.where("_id").is(laneId.toString()),
+                Criteria.where("id").is(laneId),
+                Criteria.where("id").is(laneId.toString())
+        );
     }
 
     private Optional<Lane> findLane(final TicketDocument ticketDocument, final UUID laneId) {

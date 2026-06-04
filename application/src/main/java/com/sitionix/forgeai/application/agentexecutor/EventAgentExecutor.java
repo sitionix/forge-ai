@@ -4,7 +4,6 @@ import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionPropert
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
 import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
-import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
@@ -12,7 +11,6 @@ import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentLane;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import java.util.Map;
-import java.util.Objects;
 import lombok.extern.java.Log;
 import org.springframework.stereotype.Component;
 
@@ -50,10 +48,7 @@ public class EventAgentExecutor extends SupervisedTaskDrivenAgentExecutor implem
 
     @Override
     public void validateFinalCompletionPayload(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
-        final Object scope = completionPayload.get("scope");
-        if (scope != null) {
-            this.laneCompletionSupport.requireExpectedScope(lane, Objects.toString(scope, null));
-        }
+        this.laneCompletionSupport.validateNoOutputs(completionPayload);
     }
 
     @Override

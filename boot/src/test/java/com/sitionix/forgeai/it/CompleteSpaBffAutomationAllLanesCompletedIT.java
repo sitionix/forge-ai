@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.it;
 
+import com.sitionix.forgeai.domain.model.ticket.TicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
@@ -10,7 +11,6 @@ import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "forge-ai.jobs.scheduling-enabled=false",
         "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000"
 })
-class CompleteSpaBffAutomationAllLanesCompletedIT {
+class CompleteSpaBffAutomationAllLanesCompletedIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;
@@ -35,7 +35,7 @@ class CompleteSpaBffAutomationAllLanesCompletedIT {
 
     @Test
     @DisplayName("Should complete full SPA+BFF+automation flow with all lanes completed")
-    void givenSpaBffAutomationScopes_whenCompleteAllCallbacks_thenAllLanesAreCompleted() {
+    void givenSpaBffAutomationScopes_whenCompleteAllLaneOutputs_thenAllLanesAreCompleted() {
         // given
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.startForge())
@@ -70,6 +70,7 @@ class CompleteSpaBffAutomationAllLanesCompletedIT {
         final UUID testItAutomationLaneId = this.findLaneId(ticket, Agent.TEST_IT, "automationservice-sox");
         final UUID testItBffLaneId = this.findLaneId(ticket, Agent.TEST_IT, "backendforfrontendservice-sox");
         final UUID testUiSpaLaneId = this.findLaneId(ticket, Agent.TEST_UI, "sitionix-spa");
+        final UUID reviewerLaneId = this.findLaneId(ticket, Agent.REVIEWER, "GLOBAL");
 
         // when
         this.laneCompletion.completeAnalyzerLane(ticketId, analyzerAutomationLaneId);
@@ -132,6 +133,8 @@ class CompleteSpaBffAutomationAllLanesCompletedIT {
         this.ticketRepository.updateLaneStatus(testUiSpaLaneId, LaneStatus.IN_PROGRESS);
         this.laneCompletion.completeUiTestLane(ticketId, testUiSpaLaneId);
 
+        this.laneCompletion.completeReviewerLane(ticketId, reviewerLaneId);
+
         // then
         final TicketDocument actual = this.testManager.mongo()
                 .get(TicketDocument.class)
@@ -139,14 +142,22 @@ class CompleteSpaBffAutomationAllLanesCompletedIT {
                 .singleElement()
                 .assertEntity();
 
+        assertThat(actual.getStatus()).isEqualTo(TicketStatus.RESOLVED);
         assertThat(actual.getLanes()).anyMatch(lane -> lane.getType() == Agent.EVENT && lane.getStatus() == LaneStatus.NOT_NEEDED);
-        assertThat(actual.getLanes()).anyMatch(lane -> lane.getType() == Agent.REVIEWER
-                && Set.of(LaneStatus.READY_TO_START, LaneStatus.IN_PROGRESS, LaneStatus.COMPLETED).contains(lane.getStatus()));
+        assertThat(this.getLaneStatus(actual, reviewerLaneId)).isEqualTo(LaneStatus.COMPLETED);
         assertThat(actual.getLanes().stream()
                 .filter(lane -> lane.getType() != Agent.EVENT && lane.getType() != Agent.REVIEWER)
                 .map(lane -> lane.getStatus())
                 .toList())
                 .allMatch(status -> status == LaneStatus.COMPLETED);
+    }
+
+    private LaneStatus getLaneStatus(final TicketDocument ticket, final UUID laneId) {
+        return ticket.getLanes().stream()
+                .filter(lane -> Objects.equals(lane.getId(), laneId))
+                .findFirst()
+                .orElseThrow()
+                .getStatus();
     }
 
     private UUID findLaneId(final TicketDocument ticket, final Agent agent, final String scope) {

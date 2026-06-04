@@ -22,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -50,8 +51,7 @@ class AnalyzeAgentExecutorTest {
                 this.supervisedLaneExecutionUseCase,
                 this.supervisedExecutionProperties,
                 this.ticketRepository,
-                org.mockito.Mockito.mock(com.sitionix.forgeai.domain.usecase.CompleteAgentTasks.class),
-                org.mockito.Mockito.mock(LaneCompletionSupport.class)
+                mock(LaneCompletionSupport.class)
         );
     }
 

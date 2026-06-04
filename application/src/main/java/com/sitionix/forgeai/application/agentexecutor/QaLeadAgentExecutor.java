@@ -4,10 +4,6 @@ import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionPropert
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
 import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestItPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestUiPayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadTestUnitPayload;
-import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
@@ -47,23 +43,11 @@ public class QaLeadAgentExecutor extends SupervisedTaskDrivenAgentExecutor imple
 
     @Override
     public void validateFinalCompletionPayload(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
-        this.laneCompletionSupport.requireExpectedScope(lane, this.laneCompletionSupport.requireText(completionPayload, "scope"));
-        if (this.laneCompletionSupport.requireBoolean(completionPayload, "unitTestRequired")) {
-            this.laneCompletionSupport.requireMap(completionPayload, "testUnitPayload");
-        }
-        if (this.laneCompletionSupport.requireBoolean(completionPayload, "integrationTestRequired")) {
-            this.laneCompletionSupport.requireMap(completionPayload, "testItPayload");
-        }
-        if (this.laneCompletionSupport.requireBoolean(completionPayload, "uiTestRequired")) {
-            this.laneCompletionSupport.requireMap(completionPayload, "testUiPayload");
-        }
+        this.laneCompletionSupport.validateProducedLaneInputs(lane, completionPayload);
     }
 
     @Override
     public void completeLane(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
-        this.laneCompletionSupport.requireExpectedScope(lane, this.laneCompletionSupport.requireText(completionPayload, "scope"));
-        this.laneCompletionSupport.routeQaTestLane(lane, completionPayload, "unitTestRequired", Agent.TEST_UNIT, "testUnitPayload", QaLeadTestUnitPayload.class);
-        this.laneCompletionSupport.routeQaTestLane(lane, completionPayload, "integrationTestRequired", Agent.TEST_IT, "testItPayload", QaLeadTestItPayload.class);
-        this.laneCompletionSupport.routeQaTestLane(lane, completionPayload, "uiTestRequired", Agent.TEST_UI, "testUiPayload", QaLeadTestUiPayload.class);
+        this.laneCompletionSupport.completeProducedLaneInputs(lane, completionPayload);
     }
 }

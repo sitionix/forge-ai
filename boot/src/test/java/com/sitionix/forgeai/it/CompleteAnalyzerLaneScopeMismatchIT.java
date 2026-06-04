@@ -14,7 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
-class CompleteAnalyzerLaneScopeMismatchIT {
+class CompleteAnalyzerLaneScopeMismatchIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;
@@ -23,7 +23,7 @@ class CompleteAnalyzerLaneScopeMismatchIT {
     private LaneCompletionTestFacade laneCompletion;
 
     @Test
-    @DisplayName("Should fail analyzer completion when callback payload scope does not match lane scope")
+    @DisplayName("Should fail analyzer completion when output scope does not match produced lane scope")
     void givenBffAnalyzerLane_whenCompleteAnalyzerWithAutomationScope_thenReturnBadRequestAndDoNotCreateTasks() {
         //given
         final UUID ticketId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
@@ -36,7 +36,7 @@ class CompleteAnalyzerLaneScopeMismatchIT {
         //when
         assertThatThrownBy(() -> this.laneCompletion.completeAnalyzerLane(ticketId, bffAnalyzerLaneId))
                 .isInstanceOf(ScopeMismatchException.class)
-                .hasMessage("Analyzer callback scope mismatch: payload scope=automationservice-sox, laneScope=backendforfrontendservice-sox, laneId=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+                .hasMessage("Completion output scope mismatch: sourceLaneId=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb, sourceAgent=analyzer, targetAgent=architect, expectedScope=backendforfrontendservice-sox, actualScope=automationservice-sox");
 
         //then
         this.testManager.mongo()

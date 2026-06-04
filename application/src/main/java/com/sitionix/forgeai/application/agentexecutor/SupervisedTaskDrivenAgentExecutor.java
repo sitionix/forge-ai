@@ -9,10 +9,10 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
-import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 
 abstract class SupervisedTaskDrivenAgentExecutor {
 
@@ -57,4 +57,5 @@ abstract class SupervisedTaskDrivenAgentExecutor {
         }
         return this.prepareAgentExecutionInputUseCase.enrichWithTasks(lane, input, tasks);
     }
+
 }

@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.fail;
         "forge-ai.jobs.scheduling-enabled=false"
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
-class SupervisedApiDefaultExecutionIT {
+class SupervisedApiDefaultExecutionIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;

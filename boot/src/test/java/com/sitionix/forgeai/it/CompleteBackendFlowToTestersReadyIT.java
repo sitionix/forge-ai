@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "forge-ai.jobs.scheduling-enabled=false",
         "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000"
 })
-class CompleteBackendFlowToTestersReadyIT {
+class CompleteBackendFlowToTestersReadyIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;

@@ -21,7 +21,6 @@ public class InstructionResourcesProperties {
     @Setter
     public static class AgentConfig {
         private String instructions;
-        private String endpoint;
         private Set<String> additionalInstructions = new LinkedHashSet<>();
     }
 }

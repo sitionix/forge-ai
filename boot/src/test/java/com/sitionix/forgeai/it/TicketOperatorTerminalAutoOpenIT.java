@@ -20,7 +20,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @IntegrationTest(properties = "forge.ai.operator.ticket-terminal.auto-open-on-ticket-start=true")
-class TicketOperatorTerminalAutoOpenIT {
+class TicketOperatorTerminalAutoOpenIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;

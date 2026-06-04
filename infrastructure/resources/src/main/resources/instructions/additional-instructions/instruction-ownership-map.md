@@ -34,7 +34,7 @@ Always open and read the actual file before editing:
 - agent instruction file;
 - shared instruction file;
 - additional instruction file;
-- OpenAPI contract if callback payload is involved;
+- final-step completion payload contract if completion payload shape is involved;
 - runtime/config file if the issue may be orchestration-related.
 
 If this map conflicts with the actual file, trust the actual file and update this map only if the ownership/navigation is outdated.
@@ -111,7 +111,7 @@ Examples:
 
 - scope boundaries;
 - no invented context;
-- callback transport rules;
+- completion response rules;
 - scope ownership interpretation.
 
 Do not put lane-specific rules in shared files.
@@ -199,7 +199,7 @@ Do not add a duplicate rule when a sufficient rule already exists.
 |---|---|
 | Agent misunderstood its lane responsibility | update instruction owner |
 | Agent ignored weak/vague rule | strengthen instruction owner |
-| Agent invented callback payload field | update lane file or callback rules |
+| Agent invented completion payload field | update lane file or completion response rules |
 | Agent did work owned by another lane | update shared or lane instruction owner |
 | Agent wrote tests in implementation lane | update implementation lane file |
 | Agent reported fake Sonar values | update lane file and consider API validation guard |
@@ -277,13 +277,13 @@ Owner:
 
 ---
 
-## Callback delivery mistake
+## Completion response mistake
 
 Example:
 
-- Agent claimed callback success without HTTP response verification.
-- Agent guessed callback payload from memory instead of OpenAPI.
-- Agent skipped retry rules.
+- Agent claimed completion success without returning the required final-step response.
+- Agent guessed completion payload shape from memory instead of the provided final-step contract.
+- Agent skipped validation rules.
 
 Owner:
 
@@ -311,7 +311,7 @@ Example:
 
 - repository is still on `develop`;
 - lane starts before dependencies are terminal;
-- missing completion endpoint;
+- missing final-step completion contract;
 - not-needed lane blocks final completion.
 
 Owner:

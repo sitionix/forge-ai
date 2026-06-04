@@ -8,13 +8,14 @@ import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
-import lombok.experimental.UtilityClass;
 
-@UtilityClass
-public class LaneTaskResolver {
+public final class LaneTaskResolver {
 
-    public Set<AgentTicketPayload> resolve(final Lane laneState,
-                                           final AgentTicketRepository agentTicketRepository) {
+    private LaneTaskResolver() {
+    }
+
+    public static Set<AgentTicketPayload> resolve(final Lane laneState,
+                                                  final AgentTicketRepository agentTicketRepository) {
         if (Objects.isNull(laneState.getInputTaskIds()) || laneState.getInputTaskIds().isEmpty()) {
             throw new IllegalStateException("No input task ids found for laneId=" + laneState.getId());
         }

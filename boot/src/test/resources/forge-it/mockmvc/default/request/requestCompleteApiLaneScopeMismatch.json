@@ -1,5 +1,5 @@
 {
-  "summary": "API callback with unexpected contract scope",
+  "summary": "API completion payload with unexpected contract scope",
   "contracts": [
     {
       "scope": "backendforfrontendservice-sox",
@@ -51,7 +51,7 @@
     },
     {
       "scope": "unknown-service-sox",
-      "summary": "Unexpected scope in callback payload.",
+      "summary": "Unexpected scope in completion payload.",
       "operationId": "createAgentAction",
       "method": "POST",
       "path": "/api/v1/agent-actions",

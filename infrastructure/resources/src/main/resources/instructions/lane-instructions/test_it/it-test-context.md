@@ -14,7 +14,7 @@ Use:
 
 Use QA Lead `integrationTestCases` as the primary test target.
 Use Implement BE completion facts as factual implementation context.
-Use runtime context as source of truth for assigned scope, ticket, lane, contract references, and callback references.
+Use runtime context as source of truth for assigned scope, ticket, lane, and contract references.
 
 ## Scope
 

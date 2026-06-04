@@ -1,6 +1,6 @@
 ## API Decision Rules
 
-Always complete the API request object according to the provided OpenAPI completion contract.
+Always prepare the API request object according to the provided final-step completion payload contract.
 
 Use `required: true` when this scope needs API work to deliver its assigned scope task.
 

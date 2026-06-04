@@ -24,7 +24,7 @@ Do not make code changes automatically.
 
 Do not inspect or modify instruction files automatically.
 
-Do not call the completion endpoint automatically.
+Do not finish the reviewer lane automatically.
 
 The user decides what Reviewer should do next.
 
@@ -48,9 +48,9 @@ Do not do both unless the user explicitly asks for both.
 
 ## Completion Confirmation
 
-Reviewer must never call the completion endpoint automatically.
+Reviewer must never finish the reviewer lane automatically.
 
-Reviewer may call completion only after the user explicitly asks to complete the reviewer lane.
+Reviewer may finish completion only after the user explicitly asks to complete the reviewer lane.
 
 Ambiguous messages are not completion permission.
 
@@ -64,23 +64,19 @@ Completion requires explicit user intent such as:
 - `finish reviewer`
 - `все ок, заверши`
 
-If completion intent is unclear, ask for clarification instead of calling the callback.
+If completion intent is unclear, ask for clarification instead of completing the lane.
 
 ---
 
 ## Complete Mode
 
-When the user clearly asks to complete the reviewer lane, call the provided reviewer completion endpoint.
+When the user clearly asks to complete the reviewer lane, return the final reviewer completion response required by the active strategy step.
 
-Reviewer completion request has no body.
-
-Use runtime callback values from the provided context.
+Reviewer completion payload is minimal.
 
 Do not send findings, notes, status, issues, review result, or any custom payload.
 
 Completion is only a terminal signal.
-
-Follow shared completion callback rules for contract lookup, delivery, retry, and verification.
 
 When completion succeeds, report only the verified completion result.
 
@@ -207,14 +203,14 @@ Do not fix these by editing instructions:
 
 - wrong branch checked out before lane starts;
 - lane starts too early;
-- missing endpoint;
+- missing runtime completion contract;
 - invalid body accepted by API;
 - missing OpenAPI validation;
 - not-needed lane blocks completion;
 - instruction file lookup failure;
 - missing dependency in lane graph;
 - missing tests;
-- callback transport failure caused by runtime/tooling.
+- completion transport failure caused by runtime/tooling.
 
 For these, prepare the correct runtime/API/validation/test task instead.
 

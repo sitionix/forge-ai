@@ -4,16 +4,12 @@ import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionPropert
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
 import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
-import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUiPayload;
-import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
-import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import lombok.extern.java.Log;
 import org.springframework.stereotype.Component;
 
@@ -47,17 +43,11 @@ public class FeAgentExecutor extends SupervisedTaskDrivenAgentExecutor implement
 
     @Override
     public void validateFinalCompletionPayload(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
-        final Object scope = completionPayload.get("scope");
-        if (scope != null) {
-            this.laneCompletionSupport.requireExpectedScope(lane, Objects.toString(scope, null));
-        }
+        this.laneCompletionSupport.validateProducedLaneInputs(lane, completionPayload);
     }
 
     @Override
     public void completeLane(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
-        this.laneCompletionSupport.requireExpectedScope(lane, this.laneCompletionSupport.requireText(completionPayload, "scope"));
-        this.completeAgentTasks.complete(lane.getLaneId(), List.of(
-                this.laneCompletionSupport.ticket(lane, this.laneCompletionSupport.convert(completionPayload, TestUiPayload.class), lane.getScope(), Agent.TEST_UI)
-        ));
+        this.laneCompletionSupport.completeProducedLaneInputs(lane, completionPayload);
     }
 }

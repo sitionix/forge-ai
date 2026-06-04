@@ -39,7 +39,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "forge-ai.jobs.scheduling-enabled=false"
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
-class TicketOperatorControllerIT {
+class TicketOperatorControllerIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;

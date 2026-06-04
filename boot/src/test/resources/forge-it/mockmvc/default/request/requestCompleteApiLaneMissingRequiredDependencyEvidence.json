@@ -1,5 +1,5 @@
 {
-  "summary": "API callback missing required dependency evidence",
+  "summary": "API completion payload missing required dependency evidence",
   "contracts": [
     {
       "scope": "backendforfrontendservice-sox",

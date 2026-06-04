@@ -27,11 +27,14 @@ import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import com.sitionix.forgeai.domain.usecase.ManageTicketOperatorRuns;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.UUID;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -63,7 +66,7 @@ public class SupervisedLaneExecutionUseCase {
                 .executionId(executionId)
                 .ticketId(lane.getTicketId())
                 .laneId(lane.getLaneId())
-                .workspaceRoot(java.nio.file.Path.of("").toAbsolutePath().normalize().toString())
+                .workspaceRoot(Path.of("").toAbsolutePath().normalize().toString())
                 .sourceTerminalTty(lane.getSourceTerminalTty())
                 .ticketKey(lane.getTicketKey())
                 .agentId(lane.getAgent().getId())
@@ -287,7 +290,7 @@ public class SupervisedLaneExecutionUseCase {
                 .stepId(stepId)
                 .eventType(CodexProgressEventType.TURN_INTERRUPTED)
                 .text("Ticket execution cancelled during " + phase)
-                .occurredAt(java.time.Instant.now())
+                .occurredAt(Instant.now())
                 .build());
         throw new TicketExecutionCancelledException("Ticket operator run cancelled: ticketId="
                 + lane.getTicketId() + ", stepId=" + stepId + ", phase=" + phase);
@@ -313,9 +316,9 @@ public class SupervisedLaneExecutionUseCase {
         final boolean warningTriggered = warningThreshold != null && prompt.length() > warningThreshold;
         final boolean failTriggered = failThreshold != null && prompt.length() > failThreshold;
         final String action = failTriggered ? "fail" : warningTriggered ? "warning_only" : "sent";
-        final java.util.logging.Level level = failTriggered ? java.util.logging.Level.SEVERE
-                : warningTriggered ? java.util.logging.Level.WARNING
-                : java.util.logging.Level.INFO;
+        final Level level = failTriggered ? Level.SEVERE
+                : warningTriggered ? Level.WARNING
+                : Level.INFO;
         log.log(level, this.baseLog("supervised.prompt.size", lane, executionId, sessionId, stepId)
                 + " promptType=" + promptType
                 + " chars=" + prompt.length()

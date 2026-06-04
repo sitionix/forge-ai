@@ -12,6 +12,7 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -25,6 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -57,8 +59,8 @@ class FeAgentExecutorTest {
                 this.ticketRepository,
                 this.supervisedLaneExecutionUseCase,
                 this.supervisedExecutionProperties,
-                org.mockito.Mockito.mock(LaneCompletionSupport.class),
-                org.mockito.Mockito.mock(com.sitionix.forgeai.domain.usecase.CompleteAgentTasks.class)
+                mock(LaneCompletionSupport.class),
+                mock(CompleteAgentTasks.class)
         );
     }
 

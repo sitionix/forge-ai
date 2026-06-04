@@ -12,7 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import java.util.UUID;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
-class CompleteAnalyzerLaneDebugIT {
+class CompleteAnalyzerLaneDebugIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;

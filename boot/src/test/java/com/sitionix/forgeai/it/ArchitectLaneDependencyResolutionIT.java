@@ -15,7 +15,7 @@ import java.util.UUID;
 @IntegrationTest(properties = {
         "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000"
 })
-class ArchitectLaneDependencyResolutionIT {
+class ArchitectLaneDependencyResolutionIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;

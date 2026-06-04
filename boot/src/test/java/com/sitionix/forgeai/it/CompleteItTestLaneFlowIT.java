@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
-class CompleteItTestLaneFlowIT {
+class CompleteItTestLaneFlowIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;

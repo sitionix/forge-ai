@@ -29,15 +29,15 @@ Run local verification:
 1. after the final local change;
 2. before `git push`;
 3. before PR update;
-4. before completion callback.
+4. before the final completion response.
 
 If a new commit is added after verification, run verification again.
-Completion callback uses only verification still valid for the pushed commit.
+Completion response uses only verification still valid for the pushed commit.
 Keep verification result facts for completion context.
 
 ## Failure
 
 Do not push commits when verification fails.
-Do not call completion callback when verification failed.
-Exception for `test_unit`: completion callback is allowed when unit-test gate passed and only integration/failsafe tests failed.
+Do not finish completion when verification failed.
+Exception for `test_unit`: completion is allowed when unit-test gate passed and only integration/failsafe tests failed.
 When verification cannot be executed because of missing dependencies or environment constraints, keep exact failure evidence.

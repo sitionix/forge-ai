@@ -31,7 +31,7 @@
     }
   ],
   "notes": [
-    "Single backend scope callback fixture."
+    "Single backend scope completion fixture."
   ],
   "prUrl": "https://github.com/sitionix/app-afesox/pull/143",
   "repo": "sitionix/app-afesox"

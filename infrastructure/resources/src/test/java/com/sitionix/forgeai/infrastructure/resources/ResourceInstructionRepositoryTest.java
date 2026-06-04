@@ -21,31 +21,26 @@ class ResourceInstructionRepositoryTest {
         final InstructionResourcesProperties properties = new InstructionResourcesProperties();
         final InstructionResourcesProperties.AgentConfig analyzerConfig = new InstructionResourcesProperties.AgentConfig();
         analyzerConfig.setInstructions("instructions/agents/analyzer.md");
-        analyzerConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete");
         analyzerConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of("instructions/additional-instructions/scope-context-usage.md")));
 
         final InstructionResourcesProperties.AgentConfig qaLeadConfig = new InstructionResourcesProperties.AgentConfig();
         qaLeadConfig.setInstructions("instructions/agents/qa_lead.md");
-        qaLeadConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/qa-lead/complete");
         qaLeadConfig.setAdditionalInstructions(new LinkedHashSet<>());
 
         final InstructionResourcesProperties.AgentConfig implementBeConfig = new InstructionResourcesProperties.AgentConfig();
         implementBeConfig.setInstructions("instructions/agents/implement_be.md");
-        implementBeConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-be/complete");
         implementBeConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of(
                 "instructions/additional-instructions/java-style-basics.md"
         )));
 
         final InstructionResourcesProperties.AgentConfig testUnitConfig = new InstructionResourcesProperties.AgentConfig();
         testUnitConfig.setInstructions("instructions/agents/test_unit.md");
-        testUnitConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-unit/complete");
         testUnitConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of(
                 "instructions/additional-instructions/pr-workflow.md"
         )));
 
         final InstructionResourcesProperties.AgentConfig implementFeConfig = new InstructionResourcesProperties.AgentConfig();
         implementFeConfig.setInstructions("instructions/agents/implement_fe.md");
-        implementFeConfig.setEndpoint("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-fe/complete");
         implementFeConfig.setAdditionalInstructions(new LinkedHashSet<>(Set.of(
                 "instructions/additional-instructions/preparation-to-work.md",
                 "instructions/additional-instructions/pr-workflow.md"
@@ -78,7 +73,6 @@ class ResourceInstructionRepositoryTest {
 
         //then
         assertThat(actual.getAgentInstruction()).contains("# Analyzer Instructions");
-        assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/analyzer/complete");
         assertThat(actual.getAdditionalInstructions()).hasSize(1);
         assertThat(actual.getAdditionalInstructions().iterator().next()).contains("# Scope Context Usage");
         assertThat(actual.getSharedInstructions()).hasSize(1);
@@ -108,7 +102,6 @@ class ResourceInstructionRepositoryTest {
 
         //then
         assertThat(actual.getAgentInstruction()).contains("# Implement BE Instructions");
-        assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-be/complete");
         assertThat(actual.getAdditionalInstructions()).hasSize(1);
         assertThat(actual.getAdditionalInstructions()).anySatisfy(value -> assertThat(value).contains("# Java Style Basics"));
         assertThat(actual.getSharedInstructions()).hasSize(1);
@@ -122,7 +115,6 @@ class ResourceInstructionRepositoryTest {
 
         //then
         assertThat(actual.getAgentInstruction()).contains("# QA Lead Instructions");
-        assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/qa-lead/complete");
         assertThat(actual.getAdditionalInstructions()).isEmpty();
         assertThat(actual.getSharedInstructions()).hasSize(1);
         assertThat(actual.getSharedInstructions().iterator().next()).contains("# Common Agent Rules");
@@ -135,7 +127,6 @@ class ResourceInstructionRepositoryTest {
 
         //then
         assertThat(actual.getAgentInstruction()).contains("# Implement FE Instructions");
-        assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/implement-fe/complete");
         assertThat(actual.getAdditionalInstructions()).hasSize(2);
         assertThat(actual.getAdditionalInstructions()).anySatisfy(value -> assertThat(value).contains("# Preparation To Work"));
         assertThat(actual.getAdditionalInstructions()).anySatisfy(value -> assertThat(value).contains("# PR Workflow"));
@@ -150,7 +141,6 @@ class ResourceInstructionRepositoryTest {
 
         //then
         assertThat(actual.getAgentInstruction()).contains("# Test Unit Instructions");
-        assertThat(actual.getEndpoint()).isEqualTo("/api/v1/forge-ai/tickets/{ticketId}/lanes/{laneId}/test-unit/complete");
         assertThat(actual.getAdditionalInstructions()).hasSize(1);
         assertThat(actual.getAdditionalInstructions().iterator().next()).contains("# PR Workflow");
         assertThat(actual.getSharedInstructions()).hasSize(1);
@@ -164,7 +154,6 @@ class ResourceInstructionRepositoryTest {
 
         //then
         assertThat(actual.getAgentInstruction()).contains("# Reviewer Instructions");
-        assertThat(actual.getEndpoint()).isNull();
         assertThat(actual.getAdditionalInstructions()).hasSize(1);
         assertThat(actual.getAdditionalInstructions().iterator().next()).contains("# Java Style Basics");
         assertThat(actual.getSharedInstructions()).hasSize(1);

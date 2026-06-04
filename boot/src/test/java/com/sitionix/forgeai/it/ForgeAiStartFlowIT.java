@@ -14,7 +14,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @IntegrationTest
-class ForgeAiStartFlowIT {
+class ForgeAiStartFlowIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;

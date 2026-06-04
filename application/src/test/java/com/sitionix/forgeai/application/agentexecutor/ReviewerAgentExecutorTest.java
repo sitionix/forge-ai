@@ -12,6 +12,8 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
+import com.sitionix.forgeai.domain.usecase.CompleteReviewerTask;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -23,6 +25,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -46,9 +51,9 @@ class ReviewerAgentExecutorTest {
                 this.ticketRepository,
                 this.supervisedLaneExecutionUseCase,
                 new SupervisedExecutionProperties(),
-                org.mockito.Mockito.mock(LaneCompletionSupport.class),
-                org.mockito.Mockito.mock(com.sitionix.forgeai.domain.usecase.CompleteAgentTasks.class),
-                org.mockito.Mockito.mock(com.sitionix.forgeai.domain.usecase.CompleteReviewerTask.class)
+                mock(LaneCompletionSupport.class),
+                mock(CompleteAgentTasks.class),
+                mock(CompleteReviewerTask.class)
         );
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
@@ -79,7 +84,7 @@ class ReviewerAgentExecutorTest {
         reviewerAgentExecutor.executeLane(lane);
 
         final ArgumentCaptor<AgentExecutionInput<AgentTicketPayload>> inputCaptor = ArgumentCaptor.forClass(AgentExecutionInput.class);
-        verify(this.supervisedLaneExecutionUseCase).execute(org.mockito.Mockito.eq(lane), inputCaptor.capture(), org.mockito.Mockito.anyInt());
+        verify(this.supervisedLaneExecutionUseCase).execute(eq(lane), inputCaptor.capture(), anyInt());
         assertThat(inputCaptor.getValue()).isEqualTo(enrichedInput);
     }
 }

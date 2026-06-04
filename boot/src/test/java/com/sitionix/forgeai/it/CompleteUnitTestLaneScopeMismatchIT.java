@@ -14,7 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
-class CompleteUnitTestLaneScopeMismatchIT {
+class CompleteUnitTestLaneScopeMismatchIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;
@@ -37,7 +37,7 @@ class CompleteUnitTestLaneScopeMismatchIT {
         assertThatThrownBy(() -> this.laneCompletion.completeUnitTestLane(ticketId, testUnitLaneId,
                 request -> request.setScope("backendforfrontendservice-sox")))
                 .isInstanceOf(ScopeMismatchException.class)
-                .hasMessage("Unit-test scope mismatch: laneId=10222222-2222-2222-2222-222222222222, laneScope=automationservice-sox, requestScope=backendforfrontendservice-sox");
+                .hasMessage("Completion output scope mismatch: sourceLaneId=10222222-2222-2222-2222-222222222222, sourceAgent=test_unit, targetAgent=reviewer, expectedScope=GLOBAL, actualScope=backendforfrontendservice-sox");
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)

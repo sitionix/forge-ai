@@ -3,12 +3,12 @@
 ## Scope
 
 Completion payload represents IT lane report facts only.
-Build final callback payload from the provided OpenAPI completion contract.
+Build final completion payload from the provided final-step completion payload contract.
 Use this file only for semantic content selection.
 
 ## Allowed Content
 
-Use only these semantic content groups when the OpenAPI completion contract supports them:
+Use only these semantic content groups when the final-step completion payload contract supports them:
 
 - `scope`;
 - `summary`;

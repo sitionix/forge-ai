@@ -4,6 +4,7 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.Optional;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
@@ -32,6 +33,13 @@ public enum Agent {
     @Setter
     private ExecuteAgent<? extends AgentTicketPayload> executor;
 
+    public ExecuteAgent<? extends AgentTicketPayload> getExecutor() {
+        if (this.executor == null) {
+            throw new IllegalStateException("No executor configured for agent: " + this.id);
+        }
+        return this.executor;
+    }
+
     public AgentPropertiesProvider.AgentConfigView getInfo() {
         if (this.info == null) {
             throw new IllegalStateException("No agent info configured for agent: " + this.id);
@@ -59,6 +67,28 @@ public enum Agent {
 
     public void completeLane(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
         this.getExecutor().completeLane(lane, completionPayload);
+    }
+
+    public Optional<Class<? extends AgentTicketPayload>> inputPayloadTypeFrom(final Agent sourceAgent) {
+        return Optional.ofNullable(this.getInfo().getInputPayloadTypes().get(sourceAgent))
+                .map(value -> value.getPayloadClass());
+    }
+
+    public boolean writesProducedLaneOutputs() {
+        return this.getInfo().writesProducedLaneOutputs();
+    }
+
+    public boolean requiresApiCompletionEvidence() {
+        return this.getInfo().requiresApiCompletionEvidence();
+    }
+
+    public boolean requiresCompletionOutputForEveryTarget() {
+        return this.getInfo().requiresCompletionOutputForEveryTarget();
+    }
+
+    public Optional<Class<? extends AgentTicketPayload>> completionReportPayloadType() {
+        return this.getInfo().getCompletionReportPayloadType()
+                .map(value -> value.getPayloadClass());
     }
 
 }

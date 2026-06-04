@@ -17,7 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
-class ScopeMismatchCallbacksIT {
+class ScopeMismatchCompletionIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;
@@ -43,7 +43,7 @@ class ScopeMismatchCallbacksIT {
                 "requestCompleteArchitectLane.json",
                 request -> request.getImplementationHandoff().setScope("backendforfrontendservice-sox")))
                 .isInstanceOf(ScopeMismatchException.class)
-                .hasMessage("Implementation scope mismatch: laneId=66666666-6666-6666-6666-666666666666, laneScope=automationservice-sox, requestScope=backendforfrontendservice-sox");
+                .hasMessage("Completion output scope mismatch: sourceLaneId=66666666-6666-6666-6666-666666666666, sourceAgent=architect, targetAgent=implement_be, expectedScope=automationservice-sox, actualScope=backendforfrontendservice-sox");
 
         //then
         this.testManager.mongo()
@@ -63,7 +63,7 @@ class ScopeMismatchCallbacksIT {
     }
 
     @Test
-    @DisplayName("Should fail api completion when callback contains scope outside produced implementation lanes")
+    @DisplayName("Should fail api completion when evidence misses generated dependency for produced scope")
     void givenApiLane_whenCompleteApiWithUnexpectedContractScope_thenReturnBadRequestAndDoNotCreateTasks() {
         //given
         final UUID ticketId = UUID.fromString("31111111-1111-1111-1111-111111111111");
@@ -99,8 +99,8 @@ class ScopeMismatchCallbacksIT {
     }
 
     @Test
-    @DisplayName("Should fail api completion when required scope dependency evidence is missing")
-    void givenApiLane_whenCompleteApiWithoutRequiredDependencyEvidence_thenReturnBadRequestWithHint() {
+    @DisplayName("Should skip produced implementation lane when API completion omits its contract")
+    void givenApiLane_whenCompleteApiWithoutContractForProducedScope_thenDoNotCreateTaskForMissingScope() {
         //given
         final UUID ticketId = UUID.fromString("21111111-1111-1111-1111-111111111111");
         final UUID apiLaneId = UUID.fromString("22222222-2222-2222-2222-222222222222");
@@ -110,13 +110,11 @@ class ScopeMismatchCallbacksIT {
                 .body("completeApiLaneOneBeSeedTicket.json");
 
         //when
-        assertThatThrownBy(() -> this.laneCompletion.completeApiLane(ticketId, apiLaneId, "requestCompleteApiLaneMissingRequiredDependencyEvidence.json", request -> {
+        this.laneCompletion.completeApiLane(ticketId, apiLaneId, "requestCompleteApiLaneMissingRequiredDependencyEvidence.json", request -> {
                     request.setPrUrl("https://github.com/sitionix/app-afesox/pull/164");
                     request.setRepo("sitionix/app-afesox");
                     request.getContracts().removeIf(value -> Objects.equals(value.getScope(), "automationservice-sox"));
-                }))
-                .isInstanceOf(ScopeMismatchException.class)
-                .hasMessageContaining("API callback does not contain contracts for produced implementation scopes");
+                });
 
         //then
         this.testManager.mongo()
@@ -129,7 +127,7 @@ class ScopeMismatchCallbacksIT {
                 .singleElement()
                 .andExpected(value -> value.getLanes().stream()
                         .anyMatch(lane -> Objects.equals(lane.getId(), apiLaneId)
-                                && Objects.equals(LaneStatus.IN_PROGRESS, lane.getStatus())));
+                                && Objects.equals(LaneStatus.COMPLETED, lane.getStatus())));
     }
 
     @Test

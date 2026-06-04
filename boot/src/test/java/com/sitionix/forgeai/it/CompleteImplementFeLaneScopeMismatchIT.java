@@ -14,7 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
-class CompleteImplementFeLaneScopeMismatchIT {
+class CompleteImplementFeLaneScopeMismatchIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;
@@ -23,7 +23,7 @@ class CompleteImplementFeLaneScopeMismatchIT {
     private LaneCompletionTestFacade laneCompletion;
 
     @Test
-    @DisplayName("Should fail implement_fe completion callback on scope mismatch")
+    @DisplayName("Should fail implement_fe completion on output scope mismatch")
     void givenImplementFeScopeMismatch_whenCompleteImplementFeLane_thenReturnBadRequest() {
         //given
         final UUID ticketId = UUID.fromString("b1111111-1111-1111-1111-111111111111");
@@ -37,7 +37,7 @@ class CompleteImplementFeLaneScopeMismatchIT {
         assertThatThrownBy(() -> this.laneCompletion.completeImplementFeLane(ticketId, laneId,
                 request -> request.setScope("automationservice-sox")))
                 .isInstanceOf(ScopeMismatchException.class)
-                .hasMessage("implement_fe scope mismatch: laneId=b2222222-2222-2222-2222-222222222222, laneScope=sitionix-spa, requestScope=automationservice-sox");
+                .hasMessage("Completion output scope mismatch: sourceLaneId=b2222222-2222-2222-2222-222222222222, sourceAgent=implement_fe, targetAgent=test_ui, expectedScope=sitionix-spa, actualScope=automationservice-sox");
 
         this.testManager.mongo()
                 .assertEntities(AgentTicketDocument.class)

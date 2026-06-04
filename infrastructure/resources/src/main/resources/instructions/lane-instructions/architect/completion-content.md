@@ -8,5 +8,5 @@ Use factual architect outputs only:
 - event required/not-required decision;
 - payloads for required downstream lanes.
 
-Do not include callback transport mechanics.
+Do not include completion transport mechanics.
 Do not invent downstream lane requirements that were not produced by this lane.

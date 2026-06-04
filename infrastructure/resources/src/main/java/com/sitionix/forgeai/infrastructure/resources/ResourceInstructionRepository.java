@@ -34,7 +34,6 @@ public class ResourceInstructionRepository implements InstructionRepository {
                 agentId,
                 AgentInstructions.builder()
                         .agentInstruction(this.readClasspathText(config.getInstructions()))
-                        .endpoint(config.getEndpoint())
                         .additionalInstructions(this.readClasspathTexts(config.getAdditionalInstructions()))
                         .build()
         ));
@@ -52,7 +51,6 @@ public class ResourceInstructionRepository implements InstructionRepository {
         }
         return AgentInstructions.builder()
                 .agentInstruction(instruction.getAgentInstruction())
-                .endpoint(instruction.getEndpoint())
                 .additionalInstructions(new LinkedHashSet<>(instruction.getAdditionalInstructions()))
                 .sharedInstructions(new LinkedHashSet<>(this.sharedInstructions))
                 .build();

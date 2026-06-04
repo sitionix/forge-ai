@@ -7,6 +7,7 @@ import com.sitionix.forgeai.domain.model.codex.CodexTurnResponse;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -27,6 +28,8 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
     private static final Pattern STEP_ID_PATTERN = Pattern.compile("(?m)^- stepId:\\s*([^\\r\\n]+)\\s*$");
     private static final Pattern AGENT_ID_PATTERN = Pattern.compile("(?m)^- agentId:\\s*([^\\r\\n]+)\\s*$");
     private static final Pattern SCOPE_PATTERN = Pattern.compile("(?m)^- scope:\\s*([^\\r\\n]+)\\s*$");
+    private static final Pattern JSON_SCOPE_PATTERN = Pattern.compile("\"scope\"\\s*:\\s*\"([^\"]*)\"");
+    private static final Pattern SAMPLE_SCOPE_PATTERN = Pattern.compile("(\"scope\"\\s*:\\s*)\"\\.\\.\\.\"");
 
     private final Function<CodexTurnCommand, String> responsePlanner = this::defaultResponseFor;
     private final Map<String, List<String>> history = new ConcurrentHashMap<>();
@@ -111,7 +114,7 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
         final String agentId = this.matchValue(AGENT_ID_PATTERN, prompt, "unknown");
         final String scope = this.matchValue(SCOPE_PATTERN, prompt, "GLOBAL");
         final String evidence = "completion".equals(stepId)
-                ? "\"completionPayload\":" + this.completionPayload(agentId, scope)
+                ? "\"completionPayload\":" + this.completionPayload(agentId, scope, prompt)
                 : "\"detail\":\"ok\"";
         return """
                 {
@@ -123,149 +126,102 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
                 """.formatted(stepId, evidence);
     }
 
-    private String completionPayload(final String agentId, final String scope) {
-        return switch (agentId) {
-            case "analyzer" -> """
-                    {
-                      "architectHandoff": {
-                        "scope": "%s",
-                        "requirements": [],
-                        "constraints": [],
-                        "nonGoals": [],
-                        "risks": [],
-                        "dependencies": []
-                      },
-                      "qaLeadHandoff": {
-                        "scope": "%s",
-                        "requirements": [],
-                        "constraints": [],
-                        "nonGoals": [],
-                        "risks": [],
-                        "dependencies": [],
-                        "qualityFocus": [],
-                        "edgeConsiderations": []
-                      }
-                    }
-                    """.formatted(scope, scope).trim();
-            case "architect" -> """
-                    {
-                      "implementationScope": "%s",
-                      "implementationHandoff": {
-                        "scope": "%s",
-                        "task": "Implement scoped changes",
-                        "summary": "Prepared implementation handoff",
-                        "requirements": [],
-                        "constraints": [],
-                        "nonGoals": [],
-                        "architectureDecision": "Follow scoped architecture",
-                        "dependencies": [],
-                        "acceptanceNotes": [],
-                        "risks": []
-                      },
-                      "apiRequired": false,
-                      "eventRequired": false
-                    }
-                    """.formatted(scope, scope).trim();
-            case "api" -> """
-                    {
-                      "summary": "Prepared API artifacts",
-                      "prUrl": "https://github.com/sitionix/example/pull/1",
-                      "repo": "sitionix/example",
-                      "contracts": []
-                    }
-                    """.trim();
-            case "qa_lead" -> """
-                    {
-                      "scope": "%s",
-                      "unitTestRequired": true,
-                      "testUnitPayload": {
-                        "task": "Cover scoped unit cases",
-                        "scope": "%s",
-                        "summary": "Unit test focus",
-                        "unitTestNotes": []
-                      },
-                      "integrationTestRequired": true,
-                      "testItPayload": {
-                        "task": "Cover scoped integration cases",
-                        "scope": "%s",
-                        "summary": "Integration test focus",
-                        "integrationTestCases": [],
-                        "unitTestNotes": []
-                      },
-                      "uiTestRequired": true,
-                      "testUiPayload": {
-                        "task": "Cover scoped UI cases",
-                        "scope": "%s",
-                        "summary": "UI test focus",
-                        "unitTestNotes": []
-                      }
-                    }
-                    """.formatted(scope, scope, scope, scope).trim();
-            case "implement_be" -> """
-                    {
-                      "task": "Backend implementation complete",
-                      "scope": "%s",
-                      "summary": "Prepared backend test handoff",
-                      "changedFiles": [],
-                      "integrationFlows": [],
-                      "persistenceChanges": [],
-                      "sonar": {},
-                      "unitTestNotes": []
-                    }
-                    """.formatted(scope).trim();
-            case "implement_fe" -> """
-                    {
-                      "task": "Frontend implementation complete",
-                      "scope": "%s",
-                      "summary": "Prepared frontend test handoff",
-                      "changedFiles": [],
-                      "affectedSurfaces": [],
-                      "uiBehavior": [],
-                      "sonar": {},
-                      "unitTestNotes": []
-                    }
-                    """.formatted(scope).trim();
-            case "test_unit" -> """
-                    {
-                      "task": "Review scoped changes",
-                      "scope": "%s",
-                      "summary": "Prepared reviewer handoff",
-                      "affectedFiles": [],
-                      "sonar": {}
-                    }
-                    """.formatted(scope).trim();
-            case "test_it" -> """
-                    {
-                      "scope": "%s",
-                      "summary": "Integration test run complete",
-                      "coveredCases": []
-                    }
-                    """.formatted(scope).trim();
-            case "test_ui" -> """
-                    {
-                      "scope": "%s",
-                      "summary": "UI test run complete"
-                    }
-                    """.formatted(scope).trim();
-            case "reviewer" -> """
-                    {
-                      "scope": "%s",
-                      "summary": "Reviewer lane complete"
-                    }
-                    """.formatted(scope).trim();
-            case "event" -> """
-                    {
-                      "scope": "%s",
-                      "summary": "Event lane complete"
-                    }
-                    """.formatted(scope).trim();
-            default -> """
-                    {
-                      "scope": "%s",
-                      "summary": "Completion payload"
-                    }
-                    """.formatted(scope).trim();
-        };
+    private String completionPayload(final String agentId, final String scope, final String prompt) {
+        final List<String> outputContracts = this.outputContracts(prompt);
+        final StringBuilder builder = new StringBuilder()
+                .append("{\n")
+                .append("  \"outputs\": [");
+        if (!outputContracts.isEmpty()) {
+            builder.append('\n')
+                    .append(String.join(",\n", outputContracts))
+                    .append('\n');
+        }
+        builder.append("  ]");
+        if (prompt.contains("\"apiEvidence\"")) {
+            builder.append(",\n")
+                    .append("  \"apiEvidence\": {\n")
+                    .append("    \"summary\": \"Prepared API artifacts\",\n")
+                    .append("    \"prUrl\": \"https://github.com/sitionix/example/pull/1\",\n")
+                    .append("    \"repo\": \"sitionix/example\",\n")
+                    .append("    \"contracts\": []\n")
+                    .append("  }");
+        }
+        if (prompt.contains("\"report\"")) {
+            builder.append(",\n")
+                    .append("  \"report\": ")
+                    .append(this.reportPayload(agentId, scope));
+        }
+        return builder.append("\n}").toString();
+    }
+
+    private List<String> outputContracts(final String prompt) {
+        final List<String> outputContracts = new ArrayList<>();
+        int searchFrom = 0;
+        while (true) {
+            final int agentPosition = prompt.indexOf("\"agent\"", searchFrom);
+            if (agentPosition < 0) {
+                return outputContracts;
+            }
+            final int objectStart = prompt.lastIndexOf('{', agentPosition);
+            final int objectEnd = this.matchingBrace(prompt, objectStart);
+            if (objectStart < 0 || objectEnd < 0) {
+                return outputContracts;
+            }
+            final String contract = prompt.substring(objectStart, objectEnd + 1).trim();
+            final String outputScope = this.matchValue(JSON_SCOPE_PATTERN, contract, "GLOBAL");
+            outputContracts.add(this.withConcretePayloadScope(contract, outputScope));
+            searchFrom = objectEnd + 1;
+        }
+    }
+
+    private String withConcretePayloadScope(final String contract, final String scope) {
+        return SAMPLE_SCOPE_PATTERN.matcher(contract)
+                .replaceAll(match -> match.group(1) + "\"" + scope.replace("\"", "\\\"") + "\"");
+    }
+
+    private int matchingBrace(final String source, final int objectStart) {
+        if (objectStart < 0) {
+            return -1;
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = objectStart; i < source.length(); i++) {
+            final char current = source.charAt(i);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (current == '\\') {
+                escaped = inString;
+                continue;
+            }
+            if (current == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) {
+                continue;
+            }
+            if (current == '{') {
+                depth++;
+            } else if (current == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private String reportPayload(final String agentId, final String scope) {
+        return """
+                {
+                  "scope": "%s",
+                  "summary": "%s lane complete",
+                  "coveredCases": []
+                }""".formatted(scope, agentId).trim();
     }
 
     private String matchValue(final Pattern pattern, final String source, final String fallback) {
