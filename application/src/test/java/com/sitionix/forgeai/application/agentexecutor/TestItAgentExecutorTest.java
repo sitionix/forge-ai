@@ -62,7 +62,10 @@ class TestItAgentExecutorTest {
                 this.agentTicketRepository,
                 this.ticketRepository,
                 this.supervisedLaneExecutionUseCase,
-                this.supervisedExecutionProperties
+                this.supervisedExecutionProperties,
+                org.mockito.Mockito.mock(LaneCompletionSupport.class),
+                org.mockito.Mockito.mock(com.sitionix.forgeai.domain.usecase.CompleteAgentTasks.class),
+                org.mockito.Mockito.mock(com.sitionix.forgeai.domain.usecase.CompleteAgentLane.class)
         );
     }
 

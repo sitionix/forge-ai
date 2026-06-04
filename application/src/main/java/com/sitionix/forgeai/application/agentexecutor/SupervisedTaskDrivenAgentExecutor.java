@@ -12,6 +12,7 @@ import com.sitionix.forgeai.domain.repository.TicketRepository;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 
 abstract class SupervisedTaskDrivenAgentExecutor {
 
@@ -20,17 +21,23 @@ abstract class SupervisedTaskDrivenAgentExecutor {
     protected final TicketRepository ticketRepository;
     protected final SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase;
     protected final SupervisedExecutionProperties supervisedExecutionProperties;
+    protected final LaneCompletionSupport laneCompletionSupport;
+    protected final CompleteAgentTasks completeAgentTasks;
 
     protected SupervisedTaskDrivenAgentExecutor(final PrepareAgentExecutionInputUseCase prepareAgentExecutionInputUseCase,
                                                 final AgentTicketRepository agentTicketRepository,
                                                 final TicketRepository ticketRepository,
                                                 final SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase,
-                                                final SupervisedExecutionProperties supervisedExecutionProperties) {
+                                                final SupervisedExecutionProperties supervisedExecutionProperties,
+                                                final LaneCompletionSupport laneCompletionSupport,
+                                                final CompleteAgentTasks completeAgentTasks) {
         this.prepareAgentExecutionInputUseCase = prepareAgentExecutionInputUseCase;
         this.agentTicketRepository = agentTicketRepository;
         this.ticketRepository = ticketRepository;
         this.supervisedLaneExecutionUseCase = supervisedLaneExecutionUseCase;
         this.supervisedExecutionProperties = supervisedExecutionProperties;
+        this.laneCompletionSupport = laneCompletionSupport;
+        this.completeAgentTasks = completeAgentTasks;
     }
 
     protected void executeWithSupervisor(final ReadyToStartLane lane) {

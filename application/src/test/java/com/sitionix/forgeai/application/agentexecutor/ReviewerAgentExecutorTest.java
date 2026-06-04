@@ -45,7 +45,10 @@ class ReviewerAgentExecutorTest {
                 this.agentTicketRepository,
                 this.ticketRepository,
                 this.supervisedLaneExecutionUseCase,
-                new SupervisedExecutionProperties()
+                new SupervisedExecutionProperties(),
+                org.mockito.Mockito.mock(LaneCompletionSupport.class),
+                org.mockito.Mockito.mock(com.sitionix.forgeai.domain.usecase.CompleteAgentTasks.class),
+                org.mockito.Mockito.mock(com.sitionix.forgeai.domain.usecase.CompleteReviewerTask.class)
         );
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();

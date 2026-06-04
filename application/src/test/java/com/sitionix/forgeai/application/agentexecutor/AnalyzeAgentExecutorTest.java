@@ -49,7 +49,9 @@ class AnalyzeAgentExecutorTest {
                 this.prepareAgentExecutionInputUseCase,
                 this.supervisedLaneExecutionUseCase,
                 this.supervisedExecutionProperties,
-                this.ticketRepository
+                this.ticketRepository,
+                org.mockito.Mockito.mock(com.sitionix.forgeai.domain.usecase.CompleteAgentTasks.class),
+                org.mockito.Mockito.mock(LaneCompletionSupport.class)
         );
     }
 
