@@ -564,7 +564,10 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     window.__forgeLanePayload = data;
     document.getElementById('laneTitle').textContent = `${data.agent || 'UNKNOWN'} / ${data.scope || '-'}`;
     document.getElementById('laneSubtitle').textContent = `${data.status || 'UNKNOWN'} / ${data.ticketKey || data.ticketId} / lane ${shortId(data.laneId)}`;
-    document.getElementById('backToGraph').href = `./ticket.html?ticketId=${encodeURIComponent(data.ticketId)}`;
+    const backToGraph = document.getElementById('backToGraph');
+    if (backToGraph) {
+      backToGraph.href = `./ticket.html?ticketId=${encodeURIComponent(data.ticketId)}`;
+    }
     setTextPreservingScroll(document.getElementById('laneTaskDescription'), data.taskDescription || '');
     document.getElementById('laneTaskDialogTitle').textContent = data.ticketKey || data.ticketId;
     document.getElementById('laneUpdated').textContent = `updated ${new Date().toLocaleTimeString()}`;
