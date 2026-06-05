@@ -59,7 +59,10 @@ public class GetOperatorUiReadModelUseCase implements GetOperatorUiReadModel {
                         Function.identity(),
                         this::latestExecution
                 ));
-        final Map<LaneKey, Lane> lanesByKey = ticket.getLanes().stream()
+        final List<Lane> visibleLanes = ticket.getLanes().stream()
+                .filter(lane -> this.isVisibleLane(lane, latestExecutionByLaneId.get(lane.getId())))
+                .toList();
+        final Map<LaneKey, Lane> lanesByKey = visibleLanes.stream()
                 .collect(Collectors.toMap(
                         lane -> new LaneKey(this.agentName(lane), lane.getScope()),
                         Function.identity(),
@@ -73,8 +76,8 @@ public class GetOperatorUiReadModelUseCase implements GetOperatorUiReadModel {
                 ticket.getTaskDescription(),
                 ticket.getCreatedAt(),
                 ticket.getUpdatedAt(),
-                this.counts(ticket),
-                ticket.getLanes().stream()
+                this.counts(visibleLanes),
+                visibleLanes.stream()
                         .map(lane -> this.asLaneNode(lane, latestExecutionByLaneId.get(lane.getId()), lanesByKey))
                         .toList()
         );
@@ -96,7 +99,9 @@ public class GetOperatorUiReadModelUseCase implements GetOperatorUiReadModel {
                 this.taskPreview(ticket.getTaskDescription()),
                 ticket.getCreatedAt(),
                 ticket.getUpdatedAt(),
-                this.counts(ticket)
+                this.counts(ticket.getLanes().stream()
+                        .filter(lane -> this.isVisibleLane(lane, null))
+                        .toList())
         );
     }
 
@@ -123,6 +128,7 @@ public class GetOperatorUiReadModelUseCase implements GetOperatorUiReadModel {
         return lane.getDependsOn().stream()
                 .filter(Objects::nonNull)
                 .map(dependency -> this.dependency(dependency, lanesByKey))
+                .filter(dependency -> dependency.laneId() != null)
                 .toList();
     }
 
@@ -162,18 +168,34 @@ public class GetOperatorUiReadModelUseCase implements GetOperatorUiReadModel {
                 .compare(left, right) >= 0 ? left : right;
     }
 
-    private OperatorUiLaneCounts counts(final Ticket ticket) {
+    private boolean isVisibleLane(final Lane lane, final LaneExecution latestExecution) {
+        if (LaneStatus.NOT_NEEDED.equals(lane.getStatus())) {
+            return false;
+        }
+        if (!LaneStatus.NOT_STARTED.equals(lane.getStatus())) {
+            return true;
+        }
+        if (latestExecution != null) {
+            return true;
+        }
+        if (lane.getInputTaskIds() != null && !lane.getInputTaskIds().isEmpty()) {
+            return true;
+        }
+        return lane.getDependsOn() != null && !lane.getDependsOn().isEmpty();
+    }
+
+    private OperatorUiLaneCounts counts(final List<Lane> lanes) {
         return new OperatorUiLaneCounts(
-                this.count(ticket, LaneStatus.NOT_STARTED),
-                this.count(ticket, LaneStatus.READY_TO_START),
-                this.count(ticket, LaneStatus.IN_PROGRESS),
-                this.count(ticket, LaneStatus.COMPLETED),
-                this.count(ticket, LaneStatus.NOT_NEEDED)
+                this.count(lanes, LaneStatus.NOT_STARTED),
+                this.count(lanes, LaneStatus.READY_TO_START),
+                this.count(lanes, LaneStatus.IN_PROGRESS),
+                this.count(lanes, LaneStatus.COMPLETED),
+                0
         );
     }
 
-    private long count(final Ticket ticket, final LaneStatus status) {
-        return ticket.getLanes().stream()
+    private long count(final List<Lane> lanes, final LaneStatus status) {
+        return lanes.stream()
                 .filter(lane -> lane.getStatus() == status)
                 .count();
     }

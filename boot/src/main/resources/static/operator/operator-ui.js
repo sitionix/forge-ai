@@ -43,8 +43,7 @@
       ['not started', counts.notStarted, 'NOT_STARTED'],
       ['ready', counts.ready, 'READY_TO_START'],
       ['running', counts.inProgress, 'IN_PROGRESS'],
-      ['done', counts.completed, 'COMPLETED'],
-      ['not needed', counts.notNeeded, 'NOT_NEEDED']
+      ['done', counts.completed, 'COMPLETED']
     ]
       .filter(([, count]) => Number(count) > 0)
       .map(([label, count, status]) => pill(`${count} ${label}`, status))
