@@ -16,6 +16,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -42,6 +43,16 @@ public class TicketRepositoryImpl implements TicketRepository {
     public Optional<Ticket> findById(final UUID ticketId) {
         return this.ticketRepository.findById(ticketId)
                 .map(this.ticketEntityMapper::asTicket);
+    }
+
+    @Override
+    public List<Ticket> findRecent(final int limit) {
+        final Query query = new Query()
+                .with(Sort.by(Sort.Direction.DESC, "createdAt"))
+                .limit(Math.max(1, limit));
+        return this.mongoTemplate.find(query, TicketDocument.class).stream()
+                .map(this.ticketEntityMapper::asTicket)
+                .toList();
     }
 
     @Override

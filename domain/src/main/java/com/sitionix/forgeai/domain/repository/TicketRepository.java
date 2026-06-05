@@ -17,6 +17,8 @@ public interface TicketRepository {
 
     Optional<Ticket> findById(UUID ticketId);
 
+    List<Ticket> findRecent(int limit);
+
     List<ReadyToStartLane> findAllReadyToStartLanes();
 
     String findTicketContentById(UUID ticketId);

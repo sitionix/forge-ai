@@ -330,6 +330,13 @@ class SupervisedLaneExecutionUseCaseTest {
         }
 
         @Override
+        public List<LaneExecution> findByTicketId(final UUID ticketId) {
+            return this.savedExecutions.stream()
+                    .filter(execution -> ticketId.equals(execution.getTicketId()))
+                    .toList();
+        }
+
+        @Override
         public List<LaneExecution> findActiveExecutions() {
             return this.savedExecutions.stream()
                     .filter(execution -> execution.getStatus() == null || !execution.getStatus().isTerminal())
