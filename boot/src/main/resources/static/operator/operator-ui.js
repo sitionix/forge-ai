@@ -5,12 +5,13 @@
     : '';
   const apiBase = `${contextPath}/api/v1/forge-ai/operator/ui`;
   const graphLayoutConfig = {
-    paddingX: 44,
-    paddingY: 42,
-    columnGap: 430,
-    rowGap: 255,
-    cardWidth: 370,
-    cardMinHeight: 220
+    paddingX: 24,
+    paddingY: 34,
+    levelGap: 92,
+    siblingGap: 30,
+    rowGap: 190,
+    cardWidth: 260,
+    cardMinHeight: 154
   };
 
   const statusClass = (value) => String(value || 'unknown').toLowerCase().replaceAll('_', '-');
@@ -119,7 +120,9 @@
 
   function renderGraph(data) {
     const lanes = data.lanes || [];
-    const layout = buildGraphLayout(lanes);
+    window.__forgeGraphPayload = data;
+    const graphCanvas = document.getElementById('graphCanvas');
+    const layout = buildGraphLayout(lanes, graphCanvas?.clientWidth || window.innerWidth);
     window.__forgeGraphData = lanes;
     window.__forgeGraphLayout = layout;
     const title = document.getElementById('ticketTitle');
@@ -134,7 +137,7 @@
     updated.textContent = `updated ${new Date().toLocaleTimeString()}`;
 
     const graph = document.getElementById('laneGraph');
-    graph.style.width = `${layout.width}px`;
+    graph.style.width = '100%';
     graph.style.height = `${layout.height}px`;
     graph.innerHTML = lanes.map((lane) => renderLane(lane, layout.positions.get(lane.laneId))).join('');
     renderAlerts(lanes);
@@ -148,9 +151,6 @@
       ? `${execution.currentStepOrder ? `STEP ${execution.currentStepOrder}: ` : ''}${execution.currentStepId}`
       : '-';
     const stepTitle = execution.currentStepTitle || execution.lastProgressEvent || '-';
-    const deps = (lane.dependencies || []).map((dependency) => `
-      <span class="dep">${escapeHtml(dependency.agent || '?')} / ${escapeHtml(dependency.scope || '?')} ${dependency.status ? `(${escapeHtml(dependency.status)})` : ''}</span>
-    `).join('');
 
     return `
       <article
@@ -172,17 +172,16 @@
               ${execution.status ? pill(execution.status, execution.status) : ''}
             </div>
           </div>
-          <div class="lane-meta">
-            <div class="metric"><span>current step</span><strong title="${escapeHtml(step)}">${escapeHtml(step)}</strong></div>
-            <div class="metric"><span>step title</span><strong title="${escapeHtml(stepTitle)}">${escapeHtml(stepTitle)}</strong></div>
-            <div class="metric"><span>last event</span><strong>${escapeHtml(execution.lastProgressEvent || '-')}</strong></div>
+          <div class="lane-step">
+            <span>current step</span>
+            <strong title="${escapeHtml(step)}">${escapeHtml(step)}</strong>
+            <small title="${escapeHtml(stepTitle)}">${escapeHtml(stepTitle)}</small>
           </div>
-          <div class="lane-meta">
-            <div class="metric"><span>lane id</span><strong title="${escapeHtml(lane.laneId)}">${escapeHtml(shortId(lane.laneId))}</strong></div>
-            <div class="metric"><span>execution</span><strong title="${escapeHtml(execution.executionId)}">${escapeHtml(shortId(execution.executionId))}</strong></div>
-            <div class="metric"><span>inputs</span><strong>${escapeHtml(lane.inputTaskCount || 0)}</strong></div>
+          <div class="lane-foot">
+            <span title="${escapeHtml(lane.laneId)}">lane ${escapeHtml(shortId(lane.laneId))}</span>
+            <span title="${escapeHtml(execution.executionId)}">exec ${escapeHtml(shortId(execution.executionId))}</span>
+            <span>inputs ${escapeHtml(lane.inputTaskCount || 0)}</span>
           </div>
-          ${deps ? `<div class="deps">${deps}</div>` : ''}
           ${execution.failureMessage ? `<div class="alert">${escapeHtml(execution.failureMessage)}</div>` : ''}
         </div>
       </article>
@@ -219,13 +218,13 @@
         }
         const sourceRect = source.getBoundingClientRect();
         const targetRect = target.getBoundingClientRect();
-        const x1 = sourceRect.right - graphRect.left;
-        const y1 = sourceRect.top + sourceRect.height / 2 - graphRect.top;
-        const x2 = targetRect.left - graphRect.left;
-        const y2 = targetRect.top + targetRect.height / 2 - graphRect.top;
-        const mid = x1 + Math.max(80, (x2 - x1) / 2);
+        const x1 = sourceRect.left + sourceRect.width / 2 - graphRect.left;
+        const y1 = sourceRect.bottom - graphRect.top;
+        const x2 = targetRect.left + targetRect.width / 2 - graphRect.left;
+        const y2 = targetRect.top - graphRect.top;
+        const mid = y1 + Math.max(38, (y2 - y1) / 2);
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('d', `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);
+        path.setAttribute('d', `M ${x1} ${y1} L ${x1} ${mid} L ${x2} ${mid} L ${x2} ${y2}`);
         path.setAttribute('fill', 'none');
         path.setAttribute('stroke', connectionColor(target.dataset.effectiveStatus));
         path.setAttribute('stroke-width', '2');
@@ -236,7 +235,7 @@
     });
   }
 
-  function buildGraphLayout(lanes) {
+  function buildGraphLayout(lanes, canvasWidth) {
     const lanesById = new Map(lanes.map((lane) => [lane.laneId, lane]));
     const levels = new Map();
     const visiting = new Set();
@@ -276,26 +275,51 @@
     });
 
     const positions = new Map();
-    let maxLevel = 0;
-    let maxRows = 1;
-    [...grouped.entries()].forEach(([level, entries]) => {
-      maxLevel = Math.max(maxLevel, level);
-      maxRows = Math.max(maxRows, entries.length);
-      entries
-        .sort((left, right) => left.index - right.index)
-        .forEach((entry, row) => {
-          positions.set(entry.lane.laneId, {
-            x: graphLayoutConfig.paddingX + level * graphLayoutConfig.columnGap,
-            y: graphLayoutConfig.paddingY + row * graphLayoutConfig.rowGap
+    const availableWidth = Math.max(
+      graphLayoutConfig.cardWidth + graphLayoutConfig.paddingX * 2,
+      canvasWidth
+    );
+    const usableWidth = availableWidth - graphLayoutConfig.paddingX * 2;
+    const maxPerRow = Math.max(
+      1,
+      Math.floor((usableWidth + graphLayoutConfig.siblingGap) / (graphLayoutConfig.cardWidth + graphLayoutConfig.siblingGap))
+    );
+    let y = graphLayoutConfig.paddingY;
+
+    [...grouped.entries()]
+      .sort(([left], [right]) => left - right)
+      .forEach(([, entries]) => {
+        const sorted = entries.sort((left, right) => left.index - right.index);
+        const rows = chunk(sorted, maxPerRow);
+        rows.forEach((rowEntries, rowIndex) => {
+          const rowWidth = rowEntries.length * graphLayoutConfig.cardWidth
+            + Math.max(0, rowEntries.length - 1) * graphLayoutConfig.siblingGap;
+          const startX = Math.max(graphLayoutConfig.paddingX, (availableWidth - rowWidth) / 2);
+          rowEntries.forEach((entry, column) => {
+            positions.set(entry.lane.laneId, {
+              x: startX + column * (graphLayoutConfig.cardWidth + graphLayoutConfig.siblingGap),
+              y: y + rowIndex * graphLayoutConfig.rowGap
+            });
           });
         });
-    });
+        y += rows.length * graphLayoutConfig.rowGap + graphLayoutConfig.levelGap;
+      });
 
     return {
       positions,
-      width: graphLayoutConfig.paddingX * 2 + maxLevel * graphLayoutConfig.columnGap + graphLayoutConfig.cardWidth,
-      height: graphLayoutConfig.paddingY * 2 + (maxRows - 1) * graphLayoutConfig.rowGap + graphLayoutConfig.cardMinHeight
+      height: Math.max(
+        540,
+        y - graphLayoutConfig.levelGap + graphLayoutConfig.cardMinHeight + graphLayoutConfig.paddingY
+      )
     };
+  }
+
+  function chunk(items, size) {
+    const chunks = [];
+    for (let index = 0; index < items.length; index += size) {
+      chunks.push(items.slice(index, index + size));
+    }
+    return chunks;
   }
 
   function laneDependencies(laneId) {
@@ -367,6 +391,10 @@
     document.getElementById('refreshGraph')?.addEventListener('click', loadGraph);
     loadGraph();
     setInterval(loadGraph, 3000);
-    window.addEventListener('resize', drawConnections);
+    window.addEventListener('resize', () => {
+      if (window.__forgeGraphPayload) {
+        renderGraph(window.__forgeGraphPayload);
+      }
+    });
   }
 })();
