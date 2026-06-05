@@ -31,6 +31,7 @@ public class LaneStrategiesProperties implements LaneStrategyPromptConfig {
         private String id;
         private String title;
         private String taskPlaceholder;
+        private String completionContractPlaceholder;
         private List<String> instructionRefs = new ArrayList<>();
     }
 }

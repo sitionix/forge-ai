@@ -6,13 +6,16 @@ import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.codex.ScopeContext;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadFieldContract;
+import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadObjectContract;
+import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadValueType;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
-import com.sitionix.forgeai.domain.model.ticket.lane.AgentInstructions;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.repository.CompletionPayloadContractRepository;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
 import java.util.EnumMap;
@@ -30,17 +33,19 @@ class LaneStepPromptBuilderTest {
 
     private final FakeLaneRepository laneRepository = new FakeLaneRepository();
     private final FakeLaneCompletionContractResolver laneCompletionContractResolver = new FakeLaneCompletionContractResolver();
+    private final FakeCompletionPayloadContractRepository completionPayloadContractRepository = new FakeCompletionPayloadContractRepository();
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final LaneStepPromptBuilder laneStepPromptBuilder = new LaneStepPromptBuilder(
             () -> List.of("shared/common-rules.md"),
             new FakeInstructionRepository(),
-            this.laneRepository,
-            this.laneCompletionContractResolver,
-            new ObjectMapper()
+            new CompletionPayloadContractBuilder(this.laneRepository, this.laneCompletionContractResolver, this.completionPayloadContractRepository),
+            new CompletionPayloadContractRenderer(this.objectMapper, this.completionPayloadContractRepository),
+            this.objectMapper
     );
 
     @Test
-    void buildStartPrompt_includesMetadataTasksScopeAndResolvedCommonInstructions() {
+    void buildStartPrompt_includesMetadataScopeAndResolvedCommonInstructionsWithoutTasks() {
         final String prompt = this.laneStepPromptBuilder.buildStartPrompt(this.lane(), this.strategy(), this.input());
 
         assertThat(prompt).contains("START_PROMPT");
@@ -49,7 +54,7 @@ class LaneStepPromptBuilderTest {
         assertThat(prompt).contains("laneId:");
         assertThat(prompt).contains("agentId:");
         assertThat(prompt).contains("scope:");
-        assertThat(prompt).contains("Task payloads:");
+        assertThat(prompt).doesNotContain("Task payloads:");
         assertThat(prompt).contains("Scope context:");
         assertThat(prompt).contains("### shared/common-rules.md");
         assertThat(prompt).contains("resolved::shared/common-rules.md");
@@ -65,8 +70,24 @@ class LaneStepPromptBuilderTest {
         assertThat(prompt).contains("stepId: scope_slicing");
         assertThat(prompt).contains("### lane-instructions/analyzer/scope-slicing.md");
         assertThat(prompt).contains("resolved::lane-instructions/analyzer/scope-slicing.md");
+        assertThat(prompt).contains("Task payloads:");
         assertThat(prompt).doesNotContain("architect-handoff.md");
         assertThat(prompt).doesNotContain("qa-lead-handoff.md");
+    }
+
+    @Test
+    void buildStepPrompt_withoutTaskPlaceholder_doesNotRenderTasks() {
+        final String prompt = this.laneStepPromptBuilder.buildStepPrompt(
+                this.lane(),
+                this.strategy(),
+                this.strategy().getSteps().get(1),
+                this.input(),
+                2,
+                3
+        );
+
+        assertThat(prompt).doesNotContain("Task payloads:");
+        assertThat(prompt).contains("architect_handoff");
     }
 
     @Test
@@ -99,9 +120,10 @@ class LaneStepPromptBuilderTest {
         );
 
         assertThat(prompt).contains("\"outputs\"");
-        assertThat(prompt).contains("\"agent\": \"architect\"");
-        assertThat(prompt).contains("\"scope\": \"automationservice-sox\"");
+        assertThat(prompt).contains("\"agent\" : \"architect\"");
+        assertThat(prompt).contains("\"scope\" : \"automationservice-sox\"");
         assertThat(prompt).contains("\"payload\"");
+        assertThat(prompt).contains("Concrete functional requirements");
         assertThat(prompt).doesNotContain("architectHandoff");
         assertThat(prompt).doesNotContain("qaLeadHandoff");
     }
@@ -125,9 +147,15 @@ class LaneStepPromptBuilderTest {
                 .version(1)
                 .sessionMode("single_session")
                 .steps(List.of(
-                        LaneStrategyStep.builder().id("scope_slicing").title("Scope Slicing").order(1).instructionRefs(List.of("lane-instructions/analyzer/scope-slicing.md")).build(),
+                        LaneStrategyStep.builder().id("scope_slicing").title("Scope Slicing").order(1).taskPlaceholder("TASKS").instructionRefs(List.of("lane-instructions/analyzer/scope-slicing.md")).build(),
                         LaneStrategyStep.builder().id("architect_handoff").title("Architect Handoff").order(2).instructionRefs(List.of("lane-instructions/analyzer/architect-handoff.md")).build(),
-                        LaneStrategyStep.builder().id("completion").title("Completion").order(3).instructionRefs(List.of("lane-instructions/analyzer/completion-content.md")).build()
+                        LaneStrategyStep.builder()
+                                .id("completion")
+                                .title("Completion")
+                                .order(3)
+                                .completionContractPlaceholder("COMPLETION_PAYLOAD_CONTRACT")
+                                .instructionRefs(List.of("lane-instructions/analyzer/completion-content.md"))
+                                .build()
                 ))
                 .build();
     }
@@ -144,15 +172,6 @@ class LaneStepPromptBuilderTest {
     }
 
     private static final class FakeInstructionRepository implements InstructionRepository {
-
-        @Override
-        public AgentInstructions findInstructionsByAgentId(final String agentId) {
-            return AgentInstructions.builder()
-                    .agentInstruction("resolved::" + agentId)
-                    .additionalInstructions(Set.of())
-                    .sharedInstructions(Set.of())
-                    .build();
-        }
 
         @Override
         public String findInstructionTextByRef(final String instructionRef) {
@@ -237,6 +256,47 @@ class LaneStepPromptBuilderTest {
         @Override
         public Optional<Class<? extends AgentTicketPayload>> completionReportPayloadType(final Agent agent) {
             return Optional.empty();
+        }
+    }
+
+    private static final class FakeCompletionPayloadContractRepository implements CompletionPayloadContractRepository {
+
+        private final CompletionPayloadObjectContract architectPayload = new CompletionPayloadObjectContract(
+                "ArchitectPayload",
+                "Analyzer output for architect lane.",
+                List.of(
+                        new CompletionPayloadFieldContract(
+                                "scope",
+                                CompletionPayloadValueType.STRING,
+                                true,
+                                "Exact target service scope.",
+                                null,
+                                null,
+                                null
+                        ),
+                        new CompletionPayloadFieldContract(
+                                "requirements",
+                                CompletionPayloadValueType.ARRAY,
+                                true,
+                                "Concrete functional requirements.",
+                                CompletionPayloadValueType.STRING,
+                                null,
+                                null
+                        )
+                )
+        );
+
+        @Override
+        public CompletionPayloadObjectContract findByType(final Class<?> payloadType) {
+            return this.findByTypeName(payloadType.getSimpleName());
+        }
+
+        @Override
+        public CompletionPayloadObjectContract findByTypeName(final String payloadType) {
+            if ("ArchitectPayload".equals(payloadType)) {
+                return this.architectPayload;
+            }
+            throw new IllegalArgumentException("Unexpected payloadType=" + payloadType);
         }
     }
 }

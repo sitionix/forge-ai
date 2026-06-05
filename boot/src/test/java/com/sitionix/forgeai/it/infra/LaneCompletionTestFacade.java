@@ -280,11 +280,11 @@ public class LaneCompletionTestFacade {
     }
 
     public void completeReviewerLane(final UUID ticketId, final UUID laneId) {
-        this.complete(ticketId, laneId, new LaneCompletionPayload(List.of(), null, Map.of()));
+        this.complete(ticketId, laneId, new LaneCompletionPayload(List.of(), null, null));
     }
 
     public void completeEventLane(final UUID ticketId, final UUID laneId) {
-        this.complete(ticketId, laneId, new LaneCompletionPayload(List.of(), null, Map.of()));
+        this.complete(ticketId, laneId, new LaneCompletionPayload(List.of(), null, null));
     }
 
     private void completeQaLeadLane(final UUID ticketId,
@@ -309,7 +309,7 @@ public class LaneCompletionTestFacade {
                 .filter(targetLane -> overrides.shouldInclude(sourceLane, targetLane))
                 .map(targetLane -> this.output(sourceLane, targetLane, overrides))
                 .toList();
-        this.complete(ticketId, laneId, new LaneCompletionPayload(outputs, overrides.apiEvidence(), Map.of()));
+        this.complete(ticketId, laneId, new LaneCompletionPayload(outputs, overrides.apiEvidence(), null));
     }
 
     private LaneCompletionOutput output(final Lane sourceLane,
@@ -352,15 +352,22 @@ public class LaneCompletionTestFacade {
         this.completion.completeLane(new LaneCompletionCommands.CompleteLane(
                 ticketId,
                 laneId,
-                this.objectMapper.convertValue(payload, new TypeReference<>() {
-                })
+                this.completionPayloadMap(payload)
         ));
+    }
+
+    private Map<String, Object> completionPayloadMap(final LaneCompletionPayload payload) {
+        final Map<String, Object> completionPayload = new LinkedHashMap<>(this.objectMapper.convertValue(payload, new TypeReference<>() {
+        }));
+        completionPayload.entrySet().removeIf(entry -> entry.getValue() == null);
+        return completionPayload;
     }
 
     private Map<String, Object> samplePayload(final Class<? extends AgentTicketPayload> payloadType,
                                               final String scope) {
         if (Objects.equals(payloadType, ArchitectPayload.class)) {
             return this.asMap(ArchitectPayload.builder()
+                    .scope(scope)
                     .requirements(this.set("Requirement for " + scope))
                     .constraints(this.set("Constraint for " + scope))
                     .nonGoals(Set.of())
@@ -370,6 +377,7 @@ public class LaneCompletionTestFacade {
         }
         if (Objects.equals(payloadType, QaLeadPayload.class)) {
             return this.asMap(QaLeadPayload.builder()
+                    .scope(scope)
                     .requirements(this.set("Requirement for " + scope))
                     .constraints(this.set("Constraint for " + scope))
                     .nonGoals(Set.of())
@@ -385,7 +393,7 @@ public class LaneCompletionTestFacade {
                     .reason("Required for " + scope)
                     .scope(scope)
                     .summary("API contract for " + scope)
-                    .operations(List.of())
+                    .operations(Set.of())
                     .consumers(Set.of())
                     .notes(Set.of())
                     .build());
@@ -397,7 +405,7 @@ public class LaneCompletionTestFacade {
                     .scope(scope)
                     .summary("Event contract for " + scope)
                     .eventName("event for " + scope)
-                    .payloadFields(List.of())
+                    .payloadFields(Set.of())
                     .consumers(Set.of())
                     .notes(Set.of())
                     .build());

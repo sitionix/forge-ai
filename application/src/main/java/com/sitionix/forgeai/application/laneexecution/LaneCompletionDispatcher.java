@@ -13,13 +13,18 @@ public class LaneCompletionDispatcher {
     };
 
     private final ObjectMapper objectMapper;
+    private final CompletionPayloadContractValidator completionPayloadContractValidator;
 
-    public LaneCompletionDispatcher(final ObjectMapper objectMapper) {
+    public LaneCompletionDispatcher(final ObjectMapper objectMapper,
+                                    final CompletionPayloadContractValidator completionPayloadContractValidator) {
         this.objectMapper = objectMapper;
+        this.completionPayloadContractValidator = completionPayloadContractValidator;
     }
 
     public void validateFinalCompletionPayload(final ReadyToStartLane lane, final Map<String, Object> evidence) {
-        lane.getAgent().validateFinalCompletionPayload(lane, this.requireCompletionPayload(evidence));
+        final Map<String, Object> completionPayload = this.requireCompletionPayload(evidence);
+        this.completionPayloadContractValidator.validate(lane, completionPayload);
+        lane.getAgent().validateFinalCompletionPayload(lane, completionPayload);
     }
 
     public void completeLane(final ReadyToStartLane lane, final Map<String, Object> evidence) {

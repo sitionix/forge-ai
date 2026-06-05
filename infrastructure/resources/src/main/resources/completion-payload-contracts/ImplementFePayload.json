@@ -1,0 +1,16 @@
+{
+  "payloadType": "ImplementFePayload",
+  "description": "Architect/API output used as frontend implementation lane input.",
+  "fields": [
+    { "name": "task", "type": "STRING", "required": true, "description": "Concrete frontend implementation task for this lane." },
+    { "name": "scope", "type": "STRING", "required": true, "description": "Exact frontend service or SPA scope to modify." },
+    { "name": "summary", "type": "STRING", "required": true, "description": "Concise frontend implementation summary." },
+    { "name": "requirements", "type": "ARRAY", "required": true, "description": "Frontend requirements to implement.", "itemType": "STRING" },
+    { "name": "constraints", "type": "ARRAY", "required": true, "description": "Frontend constraints and boundaries to preserve.", "itemType": "STRING" },
+    { "name": "nonGoals", "type": "ARRAY", "required": true, "description": "Frontend work explicitly out of scope.", "itemType": "STRING" },
+    { "name": "architectureDecision", "type": "STRING", "required": true, "description": "Architecture or integration direction the frontend implementation must follow." },
+    { "name": "dependencies", "type": "ARRAY", "required": true, "description": "Required APIs, BFF dependencies, routes, or generated clients.", "itemType": "STRING" },
+    { "name": "acceptanceNotes", "type": "ARRAY", "required": true, "description": "Acceptance notes the UI implementation should satisfy.", "itemType": "STRING" },
+    { "name": "risks", "type": "ARRAY", "required": true, "description": "Frontend implementation risks or areas needing care.", "itemType": "STRING" }
+  ]
+}

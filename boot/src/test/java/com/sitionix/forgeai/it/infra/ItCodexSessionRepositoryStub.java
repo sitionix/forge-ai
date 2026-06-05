@@ -155,23 +155,36 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
     }
 
     private List<String> outputContracts(final String prompt) {
+        final String template = this.completionJsonTemplate(prompt);
         final List<String> outputContracts = new ArrayList<>();
         int searchFrom = 0;
         while (true) {
-            final int agentPosition = prompt.indexOf("\"agent\"", searchFrom);
+            final int agentPosition = template.indexOf("\"agent\"", searchFrom);
             if (agentPosition < 0) {
                 return outputContracts;
             }
-            final int objectStart = prompt.lastIndexOf('{', agentPosition);
-            final int objectEnd = this.matchingBrace(prompt, objectStart);
+            final int objectStart = template.lastIndexOf('{', agentPosition);
+            final int objectEnd = this.matchingBrace(template, objectStart);
             if (objectStart < 0 || objectEnd < 0) {
                 return outputContracts;
             }
-            final String contract = prompt.substring(objectStart, objectEnd + 1).trim();
+            final String contract = template.substring(objectStart, objectEnd + 1).trim();
             final String outputScope = this.matchValue(JSON_SCOPE_PATTERN, contract, "GLOBAL");
             outputContracts.add(this.withConcretePayloadScope(contract, outputScope));
             searchFrom = objectEnd + 1;
         }
+    }
+
+    private String completionJsonTemplate(final String prompt) {
+        final String source = prompt == null ? "" : prompt;
+        final String startMarker = "Completion payload JSON template:";
+        final String endMarker = "Completion payload field contract:";
+        final int start = source.indexOf(startMarker);
+        if (start < 0) {
+            return source;
+        }
+        final int end = source.indexOf(endMarker, start);
+        return end < 0 ? source.substring(start) : source.substring(start, end);
     }
 
     private String withConcretePayloadScope(final String contract, final String scope) {

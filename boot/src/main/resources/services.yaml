@@ -23,9 +23,9 @@ services:
         service_code: athssox
         root: ""
         topics:
-          - app-afesox/apis/athssox/events/topics
+          - app-afesox/apis/athssox/event/topics
         payloads:
-          - app-afesox/apis/athssox/events/payloads
+          - app-afesox/apis/athssox/event/payloads
         generated_artifacts: []
     group: backend
     deploy:
@@ -73,9 +73,9 @@ services:
         service_code: atmssox
         root: ""
         topics:
-          - app-afesox/apis/atmssox/events/topics
+          - app-afesox/apis/atmssox/event/topics
         payloads:
-          - app-afesox/apis/atmssox/events/payloads
+          - app-afesox/apis/atmssox/event/payloads
         generated_artifacts: []
     group: backend
     deploy:
@@ -201,9 +201,9 @@ services:
         service_code: ntfssox
         root: ""
         topics:
-          - app-afesox/apis/ntfssox/events/topics
+          - app-afesox/apis/ntfssox/event/topics
         payloads:
-          - app-afesox/apis/ntfssox/events/payloads
+          - app-afesox/apis/ntfssox/event/payloads
         generated_artifacts: []
     group: backend
     deploy:
@@ -245,9 +245,9 @@ services:
         service_code: stsssox
         root: ""
         topics:
-          - app-afesox/apis/stsssox/events/topics
+          - app-afesox/apis/stsssox/event/topics
         payloads:
-          - app-afesox/apis/stsssox/events/payloads
+          - app-afesox/apis/stsssox/event/payloads
         generated_artifacts: []
     group: backend
     deploy:
@@ -294,9 +294,9 @@ services:
         service_code: wagssox
         root: ""
         topics:
-          - app-afesox/apis/wagssox/events/topics
+          - app-afesox/apis/wagssox/event/topics
         payloads:
-          - app-afesox/apis/wagssox/events/payloads
+          - app-afesox/apis/wagssox/event/payloads
         generated_artifacts: []
     group: backend
     deploy:

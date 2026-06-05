@@ -24,6 +24,9 @@ import org.springframework.stereotype.Component;
 @EnableConfigurationProperties(LaneStrategiesProperties.class)
 public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
 
+    private static final String TASKS_PLACEHOLDER = "TASKS";
+    private static final String COMPLETION_PAYLOAD_CONTRACT_PLACEHOLDER = "COMPLETION_PAYLOAD_CONTRACT";
+
     private final LaneStrategiesProperties properties;
     private final ResourceLoader resourceLoader;
     private Map<String, LaneStrategy> strategies;
@@ -43,6 +46,7 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
                                 .title(step.getTitle())
                                 .order(i + 1)
                                 .taskPlaceholder(step.getTaskPlaceholder())
+                                .completionContractPlaceholder(step.getCompletionContractPlaceholder())
                                 .instructionRefs(List.copyOf(step.getInstructionRefs()))
                                 .build();
                     })
@@ -79,6 +83,8 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
             if (!stepIds.add(step.getId())) {
                 throw new IllegalStateException("Duplicate step id '" + step.getId() + "' for agentId=" + agentId);
             }
+            this.validateTaskPlaceholder(agentId, step);
+            this.validateCompletionContractPlaceholder(agentId, step);
             final Set<String> refs = new HashSet<>();
             step.getInstructionRefs().forEach(ref -> {
                 if (!refs.add(ref)) {
@@ -87,6 +93,30 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
                 this.validateInstructionRef(ref);
             });
         });
+    }
+
+    private void validateTaskPlaceholder(final String agentId, final LaneStrategiesProperties.StepConfig step) {
+        if (step.getTaskPlaceholder() == null || step.getTaskPlaceholder().isBlank()) {
+            return;
+        }
+        if (!TASKS_PLACEHOLDER.equals(step.getTaskPlaceholder())) {
+            throw new IllegalStateException("Unsupported task placeholder '" + step.getTaskPlaceholder()
+                    + "' for agentId=" + agentId + ", stepId=" + step.getId());
+        }
+    }
+
+    private void validateCompletionContractPlaceholder(final String agentId, final LaneStrategiesProperties.StepConfig step) {
+        if (step.getCompletionContractPlaceholder() == null || step.getCompletionContractPlaceholder().isBlank()) {
+            return;
+        }
+        if (!COMPLETION_PAYLOAD_CONTRACT_PLACEHOLDER.equals(step.getCompletionContractPlaceholder())) {
+            throw new IllegalStateException("Unsupported completion contract placeholder '" + step.getCompletionContractPlaceholder()
+                    + "' for agentId=" + agentId + ", stepId=" + step.getId());
+        }
+        if (!"completion".equals(step.getId())) {
+            throw new IllegalStateException("Completion contract placeholder is only supported on completion step: agentId="
+                    + agentId + ", stepId=" + step.getId());
+        }
     }
 
     private void validateCommonInstructionRefs() {

@@ -76,8 +76,6 @@ class AnalyzeAgentExecutorTest {
         final AgentExecutionInput<AgentTicketPayload> baseInput = AgentExecutionInput.<AgentTicketPayload>builder()
                 .ticketId(ticketId)
                 .laneId(laneId)
-                .agentInstruction("instruction")
-                .sharedInstructions(Set.of("shared"))
                 .build();
         when(this.prepareAgentExecutionInputUseCase.executeClaimed(lane)).thenReturn(baseInput);
 

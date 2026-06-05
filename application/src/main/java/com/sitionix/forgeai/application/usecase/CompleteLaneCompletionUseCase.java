@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.application.usecase;
 
+import com.sitionix.forgeai.application.laneexecution.CompletionPayloadContractValidator;
 import com.sitionix.forgeai.domain.model.lanecompletion.LaneCompletionCommands;
 import com.sitionix.forgeai.domain.model.lanecompletion.LaneCompletionConflictException;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 public class CompleteLaneCompletionUseCase implements CompleteLaneCompletion {
 
     private final TicketRepository ticketRepository;
+    private final CompletionPayloadContractValidator completionPayloadContractValidator;
 
     @Override
     public void completeLane(final LaneCompletionCommands.CompleteLane command) {
@@ -32,6 +34,7 @@ public class CompleteLaneCompletionUseCase implements CompleteLaneCompletion {
                 ? Map.of()
                 : command.completionPayload();
 
+        this.completionPayloadContractValidator.validate(readyToStartLane, completionPayload);
         lane.getAgent().validateFinalCompletionPayload(readyToStartLane, completionPayload);
         lane.getAgent().completeLane(readyToStartLane, completionPayload);
     }

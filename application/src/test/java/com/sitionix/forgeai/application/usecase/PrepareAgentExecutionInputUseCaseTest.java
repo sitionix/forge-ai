@@ -2,12 +2,9 @@ package com.sitionix.forgeai.application.usecase;
 
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
-import com.sitionix.forgeai.domain.model.ticket.lane.AgentInstructions;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
-import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
-import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,9 +25,6 @@ class PrepareAgentExecutionInputUseCaseTest {
     private PrepareAgentExecutionInputUseCase prepareAgentExecutionInputUseCase;
 
     @Mock
-    private InstructionRepository instructionRepository;
-
-    @Mock
     private TicketRepository ticketRepository;
 
     @Mock
@@ -39,7 +33,6 @@ class PrepareAgentExecutionInputUseCaseTest {
     @BeforeEach
     void setUp() {
         this.prepareAgentExecutionInputUseCase = new PrepareAgentExecutionInputUseCase(
-                this.instructionRepository,
                 this.ticketRepository,
                 this.props
         );
@@ -47,7 +40,7 @@ class PrepareAgentExecutionInputUseCaseTest {
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.instructionRepository, this.ticketRepository, this.props);
+        verifyNoMoreInteractions(this.ticketRepository, this.props);
     }
 
     @Test
@@ -62,12 +55,6 @@ class PrepareAgentExecutionInputUseCaseTest {
                 .agent(Agent.ANALYZER)
                 .build();
 
-        final AgentInstructions instructions = AgentInstructions.builder()
-                .agentInstruction("agent-instruction")
-                .additionalInstructions(Set.of("add-1"))
-                .sharedInstructions(Set.of("shared-1", "shared-2"))
-                .build();
-        when(this.instructionRepository.findInstructionsByAgentId("analyzer")).thenReturn(instructions);
         when(this.ticketRepository.moveLaneToInProgressIfReady(laneId)).thenReturn(true);
 
         //when
@@ -78,14 +65,10 @@ class PrepareAgentExecutionInputUseCaseTest {
                 .ticketId(ticketId)
                 .ticket("SITIONIX-1")
                 .laneId(laneId)
-                .agentInstruction("agent-instruction")
-                .additionalInstructions(Set.of("add-1"))
-                .sharedInstructions(Set.of("shared-1", "shared-2"))
                 .build();
 
         assertThat(actual).isEqualTo(expected);
 
-        verify(this.instructionRepository).findInstructionsByAgentId("analyzer");
         verify(this.ticketRepository).moveLaneToInProgressIfReady(laneId);
     }
 
@@ -109,6 +92,6 @@ class PrepareAgentExecutionInputUseCaseTest {
                 .hasMessage("Lane is not ready to start or already started: laneId=" + laneId);
 
         verify(this.ticketRepository).moveLaneToInProgressIfReady(laneId);
-        verifyNoMoreInteractions(this.props, this.instructionRepository);
+        verifyNoMoreInteractions(this.props);
     }
 }

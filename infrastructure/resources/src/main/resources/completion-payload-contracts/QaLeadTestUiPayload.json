@@ -1,0 +1,10 @@
+{
+  "payloadType": "QaLeadTestUiPayload",
+  "description": "QA lead output used as UI test lane input.",
+  "fields": [
+    { "name": "task", "type": "STRING", "required": true, "description": "Concrete UI-test planning task." },
+    { "name": "scope", "type": "STRING", "required": true, "description": "Exact frontend scope for UI tests." },
+    { "name": "summary", "type": "STRING", "required": true, "description": "Summary of UI test focus." },
+    { "name": "unitTestNotes", "type": "ARRAY", "required": true, "description": "UI-oriented QA notes and behavior checks.", "itemType": "OBJECT", "itemObjectType": "QaLeadUnitTestNote" }
+  ]
+}

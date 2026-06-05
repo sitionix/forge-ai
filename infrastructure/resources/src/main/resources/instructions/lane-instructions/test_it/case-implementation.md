@@ -27,6 +27,19 @@ Relevant case categories may include:
 Skip irrelevant categories.
 Do not create generic checklist tests.
 
+## Conditional Flow Packs
+
+Read only the flow-specific instruction files required by the active QA cases:
+
+- `lane-instructions/test_it/http-mockmvc-flow.md` for REST/API HTTP flows;
+- `lane-instructions/test_it/postgresql-flow.md` for persistence or projection assertions;
+- `lane-instructions/test_it/wiremock-flow.md` for real outbound HTTP dependencies;
+- `lane-instructions/test_it/kafka-flow.md` for Kafka, inbox, outbox, event, or worker flows;
+- `lane-instructions/test_it/fixtures.md` when fixtures are created or changed.
+
+Do not read or apply a flow pack when the assigned QA cases do not involve that flow.
+Do not add assertions, fixtures, stubs, or Kafka/DB/WireMock setup just because a flow pack exists.
+
 ## Given / When / Then
 
 Use clear test structure.

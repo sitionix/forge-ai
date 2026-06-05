@@ -2,6 +2,8 @@ package com.sitionix.forgeai.application.usecase;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.application.agentexecutor.LaneCompletionContractResolver;
+import com.sitionix.forgeai.application.laneexecution.CompletionPayloadContractBuilder;
+import com.sitionix.forgeai.application.laneexecution.CompletionPayloadContractRenderer;
 import com.sitionix.forgeai.application.laneexecution.LaneCompletionDispatcher;
 import com.sitionix.forgeai.application.laneexecution.LaneExecutionProgressService;
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
@@ -20,13 +22,14 @@ import com.sitionix.forgeai.domain.model.laneexecution.LaneExecutionStatus;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadObjectContract;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorRun;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorRunStatus;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
-import com.sitionix.forgeai.domain.model.ticket.lane.AgentInstructions;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
+import com.sitionix.forgeai.domain.repository.CompletionPayloadContractRepository;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
@@ -136,6 +139,8 @@ class SupervisedLaneExecutionUseCaseTest {
     }
 
     private SupervisedLaneExecutionUseCase useCase(final CodexSessionRepository sessions) {
+        final FakeLaneCompletionContractResolver completionContractResolver = new FakeLaneCompletionContractResolver();
+        final FakeCompletionPayloadContractRepository completionPayloadContractRepository = new FakeCompletionPayloadContractRepository();
         return new SupervisedLaneExecutionUseCase(
                 this.laneStrategyRepository,
                 this.laneExecutionRepository,
@@ -143,8 +148,8 @@ class SupervisedLaneExecutionUseCaseTest {
                 new LaneStepPromptBuilder(
                         () -> List.of("shared/common-rules.md"),
                         new FakeInstructionRepository(),
-                        this.laneRepository,
-                        new FakeLaneCompletionContractResolver(),
+                        new CompletionPayloadContractBuilder(this.laneRepository, completionContractResolver, completionPayloadContractRepository),
+                        new CompletionPayloadContractRenderer(this.objectMapper, completionPayloadContractRepository),
                         this.objectMapper
                 ),
                 new LaneStepDoneResultParser(this.objectMapper),
@@ -175,7 +180,7 @@ class SupervisedLaneExecutionUseCaseTest {
                 .version(1)
                 .sessionMode("single_session")
                 .steps(List.of(
-                        LaneStrategyStep.builder().id("scope_slicing").title("Scope Slicing").order(1).instructionRefs(List.of("lane-instructions/analyzer/scope-slicing.md")).build(),
+                        LaneStrategyStep.builder().id("scope_slicing").title("Scope Slicing").order(1).taskPlaceholder("TASKS").instructionRefs(List.of("lane-instructions/analyzer/scope-slicing.md")).build(),
                         LaneStrategyStep.builder().id("architect_handoff").title("Architect Handoff").order(2).instructionRefs(List.of("lane-instructions/analyzer/architect-handoff.md")).build(),
                         LaneStrategyStep.builder().id("completion").title("Completion").order(3).instructionRefs(List.of("lane-instructions/analyzer/completion-content.md")).build()
                 ))
@@ -215,14 +220,6 @@ class SupervisedLaneExecutionUseCaseTest {
     }
 
     private static final class FakeInstructionRepository implements InstructionRepository {
-        @Override
-        public AgentInstructions findInstructionsByAgentId(final String agentId) {
-            return AgentInstructions.builder()
-                    .agentInstruction("resolved::" + agentId)
-                    .additionalInstructions(Set.of())
-                    .sharedInstructions(Set.of())
-                    .build();
-        }
 
         @Override
         public String findInstructionTextByRef(final String instructionRef) {
@@ -260,6 +257,19 @@ class SupervisedLaneExecutionUseCaseTest {
         @Override
         public Optional<Class<? extends AgentTicketPayload>> completionReportPayloadType(final Agent agent) {
             return Optional.empty();
+        }
+    }
+
+    private static final class FakeCompletionPayloadContractRepository implements CompletionPayloadContractRepository {
+
+        @Override
+        public CompletionPayloadObjectContract findByType(final Class<?> payloadType) {
+            return this.findByTypeName(payloadType.getSimpleName());
+        }
+
+        @Override
+        public CompletionPayloadObjectContract findByTypeName(final String payloadType) {
+            return new CompletionPayloadObjectContract(payloadType, "Fake completion payload contract.", List.of());
         }
     }
 

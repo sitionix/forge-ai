@@ -11,5 +11,6 @@ public class LaneStrategyStep {
     String title;
     int order;
     String taskPlaceholder;
+    String completionContractPlaceholder;
     List<String> instructionRefs;
 }

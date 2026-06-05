@@ -22,6 +22,8 @@ import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
 import com.sitionix.forgeai.domain.usecase.ValidateApiLaneEvidence;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -209,10 +211,11 @@ public class LaneCompletionSupport {
                     + ", targetAgent=" + targetLane.getAgent()
                     + ", targetScope=" + targetLane.getScope());
         }
-        this.objectMapper.convertValue(
+        final AgentTicketPayload payload = this.asPayload(
                 output.payload(),
                 this.laneCompletionContractResolver.inputPayloadType(sourceLane.getAgent(), targetLane.getAgent())
         );
+        this.requireExpectedScope(targetLane, this.payloadScope(payload));
     }
 
     private AgentTicket<? extends AgentTicketPayload> asProducedTicket(final ReadyToStartLane sourceLane,
@@ -221,6 +224,7 @@ public class LaneCompletionSupport {
         final Class<? extends AgentTicketPayload> payloadType =
                 this.laneCompletionContractResolver.inputPayloadType(sourceLane.getAgent(), targetLane.getAgent());
         final AgentTicketPayload payload = this.asPayload(output.payload(), payloadType);
+        this.requireExpectedScope(targetLane, this.payloadScope(payload));
         return this.targetTicket(sourceLane, targetLane, payload);
     }
 
@@ -232,25 +236,71 @@ public class LaneCompletionSupport {
     }
 
     private void preserveOrderedSetFields(final Map<String, Object> rawPayload,
-                                          final AgentTicketPayload convertedPayload) {
+                                          final Object convertedPayload) {
         if (rawPayload == null || convertedPayload == null) {
             return;
         }
         for (final Field field : convertedPayload.getClass().getDeclaredFields()) {
-            if (!Set.class.isAssignableFrom(field.getType())) {
-                continue;
-            }
             final Object rawValue = rawPayload.get(field.getName());
-            if (!(rawValue instanceof Collection<?> rawCollection)) {
-                continue;
-            }
             try {
                 field.setAccessible(true);
-                field.set(convertedPayload, new LinkedHashSet<>(rawCollection));
+                if (Set.class.isAssignableFrom(field.getType()) && rawValue instanceof Collection<?> rawCollection) {
+                    field.set(convertedPayload, this.orderedSet(rawCollection, field));
+                    continue;
+                }
+                if (rawValue instanceof Map<?, ?> rawMap) {
+                    final Object convertedValue = field.get(convertedPayload);
+                    if (convertedValue != null) {
+                        this.preserveOrderedSetFields(this.asStringObjectMap(rawMap), convertedValue);
+                    }
+                }
             } catch (IllegalAccessException exception) {
                 throw new IllegalStateException("Failed to preserve completion payload order for field=" + field.getName(), exception);
             }
         }
+    }
+
+    private LinkedHashSet<Object> orderedSet(final Collection<?> rawCollection,
+                                             final Field field) {
+        final Optional<Class<?>> elementType = this.setElementType(field);
+        final LinkedHashSet<Object> result = new LinkedHashSet<>();
+        for (final Object rawElement : rawCollection) {
+            final Object convertedElement = this.convertSetElement(rawElement, elementType.orElse(null));
+            if (rawElement instanceof Map<?, ?> rawMap && convertedElement != null) {
+                this.preserveOrderedSetFields(this.asStringObjectMap(rawMap), convertedElement);
+            }
+            result.add(convertedElement);
+        }
+        return result;
+    }
+
+    private Object convertSetElement(final Object rawElement,
+                                     final Class<?> elementType) {
+        if (rawElement == null || elementType == null || elementType.isInstance(rawElement)) {
+            return rawElement;
+        }
+        return this.objectMapper.convertValue(rawElement, elementType);
+    }
+
+    private Optional<Class<?>> setElementType(final Field field) {
+        final Type genericType = field.getGenericType();
+        if (!(genericType instanceof ParameterizedType parameterizedType)) {
+            return Optional.empty();
+        }
+        final Type elementType = parameterizedType.getActualTypeArguments()[0];
+        if (elementType instanceof Class<?> elementClass) {
+            return Optional.of(elementClass);
+        }
+        if (elementType instanceof ParameterizedType nestedParameterizedType
+                && nestedParameterizedType.getRawType() instanceof Class<?> rawClass) {
+            return Optional.of(rawClass);
+        }
+        return Optional.empty();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> asStringObjectMap(final Map<?, ?> source) {
+        return (Map<String, Object>) source;
     }
 
     private Optional<LaneCompletionOutput> optionalOutputForTarget(final Lane targetLane,

@@ -14,6 +14,8 @@ import java.util.Set;
 @AllArgsConstructor
 public class ArchitectPayload implements AgentTicketPayload {
 
+    private String scope;
+
     private Set<String> requirements;
 
     private Set<String> constraints;

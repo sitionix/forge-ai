@@ -17,8 +17,5 @@ public class AgentExecutionInput<P> {
     private String ticket;
     private UUID laneId;
     private Set<P> tasks;
-    private String agentInstruction;
     private ScopeContext scope;
-    private Set<String> additionalInstructions;
-    private Set<String> sharedInstructions;
 }

@@ -1,46 +1,5 @@
 forge:
   ai:
     instructions:
-      agents:
-        analyzer:
-          instructions: instructions/agents/analyzer.md
-          additional-instructions: [ ]
-
-        architect:
-          instructions: instructions/agents/architect.md
-          additional-instructions: [ ]
-
-        api:
-          instructions: instructions/agents/api.md
-          additional-instructions: [ ]
-
-        qa_lead:
-          instructions: instructions/agents/qa_lead.md
-          additional-instructions: [ ]
-
-        implement_be:
-          instructions: instructions/agents/implement_be.md
-          additional-instructions: [ ]
-
-        implement_fe:
-          instructions: instructions/agents/implement_fe.md
-          additional-instructions: [ ]
-
-        test_unit:
-          instructions: instructions/agents/test_unit.md
-          additional-instructions: [ ]
-
-        test_it:
-          instructions: instructions/agents/test_it.md
-          additional-instructions: [ ]
-
-        test_ui:
-          instructions: instructions/agents/test_ui.md
-          additional-instructions: [ ]
-
-        reviewer:
-          instructions: instructions/agents/reviewer.md
-          additional-instructions: [ ]
-
       shared:
         - instructions/shared/common-rules.md

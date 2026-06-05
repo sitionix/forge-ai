@@ -31,7 +31,8 @@ Do not rely on this map for detailed behavior.
 
 Always open and read the actual file before editing:
 
-- agent instruction file;
+- lane strategy file;
+- lane instruction file;
 - shared instruction file;
 - additional instruction file;
 - final-step completion payload contract if completion payload shape is involved;
@@ -69,9 +70,13 @@ Additional instructions contain reusable workflow/style/domain rule packs attach
 | `instructions/additional-instructions/java-style-basics.md` | reusable Java style rules |
 | `instructions/additional-instructions/java-test-style.md` | reusable Java unit-test style, if present |
 | `instructions/additional-instructions/generation-workflow.md` | generic API generation lifecycle |
-| `instructions/additional-instructions/api-generation-rules.md` | API targets, artifact evidence, metadata, versioning |
-| `instructions/additional-instructions/api-decision-instruction.md` | Architect API required/not-required decision |
-| `instructions/additional-instructions/event-decision-instruction.md` | Architect event required/not-required decision |
+| `instructions/additional-instructions/api-contract-rules.md` | REST contract layout and contract-change rules |
+| `instructions/additional-instructions/api-artifact-generation-rules.md` | API targets, artifact evidence, metadata |
+| `instructions/additional-instructions/version-rules.md` | API/event version synchronization |
+| `instructions/additional-instructions/event-contract-rules.md` | event contract layout, metadata, versioning |
+| `instructions/additional-instructions/event-artifact-generation-rules.md` | event artifact generation targets and evidence |
+| `instructions/lane-instructions/architect/api-decision.md` | Architect API required/not-required decision |
+| `instructions/lane-instructions/architect/event-decision.md` | Architect event required/not-required decision |
 | `instructions/additional-instructions/instruction-ownership-map.md` | navigation map for Reviewer instruction ownership |
 
 Use additional files when the rule is reusable across several agents but not universal.
@@ -80,24 +85,26 @@ Do not put lane-only payload semantics there.
 
 ---
 
-## Agent Instructions
+## Lane Strategy Instructions
 
-Agent files own lane-specific behavior.
+`lane-strategies.yml` owns lane step order and decides which instruction refs are attached to each step.
+Lane instruction files own lane-specific behavior for the step that references them.
 
-| Agent | File | Owns |
-|---|---|---|
-| `analyzer` | `instructions/agents/analyzer.md` | scope analysis and handoff preparation |
-| `architect` | `instructions/agents/architect.md` | architecture direction and downstream work decisions |
-| `api` | `instructions/agents/api.md` | API contract/generation lane behavior |
-| `qa_lead` | `instructions/agents/qa_lead.md` | QA planning context and test-lane required decisions |
-| `implement_be` | `instructions/agents/implement_be.md` | backend production implementation behavior |
-| `implement_fe` | `instructions/agents/implement_fe.md` | frontend production implementation behavior |
-| `test_unit` | `instructions/agents/test_unit.md` | backend unit-test implementation behavior |
-| `test_it` | `instructions/agents/test_it.md` | backend integration-test implementation behavior |
-| `test_ui` | `instructions/agents/test_ui.md` | frontend UI test behavior, if active |
-| `reviewer` | `instructions/agents/reviewer.md` | interactive reviewer behavior and instruction-maintenance workflow |
+| Lane | Owner |
+|---|---|
+| `analyzer` | `lane-strategies.yml` + `instructions/lane-instructions/analyzer/*` |
+| `architect` | `lane-strategies.yml` + `instructions/lane-instructions/architect/*` |
+| `api` | `lane-strategies.yml` + `instructions/lane-instructions/api/*` + API additional instructions |
+| `qa_lead` | `lane-strategies.yml` + `instructions/lane-instructions/qa-lead/*` |
+| `implement_be` | `lane-strategies.yml` + `instructions/lane-instructions/implement-be/*` |
+| `implement_fe` | `lane-strategies.yml` + `instructions/lane-instructions/implement-fe/*` |
+| `test_unit` | `lane-strategies.yml` + `instructions/lane-instructions/test-unit/*` + Java test style |
+| `test_it` | `lane-strategies.yml` + `instructions/lane-instructions/test-it/*` |
+| `test_ui` | `lane-strategies.yml` + `instructions/lane-instructions/test-ui/*` |
+| `event` | `lane-strategies.yml` + `instructions/lane-instructions/event/*` + event additional instructions |
+| `reviewer` | `lane-strategies.yml` + reviewer lane instructions when the reviewer lane is enabled |
 
-Use agent files for rules that apply only to one lane.
+Use lane instruction files for rules that apply only to one lane step.
 
 ---
 
@@ -225,7 +232,8 @@ Example:
 
 Owner:
 
-- `instructions/agents/implement_be.md`
+- `lane-strategies.yml`
+- `instructions/lane-instructions/implement-be/*`
 
 Reason:
 
@@ -243,7 +251,8 @@ Example:
 
 Owner:
 
-- `instructions/agents/test_unit.md`
+- `lane-strategies.yml`
+- `instructions/lane-instructions/test-unit/*`
 - or `instructions/additional-instructions/java-test-style.md` if the rule is reusable across Java test lanes.
 
 ---
@@ -258,7 +267,8 @@ Example:
 
 Owner:
 
-- `instructions/agents/test_it.md`
+- `lane-strategies.yml`
+- `instructions/lane-instructions/test-it/*`
 
 ---
 
@@ -272,8 +282,9 @@ Example:
 
 Owner:
 
-- `instructions/additional-instructions/api-generation-rules.md`
-- or `instructions/agents/api.md` if the issue is API lane output semantics.
+- `instructions/additional-instructions/api-artifact-generation-rules.md`
+- `instructions/additional-instructions/version-rules.md`
+- or `instructions/lane-instructions/api/*` if the issue is API lane output semantics.
 
 ---
 

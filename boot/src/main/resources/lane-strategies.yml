@@ -24,6 +24,7 @@ forge:
                 - lane-instructions/analyzer/qa-lead-handoff.md
             - id: completion
               title: Completion
+              completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
                 - lane-instructions/analyzer/completion-content.md
 
@@ -33,7 +34,9 @@ forge:
           steps:
             - id: input_normalization
               title: Input Normalization
+              task-placeholder: TASKS
               instruction-refs:
+                - additional-instructions/scope-context-usage.md
                 - lane-instructions/architect/input-normalization.md
             - id: architecture_direction
               title: Architecture Direction
@@ -53,6 +56,7 @@ forge:
                 - lane-instructions/architect/implementation-handoff.md
             - id: completion
               title: Completion
+              completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
                 - lane-instructions/architect/completion-content.md
 
@@ -84,6 +88,7 @@ forge:
                 - additional-instructions/api-artifact-generation-rules.md
             - id: completion
               title: Completion
+              completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
                 - lane-instructions/api/completion-content.md
 
@@ -93,7 +98,9 @@ forge:
           steps:
             - id: qa_context
               title: QA Context
+              task-placeholder: TASKS
               instruction-refs:
+                - additional-instructions/scope-context-usage.md
                 - lane-instructions/qa_lead/qa-context.md
             - id: qa_focus
               title: QA Focus
@@ -109,6 +116,7 @@ forge:
                 - lane-instructions/qa_lead/unit-test-notes.md
             - id: completion
               title: Completion
+              completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
                 - lane-instructions/qa_lead/completion-content.md
 
@@ -116,20 +124,35 @@ forge:
           version: 1
           session-mode: single_session
           steps:
+            - id: preparation
+              title: Preparation
+              instruction-refs:
+                - additional-instructions/preparation-to-work.md
             - id: backend_context
               title: Backend Context
+              task-placeholder: TASKS
               instruction-refs:
+                - additional-instructions/scope-context-usage.md
                 - lane-instructions/implement_be/backend-context.md
             - id: production_implementation
               title: Production Implementation
               instruction-refs:
+                - additional-instructions/implementation-boundary.md
                 - lane-instructions/implement_be/production-implementation.md
+                - additional-instructions/java-style-basics.md
             - id: local_verification
               title: Local Verification
               instruction-refs:
                 - lane-instructions/implement_be/local-verification.md
+            - id: pr
+              title: Pull Request
+              instruction-refs:
+                - additional-instructions/pr-workflow.md
+                - additional-instructions/sonar-cloud-base.md
+                - additional-instructions/implementation-sonar-gate.md
             - id: completion
               title: Completion
+              completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
                 - lane-instructions/implement_be/completion-content.md
 
@@ -137,20 +160,34 @@ forge:
           version: 1
           session-mode: single_session
           steps:
+            - id: preparation
+              title: Preparation
+              instruction-refs:
+                - additional-instructions/preparation-to-work.md
             - id: frontend_context
               title: Frontend Context
+              task-placeholder: TASKS
               instruction-refs:
+                - additional-instructions/scope-context-usage.md
                 - lane-instructions/implement_fe/frontend-context.md
             - id: production_implementation
               title: Production Implementation
               instruction-refs:
+                - additional-instructions/implementation-boundary.md
                 - lane-instructions/implement_fe/production-implementation.md
             - id: local_verification
               title: Local Verification
               instruction-refs:
                 - lane-instructions/implement_fe/local-verification.md
+            - id: pr
+              title: Pull Request
+              instruction-refs:
+                - additional-instructions/pr-workflow.md
+                - additional-instructions/sonar-cloud-base.md
+                - additional-instructions/implementation-sonar-gate.md
             - id: completion
               title: Completion
+              completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
                 - lane-instructions/implement_fe/completion-content.md
 
@@ -158,9 +195,17 @@ forge:
           version: 1
           session-mode: single_session
           steps:
+            - id: preparation
+              title: Preparation
+              instruction-refs:
+                - additional-instructions/preparation-to-work.md
             - id: unit_test_context
               title: Unit Test Context
+              task-placeholder: TASKS
               instruction-refs:
+                - additional-instructions/scope-context-usage.md
+                - additional-instructions/test-lane-boundary.md
+                - additional-instructions/java-style-basics.md
                 - lane-instructions/test_unit/unit-test-context.md
             - id: unit_test_usecase_service
               title: Unit Test Use Case Service
@@ -182,8 +227,19 @@ forge:
               title: Unit Test Generated Artifacts
               instruction-refs:
                 - lane-instructions/test_unit/unit-test-generated-artifacts.md
+            - id: local_verification
+              title: Local Verification
+              instruction-refs:
+                - additional-instructions/backend-maven-verification.md
+            - id: pr
+              title: Pull Request
+              instruction-refs:
+                - additional-instructions/pr-workflow.md
+                - additional-instructions/sonar-cloud-base.md
+                - additional-instructions/test-coverage-sonar-gate.md
             - id: completion
               title: Completion
+              completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
                 - lane-instructions/test_unit/completion-content.md
 
@@ -191,9 +247,17 @@ forge:
           version: 1
           session-mode: single_session
           steps:
+            - id: preparation
+              title: Preparation
+              instruction-refs:
+                - additional-instructions/preparation-to-work.md
             - id: it_test_context
               title: IT Test Context
+              task-placeholder: TASKS
               instruction-refs:
+                - additional-instructions/scope-context-usage.md
+                - additional-instructions/test-lane-boundary.md
+                - additional-instructions/java-style-basics.md
                 - lane-instructions/test_it/it-test-context.md
             - id: forge_it_setup
               title: Forge IT Setup
@@ -207,24 +271,17 @@ forge:
               title: Case Implementation
               instruction-refs:
                 - lane-instructions/test_it/case-implementation.md
-            - id: http_mvc_flow
-              title: HTTP MVC Flow
+            - id: local_verification
+              title: Local Verification
               instruction-refs:
-                - lane-instructions/test_it/http-mockmvc-flow.md
-            - id: kafka_flow
-              title: Kafka Flow
+                - additional-instructions/backend-maven-verification.md
+            - id: pr
+              title: Pull Request
               instruction-refs:
-                - lane-instructions/test_it/kafka-flow.md
-            - id: postgresql_flow
-              title: PostgreSQL Flow
-              instruction-refs:
-                - lane-instructions/test_it/postgresql-flow.md
-            - id: wiremock_flow
-              title: WireMock Flow
-              instruction-refs:
-                - lane-instructions/test_it/wiremock-flow.md
+                - additional-instructions/pr-workflow.md
             - id: completion
               title: Completion
+              completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
                 - lane-instructions/test_it/completion-content.md
 
@@ -232,9 +289,16 @@ forge:
           version: 1
           session-mode: single_session
           steps:
+            - id: preparation
+              title: Preparation
+              instruction-refs:
+                - additional-instructions/preparation-to-work.md
             - id: ui_test_context
               title: UI Test Context
+              task-placeholder: TASKS
               instruction-refs:
+                - additional-instructions/scope-context-usage.md
+                - additional-instructions/test-lane-boundary.md
                 - lane-instructions/test_ui/ui-test-context.md
             - id: ui_test_implementation
               title: UI Test Implementation
@@ -244,8 +308,15 @@ forge:
               title: Local Verification
               instruction-refs:
                 - lane-instructions/test_ui/local-verification.md
+            - id: pr
+              title: Pull Request
+              instruction-refs:
+                - additional-instructions/pr-workflow.md
+                - additional-instructions/sonar-cloud-base.md
+                - additional-instructions/test-coverage-sonar-gate.md
             - id: completion
               title: Completion
+              completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
                 - lane-instructions/test_ui/completion-content.md
 
@@ -263,6 +334,7 @@ forge:
                 - lane-instructions/reviewer/review-execution.md
             - id: completion
               title: Completion
+              completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
                 - lane-instructions/reviewer/completion-content.md
 
@@ -270,15 +342,30 @@ forge:
           version: 1
           session-mode: single_session
           steps:
-            - id: event_context
-              title: Event Context
+            - id: preparation
+              title: Preparation
               instruction-refs:
-                - lane-instructions/event/event-context.md
-            - id: event_delivery
-              title: Event Delivery
+                - additional-instructions/preparation-to-work.md
+            - id: contract_changes
+              title: Contract Changes
+              task-placeholder: TASKS
               instruction-refs:
-                - lane-instructions/event/event-delivery.md
+                - additional-instructions/event-contract-rules.md
+            - id: version_update
+              title: Version Update
+              instruction-refs:
+                - additional-instructions/version-rules.md
+            - id: pr
+              title: Pull Request
+              instruction-refs:
+                - additional-instructions/pr-workflow.md
+            - id: generation
+              title: Generation
+              instruction-refs:
+                - additional-instructions/generation-workflow.md
+                - additional-instructions/event-artifact-generation-rules.md
             - id: completion
               title: Completion
+              completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
                 - lane-instructions/event/completion-content.md

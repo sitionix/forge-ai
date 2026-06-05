@@ -10,8 +10,6 @@ import java.util.Set;
 public class ScopeContext {
 
     private String scope;
-    private String label;
-    private Set<String> tags;
-    private Set<String> domainKeywords;
-    private Set<String> ownBusinessAreas;
+    private ServiceScopeContext service;
+    private Set<ServiceScopeContext> relatedServices;
 }

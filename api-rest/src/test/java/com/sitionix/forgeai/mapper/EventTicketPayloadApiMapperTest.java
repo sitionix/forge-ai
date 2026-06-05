@@ -3,6 +3,7 @@ package com.sitionix.forgeai.mapper;
 import com.app_afesox.fgaisox.api_first.dto.ArchitectEventRequest;
 import com.app_afesox.fgaisox.api_first.dto.ArchitectEventPayloadField;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayloadField;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,7 +44,7 @@ class EventTicketPayloadApiMapperTest {
                 .scope("GLOBAL")
                 .summary("event summary")
                 .eventName("AgentActionCreated")
-                .payloadFields(List.of(ArchitectEventPayloadField.builder().name("id").type("string").required(Boolean.TRUE).build()))
+                .payloadFields(Set.of(EventPayloadField.builder().name("id").type("string").required(Boolean.TRUE).build()))
                 .consumers(Set.of("consumer"))
                 .notes(Set.of("note"))
                 .build());

@@ -2,6 +2,7 @@ package com.sitionix.forgeai.mapper;
 
 import com.app_afesox.fgaisox.api_first.dto.ArchitectApiRequest;
 import com.app_afesox.fgaisox.api_first.dto.ArchitectApiOperation;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiOperationPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import java.util.List;
 import java.util.Set;
@@ -41,7 +42,7 @@ class ApiTicketPayloadApiMapperTest {
                 .reason("required")
                 .scope("GLOBAL")
                 .summary("api summary")
-                .operations(List.of(ArchitectApiOperation.builder().intent("create").build()))
+                .operations(Set.of(ApiOperationPayload.builder().intent("create").build()))
                 .consumers(Set.of("consumer"))
                 .notes(Set.of("note"))
                 .build());

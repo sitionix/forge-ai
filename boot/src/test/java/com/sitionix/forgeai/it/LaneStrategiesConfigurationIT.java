@@ -47,8 +47,11 @@ class LaneStrategiesConfigurationIT {
                     "completion"
             )),
             Map.entry(Agent.EVENT, List.of(
-                    "event_context",
-                    "event_delivery",
+                    "preparation",
+                    "contract_changes",
+                    "version_update",
+                    "pr",
+                    "generation",
                     "completion"
             )),
             Map.entry(Agent.QA_LEAD, List.of(
@@ -59,41 +62,49 @@ class LaneStrategiesConfigurationIT {
                     "completion"
             )),
             Map.entry(Agent.IMPLEMENT_BE, List.of(
+                    "preparation",
                     "backend_context",
                     "production_implementation",
                     "local_verification",
+                    "pr",
                     "completion"
             )),
             Map.entry(Agent.IMPLEMENT_FE, List.of(
+                    "preparation",
                     "frontend_context",
                     "production_implementation",
                     "local_verification",
+                    "pr",
                     "completion"
             )),
             Map.entry(Agent.TEST_UNIT, List.of(
+                    "preparation",
                     "unit_test_context",
                     "unit_test_usecase_service",
                     "unit_test_core",
                     "unit_test_mapper",
                     "unit_test_controller",
                     "unit_test_generated_artifacts",
+                    "local_verification",
+                    "pr",
                     "completion"
             )),
             Map.entry(Agent.TEST_IT, List.of(
+                    "preparation",
                     "it_test_context",
                     "forge_it_setup",
                     "fixtures",
                     "case_implementation",
-                    "http_mvc_flow",
-                    "kafka_flow",
-                    "postgresql_flow",
-                    "wiremock_flow",
+                    "local_verification",
+                    "pr",
                     "completion"
             )),
             Map.entry(Agent.TEST_UI, List.of(
+                    "preparation",
                     "ui_test_context",
                     "ui_test_implementation",
                     "local_verification",
+                    "pr",
                     "completion"
             )),
             Map.entry(Agent.REVIEWER, List.of(
@@ -131,6 +142,40 @@ class LaneStrategiesConfigurationIT {
                             .as("instruction refs for agent=%s step=%s", agent.getId(), step.getId())
                             .isNotEmpty());
         }
+    }
+
+    @Test
+    void givenRealLaneStrategiesYaml_whenLoaded_thenTasksAreInjectedOnlyAtConfiguredExecutionSteps() {
+        assertTaskPlaceholder(Agent.ANALYZER, "scope_slicing");
+        assertTaskPlaceholder(Agent.ARCHITECT, "input_normalization");
+        assertTaskPlaceholder(Agent.API, "contract_changes");
+        assertTaskPlaceholder(Agent.EVENT, "contract_changes");
+        assertTaskPlaceholder(Agent.QA_LEAD, "qa_context");
+        assertTaskPlaceholder(Agent.IMPLEMENT_BE, "backend_context");
+        assertTaskPlaceholder(Agent.IMPLEMENT_FE, "frontend_context");
+        assertTaskPlaceholder(Agent.TEST_UNIT, "unit_test_context");
+        assertTaskPlaceholder(Agent.TEST_IT, "it_test_context");
+        assertTaskPlaceholder(Agent.TEST_UI, "ui_test_context");
+    }
+
+    @Test
+    void givenRealLaneStrategiesYaml_whenLoaded_thenCompletionContractIsInjectedOnlyAtCompletionStep() {
+        for (final Agent agent : Agent.values()) {
+            final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(agent.getId());
+
+            assertThat(strategy.getSteps())
+                    .filteredOn(step -> "COMPLETION_PAYLOAD_CONTRACT".equals(step.getCompletionContractPlaceholder()))
+                    .extracting(LaneStrategyStep::getId)
+                    .containsExactly("completion");
+        }
+    }
+
+    private void assertTaskPlaceholder(final Agent agent, final String stepId) {
+        final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(agent.getId());
+        assertThat(strategy.getSteps())
+                .filteredOn(step -> "TASKS".equals(step.getTaskPlaceholder()))
+                .extracting(LaneStrategyStep::getId)
+                .containsExactly(stepId);
     }
 
     private static List<Integer> expectedOrders(final List<String> expectedStepIds) {

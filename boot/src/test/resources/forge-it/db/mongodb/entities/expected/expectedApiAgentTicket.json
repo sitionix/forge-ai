@@ -12,6 +12,7 @@
         "intent": "create",
         "method": "POST",
         "path": "/api/v1/agent-actions",
+        "parameters": null,
         "request": {
           "fields": [
             {
