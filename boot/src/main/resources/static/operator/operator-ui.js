@@ -4,10 +4,17 @@
     ? window.location.pathname.slice(0, window.location.pathname.indexOf('/operator/'))
     : '';
   const apiBase = `${contextPath}/api/v1/forge-ai/operator/ui`;
+  const graphLayoutConfig = {
+    paddingX: 44,
+    paddingY: 42,
+    columnGap: 430,
+    rowGap: 255,
+    cardWidth: 370,
+    cardMinHeight: 220
+  };
 
   const statusClass = (value) => String(value || 'unknown').toLowerCase().replaceAll('_', '-');
   const fmtDate = (value) => value ? new Date(value).toLocaleString() : '-';
-  const fmtTime = (value) => value ? new Date(value).toLocaleTimeString() : '-';
   const escapeHtml = (value) => String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -111,7 +118,10 @@
   }
 
   function renderGraph(data) {
-    window.__forgeGraphData = data.lanes || [];
+    const lanes = data.lanes || [];
+    const layout = buildGraphLayout(lanes);
+    window.__forgeGraphData = lanes;
+    window.__forgeGraphLayout = layout;
     const title = document.getElementById('ticketTitle');
     const subtitle = document.getElementById('ticketSubtitle');
     const task = document.getElementById('taskDescription');
@@ -124,12 +134,14 @@
     updated.textContent = `updated ${new Date().toLocaleTimeString()}`;
 
     const graph = document.getElementById('laneGraph');
-    graph.innerHTML = (data.lanes || []).map(renderLane).join('');
-    renderAlerts(data.lanes || []);
+    graph.style.width = `${layout.width}px`;
+    graph.style.height = `${layout.height}px`;
+    graph.innerHTML = lanes.map((lane) => renderLane(lane, layout.positions.get(lane.laneId))).join('');
+    renderAlerts(lanes);
     requestAnimationFrame(drawConnections);
   }
 
-  function renderLane(lane) {
+  function renderLane(lane, position) {
     const execution = lane.execution || {};
     const effectiveStatus = execution.status === 'FAILED' ? 'FAILED' : lane.status;
     const step = execution.currentStepId
@@ -141,7 +153,13 @@
     `).join('');
 
     return `
-      <article class="lane-card ${statusClass(effectiveStatus)}" data-lane-id="${escapeHtml(lane.laneId)}" data-status="${escapeHtml(lane.status || '')}">
+      <article
+        class="lane-card ${statusClass(effectiveStatus)}"
+        data-lane-id="${escapeHtml(lane.laneId)}"
+        data-status="${escapeHtml(lane.status || '')}"
+        data-effective-status="${escapeHtml(effectiveStatus || '')}"
+        style="left:${number(position?.x)}px;top:${number(position?.y)}px;width:${graphLayoutConfig.cardWidth}px;"
+      >
         <div class="lane-stripe"></div>
         <div class="lane-content">
           <div class="lane-top">
@@ -182,12 +200,16 @@
   function drawConnections() {
     const canvas = document.getElementById('graphCanvas');
     const svg = document.getElementById('graphLines');
-    if (!canvas || !svg) {
+    const graph = document.getElementById('laneGraph');
+    if (!canvas || !svg || !graph) {
       return;
     }
-    const canvasRect = canvas.getBoundingClientRect();
-    svg.setAttribute('viewBox', `0 0 ${canvasRect.width} ${canvasRect.height}`);
+    const graphRect = graph.getBoundingClientRect();
+    svg.style.width = `${graph.offsetWidth}px`;
+    svg.style.height = `${graph.offsetHeight}px`;
+    svg.setAttribute('viewBox', `0 0 ${graph.offsetWidth} ${graph.offsetHeight}`);
     svg.innerHTML = '';
+    svg.appendChild(connectionMarker());
     document.querySelectorAll('.lane-card').forEach((target) => {
       const dependencies = laneDependencies(target.dataset.laneId);
       dependencies.forEach((dependencyId) => {
@@ -197,26 +219,124 @@
         }
         const sourceRect = source.getBoundingClientRect();
         const targetRect = target.getBoundingClientRect();
-        const x1 = sourceRect.left + sourceRect.width / 2 - canvasRect.left;
-        const y1 = sourceRect.bottom - canvasRect.top;
-        const x2 = targetRect.left + targetRect.width / 2 - canvasRect.left;
-        const y2 = targetRect.top - canvasRect.top;
-        const mid = (y1 + y2) / 2;
+        const x1 = sourceRect.right - graphRect.left;
+        const y1 = sourceRect.top + sourceRect.height / 2 - graphRect.top;
+        const x2 = targetRect.left - graphRect.left;
+        const y2 = targetRect.top + targetRect.height / 2 - graphRect.top;
+        const mid = x1 + Math.max(80, (x2 - x1) / 2);
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('d', `M ${x1} ${y1} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${y2}`);
+        path.setAttribute('d', `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);
         path.setAttribute('fill', 'none');
-        path.setAttribute('stroke', 'rgba(27, 36, 31, 0.34)');
+        path.setAttribute('stroke', connectionColor(target.dataset.effectiveStatus));
         path.setAttribute('stroke-width', '2');
         path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('marker-end', 'url(#forge-arrow)');
         svg.appendChild(path);
       });
     });
   }
 
+  function buildGraphLayout(lanes) {
+    const lanesById = new Map(lanes.map((lane) => [lane.laneId, lane]));
+    const levels = new Map();
+    const visiting = new Set();
+
+    const resolveLevel = (lane) => {
+      if (!lane?.laneId) {
+        return 0;
+      }
+      if (levels.has(lane.laneId)) {
+        return levels.get(lane.laneId);
+      }
+      if (visiting.has(lane.laneId)) {
+        return 0;
+      }
+      visiting.add(lane.laneId);
+      const dependencies = laneDependenciesFromLane(lane)
+        .map((laneId) => lanesById.get(laneId))
+        .filter(Boolean);
+      const level = dependencies.length === 0
+        ? 0
+        : Math.max(...dependencies.map((dependency) => resolveLevel(dependency) + 1));
+      visiting.delete(lane.laneId);
+      levels.set(lane.laneId, level);
+      return level;
+    };
+
+    const laneEntries = lanes.map((lane, index) => ({
+      lane,
+      index,
+      level: resolveLevel(lane)
+    }));
+    const grouped = new Map();
+    laneEntries.forEach((entry) => {
+      const group = grouped.get(entry.level) || [];
+      group.push(entry);
+      grouped.set(entry.level, group);
+    });
+
+    const positions = new Map();
+    let maxLevel = 0;
+    let maxRows = 1;
+    [...grouped.entries()].forEach(([level, entries]) => {
+      maxLevel = Math.max(maxLevel, level);
+      maxRows = Math.max(maxRows, entries.length);
+      entries
+        .sort((left, right) => left.index - right.index)
+        .forEach((entry, row) => {
+          positions.set(entry.lane.laneId, {
+            x: graphLayoutConfig.paddingX + level * graphLayoutConfig.columnGap,
+            y: graphLayoutConfig.paddingY + row * graphLayoutConfig.rowGap
+          });
+        });
+    });
+
+    return {
+      positions,
+      width: graphLayoutConfig.paddingX * 2 + maxLevel * graphLayoutConfig.columnGap + graphLayoutConfig.cardWidth,
+      height: graphLayoutConfig.paddingY * 2 + (maxRows - 1) * graphLayoutConfig.rowGap + graphLayoutConfig.cardMinHeight
+    };
+  }
+
   function laneDependencies(laneId) {
     const graphData = window.__forgeGraphData || [];
     const lane = graphData.find((item) => item.laneId === laneId);
+    return laneDependenciesFromLane(lane);
+  }
+
+  function laneDependenciesFromLane(lane) {
     return (lane?.dependencies || []).map((dependency) => dependency.laneId).filter(Boolean);
+  }
+
+  function connectionMarker() {
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+    marker.setAttribute('id', 'forge-arrow');
+    marker.setAttribute('markerWidth', '10');
+    marker.setAttribute('markerHeight', '10');
+    marker.setAttribute('refX', '8');
+    marker.setAttribute('refY', '5');
+    marker.setAttribute('orient', 'auto');
+    marker.setAttribute('markerUnits', 'strokeWidth');
+    const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    arrow.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+    arrow.setAttribute('fill', 'rgba(27, 36, 31, 0.46)');
+    marker.appendChild(arrow);
+    defs.appendChild(marker);
+    return defs;
+  }
+
+  function connectionColor(status) {
+    if (status === 'FAILED') {
+      return 'rgba(225, 82, 65, 0.62)';
+    }
+    if (status === 'COMPLETED') {
+      return 'rgba(55, 142, 91, 0.62)';
+    }
+    if (status === 'IN_PROGRESS') {
+      return 'rgba(188, 127, 30, 0.62)';
+    }
+    return 'rgba(27, 36, 31, 0.38)';
   }
 
   function cssEscape(value) {
@@ -231,6 +351,10 @@
       return '-';
     }
     return String(value).slice(0, 8);
+  }
+
+  function number(value) {
+    return Number.isFinite(value) ? value : 0;
   }
 
   if (page === 'tickets') {

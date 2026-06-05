@@ -273,7 +273,8 @@ a {
 .graph-canvas {
   position: relative;
   min-height: 540px;
-  padding: 24px;
+  overflow: auto;
+  border-radius: 0 0 28px 28px;
   background:
     linear-gradient(rgba(27, 36, 31, 0.05) 1px, transparent 1px),
     linear-gradient(90deg, rgba(27, 36, 31, 0.05) 1px, transparent 1px);
@@ -282,9 +283,8 @@ a {
 
 .graph-lines {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  top: 0;
+  left: 0;
   pointer-events: none;
   z-index: 1;
 }
@@ -292,20 +292,26 @@ a {
 .lane-graph {
   position: relative;
   z-index: 2;
-  display: grid;
-  gap: 18px;
-  max-width: 900px;
-  margin: 0 auto;
+  min-width: 100%;
+  min-height: 540px;
 }
 
 .lane-card {
+  position: absolute;
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr);
   gap: 16px;
+  min-height: 220px;
   border: 1px solid rgba(27, 36, 31, 0.14);
   border-radius: 22px;
   background: rgba(255, 252, 235, 0.94);
   box-shadow: 0 16px 44px rgba(27, 36, 31, 0.1);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.lane-card:hover {
+  border-color: rgba(246, 184, 75, 0.75);
+  box-shadow: 0 24px 64px rgba(27, 36, 31, 0.16);
 }
 
 .lane-stripe {
