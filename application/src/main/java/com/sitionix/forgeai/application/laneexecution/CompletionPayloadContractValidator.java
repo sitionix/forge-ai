@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.application.laneexecution;
 
+import com.sitionix.forgeai.domain.model.lanecompletion.ScopeMismatchException;
 import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionOutputContract;
 import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadContract;
 import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadFieldContract;
@@ -26,7 +27,7 @@ public class CompletionPayloadContractValidator {
     public void validate(final ReadyToStartLane lane, final Map<String, Object> completionPayload) {
         final CompletionPayloadContract contract = this.completionPayloadContractBuilder.build(lane);
         this.validateTopLevel(completionPayload, contract);
-        this.validateOutputs(this.requireList(completionPayload, "outputs"), contract.outputs());
+        this.validateOutputs(lane, this.requireList(completionPayload, "outputs"), contract.outputs());
         if (contract.apiEvidenceRequired()) {
             this.validateObject(
                     this.requireMap(completionPayload, "apiEvidence"),
@@ -63,7 +64,8 @@ public class CompletionPayloadContractValidator {
         }
     }
 
-    private void validateOutputs(final List<?> outputs,
+    private void validateOutputs(final ReadyToStartLane lane,
+                                 final List<?> outputs,
                                  final List<CompletionOutputContract> outputContracts) {
         for (final Object rawOutput : outputs) {
             if (!(rawOutput instanceof Map<?, ?> output)) {
@@ -75,25 +77,34 @@ public class CompletionPayloadContractValidator {
                     .filter(candidate -> Objects.equals(candidate.agent(), agent))
                     .filter(candidate -> Objects.equals(candidate.scope(), scope))
                     .findFirst()
-                    .orElseGet(() -> this.requireKnownOutputAgent(outputContracts, agent, scope));
+                    .orElseGet(() -> this.requireKnownOutput(lane, outputContracts, agent, scope));
             this.validateOutputFields(output);
             final boolean required = this.requiredBoolean(output, "required", "outputs");
             if (!required) {
                 continue;
             }
-            this.validateObject(this.requireMap(output, "payload", "outputs"), contract.payload(), "outputs.payload");
+            final Map<?, ?> payload = this.requireMap(output, "payload", "outputs");
+            this.validateObject(payload, contract.payload(), "outputs.payload");
+            this.validatePayloadScope(payload, contract);
         }
     }
 
-    private CompletionOutputContract requireKnownOutputAgent(final List<CompletionOutputContract> outputContracts,
-                                                             final String agent,
-                                                             final String scope) {
-        return outputContracts.stream()
+    private CompletionOutputContract requireKnownOutput(final ReadyToStartLane lane,
+                                                        final List<CompletionOutputContract> outputContracts,
+                                                        final String agent,
+                                                        final String scope) {
+        final CompletionOutputContract targetWithSameAgent = outputContracts.stream()
                 .filter(candidate -> Objects.equals(candidate.agent(), agent))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Unknown completion output target: agent=" + agent + ", scope=" + scope
-                ));
+                .orElse(null);
+        if (targetWithSameAgent != null) {
+            throw new ScopeMismatchException("Completion output scope mismatch: sourceLaneId=" + lane.getLaneId()
+                    + ", sourceAgent=" + lane.getAgent().getId()
+                    + ", targetAgent=" + targetWithSameAgent.agent()
+                    + ", expectedScope=" + targetWithSameAgent.scope()
+                    + ", actualScope=" + scope);
+        }
+        throw new IllegalArgumentException("Unknown completion output target: agent=" + agent + ", scope=" + scope);
     }
 
     private void validateOutputFields(final Map<?, ?> output) {
@@ -105,6 +116,24 @@ public class CompletionPayloadContractValidator {
             actual.removeAll(allowed);
             throw new IllegalArgumentException("Unknown completion output fields: " + actual);
         }
+    }
+
+    private void validatePayloadScope(final Map<?, ?> payload,
+                                      final CompletionOutputContract contract) {
+        if (!this.hasField(contract.payload(), "scope")) {
+            return;
+        }
+        final Object actual = payload.get("scope");
+        if (!Objects.equals(contract.payloadScope(), actual)) {
+            throw new ScopeMismatchException("Completion payload scope mismatch: expected="
+                    + contract.payloadScope()
+                    + ", actual=" + actual);
+        }
+    }
+
+    private boolean hasField(final CompletionPayloadObjectContract objectContract, final String fieldName) {
+        return objectContract.fields().stream()
+                .anyMatch(field -> fieldName.equals(field.name()));
     }
 
     private void validateObject(final Map<?, ?> rawObject,

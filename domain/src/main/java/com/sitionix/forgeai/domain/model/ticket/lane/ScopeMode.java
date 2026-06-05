@@ -50,6 +50,13 @@ public enum ScopeMode {
                 .orElseThrow(() -> new IllegalArgumentException("Unknown scope mode id: " + id));
     }
 
+    public static String producedPayloadScope(final String sourceLaneScope, final String targetLaneScope) {
+        if (GLOBAL_SCOPE.equals(targetLaneScope) && !GLOBAL_SCOPE.equals(sourceLaneScope)) {
+            return sourceLaneScope;
+        }
+        return targetLaneScope;
+    }
+
     public abstract List<String> laneScopes(List<String> selectedScopes);
 
     public abstract List<String> dependencyScopes(

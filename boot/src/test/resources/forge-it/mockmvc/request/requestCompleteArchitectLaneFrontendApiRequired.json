@@ -15,7 +15,7 @@
   "apiRequest": {
     "required": true,
     "reason": "frontend API contract required",
-    "scope": "GLOBAL",
+    "scope": "sitionix-spa",
     "summary": "frontend api summary",
     "operations": [
       {
@@ -50,7 +50,7 @@
   "eventRequest": {
     "required": false,
     "reason": "not required",
-    "scope": "GLOBAL",
+    "scope": "sitionix-spa",
     "summary": "event summary",
     "eventName": "",
     "payloadFields": [],

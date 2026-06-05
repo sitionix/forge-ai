@@ -33,6 +33,8 @@ public class CompletionPayloadContractRenderer {
                 .append("Rules:\n")
                 .append("- outputs must be an array. Use [] when this lane produces no downstream work.\n")
                 .append("- each output agent and scope must exactly match a listed produced lane.\n")
+                .append("- output.scope is the target lane routing scope.\n")
+                .append("- if payload has a scope field, payload.scope must exactly match payloadScope for that output.\n")
                 .append("- required=false marks that produced lane as not needed.\n")
                 .append("- required=true requires payload to satisfy the listed payload contract.\n")
                 .append("- do not add fields not listed in the contract.\n")
@@ -59,8 +61,16 @@ public class CompletionPayloadContractRenderer {
         template.put("agent", output.agent());
         template.put("scope", output.scope());
         template.put("required", output.required());
-        template.put("payload", this.objectTemplate(output.payload()));
+        template.put("payload", this.outputPayloadTemplate(output));
         return template;
+    }
+
+    private Map<String, Object> outputPayloadTemplate(final CompletionOutputContract output) {
+        final Map<String, Object> payload = this.objectTemplate(output.payload());
+        if (this.hasField(output.payload(), "scope")) {
+            payload.put("scope", output.payloadScope());
+        }
+        return payload;
     }
 
     private Map<String, Object> objectTemplate(final CompletionPayloadObjectContract objectContract) {
@@ -115,9 +125,15 @@ public class CompletionPayloadContractRenderer {
         final Map<String, Object> descriptor = new LinkedHashMap<>();
         descriptor.put("agent", output.agent());
         descriptor.put("scope", output.scope());
+        descriptor.put("payloadScope", output.payloadScope());
         descriptor.put("required", output.required());
         descriptor.put("payload", this.objectDescriptor(output.payload()));
         return descriptor;
+    }
+
+    private boolean hasField(final CompletionPayloadObjectContract objectContract, final String fieldName) {
+        return objectContract.fields().stream()
+                .anyMatch(field -> fieldName.equals(field.name()));
     }
 
     private Map<String, Object> objectDescriptor(final CompletionPayloadObjectContract objectContract) {

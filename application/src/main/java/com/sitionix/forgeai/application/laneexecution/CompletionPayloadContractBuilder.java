@@ -8,6 +8,7 @@ import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPaylo
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
+import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.repository.CompletionPayloadContractRepository;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
 import java.util.List;
@@ -53,6 +54,7 @@ public class CompletionPayloadContractBuilder {
         return new CompletionOutputContract(
                 targetLane.getAgent().getId(),
                 targetLane.getScope(),
+                ScopeMode.producedPayloadScope(sourceLane.getScope(), targetLane.getScope()),
                 true,
                 this.completionPayloadContractRepository.findByType(payloadType)
         );

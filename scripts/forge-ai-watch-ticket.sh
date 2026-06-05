@@ -211,6 +211,9 @@ render_block() {
       print_agent_scope_line "$agent_scope_color" "$agent_value" "$scope_value"
       ;;
     HEARTBEAT)
+      if [[ "$verbosity" == "minimal" ]]; then
+        return
+      fi
       print_event_line "$event_color_code" "$prefix" "RUNNING"
       print_agent_scope_line "$agent_scope_color" "$agent_value" "$scope_value"
       print_detail_line "step=$(jq -r '.stepId // "-"' <<<"$line")"

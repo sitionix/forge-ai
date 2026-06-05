@@ -36,8 +36,9 @@ class TicketOperatorEventServiceTest {
         final TicketOperatorEvent visible = this.event(ticketId, "STEP_STARTED", "visible");
         final TicketOperatorEvent commandOutput = this.event(ticketId, "COMMAND_OUTPUT", "hidden");
         final TicketOperatorEvent delta = this.event(ticketId, "AGENT_MESSAGE_DELTA", "hidden");
+        final TicketOperatorEvent heartbeat = this.event(ticketId, "HEARTBEAT", "hidden");
 
-        assertThat(this.service.filterByVerbosity(List.of(visible, commandOutput, delta), "minimal"))
+        assertThat(this.service.filterByVerbosity(List.of(visible, commandOutput, delta, heartbeat), "minimal"))
                 .containsExactly(visible);
     }
 

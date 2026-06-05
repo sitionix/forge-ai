@@ -1,15 +1,16 @@
 package com.sitionix.forgeai.application.laneexecution;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.application.agentexecutor.LaneCompletionContractResolver;
-import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadFieldContract;
-import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadObjectContract;
-import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadValueType;
+import com.sitionix.forgeai.domain.model.lanecompletion.ScopeMismatchException;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
+import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
+import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.repository.CompletionPayloadContractRepository;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
 import java.util.LinkedHashMap;
@@ -25,7 +26,8 @@ class CompletionPayloadContractValidatorTest {
 
     private final FakeLaneRepository laneRepository = new FakeLaneRepository();
     private final FakeContractResolver contractResolver = new FakeContractResolver();
-    private final FakeCompletionPayloadContractRepository contractRepository = new FakeCompletionPayloadContractRepository();
+    private final CompletionPayloadContractRepository contractRepository =
+            new TestCompletionPayloadContractRepository(new ObjectMapper());
     private final CompletionPayloadContractValidator validator = new CompletionPayloadContractValidator(
             new CompletionPayloadContractBuilder(this.laneRepository, this.contractResolver, this.contractRepository),
             this.contractRepository
@@ -85,6 +87,34 @@ class CompletionPayloadContractValidatorTest {
                 .hasMessageContaining("Missing required field: outputs.payload.qualityFocus");
     }
 
+    @Test
+    void givenPerScopeSourceAndGlobalTarget_whenPayloadScopeMatchesSourceScope_thenAccept() {
+        this.laneRepository.targetLanes = List.of(Lane.builder()
+                .id(UUID.randomUUID())
+                .agent(Agent.API)
+                .scope(ScopeMode.GLOBAL_SCOPE)
+                .build());
+
+        this.validator.validate(this.architectLane(), Map.of("outputs", List.of(
+                this.output("api", ScopeMode.GLOBAL_SCOPE, true, this.apiPayload("backendforfrontendservice-sox"))
+        )));
+    }
+
+    @Test
+    void givenPerScopeSourceAndGlobalTarget_whenPayloadScopeUsesRoutingScope_thenReject() {
+        this.laneRepository.targetLanes = List.of(Lane.builder()
+                .id(UUID.randomUUID())
+                .agent(Agent.API)
+                .scope(ScopeMode.GLOBAL_SCOPE)
+                .build());
+
+        assertThatThrownBy(() -> this.validator.validate(this.architectLane(), Map.of("outputs", List.of(
+                this.output("api", ScopeMode.GLOBAL_SCOPE, true, this.apiPayload(ScopeMode.GLOBAL_SCOPE))
+        ))))
+                .isInstanceOf(ScopeMismatchException.class)
+                .hasMessageContaining("Completion payload scope mismatch: expected=backendforfrontendservice-sox, actual=GLOBAL");
+    }
+
     private ReadyToStartLane lane() {
         return ReadyToStartLane.builder()
                 .ticketId(UUID.randomUUID())
@@ -93,6 +123,17 @@ class CompletionPayloadContractValidatorTest {
                 .agent(Agent.ANALYZER)
                 .scope("automationservice-sox")
                 .serviceId("automationservice-sox")
+                .build();
+    }
+
+    private ReadyToStartLane architectLane() {
+        return ReadyToStartLane.builder()
+                .ticketId(UUID.randomUUID())
+                .ticketKey("SITIONIX-1")
+                .laneId(UUID.fromString("22222222-2222-2222-2222-222222222222"))
+                .agent(Agent.ARCHITECT)
+                .scope("backendforfrontendservice-sox")
+                .serviceId("bffssox")
                 .build();
     }
 
@@ -112,6 +153,10 @@ class CompletionPayloadContractValidatorTest {
         final Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("scope", "automationservice-sox");
         payload.put("requirements", List.of("Add API contract."));
+        payload.put("constraints", List.of("Preserve API-first flow."));
+        payload.put("nonGoals", List.of("Do not implement runtime execution."));
+        payload.put("risks", List.of("Contract drift."));
+        payload.put("dependencies", List.of("BFF client generation."));
         return payload;
     }
 
@@ -119,11 +164,33 @@ class CompletionPayloadContractValidatorTest {
         final Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("scope", "automationservice-sox");
         payload.put("requirements", List.of("Cover API contract."));
+        payload.put("constraints", List.of("Use existing IT style."));
+        payload.put("nonGoals", List.of("Do not request UI tests for backend-only work."));
+        payload.put("risks", List.of("Regression in API mapping."));
+        payload.put("dependencies", List.of("Generated API DTOs."));
         payload.put("qualityFocus", List.of("Contract compatibility."));
+        payload.put("edgeConsiderations", List.of("Unknown project."));
+        return payload;
+    }
+
+    private Map<String, Object> apiPayload(final String scope) {
+        final Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("required", true);
+        payload.put("reason", "BFF API endpoints required");
+        payload.put("scope", scope);
+        payload.put("summary", "Add BFF flow endpoints");
+        payload.put("operations", List.of());
+        payload.put("consumers", List.of("sitionix-spa"));
+        payload.put("notes", List.of("Generate client from contract"));
         return payload;
     }
 
     private static final class FakeLaneRepository implements LaneRepository {
+
+        private List<Lane> targetLanes = List.of(
+                Lane.builder().id(UUID.randomUUID()).agent(Agent.ARCHITECT).scope("automationservice-sox").build(),
+                Lane.builder().id(UUID.randomUUID()).agent(Agent.QA_LEAD).scope("automationservice-sox").build()
+        );
 
         @Override
         public Lane findLaneToProduce(final UUID relatedLaneId, final String scope, final Agent agent) {
@@ -146,10 +213,7 @@ class CompletionPayloadContractValidatorTest {
 
         @Override
         public List<Lane> findCompletionTargetLanes(final UUID sourceLaneId) {
-            return List.of(
-                    Lane.builder().id(UUID.randomUUID()).agent(Agent.ARCHITECT).scope("automationservice-sox").build(),
-                    Lane.builder().id(UUID.randomUUID()).agent(Agent.QA_LEAD).scope("automationservice-sox").build()
-            );
+            return this.targetLanes;
         }
     }
 
@@ -159,6 +223,7 @@ class CompletionPayloadContractValidatorTest {
         public Class<? extends AgentTicketPayload> inputPayloadType(final Agent sourceAgent, final Agent targetAgent) {
             return switch (targetAgent) {
                 case ARCHITECT -> ArchitectPayload.class;
+                case API -> ApiPayload.class;
                 case QA_LEAD -> QaLeadPayload.class;
                 default -> throw new IllegalArgumentException("Unexpected target agent: " + targetAgent);
             };
@@ -182,50 +247,6 @@ class CompletionPayloadContractValidatorTest {
         @Override
         public Optional<Class<? extends AgentTicketPayload>> completionReportPayloadType(final Agent agent) {
             return Optional.empty();
-        }
-    }
-
-    private static final class FakeCompletionPayloadContractRepository implements CompletionPayloadContractRepository {
-
-        @Override
-        public CompletionPayloadObjectContract findByType(final Class<?> payloadType) {
-            return this.findByTypeName(payloadType.getSimpleName());
-        }
-
-        @Override
-        public CompletionPayloadObjectContract findByTypeName(final String payloadType) {
-            return switch (payloadType) {
-                case "ArchitectPayload" -> new CompletionPayloadObjectContract(
-                        payloadType,
-                        "Architect task input.",
-                        List.of(
-                                field("scope", CompletionPayloadValueType.STRING),
-                                field("requirements", CompletionPayloadValueType.ARRAY)
-                        )
-                );
-                case "QaLeadPayload" -> new CompletionPayloadObjectContract(
-                        payloadType,
-                        "QA lead task input.",
-                        List.of(
-                                field("scope", CompletionPayloadValueType.STRING),
-                                field("requirements", CompletionPayloadValueType.ARRAY),
-                                field("qualityFocus", CompletionPayloadValueType.ARRAY)
-                        )
-                );
-                default -> throw new IllegalArgumentException("Unexpected payloadType=" + payloadType);
-            };
-        }
-
-        private static CompletionPayloadFieldContract field(final String name, final CompletionPayloadValueType type) {
-            return new CompletionPayloadFieldContract(
-                    name,
-                    type,
-                    true,
-                    "Test field.",
-                    type == CompletionPayloadValueType.ARRAY ? CompletionPayloadValueType.STRING : null,
-                    null,
-                    null
-            );
         }
     }
 }

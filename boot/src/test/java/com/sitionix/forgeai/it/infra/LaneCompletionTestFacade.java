@@ -47,6 +47,7 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.TestUnitPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.UnitTestSonar;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.CompleteLaneCompletion;
@@ -161,8 +162,8 @@ public class LaneCompletionTestFacade {
         final CompletionOverrides overrides = new CompletionOverrides()
                 .scope(Agent.IMPLEMENT_BE, request.getImplementationHandoff() == null ? null : request.getImplementationHandoff().getScope())
                 .scope(Agent.IMPLEMENT_FE, request.getImplementationHandoff() == null ? null : request.getImplementationHandoff().getScope())
-                .scope(Agent.API, request.getApiRequest() == null ? null : request.getApiRequest().getScope())
-                .scope(Agent.EVENT, request.getEventRequest() == null ? null : request.getEventRequest().getScope())
+                .payloadScope(Agent.API, request.getApiRequest() == null ? null : request.getApiRequest().getScope())
+                .payloadScope(Agent.EVENT, request.getEventRequest() == null ? null : request.getEventRequest().getScope())
                 .payload(Agent.IMPLEMENT_BE, request.getImplementationHandoff() == null ? null : this.implementBeTicketPayloadApiMapper.asImplementBePayload(request.getImplementationHandoff()))
                 .payload(Agent.IMPLEMENT_FE, request.getImplementationHandoff() == null ? null : this.implementFeTicketPayloadApiMapper.asImplementFePayload(request.getImplementationHandoff()))
                 .payload(Agent.API, request.getApiRequest() == null ? null : this.apiTicketPayloadApiMapper.asApiPayload(request.getApiRequest()))
@@ -316,10 +317,11 @@ public class LaneCompletionTestFacade {
                                         final Lane targetLane,
                                         final CompletionOverrides overrides) {
         final String outputScope = overrides.scope(sourceLane, targetLane);
+        final String payloadScope = overrides.payloadScope(sourceLane, targetLane);
         final Boolean required = overrides.required(targetLane);
         final Map<String, Object> payload = Boolean.FALSE.equals(required)
                 ? null
-                : this.targetPayload(sourceLane, targetLane, outputScope, overrides);
+                : this.targetPayload(sourceLane, targetLane, payloadScope, overrides);
         return new LaneCompletionOutput(targetLane.getAgent().getId(), outputScope, required, payload);
     }
 
@@ -330,19 +332,19 @@ public class LaneCompletionTestFacade {
 
     private Map<String, Object> targetPayload(final Lane sourceLane,
                                               final Lane targetLane,
-                                              final String outputScope,
+                                              final String payloadScope,
                                               final CompletionOverrides overrides) {
         final Class<? extends AgentTicketPayload> payloadType =
                 this.laneCompletionContractResolver.inputPayloadType(sourceLane.getAgent(), targetLane.getAgent());
         if (Objects.equals(sourceLane.getAgent(), Agent.API)
                 && (Objects.equals(payloadType, ImplementBePayload.class) || Objects.equals(payloadType, ImplementFePayload.class))) {
-            return this.apiImplementationPayload(targetLane, outputScope, overrides.apiEvidence());
+            return this.apiImplementationPayload(targetLane, payloadScope, overrides.apiEvidence());
         }
         final Object overriddenPayload = overrides.payload(targetLane);
         if (overriddenPayload != null) {
             return this.asMap(overriddenPayload);
         }
-        return this.samplePayload(payloadType, outputScope);
+        return this.samplePayload(payloadType, payloadScope);
     }
 
     private void complete(final UUID ticketId,
@@ -744,6 +746,7 @@ public class LaneCompletionTestFacade {
 
     private final class CompletionOverrides {
         private final Map<Agent, String> scopes = new EnumMap<>(Agent.class);
+        private final Map<Agent, String> payloadScopes = new EnumMap<>(Agent.class);
         private final Map<Agent, Boolean> required = new EnumMap<>(Agent.class);
         private final Map<Agent, Object> payloads = new EnumMap<>(Agent.class);
         private ApiCompletionEvidence apiEvidence;
@@ -753,6 +756,13 @@ public class LaneCompletionTestFacade {
         CompletionOverrides scope(final Agent agent, final String scope) {
             if (scope != null) {
                 this.scopes.put(agent, scope);
+            }
+            return this;
+        }
+
+        CompletionOverrides payloadScope(final Agent agent, final String scope) {
+            if (scope != null) {
+                this.payloadScopes.put(agent, scope);
             }
             return this;
         }
@@ -793,6 +803,24 @@ public class LaneCompletionTestFacade {
                 return this.sourceScope;
             }
             return this.scopes.getOrDefault(targetLane.getAgent(), this.allScopes == null ? targetLane.getScope() : this.allScopes);
+        }
+
+        String payloadScope(final Lane sourceLane, final Lane targetLane) {
+            if (this.sourceScope != null) {
+                return this.sourceScope;
+            }
+            final String explicitPayloadScope = this.payloadScopes.get(targetLane.getAgent());
+            if (explicitPayloadScope != null) {
+                return explicitPayloadScope;
+            }
+            if (this.allScopes != null) {
+                return this.allScopes;
+            }
+            if (Objects.equals(targetLane.getScope(), ScopeMode.GLOBAL_SCOPE)
+                    && !Objects.equals(sourceLane.getScope(), ScopeMode.GLOBAL_SCOPE)) {
+                return sourceLane.getScope();
+            }
+            return targetLane.getScope();
         }
 
         Object payload(final Lane targetLane) {

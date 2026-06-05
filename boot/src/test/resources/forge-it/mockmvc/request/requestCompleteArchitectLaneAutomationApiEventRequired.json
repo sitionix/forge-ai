@@ -15,7 +15,7 @@
   "apiRequest": {
     "required": true,
     "reason": "required",
-    "scope": "GLOBAL",
+    "scope": "automationservice-sox",
     "summary": "api summary",
     "operations": [
       {
@@ -50,7 +50,7 @@
   "eventRequest": {
     "required": true,
     "reason": "required",
-    "scope": "GLOBAL",
+    "scope": "automationservice-sox",
     "summary": "event summary",
     "eventName": "AgentActionCreated",
     "payloadFields": [

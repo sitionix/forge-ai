@@ -68,7 +68,7 @@ public class TicketOperatorEventService {
             return !"AGENT_MESSAGE_DELTA".equals(event.getEventType());
         }
         return switch (event.getEventType()) {
-            case "COMMAND_STARTED", "COMMAND_COMPLETED", "COMMAND_OUTPUT", "AGENT_MESSAGE_DELTA", "PLAN", "PROCESS_STDERR" -> false;
+            case "COMMAND_STARTED", "COMMAND_COMPLETED", "COMMAND_OUTPUT", "AGENT_MESSAGE_DELTA", "PLAN", "PROCESS_STDERR", "HEARTBEAT" -> false;
             default -> true;
         };
     }

@@ -4,7 +4,7 @@
   "agent": "REVIEWER",
   "payload": {
     "task": "Prepare reviewer execution context",
-    "scope": "GLOBAL",
+    "scope": "automationservice-sox",
     "summary": "Prepared unit test coverage and findings.",
     "affectedFiles": [
       "src/test/java/com/example/FooTest.java",

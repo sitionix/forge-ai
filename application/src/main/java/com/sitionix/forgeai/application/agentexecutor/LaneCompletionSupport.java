@@ -16,6 +16,7 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
+import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
@@ -215,7 +216,7 @@ public class LaneCompletionSupport {
                 output.payload(),
                 this.laneCompletionContractResolver.inputPayloadType(sourceLane.getAgent(), targetLane.getAgent())
         );
-        this.requireExpectedScope(targetLane, this.payloadScope(payload));
+        this.requireExpectedScope(this.expectedPayloadScope(sourceLane, targetLane), this.payloadScope(payload));
     }
 
     private AgentTicket<? extends AgentTicketPayload> asProducedTicket(final ReadyToStartLane sourceLane,
@@ -224,8 +225,12 @@ public class LaneCompletionSupport {
         final Class<? extends AgentTicketPayload> payloadType =
                 this.laneCompletionContractResolver.inputPayloadType(sourceLane.getAgent(), targetLane.getAgent());
         final AgentTicketPayload payload = this.asPayload(output.payload(), payloadType);
-        this.requireExpectedScope(targetLane, this.payloadScope(payload));
+        this.requireExpectedScope(this.expectedPayloadScope(sourceLane, targetLane), this.payloadScope(payload));
         return this.targetTicket(sourceLane, targetLane, payload);
+    }
+
+    private String expectedPayloadScope(final ReadyToStartLane sourceLane, final Lane targetLane) {
+        return ScopeMode.producedPayloadScope(sourceLane.getScope(), targetLane.getScope());
     }
 
     private AgentTicketPayload asPayload(final Map<String, Object> payload,

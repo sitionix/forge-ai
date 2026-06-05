@@ -6,9 +6,6 @@ import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.codex.ScopeContext;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
-import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadFieldContract;
-import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadObjectContract;
-import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadValueType;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
@@ -33,8 +30,9 @@ class LaneStepPromptBuilderTest {
 
     private final FakeLaneRepository laneRepository = new FakeLaneRepository();
     private final FakeLaneCompletionContractResolver laneCompletionContractResolver = new FakeLaneCompletionContractResolver();
-    private final FakeCompletionPayloadContractRepository completionPayloadContractRepository = new FakeCompletionPayloadContractRepository();
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final CompletionPayloadContractRepository completionPayloadContractRepository =
+            new TestCompletionPayloadContractRepository(this.objectMapper);
 
     private final LaneStepPromptBuilder laneStepPromptBuilder = new LaneStepPromptBuilder(
             () -> List.of("shared/common-rules.md"),
@@ -126,6 +124,31 @@ class LaneStepPromptBuilderTest {
         assertThat(prompt).contains("Concrete functional requirements");
         assertThat(prompt).doesNotContain("architectHandoff");
         assertThat(prompt).doesNotContain("qaLeadHandoff");
+    }
+
+    @Test
+    void buildStepPrompt_forPerScopeSourceAndGlobalTarget_rendersRoutingScopeAndPayloadScopeSeparately() {
+        this.laneCompletionContractResolver.registerInputPayloadType(Agent.API, ApiPayload.class);
+        this.laneRepository.producedLanes = List.of(Lane.builder()
+                .id(UUID.randomUUID())
+                .agent(Agent.API)
+                .scope("GLOBAL")
+                .build());
+
+        final String prompt = this.laneStepPromptBuilder.buildStepPrompt(
+                this.lane(),
+                this.strategy(),
+                this.strategy().getSteps().getLast(),
+                this.input(),
+                3,
+                3
+        );
+
+        assertThat(prompt).contains("\"agent\" : \"api\"");
+        assertThat(prompt).contains("\"scope\" : \"GLOBAL\"");
+        assertThat(prompt).contains("\"payloadScope\" : \"backendforfrontendservice-sox\"");
+        assertThat(prompt).contains("\"payload\" : {");
+        assertThat(prompt).contains("\"scope\" : \"backendforfrontendservice-sox\"");
     }
 
     private ReadyToStartLane lane() {
@@ -256,47 +279,6 @@ class LaneStepPromptBuilderTest {
         @Override
         public Optional<Class<? extends AgentTicketPayload>> completionReportPayloadType(final Agent agent) {
             return Optional.empty();
-        }
-    }
-
-    private static final class FakeCompletionPayloadContractRepository implements CompletionPayloadContractRepository {
-
-        private final CompletionPayloadObjectContract architectPayload = new CompletionPayloadObjectContract(
-                "ArchitectPayload",
-                "Analyzer output for architect lane.",
-                List.of(
-                        new CompletionPayloadFieldContract(
-                                "scope",
-                                CompletionPayloadValueType.STRING,
-                                true,
-                                "Exact target service scope.",
-                                null,
-                                null,
-                                null
-                        ),
-                        new CompletionPayloadFieldContract(
-                                "requirements",
-                                CompletionPayloadValueType.ARRAY,
-                                true,
-                                "Concrete functional requirements.",
-                                CompletionPayloadValueType.STRING,
-                                null,
-                                null
-                        )
-                )
-        );
-
-        @Override
-        public CompletionPayloadObjectContract findByType(final Class<?> payloadType) {
-            return this.findByTypeName(payloadType.getSimpleName());
-        }
-
-        @Override
-        public CompletionPayloadObjectContract findByTypeName(final String payloadType) {
-            if ("ArchitectPayload".equals(payloadType)) {
-                return this.architectPayload;
-            }
-            throw new IllegalArgumentException("Unexpected payloadType=" + payloadType);
         }
     }
 }

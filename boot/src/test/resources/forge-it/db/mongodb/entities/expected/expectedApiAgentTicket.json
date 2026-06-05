@@ -5,7 +5,7 @@
   "payload": {
     "required": true,
     "reason": "required",
-    "scope": "GLOBAL",
+    "scope": "automationservice-sox",
     "summary": "api summary",
     "operations": [
       {
