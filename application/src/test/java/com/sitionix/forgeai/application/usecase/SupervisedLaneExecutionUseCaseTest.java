@@ -330,6 +330,13 @@ class SupervisedLaneExecutionUseCaseTest {
         }
 
         @Override
+        public List<LaneStepExecution> findStepExecutions(final UUID executionId) {
+            return this.savedStepExecutions.stream()
+                    .filter(stepExecution -> executionId.equals(stepExecution.getExecutionId()))
+                    .toList();
+        }
+
+        @Override
         public List<LaneExecution> findByTicketId(final UUID ticketId) {
             return this.savedExecutions.stream()
                     .filter(execution -> ticketId.equals(execution.getTicketId()))

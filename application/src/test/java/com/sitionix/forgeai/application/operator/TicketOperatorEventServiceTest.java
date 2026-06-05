@@ -17,7 +17,7 @@ class TicketOperatorEventServiceTest {
         final UUID ticketA = UUID.fromString("aaaaaaaa-1111-1111-1111-111111111111");
         final UUID ticketB = UUID.fromString("bbbbbbbb-1111-1111-1111-111111111111");
 
-        try (var subscription = this.service.subscribe(ticketA)) {
+        try (TicketOperatorEventService.Subscription subscription = this.service.subscribe(ticketA)) {
             final TicketOperatorEvent eventA = this.event(ticketA, "LANE_STARTED", "a");
             final TicketOperatorEvent eventB = this.event(ticketB, "LANE_STARTED", "b");
 

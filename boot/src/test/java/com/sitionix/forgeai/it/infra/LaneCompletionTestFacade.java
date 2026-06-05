@@ -72,6 +72,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.function.Consumer;
 import org.springframework.stereotype.Component;
 
@@ -563,14 +564,14 @@ public class LaneCompletionTestFacade {
     private Set<String> contractRequirements(final List<ApiCompletionContractResult> contracts) {
         return contracts.stream()
                 .map(contract -> contract.method() + " " + contract.path() + " (" + contract.operationId() + ")")
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private Set<String> contractNotes(final List<ApiCompletionContractResult> contracts) {
         return contracts.stream()
                 .filter(contract -> contract.notes() != null)
                 .flatMap(contract -> contract.notes().stream())
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private Set<String> contractDependencies(final Lane targetLane,
@@ -581,7 +582,7 @@ public class LaneCompletionTestFacade {
                 .filter(artifact -> this.artifactTargetsLane(targetLane, artifact))
                 .map(ApiCompletionGeneratedArtifact::dependency)
                 .filter(Objects::nonNull)
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private Set<String> contractAcceptanceNotes(final Lane targetLane,
@@ -592,7 +593,7 @@ public class LaneCompletionTestFacade {
                 .filter(artifact -> this.artifactTargetsLane(targetLane, artifact))
                 .filter(artifact -> artifact.notes() != null)
                 .flatMap(artifact -> artifact.notes().stream())
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private List<ApiCompletionContractResult> apiContractsForTarget(final Lane targetLane,

@@ -18,38 +18,38 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
-public interface QaLeadCompletionTicketPayloadApiMapper {
+public abstract class QaLeadCompletionTicketPayloadApiMapper {
 
     @Mapping(target = "task", expression = "java(\"Prepare unit test execution context\")")
     @Mapping(target = "scope", source = "scope")
     @Mapping(target = "summary", source = "summary")
     @Mapping(target = "unitTestNotes", source = "unitTestNotes")
-    QaLeadTestUnitPayload asTestUnitPayload(CompleteQaLeadLaneRequestDTO source);
+    public abstract QaLeadTestUnitPayload asTestUnitPayload(CompleteQaLeadLaneRequestDTO source);
 
     @Mapping(target = "task", expression = "java(\"Prepare integration test execution context\")")
     @Mapping(target = "scope", source = "scope")
     @Mapping(target = "summary", source = "summary")
     @Mapping(target = "integrationTestCases", source = "integrationTestCases")
     @Mapping(target = "unitTestNotes", source = "unitTestNotes")
-    QaLeadTestItPayload asTestItPayload(CompleteQaLeadLaneRequestDTO source);
+    public abstract QaLeadTestItPayload asTestItPayload(CompleteQaLeadLaneRequestDTO source);
 
     @Mapping(target = "task", expression = "java(\"Prepare UI test execution context\")")
     @Mapping(target = "scope", source = "scope")
     @Mapping(target = "summary", source = "summary")
     @Mapping(target = "unitTestNotes", source = "unitTestNotes")
-    QaLeadTestUiPayload asTestUiPayload(CompleteQaLeadLaneRequestDTO source);
+    public abstract QaLeadTestUiPayload asTestUiPayload(CompleteQaLeadLaneRequestDTO source);
 
-    Set<QaLeadIntegrationTestCase> asIntegrationTestCases(List<QaLeadIntegrationTestCaseDTO> source);
+    public abstract Set<QaLeadIntegrationTestCase> asIntegrationTestCases(List<QaLeadIntegrationTestCaseDTO> source);
 
-    Set<QaLeadUnitTestNote> asUnitTestNotes(List<QaLeadUnitTestNoteDTO> source);
+    public abstract Set<QaLeadUnitTestNote> asUnitTestNotes(List<QaLeadUnitTestNoteDTO> source);
 
-    QaLeadIntegrationTestCase asIntegrationTestCase(QaLeadIntegrationTestCaseDTO source);
+    public abstract QaLeadIntegrationTestCase asIntegrationTestCase(QaLeadIntegrationTestCaseDTO source);
 
-    QaLeadIntegrationFlow asIntegrationFlow(QaLeadIntegrationFlowDTO source);
+    public abstract QaLeadIntegrationFlow asIntegrationFlow(QaLeadIntegrationFlowDTO source);
 
-    Set<QaLeadDataCheck> asDataChecks(List<QaLeadDataCheckDTO> source);
+    public abstract Set<QaLeadDataCheck> asDataChecks(List<QaLeadDataCheckDTO> source);
 
-    QaLeadDataCheck asDataCheck(QaLeadDataCheckDTO source);
+    public abstract QaLeadDataCheck asDataCheck(QaLeadDataCheckDTO source);
 
-    QaLeadUnitTestNote asUnitTestNote(QaLeadUnitTestNoteDTO source);
+    public abstract QaLeadUnitTestNote asUnitTestNote(QaLeadUnitTestNoteDTO source);
 }

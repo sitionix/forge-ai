@@ -3,7 +3,7 @@
   "ticketKey": "SITIONIX-3",
   "taskDescription": "ready architect produced lanes",
   "sourceTerminalTty": "/dev/ttys999",
-  "status": "OPEN",
+  "status": "READY_TO_START",
   "lanes": [
     {
       "id": "13131313-1313-1313-1313-131313131313",

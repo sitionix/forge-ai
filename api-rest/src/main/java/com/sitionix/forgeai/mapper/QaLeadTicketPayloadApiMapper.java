@@ -6,10 +6,10 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
-public interface QaLeadTicketPayloadApiMapper {
+public abstract class QaLeadTicketPayloadApiMapper {
 
     @Mapping(target = "requirements", source = "scopeRequirements")
     @Mapping(target = "nonGoals", source = "nonGoals")
     @Mapping(target = "risks", source = "riskAreas")
-    QaLeadPayload asQaLeadPayload(AnalyzerQaLeadHandoffDTO source);
+    public abstract QaLeadPayload asQaLeadPayload(AnalyzerQaLeadHandoffDTO source);
 }

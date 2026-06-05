@@ -1,7 +1,7 @@
 package com.sitionix.forgeai.config;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
 import org.springframework.context.event.EventListener;
@@ -10,17 +10,30 @@ import org.springframework.stereotype.Component;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class OperatorUiStartupLogger {
 
     private static final String OPERATOR_UI_PATH = "/operator/index.html";
 
-    private final ServletWebServerApplicationContext webServerApplicationContext;
+    private final ObjectProvider<ServletWebServerApplicationContext> webServerApplicationContextProvider;
     private final Environment environment;
+
+    public OperatorUiStartupLogger(
+            final ObjectProvider<ServletWebServerApplicationContext> webServerApplicationContextProvider,
+            final Environment environment
+    ) {
+        this.webServerApplicationContextProvider = webServerApplicationContextProvider;
+        this.environment = environment;
+    }
 
     @EventListener(ApplicationReadyEvent.class)
     public void logOperatorUiUrl() {
-        final int port = this.webServerApplicationContext.getWebServer().getPort();
+        final ServletWebServerApplicationContext context = this.webServerApplicationContextProvider == null
+                ? null
+                : this.webServerApplicationContextProvider.getIfAvailable();
+        if (context == null || context.getWebServer() == null) {
+            return;
+        }
+        final int port = context.getWebServer().getPort();
         final String contextPath = this.environment.getProperty("server.servlet.context-path", "");
         log.info("Forge AI operator UI available at {}", this.operatorUiUrl(port, contextPath));
     }

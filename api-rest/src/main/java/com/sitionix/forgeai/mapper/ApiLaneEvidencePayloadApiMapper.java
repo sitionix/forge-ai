@@ -12,15 +12,15 @@ import org.mapstruct.Mapping;
 import org.mapstruct.Named;
 
 @Mapper(componentModel = "spring")
-public interface ApiLaneEvidencePayloadApiMapper {
+public abstract class ApiLaneEvidencePayloadApiMapper {
 
     @Mapping(target = "prUrl", source = "prUrl")
     @Mapping(target = "repo", source = "repo")
     @Mapping(target = "dependencies", source = "contracts", qualifiedByName = "toDependencies")
-    ApiLaneEvidencePayload asApiLaneEvidencePayload(CompleteApiLaneRequest source);
+    public abstract ApiLaneEvidencePayload asApiLaneEvidencePayload(CompleteApiLaneRequest source);
 
     @Named("toDependencies")
-    default List<ApiLaneEvidenceDependency> toDependencies(final List<ApiLaneContractResult> contracts) {
+    public List<ApiLaneEvidenceDependency> toDependencies(final List<ApiLaneContractResult> contracts) {
         if (contracts == null) {
             return List.of();
         }
@@ -32,7 +32,7 @@ public interface ApiLaneEvidencePayloadApiMapper {
                 .toList();
     }
 
-    default ApiLaneEvidenceDependency asApiLaneEvidenceDependency(final String scope, final ApiLaneGeneratedArtifact source) {
+    public ApiLaneEvidenceDependency asApiLaneEvidenceDependency(final String scope, final ApiLaneGeneratedArtifact source) {
         return ApiLaneEvidenceDependency.builder()
                 .scope(scope)
                 .role(source.getRole() == null ? null : source.getRole().getValue())

@@ -15,7 +15,7 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
-public interface TestItTicketPayloadApiMapper {
+public abstract class TestItTicketPayloadApiMapper {
 
     @Mapping(target = "task", expression = "java(\"Write integration tests for backend integration and persistence changes in \" + source.getScope())")
     @Mapping(target = "scope", source = "scope")
@@ -23,17 +23,17 @@ public interface TestItTicketPayloadApiMapper {
     @Mapping(target = "integrationFlows", source = "integrationFlows")
     @Mapping(target = "persistenceChanges", source = "persistenceChanges")
     @Mapping(target = "sonar", source = "sonar")
-    TestItPayload asTestItPayload(CompleteImplementBeLaneRequestDTO source);
+    public abstract TestItPayload asTestItPayload(CompleteImplementBeLaneRequestDTO source);
 
     @IterableMapping(elementTargetType = ImplementBeIntegrationFlow.class)
-    Set<ImplementBeIntegrationFlow> asIntegrationFlows(List<ImplementBeIntegrationFlowDTO> source);
+    public abstract Set<ImplementBeIntegrationFlow> asIntegrationFlows(List<ImplementBeIntegrationFlowDTO> source);
 
-    ImplementBeIntegrationFlow asIntegrationFlow(ImplementBeIntegrationFlowDTO source);
+    public abstract ImplementBeIntegrationFlow asIntegrationFlow(ImplementBeIntegrationFlowDTO source);
 
     @IterableMapping(elementTargetType = ImplementBePersistenceChange.class)
-    Set<ImplementBePersistenceChange> asPersistenceChanges(List<ImplementBePersistenceChangeDTO> source);
+    public abstract Set<ImplementBePersistenceChange> asPersistenceChanges(List<ImplementBePersistenceChangeDTO> source);
 
-    ImplementBePersistenceChange asPersistenceChange(ImplementBePersistenceChangeDTO source);
+    public abstract ImplementBePersistenceChange asPersistenceChange(ImplementBePersistenceChangeDTO source);
 
-    UnitTestSonar asUnitTestSonar(ImplementationSonarDTO source);
+    public abstract UnitTestSonar asUnitTestSonar(ImplementationSonarDTO source);
 }

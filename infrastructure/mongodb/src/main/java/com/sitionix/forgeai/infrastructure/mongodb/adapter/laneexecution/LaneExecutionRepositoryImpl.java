@@ -44,6 +44,13 @@ public class LaneExecutionRepositoryImpl implements LaneExecutionRepository {
     }
 
     @Override
+    public List<LaneStepExecution> findStepExecutions(final UUID executionId) {
+        return this.laneStepExecutionJpaRepository.findByExecutionIdOrderByStepOrderAsc(executionId).stream()
+                .map(this.laneExecutionEntityMapper::asLaneStepExecution)
+                .toList();
+    }
+
+    @Override
     public List<LaneExecution> findByTicketId(final UUID ticketId) {
         return this.laneExecutionJpaRepository.findByTicketId(ticketId).stream()
                 .map(this.laneExecutionEntityMapper::asLaneExecution)

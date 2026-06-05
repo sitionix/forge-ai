@@ -42,6 +42,11 @@ public class ManageTicketOperatorRunsUseCase implements ManageTicketOperatorRuns
     }
 
     @Override
+    public void publishEvent(final TicketOperatorEvent event) {
+        this.ticketOperatorRunService.publishEvent(event);
+    }
+
+    @Override
     public TicketOperatorRun registerWatcher(final UUID ticketId, final String watcherId, final boolean stopOnWindowClose) {
         return this.ticketOperatorRunService.registerWatcher(ticketId, watcherId, stopOnWindowClose);
     }
