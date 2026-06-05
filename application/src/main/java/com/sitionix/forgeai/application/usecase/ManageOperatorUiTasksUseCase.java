@@ -1,9 +1,16 @@
 package com.sitionix.forgeai.application.usecase;
 
+import com.sitionix.forgeai.application.operator.TicketOperatorEventService;
+import com.sitionix.forgeai.domain.exception.TicketNotFoundException;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
+import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
+import com.sitionix.forgeai.domain.repository.TicketOperatorRunRepository;
+import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.usecase.ManageOperatorUiTasks;
+import com.sitionix.forgeai.domain.usecase.ManageTicketOperatorRuns;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import java.util.Comparator;
 import java.util.List;
@@ -19,6 +26,12 @@ public class ManageOperatorUiTasksUseCase implements ManageOperatorUiTasks {
 
     private final ServicePropertiesProvider servicePropertiesProvider;
     private final StartForgeAiTask startForgeAiTask;
+    private final TicketRepository ticketRepository;
+    private final AgentTicketRepository agentTicketRepository;
+    private final LaneExecutionRepository laneExecutionRepository;
+    private final TicketOperatorRunRepository ticketOperatorRunRepository;
+    private final ManageTicketOperatorRuns manageTicketOperatorRuns;
+    private final TicketOperatorEventService ticketOperatorEventService;
 
     @Override
     public OperatorUiServiceCatalogResponse services() {
@@ -47,6 +60,23 @@ public class ManageOperatorUiTasksUseCase implements ManageOperatorUiTasks {
             throw new IllegalArgumentException("Ticket id is required");
         }
         return this.response(this.startForgeAiTask.executeOpen(ticketId));
+    }
+
+    @Override
+    public void delete(final UUID ticketId) {
+        if (ticketId == null) {
+            throw new IllegalArgumentException("Ticket id is required");
+        }
+        this.ticketRepository.findById(ticketId)
+                .orElseThrow(() -> new TicketNotFoundException(ticketId));
+        if (!this.laneExecutionRepository.findActiveExecutionsByTicketId(ticketId).isEmpty()) {
+            this.manageTicketOperatorRuns.interruptTicket(ticketId, "OPERATOR_UI_TICKET_DELETED");
+        }
+        this.agentTicketRepository.deleteByTicketId(ticketId);
+        this.laneExecutionRepository.deleteByTicketId(ticketId);
+        this.ticketOperatorRunRepository.deleteByTicketId(ticketId);
+        this.ticketRepository.deleteById(ticketId);
+        this.ticketOperatorEventService.clear(ticketId);
     }
 
     private OperatorUiServiceOption serviceOption(final Map.Entry<String, ServicePropertiesProvider.ServiceConfigView> entry) {

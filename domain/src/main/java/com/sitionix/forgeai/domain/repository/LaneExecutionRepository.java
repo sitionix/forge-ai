@@ -22,4 +22,6 @@ public interface LaneExecutionRepository {
     List<LaneExecution> findActiveExecutions();
 
     List<LaneExecution> findActiveExecutionsByTicketId(UUID ticketId);
+
+    void deleteByTicketId(UUID ticketId);
 }

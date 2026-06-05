@@ -80,4 +80,15 @@ public class LaneExecutionRepositoryImpl implements LaneExecutionRepository {
                 .map(this.laneExecutionEntityMapper::asLaneExecution)
                 .toList();
     }
+
+    @Override
+    public void deleteByTicketId(final UUID ticketId) {
+        final List<UUID> executionIds = this.laneExecutionJpaRepository.findByTicketId(ticketId).stream()
+                .map(document -> document.getId())
+                .toList();
+        if (!executionIds.isEmpty()) {
+            this.laneStepExecutionJpaRepository.deleteByExecutionIdIn(executionIds);
+        }
+        this.laneExecutionJpaRepository.deleteByTicketId(ticketId);
+    }
 }

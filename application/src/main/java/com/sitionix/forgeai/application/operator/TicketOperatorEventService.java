@@ -47,6 +47,11 @@ public class TicketOperatorEventService {
         }
     }
 
+    public void clear(final UUID ticketId) {
+        this.recentEvents.remove(ticketId);
+        this.subscribers.remove(ticketId);
+    }
+
     public Subscription subscribe(final UUID ticketId) {
         final BlockingQueue<TicketOperatorEvent> queue = new LinkedBlockingQueue<>();
         this.subscribers.computeIfAbsent(ticketId, ignored -> new CopyOnWriteArrayList<>()).add(queue);

@@ -175,6 +175,13 @@
     return response.json();
   }
 
+  async function deleteResource(path) {
+    const response = await fetch(`${apiBase}${path}`, { method: 'DELETE' });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+  }
+
   function pill(label, value) {
     return `<span class="pill ${statusClass(value)}">${escapeHtml(label)}</span>`;
   }
@@ -222,21 +229,49 @@
       }
       list.innerHTML = tickets.map((ticket) => {
         const key = ticket.ticketKey || ticket.ticketId;
+        const ticketId = ticket.ticketId || '';
         return `
-          <a class="ticket-card" href="./ticket.html?ticketId=${encodeURIComponent(ticket.ticketId)}">
-            <div>
+          <article class="ticket-card">
+            <a class="ticket-card-main" href="./ticket.html?ticketId=${encodeURIComponent(ticketId)}">
               <div class="ticket-key">
                 <strong>${escapeHtml(key)}</strong>
                 ${pill(ticket.status || 'UNKNOWN', ticket.status)}
                 ${ticket.operatorStatus ? pill(ticket.operatorStatus, ticket.operatorStatus) : ''}
               </div>
-              <p class="ticket-preview">${escapeHtml(ticket.taskPreview || ticket.ticketId)}</p>
+              <p class="ticket-preview">${escapeHtml(ticket.taskPreview || ticketId)}</p>
               <p class="ticket-preview">created ${escapeHtml(fmtDate(ticket.createdAt))}</p>
-            </div>
+            </a>
             <div class="pill-row">${countPills(ticket.laneCounts)}</div>
-          </a>
+            <button
+              class="ticket-delete"
+              type="button"
+              data-delete-ticket="${escapeHtml(ticketId)}"
+              data-delete-label="${escapeHtml(key)}"
+              aria-label="Delete ticket ${escapeHtml(key)}"
+              title="Delete ticket"
+            >&#128465;</button>
+          </article>
         `;
       }).join('');
+    } catch (error) {
+      setError('ticketListError', error);
+    }
+  }
+
+  async function deleteTicket(ticketId, label) {
+    if (!ticketId) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete ticket ${label || ticketId}?\n\nThis will stop active work for this ticket and remove it from the operator UI.`
+    );
+    if (!confirmed) {
+      return;
+    }
+    setError('ticketListError', null);
+    try {
+      await deleteResource(`/tickets/${encodeURIComponent(ticketId)}`);
+      await loadTickets();
     } catch (error) {
       setError('ticketListError', error);
     }
@@ -1299,6 +1334,15 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
 
   if (page === 'tickets') {
     document.getElementById('refreshTickets')?.addEventListener('click', loadTickets);
+    document.getElementById('ticketList')?.addEventListener('click', (event) => {
+      const button = event.target.closest?.('[data-delete-ticket]');
+      if (!button) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      deleteTicket(button.dataset.deleteTicket, button.dataset.deleteLabel);
+    });
     loadTickets();
     setInterval(loadTickets, 5000);
   }

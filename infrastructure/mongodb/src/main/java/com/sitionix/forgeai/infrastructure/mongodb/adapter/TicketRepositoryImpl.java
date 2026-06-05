@@ -47,6 +47,11 @@ public class TicketRepositoryImpl implements TicketRepository {
     }
 
     @Override
+    public void deleteById(final UUID ticketId) {
+        this.ticketRepository.deleteById(ticketId);
+    }
+
+    @Override
     public List<Ticket> findRecent(final int limit) {
         final Query query = new Query()
                 .with(Sort.by(Sort.Direction.DESC, "createdAt"))

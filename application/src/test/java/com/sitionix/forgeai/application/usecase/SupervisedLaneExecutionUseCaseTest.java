@@ -358,6 +358,16 @@ class SupervisedLaneExecutionUseCaseTest {
                     .toList();
         }
 
+        @Override
+        public void deleteByTicketId(final UUID ticketId) {
+            final List<UUID> executionIds = this.savedExecutions.stream()
+                    .filter(execution -> ticketId.equals(execution.getTicketId()))
+                    .map(LaneExecution::getId)
+                    .toList();
+            this.savedExecutions.removeIf(execution -> ticketId.equals(execution.getTicketId()));
+            this.savedStepExecutions.removeIf(stepExecution -> executionIds.contains(stepExecution.getExecutionId()));
+        }
+
         List<LaneExecution> savedExecutions() {
             return this.savedExecutions;
         }

@@ -19,6 +19,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -115,6 +116,18 @@ class OperatorUiControllerIT extends AbstractForgeAiIT {
 
         assertThat(this.ticketJpaRepository.findById(ticketId).orElseThrow().getStatus())
                 .isEqualTo(TicketStatus.READY_TO_START);
+
+        this.mockMvc.perform(delete("/api/v1/forge-ai/operator/ui/tickets/{ticketId}", ticketId)
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isNoContent());
+
+        assertThat(this.ticketJpaRepository.findById(ticketId)).isEmpty();
+
+        this.mockMvc.perform(delete("/api/v1/forge-ai/operator/ui/tickets/{ticketId}", ticketId)
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(404))
+                .andExpect(jsonPath("$.title").value("NOT_FOUND"));
     }
 
     @Test

@@ -14,4 +14,6 @@ public interface LaneExecutionJpaRepository extends MongoRepository<LaneExecutio
     List<LaneExecutionDocument> findByTicketId(UUID ticketId);
 
     List<LaneExecutionDocument> findByTicketIdAndStatusNotIn(UUID ticketId, Collection<LaneExecutionStatus> statuses);
+
+    void deleteByTicketId(UUID ticketId);
 }

@@ -51,6 +51,11 @@ public class AgentTicketRepositoryImpl implements AgentTicketRepository {
     }
 
     @Override
+    public void deleteByTicketId(final UUID ticketId) {
+        this.agentTicketJpaRepository.deleteByTicketId(ticketId);
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
     public <P extends AgentTicketPayload> Optional<AgentTicket<P>> findById(final UUID id, final Class<P> payloadType) {
         return this.findById(id)

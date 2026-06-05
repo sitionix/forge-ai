@@ -29,6 +29,11 @@ public class TicketOperatorRunRepositoryImpl implements TicketOperatorRunReposit
     }
 
     @Override
+    public void deleteByTicketId(final UUID ticketId) {
+        this.repository.deleteById(ticketId);
+    }
+
+    @Override
     public List<TicketOperatorRun> findActiveRuns() {
         return this.repository.findByStatusNotIn(List.of(
                         TicketOperatorRunStatus.CANCELLED,

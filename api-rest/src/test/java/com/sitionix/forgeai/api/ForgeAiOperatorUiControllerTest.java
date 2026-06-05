@@ -27,6 +27,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -119,6 +120,14 @@ class ForgeAiOperatorUiControllerTest {
 
         assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(result.getBody()).isSameAs(responseDto);
+    }
+
+    @Test
+    void givenTicketId_whenDeleteOperatorUiTicket_thenDelegateToUseCase() {
+        final ResponseEntity<Void> result = this.controller.deleteOperatorUiTicket(TICKET_ID);
+
+        assertThat(result.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+        verify(this.manageOperatorUiTasks).delete(TICKET_ID);
     }
 
     @Test

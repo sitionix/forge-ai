@@ -12,6 +12,8 @@ public interface ManageOperatorUiTasks {
 
     OperatorUiTaskMutationResponse execute(UUID ticketId);
 
+    void delete(UUID ticketId);
+
     record OperatorUiServiceCatalogResponse(List<OperatorUiServiceOption> services) {
     }
 

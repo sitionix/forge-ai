@@ -57,6 +57,12 @@ public class ForgeAiOperatorUiController implements ForgeAiOperatorUiApi {
     }
 
     @Override
+    public ResponseEntity<Void> deleteOperatorUiTicket(final UUID ticketId) {
+        this.manageOperatorUiTasks.delete(ticketId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @Override
     public ResponseEntity<OperatorUiTicketGraphResponseDTO> getOperatorUiTicketGraph(final UUID ticketId) {
         return ResponseEntity.ok(this.forgeAiOperatorApiMapper.asOperatorUiTicketGraphResponse(
                 this.getOperatorUiReadModel.graph(ticketId)

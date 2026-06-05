@@ -19,5 +19,7 @@ public interface AgentTicketRepository {
 
     List<AgentTicket<AgentTicketPayload>> findByIds(Collection<UUID> ids);
 
+    void deleteByTicketId(UUID ticketId);
+
     <P extends AgentTicketPayload> Optional<AgentTicket<P>> findById(UUID id, Class<P> payloadType);
 }
