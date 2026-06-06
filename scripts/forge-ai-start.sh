@@ -327,6 +327,27 @@ start_task() {
     -H "X-Terminal-TTY: ${source_tty}" \
     -d "$payload")"
   printf '%s\n' "$response"
+
+  local created_ticket_id
+  local created_ticket_key
+  local watcher_id
+  created_ticket_id="$(jq -r '.id // .ticketId // empty' <<<"$response")"
+  created_ticket_key="$(jq -r '.ticket // .ticketKey // empty' <<<"$response")"
+  watcher_id="$(uuidgen)"
+  if [[ -n "$created_ticket_id" ]]; then
+    local existing_watcher_id
+    existing_watcher_id="$(curl -fsS "${url}/api/v1/forge-ai/operator/tickets/${created_ticket_id}" | jq -r '.run.watcherId // empty' 2>/dev/null || true)"
+    if [[ -n "$existing_watcher_id" ]]; then
+      echo "[forge-ai-start] ticket terminal already requested for ticketId=${created_ticket_id}, watcherId=${existing_watcher_id}"
+    else
+      echo "[forge-ai-start] opening ticket terminal for ticketId=${created_ticket_id}"
+      if ! bash "${SCRIPT_DIR}/forge-ai-open-ticket-terminal.sh" "$created_ticket_id" "$url" "$watcher_id" "minimal" "${created_ticket_key:-$created_ticket_id}"; then
+        echo "[forge-ai-start] Manual watcher command:"
+        echo "scripts/forge-ai-watch-ticket.sh ${created_ticket_id} ${url} ${watcher_id} minimal"
+      fi
+    fi
+  fi
+
   if [[ "$FORGE_AI_STARTED_LOCAL_THIS_RUN" == "1" ]]; then
     echo "[forge-ai-start] Forge AI app log tail:"
     tail -n 40 "$FORGE_AI_LOG_FILE" || true

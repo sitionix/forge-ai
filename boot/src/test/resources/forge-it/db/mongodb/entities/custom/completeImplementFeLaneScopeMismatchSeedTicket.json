@@ -24,6 +24,22 @@
           "scope": "GLOBAL"
         }
       ]
+    },
+    {
+      "id": "b3333333-3333-3333-3333-333333333333",
+      "type": "TEST_UI",
+      "agent": "TEST_UI",
+      "scope": "sitionix-spa",
+      "serviceId": "sitionix-spa",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_FE",
+          "scope": "sitionix-spa"
+        }
+      ]
     }
   ],
   "createdAt": "2026-01-01T10:00:00",

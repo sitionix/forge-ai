@@ -1,12 +1,21 @@
 package com.sitionix.forgeai.it.infra;
 
+import com.sitionix.forgeai.domain.model.codex.CodexSession;
+import com.sitionix.forgeai.domain.model.codex.CodexSessionStartCommand;
+import com.sitionix.forgeai.domain.model.codex.CodexTurnCommand;
+import com.sitionix.forgeai.domain.model.codex.CodexTurnResponse;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -16,84 +25,226 @@ import org.springframework.stereotype.Component;
 @Profile("it")
 public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
 
-    private final Map<String, ConcurrentLinkedQueue<String>> outputs = new ConcurrentHashMap<>();
-    private final List<String> sentMessages = new CopyOnWriteArrayList<>();
-    private final List<String> startedMessages = new CopyOnWriteArrayList<>();
+    private static final Pattern STEP_ID_PATTERN = Pattern.compile("(?m)^- stepId:\\s*([^\\r\\n]+)\\s*$");
+    private static final Pattern AGENT_ID_PATTERN = Pattern.compile("(?m)^- agentId:\\s*([^\\r\\n]+)\\s*$");
+    private static final Pattern SCOPE_PATTERN = Pattern.compile("(?m)^- scope:\\s*([^\\r\\n]+)\\s*$");
+    private static final Pattern JSON_SCOPE_PATTERN = Pattern.compile("\"scope\"\\s*:\\s*\"([^\"]*)\"");
+    private static final Pattern SAMPLE_SCOPE_PATTERN = Pattern.compile("(\"scope\"\\s*:\\s*)\"\\.\\.\\.\"");
+
+    private final Function<CodexTurnCommand, String> responsePlanner = this::defaultResponseFor;
+    private final Map<String, List<String>> history = new ConcurrentHashMap<>();
+    private final List<String> submittedPrompts = new CopyOnWriteArrayList<>();
+    private final List<String> interruptedTurns = new CopyOnWriteArrayList<>();
 
     @Override
-    public String start(final String initialPrompt, final String sourceTerminalTty) {
+    public CodexSession openSession(final CodexSessionStartCommand command) {
         final String sessionId = UUID.randomUUID().toString();
-        this.outputs.put(sessionId, new ConcurrentLinkedQueue<>());
-        this.startedMessages.add(initialPrompt);
-        final String stepId = this.extractStepId(initialPrompt);
-        if (stepId != null) {
-            this.outputs.get(sessionId).add("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + stepId + "\",\"summary\":\"done\",\"evidence\":{}}");
-        }
-        return sessionId;
+        this.history.put(sessionId, new CopyOnWriteArrayList<>());
+        return CodexSession.builder()
+                .id(sessionId)
+                .threadId("thread-" + sessionId)
+                .processPid(91342L)
+                .command(List.of("codex", "app-server", "--stdio"))
+                .cwd(System.getProperty("user.dir"))
+                .startedAt(Instant.now())
+                .codexVersion("fake")
+                .build();
     }
 
     @Override
-    public void send(final String sessionId, final String message, final String sourceTerminalTty) {
-        this.sentMessages.add(message);
-        final String stepId = this.extractStepId(message);
-        if (stepId != null) {
-            this.outputs.get(sessionId).add("{\"type\":\"LANE_STEP_DONE\",\"stepId\":\"" + stepId + "\",\"summary\":\"done\",\"evidence\":{}}");
-        }
+    public CodexTurnResponse submitTurn(final String sessionId, final CodexTurnCommand command) {
+        this.ensureSession(sessionId);
+        this.history.get(sessionId).add("service:" + command.prompt());
+        this.submittedPrompts.add(command.prompt());
+        final String response = this.responsePlanner.apply(command);
+        this.history.get(sessionId).add("assistant:" + response);
+        return CodexTurnResponse.builder()
+                .sessionId(sessionId)
+                .threadId("thread-" + sessionId)
+                .turnId(UUID.randomUUID().toString())
+                .assistantResponse(response)
+                .build();
     }
 
     @Override
-    public String waitForOutput(final String sessionId, final long timeoutMs) {
-        final String output = this.outputs.get(sessionId).poll();
-        if (output == null) {
-            throw new IllegalStateException("No output queued for sessionId=" + sessionId);
-        }
-        return output;
+    public void closeSession(final String sessionId) {
+        this.history.remove(sessionId);
     }
 
     @Override
-    public boolean isAlive(final String sessionId) {
-        return this.outputs.containsKey(sessionId);
+    public void interruptTurn(final String sessionId, final String turnId, final Duration timeout) {
+        this.history.computeIfAbsent(sessionId, ignored -> new CopyOnWriteArrayList<>());
+        this.interruptedTurns.add(turnId);
     }
 
-    @Override
-    public void close(final String sessionId) {
-        this.outputs.remove(sessionId);
+    public List<String> history(final String sessionId) {
+        return List.copyOf(this.history.getOrDefault(sessionId, List.of()));
+    }
+
+    public List<String> submittedPrompts() {
+        return List.copyOf(this.submittedPrompts);
     }
 
     public List<String> sentMessages() {
-        return List.copyOf(this.sentMessages);
+        return this.submittedPrompts();
+    }
+
+    public void clearSubmittedPrompts() {
+        this.submittedPrompts.clear();
     }
 
     public void clearSentMessages() {
-        this.sentMessages.clear();
+        this.clearSubmittedPrompts();
     }
 
     public List<String> startedMessages() {
-        return List.copyOf(this.startedMessages);
+        return List.of();
     }
 
     public void clearStartedMessages() {
-        this.startedMessages.clear();
     }
 
-    private String extractStepId(final String message) {
-        final String marker = "Step id:";
-        final int markerIndex = message.indexOf(marker);
-        if (markerIndex >= 0) {
-            final int start = markerIndex + marker.length();
-            final int lineEnd = message.indexOf('\n', start);
-            final String value = lineEnd >= 0 ? message.substring(start, lineEnd) : message.substring(start);
-            return value.trim();
+    public List<String> interruptedTurns() {
+        return List.copyOf(this.interruptedTurns);
+    }
+
+    private String defaultResponseFor(final CodexTurnCommand command) {
+        final String prompt = command == null ? "" : command.prompt();
+        final String stepId = this.matchValue(STEP_ID_PATTERN, prompt, "unknown");
+        final String agentId = this.matchValue(AGENT_ID_PATTERN, prompt, "unknown");
+        final String scope = this.matchValue(SCOPE_PATTERN, prompt, "GLOBAL");
+        final String evidence = "completion".equals(stepId)
+                ? "\"completionPayload\":" + this.completionPayload(agentId, scope, prompt)
+                : "\"detail\":\"ok\"";
+        return """
+                {
+                  "type": "LANE_STEP_DONE",
+                  "stepId": "%s",
+                  "summary": "done",
+                  "evidence": { %s }
+                }
+                """.formatted(stepId, evidence);
+    }
+
+    private String completionPayload(final String agentId, final String scope, final String prompt) {
+        final List<String> outputContracts = this.outputContracts(prompt);
+        final StringBuilder builder = new StringBuilder()
+                .append("{\n")
+                .append("  \"outputs\": [");
+        if (!outputContracts.isEmpty()) {
+            builder.append('\n')
+                    .append(String.join(",\n", outputContracts))
+                    .append('\n');
         }
-        final String jsonMarker = "\"stepId\":\"";
-        final int jsonIndex = message.indexOf(jsonMarker);
-        if (jsonIndex >= 0) {
-            final int start = jsonIndex + jsonMarker.length();
-            final int end = message.indexOf('"', start);
-            if (end > start) {
-                return message.substring(start, end);
+        builder.append("  ]");
+        if (prompt.contains("\"apiEvidence\"")) {
+            builder.append(",\n")
+                    .append("  \"apiEvidence\": {\n")
+                    .append("    \"summary\": \"Prepared API artifacts\",\n")
+                    .append("    \"prUrl\": \"https://github.com/sitionix/example/pull/1\",\n")
+                    .append("    \"repo\": \"sitionix/example\",\n")
+                    .append("    \"contracts\": []\n")
+                    .append("  }");
+        }
+        if (prompt.contains("\"report\"")) {
+            builder.append(",\n")
+                    .append("  \"report\": ")
+                    .append(this.reportPayload(agentId, scope));
+        }
+        return builder.append("\n}").toString();
+    }
+
+    private List<String> outputContracts(final String prompt) {
+        final String template = this.completionJsonTemplate(prompt);
+        final List<String> outputContracts = new ArrayList<>();
+        int searchFrom = 0;
+        while (true) {
+            final int agentPosition = template.indexOf("\"agent\"", searchFrom);
+            if (agentPosition < 0) {
+                return outputContracts;
+            }
+            final int objectStart = template.lastIndexOf('{', agentPosition);
+            final int objectEnd = this.matchingBrace(template, objectStart);
+            if (objectStart < 0 || objectEnd < 0) {
+                return outputContracts;
+            }
+            final String contract = template.substring(objectStart, objectEnd + 1).trim();
+            final String outputScope = this.matchValue(JSON_SCOPE_PATTERN, contract, "GLOBAL");
+            outputContracts.add(this.withConcretePayloadScope(contract, outputScope));
+            searchFrom = objectEnd + 1;
+        }
+    }
+
+    private String completionJsonTemplate(final String prompt) {
+        final String source = prompt == null ? "" : prompt;
+        final String startMarker = "Completion payload JSON template:";
+        final String endMarker = "Completion payload field contract:";
+        final int start = source.indexOf(startMarker);
+        if (start < 0) {
+            return source;
+        }
+        final int end = source.indexOf(endMarker, start);
+        return end < 0 ? source.substring(start) : source.substring(start, end);
+    }
+
+    private String withConcretePayloadScope(final String contract, final String scope) {
+        return SAMPLE_SCOPE_PATTERN.matcher(contract)
+                .replaceAll(match -> match.group(1) + "\"" + scope.replace("\"", "\\\"") + "\"");
+    }
+
+    private int matchingBrace(final String source, final int objectStart) {
+        if (objectStart < 0) {
+            return -1;
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = objectStart; i < source.length(); i++) {
+            final char current = source.charAt(i);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (current == '\\') {
+                escaped = inString;
+                continue;
+            }
+            if (current == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) {
+                continue;
+            }
+            if (current == '{') {
+                depth++;
+            } else if (current == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
             }
         }
-        return null;
+        return -1;
+    }
+
+    private String reportPayload(final String agentId, final String scope) {
+        return """
+                {
+                  "scope": "%s",
+                  "summary": "%s lane complete",
+                  "coveredCases": []
+                }""".formatted(scope, agentId).trim();
+    }
+
+    private String matchValue(final Pattern pattern, final String source, final String fallback) {
+        final Matcher matcher = pattern.matcher(source == null ? "" : source);
+        return matcher.find() ? matcher.group(1).trim() : fallback;
+    }
+
+    private void ensureSession(final String sessionId) {
+        if (!this.history.containsKey(sessionId)) {
+            throw new IllegalStateException("Unknown fake sessionId=" + sessionId);
+        }
     }
 }

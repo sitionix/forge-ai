@@ -6,5 +6,5 @@ import java.util.UUID;
 
 public interface ValidateApiLaneEvidence {
 
-    void validate(UUID laneId, Set<String> callbackContractScopes, ApiLaneEvidencePayload evidencePayload);
+    void validate(UUID laneId, Set<String> contractScopes, ApiLaneEvidencePayload evidencePayload);
 }

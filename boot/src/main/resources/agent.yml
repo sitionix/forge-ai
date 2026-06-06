@@ -12,6 +12,8 @@ agents:
     groups: [ backend, frontend ]
     depends_on: [ analyzer ]
     produces: [ implement_be, implement_fe, api, event ]
+    input_payloads:
+      analyzer: architect
 
   - id: api
     enabled: true
@@ -19,6 +21,11 @@ agents:
     groups: [ backend, frontend ]
     depends_on: [ architect ]
     produces: [ implement_be, implement_fe ]
+    input_payloads:
+      architect: api
+    completion:
+      requires_api_evidence: true
+      requires_output_for_every_target: false
 
   - id: event
     enabled: true
@@ -26,13 +33,20 @@ agents:
     groups: [ backend ]
     depends_on: [ architect ]
     produces: [ implement_be ]
+    input_payloads:
+      architect: event
+    completion:
+      writes_produced_lane_outputs: false
+      requires_output_for_every_target: false
 
   - id: qa_lead
     enabled: true
     scope_mode: per_scope
     groups: [ backend, frontend ]
     depends_on: [ analyzer ]
-    produces: [ test_it, test_ui ]
+    produces: [ test_unit, test_it, test_ui ]
+    input_payloads:
+      analyzer: qa_lead
 
   - id: implement_be
     enabled: true
@@ -40,6 +54,10 @@ agents:
     groups: [ backend ]
     depends_on: [ architect, api, event ]
     produces: [ test_unit, test_it ]
+    input_payloads:
+      architect: implement_be
+      api: implement_be
+      event: implement_be
 
   - id: implement_fe
     enabled: true
@@ -47,6 +65,9 @@ agents:
     groups: [ frontend ]
     depends_on: [ architect, api ]
     produces: [ test_ui ]
+    input_payloads:
+      architect: implement_fe
+      api: implement_fe
 
   - id: test_unit
     enabled: true
@@ -54,6 +75,9 @@ agents:
     groups: [ backend ]
     depends_on: [ implement_be ]
     produces: [ reviewer ]
+    input_payloads:
+      implement_be: test_unit
+      qa_lead: qa_lead_test_unit
 
   - id: test_it
     enabled: true
@@ -61,6 +85,13 @@ agents:
     groups: [ backend ]
     depends_on: [ implement_be, qa_lead ]
     produces: [ ]
+    input_payloads:
+      implement_be: test_it
+      qa_lead: qa_lead_test_it
+    completion:
+      writes_produced_lane_outputs: false
+      requires_output_for_every_target: false
+      report_payload: test_it_completion
 
   - id: test_ui
     enabled: true
@@ -68,6 +99,9 @@ agents:
     groups: [ frontend ]
     depends_on: [ implement_fe, qa_lead ]
     produces: [ ]
+    input_payloads:
+      implement_fe: test_ui
+      qa_lead: qa_lead_test_ui
 
   - id: reviewer
     enabled: true
@@ -75,3 +109,8 @@ agents:
     groups: [ backend, frontend ]
     depends_on: [ ]
     produces: [ ]
+    input_payloads:
+      test_unit: reviewer
+    completion:
+      writes_produced_lane_outputs: false
+      requires_output_for_every_target: false

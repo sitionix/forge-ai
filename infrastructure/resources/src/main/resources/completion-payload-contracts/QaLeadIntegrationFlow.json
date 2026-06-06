@@ -1,0 +1,10 @@
+{
+  "payloadType": "QaLeadIntegrationFlow",
+  "description": "Integration flow or API operation to test.",
+  "fields": [
+    { "name": "name", "type": "STRING", "required": true, "description": "Flow name." },
+    { "name": "method", "type": "STRING", "required": true, "description": "HTTP method or flow trigger method." },
+    { "name": "path", "type": "STRING", "required": true, "description": "Endpoint path or integration path." },
+    { "name": "operationId", "type": "STRING", "required": false, "description": "Contract operation id when available." }
+  ]
+}

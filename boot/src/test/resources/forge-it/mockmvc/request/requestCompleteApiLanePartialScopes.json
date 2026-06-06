@@ -61,18 +61,18 @@
           "version": "0.0.1",
           "dependency": "pnpm add @sitionix/app-afesox-bffssox-frontend-sitionix-139-unstable@0.0.1",
           "notes": [
-            "Evidence: synthetic test fixture for partial-scope API callback"
+            "Evidence: synthetic test fixture for partial-scope API completion payload"
           ],
           "runId": 1
         }
       ],
       "notes": [
-        "Scope intentionally excludes automationservice-sox to validate partial global API callback handling."
+        "Scope intentionally excludes automationservice-sox to validate partial global API completion handling."
       ]
     }
   ],
   "notes": [
-    "Partial scope callback fixture for global API lane."
+    "Partial scope completion fixture for global API lane."
   ],
   "prUrl": "https://github.com/sitionix/app-afesox/pull/143",
   "repo": "sitionix/app-afesox"

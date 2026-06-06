@@ -14,6 +14,7 @@ import java.util.Set;
 @AllArgsConstructor
 public class QaLeadPayload implements AgentTicketPayload {
 
+    private String scope;
     private Set<String> requirements;
     private Set<String> constraints;
     private Set<String> nonGoals;

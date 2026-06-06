@@ -3,12 +3,12 @@
 ## Scope
 
 Completion payload represents API lane facts only.
-Build final callback payload from the provided OpenAPI completion contract.
+Build final completion payload from the provided final-step completion payload contract.
 Use this file only for semantic content selection.
 
 ## Allowed Content
 
-Use only these semantic content groups when the OpenAPI completion contract supports them:
+Use only these semantic content groups when the final-step completion payload contract supports them:
 
 - changed contract units;
 - operation metadata;
@@ -29,7 +29,7 @@ Do not include:
 
 - implementation handoff;
 - test planning content;
-- callback transport mechanics;
+- completion transport mechanics;
 - OpenAPI request-construction mechanics;
 - retry or HTTP delivery verification rules;
 - generation target-selection logic.

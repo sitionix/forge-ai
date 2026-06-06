@@ -1,6 +1,8 @@
 package com.sitionix.forgeai.application.agentexecutor;
 
+import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
 import com.sitionix.forgeai.application.usecase.PrepareAgentExecutionInputUseCase;
+import com.sitionix.forgeai.application.usecase.SupervisedLaneExecutionUseCase;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
@@ -8,9 +10,9 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.QaLeadPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
-import com.sitionix.forgeai.domain.port.CodexClient;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
+import com.sitionix.forgeai.domain.usecase.CompleteAgentTasks;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -24,6 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -35,34 +38,43 @@ class QaLeadAgentExecutorTest {
     private PrepareAgentExecutionInputUseCase prepareAgentExecutionInputUseCase;
 
     @Mock
-    private CodexClient codexClient;
-
-    @Mock
     private AgentTicketRepository agentTicketRepository;
 
     @Mock
     private TicketRepository ticketRepository;
 
+    @Mock
+    private SupervisedLaneExecutionUseCase supervisedLaneExecutionUseCase;
+
+    private final SupervisedExecutionProperties supervisedExecutionProperties = new SupervisedExecutionProperties();
     private QaLeadAgentExecutor qaLeadAgentExecutor;
 
     @BeforeEach
     void setUp() {
+        this.supervisedExecutionProperties.setCorrectionAttempts(2);
         this.qaLeadAgentExecutor = new QaLeadAgentExecutor(
                 this.prepareAgentExecutionInputUseCase,
-                this.codexClient,
                 this.agentTicketRepository,
-                this.ticketRepository
+                this.ticketRepository,
+                this.supervisedLaneExecutionUseCase,
+                this.supervisedExecutionProperties,
+                mock(LaneCompletionSupport.class),
+                mock(CompleteAgentTasks.class)
         );
     }
 
     @AfterEach
     void tearDown() {
-        verifyNoMoreInteractions(this.prepareAgentExecutionInputUseCase, this.codexClient, this.agentTicketRepository, this.ticketRepository);
+        verifyNoMoreInteractions(
+                this.prepareAgentExecutionInputUseCase,
+                this.agentTicketRepository,
+                this.ticketRepository,
+                this.supervisedLaneExecutionUseCase
+        );
     }
 
     @Test
-    void givenReadyToStartLane_whenExecuteLane_thenSubmitQaLeadInput() {
-        //given
+    void givenReadyToStartLane_whenExecuteLane_thenUseSupervisorWithPreparedInput() {
         final UUID ticketId = UUID.randomUUID();
         final UUID laneId = UUID.randomUUID();
         final UUID inputTaskId = UUID.randomUUID();
@@ -80,7 +92,7 @@ class QaLeadAgentExecutorTest {
                 .ticketId(ticketId)
                 .laneId(laneId)
                 .build();
-        when(this.prepareAgentExecutionInputUseCase.execute(lane)).thenReturn(baseInput);
+        when(this.prepareAgentExecutionInputUseCase.executeClaimed(lane)).thenReturn(baseInput);
 
         final Lane laneState = Lane.builder()
                 .id(laneId)
@@ -104,18 +116,15 @@ class QaLeadAgentExecutorTest {
                 .build();
         when(this.prepareAgentExecutionInputUseCase.enrichWithTasks(lane, baseInput, Set.of(payload))).thenReturn(enrichedInput);
 
-        //when
         this.qaLeadAgentExecutor.executeLane(lane);
 
-        //then
-        verify(this.prepareAgentExecutionInputUseCase).execute(lane);
+        verify(this.prepareAgentExecutionInputUseCase).executeClaimed(lane);
         verify(this.ticketRepository).findByLaneId(laneId);
         verify(this.agentTicketRepository).findById(inputTaskId);
         verify(this.prepareAgentExecutionInputUseCase).enrichWithTasks(lane, baseInput, Set.of(payload));
 
         final ArgumentCaptor<AgentExecutionInput> inputCaptor = ArgumentCaptor.forClass(AgentExecutionInput.class);
-        verify(this.codexClient).submit(inputCaptor.capture(), eq("/dev/ttys004"));
-        final AgentExecutionInput actual = inputCaptor.getValue();
-        assertThat(actual).isEqualTo(enrichedInput);
+        verify(this.supervisedLaneExecutionUseCase).execute(eq(lane), inputCaptor.capture(), eq(2));
+        assertThat(inputCaptor.getValue()).isEqualTo(enrichedInput);
     }
 }

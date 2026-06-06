@@ -6,6 +6,7 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -23,6 +24,9 @@ import org.springframework.stereotype.Component;
 @EnableConfigurationProperties(LaneStrategiesProperties.class)
 public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
 
+    private static final String TASKS_PLACEHOLDER = "TASKS";
+    private static final String COMPLETION_PAYLOAD_CONTRACT_PLACEHOLDER = "COMPLETION_PAYLOAD_CONTRACT";
+
     private final LaneStrategiesProperties properties;
     private final ResourceLoader resourceLoader;
     private Map<String, LaneStrategy> strategies;
@@ -30,6 +34,7 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
     @PostConstruct
     public void init() {
         this.strategies = new HashMap<>();
+        this.validateCommonInstructionRefs();
         this.properties.getConfigs().forEach((agentId, cfg) -> {
             this.validateAgent(agentId);
             this.validateSteps(agentId, cfg);
@@ -40,6 +45,8 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
                                 .id(step.getId())
                                 .title(step.getTitle())
                                 .order(i + 1)
+                                .taskPlaceholder(step.getTaskPlaceholder())
+                                .completionContractPlaceholder(step.getCompletionContractPlaceholder())
                                 .instructionRefs(List.copyOf(step.getInstructionRefs()))
                                 .build();
                     })
@@ -51,6 +58,7 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
                     .steps(steps)
                     .build());
         });
+        this.validateRequiredStrategies();
     }
 
     @Override
@@ -75,6 +83,8 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
             if (!stepIds.add(step.getId())) {
                 throw new IllegalStateException("Duplicate step id '" + step.getId() + "' for agentId=" + agentId);
             }
+            this.validateTaskPlaceholder(agentId, step);
+            this.validateCompletionContractPlaceholder(agentId, step);
             final Set<String> refs = new HashSet<>();
             step.getInstructionRefs().forEach(ref -> {
                 if (!refs.add(ref)) {
@@ -82,6 +92,43 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
                 }
                 this.validateInstructionRef(ref);
             });
+        });
+    }
+
+    private void validateTaskPlaceholder(final String agentId, final LaneStrategiesProperties.StepConfig step) {
+        if (step.getTaskPlaceholder() == null || step.getTaskPlaceholder().isBlank()) {
+            return;
+        }
+        if (!TASKS_PLACEHOLDER.equals(step.getTaskPlaceholder())) {
+            throw new IllegalStateException("Unsupported task placeholder '" + step.getTaskPlaceholder()
+                    + "' for agentId=" + agentId + ", stepId=" + step.getId());
+        }
+    }
+
+    private void validateCompletionContractPlaceholder(final String agentId, final LaneStrategiesProperties.StepConfig step) {
+        if (step.getCompletionContractPlaceholder() == null || step.getCompletionContractPlaceholder().isBlank()) {
+            return;
+        }
+        if (!COMPLETION_PAYLOAD_CONTRACT_PLACEHOLDER.equals(step.getCompletionContractPlaceholder())) {
+            throw new IllegalStateException("Unsupported completion contract placeholder '" + step.getCompletionContractPlaceholder()
+                    + "' for agentId=" + agentId + ", stepId=" + step.getId());
+        }
+        if (!"completion".equals(step.getId())) {
+            throw new IllegalStateException("Completion contract placeholder is only supported on completion step: agentId="
+                    + agentId + ", stepId=" + step.getId());
+        }
+    }
+
+    private void validateCommonInstructionRefs() {
+        if (this.properties.getCommonInstructionRefs() == null || this.properties.getCommonInstructionRefs().isEmpty()) {
+            throw new IllegalStateException("Missing common instruction refs for lane strategies");
+        }
+        final Set<String> refs = new HashSet<>();
+        this.properties.getCommonInstructionRefs().forEach(ref -> {
+            if (!refs.add(ref)) {
+                throw new IllegalStateException("Duplicate common instruction ref '" + ref + "'");
+            }
+            this.validateInstructionRef(ref);
         });
     }
 
@@ -95,5 +142,15 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
         } catch (IOException e) {
             throw new IllegalStateException("Failed to read instruction ref: " + ref, e);
         }
+    }
+
+    private void validateRequiredStrategies() {
+        Arrays.stream(Agent.values())
+                .map(Agent::getId)
+                .forEach(agentId -> {
+                    if (!this.strategies.containsKey(agentId)) {
+                        throw new IllegalStateException("Missing lane strategy for executable agentId=" + agentId);
+                    }
+                });
     }
 }

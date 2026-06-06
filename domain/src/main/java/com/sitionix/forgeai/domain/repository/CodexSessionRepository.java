@@ -1,14 +1,18 @@
 package com.sitionix.forgeai.domain.repository;
 
+import com.sitionix.forgeai.domain.model.codex.CodexSession;
+import com.sitionix.forgeai.domain.model.codex.CodexSessionStartCommand;
+import com.sitionix.forgeai.domain.model.codex.CodexTurnCommand;
+import com.sitionix.forgeai.domain.model.codex.CodexTurnResponse;
+import java.time.Duration;
+
 public interface CodexSessionRepository {
 
-    String start(String initialPrompt, String sourceTerminalTty);
+    CodexSession openSession(CodexSessionStartCommand command);
 
-    void send(String sessionId, String message, String sourceTerminalTty);
+    CodexTurnResponse submitTurn(String sessionId, CodexTurnCommand command);
 
-    String waitForOutput(String sessionId, long timeoutMs);
+    void interruptTurn(String sessionId, String turnId, Duration timeout);
 
-    boolean isAlive(String sessionId);
-
-    void close(String sessionId);
+    void closeSession(String sessionId);
 }

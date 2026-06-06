@@ -2,7 +2,7 @@
   "ticketKey": "SITIONIX-11",
   "taskDescription": "ready reviewer job",
   "sourceTerminalTty": "/dev/ttys999",
-  "status": "OPEN",
+  "status": "RESOLVED",
   "lanes": [
     {
       "type": "TEST_UNIT",
@@ -21,7 +21,7 @@
       "type": "REVIEWER",
       "scope": "GLOBAL",
       "serviceId": "global",
-      "status": "IN_PROGRESS",
+      "status": "COMPLETED",
       "attempt": 0,
       "dependsOn": [
         {

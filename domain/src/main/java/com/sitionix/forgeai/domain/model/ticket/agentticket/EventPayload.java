@@ -6,7 +6,6 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.List;
 import java.util.Set;
 
 @Data
@@ -19,7 +18,7 @@ public class EventPayload implements AgentTicketPayload {
     private String scope;
     private String summary;
     private String eventName;
-    private List<Object> payloadFields;
+    private Set<EventPayloadField> payloadFields;
     private Set<String> consumers;
     private Set<String> notes;
 }

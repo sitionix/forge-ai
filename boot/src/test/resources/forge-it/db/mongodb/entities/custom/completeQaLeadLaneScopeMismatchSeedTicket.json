@@ -37,6 +37,21 @@
     },
     {
       "id": "93333333-3333-3333-3333-333333333333",
+      "type": "TEST_UNIT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "automationservice-sox"
+        }
+      ]
+    },
+    {
+      "id": "96666666-6666-6666-6666-666666666666",
       "type": "TEST_IT",
       "scope": "automationservice-sox",
       "serviceId": "atmssox",

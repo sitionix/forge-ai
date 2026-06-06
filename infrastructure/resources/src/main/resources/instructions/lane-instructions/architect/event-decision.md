@@ -1,6 +1,6 @@
 ## Event Decision Rules
 
-Always complete the event request object according to the provided OpenAPI completion contract.
+Always prepare the event request object according to the provided final-step completion payload contract.
 
 Use `required: true` only when event boundary contract work is needed, such as:
 
@@ -41,4 +41,3 @@ Expected `required: false` shape:
   "consumers": [],
   "notes": []
 }
-

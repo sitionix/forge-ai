@@ -11,10 +11,10 @@ import com.sitionix.forgeai.domain.usecase.ValidateApiLaneEvidence;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Pattern;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.util.regex.Pattern;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -31,7 +31,7 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
     }
 
     @Override
-    public void validate(final UUID laneId, final Set<String> callbackContractScopes, final ApiLaneEvidencePayload evidencePayload) {
+    public void validate(final UUID laneId, final Set<String> contractScopes, final ApiLaneEvidencePayload evidencePayload) {
         final Lane lane = this.ticketRepository.findByLaneId(laneId)
                 .orElseThrow(() -> new ApiLaneEvidenceValidationException(
                         "api_evidence_lane_not_found",
@@ -46,14 +46,14 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
                     "Retry lane execution after lane is created and in progress."
             );
         }
-        final Set<String> callbackScopes = callbackContractScopes == null
+        final Set<String> normalizedContractScopes = contractScopes == null
                 ? Set.of()
-                : callbackContractScopes.stream()
+                : contractScopes.stream()
                 .filter(Objects::nonNull)
                 .map(String::trim)
                 .filter(value -> !value.isEmpty())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-        final Set<String> requiredScopes = callbackScopes;
+        final Set<String> requiredScopes = normalizedContractScopes;
         if (requiredScopes.isEmpty()) {
             return;
         }

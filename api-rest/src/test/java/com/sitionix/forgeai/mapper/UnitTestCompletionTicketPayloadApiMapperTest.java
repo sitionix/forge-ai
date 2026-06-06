@@ -4,6 +4,7 @@ import com.app_afesox.fgaisox.api_first.dto.CompleteUnitTestLaneRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.UnitTestSonarDTO;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ReviewerPayload;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.UnitTestSonar;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -28,14 +29,14 @@ class UnitTestCompletionTicketPayloadApiMapperTest {
         final CompleteUnitTestLaneRequestDTO source = CompleteUnitTestLaneRequestDTO.builder()
                 .scope("automationservice-sox")
                 .summary("unit summary")
-                .affectedFiles(java.util.List.of("src/test/java/com/example/FooTest.java"))
+                .affectedFiles(List.of("src/test/java/com/example/FooTest.java"))
                 .sonar(sonarDto)
                 .build();
         final ReviewerPayload expected = new ReviewerPayload(
                 "Prepare reviewer execution context",
-                "GLOBAL",
+                "automationservice-sox",
                 "unit summary",
-                java.util.List.of("src/test/java/com/example/FooTest.java"),
+                List.of("src/test/java/com/example/FooTest.java"),
                 new UnitTestSonar(91.0, 1)
         );
 

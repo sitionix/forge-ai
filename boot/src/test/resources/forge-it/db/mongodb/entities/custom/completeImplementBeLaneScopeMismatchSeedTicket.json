@@ -14,6 +14,21 @@
       "attempt": 0,
       "inputTaskIds": ["69999999-9999-9999-9999-999999999999"],
       "dependsOn": []
+    },
+    {
+      "id": "63333333-3333-3333-3333-333333333333",
+      "type": "TEST_UNIT",
+      "scope": "automationservice-sox",
+      "serviceId": "atmssox",
+      "status": "NOT_STARTED",
+      "attempt": 0,
+      "inputTaskIds": [],
+      "dependsOn": [
+        {
+          "type": "IMPLEMENT_BE",
+          "scope": "automationservice-sox"
+        }
+      ]
     }
   ],
   "createdAt": "2026-01-01T10:00:00",

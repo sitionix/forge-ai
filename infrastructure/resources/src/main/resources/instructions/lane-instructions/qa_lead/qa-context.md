@@ -51,7 +51,7 @@ Unrelated behavior is omitted.
 
 For backend scopes, prepare cases for backend integration testing.
 For frontend scopes, prepare cases for UI behavior testing.
-Use the provided OpenAPI completion contract as the source of truth for final field names and payload shape.
+Use the provided final-step completion payload contract as the source of truth for final field names and payload shape.
 
 ## Result
 

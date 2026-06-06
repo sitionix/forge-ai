@@ -7,7 +7,7 @@ If sonar coverage is less then 90%, you need to cover more to satisfy sonar
 
 ## Allowed Content
 
-Use only these content groups when supported by the OpenAPI completion contract:
+Use only these content groups when supported by the final-step completion payload contract:
 
 - `scope`;
 - `summary`;

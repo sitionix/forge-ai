@@ -1,0 +1,10 @@
+{
+  "payloadType": "EventPayloadField",
+  "description": "One field in an event payload contract.",
+  "fields": [
+    { "name": "name", "type": "STRING", "required": true, "description": "Field name as it should appear in the event schema." },
+    { "name": "required", "type": "BOOLEAN", "required": true, "description": "Whether this event field is required." },
+    { "name": "type", "type": "STRING", "required": true, "description": "Field type in event schema terms." },
+    { "name": "description", "type": "STRING", "required": true, "description": "Human-readable event field purpose and constraints." }
+  ]
+}

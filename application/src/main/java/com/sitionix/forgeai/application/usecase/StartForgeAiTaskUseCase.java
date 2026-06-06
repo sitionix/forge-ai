@@ -1,5 +1,7 @@
 package com.sitionix.forgeai.application.usecase;
 
+import com.sitionix.forgeai.application.operator.TicketOperatorRunService;
+import com.sitionix.forgeai.application.operator.TicketOperatorTerminalAutoOpenService;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.TicketStatus;
@@ -29,6 +31,9 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
 
     private final ServicePropertiesProvider props;
 
+    private final TicketOperatorRunService ticketOperatorRunService;
+    private final TicketOperatorTerminalAutoOpenService ticketOperatorTerminalAutoOpenService;
+
     @Override
     public Ticket execute(final ForgeAiStartCommand command) {
         final List<SelectedService> laneProps = command.getServiceIds().stream()
@@ -45,7 +50,10 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
                 .lanes(this.mapLane(laneProps))
                 .build();
 
-        return ticketRepository.save(ticket);
+        final Ticket saved = ticketRepository.save(ticket);
+        this.ticketOperatorRunService.initializeRun(saved);
+        this.ticketOperatorTerminalAutoOpenService.openIfConfigured(saved);
+        return saved;
     }
 
     private List<Lane> mapLane(final List<SelectedService> services) {

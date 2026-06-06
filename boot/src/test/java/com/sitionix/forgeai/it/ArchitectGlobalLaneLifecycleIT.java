@@ -1,35 +1,26 @@
 package com.sitionix.forgeai.it;
 
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
-class ArchitectGlobalLaneLifecycleIT {
+class ArchitectGlobalLaneLifecycleIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;
 
-    @MockBean
-    private TerminalTabLauncher terminalTabLauncher;
-
-    @MockBean
-    private CodexCliCommandBuilder codexCliCommandBuilder;
-
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
     @Test
     @DisplayName("Should keep API and EVENT NOT_STARTED when one of architect dependencies is still IN_PROGRESS")
     void givenTwoArchitectDependenciesAndSecondArchitectInProgress_whenCompleteFirstArchitect_thenApiAndEventStayNotStarted() {
@@ -44,13 +35,7 @@ class ArchitectGlobalLaneLifecycleIT {
                 .body("architectGlobalWaitingSeedTicket.json");
 
         //when
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeArchitectLane())
-                .withRequest("requestCompleteArchitectLaneAutomationApiEventRequired.json")
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", architectLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(architectLaneId.toString()))
-                .assertDefault();
+        this.laneCompletion.completeArchitectLane(ticketId, architectLaneId, "requestCompleteArchitectLaneAutomationApiEventRequired.json", request -> { });
 
         //then
         this.testManager.mongo()
@@ -76,13 +61,7 @@ class ArchitectGlobalLaneLifecycleIT {
                 .body("architectGlobalReadySeedTicket.json");
 
         //when
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeArchitectLane())
-                .withRequest("requestCompleteArchitectLaneBffApiEventRequired.json")
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", architectLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(architectLaneId.toString()))
-                .assertDefault();
+        this.laneCompletion.completeArchitectLane(ticketId, architectLaneId, "requestCompleteArchitectLaneBffApiEventRequired.json", request -> { });
 
         //then
         this.testManager.mongo()
@@ -108,17 +87,9 @@ class ArchitectGlobalLaneLifecycleIT {
                 .body("architectGlobalWaitingSeedTicket.json");
 
         //when
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeArchitectLane())
-                .withRequest("requestCompleteArchitectLaneAutomationApiEventRequired.json")
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", firstArchitectLaneId))
-                .assertDefault();
+        this.laneCompletion.completeArchitectLane(ticketId, firstArchitectLaneId, "requestCompleteArchitectLaneAutomationApiEventRequired.json", request -> { });
 
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeArchitectLane())
-                .withRequest("requestCompleteArchitectLaneBffApiEventRequired.json")
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", secondArchitectLaneId))
-                .assertDefault();
+        this.laneCompletion.completeArchitectLane(ticketId, secondArchitectLaneId, "requestCompleteArchitectLaneBffApiEventRequired.json", request -> { });
 
         //then
         this.testManager.mongo()

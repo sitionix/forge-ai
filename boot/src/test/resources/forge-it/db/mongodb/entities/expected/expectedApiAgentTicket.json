@@ -5,13 +5,14 @@
   "payload": {
     "required": true,
     "reason": "required",
-    "scope": "GLOBAL",
+    "scope": "automationservice-sox",
     "summary": "api summary",
     "operations": [
       {
         "intent": "create",
         "method": "POST",
         "path": "/api/v1/agent-actions",
+        "parameters": null,
         "request": {
           "fields": [
             {

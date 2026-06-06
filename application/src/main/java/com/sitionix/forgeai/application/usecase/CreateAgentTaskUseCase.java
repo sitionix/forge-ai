@@ -10,13 +10,12 @@ import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.CompleteAgentLane;
 import com.sitionix.forgeai.domain.usecase.CreateAgentTask;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.java.Log;
-import org.springframework.stereotype.Service;
-
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.java.Log;
+import org.springframework.stereotype.Service;
 
 @RequiredArgsConstructor
 @Service
@@ -38,9 +37,15 @@ public class CreateAgentTaskUseCase implements CreateAgentTask {
         this.completeInfo(agentTicket, laneToProduce);
 
         this.agentTicketRepository.save(agentTicket);
-        log.info("Created agent ticket: " + agentTicket.getId());
+        log.info("Created agent ticket: " + agentTicket.getId()
+                + " agent=" + agentTicket.getAgent()
+                + " scope=" + agentTicket.getScope()
+                + " laneId=" + agentTicket.getLaneId());
 
         this.laneRepository.assignInputTaskId(laneToProduce.getId(), agentTicket.getId());
+        if (LaneStatus.NOT_NEEDED.equals(laneToProduce.getStatus())) {
+            this.ticketRepository.updateLaneStatus(laneToProduce.getId(), LaneStatus.NOT_STARTED);
+        }
         this.completeAgentLane.completeAndPrepareAgents(sourceLaneId);
     }
 

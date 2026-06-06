@@ -33,7 +33,7 @@ Sonar failure handling flow for `implement_fe`:
 
 ## Self-Review Loop (Mandatory)
 
-Before commit and again before completion callback, run a self-review loop and do not stop on fixable gaps.
+Before commit and again before the final completion response, run a self-review loop and do not stop on fixable gaps.
 
 Loop:
 1. run style/quality checks for changed production files;
@@ -44,8 +44,8 @@ Loop:
 Rules:
 - Do not finish lane work while self-review has fixable failures.
 - Do not ask user what to do for fixable style/quality gaps owned by this lane.
-- Do not send completion callback until the latest self-review loop is fully `PASS`.
-- Do not pass without all strategy steps(except callback) fully completed, need evidence about style/pr/Sonar issues fixes.
+- Do not finish the completion step until the latest self-review loop is fully `PASS`.
+- Do not pass without all strategy steps fully completed; include evidence about style, PR, and Sonar issue fixes.
 
 
 ## Boundary

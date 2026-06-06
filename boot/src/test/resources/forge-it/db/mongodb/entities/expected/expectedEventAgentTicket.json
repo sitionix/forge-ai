@@ -5,7 +5,7 @@
   "payload": {
     "required": false,
     "reason": "not required",
-    "scope": "GLOBAL",
+    "scope": "automationservice-sox",
     "summary": "event summary",
     "eventName": "AgentActionCreated",
     "payloadFields": [

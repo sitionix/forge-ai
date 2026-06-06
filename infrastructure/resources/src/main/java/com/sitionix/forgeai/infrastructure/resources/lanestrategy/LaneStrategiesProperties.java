@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.infrastructure.resources.lanestrategy;
 
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyPromptConfig;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -11,8 +12,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @Getter
 @Setter
 @ConfigurationProperties(prefix = "forge.ai.lane-strategies")
-public class LaneStrategiesProperties {
+public class LaneStrategiesProperties implements LaneStrategyPromptConfig {
 
+    private List<String> commonInstructionRefs = new ArrayList<>();
     private Map<String, StrategyConfig> configs = new LinkedHashMap<>();
 
     @Getter
@@ -28,6 +30,8 @@ public class LaneStrategiesProperties {
     public static class StepConfig {
         private String id;
         private String title;
+        private String taskPlaceholder;
+        private String completionContractPlaceholder;
         private List<String> instructionRefs = new ArrayList<>();
     }
 }

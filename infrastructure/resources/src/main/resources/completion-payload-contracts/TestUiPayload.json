@@ -1,0 +1,14 @@
+{
+  "payloadType": "TestUiPayload",
+  "description": "Frontend implementation and QA output used as UI test lane input.",
+  "fields": [
+    { "name": "task", "type": "STRING", "required": true, "description": "Concrete UI test task derived from frontend implementation changes." },
+    { "name": "scope", "type": "STRING", "required": true, "description": "Exact frontend scope for UI tests." },
+    { "name": "summary", "type": "STRING", "required": true, "description": "Summary of UI behavior to test." },
+    { "name": "changedFiles", "type": "ARRAY", "required": true, "description": "Frontend production files changed by implementation.", "itemType": "OBJECT", "itemObjectType": "ImplementFeChangedFile" },
+    { "name": "affectedSurfaces", "type": "ARRAY", "required": true, "description": "UI routes, pages, components, or flows affected by the change.", "itemType": "OBJECT", "itemObjectType": "ImplementFeAffectedSurface" },
+    { "name": "uiBehavior", "type": "ARRAY", "required": true, "description": "User-visible behavior that UI tests should verify.", "itemType": "STRING" },
+    { "name": "sonar", "type": "OBJECT", "required": true, "description": "Frontend implementation static analysis or quality result relevant to testing.", "objectType": "UnitTestSonar" },
+    { "name": "unitTestNotes", "type": "ARRAY", "required": false, "description": "QA lead UI/testing notes when available.", "itemType": "OBJECT", "itemObjectType": "QaLeadUnitTestNote" }
+  ]
+}

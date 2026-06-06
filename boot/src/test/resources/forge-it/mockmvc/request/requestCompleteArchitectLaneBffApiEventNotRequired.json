@@ -15,7 +15,7 @@
   "apiRequest": {
     "required": false,
     "reason": "not required",
-    "scope": "GLOBAL",
+    "scope": "backendforfrontendservice-sox",
     "summary": "api summary",
     "operations": [],
     "consumers": [],
@@ -24,7 +24,7 @@
   "eventRequest": {
     "required": false,
     "reason": "not required",
-    "scope": "GLOBAL",
+    "scope": "backendforfrontendservice-sox",
     "summary": "event summary",
     "eventName": "",
     "payloadFields": [],

@@ -15,7 +15,7 @@
   "apiRequest": {
     "required": false,
     "reason": "not required",
-    "scope": "GLOBAL",
+    "scope": "automationservice-sox",
     "summary": "api summary",
     "operations": [],
     "consumers": [],
@@ -24,7 +24,7 @@
   "eventRequest": {
     "required": false,
     "reason": "not required",
-    "scope": "GLOBAL",
+    "scope": "automationservice-sox",
     "summary": "event summary",
     "eventName": "",
     "payloadFields": [],

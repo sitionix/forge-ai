@@ -1,0 +1,8 @@
+{
+  "payloadType": "QaLeadDataCheck",
+  "description": "One data assertion expected from an integration test.",
+  "fields": [
+    { "name": "target", "type": "STRING", "required": true, "description": "Data target such as response field, database record, event payload, or side effect." },
+    { "name": "expectation", "type": "STRING", "required": true, "description": "Expected value, state, or invariant." }
+  ]
+}

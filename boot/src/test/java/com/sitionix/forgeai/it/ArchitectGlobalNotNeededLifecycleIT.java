@@ -1,31 +1,22 @@
 package com.sitionix.forgeai.it;
 
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.CodexCliCommandBuilder;
-import com.sitionix.forgeai.infrastructure.codexcli.adapter.TerminalTabLauncher;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
-import com.sitionix.forgeai.it.infra.ControllerEndpoint;
+import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
-import com.sitionix.forgeit.mockmvc.api.PathParams;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 @IntegrationTest(properties = "forge-ai.jobs.ready-to-start.fixed-delay-ms=600000")
-class ArchitectGlobalNotNeededLifecycleIT {
+class ArchitectGlobalNotNeededLifecycleIT extends AbstractForgeAiIT {
 
     @Autowired
     private TestManager testManager;
 
-    @MockBean
-    private TerminalTabLauncher terminalTabLauncher;
-
-    @MockBean
-    private CodexCliCommandBuilder codexCliCommandBuilder;
-
+    @Autowired
+    private LaneCompletionTestFacade laneCompletion;
     @Test
     @DisplayName("Should mark API and EVENT as NOT_NEEDED when architect marks both as not required")
     void givenApiAndEventNotRequired_whenCompleteArchitect_thenMarkGlobalLanesAsNotNeeded() {
@@ -38,13 +29,7 @@ class ArchitectGlobalNotNeededLifecycleIT {
                 .body("architectGlobalNotNeededSeedTicket.json");
 
         //when
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.completeArchitectLane())
-                .withRequest("requestCompleteArchitectLaneBffApiEventNotRequired.json")
-                .withPathParameters(PathParams.create().add("ticketId", ticketId).add("laneId", architectLaneId))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticketId").value(ticketId.toString()))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.laneId").value(architectLaneId.toString()))
-                .assertDefault();
+        this.laneCompletion.completeArchitectLane(ticketId, architectLaneId, "requestCompleteArchitectLaneBffApiEventNotRequired.json", request -> { });
 
         //then
         this.testManager.mongo()

@@ -9,5 +9,5 @@ import com.sitionix.forgeit.mongodb.api.MongoSupport;
         MockMvcSupport.class,
         MongoSupport.class
 })
-public interface TestManager extends ForgeIT {
+public interface TestManager extends ForgeIT, MockMvcSupport, MongoSupport {
 }

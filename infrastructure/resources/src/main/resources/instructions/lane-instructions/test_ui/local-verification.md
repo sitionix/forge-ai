@@ -25,7 +25,7 @@ Run local verification:
 1. after final local test change;
 2. before `git push`;
 3. before PR update;
-4. before completion callback.
+4. before the final completion response.
 
 If a new commit is added after verification, run verification again.
 Keep verification result facts for completion context.
