@@ -23,25 +23,6 @@
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
 
-  function initNavigation() {
-    const toggle = document.getElementById('navToggle');
-    if (!toggle) {
-      return;
-    }
-    const collapsed = window.localStorage.getItem('forgeOperatorNavCollapsed') === 'true';
-    document.body.classList.toggle('nav-collapsed', collapsed);
-    toggle.setAttribute('aria-expanded', String(!collapsed));
-    toggle.addEventListener('click', () => {
-      const nextCollapsed = !document.body.classList.contains('nav-collapsed');
-      document.body.classList.toggle('nav-collapsed', nextCollapsed);
-      window.localStorage.setItem('forgeOperatorNavCollapsed', String(nextCollapsed));
-      toggle.setAttribute('aria-expanded', String(!nextCollapsed));
-      if (window.__forgeGraphPayload) {
-        requestAnimationFrame(() => renderGraph(window.__forgeGraphPayload));
-      }
-    });
-  }
-
   async function getJson(path) {
     const response = await fetch(`${apiBase}${path}`, { cache: 'no-store' });
     if (!response.ok) {
@@ -726,14 +707,12 @@
   }
 
   if (page === 'tickets') {
-    initNavigation();
     document.getElementById('refreshTickets')?.addEventListener('click', loadTickets);
     loadTickets();
     setInterval(loadTickets, 5000);
   }
 
   if (page === 'ticket') {
-    initNavigation();
     document.getElementById('refreshGraph')?.addEventListener('click', loadGraph);
     loadGraph();
     setInterval(loadGraph, 3000);
@@ -745,7 +724,6 @@
   }
 
   if (page === 'agents') {
-    initNavigation();
     document.getElementById('refreshAgents')?.addEventListener('click', loadAgentsConfig);
     document.getElementById('saveResource')?.addEventListener('click', saveSelectedResource);
     loadAgentsConfig();
