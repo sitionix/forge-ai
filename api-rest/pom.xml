@@ -23,7 +23,7 @@
         </dependency>
         <dependency>
             <groupId>com.afesox</groupId>
-            <artifactId>app-afesox-fgaisox-api-first-sitionix-34-unstable</artifactId>
+            <artifactId>app-afesox-fgaisox-api-first-stable</artifactId>
             <version>${fgaisox.api.version}</version>
         </dependency>
         <dependency>
