@@ -3,7 +3,6 @@ package com.sitionix.forgeai.config;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -18,46 +17,54 @@ class OperatorStaticUiRegressionTest {
 
         assertThat(html)
                 .contains("href=\"../actuator/health\">Health</a>")
+                .contains("href=\"./agents.html\">Agents</a>")
                 .contains("id=\"refreshTickets\"")
                 .contains(">Refresh</button>")
-                .doesNotContain("id=\"navToggle\"")
-                .doesNotContain("class=\"nav-toggle\"")
-                .doesNotContain(">Menu<");
+                .doesNotContain("class=\"side-nav\"")
+                .doesNotContain("id=\"navToggle\"");
     }
 
     @Test
-    void givenOperatorPages_whenRendered_thenUseExistingSideNavigationLinksOnly() throws Exception {
-        for (final String page : List.of("index.html", "ticket.html", "agents.html")) {
-            final String html = this.read(page);
+    void givenTicketPage_whenRendered_thenKeepExistingTicketActionsAndExposeAgents() throws Exception {
+        final String html = this.read("ticket.html");
 
-            assertThat(html)
-                    .as(page)
-                    .contains("class=\"side-nav\"")
-                    .contains("href=\"./index.html\"")
-                    .contains(">Tickets</a>")
-                    .contains("href=\"./agents.html\"")
-                    .contains(">Agents</a>")
-                    .doesNotContain("id=\"navToggle\"")
-                    .doesNotContain("class=\"nav-toggle\"")
-                    .doesNotContain(">Menu<");
-        }
+        assertThat(html)
+                .contains("href=\"./index.html\">Tickets</a>")
+                .contains("href=\"./agents.html\">Agents</a>")
+                .contains("id=\"refreshGraph\"")
+                .contains(">Refresh</button>")
+                .doesNotContain("class=\"side-nav\"")
+                .doesNotContain("id=\"navToggle\"");
     }
 
     @Test
-    void givenOperatorCss_whenSidebarIsFixed_thenContentGetsGutterWithoutReplacingButtons() throws Exception {
+    void givenAgentsPage_whenRendered_thenUseMainStyleHeroActions() throws Exception {
+        final String html = this.read("agents.html");
+
+        assertThat(html)
+                .contains("href=\"./index.html\">Tickets</a>")
+                .contains("id=\"refreshAgents\"")
+                .contains(">Refresh</button>")
+                .doesNotContain("class=\"side-nav\"")
+                .doesNotContain("id=\"navToggle\"");
+    }
+
+    @Test
+    void givenOperatorCss_whenRendered_thenKeepMainCenteredLayoutWithoutSidebar() throws Exception {
         final String css = this.read("operator-ui.css");
 
         assertThat(css)
-                .contains(".side-nav {")
-                .contains("position: fixed;")
-                .contains("width: 150px;")
                 .contains(".shell {")
-                .contains("margin-left: 196px;")
+                .contains("width: min(1440px, calc(100vw - 48px));")
+                .contains("margin: 0 auto;")
+                .contains(".graph-shell {")
+                .contains("width: min(1680px, calc(100vw - 40px));")
                 .contains("@media (max-width: 1000px)")
-                .contains("margin-left: auto;")
+                .doesNotContain(".side-nav")
+                .doesNotContain(".nav-link")
                 .doesNotContain(".nav-toggle")
                 .doesNotContain("nav-collapsed")
-                .doesNotContain("--nav-width");
+                .doesNotContain("margin-left: 196px");
     }
 
     private String read(final String fileName) throws Exception {

@@ -35,62 +35,17 @@ a {
 }
 
 .shell {
-  width: auto;
-  max-width: 1440px;
-  margin-left: 196px;
-  margin-right: 24px;
+  width: min(1440px, calc(100vw - 48px));
+  margin: 0 auto;
   padding: 32px 0 48px;
 }
 
-.side-nav {
-  position: fixed;
-  top: 18px;
-  left: 18px;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 150px;
-  padding: 12px;
-  border: 1px solid rgba(255, 248, 222, 0.16);
-  border-radius: 22px;
-  background: rgba(17, 24, 20, 0.82);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(14px);
-}
-
-.nav-brand,
-.nav-link {
-  text-decoration: none;
-}
-
-.nav-brand {
-  color: var(--accent);
-  font: 800 12px/1 var(--mono);
-  letter-spacing: 0.16em;
-  padding: 10px 12px;
-  text-transform: uppercase;
-}
-
-.nav-link {
-  border-radius: 999px;
-  color: rgba(255, 248, 222, 0.72);
-  font: 800 13px/1 var(--mono);
-  padding: 12px;
-}
-
-.nav-link:hover,
-.nav-link.active {
-  background: rgba(255, 248, 222, 0.14);
-  color: #fff8de;
-}
-
 .graph-shell {
-  max-width: 1680px;
+  width: min(1680px, calc(100vw - 40px));
 }
 
 .agents-shell {
-  max-width: 1760px;
+  width: min(1760px, calc(100vw - 40px));
 }
 
 .hero {
@@ -726,18 +681,7 @@ a {
   .graph-shell,
   .agents-shell {
     width: min(100vw - 24px, 900px);
-    margin-left: auto;
-    margin-right: auto;
-    padding-top: 98px;
-  }
-
-  .side-nav {
-    right: 12px;
-    left: 12px;
-    width: auto;
-    flex-direction: row;
-    align-items: center;
-    overflow-x: auto;
+    padding-top: 18px;
   }
 
   .hero {
