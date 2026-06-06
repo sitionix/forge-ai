@@ -3,6 +3,10 @@ package com.sitionix.forgeai.api;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiTicketGraphResponse;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiTicketListResponse;
+import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig;
+import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorAgentConfigResponse;
+import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorConfigResourceSaveRequest;
+import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorConfigResourceView;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,9 +28,12 @@ class ForgeAiOperatorUiControllerTest {
     @Mock
     private GetOperatorUiReadModel getOperatorUiReadModel;
 
+    @Mock
+    private ManageOperatorAgentConfig manageOperatorAgentConfig;
+
     @BeforeEach
     void setUp() {
-        this.controller = new ForgeAiOperatorUiController(this.getOperatorUiReadModel);
+        this.controller = new ForgeAiOperatorUiController(this.getOperatorUiReadModel, this.manageOperatorAgentConfig);
     }
 
     @Test
@@ -53,5 +60,35 @@ class ForgeAiOperatorUiControllerTest {
         when(this.getOperatorUiReadModel.graph(TICKET_ID)).thenReturn(response);
 
         assertThat(this.controller.graph(TICKET_ID)).isSameAs(response);
+    }
+
+    @Test
+    void givenRequest_whenAgentConfig_thenDelegateToUseCase() {
+        final OperatorAgentConfigResponse response = new OperatorAgentConfigResponse(
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                "restart"
+        );
+        when(this.manageOperatorAgentConfig.config()).thenReturn(response);
+
+        assertThat(this.controller.agentConfig()).isSameAs(response);
+    }
+
+    @Test
+    void givenSaveResourceRequest_whenSaveAgentConfigResource_thenDelegateToUseCase() {
+        final OperatorConfigResourceSaveRequest request = new OperatorConfigResourceSaveRequest("agent-yml", "agents: []");
+        final OperatorConfigResourceView response = new OperatorConfigResourceView(
+                "agent-yml",
+                "agent.yml",
+                "yaml",
+                "/repo/boot/src/main/resources/agent.yml",
+                true,
+                "agents: []"
+        );
+        when(this.manageOperatorAgentConfig.saveResource(request)).thenReturn(response);
+
+        assertThat(this.controller.saveAgentConfigResource(request)).isSameAs(response);
     }
 }

@@ -31,6 +31,21 @@
     return response.json();
   }
 
+  async function putJson(path, body) {
+    const response = await fetch(`${apiBase}${path}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `${response.status} ${response.statusText}`);
+    }
+    return response.json();
+  }
+
   function pill(label, value) {
     return `<span class="pill ${statusClass(value)}">${escapeHtml(label)}</span>`;
   }
@@ -380,6 +395,317 @@
     return Number.isFinite(value) ? value : 0;
   }
 
+  async function loadAgentsConfig() {
+    const status = document.getElementById('resourceSaveStatus');
+    if (status) {
+      status.textContent = '';
+    }
+    try {
+      const data = await getJson('/agents/config');
+      window.__forgeAgentConfig = data;
+      setError('agentsError', null);
+      renderAgentsConfig(data);
+    } catch (error) {
+      setError('agentsError', error);
+    }
+  }
+
+  function renderAgentsConfig(data) {
+    const notice = document.getElementById('agentsNotice');
+    if (notice) {
+      notice.textContent = data.restartRequiredMessage || '';
+      notice.classList.toggle('hidden', !notice.textContent);
+    }
+    renderAgentsList(data.agents || []);
+    renderResourceOptions(data.editableResources || []);
+    const selectedAgentId = window.__forgeSelectedAgentId
+      || (data.agents || []).find((agent) => agent.enabled)?.id
+      || (data.agents || [])[0]?.id;
+    if (selectedAgentId) {
+      selectAgent(selectedAgentId);
+    }
+  }
+
+  function renderAgentsList(agents) {
+    const list = document.getElementById('agentsList');
+    if (!list) {
+      return;
+    }
+    if (agents.length === 0) {
+      list.innerHTML = '<div class="error-box">No agents configured.</div>';
+      return;
+    }
+    list.innerHTML = agents.map((agent) => `
+      <button
+        type="button"
+        class="agent-card ${agent.id === window.__forgeSelectedAgentId ? 'active' : ''}"
+        data-agent-id="${escapeHtml(agent.id)}"
+      >
+        <h3>${escapeHtml(agent.id)}</h3>
+        <p>${escapeHtml(agent.scopeMode || 'scope mode unknown')} / ${(agent.groups || []).map(escapeHtml).join(', ') || 'no groups'}</p>
+        <div class="pill-row">
+          ${pill(agent.enabled ? 'enabled' : 'disabled', agent.enabled ? 'COMPLETED' : 'NOT_NEEDED')}
+          ${agent.laneStrategy ? pill(`${(agent.laneStrategy.steps || []).length} steps`, 'READY_TO_START') : pill('no strategy', 'FAILED')}
+        </div>
+      </button>
+    `).join('');
+    list.querySelectorAll('.agent-card').forEach((card) => {
+      card.addEventListener('click', () => selectAgent(card.dataset.agentId));
+    });
+  }
+
+  function selectAgent(agentId) {
+    const data = window.__forgeAgentConfig;
+    const agent = (data?.agents || []).find((item) => item.id === agentId);
+    if (!agent) {
+      return;
+    }
+    window.__forgeSelectedAgentId = agentId;
+    document.querySelectorAll('.agent-card').forEach((card) => {
+      card.classList.toggle('active', card.dataset.agentId === agentId);
+    });
+    renderAgentDetail(agent);
+  }
+
+  function renderAgentDetail(agent) {
+    const title = document.getElementById('agentDetailTitle');
+    const subtitle = document.getElementById('agentDetailSubtitle');
+    const pills = document.getElementById('agentDetailPills');
+    const detail = document.getElementById('agentDetail');
+    if (!detail) {
+      return;
+    }
+    title.textContent = agent.id;
+    subtitle.textContent = `${agent.scopeMode || 'scope mode unknown'} / ${(agent.groups || []).join(', ') || 'no groups'}`;
+    pills.innerHTML = [
+      pill(agent.enabled ? 'enabled' : 'disabled', agent.enabled ? 'COMPLETED' : 'NOT_NEEDED'),
+      agent.completion?.reportPayload ? pill(`report ${agent.completion.reportPayload}`, 'READY_TO_START') : '',
+      agent.laneStrategy ? pill(`strategy v${agent.laneStrategy.version}`, 'IN_PROGRESS') : ''
+    ].join('');
+
+    detail.innerHTML = [
+      renderAgentOverview(agent),
+      renderPayloads(agent),
+      renderLaneStrategy(agent.laneStrategy),
+      renderPayloadContracts(agent.payloadContracts || [])
+    ].join('');
+
+    detail.querySelectorAll('[data-resource-key]').forEach((button) => {
+      button.addEventListener('click', () => selectResource(button.dataset.resourceKey));
+    });
+  }
+
+  function renderAgentOverview(agent) {
+    return `
+      <section class="agent-section">
+        <h3>Routing</h3>
+        <div class="agent-kv-grid">
+          ${kv('Depends on', tokens(agent.dependsOn))}
+          ${kv('Produces', tokens(agent.produces))}
+          ${kv('Scope mode', escapeHtml(agent.scopeMode || '-'))}
+          ${kv('Groups', tokens(agent.groups))}
+          ${kv('Completion', renderCompletion(agent.completion))}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderPayloads(agent) {
+    const payloads = agent.inputPayloads || [];
+    return `
+      <section class="agent-section">
+        <h3>Input Payloads</h3>
+        <div class="payload-grid">
+          ${payloads.length === 0 ? '<p class="muted">No input payloads.</p>' : payloads.map((payload) => `
+            <article class="payload-card">
+          <header>
+            <div>
+              <span>from</span>
+              <h4>${escapeHtml(payload.sourceAgent || '-')}</h4>
+            </div>
+            ${pill(payload.payloadType || 'payload', 'READY_TO_START')}
+          </header>
+          <div class="agent-kv-grid">
+                ${kv('Payload type', escapeHtml(payload.payloadType || '-'))}
+                ${kv('Payload class', escapeHtml(payload.payloadClass || '-'))}
+          </div>
+        </article>
+      `).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderLaneStrategy(strategy) {
+    if (!strategy) {
+      return `
+        <section class="agent-section">
+          <h3>Lane Strategy</h3>
+          <p class="muted">No lane strategy found for this agent.</p>
+          ${resourceButton('lane-strategies-yml', 'Open lane-strategies.yml')}
+        </section>
+      `;
+    }
+    return `
+      <section class="agent-section">
+        <h3>Lane Strategy</h3>
+        <div class="agent-kv-grid">
+          ${kv('Agent', escapeHtml(strategy.agentId || '-'))}
+          ${kv('Version', escapeHtml(strategy.version ?? '-'))}
+          ${kv('Session mode', escapeHtml(strategy.sessionMode || '-'))}
+          ${kv('Resource', resourceButton('lane-strategies-yml', 'Edit lane-strategies.yml'))}
+        </div>
+        <div class="step-list">
+          ${(strategy.steps || []).map((step) => `
+            <article class="step-card">
+              <header>
+                <div>
+                  <span>step ${escapeHtml(step.order)}</span>
+                  <h4>${escapeHtml(step.id)} - ${escapeHtml(step.title || '-')}</h4>
+                </div>
+                ${step.taskPlaceholder ? pill('task placeholder', 'IN_PROGRESS') : ''}
+              </header>
+              <div class="agent-kv-grid">
+                ${kv('Task placeholder', escapeHtml(step.taskPlaceholder || '-'))}
+                ${kv('Contract placeholder', escapeHtml(step.completionContractPlaceholder || '-'))}
+                ${kv('Instructions', instructionButtons(step.instructionRefs || []))}
+              </div>
+            </article>
+          `).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderPayloadContracts(contracts) {
+    return `
+      <section class="agent-section">
+        <h3>Payload Contracts</h3>
+        <div class="payload-grid">
+          ${contracts.length === 0 ? '<p class="muted">No payload contracts linked to this agent.</p>' : contracts.map((contract) => `
+            <article class="payload-card">
+              <header>
+                <div>
+                  <span>contract</span>
+                  <h4>${escapeHtml(contract.payloadType)}</h4>
+                </div>
+                ${resourceButton(contract.resourceKey, 'Edit JSON')}
+              </header>
+              <p class="muted">${escapeHtml(contract.description || '')}</p>
+            </article>
+          `).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderCompletion(completion) {
+    if (!completion) {
+      return '-';
+    }
+    return [
+      completion.writesProducedLaneOutputs ? 'writes produced outputs' : 'no produced outputs',
+      completion.requiresApiEvidence ? 'requires API evidence' : 'no API evidence',
+      completion.requiresOutputForEveryTarget ? 'requires output for every target' : 'target output optional',
+      completion.reportPayload ? `report ${completion.reportPayload}` : 'no report payload'
+    ].map(escapeHtml).join('<br>');
+  }
+
+  function tokens(values) {
+    const items = (values || []).filter(Boolean);
+    if (items.length === 0) {
+      return '-';
+    }
+    return `<div class="ref-list">${items.map((value) => `<span class="dep">${escapeHtml(value)}</span>`).join('')}</div>`;
+  }
+
+  function instructionButtons(refs) {
+    if (refs.length === 0) {
+      return '-';
+    }
+    return `<div class="ref-list">${refs.map((ref) => resourceButton(`instruction:${ref}`, ref)).join('')}</div>`;
+  }
+
+  function resourceButton(resourceKey, label) {
+    return `
+      <button type="button" class="ref-button" data-resource-key="${escapeHtml(resourceKey)}">
+        ${escapeHtml(label)}
+      </button>
+    `;
+  }
+
+  function kv(label, value) {
+    return `
+      <div class="agent-kv">
+        <span>${escapeHtml(label)}</span>
+        <strong>${value}</strong>
+      </div>
+    `;
+  }
+
+  function renderResourceOptions(resources) {
+    const select = document.getElementById('resourceSelect');
+    if (!select) {
+      return;
+    }
+    window.__forgeResourcesByKey = new Map(resources.map((resource) => [resource.resourceKey, resource]));
+    select.innerHTML = resources.map((resource) => `
+      <option value="${escapeHtml(resource.resourceKey)}">
+        ${escapeHtml(resource.label)} (${escapeHtml(resource.resourceType)})
+      </option>
+    `).join('');
+    select.addEventListener('change', () => selectResource(select.value));
+    if (resources.length > 0) {
+      selectResource(window.__forgeSelectedResourceKey || resources[0].resourceKey);
+    }
+  }
+
+  function selectResource(resourceKey) {
+    const resources = window.__forgeResourcesByKey;
+    const resource = resources?.get(resourceKey);
+    if (!resource) {
+      return;
+    }
+    window.__forgeSelectedResourceKey = resourceKey;
+    const select = document.getElementById('resourceSelect');
+    const textarea = document.getElementById('resourceContent');
+    const status = document.getElementById('resourceSaveStatus');
+    if (select) {
+      select.value = resourceKey;
+    }
+    if (textarea) {
+      textarea.value = resource.content || '';
+      textarea.disabled = !resource.writable;
+    }
+    if (status) {
+      status.textContent = resource.writable ? resource.path : `read-only: ${resource.path}`;
+    }
+  }
+
+  async function saveSelectedResource() {
+    const textarea = document.getElementById('resourceContent');
+    const status = document.getElementById('resourceSaveStatus');
+    const resourceKey = window.__forgeSelectedResourceKey;
+    if (!resourceKey || !textarea) {
+      return;
+    }
+    try {
+      status.textContent = 'saving...';
+      const updated = await putJson('/agents/config/resources', {
+        resourceKey,
+        content: textarea.value
+      });
+      const resources = window.__forgeResourcesByKey || new Map();
+      resources.set(updated.resourceKey, updated);
+      window.__forgeResourcesByKey = resources;
+      status.textContent = `saved ${new Date().toLocaleTimeString()} / restart required`;
+      setError('agentsError', null);
+    } catch (error) {
+      status.textContent = 'save failed';
+      setError('agentsError', error);
+    }
+  }
+
   if (page === 'tickets') {
     document.getElementById('refreshTickets')?.addEventListener('click', loadTickets);
     loadTickets();
@@ -395,5 +721,11 @@
         renderGraph(window.__forgeGraphPayload);
       }
     });
+  }
+
+  if (page === 'agents') {
+    document.getElementById('refreshAgents')?.addEventListener('click', loadAgentsConfig);
+    document.getElementById('saveResource')?.addEventListener('click', saveSelectedResource);
+    loadAgentsConfig();
   }
 })();
