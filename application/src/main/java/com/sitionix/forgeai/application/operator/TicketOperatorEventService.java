@@ -1,9 +1,9 @@
 package com.sitionix.forgeai.application.operator;
 
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorEvent;
-import java.util.ArrayDeque;
+import com.sitionix.forgeai.domain.repository.TicketOperatorEventRepository;
+import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -12,43 +12,39 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class TicketOperatorEventService {
 
     private static final int BUFFER_LIMIT = 500;
 
-    private final Map<UUID, Deque<TicketOperatorEvent>> recentEvents = new ConcurrentHashMap<>();
+    private final TicketOperatorEventRepository ticketOperatorEventRepository;
     private final Map<UUID, CopyOnWriteArrayList<BlockingQueue<TicketOperatorEvent>>> subscribers = new ConcurrentHashMap<>();
 
     public void publish(final TicketOperatorEvent event) {
         if (event == null || event.getTicketId() == null) {
             return;
         }
-        final Deque<TicketOperatorEvent> buffer = this.recentEvents.computeIfAbsent(event.getTicketId(), ignored -> new ArrayDeque<>());
-        synchronized (buffer) {
-            buffer.addLast(event);
-            while (buffer.size() > BUFFER_LIMIT) {
-                buffer.removeFirst();
-            }
-        }
-        this.subscribers.getOrDefault(event.getTicketId(), new CopyOnWriteArrayList<>())
-                .forEach(queue -> queue.offer(event));
+        final TicketOperatorEvent savedEvent = this.ticketOperatorEventRepository.save(this.normalize(event));
+        this.subscribers.getOrDefault(savedEvent.getTicketId(), new CopyOnWriteArrayList<>())
+                .forEach(queue -> queue.offer(savedEvent));
     }
 
     public List<TicketOperatorEvent> recentEvents(final UUID ticketId) {
-        final Deque<TicketOperatorEvent> buffer = this.recentEvents.get(ticketId);
-        if (buffer == null) {
+        if (ticketId == null) {
             return List.of();
         }
-        synchronized (buffer) {
-            return List.copyOf(buffer);
-        }
+        return this.ticketOperatorEventRepository.findRecentByTicketId(ticketId, BUFFER_LIMIT);
     }
 
     public void clear(final UUID ticketId) {
-        this.recentEvents.remove(ticketId);
+        if (ticketId == null) {
+            return;
+        }
+        this.ticketOperatorEventRepository.deleteByTicketId(ticketId);
         this.subscribers.remove(ticketId);
     }
 
@@ -76,6 +72,15 @@ public class TicketOperatorEventService {
             case "COMMAND_STARTED", "COMMAND_COMPLETED", "COMMAND_OUTPUT", "AGENT_MESSAGE_DELTA", "PLAN", "PROCESS_STDERR", "HEARTBEAT" -> false;
             default -> true;
         };
+    }
+
+    private TicketOperatorEvent normalize(final TicketOperatorEvent event) {
+        if (event.getTimestamp() != null) {
+            return event;
+        }
+        return event.toBuilder()
+                .timestamp(Instant.now())
+                .build();
     }
 
     public final class Subscription implements AutoCloseable {

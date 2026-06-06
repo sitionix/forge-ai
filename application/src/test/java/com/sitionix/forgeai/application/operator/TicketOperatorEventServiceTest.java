@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.application.operator;
 
+import com.sitionix.forgeai.application.testsupport.InMemoryTicketOperatorEventRepository;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorEvent;
 import java.time.Instant;
 import java.util.List;
@@ -10,7 +11,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class TicketOperatorEventServiceTest {
 
-    private final TicketOperatorEventService service = new TicketOperatorEventService();
+    private final InMemoryTicketOperatorEventRepository repository = new InMemoryTicketOperatorEventRepository();
+    private final TicketOperatorEventService service = new TicketOperatorEventService(this.repository);
 
     @Test
     void givenTwoTickets_whenPublish_thenSubscriptionAndReplayStayTicketScoped() throws Exception {
@@ -40,6 +42,27 @@ class TicketOperatorEventServiceTest {
 
         assertThat(this.service.filterByVerbosity(List.of(visible, commandOutput, delta, heartbeat), "minimal"))
                 .containsExactly(visible);
+    }
+
+    @Test
+    void givenEventsPersisted_whenServiceRecreated_thenReplayStillReturnsTicketEvents() {
+        final UUID ticketId = UUID.fromString("aaaaaaaa-1111-1111-1111-111111111111");
+        final TicketOperatorEvent event = this.event(ticketId, "STEP_PERSISTED", "persisted");
+
+        this.service.publish(event);
+
+        final TicketOperatorEventService recreatedService = new TicketOperatorEventService(this.repository);
+        assertThat(recreatedService.recentEvents(ticketId)).containsExactly(event);
+    }
+
+    @Test
+    void givenTicketEvents_whenClear_thenPersistedReplayIsDeleted() {
+        final UUID ticketId = UUID.fromString("aaaaaaaa-1111-1111-1111-111111111111");
+        this.service.publish(this.event(ticketId, "STEP_PERSISTED", "persisted"));
+
+        this.service.clear(ticketId);
+
+        assertThat(this.service.recentEvents(ticketId)).isEmpty();
     }
 
     private TicketOperatorEvent event(final UUID ticketId, final String type, final String message) {

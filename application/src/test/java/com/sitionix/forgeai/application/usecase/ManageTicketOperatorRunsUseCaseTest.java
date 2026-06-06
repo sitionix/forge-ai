@@ -4,6 +4,7 @@ import com.sitionix.forgeai.application.laneexecution.LaneExecutionProgressServi
 import com.sitionix.forgeai.application.operator.TicketOperatorEventService;
 import com.sitionix.forgeai.application.operator.TicketOperatorRunService;
 import com.sitionix.forgeai.application.operator.TicketOperatorTerminalProperties;
+import com.sitionix.forgeai.application.testsupport.InMemoryTicketOperatorEventRepository;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorRun;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorRunStatus;
@@ -45,7 +46,7 @@ class ManageTicketOperatorRunsUseCaseTest {
                 this.laneExecutionProgressService,
                 this.codexSessionRepository,
                 new TicketOperatorTerminalProperties(),
-                new TicketOperatorEventService()
+                new TicketOperatorEventService(new InMemoryTicketOperatorEventRepository())
         );
     }
 

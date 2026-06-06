@@ -6,6 +6,7 @@ import com.sitionix.forgeai.domain.model.laneexecution.LaneExecutionStatus;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorEvent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
+import com.sitionix.forgeai.domain.repository.TicketOperatorEventRepository;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.LaneDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.laneexecution.LaneExecutionDocument;
@@ -55,6 +56,9 @@ class TicketOperatorControllerIT extends AbstractForgeAiIT {
 
     @Autowired
     private TicketOperatorRunService ticketOperatorRunService;
+
+    @Autowired
+    private TicketOperatorEventRepository ticketOperatorEventRepository;
 
     @Autowired
     private ReadyToStartLaneJob readyToStartLaneJob;
@@ -113,6 +117,11 @@ class TicketOperatorControllerIT extends AbstractForgeAiIT {
                 .andExpect(jsonPath("$.recentEvents[?(@.message == 'lane-a1')]").isNotEmpty())
                 .andExpect(jsonPath("$.recentEvents[?(@.message == 'lane-a2')]").isNotEmpty())
                 .andExpect(jsonPath("$.recentEvents[?(@.message == 'lane-b1')]").isEmpty());
+
+        assertThat(this.ticketOperatorEventRepository.findRecentByTicketId(ticketA.getId(), 500))
+                .extracting(TicketOperatorEvent::getMessage)
+                .contains("lane-a1", "lane-a2")
+                .doesNotContain("lane-b1");
     }
 
     @Test
