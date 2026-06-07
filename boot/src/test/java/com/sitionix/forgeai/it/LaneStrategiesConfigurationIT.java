@@ -9,6 +9,7 @@ import com.sitionix.forgeai.infrastructure.resources.lanestrategy.ResourceLaneSt
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -170,6 +171,17 @@ class LaneStrategiesConfigurationIT {
         }
     }
 
+    @Test
+    void givenRealLaneStrategiesYaml_whenLoaded_thenPreparationStepsUseGitPreparationValidator() {
+        assertPreparationValidator(Agent.API);
+        assertPreparationValidator(Agent.EVENT);
+        assertPreparationValidator(Agent.IMPLEMENT_BE);
+        assertPreparationValidator(Agent.IMPLEMENT_FE);
+        assertPreparationValidator(Agent.TEST_UNIT);
+        assertPreparationValidator(Agent.TEST_IT);
+        assertPreparationValidator(Agent.TEST_UI);
+    }
+
     private void assertTaskPlaceholder(final Agent agent, final String stepId) {
         final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(agent.getId());
         assertThat(strategy.getSteps())
@@ -178,8 +190,16 @@ class LaneStrategiesConfigurationIT {
                 .containsExactly(stepId);
     }
 
+    private void assertPreparationValidator(final Agent agent) {
+        final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(agent.getId());
+        assertThat(strategy.getSteps())
+                .filteredOn(step -> "preparation".equals(step.getId()))
+                .singleElement()
+                .satisfies(step -> assertThat(step.getValidator()).isEqualTo("gitPreparation"));
+    }
+
     private static List<Integer> expectedOrders(final List<String> expectedStepIds) {
-        return java.util.stream.IntStream.rangeClosed(1, expectedStepIds.size())
+        return IntStream.rangeClosed(1, expectedStepIds.size())
                 .boxed()
                 .toList();
     }

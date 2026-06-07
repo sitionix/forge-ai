@@ -5,6 +5,7 @@ import com.sitionix.forgeai.application.operator.TicketOperatorTerminalAutoOpenS
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.model.ticket.TicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneDependency;
@@ -18,7 +19,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,6 +33,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -79,6 +83,7 @@ class StartForgeAiTaskUseCaseTest {
         final Ticket actual = this.startForgeAiTask.execute(command);
 
         //then
+        assertThat(actual.getStatus()).isEqualTo(TicketStatus.READY_TO_START);
         final List<Lane> analyzerLanes = actual.getLanes().stream()
                 .filter(lane -> lane.getAgent() == Agent.ANALYZER)
                 .toList();
@@ -90,6 +95,44 @@ class StartForgeAiTaskUseCaseTest {
                 .containsExactly(LaneStatus.READY_TO_START);
         assertThat(analyzerLanes.stream().allMatch(lane -> lane.getDependsOn().isEmpty())).isTrue();
         verify(this.ticketOperatorTerminalAutoOpenService).openIfConfigured(actual);
+    }
+
+    @Test
+    void givenCreateOpenCommand_whenCreateOpen_thenCreatesOpenTicketWithoutTerminalAutoOpen() {
+        //given
+        final ForgeAiStartCommand command = this.getCommand();
+        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.getServiceMap();
+        when(this.props.getServices()).thenReturn(services);
+
+        //when
+        final Ticket actual = this.startForgeAiTask.createOpen(command);
+
+        //then
+        assertThat(actual.getStatus()).isEqualTo(TicketStatus.OPEN);
+        assertThat(actual.getLanes().stream()
+                .filter(lane -> lane.getAgent() == Agent.ANALYZER)
+                .map(Lane::getStatus))
+                .containsOnly(LaneStatus.READY_TO_START);
+        verify(this.ticketOperatorTerminalAutoOpenService, never()).openIfConfigured(actual);
+    }
+
+    @Test
+    void givenOpenTicket_whenExecuteOpen_thenMoveTicketToReadyToStart() {
+        //given
+        final Ticket ticket = Ticket.builder()
+                .id(UUID.randomUUID())
+                .ticketKey("SITIONIX-1")
+                .status(TicketStatus.OPEN)
+                .build();
+        when(this.ticketRepository.findById(ticket.getId())).thenReturn(Optional.of(ticket));
+        when(this.ticketRepository.save(any(Ticket.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        //when
+        final Ticket actual = this.startForgeAiTask.executeOpen(ticket.getId());
+
+        //then
+        assertThat(actual.getStatus()).isEqualTo(TicketStatus.READY_TO_START);
+        verify(this.ticketRepository).save(ticket);
     }
 
     @Test
@@ -258,7 +301,7 @@ class StartForgeAiTaskUseCaseTest {
         final AgentPropertiesProvider.AgentConfigView testUi = this.getAgent("test_ui", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.FRONTEND), List.of(Agent.IMPLEMENT_FE, Agent.QA_LEAD));
         final AgentPropertiesProvider.AgentConfigView reviewer = this.getAgent("reviewer", ScopeMode.GLOBAL,
                 Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of());
-        when(testUi.isEnabled()).thenReturn(false);
+        lenient().when(testUi.isEnabled()).thenReturn(false);
 
         this.bind(Agent.ANALYZER, analyzer);
         this.bind(Agent.ARCHITECT, architect);

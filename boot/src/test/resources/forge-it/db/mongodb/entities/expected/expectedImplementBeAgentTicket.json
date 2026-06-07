@@ -2,6 +2,7 @@
   "status": "CREATED",
   "scope": "automationservice-sox",
   "agent": "IMPLEMENT_BE",
+  "sourceLaneId": "66666666-6666-6666-6666-666666666666",
   "payload": {
     "task": "implement task",
     "scope": "automationservice-sox",

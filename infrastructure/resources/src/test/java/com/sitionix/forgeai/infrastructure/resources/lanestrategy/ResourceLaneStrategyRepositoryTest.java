@@ -20,7 +20,7 @@ class ResourceLaneStrategyRepositoryTest {
         configs.put("analyzer", strategy(step("scope_slicing", "Scope Slicing", null, List.of("additional-instructions/scope-context-usage.md", "lane-instructions/analyzer/scope-slicing.md"))));
         configs.put("architect", strategy(step("input_normalization", "Input Normalization", "TASKS", List.of("lane-instructions/architect/input-normalization.md"))));
         configs.put("api", strategy(
-                step("preparation", "Preparation", null, List.of("additional-instructions/preparation-to-work.md")),
+                stepWithValidator("preparation", "Preparation", "gitPreparation", List.of("additional-instructions/preparation-to-work.md")),
                 step("contract_changes", "Contract Changes", "TASKS", List.of("additional-instructions/api-contract-rules.md"))
         ));
         configs.put("qa_lead", strategy(step("qa_context", "QA Context", "TASKS", List.of("lane-instructions/qa_lead/qa-context.md"))));
@@ -42,6 +42,7 @@ class ResourceLaneStrategyRepositoryTest {
         final LaneStrategy strategy = repository.findByAgentId("api");
         assertThat(strategy.getSteps()).hasSize(2);
         assertThat(strategy.getSteps().get(0).getId()).isEqualTo("preparation");
+        assertThat(strategy.getSteps().get(0).getValidator()).isEqualTo("gitPreparation");
         assertThat(strategy.getSteps().get(1).getId()).isEqualTo("contract_changes");
         assertThat(strategy.getSteps().get(1).getTaskPlaceholder()).isEqualTo("TASKS");
     }
@@ -186,6 +187,21 @@ class ResourceLaneStrategyRepositoryTest {
     }
 
     @Test
+    void givenValidatorWithoutEvidenceType_whenInit_thenLoad() {
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
+        properties.getConfigs().put("api", strategy(
+                stepWithValidator("preparation", "Preparation", "gitPreparation", List.of("additional-instructions/preparation-to-work.md"))
+        ));
+
+        final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
+
+        repository.init();
+
+        assertThat(repository.findByAgentId("api").getSteps().getFirst().getValidator()).isEqualTo("gitPreparation");
+    }
+
+    @Test
     void givenEmptySteps_whenInit_thenReject() {
         final LaneStrategiesProperties properties = baseProperties();
         properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
@@ -250,6 +266,15 @@ class ResourceLaneStrategyRepositoryTest {
         step.setTaskPlaceholder(taskPlaceholder);
         step.setCompletionContractPlaceholder(completionContractPlaceholder);
         step.setInstructionRefs(refs);
+        return step;
+    }
+
+    private static LaneStrategiesProperties.StepConfig stepWithValidator(final String id,
+                                                                         final String title,
+                                                                         final String validator,
+                                                                         final List<String> refs) {
+        final LaneStrategiesProperties.StepConfig step = step(id, title, null, refs);
+        step.setValidator(validator);
         return step;
     }
 }

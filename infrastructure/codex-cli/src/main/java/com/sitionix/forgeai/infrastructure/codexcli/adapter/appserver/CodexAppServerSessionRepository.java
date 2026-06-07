@@ -177,7 +177,7 @@ public class CodexAppServerSessionRepository implements CodexSessionRepository {
         final String workspaceRoot = this.workspaceRoot(command);
         final ObjectNode params = this.objectMapper.createObjectNode();
         params.put("cwd", workspaceRoot);
-        params.set("runtimeWorkspaceRoots", this.objectMapper.createArrayNode().add(workspaceRoot));
+        params.set("runtimeWorkspaceRoots", this.runtimeWorkspaceRoots(command, workspaceRoot));
         params.put("approvalPolicy", this.properties.getApprovalPolicy());
         params.put("sandbox", this.properties.getSandbox());
         params.put("serviceName", this.properties.getServiceName());
@@ -220,6 +220,32 @@ public class CodexAppServerSessionRepository implements CodexSessionRepository {
             throw new IllegalStateException("Invalid Codex app-server cwd: path is not a directory: " + path);
         }
         return path.toString();
+    }
+
+    private ArrayNode runtimeWorkspaceRoots(final CodexSessionStartCommand command, final String workspaceRoot) {
+        final ArrayNode roots = this.objectMapper.createArrayNode();
+        final List<String> candidates = command == null || command.runtimeWorkspaceRoots() == null || command.runtimeWorkspaceRoots().isEmpty()
+                ? List.of(workspaceRoot)
+                : command.runtimeWorkspaceRoots();
+        for (final String candidate : candidates) {
+            final String root = this.workspaceRoot(command == null ? null : command.toBuilder().workspaceRoot(candidate).build());
+            if (!this.contains(roots, root)) {
+                roots.add(root);
+            }
+        }
+        if (!this.contains(roots, workspaceRoot)) {
+            roots.insert(0, workspaceRoot);
+        }
+        return roots;
+    }
+
+    private boolean contains(final ArrayNode values, final String expected) {
+        for (final JsonNode value : values) {
+            if (expected.equals(value.asText())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasText(final String value) {

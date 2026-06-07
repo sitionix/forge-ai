@@ -19,6 +19,7 @@ public class FakeInteractiveCodexSessionRepository implements CodexSessionReposi
     private final Function<CodexTurnCommand, String> responsePlanner;
     private final Map<String, List<String>> historyBySession = new LinkedHashMap<>();
     private final List<String> submittedPrompts = new ArrayList<>();
+    private final List<CodexSessionStartCommand> openSessionCommands = new ArrayList<>();
 
     public FakeInteractiveCodexSessionRepository(final Function<CodexTurnCommand, String> responsePlanner) {
         this.responsePlanner = responsePlanner;
@@ -26,6 +27,7 @@ public class FakeInteractiveCodexSessionRepository implements CodexSessionReposi
 
     @Override
     public CodexSession openSession(final CodexSessionStartCommand command) {
+        this.openSessionCommands.add(command);
         final String sessionId = UUID.randomUUID().toString();
         final String threadId = "thread-" + sessionId;
         this.historyBySession.put(sessionId, new ArrayList<>());
@@ -34,7 +36,7 @@ public class FakeInteractiveCodexSessionRepository implements CodexSessionReposi
                 .threadId(threadId)
                 .processPid(12345L)
                 .command(List.of("codex", "app-server", "--stdio"))
-                .cwd(System.getProperty("user.dir"))
+                .cwd(command.workspaceRoot())
                 .startedAt(Instant.now())
                 .codexVersion("fake")
                 .build();
@@ -78,6 +80,10 @@ public class FakeInteractiveCodexSessionRepository implements CodexSessionReposi
 
     public List<String> submittedPrompts() {
         return List.copyOf(this.submittedPrompts);
+    }
+
+    public List<CodexSessionStartCommand> openSessionCommands() {
+        return List.copyOf(this.openSessionCommands);
     }
 
     private void ensureSession(final String sessionId) {

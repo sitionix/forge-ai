@@ -11,5 +11,7 @@ public interface TicketOperatorRunRepository {
 
     Optional<TicketOperatorRun> findByTicketId(UUID ticketId);
 
+    void deleteByTicketId(UUID ticketId);
+
     List<TicketOperatorRun> findActiveRuns();
 }

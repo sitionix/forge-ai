@@ -18,6 +18,7 @@ agents:
   - id: api
     enabled: true
     scope_mode: global
+    workspace_contract_ref: api
     groups: [ backend, frontend ]
     depends_on: [ architect ]
     produces: [ implement_be, implement_fe ]
@@ -30,6 +31,7 @@ agents:
   - id: event
     enabled: true
     scope_mode: global
+    workspace_contract_ref: events
     groups: [ backend ]
     depends_on: [ architect ]
     produces: [ implement_be ]
@@ -73,7 +75,7 @@ agents:
     enabled: true
     scope_mode: per_scope
     groups: [ backend ]
-    depends_on: [ implement_be ]
+    depends_on: [ implement_be, qa_lead ]
     produces: [ reviewer ]
     input_payloads:
       implement_be: test_unit

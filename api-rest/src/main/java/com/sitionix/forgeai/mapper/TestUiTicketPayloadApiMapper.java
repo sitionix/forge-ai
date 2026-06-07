@@ -15,7 +15,7 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
-public interface TestUiTicketPayloadApiMapper {
+public abstract class TestUiTicketPayloadApiMapper {
 
     @Mapping(target = "task", expression = "java(\"Write UI tests for frontend changed files in \" + source.getScope())")
     @Mapping(target = "scope", source = "scope")
@@ -25,18 +25,18 @@ public interface TestUiTicketPayloadApiMapper {
     @Mapping(target = "uiBehavior", source = "uiBehavior")
     @Mapping(target = "sonar", source = "sonar")
     @Mapping(target = "unitTestNotes", ignore = true)
-    TestUiPayload asTestUiPayload(CompleteImplementFeLaneRequestDTO source);
+    public abstract TestUiPayload asTestUiPayload(CompleteImplementFeLaneRequestDTO source);
 
     @IterableMapping(elementTargetType = ImplementFeChangedFile.class)
-    Set<ImplementFeChangedFile> asChangedFiles(List<ImplementFeChangedFileDTO> source);
+    public abstract Set<ImplementFeChangedFile> asChangedFiles(List<ImplementFeChangedFileDTO> source);
 
-    ImplementFeChangedFile asChangedFile(ImplementFeChangedFileDTO source);
+    public abstract ImplementFeChangedFile asChangedFile(ImplementFeChangedFileDTO source);
 
     @IterableMapping(elementTargetType = ImplementFeAffectedSurface.class)
-    Set<ImplementFeAffectedSurface> asAffectedSurfaces(List<ImplementFeAffectedSurfaceDTO> source);
+    public abstract Set<ImplementFeAffectedSurface> asAffectedSurfaces(List<ImplementFeAffectedSurfaceDTO> source);
 
     @Mapping(target = "type", source = "type")
-    ImplementFeAffectedSurface asAffectedSurface(ImplementFeAffectedSurfaceDTO source);
+    public abstract ImplementFeAffectedSurface asAffectedSurface(ImplementFeAffectedSurfaceDTO source);
 
-    UnitTestSonar asUnitTestSonar(ImplementationSonarDTO source);
+    public abstract UnitTestSonar asUnitTestSonar(ImplementationSonarDTO source);
 }

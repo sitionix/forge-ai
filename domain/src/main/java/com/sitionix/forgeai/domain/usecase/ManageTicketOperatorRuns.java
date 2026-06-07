@@ -14,6 +14,8 @@ public interface ManageTicketOperatorRuns {
 
     List<TicketOperatorEvent> recentEvents(UUID ticketId, String verbosity);
 
+    void publishEvent(TicketOperatorEvent event);
+
     TicketOperatorRun registerWatcher(UUID ticketId, String watcherId, boolean stopOnWindowClose);
 
     TicketOperatorEventStream stream(UUID ticketId, String watcherId, String verbosity, boolean stopOnWindowClose);

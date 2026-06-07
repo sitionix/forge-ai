@@ -9,9 +9,11 @@ import com.sitionix.forgeai.domain.model.laneexecution.LaneExecutionStatus;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorEvent;
+import com.sitionix.forgeai.domain.model.operator.TicketOperatorRun;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.repository.CodexProgressObserver;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -61,7 +63,7 @@ public class LaneExecutionProgressService implements CodexProgressObserver {
                 .scope(saved.getScope())
                 .eventType("LANE_STARTED")
                 .message("Lane started")
-                .timestamp(java.time.Instant.now())
+                .timestamp(Instant.now())
                 .build());
         return saved;
     }
@@ -193,7 +195,7 @@ public class LaneExecutionProgressService implements CodexProgressObserver {
                 .activeTurnId(execution.getActiveTurnId())
                 .eventType("STEP_STARTED")
                 .message("Step started")
-                .timestamp(java.time.Instant.now())
+                .timestamp(Instant.now())
                 .build());
     }
 
@@ -218,13 +220,13 @@ public class LaneExecutionProgressService implements CodexProgressObserver {
                 .stepOrder(to.getOrder())
                 .eventType("NEXT_STEP")
                 .message("Next step: " + from.getId() + " -> " + to.getId())
-                .timestamp(java.time.Instant.now())
+                .timestamp(Instant.now())
                 .build());
     }
 
     public void publishLaneCompleted(final ReadyToStartLane lane, final UUID executionId, final LaneStrategyStep step, final int totalSteps) {
         this.publishSimple(lane, executionId, step, totalSteps, "LANE_COMPLETED", "Lane completed");
-        final var run = this.ticketOperatorRunService.markCompletedIfTerminal(lane.getTicketId());
+        final TicketOperatorRun run = this.ticketOperatorRunService.markCompletedIfTerminal(lane.getTicketId());
         if ("COMPLETED".equals(run.getStatus().name())) {
             this.ticketOperatorRunService.publishEvent(this.ticketOperatorRunService.ticketEvent(
                     lane.getTicketId(),
@@ -278,7 +280,7 @@ public class LaneExecutionProgressService implements CodexProgressObserver {
                 .activeTurnId(execution.getActiveTurnId())
                 .eventType("LANE_INTERRUPTED")
                 .message(message)
-                .timestamp(java.time.Instant.now())
+                .timestamp(Instant.now())
                 .build());
     }
 
@@ -356,7 +358,7 @@ public class LaneExecutionProgressService implements CodexProgressObserver {
         return this.laneExecutionRepository.saveExecution(updated);
     }
 
-    private LocalDateTime asLocalDateTime(final java.time.Instant instant) {
+    private LocalDateTime asLocalDateTime(final Instant instant) {
         return instant == null ? null : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
     }
 
@@ -454,7 +456,7 @@ public class LaneExecutionProgressService implements CodexProgressObserver {
                 .activeTurnId(execution.getActiveTurnId())
                 .eventType(eventType)
                 .message(message)
-                .timestamp(java.time.Instant.now())
+                .timestamp(Instant.now())
                 .build());
     }
 

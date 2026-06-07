@@ -17,5 +17,6 @@
         <module>codex-cli</module>
         <module>resources</module>
         <module>github-cli</module>
+        <module>jarvis-client</module>
     </modules>
 </project>

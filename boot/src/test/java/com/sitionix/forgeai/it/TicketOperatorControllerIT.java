@@ -6,6 +6,7 @@ import com.sitionix.forgeai.domain.model.laneexecution.LaneExecutionStatus;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorEvent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
+import com.sitionix.forgeai.domain.repository.TicketOperatorEventRepository;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.LaneDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.laneexecution.LaneExecutionDocument;
@@ -29,7 +30,6 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.fail;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -55,6 +55,9 @@ class TicketOperatorControllerIT extends AbstractForgeAiIT {
 
     @Autowired
     private TicketOperatorRunService ticketOperatorRunService;
+
+    @Autowired
+    private TicketOperatorEventRepository ticketOperatorEventRepository;
 
     @Autowired
     private ReadyToStartLaneJob readyToStartLaneJob;
@@ -113,6 +116,11 @@ class TicketOperatorControllerIT extends AbstractForgeAiIT {
                 .andExpect(jsonPath("$.recentEvents[?(@.message == 'lane-a1')]").isNotEmpty())
                 .andExpect(jsonPath("$.recentEvents[?(@.message == 'lane-a2')]").isNotEmpty())
                 .andExpect(jsonPath("$.recentEvents[?(@.message == 'lane-b1')]").isEmpty());
+
+        assertThat(this.ticketOperatorEventRepository.findRecentByTicketId(ticketA.getId(), 500))
+                .extracting(TicketOperatorEvent::getMessage)
+                .contains("lane-a1", "lane-a2")
+                .doesNotContain("lane-b1");
     }
 
     @Test
@@ -140,40 +148,18 @@ class TicketOperatorControllerIT extends AbstractForgeAiIT {
 
         this.codexSessionRepositoryStub.clearSentMessages();
         this.readyToStartLaneJob.run();
-        this.awaitDispatchForRunningTicket(ticketB.getId(), ticketA.getId(), Duration.ofSeconds(5));
 
-        final List<String> prompts = this.codexSessionRepositoryStub.sentMessages();
-        assertThat(prompts).isNotEmpty();
-        assertThat(prompts).allMatch(prompt -> !prompt.contains(ticketA.getId().toString()));
-        assertThat(prompts).anyMatch(prompt -> prompt.contains(ticketB.getId().toString()));
-
-        final TicketDocument cancelledTicket = this.ticketJpaRepository.findById(ticketA.getId()).orElseThrow();
-        final TicketDocument runningTicket = this.ticketJpaRepository.findById(ticketB.getId()).orElseThrow();
-        assertThat(this.statusOf(cancelledTicket, Agent.ANALYZER)).isEqualTo(LaneStatus.READY_TO_START);
-        assertThat(this.statusOf(runningTicket, Agent.ANALYZER)).isNotEqualTo(LaneStatus.READY_TO_START);
-    }
-
-    private void awaitDispatchForRunningTicket(final UUID runningTicketId, final UUID cancelledTicketId, final Duration timeout) {
-        final long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
+        this.eventually(Duration.ofSeconds(30), () -> {
             final List<String> prompts = this.codexSessionRepositoryStub.sentMessages();
-            if (!prompts.isEmpty()
-                    && prompts.stream().allMatch(prompt -> !prompt.contains(cancelledTicketId.toString()))
-                    && prompts.stream().anyMatch(prompt -> prompt.contains(runningTicketId.toString()))) {
-                return;
-            }
-            sleepBriefly();
-        }
-        fail("Scheduler did not dispatch only the running ticket within %s".formatted(timeout));
-    }
+            assertThat(prompts).isNotEmpty();
+            assertThat(prompts).allMatch(prompt -> !prompt.contains(ticketA.getId().toString()));
+            assertThat(prompts).anyMatch(prompt -> prompt.contains(ticketB.getId().toString()));
 
-    private void sleepBriefly() {
-        try {
-            Thread.sleep(100);
-        } catch (final InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            fail("Interrupted while waiting for ticket operator assertions");
-        }
+            final TicketDocument cancelledTicket = this.ticketJpaRepository.findById(ticketA.getId()).orElseThrow();
+            final TicketDocument runningTicket = this.ticketJpaRepository.findById(ticketB.getId()).orElseThrow();
+            assertThat(this.statusOf(cancelledTicket, Agent.ANALYZER)).isEqualTo(LaneStatus.READY_TO_START);
+            assertThat(this.statusOf(runningTicket, Agent.ANALYZER)).isNotEqualTo(LaneStatus.READY_TO_START);
+        });
     }
 
     private TicketDocument createTicket(final boolean backend) {

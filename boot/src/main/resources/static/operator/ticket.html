@@ -15,36 +15,41 @@
         <p id="ticketSubtitle" class="muted">loading</p>
       </div>
       <div class="hero-actions">
-        <a class="button ghost" href="./index.html">Tickets</a>
+        <button id="openTask" class="button ghost" type="button">Task</button>
+        <button id="executeTicket" class="button hidden" type="button">Execute</button>
+        <button id="resetLayout" class="button ghost" type="button">Reset Layout</button>
         <button id="refreshGraph" class="button">Refresh</button>
       </div>
     </header>
 
-    <section class="grid two">
-      <aside class="panel task-panel">
-        <div class="panel-head compact">
-          <h2>Task</h2>
+    <section class="panel graph-panel">
+      <div class="panel-head compact">
+        <div>
+          <h2>Lane Graph</h2>
+          <p>Cards are agents. Lines are dependencies from `agent.yml` lane graph.</p>
+        </div>
+        <div class="graph-summary">
+          <div id="laneCounts" class="counts"></div>
           <span id="graphUpdated" class="muted">loading</span>
         </div>
-        <pre id="taskDescription" class="task-text"></pre>
-      </aside>
-
-      <section class="panel graph-panel">
-        <div class="panel-head compact">
-          <div>
-            <h2>Lane Graph</h2>
-            <p>Cards are agents. Lines are dependencies from `agent.yml` lane graph.</p>
-          </div>
-          <div id="laneCounts" class="counts"></div>
-        </div>
-        <div id="graphAlerts" class="alerts"></div>
-        <div id="graphCanvas" class="graph-canvas">
-          <svg id="graphLines" class="graph-lines" aria-hidden="true"></svg>
-          <div id="laneGraph" class="lane-graph"></div>
-        </div>
-        <div id="graphError" class="error-box hidden"></div>
-      </section>
+      </div>
+      <div id="graphCanvas" class="graph-canvas">
+        <svg id="graphLines" class="graph-lines" aria-hidden="true"></svg>
+        <div id="laneGraph" class="lane-graph"></div>
+      </div>
+      <div id="graphError" class="error-box hidden"></div>
     </section>
+
+    <dialog id="taskDialog" class="task-dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">Ticket Task</p>
+          <h2 id="taskDialogTitle">Task</h2>
+        </div>
+        <button id="closeTask" class="button ghost dialog-close" type="button">Close</button>
+      </div>
+      <pre id="taskDescription" class="task-text"></pre>
+    </dialog>
   </main>
 
   <script src="./operator-ui.js"></script>

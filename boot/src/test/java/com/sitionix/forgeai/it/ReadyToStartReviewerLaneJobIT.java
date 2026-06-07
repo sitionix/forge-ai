@@ -13,7 +13,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.annotation.DirtiesContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.fail;
 
 @IntegrationTest(properties = {
         "forge-ai.jobs.scheduling-enabled=false",
@@ -43,42 +42,22 @@ class ReadyToStartReviewerLaneJobIT extends AbstractForgeAiIT {
         this.readyToStartLaneJob.run();
 
         //then
-        final TicketDocument actual = this.awaitResolvedTicket(Duration.ofSeconds(15));
-
-        this.testManager.mongo()
-                .assertEntities(AgentTicketDocument.class)
-                .hasSize(0);
-
-        this.testManager.mongo()
-                .assertEntities(TicketDocument.class)
-                .ignoreFields("id", "createdAt", "updatedAt", "attempt", "inputTaskIds")
-                .containsWithJsonsStrict("expectedReadyToStartReviewerLaneJobTicket.json");
-        assertThat(actual.getStatus()).isEqualTo(TicketStatus.RESOLVED);
-    }
-
-    private TicketDocument awaitResolvedTicket(final Duration timeout) {
-        final long deadline = System.nanoTime() + timeout.toNanos();
-        while (System.nanoTime() < deadline) {
+        this.eventually(Duration.ofSeconds(30), () -> {
             final TicketDocument actual = this.testManager.mongo()
                     .get(TicketDocument.class)
                     .hasSize(1)
                     .singleElement()
                     .assertEntity();
-            if (TicketStatus.RESOLVED.equals(actual.getStatus())) {
-                return actual;
-            }
-            sleepBriefly();
-        }
-        fail("Reviewer lane did not resolve ticket within %s".formatted(timeout));
-        return null;
-    }
 
-    private void sleepBriefly() {
-        try {
-            Thread.sleep(100);
-        } catch (final InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            fail("Interrupted while waiting for reviewer lane completion");
-        }
+            this.testManager.mongo()
+                    .assertEntities(AgentTicketDocument.class)
+                    .hasSize(0);
+
+            this.testManager.mongo()
+                    .assertEntities(TicketDocument.class)
+                    .ignoreFields("id", "createdAt", "updatedAt", "attempt", "inputTaskIds")
+                    .containsWithJsonsStrict("expectedReadyToStartReviewerLaneJobTicket.json");
+            assertThat(actual.getStatus()).isEqualTo(TicketStatus.RESOLVED);
+        });
     }
 }

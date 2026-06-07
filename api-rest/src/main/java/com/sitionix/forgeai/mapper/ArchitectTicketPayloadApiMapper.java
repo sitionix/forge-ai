@@ -5,7 +5,7 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.ArchitectPayload;
 import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
-public interface ArchitectTicketPayloadApiMapper {
+public abstract class ArchitectTicketPayloadApiMapper {
 
-    ArchitectPayload asArchitectPayload(AnalyzerArchitectHandoffDTO source);
+    public abstract ArchitectPayload asArchitectPayload(AnalyzerArchitectHandoffDTO source);
 }

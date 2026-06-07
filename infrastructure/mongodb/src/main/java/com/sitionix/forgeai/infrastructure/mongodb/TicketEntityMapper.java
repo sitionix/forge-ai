@@ -5,8 +5,8 @@ import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring", uses = LaneEntityMapper.class)
-public interface TicketEntityMapper {
-    TicketDocument asTicketDocument(Ticket ticket);
+public abstract class TicketEntityMapper {
+    public abstract TicketDocument asTicketDocument(Ticket ticket);
 
-    Ticket asTicket(TicketDocument ticketDocument);
+    public abstract Ticket asTicket(TicketDocument ticketDocument);
 }

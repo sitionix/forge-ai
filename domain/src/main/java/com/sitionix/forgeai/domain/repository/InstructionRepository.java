@@ -1,5 +1,7 @@
 package com.sitionix.forgeai.domain.repository;
 
+import java.util.Set;
+
 /**
  * Provides lane strategy instruction texts.
  */
@@ -18,5 +20,5 @@ public interface InstructionRepository {
      *
      * @return shared instruction refs
      */
-    java.util.Set<String> findSharedInstructionRefs();
+    Set<String> findSharedInstructionRefs();
 }

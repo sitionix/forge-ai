@@ -18,6 +18,8 @@ public class AgentTicket<P extends AgentTicketPayload> {
     private UUID id;
     private UUID ticketId;
 
+    private UUID sourceLaneId;
+
     private UUID laneId;
     private AgentTicketStatus status;
     private String scope;

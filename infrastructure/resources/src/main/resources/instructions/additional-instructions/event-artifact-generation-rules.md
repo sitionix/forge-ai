@@ -2,9 +2,9 @@
 
 ## Metadata
 
-Resolve event generation targets from:
+Resolve event generation targets from the configured event contract source repository and metadata exposed by scope context.
 
-`app-afesox/apis/metadata.yml`
+Use `contractRefs.events.sourceRepo` and `contractRefs.events.generatedArtifacts` to identify allowed generated targets.
 
 Supported event artifact kinds:
 

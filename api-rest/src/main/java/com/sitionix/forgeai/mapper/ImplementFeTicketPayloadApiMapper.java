@@ -5,7 +5,7 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.ImplementFePayload;
 import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
-public interface ImplementFeTicketPayloadApiMapper {
+public abstract class ImplementFeTicketPayloadApiMapper {
 
-    ImplementFePayload asImplementFePayload(ArchitectImplementationHandoff source);
+    public abstract ImplementFePayload asImplementFePayload(ArchitectImplementationHandoff source);
 }

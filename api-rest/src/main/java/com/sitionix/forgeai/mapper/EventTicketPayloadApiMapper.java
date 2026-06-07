@@ -7,9 +7,9 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.EventPayload;
 import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
-public interface EventTicketPayloadApiMapper {
+public abstract class EventTicketPayloadApiMapper {
 
-    EventPayload asEventPayload(ArchitectEventRequest source);
+    public abstract EventPayload asEventPayload(ArchitectEventRequest source);
 
-    EventPayloadField asEventPayloadField(ArchitectEventPayloadField source);
+    public abstract EventPayloadField asEventPayloadField(ArchitectEventPayloadField source);
 }

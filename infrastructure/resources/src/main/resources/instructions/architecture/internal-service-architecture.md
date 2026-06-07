@@ -127,7 +127,7 @@ Purpose:
 
 What belongs there:
 
-- Controllers implementing generated `app-afesox` APIs.
+- Controllers implementing generated APIs from the configured contract source repository.
 - API mappers.
 - HTTP exception translation.
 - HTTP-only helpers, such as BFF cookie/header handling.
@@ -173,7 +173,7 @@ Repository-backed observations:
 - `backendforfrontendservice-sox/clients` is a clean example of outbound adapters:
   - core port in `domain`
   - adapter implementation in `clients`
-  - generated client artifact from `app-afesox`
+  - generated client artifact from the configured contract source repository
   - boot-time `ApiClient`/`RestTemplate` configuration in `boot`
 - `notificationservice-sox/clients` follows the same pattern for auth and BFF calls.
 - These modules are adapters only. They translate and execute calls, but do not own the downstream behavior.

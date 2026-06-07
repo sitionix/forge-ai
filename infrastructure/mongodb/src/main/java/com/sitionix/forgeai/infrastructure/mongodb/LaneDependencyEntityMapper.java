@@ -5,9 +5,9 @@ import com.sitionix.forgeai.infrastructure.mongodb.entity.LaneDependencyDocument
 import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
-public interface LaneDependencyEntityMapper {
+public abstract class LaneDependencyEntityMapper {
 
-    LaneDependencyDocument asLaneDependencyDocument(LaneDependency laneDependency);
+    public abstract LaneDependencyDocument asLaneDependencyDocument(LaneDependency laneDependency);
 
-    LaneDependency asLaneDependency(LaneDependencyDocument laneDependencyDocument);
+    public abstract LaneDependency asLaneDependency(LaneDependencyDocument laneDependencyDocument);
 }

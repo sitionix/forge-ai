@@ -13,19 +13,19 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiPayloadShape;
 import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
-public interface ApiTicketPayloadApiMapper {
+public abstract class ApiTicketPayloadApiMapper {
 
-    ApiPayload asApiPayload(ArchitectApiRequest source);
+    public abstract ApiPayload asApiPayload(ArchitectApiRequest source);
 
-    ApiOperationPayload asApiOperationPayload(ArchitectApiOperation source);
+    public abstract ApiOperationPayload asApiOperationPayload(ArchitectApiOperation source);
 
-    ApiParameterPayload asApiParameterPayload(ArchitectApiParameter source);
+    public abstract ApiParameterPayload asApiParameterPayload(ArchitectApiParameter source);
 
-    ApiPayloadShape asApiPayloadShape(ArchitectApiPayloadShape source);
+    public abstract ApiPayloadShape asApiPayloadShape(ArchitectApiPayloadShape source);
 
-    ApiPayloadField asApiPayloadField(ArchitectApiField source);
+    public abstract ApiPayloadField asApiPayloadField(ArchitectApiField source);
 
-    default String map(final Enum<?> source) {
+    public String map(final Enum<?> source) {
         return source == null ? null : source.name();
     }
 }

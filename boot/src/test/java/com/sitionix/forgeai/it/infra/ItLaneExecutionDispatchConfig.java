@@ -13,7 +13,7 @@ public class ItLaneExecutionDispatchConfig {
 
     @Bean
     @Primary
-    public TaskExecutor itLaneExecutionTaskExecutor() {
+    public TaskExecutor laneExecutionTaskExecutor() {
         return new SyncTaskExecutor();
     }
 }

@@ -1,7 +1,9 @@
 package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
+import com.sitionix.forgeai.domain.model.ticket.TicketStatus;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
+import com.sitionix.forgeai.infrastructure.mongodb.repository.TicketJpaRepository;
 import com.sitionix.forgeai.it.infra.ItCodexSessionRepositoryStub;
 import com.sitionix.forgeai.it.infra.LaneCompletionTestFacade;
 import com.sitionix.forgeai.it.infra.TestManager;
@@ -29,6 +31,8 @@ class ReadyToStartQaLeadLaneJobIT extends AbstractForgeAiIT {
 
     @Autowired
     private ItCodexSessionRepositoryStub codexSessionRepositoryStub;
+    @Autowired
+    private TicketJpaRepository ticketJpaRepository;
 
     @Autowired
     private ReadyToStartLaneJob readyToStartLaneJob;
@@ -45,6 +49,7 @@ class ReadyToStartQaLeadLaneJobIT extends AbstractForgeAiIT {
                 .body("completeQaLeadLaneBackendSeedTicket.json");
 
         this.laneCompletion.completeQaLeadLaneBackend(ticketId, qaLeadLaneId);
+        this.moveTicketToReadyToStart(ticketId);
 
         this.readyToStartLaneJob.run();
 
@@ -55,5 +60,11 @@ class ReadyToStartQaLeadLaneJobIT extends AbstractForgeAiIT {
                 .assertEntity();
         assertThat(actual.getLanes().stream().filter(lane -> lane.getId().equals(qaLeadLaneId)).findFirst().orElseThrow().getStatus().name())
                 .isEqualTo("COMPLETED");
+    }
+
+    private void moveTicketToReadyToStart(final UUID ticketId) {
+        final TicketDocument ticket = this.ticketJpaRepository.findById(ticketId).orElseThrow();
+        ticket.setStatus(TicketStatus.READY_TO_START);
+        this.ticketJpaRepository.save(ticket);
     }
 }

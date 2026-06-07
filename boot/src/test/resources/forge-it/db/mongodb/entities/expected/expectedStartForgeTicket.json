@@ -2,7 +2,7 @@
   "ticketKey": "SITIONIX-1",
   "taskDescription": "hi",
   "sourceTerminalTty": "/dev/ttys999",
-  "status": "OPEN",
+  "status": "READY_TO_START",
   "lanes": [
     {
       "type": "ANALYZER",

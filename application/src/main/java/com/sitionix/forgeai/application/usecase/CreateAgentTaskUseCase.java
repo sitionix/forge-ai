@@ -34,7 +34,7 @@ public class CreateAgentTaskUseCase implements CreateAgentTask {
     public <P extends AgentTicketPayload> void create(final AgentTicket<P> agentTicket, final UUID sourceLaneId) {
         final Lane laneToProduce = this.findLaneToProduceOptional(sourceLaneId, agentTicket.getScope(), agentTicket.getAgent())
                 .orElseThrow(() -> this.laneNotFound(sourceLaneId, agentTicket.getScope(), agentTicket.getAgent()));
-        this.completeInfo(agentTicket, laneToProduce);
+        this.completeInfo(agentTicket, sourceLaneId, laneToProduce);
 
         this.agentTicketRepository.save(agentTicket);
         log.info("Created agent ticket: " + agentTicket.getId()
@@ -49,9 +49,10 @@ public class CreateAgentTaskUseCase implements CreateAgentTask {
         this.completeAgentLane.completeAndPrepareAgents(sourceLaneId);
     }
 
-    private void completeInfo(final AgentTicket<?> agentTicket, final Lane lane) {
+    private void completeInfo(final AgentTicket<?> agentTicket, final UUID sourceLaneId, final Lane lane) {
         agentTicket.setCreatedAt(LocalDateTime.now());
         agentTicket.setUpdatedAt(LocalDateTime.now());
+        agentTicket.setSourceLaneId(sourceLaneId);
         agentTicket.setLaneId(lane.getId());
     }
 

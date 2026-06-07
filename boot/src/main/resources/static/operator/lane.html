@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forge AI Agent Lane</title>
+  <link rel="stylesheet" href="./operator-ui.css">
+</head>
+<body data-page="lane">
+  <main class="shell lane-shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Forge AI Operator</p>
+        <h1 id="laneTitle">Agent Lane</h1>
+        <p id="laneSubtitle" class="muted">loading</p>
+      </div>
+      <div class="hero-actions">
+        <button id="openLaneTask" class="button ghost" type="button">Task</button>
+        <button class="button ghost" type="button" disabled>Settings</button>
+        <button id="refreshLane" class="button">Refresh</button>
+      </div>
+    </header>
+
+    <div class="lane-detail-grid">
+      <section class="panel">
+        <div class="panel-head compact">
+          <div>
+            <h2>Dependencies</h2>
+            <p>Blocking lanes that must complete before this lane can run.</p>
+          </div>
+        </div>
+        <div id="laneDependencies" class="lane-detail-list dependency-list"></div>
+
+        <div class="panel-head compact section-subhead">
+          <div>
+            <h2>Input Tasks</h2>
+            <p>Payloads assigned to this lane and their producing agent.</p>
+          </div>
+        </div>
+        <div id="laneInputs" class="lane-detail-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head compact">
+          <div>
+            <h2>Execution Trace</h2>
+            <p>Strategy steps, execution status, and failure/stderr details.</p>
+          </div>
+        </div>
+        <div id="laneTrace" class="lane-detail-list"></div>
+      </section>
+    </div>
+
+    <section class="panel conversation-panel">
+      <div class="panel-head compact">
+        <div>
+          <h2>Agent Session</h2>
+          <p>Read-only orchestration and Codex progress stream for this lane.</p>
+        </div>
+        <span id="laneUpdated" class="muted">loading</span>
+      </div>
+      <div id="laneEvents" class="conversation-log"></div>
+      <div id="laneError" class="error-box hidden"></div>
+    </section>
+
+    <dialog id="laneTaskDialog" class="task-dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">Ticket Task</p>
+          <h2 id="laneTaskDialogTitle">Task</h2>
+        </div>
+        <button id="closeLaneTask" class="button ghost dialog-close" type="button">Close</button>
+      </div>
+      <pre id="laneTaskDescription" class="task-text"></pre>
+    </dialog>
+  </main>
+
+  <script src="./operator-ui.js"></script>
+</body>
+</html>

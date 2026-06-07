@@ -47,6 +47,7 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
                                 .order(i + 1)
                                 .taskPlaceholder(step.getTaskPlaceholder())
                                 .completionContractPlaceholder(step.getCompletionContractPlaceholder())
+                                .validator(step.getValidator())
                                 .instructionRefs(List.copyOf(step.getInstructionRefs()))
                                 .build();
                     })

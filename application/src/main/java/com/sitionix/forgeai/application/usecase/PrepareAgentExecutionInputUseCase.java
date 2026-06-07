@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -78,7 +79,7 @@ public class PrepareAgentExecutionInputUseCase {
                 .map(Lane::getServiceId)
                 .filter(Objects::nonNull)
                 .filter(serviceId -> !Objects.equals("global", serviceId))
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                .collect(Collectors.toCollection(LinkedHashSet::new));
         final Set<ServiceScopeContext> contexts = new LinkedHashSet<>();
         for (final String serviceId : serviceIds) {
             contexts.add(this.serviceScopeContext(serviceId, null));

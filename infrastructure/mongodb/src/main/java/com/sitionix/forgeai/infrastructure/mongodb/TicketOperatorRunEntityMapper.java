@@ -5,9 +5,9 @@ import com.sitionix.forgeai.infrastructure.mongodb.entity.operator.TicketOperato
 import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
-public interface TicketOperatorRunEntityMapper {
+public abstract class TicketOperatorRunEntityMapper {
 
-    TicketOperatorRunDocument asDocument(TicketOperatorRun source);
+    public abstract TicketOperatorRunDocument asDocument(TicketOperatorRun source);
 
-    TicketOperatorRun asDomain(TicketOperatorRunDocument source);
+    public abstract TicketOperatorRun asDomain(TicketOperatorRunDocument source);
 }

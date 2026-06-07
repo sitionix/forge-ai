@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.infrastructure.mongodb.adapter;
 
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
+import com.sitionix.forgeai.domain.model.ticket.TicketStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneDependency;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
@@ -43,6 +44,11 @@ public class TicketRepositoryImpl implements TicketRepository {
     public Optional<Ticket> findById(final UUID ticketId) {
         return this.ticketRepository.findById(ticketId)
                 .map(this.ticketEntityMapper::asTicket);
+    }
+
+    @Override
+    public void deleteById(final UUID ticketId) {
+        this.ticketRepository.deleteById(ticketId);
     }
 
     @Override
@@ -101,8 +107,10 @@ public class TicketRepositoryImpl implements TicketRepository {
 
     @Override
     public boolean moveLaneToInProgressIfReady(final UUID laneId) {
-        final Query query = this.laneElementQuery(laneId, LaneStatus.READY_TO_START);
-        final Update update = new Update().set("lanes.$.status", LaneStatus.IN_PROGRESS);
+        final Query query = this.readyTicketLaneElementQuery(laneId, LaneStatus.READY_TO_START);
+        final Update update = new Update()
+                .set("status", TicketStatus.IN_PROGRESS)
+                .set("lanes.$.status", LaneStatus.IN_PROGRESS);
         return this.mongoTemplate.updateFirst(query, update, TicketDocument.class).getModifiedCount() > 0;
     }
 
@@ -183,6 +191,16 @@ public class TicketRepositoryImpl implements TicketRepository {
                 this.laneElementIdCriteria(laneId),
                 Criteria.where("status").is(laneStatus)
         )));
+    }
+
+    private Query readyTicketLaneElementQuery(final UUID laneId, final LaneStatus laneStatus) {
+        return Query.query(new Criteria().andOperator(
+                Criteria.where("status").in(TicketStatus.READY_TO_START, TicketStatus.IN_PROGRESS),
+                Criteria.where("lanes").elemMatch(new Criteria().andOperator(
+                        this.laneElementIdCriteria(laneId),
+                        Criteria.where("status").is(laneStatus)
+                ))
+        ));
     }
 
     private Criteria laneElementIdCriteria(final UUID laneId) {

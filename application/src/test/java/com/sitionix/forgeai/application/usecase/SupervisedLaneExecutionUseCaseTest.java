@@ -10,8 +10,10 @@ import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
 import com.sitionix.forgeai.application.laneexecution.LaneStepPromptBuilder;
 import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
 import com.sitionix.forgeai.application.laneexecution.support.FakeInteractiveCodexSessionRepository;
+import com.sitionix.forgeai.application.laneexecution.validation.LaneStepEvidenceValidatorRegistry;
 import com.sitionix.forgeai.application.operator.TicketOperatorRunService;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
+import com.sitionix.forgeai.domain.model.codex.CodexLaneWorkspace;
 import com.sitionix.forgeai.domain.model.codex.CodexSession;
 import com.sitionix.forgeai.domain.model.codex.CodexSessionStartCommand;
 import com.sitionix.forgeai.domain.model.codex.CodexTurnCommand;
@@ -36,6 +38,7 @@ import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
 import com.sitionix.forgeai.domain.repository.LaneRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import com.sitionix.forgeai.domain.usecase.ManageTicketOperatorRuns;
+import com.sitionix.forgeai.domain.usecase.ResolveCodexLaneWorkspace;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -138,7 +141,35 @@ class SupervisedLaneExecutionUseCaseTest {
         verify(this.laneCompletionDispatcher, never()).completeLane(any(), any());
     }
 
+    @Test
+    void givenResolvedLaneWorkspace_whenExecute_thenOpenCodexSessionWithResolvedCwdAndRoots() {
+        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(this.strategy());
+        final FakeInteractiveCodexSessionRepository sessions = new FakeInteractiveCodexSessionRepository(command -> this.validResult(this.stepIdFromPrompt(command.prompt())));
+        final SupervisedLaneExecutionUseCase useCase = this.useCase(
+                sessions,
+                lane -> new CodexLaneWorkspace("/workspace/backendforfrontendservice-sox", List.of(
+                        "/workspace/backendforfrontendservice-sox",
+                        "/workspace/app-afesox"
+                ))
+        );
+
+        useCase.execute(this.lane(), this.input(), 1);
+
+        assertThat(sessions.openSessionCommands()).singleElement().satisfies(command -> {
+            assertThat(command.workspaceRoot()).isEqualTo("/workspace/backendforfrontendservice-sox");
+            assertThat(command.runtimeWorkspaceRoots()).containsExactly(
+                    "/workspace/backendforfrontendservice-sox",
+                    "/workspace/app-afesox"
+            );
+        });
+    }
+
     private SupervisedLaneExecutionUseCase useCase(final CodexSessionRepository sessions) {
+        return this.useCase(sessions, lane -> new CodexLaneWorkspace(System.getProperty("user.dir"), List.of(System.getProperty("user.dir"))));
+    }
+
+    private SupervisedLaneExecutionUseCase useCase(final CodexSessionRepository sessions,
+                                                   final ResolveCodexLaneWorkspace resolveCodexLaneWorkspace) {
         final FakeLaneCompletionContractResolver completionContractResolver = new FakeLaneCompletionContractResolver();
         final FakeCompletionPayloadContractRepository completionPayloadContractRepository = new FakeCompletionPayloadContractRepository();
         return new SupervisedLaneExecutionUseCase(
@@ -157,7 +188,9 @@ class SupervisedLaneExecutionUseCaseTest {
                 this.laneExecutionProgressService,
                 this.supervisedExecutionProperties,
                 this.objectMapper,
-                this.manageTicketOperatorRuns
+                this.manageTicketOperatorRuns,
+                resolveCodexLaneWorkspace,
+                new LaneStepEvidenceValidatorRegistry(this.objectMapper, List.of())
         );
     }
 
@@ -330,6 +363,13 @@ class SupervisedLaneExecutionUseCaseTest {
         }
 
         @Override
+        public List<LaneStepExecution> findStepExecutions(final UUID executionId) {
+            return this.savedStepExecutions.stream()
+                    .filter(stepExecution -> executionId.equals(stepExecution.getExecutionId()))
+                    .toList();
+        }
+
+        @Override
         public List<LaneExecution> findByTicketId(final UUID ticketId) {
             return this.savedExecutions.stream()
                     .filter(execution -> ticketId.equals(execution.getTicketId()))
@@ -349,6 +389,16 @@ class SupervisedLaneExecutionUseCaseTest {
                     .filter(execution -> ticketId.equals(execution.getTicketId()))
                     .filter(execution -> execution.getStatus() == null || !execution.getStatus().isTerminal())
                     .toList();
+        }
+
+        @Override
+        public void deleteByTicketId(final UUID ticketId) {
+            final List<UUID> executionIds = this.savedExecutions.stream()
+                    .filter(execution -> ticketId.equals(execution.getTicketId()))
+                    .map(LaneExecution::getId)
+                    .toList();
+            this.savedExecutions.removeIf(execution -> ticketId.equals(execution.getTicketId()));
+            this.savedStepExecutions.removeIf(stepExecution -> executionIds.contains(stepExecution.getExecutionId()));
         }
 
         List<LaneExecution> savedExecutions() {

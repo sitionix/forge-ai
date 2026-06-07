@@ -4,22 +4,31 @@
 
 Use execution input `tasks` as the event contract intent source.
 
-Use source-of-truth event contracts under:
+Preparation is already complete before this step starts.
+Do not run repository setup, clone, remote reconfiguration, `checkout develop`, or branch recreation in this step.
 
-`app-afesox/apis/<service-code>/event`
+Use the source-of-truth event contract repository and paths from the rendered scope context:
+
+- `scope.service.contractRefs.events.sourceRepo`
+- `scope.service.contractRefs.events.eventFamily`
+- `scope.service.contractRefs.events.serviceCode`
+- `scope.service.contractRefs.events.topics`
+- `scope.service.contractRefs.events.payloads`
+
+For global lanes, use the matching `scope.relatedServices[*].contractRefs.events` entries.
 
 Resolve the concrete event surface from:
 
 - execution task intent;
 - scope context service metadata;
 - `contractRefs.events`;
-- `app-afesox/apis/metadata.yml`.
+- contract metadata in the configured contract source repository.
 
 Abstract scope names such as `CROSS_SERVICE` are routing hints, not service codes.
 
 ## Contract Layout
 
-Event contracts follow the app-afesox event layout:
+Event contracts follow the configured event contract repository layout:
 
 - `apis/<service-code>/event/<event-name>/<version>/envelope.avsc`;
 - `apis/<service-code>/event/<event-name>/<version>/imports/<EventName>.avsc`;
