@@ -1,4 +1,6 @@
-package com.sitionix.forgeai.application.infrastructure.jarvis;
+package com.sitionix.forgeai.domain.exception;
+
+import com.sitionix.forgeai.domain.model.jarvis.JarvisGatewayErrorCode;
 
 public class JarvisGatewayException extends RuntimeException {
 

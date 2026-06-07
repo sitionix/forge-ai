@@ -1,4 +1,4 @@
-package com.sitionix.forgeai.application.infrastructure.jarvis;
+package com.sitionix.forgeai.domain.model.jarvis;
 
 public enum JarvisGatewayErrorCode {
     INVALID_COMMAND,

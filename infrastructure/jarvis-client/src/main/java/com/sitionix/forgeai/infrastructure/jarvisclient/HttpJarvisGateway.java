@@ -3,19 +3,19 @@ package com.sitionix.forgeai.infrastructure.jarvisclient;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisActionView;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisActionsSummaryView;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisActionsView;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisCommandRequest;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisCommandResultView;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisExecutionView;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisGateway;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisGatewayErrorCode;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisGatewayException;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisIntentView;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisModelView;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisRuntimeView;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisStatusView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisActionView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisActionsSummaryView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisActionsView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandRequest;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandResultView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisExecutionView;
+import com.sitionix.forgeai.domain.port.JarvisGateway;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisGatewayErrorCode;
+import com.sitionix.forgeai.domain.exception.JarvisGatewayException;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisIntentView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisModelView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisRuntimeView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisStatusView;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.URI;
@@ -110,6 +110,7 @@ public class HttpJarvisGateway implements JarvisGateway {
     private JsonNode send(final String method, final String path, final Object body) {
         this.properties.validateBaseUrl();
         final HttpRequest.Builder builder = HttpRequest.newBuilder(this.resolve(path))
+                // Uvicorn logs Java's default HTTP/2 upgrade probe as an invalid request on local POST calls.
                 .version(HttpClient.Version.HTTP_1_1)
                 .timeout(this.properties.getReadTimeout())
                 .header("Accept", "application/json");

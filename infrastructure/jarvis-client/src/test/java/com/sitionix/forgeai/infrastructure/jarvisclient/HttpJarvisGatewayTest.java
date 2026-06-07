@@ -4,9 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisCommandRequest;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisGatewayErrorCode;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisGatewayException;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandRequest;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisGatewayErrorCode;
+import com.sitionix.forgeai.domain.exception.JarvisGatewayException;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.URI;
@@ -82,6 +82,18 @@ class HttpJarvisGatewayTest {
     }
 
     @Test
+    void requestsUseHttp11ForUvicornCompatibility() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"status":"UP","host":"127.0.0.1","port":7071,"model":{"defaultModel":"qwen2.5-coder:7b"},"ollama":{"baseUrl":"http://localhost:11434","status":"UP"},"actions":{"count":2}}
+                """);
+        final HttpJarvisGateway gateway = gateway(client);
+
+        gateway.status();
+
+        assertThat(client.lastRequest.version()).contains(HttpClient.Version.HTTP_1_1);
+    }
+
+    @Test
     void unsupportedActionMapsToGatewayCode() {
         final HttpJarvisGateway gateway = gateway(new FakeHttpClient(403, """
                 {"code":"UNSUPPORTED_ACTION","message":"The requested action is not allowlisted"}
@@ -131,6 +143,7 @@ class HttpJarvisGatewayTest {
         private final String body;
         private final IOException failure;
         private int calls;
+        private HttpRequest lastRequest;
 
         private FakeHttpClient(final int status, final String body) {
             this.status = status;
@@ -193,6 +206,7 @@ class HttpJarvisGatewayTest {
         public <T> HttpResponse<T> send(final HttpRequest request,
                                         final HttpResponse.BodyHandler<T> responseBodyHandler) throws IOException {
             this.calls++;
+            this.lastRequest = request;
             if (this.failure != null) {
                 throw this.failure;
             }

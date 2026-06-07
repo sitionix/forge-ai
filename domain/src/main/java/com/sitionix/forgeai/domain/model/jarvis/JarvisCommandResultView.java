@@ -1,4 +1,4 @@
-package com.sitionix.forgeai.application.infrastructure.jarvis;
+package com.sitionix.forgeai.domain.model.jarvis;
 
 public record JarvisCommandResultView(
         String input,

@@ -1,12 +1,12 @@
 package com.sitionix.forgeai.api;
 
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisActionsView;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisCommandRequest;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisCommandResultView;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisGateway;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisGatewayErrorCode;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisGatewayException;
-import com.sitionix.forgeai.application.infrastructure.jarvis.JarvisStatusView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisActionsView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandRequest;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandResultView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisGatewayErrorCode;
+import com.sitionix.forgeai.domain.exception.JarvisGatewayException;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisStatusView;
+import com.sitionix.forgeai.domain.usecase.ManageJarvisInfrastructure;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,21 +20,21 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class ForgeAiInfrastructureJarvisController {
 
-    private final JarvisGateway jarvisGateway;
+    private final ManageJarvisInfrastructure manageJarvisInfrastructure;
 
     @GetMapping("/api/v1/infrastructure/jarvis/status")
     public ResponseEntity<JarvisStatusView> status() {
-        return ResponseEntity.ok(this.jarvisGateway.status());
+        return ResponseEntity.ok(this.manageJarvisInfrastructure.status());
     }
 
     @GetMapping("/api/v1/infrastructure/jarvis/actions")
     public ResponseEntity<JarvisActionsView> actions() {
-        return ResponseEntity.ok(this.jarvisGateway.actions());
+        return ResponseEntity.ok(this.manageJarvisInfrastructure.actions());
     }
 
     @PostMapping("/api/v1/infrastructure/jarvis/command")
     public ResponseEntity<JarvisCommandResultView> command(@RequestBody final JarvisCommandRequest request) {
-        return ResponseEntity.ok(this.jarvisGateway.command(request));
+        return ResponseEntity.ok(this.manageJarvisInfrastructure.command(request));
     }
 
     @ExceptionHandler(JarvisGatewayException.class)

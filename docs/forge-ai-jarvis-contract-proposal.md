@@ -5,6 +5,7 @@ Implemented communication model:
 ```text
 Operator UI
   -> Forge AI REST API
+  -> ManageJarvisInfrastructure
   -> JarvisGateway
   -> HttpJarvisGateway
   -> Jarvis local FastAPI service
@@ -27,10 +28,22 @@ Controller:
 api-rest/src/main/java/com/sitionix/forgeai/api/ForgeAiInfrastructureJarvisController.java
 ```
 
-Application port:
+Domain use case:
 
 ```text
-application/src/main/java/com/sitionix/forgeai/application/infrastructure/jarvis/JarvisGateway.java
+domain/src/main/java/com/sitionix/forgeai/domain/usecase/ManageJarvisInfrastructure.java
+```
+
+Application implementation:
+
+```text
+application/src/main/java/com/sitionix/forgeai/application/usecase/ManageJarvisInfrastructureUseCase.java
+```
+
+Domain outbound port:
+
+```text
+domain/src/main/java/com/sitionix/forgeai/domain/port/JarvisGateway.java
 ```
 
 HTTP adapter:

@@ -431,8 +431,10 @@ Implement a Forge-side Jarvis proxy as a narrow application port and HTTP adapte
 
 ```text
 api-rest controller
-  -> application JarvisGateway port
-  -> infrastructure HTTP client adapter
+  -> domain ManageJarvisInfrastructure use case
+  -> application ManageJarvisInfrastructureUseCase
+  -> domain JarvisGateway port
+  -> infrastructure jarvis-client HTTP adapter
   -> http://127.0.0.1:7071/api/v1/jarvis/*
 ```
 

@@ -113,6 +113,7 @@ Forge AI never executes Jarvis shell actions. Forge AI proxies to Jarvis through
 ```text
 Operator UI
   -> /fgaisox/api/v1/infrastructure/jarvis/*
+  -> ManageJarvisInfrastructure
   -> JarvisGateway
   -> HttpJarvisGateway
   -> http://127.0.0.1:7071/api/v1/jarvis/*
