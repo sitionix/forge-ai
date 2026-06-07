@@ -1498,7 +1498,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       select.value = resourceKey;
     }
     if (textarea) {
-      textarea.value = resource.content || '';
+      textarea.value = formatEditableResourceContent(resource);
       textarea.disabled = !resource.writable;
     }
     if (status) {
@@ -1527,6 +1527,18 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     } catch (error) {
       status.textContent = 'save failed';
       setError('agentsError', error);
+    }
+  }
+
+  function formatEditableResourceContent(resource) {
+    const content = String(resource?.content || '');
+    if (resource?.resourceType !== 'json') {
+      return content;
+    }
+    try {
+      return `${JSON.stringify(JSON.parse(content), null, 2)}\n`;
+    } catch (error) {
+      return content;
     }
   }
 

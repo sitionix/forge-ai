@@ -55,6 +55,8 @@ class OperatorStaticUiRegressionTest {
         assertThat(html)
                 .contains("id=\"refreshAgents\"")
                 .contains(">Refresh</button>")
+                .contains("id=\"resourceContent\"")
+                .contains("wrap=\"soft\"")
                 .doesNotContain("href=\"./index.html\">Tickets</a>")
                 .doesNotContain("id=\"navToggle\"");
     }
@@ -77,6 +79,8 @@ class OperatorStaticUiRegressionTest {
                 .contains("if (page === 'agents')")
                 .contains("loadAgentsConfig")
                 .contains("saveSelectedResource")
+                .contains("formatEditableResourceContent")
+                .contains("JSON.stringify(JSON.parse(content), null, 2)")
                 .doesNotContain("class=\"side-nav\"")
                 .doesNotContain("id=\"navToggle\"");
     }
@@ -94,6 +98,10 @@ class OperatorStaticUiRegressionTest {
                 .contains("margin: 0 auto;")
                 .contains(".agents-grid")
                 .contains(".agent-card")
+                .contains("grid-template-columns: minmax(220px, 0.72fr) minmax(390px, 1.12fr) minmax(320px, 0.92fr);")
+                .contains(".config-editor-panel")
+                .contains("white-space: pre-wrap;")
+                .contains("@media (max-width: 1280px)")
                 .contains("@media (max-width: 1000px)")
                 .doesNotContain(".side-nav")
                 .doesNotContain(".nav-toggle")

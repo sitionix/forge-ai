@@ -61,7 +61,8 @@ a {
 }
 
 .agents-shell {
-  max-width: 1760px;
+  width: 100%;
+  max-width: none;
 }
 
 .operator-sidebar {
@@ -309,8 +310,13 @@ body.sidebar-collapsed .sidebar-link {
   justify-content: space-between;
   gap: 20px;
   align-items: flex-start;
+  min-width: 0;
   padding: 28px 30px;
   border-bottom: 1px solid rgba(27, 36, 31, 0.12);
+}
+
+.panel-head > div {
+  min-width: 0;
 }
 
 .panel-head.compact {
@@ -329,6 +335,7 @@ body.sidebar-collapsed .sidebar-link {
   margin: 8px 0 0;
   color: var(--muted);
   max-width: 760px;
+  overflow-wrap: anywhere;
 }
 
 .ticket-list {
@@ -1139,22 +1146,23 @@ body.sidebar-collapsed .sidebar-link {
 
 .agents-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 0.72fr) minmax(520px, 1.28fr) minmax(460px, 1fr);
-  gap: 18px;
+  grid-template-columns: minmax(220px, 0.72fr) minmax(390px, 1.12fr) minmax(320px, 0.92fr);
+  gap: 14px;
   align-items: start;
 }
 
 .agents-list-panel,
 .agent-detail-panel,
 .config-editor-panel {
+  min-width: 0;
   min-height: 640px;
 }
 
 .agent-list {
   position: relative;
   display: grid;
-  gap: 12px;
-  padding: 18px;
+  gap: 10px;
+  padding: 14px;
 }
 
 .agent-card {
@@ -1165,7 +1173,7 @@ body.sidebar-collapsed .sidebar-link {
   color: var(--ink);
   cursor: pointer;
   font: inherit;
-  padding: 16px;
+  padding: 12px;
   text-align: left;
   transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
 }
@@ -1181,7 +1189,7 @@ body.sidebar-collapsed .sidebar-link {
 .agent-section h3 {
   margin: 0;
   font-family: var(--display);
-  font-size: 28px;
+  font-size: 24px;
   letter-spacing: -0.03em;
   text-transform: uppercase;
 }
@@ -1189,25 +1197,26 @@ body.sidebar-collapsed .sidebar-link {
 .agent-card p {
   margin: 8px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .agent-detail {
   display: grid;
-  gap: 16px;
-  padding: 18px;
+  gap: 12px;
+  padding: 14px;
 }
 
 .agent-section {
   border: 1px solid rgba(27, 36, 31, 0.1);
   border-radius: 20px;
   background: rgba(255, 252, 235, 0.62);
-  padding: 18px;
+  padding: 14px;
 }
 
 .agent-section h3 {
-  font-size: 24px;
+  font-size: 21px;
 }
 
 .agent-kv-grid,
@@ -1219,8 +1228,8 @@ body.sidebar-collapsed .sidebar-link {
 
 .agent-kv {
   display: grid;
-  grid-template-columns: 160px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(112px, 0.32fr) minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
   border-bottom: 1px solid rgba(27, 36, 31, 0.1);
   padding-bottom: 9px;
@@ -1257,7 +1266,7 @@ body.sidebar-collapsed .sidebar-link {
   border: 1px solid rgba(27, 36, 31, 0.1);
   border-radius: 16px;
   background: rgba(255, 248, 222, 0.7);
-  padding: 14px;
+  padding: 12px;
 }
 
 .step-card header,
@@ -1303,7 +1312,7 @@ body.sidebar-collapsed .sidebar-link {
 .config-editor {
   display: grid;
   gap: 12px;
-  padding: 18px;
+  padding: 14px;
 }
 
 .field-label {
@@ -1317,18 +1326,22 @@ body.sidebar-collapsed .sidebar-link {
 .resource-select,
 .resource-textarea {
   width: 100%;
+  min-width: 0;
   border: 1px solid rgba(27, 36, 31, 0.16);
   border-radius: 16px;
   background: rgba(255, 252, 235, 0.9);
   color: var(--ink);
-  font: 12px/1.5 var(--mono);
-  padding: 12px;
+  font: 11px/1.55 var(--mono);
+  padding: 10px;
 }
 
 .resource-textarea {
   min-height: 470px;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
   resize: vertical;
-  white-space: pre;
+  tab-size: 2;
+  white-space: pre-wrap;
 }
 
 .editor-actions {
@@ -1336,6 +1349,39 @@ body.sidebar-collapsed .sidebar-link {
   gap: 12px;
   align-items: center;
   justify-content: space-between;
+}
+
+@media (max-width: 1560px) {
+  .agents-grid {
+    grid-template-columns: minmax(210px, 0.62fr) minmax(360px, 1fr) minmax(300px, 0.82fr);
+  }
+
+  .panel-head.compact {
+    padding: 16px 18px;
+  }
+
+  .agent-card h3,
+  .agent-section h3 {
+    font-size: 21px;
+  }
+
+  .agent-kv {
+    grid-template-columns: minmax(96px, 0.3fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1280px) {
+  .agents-grid {
+    grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr);
+  }
+
+  .config-editor-panel {
+    grid-column: 1 / -1;
+  }
+
+  .resource-textarea {
+    min-height: 360px;
+  }
 }
 
 @media (max-width: 1000px) {
