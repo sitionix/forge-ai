@@ -7,7 +7,10 @@ import com.sitionix.forgeai.application.laneexecution.LaneExecutionProgressServi
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
 import com.sitionix.forgeai.application.laneexecution.LaneStepPromptBuilder;
 import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
+import com.sitionix.forgeai.application.laneexecution.validation.LaneStepEvidenceValidatorRegistry;
+import com.sitionix.forgeai.application.laneexecution.validation.LaneStepValidationContext;
 import com.sitionix.forgeai.domain.model.codex.AgentExecutionInput;
+import com.sitionix.forgeai.domain.model.codex.CodexLaneWorkspace;
 import com.sitionix.forgeai.domain.model.codex.CodexProgressEvent;
 import com.sitionix.forgeai.domain.model.codex.CodexProgressEventType;
 import com.sitionix.forgeai.domain.model.codex.CodexSession;
@@ -27,8 +30,8 @@ import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import com.sitionix.forgeai.domain.usecase.ManageTicketOperatorRuns;
+import com.sitionix.forgeai.domain.usecase.ResolveCodexLaneWorkspace;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -56,6 +59,8 @@ public class SupervisedLaneExecutionUseCase {
     private final SupervisedExecutionProperties supervisedExecutionProperties;
     private final ObjectMapper objectMapper;
     private final ManageTicketOperatorRuns manageTicketOperatorRuns;
+    private final ResolveCodexLaneWorkspace resolveCodexLaneWorkspace;
+    private final LaneStepEvidenceValidatorRegistry stepEvidenceValidatorRegistry;
 
     public void execute(final ReadyToStartLane lane,
                         final AgentExecutionInput<AgentTicketPayload> input,
@@ -63,11 +68,13 @@ public class SupervisedLaneExecutionUseCase {
         final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(lane.getAgent().getId());
         final UUID executionId = UUID.randomUUID();
         final LaneExecution execution = this.laneExecutionProgressService.createStartingExecution(lane, strategy, executionId);
+        final CodexLaneWorkspace workspace = this.resolveCodexLaneWorkspace.resolve(lane);
         final CodexSession session = this.codexSessionRepository.openSession(CodexSessionStartCommand.builder()
                 .executionId(executionId)
                 .ticketId(lane.getTicketId())
                 .laneId(lane.getLaneId())
-                .workspaceRoot(Path.of("").toAbsolutePath().normalize().toString())
+                .workspaceRoot(workspace.cwd())
+                .runtimeWorkspaceRoots(workspace.runtimeWorkspaceRoots())
                 .sourceTerminalTty(lane.getSourceTerminalTty())
                 .ticketKey(lane.getTicketKey())
                 .agentId(lane.getAgent().getId())
@@ -81,7 +88,7 @@ public class SupervisedLaneExecutionUseCase {
         this.logEvent("codex.session.started", lane, executionId, session.id(), null);
 
         try {
-            completed = this.runSteps(lane, input, strategy, execution, session.id(), correctionAttempts);
+            completed = this.runSteps(lane, input, strategy, execution, session.id(), correctionAttempts, workspace);
             if (completed) {
                 this.laneExecutionProgressService.markCompleted(executionId);
                 this.logEvent("supervised.execution.steps.completed", lane, executionId, session.id(), null);
@@ -125,7 +132,8 @@ public class SupervisedLaneExecutionUseCase {
                              final LaneStrategy strategy,
                              final LaneExecution execution,
                              final String sessionId,
-                             final int correctionAttempts) {
+                             final int correctionAttempts,
+                             final CodexLaneWorkspace workspace) {
         LaneExecution currentExecution = execution;
         for (int index = 0; index < strategy.getSteps().size(); index++) {
             final LaneStrategyStep step = strategy.getSteps().get(index);
@@ -154,6 +162,8 @@ public class SupervisedLaneExecutionUseCase {
                         currentExecution.getId(),
                         sessionId,
                         step,
+                        strategy,
+                        workspace,
                         prompt,
                         correctionAttempts,
                         finalStep,
@@ -201,6 +211,8 @@ public class SupervisedLaneExecutionUseCase {
                                                     final UUID executionId,
                                                     final String sessionId,
                                                     final LaneStrategyStep step,
+                                                    final LaneStrategy strategy,
+                                                    final CodexLaneWorkspace workspace,
                                                     final String prompt,
                                                     final int correctionAttempts,
                                                     final boolean finalStep,
@@ -212,6 +224,10 @@ public class SupervisedLaneExecutionUseCase {
             try {
                 this.ensureTicketNotCancelled(lane, executionId, sessionId, step.getId(), "after_response");
                 final LaneStepDoneResult result = this.resultParser.parse(response, step.getId());
+                this.stepEvidenceValidatorRegistry.validate(
+                        new LaneStepValidationContext(lane, strategy, step, workspace, executionId, sessionId),
+                        result.getEvidence()
+                );
                 if (finalStep) {
                     this.laneCompletionDispatcher.validateFinalCompletionPayload(lane, result.getEvidence());
                 }

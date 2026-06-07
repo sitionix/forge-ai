@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
+import com.sitionix.forgeai.application.laneexecution.validation.LaneStepEvidenceValidatorRegistry;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.laneexecution.LaneExecutionDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.laneexecution.LaneStepExecutionDocument;
@@ -15,6 +16,7 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -50,6 +52,10 @@ class SupervisedApiLaneExecutionIT extends AbstractForgeAiIT {
 
     @Autowired
     private ItCodexSessionRepositoryStub codexSessionRepositoryStub;
+
+    @MockBean
+    private LaneStepEvidenceValidatorRegistry laneStepEvidenceValidatorRegistry;
+
     @Test
     @DisplayName("Should execute API lane via supervised turn protocol and persist step results")
     void givenReadyApiLane_whenSupervisorRuns_thenPersistLaneAndStepExecutions() throws Exception {

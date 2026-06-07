@@ -663,10 +663,30 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     setTextPreservingScroll(document.getElementById('laneTaskDescription'), data.taskDescription || '');
     document.getElementById('laneTaskDialogTitle').textContent = data.ticketKey || data.ticketId;
     document.getElementById('laneUpdated').textContent = `updated ${new Date().toLocaleTimeString()}`;
+    replaceHtmlIfChanged(document.getElementById('laneDependencies'), renderLaneDependencies(data.dependencies || []));
     replaceHtmlIfChanged(document.getElementById('laneInputs'), renderInputTasks(data.inputTasks || []));
     replaceHtmlIfChanged(document.getElementById('laneTrace'), renderLaneTrace(data));
     replaceHtmlIfChanged(document.getElementById('laneEvents'), renderLaneEvents(data.events || []));
     restoreDetailViewState(viewState);
+  }
+
+  function renderLaneDependencies(dependencies) {
+    if (dependencies.length === 0) {
+      return '<div class="empty-state">No blocking lane dependencies.</div>';
+    }
+    return dependencies.map((dependency) => {
+      const status = dependency.status || 'UNKNOWN';
+      return `
+        <article class="dependency-card ${statusClass(status)}">
+          <div>
+            <strong>${escapeHtml(dependency.agent || 'UNKNOWN')}</strong>
+            <p>${escapeHtml(dependency.scope || '-')}</p>
+            <p class="detail-meta" title="${escapeHtml(dependency.laneId || '-')}">lane ${escapeHtml(shortId(dependency.laneId))}</p>
+          </div>
+          ${pill(status, status)}
+        </article>
+      `;
+    }).join('');
   }
 
   function renderInputTasks(inputTasks) {
@@ -880,7 +900,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     if (events.length === 0) {
       return '<div class="empty-state">No lane events captured yet.</div>';
     }
-    return events.map((event) => `
+    return events.map((event, index) => `
       <article class="conversation-event ${statusClass(event.role)}">
         <div class="event-meta">
           <span>${escapeHtml(timeOnly(event.timestamp))}</span>
@@ -888,9 +908,57 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
           <span>${escapeHtml(event.eventType || '-')}</span>
           ${event.stepId ? `<span>step=${escapeHtml(event.stepId)}</span>` : ''}
         </div>
-        <pre>${escapeHtml(event.message || '')}</pre>
+        ${renderLaneEventMessage(event, index)}
       </article>
     `).join('');
+  }
+
+  function renderLaneEventMessage(event, index) {
+    const message = event.message || '';
+    const detailKey = `event:${index}:${event.eventType || 'event'}:${event.stepId || 'no-step'}`;
+    const parsed = parseJsonValue(message);
+    if (parsed.empty) {
+      return '';
+    }
+    if (parsed.ok && parsed.value !== null && typeof parsed.value === 'object') {
+      return `
+        <p class="event-preview">${escapeHtml(jsonEventPreview(parsed.value))}</p>
+        <details class="stateful-details event-details" data-detail-key="${escapeHtml(detailKey)}">
+          <summary>Message JSON</summary>
+          ${renderJsonViewer(message, 'No message.', detailKey)}
+        </details>
+      `;
+    }
+    const raw = parsed.ok ? formatJsonPrimitive(parsed.value) : parsed.raw;
+    const compact = compactText(raw, 320);
+    const isLong = String(raw).length > compact.length;
+    return `
+      <p class="event-preview">${escapeHtml(compact)}</p>
+      ${isLong ? `
+        <details class="stateful-details event-details" data-detail-key="${escapeHtml(detailKey)}">
+          <summary>Full message</summary>
+          <pre class="stacktrace event-raw" data-scroll-key="${escapeHtml(detailKey)}">${escapeHtml(raw)}</pre>
+        </details>
+      ` : ''}
+    `;
+  }
+
+  function jsonEventPreview(value) {
+    if (Array.isArray(value)) {
+      return `Array - ${value.length} ${plural(value.length, 'item', 'items')}`;
+    }
+    const type = value.type || value.eventType || 'JSON';
+    const step = value.stepId ? ` / ${value.stepId}` : '';
+    const summary = value.summary ? ` - ${compactText(value.summary, 220)}` : '';
+    return `${type}${step}${summary}`;
+  }
+
+  function compactText(value, limit) {
+    const normalized = String(value ?? '').replace(/\s+/g, ' ').trim();
+    if (normalized.length <= limit) {
+      return normalized;
+    }
+    return `${normalized.slice(0, Math.max(0, limit - 1)).trimEnd()}...`;
   }
 
   function drawConnections() {
@@ -905,7 +973,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     svg.style.height = `${graph.offsetHeight}px`;
     svg.setAttribute('viewBox', `0 0 ${graph.offsetWidth} ${graph.offsetHeight}`);
     svg.innerHTML = '';
-    svg.appendChild(connectionMarker());
+    svg.appendChild(connectionMarkers());
     graphEdges().forEach((edge) => svg.appendChild(renderConnection(edge, graphRect)));
   }
 
@@ -964,11 +1032,12 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       `M ${sourcePoint.x} ${sourcePoint.y} L ${sourcePoint.x} ${midY} L ${targetPoint.x} ${midY} L ${targetPoint.x} ${targetPoint.y}`
     );
     path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', connectionColor(edge.target.dataset.effectiveStatus));
+    const sourceStatus = edge.source.dataset.effectiveStatus;
+    path.setAttribute('stroke', connectionColor(sourceStatus));
     path.setAttribute('stroke-width', '1.7');
     path.setAttribute('stroke-linecap', 'round');
     path.setAttribute('stroke-linejoin', 'round');
-    path.setAttribute('marker-end', 'url(#forge-arrow)');
+    path.setAttribute('marker-end', `url(#${connectionMarkerId(sourceStatus)})`);
     return path;
   }
 
@@ -1206,10 +1275,20 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     return (lane?.dependencies || []).map((dependency) => dependency.laneId).filter(Boolean);
   }
 
-  function connectionMarker() {
+  function connectionMarkers() {
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    [
+      ['forge-arrow-default', 'UNKNOWN'],
+      ['forge-arrow-completed', 'COMPLETED'],
+      ['forge-arrow-running', 'IN_PROGRESS'],
+      ['forge-arrow-failed', 'FAILED']
+    ].forEach(([id, status]) => defs.appendChild(connectionMarker(id, connectionColor(status))));
+    return defs;
+  }
+
+  function connectionMarker(id, color) {
     const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
-    marker.setAttribute('id', 'forge-arrow');
+    marker.setAttribute('id', id);
     marker.setAttribute('markerWidth', '10');
     marker.setAttribute('markerHeight', '10');
     marker.setAttribute('refX', '8');
@@ -1218,10 +1297,9 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     marker.setAttribute('markerUnits', 'strokeWidth');
     const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     arrow.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
-    arrow.setAttribute('fill', 'rgba(27, 36, 31, 0.46)');
+    arrow.setAttribute('fill', color);
     marker.appendChild(arrow);
-    defs.appendChild(marker);
-    return defs;
+    return marker;
   }
 
   function connectionColor(status) {
@@ -1235,6 +1313,19 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       return 'rgba(188, 127, 30, 0.62)';
     }
     return 'rgba(27, 36, 31, 0.38)';
+  }
+
+  function connectionMarkerId(status) {
+    if (status === 'FAILED') {
+      return 'forge-arrow-failed';
+    }
+    if (status === 'COMPLETED') {
+      return 'forge-arrow-completed';
+    }
+    if (status === 'IN_PROGRESS') {
+      return 'forge-arrow-running';
+    }
+    return 'forge-arrow-default';
   }
 
   function cssEscape(value) {

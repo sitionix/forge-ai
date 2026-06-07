@@ -66,6 +66,7 @@ forge:
           steps:
             - id: preparation
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: contract_changes
@@ -126,6 +127,7 @@ forge:
           steps:
             - id: preparation
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: backend_context
@@ -162,6 +164,7 @@ forge:
           steps:
             - id: preparation
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: frontend_context
@@ -197,6 +200,7 @@ forge:
           steps:
             - id: preparation
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: unit_test_context
@@ -249,6 +253,7 @@ forge:
           steps:
             - id: preparation
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: it_test_context
@@ -291,6 +296,7 @@ forge:
           steps:
             - id: preparation
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: ui_test_context
@@ -344,6 +350,7 @@ forge:
           steps:
             - id: preparation
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: contract_changes

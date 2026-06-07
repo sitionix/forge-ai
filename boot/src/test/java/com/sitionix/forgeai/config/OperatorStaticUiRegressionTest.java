@@ -49,6 +49,17 @@ class OperatorStaticUiRegressionTest {
     }
 
     @Test
+    void givenLanePage_whenRendered_thenShowDependenciesInputsAndSession() throws Exception {
+        final String html = this.read("lane.html");
+
+        assertThat(html)
+                .contains("id=\"laneDependencies\"")
+                .contains(">Dependencies</h2>")
+                .contains("id=\"laneInputs\"")
+                .contains("id=\"laneEvents\"");
+    }
+
+    @Test
     void givenAgentsPage_whenRendered_thenUseSidebarNavigationAndRefreshAction() throws Exception {
         final String html = this.read("agents.html");
 
@@ -81,6 +92,11 @@ class OperatorStaticUiRegressionTest {
                 .contains("saveSelectedResource")
                 .contains("formatEditableResourceContent")
                 .contains("JSON.stringify(JSON.parse(content), null, 2)")
+                .contains("renderLaneDependencies(data.dependencies || [])")
+                .contains("function renderLaneEventMessage")
+                .contains("jsonEventPreview")
+                .contains("connectionColor(sourceStatus)")
+                .contains("connectionMarkerId(sourceStatus)")
                 .doesNotContain("class=\"side-nav\"")
                 .doesNotContain("id=\"navToggle\"");
     }
@@ -100,6 +116,9 @@ class OperatorStaticUiRegressionTest {
                 .contains(".agent-card")
                 .contains("grid-template-columns: minmax(220px, 0.72fr) minmax(390px, 1.12fr) minmax(320px, 0.92fr);")
                 .contains(".config-editor-panel")
+                .contains(".dependency-card")
+                .contains(".event-preview")
+                .contains(".conversation-event .event-details")
                 .contains("white-space: pre-wrap;")
                 .contains("@media (max-width: 1280px)")
                 .contains("@media (max-width: 1000px)")

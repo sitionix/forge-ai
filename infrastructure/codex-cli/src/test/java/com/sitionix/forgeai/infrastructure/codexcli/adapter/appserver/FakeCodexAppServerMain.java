@@ -62,6 +62,15 @@ public final class FakeCodexAppServerMain {
                     writeError(writer, message.path("id").asText(), -32602, "Invalid params: unknown field sandbox", "{\"field\":\"sandbox\"}");
                     return;
                 }
+                if ("workspace_roots".equals(scenario)) {
+                    final JsonNode params = message.path("params");
+                    final String cwd = params.path("cwd").asText();
+                    final JsonNode roots = params.path("runtimeWorkspaceRoots");
+                    if (cwd.isBlank() || !roots.isArray() || roots.size() != 2 || !cwd.equals(roots.get(0).asText())) {
+                        writeError(writer, message.path("id").asText(), -32602, "Invalid workspace roots", "{\"field\":\"runtimeWorkspaceRoots\"}");
+                        return;
+                    }
+                }
                 threadId = "thr_" + scenario;
                 final ObjectNode thread = mapper.createObjectNode();
                 thread.put("id", threadId);
@@ -124,6 +133,22 @@ public final class FakeCodexAppServerMain {
                     writeTurnCompleted(writer, mapper, threadId, turnId);
                     continue;
                 }
+                if ("server_request".equals(scenario)) {
+                    writeServerRequest(writer, mapper);
+                    final String serverResponseLine = readNonBlankLine(reader);
+                    if (serverResponseLine == null) {
+                        System.err.println("fake server expected server-request rejection but stdin closed");
+                        return;
+                    }
+                    final JsonNode serverResponse = mapper.readTree(serverResponseLine);
+                    if (!"server_req_1".equals(serverResponse.path("id").asText()) || !serverResponse.hasNonNull("error")) {
+                        System.err.println("fake server expected JSON-RPC error response to server request: " + serverResponseLine);
+                        return;
+                    }
+                    writeItemCompleted(writer, mapper, threadId, turnId, "server request rejected and continued");
+                    writeTurnCompleted(writer, mapper, threadId, turnId);
+                    return;
+                }
                 writeItemCompleted(writer, mapper, threadId, turnId, prompt);
                 writeTurnCompleted(writer, mapper, threadId, turnId);
                 return;
@@ -136,6 +161,16 @@ public final class FakeCodexAppServerMain {
                 return;
             }
         }
+    }
+
+    private static String readNonBlankLine(final BufferedReader reader) throws Exception {
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (!line.isBlank()) {
+                return line;
+            }
+        }
+        return null;
     }
 
     private static void writeResult(final Writer writer, final String id, final JsonNode result) throws Exception {
@@ -214,6 +249,19 @@ public final class FakeCodexAppServerMain {
         params.put("turnId", turnId);
         params.put("explanation", "Inspect repository and classify scope-owned requirements");
         writer.write(mapper.writeValueAsString(notification));
+        writer.write('\n');
+        writer.flush();
+    }
+
+    private static void writeServerRequest(final Writer writer, final ObjectMapper mapper) throws Exception {
+        final ObjectNode request = mapper.createObjectNode();
+        request.put("id", "server_req_1");
+        request.put("method", "codex/toolCall");
+        final ObjectNode params = request.putObject("params");
+        params.put("serverName", "codex_apps");
+        params.put("toolName", "update_pull_request");
+        params.put("arguments", "{\"body\":\"must not be executed by Forge AI\"}");
+        writer.write(mapper.writeValueAsString(request));
         writer.write('\n');
         writer.flush();
     }
