@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forge AI Jarvis Infrastructure</title>
+  <link rel="stylesheet" href="./operator-ui.css">
+</head>
+<body data-page="jarvis">
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Infrastructure</p>
+        <h1>Jarvis</h1>
+        <p class="muted">Local assistant infrastructure controlled through Forge AI.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshJarvis" class="button">Refresh</button>
+      </div>
+    </header>
+
+    <section class="panel jarvis-status-panel">
+      <div class="panel-head">
+        <div>
+          <h2>Runtime</h2>
+          <p>Forge AI proxies to the local Jarvis service. Browser calls stay inside the Forge AI backend.</p>
+        </div>
+        <span id="jarvisUpdated" class="muted">loading</span>
+      </div>
+      <div id="jarvisStatusCards" class="jarvis-status-grid"></div>
+      <div id="jarvisStatusError" class="error-box hidden"></div>
+    </section>
+
+    <div class="jarvis-grid">
+      <section class="panel">
+        <div class="panel-head compact">
+          <div>
+            <h2>Allowlisted Actions</h2>
+            <p>Safe metadata only. Raw command arrays are not exposed to the UI.</p>
+          </div>
+        </div>
+        <div id="jarvisActions" class="jarvis-actions-list"></div>
+        <div id="jarvisActionsError" class="error-box hidden"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head compact">
+          <div>
+            <h2>Command Test</h2>
+            <p>Text is sent to Forge AI, then Jarvis classifies it into a strict allowlisted intent.</p>
+          </div>
+        </div>
+        <form id="jarvisCommandForm" class="jarvis-command-form">
+          <label class="field">
+            <span>Command</span>
+            <input id="jarvisCommandText" type="text" placeholder="перевір ollama" autocomplete="off">
+          </label>
+          <div class="form-actions">
+            <button id="executeJarvisCommand" type="submit" class="button">Execute</button>
+          </div>
+        </form>
+        <div class="notice-box jarvis-security-notice">
+          Jarvis executes only allowlisted actions. Forge AI does not execute shell commands or parse commands into actions.
+        </div>
+        <div id="jarvisCommandResult" class="jarvis-command-result hidden"></div>
+        <div id="jarvisCommandError" class="error-box hidden"></div>
+      </section>
+    </div>
+  </main>
+
+  <script src="./operator-ui.js"></script>
+</body>
+</html>

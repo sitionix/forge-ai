@@ -9,3 +9,16 @@
 # Build output
 target/
 **/target/
+.m2/
+
+# Python / Jarvis local module
+infrastructure/jarvis/services/jarvis-agent/.venv/
+infrastructure/jarvis/services/jarvis-agent/src/*.egg-info/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local runtime state
+var/
+*.pid
+*.log

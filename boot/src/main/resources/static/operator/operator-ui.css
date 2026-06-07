@@ -142,6 +142,15 @@ body.sidebar-collapsed .operator-sidebar {
   padding: 14px;
 }
 
+.sidebar-group-title {
+  margin: 12px 4px 2px;
+  color: rgba(255, 248, 222, 0.44);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
 .sidebar-link {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
@@ -208,7 +217,8 @@ body.sidebar-collapsed .operator-sidebar {
 
 body.sidebar-collapsed .sidebar-title,
 body.sidebar-collapsed .sidebar-label,
-body.sidebar-collapsed .sidebar-footer {
+body.sidebar-collapsed .sidebar-footer,
+body.sidebar-collapsed .sidebar-group-title {
   display: none;
 }
 
@@ -1142,6 +1152,42 @@ body.sidebar-collapsed .sidebar-link {
   border-radius: 18px;
   background: rgba(246, 184, 75, 0.14);
   color: #fff8de;
+}
+
+.jarvis-status-grid,
+.jarvis-grid,
+.jarvis-actions-list {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.jarvis-status-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.jarvis-grid {
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  align-items: start;
+  padding: 18px 0 0;
+}
+
+.jarvis-command-form {
+  position: relative;
+  display: grid;
+  gap: 16px;
+  padding: 18px 20px 10px;
+}
+
+.jarvis-security-notice {
+  margin: 10px 20px 18px;
+  color: var(--ink);
+}
+
+.jarvis-command-result {
+  position: relative;
+  padding: 0 20px 20px;
 }
 
 .agents-grid {

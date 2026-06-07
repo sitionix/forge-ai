@@ -74,6 +74,10 @@
                 <artifactId>github-cli</artifactId>
             </dependency>
             <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>jarvis-client</artifactId>
+            </dependency>
+            <dependency>
                 <groupId>org.mapstruct</groupId>
                 <artifactId>mapstruct</artifactId>
                 <version>${mapstruct.version}</version>

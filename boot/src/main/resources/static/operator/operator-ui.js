@@ -4,6 +4,7 @@
     ? window.location.pathname.slice(0, window.location.pathname.indexOf('/operator/'))
     : '';
   const apiBase = `${contextPath}/api/v1/forge-ai/operator/ui`;
+  const infrastructureApiBase = `${contextPath}/api/v1/infrastructure`;
   const graphLayoutConfig = {
     paddingX: 22,
     paddingY: 28,
@@ -87,6 +88,7 @@
           <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Toggle sidebar">≡</button>
         </div>
         <nav class="sidebar-nav">
+          <div class="sidebar-group-title">Forge AI</div>
           <a class="sidebar-link ${page === 'tickets' ? 'active' : ''}" href="./index.html">
             <span class="sidebar-icon">T</span>
             <span class="sidebar-label">
@@ -115,6 +117,14 @@
             <span class="sidebar-label">
               <strong>Health</strong>
               <small>server status</small>
+            </span>
+          </a>
+          <div class="sidebar-group-title">Infrastructure</div>
+          <a class="sidebar-link ${page === 'jarvis' ? 'active' : ''}" href="./jarvis.html">
+            <span class="sidebar-icon">J</span>
+            <span class="sidebar-label">
+              <strong>Jarvis</strong>
+              <small>local assistant</small>
             </span>
           </a>
         </nav>
@@ -200,6 +210,33 @@
     if (!response.ok) {
       throw new Error(`${response.status} ${response.statusText}`);
     }
+  }
+
+  async function getInfrastructureJson(path) {
+    return fetchInfrastructureJson('GET', path);
+  }
+
+  async function postInfrastructureJson(path, body) {
+    return fetchInfrastructureJson('POST', path, body);
+  }
+
+  async function fetchInfrastructureJson(method, path, body) {
+    const options = {
+      method,
+      cache: 'no-store',
+      headers: { Accept: 'application/json' }
+    };
+    if (body !== undefined) {
+      options.headers['Content-Type'] = 'application/json';
+      options.body = JSON.stringify(body);
+    }
+    const response = await fetch(`${infrastructureApiBase}${path}`, options);
+    const text = await response.text();
+    const payload = text ? JSON.parse(text) : {};
+    if (!response.ok) {
+      throw new Error(payload.message || payload.code || `${response.status} ${response.statusText}`);
+    }
+    return payload;
   }
 
   function pill(label, value) {
@@ -1219,6 +1256,136 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     return value ? new Date(value).toLocaleTimeString() : '--:--:--';
   }
 
+  async function loadJarvisStatus() {
+    const updated = document.getElementById('jarvisUpdated');
+    try {
+      const data = await getInfrastructureJson('/jarvis/status');
+      setError('jarvisStatusError', null);
+      renderJarvisStatus(data);
+      if (updated) {
+        updated.textContent = `updated ${new Date().toLocaleTimeString()}`;
+      }
+    } catch (error) {
+      setError('jarvisStatusError', error);
+      if (updated) {
+        updated.textContent = 'failed';
+      }
+    }
+  }
+
+  async function loadJarvisActions() {
+    try {
+      const data = await getInfrastructureJson('/jarvis/actions');
+      setError('jarvisActionsError', null);
+      renderJarvisActions(data.actions || []);
+    } catch (error) {
+      setError('jarvisActionsError', error);
+    }
+  }
+
+  function renderJarvisStatus(data) {
+    const cards = document.getElementById('jarvisStatusCards');
+    if (!cards) {
+      return;
+    }
+    const jarvisBase = data.host && data.port ? `${data.host}:${data.port}` : '-';
+    const model = data.model?.defaultModel || '-';
+    cards.innerHTML = [
+      renderJarvisStatusCard('Jarvis', data.status || 'UNKNOWN', jarvisBase),
+      renderJarvisStatusCard('Ollama', data.ollama?.status || 'UNKNOWN', data.ollama?.baseUrl || '-'),
+      renderJarvisStatusCard('Model', model, 'default model'),
+      renderJarvisStatusCard('Actions', String(data.actions?.count ?? '-'), 'allowlisted')
+    ].join('');
+  }
+
+  function renderJarvisStatusCard(title, value, meta) {
+    return `
+      <article class="detail-card jarvis-status-card">
+        <div class="detail-card-head">
+          <div>
+            <strong>${escapeHtml(title)}</strong>
+            <p>${escapeHtml(meta || '-')}</p>
+          </div>
+          ${pill(value || 'UNKNOWN', value)}
+        </div>
+      </article>
+    `;
+  }
+
+  function renderJarvisActions(actions) {
+    const list = document.getElementById('jarvisActions');
+    if (!list) {
+      return;
+    }
+    if (actions.length === 0) {
+      list.innerHTML = '<div class="empty-state">No allowlisted actions reported.</div>';
+      return;
+    }
+    list.innerHTML = actions.map((action) => `
+      <article class="detail-card">
+        <div class="detail-card-head">
+          <div>
+            <strong>${escapeHtml(action.action || 'action')}</strong>
+            <p>${escapeHtml(action.description || '-')}</p>
+          </div>
+        </div>
+        <div class="pill-row">
+          ${(action.targets || []).map((target) => pill(target, 'READY_TO_START')).join('')}
+        </div>
+      </article>
+    `).join('');
+  }
+
+  async function submitJarvisCommand(event) {
+    event.preventDefault();
+    const input = document.getElementById('jarvisCommandText');
+    const text = input?.value?.trim() || '';
+    if (!text) {
+      setError('jarvisCommandError', new Error('Command text is required.'));
+      return;
+    }
+    setJarvisCommandBusy(true);
+    try {
+      const response = await postInfrastructureJson('/jarvis/command', { text });
+      setError('jarvisCommandError', null);
+      renderJarvisCommandResult(response);
+    } catch (error) {
+      setError('jarvisCommandError', error);
+    } finally {
+      setJarvisCommandBusy(false);
+    }
+  }
+
+  function setJarvisCommandBusy(busy) {
+    const button = document.getElementById('executeJarvisCommand');
+    if (!button) {
+      return;
+    }
+    button.disabled = busy;
+    button.textContent = busy ? 'Executing...' : 'Execute';
+  }
+
+  function renderJarvisCommandResult(response) {
+    const result = document.getElementById('jarvisCommandResult');
+    if (!result) {
+      return;
+    }
+    result.classList.remove('hidden');
+    result.innerHTML = `
+      <article class="detail-card">
+        <div class="detail-card-head">
+          <div>
+            <strong>Intent</strong>
+            <p>${escapeHtml(response.intent?.action || '-')} / ${escapeHtml(response.intent?.target || '-')}</p>
+          </div>
+          ${pill(response.execution?.executed ? 'executed' : 'not executed', response.execution?.executed ? 'COMPLETED' : 'FAILED')}
+        </div>
+        <p class="detail-meta">${escapeHtml(response.execution?.message || '-')}</p>
+        ${response.execution?.output ? `<pre class="stacktrace">${escapeHtml(response.execution.output)}</pre>` : ''}
+      </article>
+    `;
+  }
+
   async function loadAgentsConfig() {
     const status = document.getElementById('resourceSaveStatus');
     if (status) {
@@ -1767,5 +1934,15 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     document.getElementById('refreshAgents')?.addEventListener('click', loadAgentsConfig);
     document.getElementById('saveResource')?.addEventListener('click', saveSelectedResource);
     loadAgentsConfig();
+  }
+
+  if (page === 'jarvis') {
+    document.getElementById('refreshJarvis')?.addEventListener('click', () => {
+      loadJarvisStatus();
+      loadJarvisActions();
+    });
+    document.getElementById('jarvisCommandForm')?.addEventListener('submit', submitJarvisCommand);
+    loadJarvisStatus();
+    loadJarvisActions();
   }
 })();
