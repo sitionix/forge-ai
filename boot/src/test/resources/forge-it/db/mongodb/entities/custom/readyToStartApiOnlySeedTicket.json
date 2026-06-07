@@ -3,7 +3,7 @@
   "ticketKey": "SITIONIX-API-1",
   "taskDescription": "ready api lane only",
   "sourceTerminalTty": "/dev/ttys999",
-  "status": "OPEN",
+  "status": "READY_TO_START",
   "lanes": [
     {
       "id": "bbbbbbbb-2222-2222-2222-222222222222",

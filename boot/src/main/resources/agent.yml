@@ -73,7 +73,7 @@ agents:
     enabled: true
     scope_mode: per_scope
     groups: [ backend ]
-    depends_on: [ implement_be ]
+    depends_on: [ implement_be, qa_lead ]
     produces: [ reviewer ]
     input_payloads:
       implement_be: test_unit

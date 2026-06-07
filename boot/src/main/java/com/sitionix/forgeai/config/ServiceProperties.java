@@ -3,8 +3,10 @@ package com.sitionix.forgeai.config;
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -49,11 +51,11 @@ public class ServiceProperties implements ServicePropertiesProvider {
                 return null;
             }
             return this.contractRefs.entrySet().stream()
-                    .collect(java.util.stream.Collectors.toMap(
+                    .collect(Collectors.toMap(
                             Map.Entry::getKey,
                             value -> value.getValue(),
                             (left, right) -> right,
-                            java.util.LinkedHashMap::new
+                            LinkedHashMap::new
                     ));
         }
     }

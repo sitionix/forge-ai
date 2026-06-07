@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.api;
 
+import com.sitionix.forgeai.domain.exception.TicketNotFoundException;
 import com.sitionix.forgeai.domain.model.lanecompletion.ScopeMismatchException;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +72,16 @@ public class ForgeAiExceptionHandler {
                         "code", HttpStatus.BAD_REQUEST.value(),
                         "title", "VALIDATION_FAILED",
                         "details", this.buildValidationDetails(exception.getBindingResult().getFieldErrors())
+                ));
+    }
+
+    @ExceptionHandler(TicketNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleTicketNotFound(final TicketNotFoundException exception) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of(
+                        "code", HttpStatus.NOT_FOUND.value(),
+                        "title", "NOT_FOUND",
+                        "details", exception.getMessage()
                 ));
     }
 

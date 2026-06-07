@@ -1,19 +1,35 @@
 package com.sitionix.forgeai.application.usecase;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.application.operator.TicketOperatorEventService;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneExecutionStatus;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStepExecution;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.operator.TicketOperatorEvent;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
+import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorRun;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneDependency;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
+import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
+import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import com.sitionix.forgeai.domain.repository.TicketOperatorRunRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiLaneCounts;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiLaneDependency;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiLaneExecution;
+import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiLaneDetailResponse;
+import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiLaneEvent;
+import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiLaneInputTask;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiLaneNode;
+import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiLaneStep;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiTicketGraphResponse;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiTicketListResponse;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiTicketSummary;
@@ -38,7 +54,11 @@ public class GetOperatorUiReadModelUseCase implements GetOperatorUiReadModel {
 
     private final TicketRepository ticketRepository;
     private final LaneExecutionRepository laneExecutionRepository;
+    private final AgentTicketRepository agentTicketRepository;
+    private final LaneStrategyRepository laneStrategyRepository;
     private final TicketOperatorRunRepository ticketOperatorRunRepository;
+    private final TicketOperatorEventService ticketOperatorEventService;
+    private final ObjectMapper objectMapper;
 
     @Override
     public OperatorUiTicketListResponse tickets(final Integer limit) {
@@ -60,7 +80,7 @@ public class GetOperatorUiReadModelUseCase implements GetOperatorUiReadModel {
                         this::latestExecution
                 ));
         final List<Lane> visibleLanes = ticket.getLanes().stream()
-                .filter(lane -> this.isVisibleLane(lane, latestExecutionByLaneId.get(lane.getId())))
+                .filter(this::isVisibleLane)
                 .toList();
         final Map<LaneKey, Lane> lanesByKey = visibleLanes.stream()
                 .collect(Collectors.toMap(
@@ -83,6 +103,47 @@ public class GetOperatorUiReadModelUseCase implements GetOperatorUiReadModel {
         );
     }
 
+    @Override
+    public OperatorUiLaneDetailResponse lane(final UUID ticketId, final UUID laneId) {
+        final Ticket ticket = this.ticketRepository.findById(ticketId)
+                .orElseThrow(() -> new IllegalStateException("Ticket not found: " + ticketId));
+        final Lane lane = ticket.getLanes().stream()
+                .filter(value -> Objects.equals(value.getId(), laneId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Lane not found: ticketId=" + ticketId + ", laneId=" + laneId));
+        final List<LaneExecution> executions = this.laneExecutionRepository.findByTicketId(ticketId);
+        final LaneExecution execution = executions.stream()
+                .filter(value -> Objects.equals(value.getLaneId(), laneId))
+                .reduce(this::latestExecution)
+                .orElse(null);
+        final Map<UUID, Lane> lanesById = ticket.getLanes().stream()
+                .collect(Collectors.toMap(Lane::getId, Function.identity(), (left, right) -> left));
+        final Map<LaneKey, Lane> lanesByKey = ticket.getLanes().stream()
+                .collect(Collectors.toMap(
+                        value -> new LaneKey(this.agentName(value), value.getScope()),
+                        Function.identity(),
+                        (left, right) -> left
+                ));
+        return new OperatorUiLaneDetailResponse(
+                ticket.getId(),
+                ticket.getTicketKey(),
+                this.name(ticket.getStatus()),
+                lane.getId(),
+                this.agentName(lane),
+                lane.getScope(),
+                lane.getServiceId(),
+                this.name(lane.getStatus()),
+                lane.getAttempt(),
+                ticket.getTaskDescription(),
+                this.dependencies(lane, lanesByKey),
+                this.inputTasks(lane, lanesById, lanesByKey),
+                this.execution(execution),
+                this.steps(lane, execution),
+                execution == null || execution.getStderrTail() == null ? List.of() : execution.getStderrTail(),
+                this.events(ticketId, laneId)
+        );
+    }
+
     private int normalizeLimit(final Integer limit) {
         if (limit == null) {
             return DEFAULT_TICKET_LIMIT;
@@ -100,7 +161,7 @@ public class GetOperatorUiReadModelUseCase implements GetOperatorUiReadModel {
                 ticket.getCreatedAt(),
                 ticket.getUpdatedAt(),
                 this.counts(ticket.getLanes().stream()
-                        .filter(lane -> this.isVisibleLane(lane, null))
+                        .filter(this::isVisibleLane)
                         .toList())
         );
     }
@@ -160,6 +221,168 @@ public class GetOperatorUiReadModelUseCase implements GetOperatorUiReadModel {
         );
     }
 
+    private List<OperatorUiLaneInputTask> inputTasks(final Lane lane,
+                                                     final Map<UUID, Lane> lanesById,
+                                                     final Map<LaneKey, Lane> lanesByKey) {
+        if (lane.getInputTaskIds() == null || lane.getInputTaskIds().isEmpty()) {
+            return List.of();
+        }
+        return this.agentTicketRepository.findByIds(lane.getInputTaskIds()).stream()
+                .sorted(Comparator.comparing(
+                        AgentTicket::getCreatedAt,
+                        Comparator.nullsLast(LocalDateTime::compareTo)
+                ))
+                .map(task -> this.inputTask(lane, task, lanesById, lanesByKey))
+                .toList();
+    }
+
+    private OperatorUiLaneInputTask inputTask(final Lane targetLane,
+                                             final AgentTicket<AgentTicketPayload> task,
+                                             final Map<UUID, Lane> lanesById,
+                                             final Map<LaneKey, Lane> lanesByKey) {
+        final Lane sourceLane = this.sourceLane(targetLane, task, lanesById, lanesByKey);
+        return new OperatorUiLaneInputTask(
+                task.getId(),
+                sourceLane == null ? task.getSourceLaneId() : sourceLane.getId(),
+                sourceLane == null ? null : this.agentName(sourceLane),
+                sourceLane == null ? null : sourceLane.getScope(),
+                this.name(task.getStatus()),
+                task.getPayload() == null ? null : task.getPayload().getClass().getSimpleName(),
+                this.payloadJson(task.getPayload()),
+                task.getCreatedAt()
+        );
+    }
+
+    private Lane sourceLane(final Lane targetLane,
+                            final AgentTicket<AgentTicketPayload> task,
+                            final Map<UUID, Lane> lanesById,
+                            final Map<LaneKey, Lane> lanesByKey) {
+        if (task.getSourceLaneId() != null) {
+            return lanesById.get(task.getSourceLaneId());
+        }
+        if (targetLane.getDependsOn() == null || targetLane.getDependsOn().isEmpty()) {
+            return null;
+        }
+        for (final LaneDependency dependency : targetLane.getDependsOn()) {
+            final Lane candidate = lanesByKey.get(new LaneKey(
+                    dependency.getType() == null ? null : dependency.getType().name(),
+                    dependency.getScope()
+            ));
+            if (candidate != null && this.payloadMatchesSource(targetLane, dependency, task.getPayload())) {
+                return candidate;
+            }
+        }
+        if (targetLane.getDependsOn().size() == 1) {
+            final LaneDependency dependency = targetLane.getDependsOn().iterator().next();
+            return lanesByKey.get(new LaneKey(
+                    dependency.getType() == null ? null : dependency.getType().name(),
+                    dependency.getScope()
+            ));
+        }
+        return null;
+    }
+
+    private boolean payloadMatchesSource(final Lane targetLane,
+                                         final LaneDependency dependency,
+                                         final AgentTicketPayload payload) {
+        if (targetLane.getAgent() == null || dependency.getType() == null || payload == null) {
+            return false;
+        }
+        try {
+            return targetLane.getAgent().inputPayloadTypeFrom(dependency.getType())
+                    .filter(type -> type.isInstance(payload))
+                    .isPresent();
+        } catch (final IllegalStateException ignored) {
+            return false;
+        }
+    }
+
+    private String payloadJson(final AgentTicketPayload payload) {
+        if (payload == null) {
+            return "{}";
+        }
+        try {
+            return this.objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(payload);
+        } catch (final JsonProcessingException e) {
+            return "{\"serializationError\":\"" + e.getOriginalMessage() + "\"}";
+        }
+    }
+
+    private List<OperatorUiLaneStep> steps(final Lane lane, final LaneExecution execution) {
+        final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(lane.getAgent().getId());
+        final Map<String, LaneStepExecution> persistedSteps = execution == null
+                ? Map.of()
+                : this.laneExecutionRepository.findStepExecutions(execution.getId()).stream()
+                .collect(Collectors.toMap(LaneStepExecution::getStepId, Function.identity(), (left, right) -> right));
+        return strategy.getSteps().stream()
+                .map(step -> this.step(step, execution, persistedSteps.get(step.getId())))
+                .toList();
+    }
+
+    private OperatorUiLaneStep step(final LaneStrategyStep step,
+                                    final LaneExecution execution,
+                                    final LaneStepExecution persistedStep) {
+        return new OperatorUiLaneStep(
+                step.getId(),
+                step.getOrder(),
+                step.getTitle(),
+                this.stepStatus(step, execution, persistedStep),
+                persistedStep == null ? null : persistedStep.getStartedAt(),
+                persistedStep == null ? null : persistedStep.getCompletedAt(),
+                persistedStep == null ? null : persistedStep.getResultJson(),
+                persistedStep == null ? null : persistedStep.getEvidenceJson()
+        );
+    }
+
+    private String stepStatus(final LaneStrategyStep step,
+                              final LaneExecution execution,
+                              final LaneStepExecution persistedStep) {
+        if (persistedStep != null && persistedStep.isDone()) {
+            return "DONE";
+        }
+        if (execution == null || !Objects.equals(execution.getCurrentStepId(), step.getId())) {
+            return "PENDING";
+        }
+        if (LaneExecutionStatus.FAILED.equals(execution.getStatus())) {
+            return "FAILED";
+        }
+        if (LaneExecutionStatus.INTERRUPTED.equals(execution.getStatus()) || LaneExecutionStatus.CANCELLED.equals(execution.getStatus())) {
+            return "INTERRUPTED";
+        }
+        if (LaneExecutionStatus.COMPLETED.equals(execution.getStatus())) {
+            return "DONE";
+        }
+        return "RUNNING";
+    }
+
+    private List<OperatorUiLaneEvent> events(final UUID ticketId, final UUID laneId) {
+        return this.ticketOperatorEventService.recentEvents(ticketId).stream()
+                .filter(event -> Objects.equals(event.getLaneId(), laneId))
+                .map(this::event)
+                .toList();
+    }
+
+    private OperatorUiLaneEvent event(final TicketOperatorEvent event) {
+        return new OperatorUiLaneEvent(
+                event.getTimestamp(),
+                event.getEventType(),
+                event.getMessage(),
+                event.getStepId(),
+                event.getStepOrder(),
+                event.getActiveTurnId(),
+                this.eventRole(event)
+        );
+    }
+
+    private String eventRole(final TicketOperatorEvent event) {
+        return switch (Objects.toString(event.getEventType(), "")) {
+            case "ORCHESTRATOR_MESSAGE", "CORRECTION_STARTED", "STEP_VALIDATION_FAILED" -> "ORCHESTRATOR";
+            case "AGENT_MESSAGE", "AGENT_MESSAGE_DELTA", "TURN_COMPLETED" -> "AGENT";
+            case "COMMAND_STARTED", "COMMAND_COMPLETED", "COMMAND_OUTPUT", "FILE_CHANGE" -> "TOOL";
+            default -> "SYSTEM";
+        };
+    }
+
     private LaneExecution latestExecution(final LaneExecution left, final LaneExecution right) {
         return Comparator.comparing(
                         LaneExecution::getStartedAt,
@@ -168,20 +391,8 @@ public class GetOperatorUiReadModelUseCase implements GetOperatorUiReadModel {
                 .compare(left, right) >= 0 ? left : right;
     }
 
-    private boolean isVisibleLane(final Lane lane, final LaneExecution latestExecution) {
-        if (LaneStatus.NOT_NEEDED.equals(lane.getStatus())) {
-            return false;
-        }
-        if (!LaneStatus.NOT_STARTED.equals(lane.getStatus())) {
-            return true;
-        }
-        if (latestExecution != null) {
-            return true;
-        }
-        if (lane.getInputTaskIds() != null && !lane.getInputTaskIds().isEmpty()) {
-            return true;
-        }
-        return lane.getDependsOn() != null && !lane.getDependsOn().isEmpty();
+    private boolean isVisibleLane(final Lane lane) {
+        return !LaneStatus.NOT_NEEDED.equals(lane.getStatus());
     }
 
     private OperatorUiLaneCounts counts(final List<Lane> lanes) {

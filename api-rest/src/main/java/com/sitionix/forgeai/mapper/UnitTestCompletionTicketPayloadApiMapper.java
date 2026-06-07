@@ -8,14 +8,14 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
-public interface UnitTestCompletionTicketPayloadApiMapper {
+public abstract class UnitTestCompletionTicketPayloadApiMapper {
 
     @Mapping(target = "task", expression = "java(\"Prepare reviewer execution context\")")
     @Mapping(target = "scope", source = "scope")
     @Mapping(target = "summary", source = "summary")
     @Mapping(target = "affectedFiles", source = "affectedFiles")
     @Mapping(target = "sonar", source = "sonar")
-    ReviewerPayload asReviewerPayload(CompleteUnitTestLaneRequestDTO source);
+    public abstract ReviewerPayload asReviewerPayload(CompleteUnitTestLaneRequestDTO source);
 
-    UnitTestSonar asUnitTestSonar(UnitTestSonarDTO source);
+    public abstract UnitTestSonar asUnitTestSonar(UnitTestSonarDTO source);
 }

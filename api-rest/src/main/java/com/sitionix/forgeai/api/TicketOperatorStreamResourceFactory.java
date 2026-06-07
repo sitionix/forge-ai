@@ -6,6 +6,8 @@ import com.sitionix.forgeai.domain.usecase.TicketOperatorEventStream;
 import com.sitionix.forgeai.mapper.ForgeAiOperatorApiMapper;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -28,10 +30,10 @@ public class TicketOperatorStreamResourceFactory {
     }
 
     public Resource create(final TicketOperatorEventStream stream, final boolean replay) {
-        final java.io.PipedInputStream inputStream = new java.io.PipedInputStream();
-        final java.io.PipedOutputStream outputStream;
+        final PipedInputStream inputStream = new PipedInputStream();
+        final PipedOutputStream outputStream;
         try {
-            outputStream = new java.io.PipedOutputStream(inputStream);
+            outputStream = new PipedOutputStream(inputStream);
         } catch (final IOException exception) {
             throw new IllegalStateException("Unable to open operator ticket stream", exception);
         }
@@ -40,7 +42,7 @@ public class TicketOperatorStreamResourceFactory {
     }
 
     private void writeStream(final TicketOperatorEventStream stream,
-                             final java.io.PipedOutputStream outputStream,
+                             final PipedOutputStream outputStream,
                              final boolean replay) {
         try (stream; outputStream; BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(outputStream, StandardCharsets.UTF_8))) {
             if (replay) {

@@ -4,11 +4,15 @@ import com.sitionix.forgeai.application.laneexecution.LaneExecutionProgressServi
 import com.sitionix.forgeai.application.operator.TicketOperatorEventService;
 import com.sitionix.forgeai.application.operator.TicketOperatorRunService;
 import com.sitionix.forgeai.application.operator.TicketOperatorTerminalProperties;
+import com.sitionix.forgeai.application.testsupport.InMemoryTicketOperatorEventRepository;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorRun;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorRunStatus;
 import com.sitionix.forgeai.domain.repository.CodexSessionRepository;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,7 +46,7 @@ class ManageTicketOperatorRunsUseCaseTest {
                 this.laneExecutionProgressService,
                 this.codexSessionRepository,
                 new TicketOperatorTerminalProperties(),
-                new TicketOperatorEventService()
+                new TicketOperatorEventService(new InMemoryTicketOperatorEventRepository())
         );
     }
 
@@ -70,7 +74,7 @@ class ManageTicketOperatorRunsUseCaseTest {
 
         verify(this.laneExecutionProgressService).markCancelRequested(withTurn.getId());
         verify(this.laneExecutionProgressService).markCancelRequested(withoutTurn.getId());
-        verify(this.codexSessionRepository).interruptTurn("session-a1", "turn-a1", java.time.Duration.ofSeconds(10));
+        verify(this.codexSessionRepository).interruptTurn("session-a1", "turn-a1", Duration.ofSeconds(10));
         verify(this.codexSessionRepository, never()).interruptTurn(eq("session-a2"), any(), any());
         verify(this.codexSessionRepository).closeSession("session-a1");
         verify(this.codexSessionRepository).closeSession("session-a2");
@@ -96,7 +100,7 @@ class ManageTicketOperatorRunsUseCaseTest {
                 .sessionId(sessionId)
                 .activeTurnId(turnId)
                 .processPid(42L)
-                .startedAt(java.time.LocalDateTime.ofInstant(Instant.now(), java.time.ZoneOffset.UTC))
+                .startedAt(LocalDateTime.ofInstant(Instant.now(), ZoneOffset.UTC))
                 .build();
     }
 }

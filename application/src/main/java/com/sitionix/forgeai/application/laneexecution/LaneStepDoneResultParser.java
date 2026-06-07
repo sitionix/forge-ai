@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepDoneResult;
+import java.io.IOException;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -78,7 +79,7 @@ public class LaneStepDoneResultParser {
             }
         } catch (final JsonProcessingException e) {
             throw new IllegalArgumentException("Invalid LANE_STEP_DONE JSON payload", e);
-        } catch (final java.io.IOException e) {
+        } catch (final IOException e) {
             throw new IllegalArgumentException("Invalid LANE_STEP_DONE JSON payload", e);
         }
         return trimmed;

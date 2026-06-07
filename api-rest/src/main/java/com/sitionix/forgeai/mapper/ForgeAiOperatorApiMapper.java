@@ -2,6 +2,12 @@ package com.sitionix.forgeai.mapper;
 
 import com.app_afesox.fgaisox.api_first.dto.OperatorExecutionDTO;
 import com.app_afesox.fgaisox.api_first.dto.OperatorExecutionsResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.OperatorUiCreateTaskRequestDTO;
+import com.app_afesox.fgaisox.api_first.dto.OperatorUiLaneDetailResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.OperatorUiServiceCatalogResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.OperatorUiTaskMutationResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.OperatorUiTicketGraphResponseDTO;
+import com.app_afesox.fgaisox.api_first.dto.OperatorUiTicketListResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.TicketOperatorEventDTO;
 import com.app_afesox.fgaisox.api_first.dto.TicketOperatorExecutionDTO;
 import com.app_afesox.fgaisox.api_first.dto.TicketOperatorLaneSummaryDTO;
@@ -13,6 +19,13 @@ import com.sitionix.forgeai.domain.model.operator.TicketOperatorEvent;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorRun;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
+import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiLaneDetailResponse;
+import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiTicketGraphResponse;
+import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiTicketListResponse;
+import com.sitionix.forgeai.domain.usecase.ManageOperatorUiTasks.OperatorUiCreateTaskCommand;
+import com.sitionix.forgeai.domain.usecase.ManageOperatorUiTasks.OperatorUiServiceCatalogResponse;
+import com.sitionix.forgeai.domain.usecase.ManageOperatorUiTasks.OperatorUiTaskMutationResponse;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -21,7 +34,7 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
-public interface ForgeAiOperatorApiMapper {
+public abstract class ForgeAiOperatorApiMapper {
 
     @Mapping(target = "executionId", source = "id")
     @Mapping(target = "status", expression = "java(source.getStatus() == null ? null : source.getStatus().name())")
@@ -32,9 +45,9 @@ public interface ForgeAiOperatorApiMapper {
     @Mapping(target = "activeStepTitle", source = "currentStepTitle")
     @Mapping(target = "lastProgressAt", expression = "java(toOffsetDateTime(source.getLastProgressAt()))")
     @Mapping(target = "stopCommand", ignore = true)
-    OperatorExecutionDTO asOperatorExecution(LaneExecution source);
+    public abstract OperatorExecutionDTO asOperatorExecution(LaneExecution source);
 
-    default OperatorExecutionsResponseDTO asOperatorExecutionsResponse(final List<OperatorExecutionDTO> items) {
+    public OperatorExecutionsResponseDTO asOperatorExecutionsResponse(final List<OperatorExecutionDTO> items) {
         return OperatorExecutionsResponseDTO.builder()
                 .items(items)
                 .build();
@@ -45,9 +58,9 @@ public interface ForgeAiOperatorApiMapper {
     @Mapping(target = "cancelRequestedAt", expression = "java(toOffsetDateTime(source.getCancelRequestedAt()))")
     @Mapping(target = "cancelledAt", expression = "java(toOffsetDateTime(source.getCancelledAt()))")
     @Mapping(target = "lastProgressAt", expression = "java(toOffsetDateTime(source.getLastProgressAt()))")
-    TicketOperatorRunDTO asTicketOperatorRun(TicketOperatorRun source);
+    public abstract TicketOperatorRunDTO asTicketOperatorRun(TicketOperatorRun source);
 
-    default TicketOperatorRunsResponseDTO asTicketOperatorRunsResponse(final List<TicketOperatorRunDTO> items) {
+    public TicketOperatorRunsResponseDTO asTicketOperatorRunsResponse(final List<TicketOperatorRunDTO> items) {
         return TicketOperatorRunsResponseDTO.builder()
                 .items(items)
                 .build();
@@ -60,16 +73,16 @@ public interface ForgeAiOperatorApiMapper {
     @Mapping(target = "activeStepId", source = "currentStepId")
     @Mapping(target = "activeStepOrder", source = "currentStepOrder")
     @Mapping(target = "activeStepTitle", source = "currentStepTitle")
-    TicketOperatorExecutionDTO asTicketOperatorExecution(LaneExecution source);
+    public abstract TicketOperatorExecutionDTO asTicketOperatorExecution(LaneExecution source);
 
     @Mapping(target = "lastHeartbeatAt", expression = "java(toOffsetDateTime(source.getLastHeartbeatAt()))")
     @Mapping(target = "cancelRequestedAt", expression = "java(toOffsetDateTime(source.getCancelRequestedAt()))")
     @Mapping(target = "cancelledAt", expression = "java(toOffsetDateTime(source.getCancelledAt()))")
     @Mapping(target = "lastProgressAt", expression = "java(toOffsetDateTime(source.getLastProgressAt()))")
     @Mapping(target = "status", expression = "java(source.getStatus() == null ? null : source.getStatus().name())")
-    TicketOperatorRunDTO asTicketOperatorRunForSnapshot(TicketOperatorRun source);
+    public abstract TicketOperatorRunDTO asTicketOperatorRunForSnapshot(TicketOperatorRun source);
 
-    default TicketOperatorLaneSummaryDTO asTicketOperatorLaneSummary(final Ticket ticket) {
+    public TicketOperatorLaneSummaryDTO asTicketOperatorLaneSummary(final Ticket ticket) {
         return TicketOperatorLaneSummaryDTO.builder()
                 .completed(countByStatus(ticket, LaneStatus.COMPLETED))
                 .inProgress(countByStatus(ticket, LaneStatus.IN_PROGRESS))
@@ -83,9 +96,9 @@ public interface ForgeAiOperatorApiMapper {
     @Mapping(target = "codexSessionId", source = "codexSessionId")
     @Mapping(target = "codexThreadId", source = "codexThreadId")
     @Mapping(target = "timestamp", expression = "java(toOffsetDateTime(source.getTimestamp()))")
-    TicketOperatorEventDTO asTicketOperatorEvent(TicketOperatorEvent source);
+    public abstract TicketOperatorEventDTO asTicketOperatorEvent(TicketOperatorEvent source);
 
-    default TicketOperatorSnapshotResponseDTO asTicketOperatorSnapshot(
+    public TicketOperatorSnapshotResponseDTO asTicketOperatorSnapshot(
             final TicketOperatorRunDTO run,
             final TicketOperatorLaneSummaryDTO laneSummary,
             final List<TicketOperatorExecutionDTO> activeExecutions,
@@ -99,15 +112,39 @@ public interface ForgeAiOperatorApiMapper {
                 .build();
     }
 
-    default OffsetDateTime toOffsetDateTime(final LocalDateTime value) {
+    public abstract OperatorUiTicketListResponseDTO asOperatorUiTicketListResponse(
+            OperatorUiTicketListResponse source
+    );
+
+    public abstract OperatorUiTicketGraphResponseDTO asOperatorUiTicketGraphResponse(
+            OperatorUiTicketGraphResponse source
+    );
+
+    public abstract OperatorUiLaneDetailResponseDTO asOperatorUiLaneDetailResponse(
+            OperatorUiLaneDetailResponse source
+    );
+
+    public abstract OperatorUiServiceCatalogResponseDTO asOperatorUiServiceCatalogResponse(
+            OperatorUiServiceCatalogResponse source
+    );
+
+    public abstract OperatorUiTaskMutationResponseDTO asOperatorUiTaskMutationResponse(
+            OperatorUiTaskMutationResponse source
+    );
+
+    public abstract OperatorUiCreateTaskCommand asOperatorUiCreateTaskCommand(
+            OperatorUiCreateTaskRequestDTO source
+    );
+
+    public OffsetDateTime toOffsetDateTime(final LocalDateTime value) {
         return value == null ? null : value.atOffset(ZoneOffset.UTC);
     }
 
-    default OffsetDateTime toOffsetDateTime(final java.time.Instant value) {
+    public OffsetDateTime toOffsetDateTime(final Instant value) {
         return value == null ? null : value.atOffset(ZoneOffset.UTC);
     }
 
-    private static long countByStatus(final Ticket ticket, final LaneStatus status) {
+    private long countByStatus(final Ticket ticket, final LaneStatus status) {
         return ticket.getLanes().stream()
                 .filter(lane -> lane.getStatus() == status)
                 .count();

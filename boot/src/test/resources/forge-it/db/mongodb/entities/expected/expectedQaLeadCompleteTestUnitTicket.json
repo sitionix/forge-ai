@@ -3,6 +3,7 @@
   "laneId": "76666666-6666-6666-6666-666666666666",
   "agent": "TEST_UNIT",
   "scope": "automationservice-sox",
+  "sourceLaneId": "72222222-2222-2222-2222-222222222222",
   "payload": {
     "task": "Prepare unit test execution context",
     "scope": "automationservice-sox",

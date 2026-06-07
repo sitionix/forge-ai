@@ -3,7 +3,7 @@
   "ticketKey": "SITIONIX-15",
   "taskDescription": "ready implement-be job",
   "sourceTerminalTty": "/dev/ttys999",
-  "status": "OPEN",
+  "status": "READY_TO_START",
   "lanes": [
     {
       "id": "15222222-2222-2222-2222-222222222222",

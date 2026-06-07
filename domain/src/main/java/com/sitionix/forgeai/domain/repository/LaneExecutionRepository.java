@@ -15,9 +15,13 @@ public interface LaneExecutionRepository {
 
     Optional<LaneExecution> findExecution(UUID executionId);
 
+    List<LaneStepExecution> findStepExecutions(UUID executionId);
+
     List<LaneExecution> findByTicketId(UUID ticketId);
 
     List<LaneExecution> findActiveExecutions();
 
     List<LaneExecution> findActiveExecutionsByTicketId(UUID ticketId);
+
+    void deleteByTicketId(UUID ticketId);
 }

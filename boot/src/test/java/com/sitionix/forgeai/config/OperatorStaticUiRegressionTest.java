@@ -16,54 +16,87 @@ class OperatorStaticUiRegressionTest {
         final String html = this.read("index.html");
 
         assertThat(html)
-                .contains("href=\"../actuator/health\">Health</a>")
-                .contains("href=\"./agents.html\">Agents</a>")
                 .contains("id=\"refreshTickets\"")
                 .contains(">Refresh</button>")
-                .doesNotContain("class=\"side-nav\"")
+                .doesNotContain("href=\"../actuator/health\">Health</a>")
                 .doesNotContain("id=\"navToggle\"");
     }
 
     @Test
-    void givenTicketPage_whenRendered_thenKeepExistingTicketActionsAndExposeAgents() throws Exception {
+    void givenTicketPage_whenRendered_thenKeepExistingTicketGraphActions() throws Exception {
         final String html = this.read("ticket.html");
 
         assertThat(html)
-                .contains("href=\"./index.html\">Tickets</a>")
-                .contains("href=\"./agents.html\">Agents</a>")
+                .contains("id=\"openTask\"")
+                .contains(">Task</button>")
+                .contains("id=\"executeTicket\"")
+                .contains(">Execute</button>")
+                .contains("id=\"resetLayout\"")
+                .contains(">Reset Layout</button>")
                 .contains("id=\"refreshGraph\"")
                 .contains(">Refresh</button>")
-                .doesNotContain("class=\"side-nav\"")
                 .doesNotContain("id=\"navToggle\"");
     }
 
     @Test
-    void givenAgentsPage_whenRendered_thenUseMainStyleHeroActions() throws Exception {
+    void givenOperatorStaticPages_whenRendered_thenKeepTicketAndLaneFlows() {
+        assertThat(OPERATOR_UI_DIR.resolve("new-task.html"))
+                .exists();
+        assertThat(OPERATOR_UI_DIR.resolve("lane.html"))
+                .exists();
+        assertThat(OPERATOR_UI_DIR.resolve("agents.html"))
+                .exists();
+    }
+
+    @Test
+    void givenAgentsPage_whenRendered_thenUseSidebarNavigationAndRefreshAction() throws Exception {
         final String html = this.read("agents.html");
 
         assertThat(html)
-                .contains("href=\"./index.html\">Tickets</a>")
                 .contains("id=\"refreshAgents\"")
                 .contains(">Refresh</button>")
+                .doesNotContain("href=\"./index.html\">Tickets</a>")
+                .doesNotContain("id=\"navToggle\"");
+    }
+
+    @Test
+    void givenOperatorJs_whenRendered_thenKeepSidebarEntriesAndPageHandlers() throws Exception {
+        final String js = this.read("operator-ui.js");
+
+        assertThat(js)
+                .contains("function initSidebar()")
+                .contains("href=\"./index.html\"")
+                .contains("<strong>Tickets</strong>")
+                .contains("href=\"./new-task.html\"")
+                .contains("<strong>New Task</strong>")
+                .contains("href=\"./agents.html\"")
+                .contains("<strong>Agents</strong>")
+                .contains("href=\"../actuator/health\"")
+                .contains("if (page === 'new-task')")
+                .contains("if (page === 'lane')")
+                .contains("if (page === 'agents')")
+                .contains("loadAgentsConfig")
+                .contains("saveSelectedResource")
                 .doesNotContain("class=\"side-nav\"")
                 .doesNotContain("id=\"navToggle\"");
     }
 
     @Test
-    void givenOperatorCss_whenRendered_thenKeepMainCenteredLayoutWithoutSidebar() throws Exception {
+    void givenOperatorCss_whenRendered_thenKeepSidebarLayoutAndAgentsStyles() throws Exception {
         final String css = this.read("operator-ui.css");
 
         assertThat(css)
+                .contains("--sidebar-width: 244px;")
+                .contains("body.has-sidebar")
+                .contains(".operator-sidebar")
+                .contains(".sidebar-link")
                 .contains(".shell {")
-                .contains("width: min(1440px, calc(100vw - 48px));")
                 .contains("margin: 0 auto;")
-                .contains(".graph-shell {")
-                .contains("width: min(1680px, calc(100vw - 40px));")
+                .contains(".agents-grid")
+                .contains(".agent-card")
                 .contains("@media (max-width: 1000px)")
                 .doesNotContain(".side-nav")
-                .doesNotContain(".nav-link")
                 .doesNotContain(".nav-toggle")
-                .doesNotContain("nav-collapsed")
                 .doesNotContain("margin-left: 196px");
     }
 

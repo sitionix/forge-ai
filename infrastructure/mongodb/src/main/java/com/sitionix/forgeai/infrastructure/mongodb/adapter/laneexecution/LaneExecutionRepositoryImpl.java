@@ -44,6 +44,13 @@ public class LaneExecutionRepositoryImpl implements LaneExecutionRepository {
     }
 
     @Override
+    public List<LaneStepExecution> findStepExecutions(final UUID executionId) {
+        return this.laneStepExecutionJpaRepository.findByExecutionIdOrderByStepOrderAsc(executionId).stream()
+                .map(this.laneExecutionEntityMapper::asLaneStepExecution)
+                .toList();
+    }
+
+    @Override
     public List<LaneExecution> findByTicketId(final UUID ticketId) {
         return this.laneExecutionJpaRepository.findByTicketId(ticketId).stream()
                 .map(this.laneExecutionEntityMapper::asLaneExecution)
@@ -72,5 +79,16 @@ public class LaneExecutionRepositoryImpl implements LaneExecutionRepository {
                 )).stream()
                 .map(this.laneExecutionEntityMapper::asLaneExecution)
                 .toList();
+    }
+
+    @Override
+    public void deleteByTicketId(final UUID ticketId) {
+        final List<UUID> executionIds = this.laneExecutionJpaRepository.findByTicketId(ticketId).stream()
+                .map(document -> document.getId())
+                .toList();
+        if (!executionIds.isEmpty()) {
+            this.laneStepExecutionJpaRepository.deleteByExecutionIdIn(executionIds);
+        }
+        this.laneExecutionJpaRepository.deleteByTicketId(ticketId);
     }
 }

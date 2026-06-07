@@ -20,6 +20,7 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -36,24 +37,86 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
 
     @Override
     public Ticket execute(final ForgeAiStartCommand command) {
-        final List<SelectedService> laneProps = command.getServiceIds().stream()
-                .map(serviceId -> new SelectedService(serviceId, this.props.getServices().get(serviceId)))
-                .toList();
+        return this.create(command, TicketStatus.READY_TO_START, true);
+    }
+
+    @Override
+    public Ticket createOpen(final ForgeAiStartCommand command) {
+        return this.create(command, TicketStatus.OPEN, false);
+    }
+
+    @Override
+    public Ticket executeOpen(final UUID ticketId) {
+        final Ticket ticket = this.ticketRepository.findById(ticketId)
+                .orElseThrow(() -> new IllegalArgumentException("Ticket not found: " + ticketId));
+        if (TicketStatus.READY_TO_START.equals(ticket.getStatus())) {
+            return ticket;
+        }
+        if (!TicketStatus.OPEN.equals(ticket.getStatus())) {
+            throw new IllegalStateException("Only OPEN ticket can be executed: ticketId=" + ticketId + ", status=" + ticket.getStatus());
+        }
+        ticket.setStatus(TicketStatus.READY_TO_START);
+        ticket.setUpdatedAt(LocalDateTime.now());
+        final Ticket saved = this.ticketRepository.save(ticket);
+        this.ticketOperatorRunService.publishEvent(this.ticketOperatorRunService.ticketEvent(
+                saved.getId(),
+                saved.getTicketKey(),
+                "TICKET_READY_TO_START",
+                "Ticket moved to READY_TO_START"
+        ));
+        return saved;
+    }
+
+    private Ticket create(final ForgeAiStartCommand command, final TicketStatus initialStatus, final boolean autoOpenTerminal) {
+        final List<SelectedService> laneProps = this.selectedServices(command);
 
         final Ticket ticket = Ticket.builder()
                 .id(UUID.randomUUID())
                 .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
                 .taskDescription(command.getTask())
                 .sourceTerminalTty(command.getSourceTerminalTty())
-                .status(TicketStatus.OPEN)
+                .status(initialStatus)
                 .ticketKey(command.getTicket())
                 .lanes(this.mapLane(laneProps))
                 .build();
 
         final Ticket saved = ticketRepository.save(ticket);
-        this.ticketOperatorRunService.initializeRun(saved);
-        this.ticketOperatorTerminalAutoOpenService.openIfConfigured(saved);
+        if (autoOpenTerminal) {
+            this.ticketOperatorRunService.initializeRun(saved);
+            this.ticketOperatorTerminalAutoOpenService.openIfConfigured(saved);
+        }
         return saved;
+    }
+
+    private List<SelectedService> selectedServices(final ForgeAiStartCommand command) {
+        if (command == null) {
+            throw new IllegalArgumentException("Start command is required");
+        }
+        if (command.getTicket() == null || command.getTicket().isBlank()) {
+            throw new IllegalArgumentException("Ticket key is required");
+        }
+        if (command.getTask() == null || command.getTask().isBlank()) {
+            throw new IllegalArgumentException("Task description is required");
+        }
+        if (command.getServiceIds() == null || command.getServiceIds().isEmpty()) {
+            throw new IllegalArgumentException("At least one service id is required");
+        }
+        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.props.getServices();
+        return command.getServiceIds().stream()
+                .distinct()
+                .map(serviceId -> new SelectedService(serviceId, this.service(services, serviceId)))
+                .toList();
+    }
+
+    private ServicePropertiesProvider.ServiceConfigView service(
+            final Map<String, ServicePropertiesProvider.ServiceConfigView> services,
+            final String serviceId
+    ) {
+        if (services == null || !services.containsKey(serviceId) || services.get(serviceId) == null) {
+            throw new IllegalArgumentException("Unknown service id: " + serviceId);
+        }
+        return services.get(serviceId);
     }
 
     private List<Lane> mapLane(final List<SelectedService> services) {

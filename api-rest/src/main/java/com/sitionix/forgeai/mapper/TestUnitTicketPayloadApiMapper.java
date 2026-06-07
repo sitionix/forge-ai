@@ -13,7 +13,7 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
-public interface TestUnitTicketPayloadApiMapper {
+public abstract class TestUnitTicketPayloadApiMapper {
 
     @Mapping(target = "task", expression = "java(\"Write unit tests for backend changed files in \" + source.getScope())")
     @Mapping(target = "scope", source = "scope")
@@ -21,12 +21,12 @@ public interface TestUnitTicketPayloadApiMapper {
     @Mapping(target = "changedFiles", source = "changedFiles")
     @Mapping(target = "sonar", source = "sonar")
     @Mapping(target = "unitTestNotes", ignore = true)
-    TestUnitPayload asTestUnitPayload(CompleteImplementBeLaneRequestDTO source);
+    public abstract TestUnitPayload asTestUnitPayload(CompleteImplementBeLaneRequestDTO source);
 
     @IterableMapping(elementTargetType = ImplementBeChangedFile.class)
-    Set<ImplementBeChangedFile> asChangedFiles(List<ImplementBeChangedFileDTO> source);
+    public abstract Set<ImplementBeChangedFile> asChangedFiles(List<ImplementBeChangedFileDTO> source);
 
-    ImplementBeChangedFile asChangedFile(ImplementBeChangedFileDTO source);
+    public abstract ImplementBeChangedFile asChangedFile(ImplementBeChangedFileDTO source);
 
-    UnitTestSonar asUnitTestSonar(ImplementationSonarDTO source);
+    public abstract UnitTestSonar asUnitTestSonar(ImplementationSonarDTO source);
 }

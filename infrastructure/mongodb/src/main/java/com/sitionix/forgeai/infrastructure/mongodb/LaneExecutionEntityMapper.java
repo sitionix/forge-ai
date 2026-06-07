@@ -7,11 +7,13 @@ import com.sitionix.forgeai.infrastructure.mongodb.entity.laneexecution.LaneStep
 import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
-public interface LaneExecutionEntityMapper {
+public abstract class LaneExecutionEntityMapper {
 
-    LaneExecutionDocument asLaneExecutionDocument(LaneExecution source);
+    public abstract LaneExecutionDocument asLaneExecutionDocument(LaneExecution source);
 
-    LaneExecution asLaneExecution(LaneExecutionDocument source);
+    public abstract LaneExecution asLaneExecution(LaneExecutionDocument source);
 
-    LaneStepExecutionDocument asLaneStepExecutionDocument(LaneStepExecution source);
+    public abstract LaneStepExecutionDocument asLaneStepExecutionDocument(LaneStepExecution source);
+
+    public abstract LaneStepExecution asLaneStepExecution(LaneStepExecutionDocument source);
 }

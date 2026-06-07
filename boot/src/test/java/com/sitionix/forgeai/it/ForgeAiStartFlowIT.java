@@ -29,7 +29,7 @@ class ForgeAiStartFlowIT extends AbstractForgeAiIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticket").value("SITIONIX-1"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.task").value("hi"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.scope").value("forge-ai"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OPEN"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("READY_TO_START"))
                 .assertDefault();
 
         final TicketDocument actual = this.testManager.mongo()
@@ -53,7 +53,7 @@ class ForgeAiStartFlowIT extends AbstractForgeAiIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.ticket").value("SITIONIX-2"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.task").value("frontend task"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.scope").value("forge-ai"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OPEN"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("READY_TO_START"))
                 .assertDefault();
 
         final TicketDocument actual = this.testManager.mongo()

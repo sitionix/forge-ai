@@ -3,6 +3,7 @@
   "laneId": "95555555-5555-5555-5555-555555555555",
   "agent": "TEST_UI",
   "scope": "sitionix-spa",
+  "sourceLaneId": "92222222-2222-2222-2222-222222222222",
   "payload": {
     "task": "Prepare UI test execution context",
     "scope": "sitionix-spa",

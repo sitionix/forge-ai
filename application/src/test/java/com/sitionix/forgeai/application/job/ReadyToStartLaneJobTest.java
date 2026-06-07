@@ -24,6 +24,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @ExtendWith(MockitoExtension.class)
 class ReadyToStartLaneJobTest {
@@ -113,7 +114,7 @@ class ReadyToStartLaneJobTest {
         verify(architectExecutor, never()).executeLane(firstLane);
         verify(architectExecutor, never()).executeLane(secondLane);
 
-        org.assertj.core.api.Assertions.assertThat(submittedExecutions).hasSize(2);
+        assertThat(submittedExecutions).hasSize(2);
 
         submittedExecutions.forEach(Runnable::run);
         verify(this.manageTicketOperatorRuns, times(2)).isExecutionBlocked(firstLane.getTicketId());

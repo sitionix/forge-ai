@@ -548,6 +548,7 @@ final class CodexJsonRpcClient implements AutoCloseable {
         final String eventThreadId = params.path("threadId").asText(this.threadId);
         final JsonNode turnNode = params.path("turn");
         final String turnId = turnNode.path("id").asText(null);
+        this.turnEventCollector.registerCompletedTurn(eventThreadId, turnId, turnNode);
         this.emit(CodexProgressEvent.builder()
                 .executionId(this.progressContext.executionId())
                 .ticketId(this.progressContext.ticketId())
@@ -563,7 +564,6 @@ final class CodexJsonRpcClient implements AutoCloseable {
                 .durationMs(turnNode.hasNonNull("durationMs") ? turnNode.get("durationMs").asLong() : null)
                 .occurredAt(Instant.now())
                 .build());
-        this.turnEventCollector.registerCompletedTurn(eventThreadId, turnId, turnNode);
     }
 
     private void failPendingRequests(final String reason) {

@@ -23,6 +23,8 @@ public class AgentTicketDocument {
 
     private UUID ticketId;
 
+    private UUID sourceLaneId;
+
     private UUID laneId;
 
     private AgentTicketStatus status;

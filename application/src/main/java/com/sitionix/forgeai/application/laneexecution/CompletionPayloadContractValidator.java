@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -111,7 +112,7 @@ public class CompletionPayloadContractValidator {
         final Set<String> allowed = Set.of("agent", "scope", "required", "payload");
         final Set<String> actual = output.keySet().stream()
                 .map(Object::toString)
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                .collect(Collectors.toCollection(LinkedHashSet::new));
         if (!allowed.containsAll(actual)) {
             actual.removeAll(allowed);
             throw new IllegalArgumentException("Unknown completion output fields: " + actual);
@@ -141,10 +142,10 @@ public class CompletionPayloadContractValidator {
                                 final String path) {
         final Set<String> allowed = objectContract.fields().stream()
                 .map(CompletionPayloadFieldContract::name)
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                .collect(Collectors.toCollection(LinkedHashSet::new));
         final Set<String> actual = rawObject.keySet().stream()
                 .map(Object::toString)
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+                .collect(Collectors.toCollection(LinkedHashSet::new));
         if (!allowed.containsAll(actual)) {
             actual.removeAll(allowed);
             throw new IllegalArgumentException("Unknown fields at " + path + ": " + actual);
