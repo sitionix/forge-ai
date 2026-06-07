@@ -63,6 +63,22 @@ class CodexAppServerSessionRepositoryTest {
     }
 
     @Test
+    void givenRuntimeWorkspaceRoots_whenOpenSession_thenPassAllRootsToThreadStart() {
+        final CodexAppServerSessionRepository repository = this.repositoryFor("workspace_roots");
+        final Path cwd = Path.of("").toAbsolutePath().normalize();
+        final Path extraRoot = cwd.getParent();
+
+        final CodexSession session = repository.openSession(this.startCommand().toBuilder()
+                .workspaceRoot(cwd.toString())
+                .runtimeWorkspaceRoots(List.of(cwd.toString(), extraRoot.toString()))
+                .build());
+
+        assertThat(session.threadId()).isEqualTo("thr_workspace_roots");
+        repository.closeSession(session.id());
+    }
+
+
+    @Test
     void givenMultilinePrompt_whenSubmitTurn_thenSentAsSingleInputTextAndReturnedAsSingleAssistantTurn() {
         final CodexAppServerSessionRepository repository = this.repositoryFor("success");
         final CodexSession session = repository.openSession(this.startCommand());
@@ -122,6 +138,36 @@ class CodexAppServerSessionRepositoryTest {
                 CodexProgressEventType.TURN_COMPLETED
         );
         assertThat(observer.events()).allMatch(event -> event.text() == null || !event.text().trim().startsWith("{"));
+        repository.closeSession(session.id());
+    }
+
+    @Test
+    void givenServerRequestDuringTurn_whenSubmitTurn_thenRejectRequestAndContinueWaitingForTurnCompletion() {
+        final CapturingObserver observer = new CapturingObserver();
+        final CodexAppServerSessionRepository repository = this.repositoryFor("server_request", new CodexAppServerProperties(), new CodexProgressProperties(), observer);
+        final CodexSession session = repository.openSession(this.startCommand());
+
+        final CodexTurnResponse response = repository.submitTurn(session.id(), CodexTurnCommand.builder()
+                .prompt("open pr")
+                .timeout(Duration.ofSeconds(5))
+                .promptType("STEP_PROMPT")
+                .stepId("pr")
+                .stepOrder(4)
+                .stepTitle("Pull Request")
+                .build());
+
+        assertThat(response.assistantResponse()).isEqualTo("server request rejected and continued");
+        assertThat(observer.eventTypes()).contains(
+                CodexProgressEventType.SERVER_REQUEST,
+                CodexProgressEventType.TURN_COMPLETED
+        );
+        assertThat(observer.events())
+                .filteredOn(event -> event.eventType() == CodexProgressEventType.SERVER_REQUEST)
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.status()).isEqualTo("codex/toolCall");
+                    assertThat(event.text()).contains("codex_apps").contains("update_pull_request");
+                });
         repository.closeSession(session.id());
     }
 

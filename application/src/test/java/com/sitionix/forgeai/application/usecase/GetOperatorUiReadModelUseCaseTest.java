@@ -271,18 +271,33 @@ class GetOperatorUiReadModelUseCaseTest {
                 .done(true)
                 .evidenceJson("{}")
                 .build()));
-        when(this.ticketOperatorEventService.recentEvents(TICKET_ID)).thenReturn(List.of(TicketOperatorEvent.builder()
-                .ticketId(TICKET_ID)
-                .laneId(ARCHITECT_LANE_ID)
-                .eventType("ORCHESTRATOR_MESSAGE")
-                .message("prompt")
-                .stepId("architecture_direction")
-                .timestamp(Instant.parse("2026-06-05T10:02:00Z"))
-                .build()));
+        when(this.ticketOperatorEventService.recentEvents(TICKET_ID)).thenReturn(List.of(
+                TicketOperatorEvent.builder()
+                        .ticketId(TICKET_ID)
+                        .laneId(ARCHITECT_LANE_ID)
+                        .eventType("ORCHESTRATOR_MESSAGE")
+                        .message("prompt")
+                        .stepId("architecture_direction")
+                        .timestamp(Instant.parse("2026-06-05T10:02:00Z"))
+                        .build(),
+                TicketOperatorEvent.builder()
+                        .ticketId(TICKET_ID)
+                        .laneId(ANALYZER_LANE_ID)
+                        .eventType("AGENT_MESSAGE")
+                        .message("other lane event")
+                        .stepId("scope_slicing")
+                        .timestamp(Instant.parse("2026-06-05T10:01:00Z"))
+                        .build()
+        ));
 
         final GetOperatorUiReadModel.OperatorUiLaneDetailResponse actual = this.useCase.lane(TICKET_ID, ARCHITECT_LANE_ID);
 
         assertThat(actual.laneId()).isEqualTo(ARCHITECT_LANE_ID);
+        assertThat(actual.dependencies()).singleElement()
+                .satisfies(dependency -> {
+                    assertThat(dependency.laneId()).isEqualTo(ANALYZER_LANE_ID);
+                    assertThat(dependency.status()).isEqualTo("COMPLETED");
+                });
         assertThat(actual.inputTasks()).singleElement()
                 .satisfies(task -> {
                     assertThat(task.sourceLaneId()).isEqualTo(ANALYZER_LANE_ID);
@@ -298,5 +313,7 @@ class GetOperatorUiReadModelUseCaseTest {
                     assertThat(event.role()).isEqualTo("ORCHESTRATOR");
                     assertThat(event.message()).isEqualTo("prompt");
                 });
+        assertThat(actual.events()).extracting(GetOperatorUiReadModel.OperatorUiLaneEvent::message)
+                .doesNotContain("other lane event");
     }
 }

@@ -1,10 +1,11 @@
-package com.sitionix.forgeai.application.operator;
+package com.sitionix.forgeai.config.operator;
 
+import com.sitionix.forgeai.application.operator.TicketOperatorTerminalLauncher;
+import com.sitionix.forgeai.application.operator.TicketOperatorTerminalProperties;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;

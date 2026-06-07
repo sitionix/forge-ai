@@ -9,11 +9,11 @@ This repository contains a browser-facing frontend, a browser-facing BFF, three 
 - `authorisationservice-sox` publishes notification events through an outbox to Kafka.
 - `notificationservice-sox` consumes those notification events directly and then makes HTTP calls back into auth/BFF flows.
 
-This map excludes README statements as source of truth. It is based on runnable/configured code paths in Spring modules, Vite configs, package sources, `docker-compose.yml`, and `app-afesox` contracts.
+This map excludes README statements as source of truth. It is based on runnable/configured code paths in Spring modules, Vite configs, package sources, `docker-compose.yml`, and configured contract repository metadata.
 
 # 2. Module catalog
 
-Module: `app-afesox`
+Module: configured contract source repository from `services.yaml`
 Type: `shared`
 
 Responsibilities:
@@ -22,14 +22,14 @@ Responsibilities:
 - Drives generated Java API/client/event artifacts used by the services.
 
 Entrypoints:
-- Maven generation profiles in `app-afesox/pom.xml`.
-- `app-afesox/justfile` recipe `generate-api`.
-- Contract files under `app-afesox/apis/**`.
+- Maven generation profiles in the configured contract source repository.
+- Contract repository generation commands documented by that repository.
+- Contract files exposed through service `contractRefs`.
 
 Dependencies:
 - OpenAPI Generator.
 - AsyncAPI/Avro specs under `apis/**`.
-- GitHub PR comment workflow from `app-afesox/justfile`.
+- GitHub PR comment workflow from the configured contract repository generation command.
 
 Owns data:
 - no
@@ -37,7 +37,7 @@ Owns data:
 
 Notes:
 - This is the backend/source contract repository used by generated Java artifacts.
-- Topic names come from `app-afesox/apis/stsssox/event/asyncapi.yml` and `app-afesox/apis/ntfssox/event/asyncapi.yml`.
+- Topic names come from the configured event contract refs for each producing service.
 
 Module: `authorisationservice-sox`
 Type: `backend`
@@ -58,7 +58,7 @@ Entrypoints:
 Dependencies:
 - Internal modules: `api-rest`, `application`, `domain`, `infrastructure/postgresql`, `pipe/pipe-producer-notification-v1`.
 - External systems: Postgres `AUTHS_SOX`, Kafka, filesystem key material under `authorisationservice-sox/keys`.
-- Shared libs: `forge-security-server`, `forgecommon-outbox-*`, generated `app-afesox-athssox-api-first-stable`, generated notification producer artifacts.
+- Shared libs: `forge-security-server`, `forgecommon-outbox-*`, generated auth API contract artifacts, generated notification producer artifacts.
 
 Owns data:
 - yes
@@ -89,7 +89,7 @@ Entrypoints:
 Dependencies:
 - Internal modules: `api-rest`, `application`, `domain`, `clients/client-athssox`, `clients/client-stsssox`, `clients/client-wagssox`.
 - External systems: downstream HTTP services `authorisationservice-sox`, `siteservice-sox`, `workspaceaggregationservice-sox`.
-- Shared libs: `forge-security-client`, `forge-security-user-jwt`, generated `app-afesox-bffssox-api-first-stable`, generated downstream client artifacts.
+- Shared libs: `forge-security-client`, `forge-security-user-jwt`, generated BFF API contract artifacts, generated downstream client artifacts.
 
 Owns data:
 - no
@@ -117,7 +117,7 @@ Entrypoints:
 Dependencies:
 - Internal modules: `application`, `domain`, `pipe/pipe-consumer-notification`, `clients/client-athssox`, `clients/client-bffssox`.
 - External systems: Kafka, HTTP calls to `authorisationservice-sox` and `backendforfrontendservice-sox`.
-- Shared libs: `forge-security-client`, generated `app-afesox-ntfssox-event-notifications-consumer-stable`, generated auth/BFF client artifacts.
+- Shared libs: `forge-security-client`, generated notification event consumer artifacts, generated auth/BFF client artifacts.
 
 Owns data:
 - no
@@ -143,7 +143,7 @@ Entrypoints:
 Dependencies:
 - Internal modules: `api-rest`, `application`, `domain`, `infrastructure/postgresql`, `pipe/pipe-producer-site-meta`.
 - External systems: Postgres `SITES_SOX`, Kafka.
-- Shared libs: `forge-security-server`, `forgecommon-outbox-*`, generated `app-afesox-stsssox-api-first-stable`, generated site-meta producer artifacts.
+- Shared libs: `forge-security-server`, `forgecommon-outbox-*`, generated site API contract artifacts, generated site-meta producer artifacts.
 
 Owns data:
 - yes
@@ -174,7 +174,7 @@ Entrypoints:
 Dependencies:
 - Internal modules: `api-rest`, `application`, `domain`, `infrastructure/postgresql`, `pipe/pipe-consumer-site-meta`.
 - External systems: Postgres `WAGS_SOX`, Kafka.
-- Shared libs: `forge-security-server`, `forgecommon-inbox-*`, generated `app-afesox-wagssox-api-first-stable`, generated site-meta consumer artifacts.
+- Shared libs: `forge-security-server`, `forgecommon-inbox-*`, generated workspace API contract artifacts, generated site-meta consumer artifacts.
 
 Owns data:
 - yes
@@ -347,7 +347,7 @@ Owns data:
 - Type definitions only.
 
 Notes:
-- These contracts are handwritten TypeScript types, not generated from `app-afesox`.
+- These contracts are handwritten TypeScript types, not generated from the configured backend contract source repository.
 - Current workspace types include objects/endpoints not backed by current backend contracts.
 
 Module: `sitionix-spa/packages/ui`
@@ -689,7 +689,7 @@ Local runtime residue:
 - Evidence: `siteservice-sox` owns write-side site persistence; `workspaceaggregationservice-sox` owns read-side workspace site views.
 
 - Contract-first/generated client usage is present.
-- Evidence: controllers implement generated `app-afesox` APIs and downstream modules depend on generated `app-afesox-*client-stable` / `app-afesox-*event-*` artifacts.
+- Evidence: controllers implement generated APIs and downstream modules depend on generated API/client/event artifacts from the configured contract source repository.
 
 - Microfrontend/module federation is present.
 - Evidence: `shell`, `auth`, `workspace`, and `builder` Vite configs use `@originjs/vite-plugin-federation`.
@@ -717,11 +717,11 @@ Local runtime residue:
 - Notification processing is Kafka-driven, not HTTP-triggered.
 - Derived from `NotificationConsumer` being the main entrypoint and no notification REST controller being present.
 
-- `app-afesox` is the Java contract source for backend APIs/events.
+- The configured contract source repository is the Java contract source for backend APIs/events.
 - Derived from generated Java API/client/event dependencies across services.
 
 - `@sitionix/contracts` is frontend-local typing, not the backend contract source of truth.
-- Derived from frontend package code being handwritten TypeScript while backend uses generated `app-afesox` artifacts.
+- Derived from frontend package code being handwritten TypeScript while backend uses generated artifacts from the configured contract source repository.
 
 - `builder` is currently isolated from backend APIs.
 - Derived from no HTTP client usage in builder sources.
@@ -749,4 +749,4 @@ Local runtime residue:
 - No matching update/delete site HTTP/usecase implementation was found in current `siteservice-sox` main sources.
 
 - Frontend contracts are ahead of backend/generated contracts.
-- Evidence: `@sitionix/contracts` defines dashboard, CRM, trash, editor, collection, and domain models that are not represented in current `app-afesox` BFF/workspace REST contracts.
+- Evidence: `@sitionix/contracts` defines dashboard, CRM, trash, editor, collection, and domain models that are not represented in current configured BFF/workspace REST contracts.

@@ -1,6 +1,7 @@
 package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.application.job.ReadyToStartLaneJob;
+import com.sitionix.forgeai.application.laneexecution.validation.LaneStepEvidenceValidatorRegistry;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.laneexecution.LaneExecutionDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.repository.laneexecution.LaneExecutionJpaRepository;
@@ -11,6 +12,7 @@ import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.annotation.DirtiesContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -33,6 +35,9 @@ class SupervisedApiDefaultExecutionIT extends AbstractForgeAiIT {
 
     @Autowired
     private LaneExecutionJpaRepository laneExecutionJpaRepository;
+
+    @MockBean
+    private LaneStepEvidenceValidatorRegistry laneStepEvidenceValidatorRegistry;
 
     @Test
     @DisplayName("Should execute API lane via supervised session by default")

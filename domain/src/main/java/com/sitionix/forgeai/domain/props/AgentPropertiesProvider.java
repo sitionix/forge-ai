@@ -48,5 +48,9 @@ public interface AgentPropertiesProvider {
         default Optional<AgentTicketPayloadType> getCompletionReportPayloadType() {
             return Optional.empty();
         }
+
+        default Optional<String> getWorkspaceContractRef() {
+            return Optional.empty();
+        }
     }
 }

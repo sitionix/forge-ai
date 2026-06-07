@@ -10,7 +10,7 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 public interface TicketJpaRepository extends MongoRepository<TicketDocument, UUID> {
 
     @Aggregation(pipeline = {
-            "{ $match: { status: 'READY_TO_START' } }",
+            "{ $match: { status: { $in: [ 'READY_TO_START', 'IN_PROGRESS' ] } } }",
             "{ $unwind: '$lanes' }",
             "{ $match: { 'lanes.status': 'READY_TO_START' } }",
             "{ $project: { " +

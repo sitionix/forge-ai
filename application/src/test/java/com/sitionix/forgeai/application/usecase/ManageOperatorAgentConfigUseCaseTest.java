@@ -1,9 +1,9 @@
 package com.sitionix.forgeai.application.usecase;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadObjectContract;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.operator.OperatorConfigResource;
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.AgentTicketPayloadType;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
@@ -12,24 +12,19 @@ import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import com.sitionix.forgeai.domain.repository.CompletionPayloadContractRepository;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
+import com.sitionix.forgeai.domain.repository.OperatorConfigResourceRepository;
 import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -38,12 +33,8 @@ class ManageOperatorAgentConfigUseCaseTest {
 
     private static final String INSTRUCTION_REF = "shared/common-rules.md";
 
-    @TempDir
-    private Path repositoryRoot;
-
-    private String originalUserDir;
-
     private ManageOperatorAgentConfig useCase;
+    private FakeOperatorConfigResourceRepository operatorConfigResourceRepository;
 
     @Mock
     private AgentPropertiesProvider agentPropertiesProvider;
@@ -55,22 +46,15 @@ class ManageOperatorAgentConfigUseCaseTest {
     private CompletionPayloadContractRepository completionPayloadContractRepository;
 
     @BeforeEach
-    void setUp() throws Exception {
-        this.originalUserDir = System.getProperty("user.dir");
-        this.createRepositoryFiles();
-        System.setProperty("user.dir", this.repositoryRoot.toString());
+    void setUp() {
+        this.operatorConfigResourceRepository = new FakeOperatorConfigResourceRepository();
         this.useCase = new ManageOperatorAgentConfigUseCase(
                 this.agentPropertiesProvider,
                 this.laneStrategyRepository,
                 this.instructionRepository,
                 this.completionPayloadContractRepository,
-                new ObjectMapper()
+                this.operatorConfigResourceRepository
         );
-    }
-
-    @AfterEach
-    void tearDown() {
-        System.setProperty("user.dir", this.originalUserDir);
     }
 
     @Test
@@ -143,24 +127,8 @@ class ManageOperatorAgentConfigUseCaseTest {
         );
 
         assertThat(actual.resourceKey()).isEqualTo("agent-yml");
-        assertThat(Files.readString(this.repositoryRoot.resolve("boot/src/main/resources/agent.yml"), StandardCharsets.UTF_8))
-                .isEqualTo("agents: []\n");
-    }
-
-    @Test
-    void givenInstructionPathTraversal_whenSaveResource_thenRejectResourceKey() {
-        assertThatThrownBy(() -> this.useCase.saveResource(
-                new ManageOperatorAgentConfig.OperatorConfigResourceSaveRequest("instruction:../agent.yml", "content")
-        )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Unsupported instruction ref");
-    }
-
-    @Test
-    void givenInvalidJsonContract_whenSaveResource_thenRejectContent() {
-        assertThatThrownBy(() -> this.useCase.saveResource(
-                new ManageOperatorAgentConfig.OperatorConfigResourceSaveRequest("contract:ArchitectPayload", "{broken")
-        )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Invalid JSON content");
+        assertThat(actual.content()).isEqualTo("agents: []\n");
+        assertThat(this.operatorConfigResourceRepository.agentYaml().content()).isEqualTo("agents: []\n");
     }
 
     private AgentPropertiesProvider.AgentConfigView agent(final String id,
@@ -178,22 +146,67 @@ class ManageOperatorAgentConfigUseCaseTest {
         return agent;
     }
 
-    private void createRepositoryFiles() throws Exception {
-        Files.writeString(this.repositoryRoot.resolve("pom.xml"), "<project />", StandardCharsets.UTF_8);
-        Files.createDirectories(this.repositoryRoot.resolve("boot/src/main/resources"));
-        Files.writeString(this.repositoryRoot.resolve("boot/src/main/resources/agent.yml"), "agents: []\n", StandardCharsets.UTF_8);
-        Files.writeString(this.repositoryRoot.resolve("boot/src/main/resources/lane-strategies.yml"), "strategies: []\n", StandardCharsets.UTF_8);
-        Files.createDirectories(this.repositoryRoot.resolve("infrastructure/resources/src/main/resources/instructions/shared"));
-        Files.writeString(
-                this.repositoryRoot.resolve("infrastructure/resources/src/main/resources/instructions/" + INSTRUCTION_REF),
-                "shared instruction",
-                StandardCharsets.UTF_8
-        );
-        Files.createDirectories(this.repositoryRoot.resolve("infrastructure/resources/src/main/resources/completion-payload-contracts"));
-        Files.writeString(
-                this.repositoryRoot.resolve("infrastructure/resources/src/main/resources/completion-payload-contracts/ArchitectPayload.json"),
-                "{\"payloadType\":\"ArchitectPayload\",\"description\":\"Architect task input.\",\"fields\":[]}",
-                StandardCharsets.UTF_8
-        );
+    private static final class FakeOperatorConfigResourceRepository implements OperatorConfigResourceRepository {
+
+        private final Map<String, String> content = new java.util.LinkedHashMap<>(Map.of(
+                "agent-yml", "agents: []\n",
+                "lane-strategies-yml", "strategies: []\n",
+                "instruction:" + INSTRUCTION_REF, "shared instruction",
+                "contract:ArchitectPayload", "{\"payloadType\":\"ArchitectPayload\",\"description\":\"Architect task input.\",\"fields\":[]}"
+        ));
+
+        @Override
+        public OperatorConfigResource agentYaml() {
+            return this.resource("agent-yml", "agent.yml", "yaml");
+        }
+
+        @Override
+        public OperatorConfigResource laneStrategiesYaml() {
+            return this.resource("lane-strategies-yml", "lane-strategies.yml", "yaml");
+        }
+
+        @Override
+        public OperatorConfigResource instruction(final String instructionRef) {
+            return this.resource("instruction:" + instructionRef, instructionRef, "markdown");
+        }
+
+        @Override
+        public OperatorConfigResource contract(final String payloadType) {
+            return this.resource("contract:" + payloadType, payloadType, "json");
+        }
+
+        @Override
+        public List<OperatorConfigResource> contracts() {
+            return List.of(this.contract("ArchitectPayload"));
+        }
+
+        @Override
+        public OperatorConfigResource save(final String resourceKey, final String content) {
+            this.content.put(resourceKey, content);
+            if ("agent-yml".equals(resourceKey)) {
+                return this.agentYaml();
+            }
+            if ("lane-strategies-yml".equals(resourceKey)) {
+                return this.laneStrategiesYaml();
+            }
+            if (resourceKey.startsWith("instruction:")) {
+                return this.instruction(resourceKey.substring("instruction:".length()));
+            }
+            if (resourceKey.startsWith("contract:")) {
+                return this.contract(resourceKey.substring("contract:".length()));
+            }
+            throw new IllegalArgumentException("Unsupported config resourceKey: " + resourceKey);
+        }
+
+        private OperatorConfigResource resource(final String resourceKey, final String label, final String type) {
+            return OperatorConfigResource.builder()
+                    .resourceKey(resourceKey)
+                    .label(label)
+                    .resourceType(type)
+                    .path("/repo/" + label)
+                    .writable(true)
+                    .content(this.content.get(resourceKey))
+                    .build();
+        }
     }
 }

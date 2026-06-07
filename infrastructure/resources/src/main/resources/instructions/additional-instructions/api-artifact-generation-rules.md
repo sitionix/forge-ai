@@ -2,9 +2,9 @@
 
 ## Metadata
 
-Resolve API generation targets from:
+Resolve API generation targets from the configured API contract source repository and metadata exposed by scope context.
 
-`app-afesox/apis/metadata.yml`
+Use `contractRefs.api.sourceRepo`, `contractRefs.api.generatedArtifacts`, `contractRefs.api.consumerArtifacts`, and `contractRefs.api.frontendPackages` to identify allowed generated targets.
 
 Supported API artifact kinds:
 

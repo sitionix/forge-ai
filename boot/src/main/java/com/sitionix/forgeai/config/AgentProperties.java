@@ -39,6 +39,7 @@ public class AgentProperties implements AgentPropertiesProvider {
         private List<String> groups;
         private List<String> dependsOn;
         private List<String> produces;
+        private String workspaceContractRef;
         private Map<String, String> inputPayloads = new LinkedHashMap<>();
         private CompletionConfig completion = new CompletionConfig();
 
@@ -125,6 +126,14 @@ public class AgentProperties implements AgentPropertiesProvider {
                 return Optional.empty();
             }
             return Optional.of(AgentTicketPayloadType.byId(this.completion.getReportPayload()));
+        }
+
+        @Override
+        public Optional<String> getWorkspaceContractRef() {
+            if (this.workspaceContractRef == null || this.workspaceContractRef.isBlank()) {
+                return Optional.empty();
+            }
+            return Optional.of(this.workspaceContractRef);
         }
     }
 

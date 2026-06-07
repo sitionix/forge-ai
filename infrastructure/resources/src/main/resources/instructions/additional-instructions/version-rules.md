@@ -15,6 +15,8 @@ They may apply to:
 ## Source
 
 Compare the changed contract surface version in the current branch against `develop`.
+Do not checkout `develop` or recreate branches in this step; preparation already selected the ticket branch.
+Read baseline files through git refs such as `git show develop:<path>` or `git show origin/develop:<path>` when needed.
 
 Use the version fields owned by the changed contract surface.
 
