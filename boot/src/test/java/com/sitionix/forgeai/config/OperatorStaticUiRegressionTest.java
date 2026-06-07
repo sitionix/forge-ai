@@ -10,6 +10,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 class OperatorStaticUiRegressionTest {
 
     private static final Path OPERATOR_UI_DIR = Path.of("src/main/resources/static/operator");
+    private static final Path STATIC_UI_DIR = Path.of("src/main/resources/static");
+
+    @Test
+    void givenRootStaticIndex_whenRendered_thenRedirectToOperatorUi() throws Exception {
+        final String html = Files.readString(STATIC_UI_DIR.resolve("index.html"), StandardCharsets.UTF_8);
+
+        assertThat(html)
+                .contains("url=./operator/index.html")
+                .contains("href=\"./operator/index.html\"");
+    }
 
     @Test
     void givenTicketsPage_whenRendered_thenKeepExistingPrimaryActions() throws Exception {
