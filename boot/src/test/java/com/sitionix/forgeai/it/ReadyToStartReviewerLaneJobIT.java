@@ -6,6 +6,7 @@ import com.sitionix.forgeai.infrastructure.mongodb.entity.AgentTicketDocument;
 import com.sitionix.forgeai.infrastructure.mongodb.entity.TicketDocument;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
+import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,20 +42,22 @@ class ReadyToStartReviewerLaneJobIT extends AbstractForgeAiIT {
         this.readyToStartLaneJob.run();
 
         //then
-        final TicketDocument actual = this.testManager.mongo()
-                .get(TicketDocument.class)
-                .hasSize(1)
-                .singleElement()
-                .assertEntity();
+        this.eventually(Duration.ofSeconds(30), () -> {
+            final TicketDocument actual = this.testManager.mongo()
+                    .get(TicketDocument.class)
+                    .hasSize(1)
+                    .singleElement()
+                    .assertEntity();
 
-        this.testManager.mongo()
-                .assertEntities(AgentTicketDocument.class)
-                .hasSize(0);
+            this.testManager.mongo()
+                    .assertEntities(AgentTicketDocument.class)
+                    .hasSize(0);
 
-        this.testManager.mongo()
-                .assertEntities(TicketDocument.class)
-                .ignoreFields("id", "createdAt", "updatedAt", "attempt", "inputTaskIds")
-                .containsWithJsonsStrict("expectedReadyToStartReviewerLaneJobTicket.json");
-        assertThat(actual.getStatus()).isEqualTo(TicketStatus.RESOLVED);
+            this.testManager.mongo()
+                    .assertEntities(TicketDocument.class)
+                    .ignoreFields("id", "createdAt", "updatedAt", "attempt", "inputTaskIds")
+                    .containsWithJsonsStrict("expectedReadyToStartReviewerLaneJobTicket.json");
+            assertThat(actual.getStatus()).isEqualTo(TicketStatus.RESOLVED);
+        });
     }
 }

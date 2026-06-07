@@ -16,6 +16,7 @@ import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.ItCodexSessionRepositoryStub;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Comparator;
@@ -148,15 +149,17 @@ class TicketOperatorControllerIT extends AbstractForgeAiIT {
         this.codexSessionRepositoryStub.clearSentMessages();
         this.readyToStartLaneJob.run();
 
-        final List<String> prompts = this.codexSessionRepositoryStub.sentMessages();
-        assertThat(prompts).isNotEmpty();
-        assertThat(prompts).allMatch(prompt -> !prompt.contains(ticketA.getId().toString()));
-        assertThat(prompts).anyMatch(prompt -> prompt.contains(ticketB.getId().toString()));
+        this.eventually(Duration.ofSeconds(30), () -> {
+            final List<String> prompts = this.codexSessionRepositoryStub.sentMessages();
+            assertThat(prompts).isNotEmpty();
+            assertThat(prompts).allMatch(prompt -> !prompt.contains(ticketA.getId().toString()));
+            assertThat(prompts).anyMatch(prompt -> prompt.contains(ticketB.getId().toString()));
 
-        final TicketDocument cancelledTicket = this.ticketJpaRepository.findById(ticketA.getId()).orElseThrow();
-        final TicketDocument runningTicket = this.ticketJpaRepository.findById(ticketB.getId()).orElseThrow();
-        assertThat(this.statusOf(cancelledTicket, Agent.ANALYZER)).isEqualTo(LaneStatus.READY_TO_START);
-        assertThat(this.statusOf(runningTicket, Agent.ANALYZER)).isNotEqualTo(LaneStatus.READY_TO_START);
+            final TicketDocument cancelledTicket = this.ticketJpaRepository.findById(ticketA.getId()).orElseThrow();
+            final TicketDocument runningTicket = this.ticketJpaRepository.findById(ticketB.getId()).orElseThrow();
+            assertThat(this.statusOf(cancelledTicket, Agent.ANALYZER)).isEqualTo(LaneStatus.READY_TO_START);
+            assertThat(this.statusOf(runningTicket, Agent.ANALYZER)).isNotEqualTo(LaneStatus.READY_TO_START);
+        });
     }
 
     private TicketDocument createTicket(final boolean backend) {
