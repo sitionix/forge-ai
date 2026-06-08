@@ -36,7 +36,7 @@ class GithubCliApiArtifactGenerationAdapterTest {
                 """));
         final GithubCliApiArtifactGenerationAdapter adapter = new GithubCliApiArtifactGenerationAdapter(
                 new GithubPullRequestClient(new ObjectMapper(), runner),
-                new ApiGenerationMetadataResolver(new ApiGenerationArtifactNaming()),
+                new ApiGenerationMetadataResolver(),
                 new ApiGenerationCommand(),
                 new ApiGenerationArtifactParser(new ApiGenerationArtifactNaming()),
                 Duration.ofSeconds(1),
@@ -90,7 +90,7 @@ class GithubCliApiArtifactGenerationAdapterTest {
                 """));
         final GithubCliApiArtifactGenerationAdapter adapter = new GithubCliApiArtifactGenerationAdapter(
                 new GithubPullRequestClient(new ObjectMapper(), runner),
-                new ApiGenerationMetadataResolver(new ApiGenerationArtifactNaming()),
+                new ApiGenerationMetadataResolver(),
                 new ApiGenerationCommand(),
                 new ApiGenerationArtifactParser(new ApiGenerationArtifactNaming()),
                 Duration.ofSeconds(1),

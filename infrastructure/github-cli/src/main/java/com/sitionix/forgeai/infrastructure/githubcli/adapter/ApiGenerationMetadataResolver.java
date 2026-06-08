@@ -8,12 +8,6 @@ import org.springframework.stereotype.Component;
 @Component
 class ApiGenerationMetadataResolver {
 
-    private final ApiGenerationArtifactNaming artifactNaming;
-
-    ApiGenerationMetadataResolver(final ApiGenerationArtifactNaming artifactNaming) {
-        this.artifactNaming = artifactNaming;
-    }
-
     String resolveGenerationName(final ApiArtifactGenerationRequest request, final String metadata) {
         final String execution = request.generationType();
         return this.metadataEntries(metadata).stream()
