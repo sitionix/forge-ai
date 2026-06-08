@@ -1,6 +1,11 @@
 package com.sitionix.forgeai.config;
 
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
+import com.sitionix.forgeai.domain.props.ContractRefView;
+import com.sitionix.forgeai.domain.props.DbConfigView;
+import com.sitionix.forgeai.domain.props.DeployConfigView;
+import com.sitionix.forgeai.domain.props.DeployUnitConfigView;
+import com.sitionix.forgeai.domain.props.ServiceConfigView;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.LinkedHashMap;
@@ -27,9 +32,10 @@ public class ServiceProperties implements ServicePropertiesProvider {
 
     @Getter
     @Setter
-    public static class ServiceConfig implements ServicePropertiesProvider.ServiceConfigView {
+    public static class ServiceConfig implements ServiceConfigView {
         private String label;
         private String path;
+        private String repo;
         private ServiceGroup group;
         private List<String> tags;
         private List<TestType> tests;
@@ -46,7 +52,7 @@ public class ServiceProperties implements ServicePropertiesProvider {
         }
 
         @Override
-        public Map<String, ServicePropertiesProvider.ContractRefView> getContractRefs() {
+        public Map<String, ContractRefView> getContractRefs() {
             if (this.contractRefs == null) {
                 return null;
             }
@@ -62,7 +68,7 @@ public class ServiceProperties implements ServicePropertiesProvider {
 
     @Getter
     @Setter
-    public static class DeployConfig implements ServicePropertiesProvider.DeployConfigView {
+    public static class DeployConfig implements DeployConfigView {
         private String type;
         private String repo;
         private DeployUnitConfig service;
@@ -71,7 +77,7 @@ public class ServiceProperties implements ServicePropertiesProvider {
 
     @Getter
     @Setter
-    public static class DbConfig implements ServicePropertiesProvider.DbConfigView {
+    public static class DbConfig implements DbConfigView {
         private Boolean required;
         private DbType type;
         private String mode;
@@ -85,15 +91,16 @@ public class ServiceProperties implements ServicePropertiesProvider {
 
     @Getter
     @Setter
-    public static class DeployUnitConfig implements ServicePropertiesProvider.DeployUnitConfigView {
+    public static class DeployUnitConfig implements DeployUnitConfigView {
         private String name;
+        private String healthcheckUrl;
         private String workflowName;
         private String workflowEvent;
     }
 
     @Getter
     @Setter
-    public static class ContractRefConfig implements ServicePropertiesProvider.ContractRefView {
+    public static class ContractRefConfig implements ContractRefView {
         private String sourceRepo;
         private String apiFamily;
         private String eventFamily;

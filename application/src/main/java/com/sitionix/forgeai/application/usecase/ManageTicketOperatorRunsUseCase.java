@@ -109,14 +109,7 @@ public class ManageTicketOperatorRunsUseCase implements ManageTicketOperatorRuns
         ));
         run = this.ticketOperatorRunService.markInterrupting(ticketId, reason);
         for (final LaneExecution execution : this.laneExecutionProgressService.findActiveExecutionsByTicket(ticketId)) {
-            this.laneExecutionProgressService.markCancelRequested(execution.getId());
-            if (execution.getSessionId() != null && execution.getActiveTurnId() != null) {
-                this.codexSessionRepository.interruptTurn(execution.getSessionId(), execution.getActiveTurnId(), Duration.ofSeconds(10));
-            }
-            if (execution.getSessionId() != null) {
-                this.codexSessionRepository.closeSession(execution.getSessionId());
-            }
-            this.laneExecutionProgressService.markInterrupted(execution.getId(), "Ticket operator interrupt: " + reason);
+            this.interruptExecution(execution, reason);
         }
         run = this.ticketOperatorRunService.markCancelled(ticketId, reason);
         this.ticketOperatorRunService.publishEvent(this.ticketOperatorRunService.ticketEvent(
@@ -126,6 +119,28 @@ public class ManageTicketOperatorRunsUseCase implements ManageTicketOperatorRuns
                 reason
         ));
         return run;
+    }
+
+    private void interruptExecution(final LaneExecution execution, final String reason) {
+        this.laneExecutionProgressService.markCancelRequested(execution.getId());
+        final String sessionId = execution.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            this.laneExecutionProgressService.markInterrupted(execution.getId(), "Ticket operator interrupt before Codex session: " + reason);
+            return;
+        }
+        try {
+            if (execution.getActiveTurnId() != null && !execution.getActiveTurnId().isBlank()) {
+                this.codexSessionRepository.interruptTurn(sessionId, execution.getActiveTurnId(), Duration.ofSeconds(10));
+            }
+            this.codexSessionRepository.closeSession(sessionId);
+            this.laneExecutionProgressService.markInterrupted(execution.getId(), "Ticket operator interrupt: " + reason);
+        } catch (final RuntimeException ex) {
+            this.codexSessionRepository.closeSession(sessionId);
+            this.laneExecutionProgressService.markInterrupted(
+                    execution.getId(),
+                    "Ticket operator interrupt cleanup completed after transport failure: " + ex.getMessage()
+            );
+        }
     }
 
     @Override

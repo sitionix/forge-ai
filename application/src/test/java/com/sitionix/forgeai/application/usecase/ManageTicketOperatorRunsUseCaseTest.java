@@ -23,6 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -80,6 +81,33 @@ class ManageTicketOperatorRunsUseCaseTest {
         verify(this.codexSessionRepository).closeSession("session-a2");
         verify(this.laneExecutionProgressService).markInterrupted(withTurn.getId(), "Ticket operator interrupt: terminal-closed");
         verify(this.laneExecutionProgressService).markInterrupted(withoutTurn.getId(), "Ticket operator interrupt: terminal-closed");
+    }
+
+    @Test
+    void givenStaleCodexSession_whenTicketInterrupt_thenCleanupDoesNotFail() {
+        final UUID ticketId = UUID.fromString("aaaaaaaa-1111-1111-1111-111111111111");
+        final LaneExecution execution = this.execution(
+                ticketId,
+                UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                "stale-session",
+                "active-turn"
+        );
+        when(this.ticketOperatorRunService.markCancelRequested(ticketId, "delete")).thenReturn(this.run(ticketId, TicketOperatorRunStatus.CANCEL_REQUESTED));
+        when(this.ticketOperatorRunService.markInterrupting(ticketId, "delete")).thenReturn(this.run(ticketId, TicketOperatorRunStatus.INTERRUPTING));
+        when(this.ticketOperatorRunService.markCancelled(ticketId, "delete")).thenReturn(this.run(ticketId, TicketOperatorRunStatus.CANCELLED));
+        when(this.laneExecutionProgressService.findActiveExecutionsByTicket(ticketId)).thenReturn(List.of(execution));
+        doThrow(new IllegalStateException("Unknown Codex sessionId=stale-session"))
+                .when(this.codexSessionRepository)
+                .interruptTurn("stale-session", "active-turn", Duration.ofSeconds(10));
+
+        this.useCase.interruptTicket(ticketId, "delete");
+
+        verify(this.laneExecutionProgressService).markCancelRequested(execution.getId());
+        verify(this.codexSessionRepository).closeSession("stale-session");
+        verify(this.laneExecutionProgressService).markInterrupted(
+                execution.getId(),
+                "Ticket operator interrupt cleanup completed after transport failure: Unknown Codex sessionId=stale-session"
+        );
     }
 
     private TicketOperatorRun run(final UUID ticketId, final TicketOperatorRunStatus status) {

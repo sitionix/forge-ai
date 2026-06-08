@@ -4,7 +4,6 @@
   "agent": "EVENT",
   "sourceLaneId": "66666666-6666-6666-6666-666666666666",
   "payload": {
-    "required": false,
     "reason": "not required",
     "scope": "automationservice-sox",
     "summary": "event summary",

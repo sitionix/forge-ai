@@ -2,7 +2,6 @@
   "payloadType": "EventPayload",
   "description": "Architect output used as Event lane input for event contract work.",
   "fields": [
-    { "name": "required", "type": "BOOLEAN", "required": true, "description": "Whether event contract work is required for this target scope." },
     { "name": "reason", "type": "STRING", "required": true, "description": "Short reason why event work is or is not required." },
     { "name": "scope", "type": "STRING", "required": true, "description": "Exact service scope affected by the event decision." },
     { "name": "summary", "type": "STRING", "required": true, "description": "Concise event work summary for the Event lane." },

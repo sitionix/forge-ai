@@ -66,6 +66,24 @@ class CompletionPayloadContractValidatorTest {
     }
 
     @Test
+    void givenLegacyProducedPayloadRequiredField_whenValidate_thenReject() {
+        final Map<String, Object> payload = this.apiPayload("backendforfrontendservice-sox");
+        payload.put("required", false);
+
+        this.laneRepository.targetLanes = List.of(Lane.builder()
+                .id(UUID.randomUUID())
+                .agent(Agent.API)
+                .scope(ScopeMode.GLOBAL_SCOPE)
+                .build());
+
+        assertThatThrownBy(() -> this.validator.validate(this.architectLane(), Map.of("outputs", List.of(
+                this.output("api", ScopeMode.GLOBAL_SCOPE, true, payload)
+        ))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Unknown fields at outputs.payload: [required]");
+    }
+
+    @Test
     void givenUnknownOutputTarget_whenValidate_thenReject() {
         assertThatThrownBy(() -> this.validator.validate(this.lane(), Map.of("outputs", List.of(
                 this.output("implement_be", "automationservice-sox", true, this.architectPayload())
@@ -175,7 +193,6 @@ class CompletionPayloadContractValidatorTest {
 
     private Map<String, Object> apiPayload(final String scope) {
         final Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("required", true);
         payload.put("reason", "BFF API endpoints required");
         payload.put("scope", scope);
         payload.put("summary", "Add BFF flow endpoints");

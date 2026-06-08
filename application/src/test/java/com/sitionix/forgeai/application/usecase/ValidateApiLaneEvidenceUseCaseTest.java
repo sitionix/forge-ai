@@ -12,7 +12,13 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.port.GithubEvidencePort;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
+import com.sitionix.forgeai.domain.props.ContractRefView;
+import com.sitionix.forgeai.domain.props.DbConfigView;
+import com.sitionix.forgeai.domain.props.DeployConfigView;
+import com.sitionix.forgeai.domain.props.DeployUnitConfigView;
+import com.sitionix.forgeai.domain.props.ServiceConfigView;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import java.util.List;
@@ -210,7 +216,7 @@ class ValidateApiLaneEvidenceUseCaseTest {
     private record TestAgentConfigView(
             String id,
             String workspaceContractRef
-    ) implements AgentPropertiesProvider.AgentConfigView {
+    ) implements AgentConfigView {
 
         @Override
         public String getId() {
@@ -250,9 +256,9 @@ class ValidateApiLaneEvidenceUseCaseTest {
 
     private record TestServiceConfigView(
             String path,
-            ServicePropertiesProvider.DeployConfigView deploy,
-            Map<String, ServicePropertiesProvider.ContractRefView> contractRefs
-    ) implements ServicePropertiesProvider.ServiceConfigView {
+            DeployConfigView deploy,
+            Map<String, ContractRefView> contractRefs
+    ) implements ServiceConfigView {
 
         @Override
         public String getLabel() {
@@ -262,6 +268,11 @@ class ValidateApiLaneEvidenceUseCaseTest {
         @Override
         public String getPath() {
             return this.path;
+        }
+
+        @Override
+        public String getRepo() {
+            return null;
         }
 
         @Override
@@ -295,22 +306,22 @@ class ValidateApiLaneEvidenceUseCaseTest {
         }
 
         @Override
-        public Map<String, ServicePropertiesProvider.ContractRefView> getContractRefs() {
+        public Map<String, ContractRefView> getContractRefs() {
             return this.contractRefs;
         }
 
         @Override
-        public ServicePropertiesProvider.DeployConfigView getDeploy() {
+        public DeployConfigView getDeploy() {
             return this.deploy;
         }
 
         @Override
-        public ServicePropertiesProvider.DbConfigView getDb() {
+        public DbConfigView getDb() {
             return null;
         }
     }
 
-    private record TestDeployConfigView(String repo) implements ServicePropertiesProvider.DeployConfigView {
+    private record TestDeployConfigView(String repo) implements DeployConfigView {
 
         @Override
         public String getType() {
@@ -323,17 +334,17 @@ class ValidateApiLaneEvidenceUseCaseTest {
         }
 
         @Override
-        public ServicePropertiesProvider.DeployUnitConfigView getService() {
+        public DeployUnitConfigView getService() {
             return null;
         }
 
         @Override
-        public ServicePropertiesProvider.DeployUnitConfigView getDb() {
+        public DeployUnitConfigView getDb() {
             return null;
         }
     }
 
-    private record TestContractRefView(String sourceRepo) implements ServicePropertiesProvider.ContractRefView {
+    private record TestContractRefView(String sourceRepo) implements ContractRefView {
 
         @Override
         public String getSourceRepo() {

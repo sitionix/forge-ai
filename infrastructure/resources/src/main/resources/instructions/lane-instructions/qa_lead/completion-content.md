@@ -27,6 +27,16 @@ Use assigned scope from runtime context.
 Short factual summary of QA focus for the assigned scope.
 Mention only QA context produced by this lane.
 
+## Compactness
+
+Keep completion payload compact and implementation-friendly.
+
+- Prefer the smallest useful set of downstream test artifacts.
+- Keep `unitTestNotes` short and concrete.
+- Keep `integrationTestCases` high-signal only.
+- Do not restate analyzer input, prior QA step evidence, or the full task description.
+- Avoid repeating the same fact in `summary`, notes, and cases.
+
 ## Boundary
 
 Completion content is not test code.

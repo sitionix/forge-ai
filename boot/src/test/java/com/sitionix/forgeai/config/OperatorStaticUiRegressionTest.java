@@ -56,6 +56,10 @@ class OperatorStaticUiRegressionTest {
                 .exists();
         assertThat(OPERATOR_UI_DIR.resolve("agents.html"))
                 .exists();
+        assertThat(OPERATOR_UI_DIR.resolve("services.html"))
+                .exists();
+        assertThat(OPERATOR_UI_DIR.resolve("service.html"))
+                .exists();
     }
 
     @Test
@@ -63,6 +67,10 @@ class OperatorStaticUiRegressionTest {
         final String html = this.read("lane.html");
 
         assertThat(html)
+                .contains("id=\"stopLane\"")
+                .contains(">Stop</button>")
+                .contains("id=\"retryLane\"")
+                .contains(">Retry</button>")
                 .contains("id=\"laneDependencies\"")
                 .contains(">Dependencies</h2>")
                 .contains("id=\"laneInputs\"")
@@ -83,6 +91,36 @@ class OperatorStaticUiRegressionTest {
     }
 
     @Test
+    void givenServicesPage_whenRendered_thenExposeLocalServiceSanityUi() throws Exception {
+        final String html = this.read("services.html");
+
+        assertThat(html)
+                .contains("data-page=\"services\"")
+                .contains("id=\"refreshServices\"")
+                .contains("id=\"operatorServicesList\"")
+                .contains("services.yaml")
+                .doesNotContain("id=\"operatorServiceDetail\"")
+                .doesNotContain("local repository availability, branch sanity, docker state")
+                .doesNotContain("id=\"navToggle\"");
+    }
+
+    @Test
+    void givenServiceDetailPage_whenRendered_thenExposeServiceDetailActions() throws Exception {
+        final String html = this.read("service.html");
+
+        assertThat(html)
+                .contains("data-page=\"service\"")
+                .contains("id=\"serviceDetailTitle\"")
+                .contains("id=\"serviceDetailStatus\"")
+                .contains("id=\"operatorServiceDetail\"")
+                .contains("id=\"defaultServiceDialog\"")
+                .contains("data-default-mode=\"COMMIT\"")
+                .contains("data-default-mode=\"STASH\"")
+                .doesNotContain("delete current branch")
+                .doesNotContain("id=\"navToggle\"");
+    }
+
+    @Test
     void givenOperatorJs_whenRendered_thenKeepSidebarEntriesAndPageHandlers() throws Exception {
         final String js = this.read("operator-ui.js");
 
@@ -94,14 +132,33 @@ class OperatorStaticUiRegressionTest {
                 .contains("<strong>New Task</strong>")
                 .contains("href=\"./agents.html\"")
                 .contains("<strong>Agents</strong>")
+                .contains("href=\"./services.html\"")
+                .contains("<strong>Services</strong>")
                 .contains("href=\"../actuator/health\"")
                 .contains("if (page === 'new-task')")
                 .contains("if (page === 'lane')")
                 .contains("if (page === 'agents')")
+                .contains("if (page === 'services')")
+                .contains("if (page === 'service')")
+                .contains("loadOperatorServices")
+                .contains("loadOperatorServiceDetail")
+                .contains("groupOperatorServices")
+                .contains("renderOperatorServiceGroup")
+                .contains("serviceRuntimeVisible(service)")
+                .contains("data-clone-service")
+                .contains("data-default-service")
+                .contains("data-default-mode")
                 .contains("loadAgentsConfig")
                 .contains("saveSelectedResource")
                 .contains("formatEditableResourceContent")
                 .contains("JSON.stringify(JSON.parse(content), null, 2)")
+                .contains("const operatorApiBase =")
+                .contains("function syncLaneStopButton(data)")
+                .contains("function stopCurrentLaneExecution()")
+                .contains("function syncLaneRetryButton(data)")
+                .contains("function retryCurrentLaneExecution()")
+                .contains("postOperatorJson(`/executions/${encodeURIComponent(executionId)}/interrupt`)")
+                .contains("postOperatorJson(`/ui/tickets/${encodeURIComponent(ticketId)}/lanes/${encodeURIComponent(laneId)}/retry`)")
                 .contains("renderLaneDependencies(data.dependencies || [])")
                 .contains("function renderLaneEventMessage")
                 .contains("jsonEventPreview")
@@ -124,6 +181,14 @@ class OperatorStaticUiRegressionTest {
                 .contains("margin: 0 auto;")
                 .contains(".agents-grid")
                 .contains(".agent-card")
+                .contains(".services-grid")
+                .contains(".operator-services-group")
+                .contains(".operator-services-group-grid")
+                .contains(".operator-service-card")
+                .contains(".service-runtime-status")
+                .contains(".service-clone-button")
+                .contains(".button.danger")
+                .contains(".contract-ref-card")
                 .contains("grid-template-columns: minmax(220px, 0.72fr) minmax(390px, 1.12fr) minmax(320px, 0.92fr);")
                 .contains(".config-editor-panel")
                 .contains(".dependency-card")

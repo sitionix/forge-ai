@@ -1,7 +1,5 @@
 package com.sitionix.forgeai.domain.props;
 
-import com.sitionix.forgeai.domain.model.service.ServiceGroup;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -10,82 +8,4 @@ import java.util.Map;
 public interface ServicePropertiesProvider {
 
     Map<String, ServiceConfigView> getServices();
-
-    interface ServiceConfigView {
-        String getLabel();
-
-        String getPath();
-
-        ServiceGroup getGroup();
-
-        List<String> getTags();
-
-        List<String> getTests();
-
-        List<String> getDomainKeywords();
-
-        List<String> getOwnsBusinessAreas();
-
-        List<String> getArchitectureRefs();
-
-        Map<String, ContractRefView> getContractRefs();
-
-        DeployConfigView getDeploy();
-
-        DbConfigView getDb();
-    }
-
-    interface DeployConfigView {
-        String getType();
-
-        String getRepo();
-
-        DeployUnitConfigView getService();
-
-        DeployUnitConfigView getDb();
-    }
-
-    interface DbConfigView {
-        Boolean getRequired();
-
-        String getType();
-
-        String getMode();
-
-        String getKey();
-    }
-
-    interface DeployUnitConfigView {
-        String getName();
-
-        String getWorkflowName();
-
-        String getWorkflowEvent();
-    }
-
-    interface ContractRefView {
-        String getSourceRepo();
-
-        String getApiFamily();
-
-        String getEventFamily();
-
-        String getServiceCode();
-
-        String getRoot();
-
-        List<String> getSchemas();
-
-        List<String> getOperations();
-
-        List<String> getTopics();
-
-        List<String> getPayloads();
-
-        List<String> getGeneratedArtifacts();
-
-        List<String> getConsumerArtifacts();
-
-        List<String> getFrontendPackages();
-    }
 }

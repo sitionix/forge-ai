@@ -1,7 +1,8 @@
 package com.sitionix.forgeai.domain.usecase;
 
-import java.time.LocalDateTime;
-import java.util.List;
+import com.sitionix.forgeai.domain.model.operator.task.OperatorUiCreateTaskCommand;
+import com.sitionix.forgeai.domain.model.operator.task.OperatorUiServiceCatalogResponse;
+import com.sitionix.forgeai.domain.model.operator.task.OperatorUiTaskMutationResponse;
 import java.util.UUID;
 
 public interface ManageOperatorUiTasks {
@@ -12,34 +13,7 @@ public interface ManageOperatorUiTasks {
 
     OperatorUiTaskMutationResponse execute(UUID ticketId);
 
+    void retryLane(UUID ticketId, UUID laneId);
+
     void delete(UUID ticketId);
-
-    record OperatorUiServiceCatalogResponse(List<OperatorUiServiceOption> services) {
-    }
-
-    record OperatorUiServiceOption(
-            String id,
-            String label,
-            String path,
-            String group,
-            List<String> tags
-    ) {
-    }
-
-    record OperatorUiCreateTaskCommand(
-            String ticket,
-            String task,
-            List<String> serviceIds,
-            String sourceTerminalTty
-    ) {
-    }
-
-    record OperatorUiTaskMutationResponse(
-            UUID ticketId,
-            String ticketKey,
-            String status,
-            LocalDateTime createdAt,
-            LocalDateTime updatedAt
-    ) {
-    }
 }

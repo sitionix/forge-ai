@@ -6,7 +6,10 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
+import com.sitionix.forgeai.domain.props.ContractRefView;
+import com.sitionix.forgeai.domain.props.ServiceConfigView;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.ResolveCodexLaneWorkspace;
@@ -115,7 +118,7 @@ public class ServiceConfigCodexLaneWorkspaceResolver implements ResolveCodexLane
     }
 
     private Optional<Path> serviceRoot(final String serviceId, final Path forgeAiRoot) {
-        final ServicePropertiesProvider.ServiceConfigView service = this.services().get(serviceId);
+        final ServiceConfigView service = this.services().get(serviceId);
         if (service == null || !this.hasText(service.getPath())) {
             return Optional.empty();
         }
@@ -129,28 +132,39 @@ public class ServiceConfigCodexLaneWorkspaceResolver implements ResolveCodexLane
             return roots;
         }
         for (final String serviceId : serviceIds) {
-            final ServicePropertiesProvider.ServiceConfigView service = this.services().get(serviceId);
+            final ServiceConfigView service = this.services().get(serviceId);
             if (service == null || service.getContractRefs() == null) {
                 continue;
             }
             this.contractRefsForLane(contractRefKey.get(), service).stream()
-                    .map(ServicePropertiesProvider.ContractRefView::getSourceRepo)
+                    .map(this::contractRootPath)
                     .filter(this::hasText)
-                    .map(sourceRepo -> this.resolveConfiguredPath(serviceId, sourceRepo, forgeAiRoot))
+                    .map(path -> this.resolveConfiguredPath(serviceId, path, forgeAiRoot))
                     .forEach(roots::add);
         }
         return roots;
     }
 
-    private List<ServicePropertiesProvider.ContractRefView> contractRefsForLane(
+    private String contractRootPath(final ContractRefView contractRef) {
+        if (contractRef == null || !this.hasText(contractRef.getSourceRepo())) {
+            return null;
+        }
+        final ServiceConfigView configuredContractRepository = this.services().get(contractRef.getSourceRepo());
+        if (configuredContractRepository != null && this.hasText(configuredContractRepository.getPath())) {
+            return configuredContractRepository.getPath();
+        }
+        return contractRef.getSourceRepo();
+    }
+
+    private List<ContractRefView> contractRefsForLane(
             final String refKey,
-            final ServicePropertiesProvider.ServiceConfigView service
+            final ServiceConfigView service
     ) {
         if (service.getContractRefs() == null || service.getContractRefs().isEmpty()) {
             return List.of();
         }
         if (this.hasText(refKey)) {
-            final ServicePropertiesProvider.ContractRefView ref = service.getContractRefs().get(refKey);
+            final ContractRefView ref = service.getContractRefs().get(refKey);
             return ref == null ? List.of() : List.of(ref);
         }
         return List.of();
@@ -161,7 +175,7 @@ public class ServiceConfigCodexLaneWorkspaceResolver implements ResolveCodexLane
             return Optional.empty();
         }
         return this.agentConfig(lane.getAgent())
-                .flatMap(AgentPropertiesProvider.AgentConfigView::getWorkspaceContractRef)
+                .flatMap(AgentConfigView::getWorkspaceContractRef)
                 .filter(this::hasText);
     }
 
@@ -171,7 +185,7 @@ public class ServiceConfigCodexLaneWorkspaceResolver implements ResolveCodexLane
                 && this.contractRefKey(lane).isPresent();
     }
 
-    private Optional<AgentPropertiesProvider.AgentConfigView> agentConfig(final Agent agent) {
+    private Optional<AgentConfigView> agentConfig(final Agent agent) {
         if (agent == null || this.agentPropertiesProvider.getAgents() == null) {
             return Optional.empty();
         }
@@ -205,8 +219,8 @@ public class ServiceConfigCodexLaneWorkspaceResolver implements ResolveCodexLane
         return path;
     }
 
-    private Map<String, ServicePropertiesProvider.ServiceConfigView> services() {
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.servicePropertiesProvider.getServices();
+    private Map<String, ServiceConfigView> services() {
+        final Map<String, ServiceConfigView> services = this.servicePropertiesProvider.getServices();
         return services == null ? Collections.emptyMap() : services;
     }
 

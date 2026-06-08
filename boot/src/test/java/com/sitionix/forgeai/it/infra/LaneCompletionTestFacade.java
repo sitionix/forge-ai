@@ -392,7 +392,6 @@ public class LaneCompletionTestFacade {
         }
         if (Objects.equals(payloadType, ApiPayload.class)) {
             return this.asMap(ApiPayload.builder()
-                    .required(true)
                     .reason("Required for " + scope)
                     .scope(scope)
                     .summary("API contract for " + scope)
@@ -403,7 +402,6 @@ public class LaneCompletionTestFacade {
         }
         if (Objects.equals(payloadType, EventPayload.class)) {
             return this.asMap(EventPayload.builder()
-                    .required(true)
                     .reason("Required for " + scope)
                     .scope(scope)
                     .summary("Event contract for " + scope)

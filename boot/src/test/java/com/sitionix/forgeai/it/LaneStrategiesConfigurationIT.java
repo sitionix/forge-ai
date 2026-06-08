@@ -139,6 +139,7 @@ class LaneStrategiesConfigurationIT {
                     .extracting(LaneStrategyStep::getOrder)
                     .containsExactlyElementsOf(expectedOrders(expectedStepIds));
             assertThat(strategy.getSteps())
+                    .filteredOn(step -> !step.isOrchestratorStep())
                     .allSatisfy(step -> assertThat(step.getInstructionRefs())
                             .as("instruction refs for agent=%s step=%s", agent.getId(), step.getId())
                             .isNotEmpty());
@@ -180,6 +181,20 @@ class LaneStrategiesConfigurationIT {
         assertPreparationValidator(Agent.TEST_UNIT);
         assertPreparationValidator(Agent.TEST_IT);
         assertPreparationValidator(Agent.TEST_UI);
+    }
+
+    @Test
+    void givenRealLaneStrategiesYaml_whenLoaded_thenApiGenerationIsOrchestratorStep() {
+        final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(Agent.API.getId());
+
+        assertThat(strategy.getSteps())
+                .filteredOn(step -> "generation".equals(step.getId()))
+                .singleElement()
+                .satisfies(step -> {
+                    assertThat(step.isOrchestratorStep()).isTrue();
+                    assertThat(step.getHandler()).isEqualTo("apiArtifactGeneration");
+                    assertThat(step.getInstructionRefs()).isEmpty();
+                });
     }
 
     private void assertTaskPlaceholder(final Agent agent, final String stepId) {

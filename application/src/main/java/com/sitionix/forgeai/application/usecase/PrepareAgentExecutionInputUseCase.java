@@ -12,6 +12,11 @@ import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
+import com.sitionix.forgeai.domain.props.ContractRefView;
+import com.sitionix.forgeai.domain.props.DbConfigView;
+import com.sitionix.forgeai.domain.props.DeployConfigView;
+import com.sitionix.forgeai.domain.props.DeployUnitConfigView;
+import com.sitionix.forgeai.domain.props.ServiceConfigView;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import java.util.Collections;
@@ -88,7 +93,7 @@ public class PrepareAgentExecutionInputUseCase {
     }
 
     private ServiceScopeContext serviceScopeContext(final String serviceId, final String fallbackScope) {
-        final ServicePropertiesProvider.ServiceConfigView service = this.props.getServices().get(serviceId);
+        final ServiceConfigView service = this.props.getServices().get(serviceId);
         if (service == null) {
             return ServiceScopeContext.builder()
                     .serviceId(serviceId)
@@ -112,7 +117,7 @@ public class PrepareAgentExecutionInputUseCase {
                 .build();
     }
 
-    private Map<String, ContractRefContext> contractRefs(final Map<String, ServicePropertiesProvider.ContractRefView> refs) {
+    private Map<String, ContractRefContext> contractRefs(final Map<String, ContractRefView> refs) {
         if (refs == null || refs.isEmpty()) {
             return Collections.emptyMap();
         }
@@ -121,7 +126,7 @@ public class PrepareAgentExecutionInputUseCase {
         return result;
     }
 
-    private ContractRefContext contractRef(final ServicePropertiesProvider.ContractRefView ref) {
+    private ContractRefContext contractRef(final ContractRefView ref) {
         if (ref == null) {
             return null;
         }
@@ -141,7 +146,7 @@ public class PrepareAgentExecutionInputUseCase {
                 .build();
     }
 
-    private DeployContext deploy(final ServicePropertiesProvider.DeployConfigView deploy) {
+    private DeployContext deploy(final DeployConfigView deploy) {
         if (deploy == null) {
             return null;
         }
@@ -153,7 +158,7 @@ public class PrepareAgentExecutionInputUseCase {
                 .build();
     }
 
-    private DeployUnitContext deployUnit(final ServicePropertiesProvider.DeployUnitConfigView deployUnit) {
+    private DeployUnitContext deployUnit(final DeployUnitConfigView deployUnit) {
         if (deployUnit == null) {
             return null;
         }
@@ -164,7 +169,7 @@ public class PrepareAgentExecutionInputUseCase {
                 .build();
     }
 
-    private DbContext db(final ServicePropertiesProvider.DbConfigView db) {
+    private DbContext db(final DbConfigView db) {
         if (db == null) {
             return null;
         }

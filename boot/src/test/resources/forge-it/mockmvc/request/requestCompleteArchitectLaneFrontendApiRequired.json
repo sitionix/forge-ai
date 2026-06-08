@@ -13,7 +13,6 @@
     "risks": ["Generated client integration can affect current page state wiring."]
   },
   "apiRequest": {
-    "required": true,
     "reason": "frontend API contract required",
     "scope": "sitionix-spa",
     "summary": "frontend api summary",
@@ -48,7 +47,6 @@
     "notes": ["frontend contract note"]
   },
   "eventRequest": {
-    "required": false,
     "reason": "not required",
     "scope": "sitionix-spa",
     "summary": "event summary",

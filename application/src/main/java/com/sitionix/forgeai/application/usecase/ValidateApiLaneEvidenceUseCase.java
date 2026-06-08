@@ -7,7 +7,10 @@ import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiLaneEvidencePaylo
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.port.GithubEvidencePort;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
+import com.sitionix.forgeai.domain.props.ContractRefView;
+import com.sitionix.forgeai.domain.props.ServiceConfigView;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.ValidateApiLaneEvidence;
@@ -218,12 +221,12 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
 
     private boolean scopeMatches(final Set<String> requiredScopes,
                                  final String serviceId,
-                                 final ServicePropertiesProvider.ServiceConfigView service) {
+                                 final ServiceConfigView service) {
         return requiredScopes.contains(serviceId) || requiredScopes.contains(service.getPath());
     }
 
-    private Optional<ServicePropertiesProvider.ContractRefView> apiContractRef(
-            final ServicePropertiesProvider.ServiceConfigView service
+    private Optional<ContractRefView> apiContractRef(
+            final ServiceConfigView service
     ) {
         if (service.getContractRefs() == null) {
             return Optional.empty();
@@ -239,12 +242,12 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
         return this.agentPropertiesProvider.getAgents().stream()
                 .filter(config -> config != null && Objects.equals(config.getId(), agent.getId()))
                 .findFirst()
-                .flatMap(AgentPropertiesProvider.AgentConfigView::getWorkspaceContractRef)
+                .flatMap(AgentConfigView::getWorkspaceContractRef)
                 .filter(this::hasText);
     }
 
-    private Optional<String> expectedRepository(final ServicePropertiesProvider.ServiceConfigView service,
-                                                final ServicePropertiesProvider.ContractRefView ref) {
+    private Optional<String> expectedRepository(final ServiceConfigView service,
+                                                final ContractRefView ref) {
         if (ref == null || !this.hasText(ref.getSourceRepo())) {
             return Optional.empty();
         }
@@ -256,7 +259,7 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
                 .map(owner -> owner + "/" + this.repoName(sourceRepo));
     }
 
-    private Optional<String> deployOwner(final ServicePropertiesProvider.ServiceConfigView service) {
+    private Optional<String> deployOwner(final ServiceConfigView service) {
         if (service == null || service.getDeploy() == null || !this.hasText(service.getDeploy().getRepo())) {
             return Optional.empty();
         }
@@ -289,8 +292,8 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
         return repository == null ? "" : repository.trim().toLowerCase(Locale.ROOT);
     }
 
-    private Map<String, ServicePropertiesProvider.ServiceConfigView> services() {
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.servicePropertiesProvider.getServices();
+    private Map<String, ServiceConfigView> services() {
+        final Map<String, ServiceConfigView> services = this.servicePropertiesProvider.getServices();
         return services == null ? Collections.emptyMap() : services;
     }
 

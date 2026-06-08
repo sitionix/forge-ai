@@ -13,7 +13,6 @@
     "risks": ["risk1"]
   },
   "apiRequest": {
-    "required": true,
     "reason": "required",
     "scope": "automationservice-sox",
     "summary": "api summary",
@@ -48,7 +47,6 @@
     "notes": ["note1"]
   },
   "eventRequest": {
-    "required": true,
     "reason": "required",
     "scope": "automationservice-sox",
     "summary": "event summary",

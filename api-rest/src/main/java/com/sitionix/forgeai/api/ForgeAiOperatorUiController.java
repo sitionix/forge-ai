@@ -7,11 +7,16 @@ import com.app_afesox.fgaisox.api_first.dto.OperatorUiServiceCatalogResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.OperatorUiTaskMutationResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.OperatorUiTicketGraphResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.OperatorUiTicketListResponseDTO;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorAgentConfigResponse;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorConfigResourceSaveRequest;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorConfigResourceView;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel;
 import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorAgentConfigResponse;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorConfigResourceSaveRequest;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorConfigResourceView;
+import com.sitionix.forgeai.domain.model.operator.service.OperatorServiceActionResponse;
+import com.sitionix.forgeai.domain.model.operator.service.OperatorServiceDefaultMode;
+import com.sitionix.forgeai.domain.model.operator.service.OperatorServiceDetailResponse;
+import com.sitionix.forgeai.domain.model.operator.service.OperatorServicesResponse;
+import com.sitionix.forgeai.domain.usecase.ManageOperatorServices;
 import com.sitionix.forgeai.domain.usecase.ManageOperatorUiTasks;
 import com.sitionix.forgeai.mapper.ForgeAiOperatorApiMapper;
 import java.util.UUID;
@@ -19,8 +24,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -30,6 +38,7 @@ public class ForgeAiOperatorUiController implements ForgeAiOperatorUiApi {
     private final GetOperatorUiReadModel getOperatorUiReadModel;
     private final ManageOperatorUiTasks manageOperatorUiTasks;
     private final ManageOperatorAgentConfig manageOperatorAgentConfig;
+    private final ManageOperatorServices manageOperatorServices;
     private final ForgeAiOperatorApiMapper forgeAiOperatorApiMapper;
 
     @Override
@@ -70,6 +79,15 @@ public class ForgeAiOperatorUiController implements ForgeAiOperatorUiApi {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/api/v1/forge-ai/operator/ui/tickets/{ticketId}/lanes/{laneId}/retry")
+    public ResponseEntity<Void> retryOperatorUiLane(
+            @PathVariable final UUID ticketId,
+            @PathVariable final UUID laneId
+    ) {
+        this.manageOperatorUiTasks.retryLane(ticketId, laneId);
+        return ResponseEntity.accepted().build();
+    }
+
     @Override
     public ResponseEntity<OperatorUiTicketGraphResponseDTO> getOperatorUiTicketGraph(final UUID ticketId) {
         return ResponseEntity.ok(this.forgeAiOperatorApiMapper.asOperatorUiTicketGraphResponse(
@@ -94,5 +112,35 @@ public class ForgeAiOperatorUiController implements ForgeAiOperatorUiApi {
             @RequestBody final OperatorConfigResourceSaveRequest request
     ) {
         return ResponseEntity.ok(this.manageOperatorAgentConfig.saveResource(request));
+    }
+
+    @GetMapping("/api/v1/forge-ai/operator/ui/local-services")
+    public ResponseEntity<OperatorServicesResponse> getOperatorLocalServices() {
+        return ResponseEntity.ok(this.manageOperatorServices.services());
+    }
+
+    @GetMapping("/api/v1/forge-ai/operator/ui/local-services/{serviceId}")
+    public ResponseEntity<OperatorServiceDetailResponse> getOperatorLocalService(
+            @PathVariable final String serviceId
+    ) {
+        return ResponseEntity.ok(this.manageOperatorServices.service(serviceId));
+    }
+
+    @PostMapping("/api/v1/forge-ai/operator/ui/local-services/{serviceId}/clone")
+    public ResponseEntity<OperatorServiceActionResponse> cloneOperatorLocalService(
+            @PathVariable final String serviceId
+    ) {
+        return ResponseEntity.ok(this.manageOperatorServices.cloneService(serviceId));
+    }
+
+    @PostMapping("/api/v1/forge-ai/operator/ui/local-services/{serviceId}/default")
+    public ResponseEntity<OperatorServiceActionResponse> defaultOperatorLocalService(
+            @PathVariable final String serviceId,
+            @RequestParam(required = false) final String mode
+    ) {
+        return ResponseEntity.ok(this.manageOperatorServices.defaultService(
+                serviceId,
+                OperatorServiceDefaultMode.from(mode)
+        ));
     }
 }

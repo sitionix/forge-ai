@@ -56,6 +56,25 @@ class LaneStepDoneResultParserTest {
     }
 
     @Test
+    void givenMarkdownFencedJson_whenParse_thenExtractObject() {
+        final LaneStepDoneResult result = this.parser.parse("""
+                ```json
+                {
+                  "type": "LANE_STEP_DONE",
+                  "stepId": "scope_slicing",
+                  "summary": "done",
+                  "evidence": {
+                    "detail": "ok"
+                  }
+                }
+                ```
+                """, "scope_slicing");
+
+        assertThat(result.getStepId()).isEqualTo("scope_slicing");
+        assertThat(result.getSummary()).isEqualTo("done");
+    }
+
+    @Test
     void givenNoJson_whenParse_thenReject() {
         assertThatThrownBy(() -> this.parser.parse("done", "scope_slicing"))
                 .isInstanceOf(IllegalArgumentException.class)

@@ -13,7 +13,6 @@
     "risks": ["risk1"]
   },
   "apiRequest": {
-    "required": false,
     "reason": "not required",
     "scope": "backendforfrontendservice-sox",
     "summary": "api summary",
@@ -22,7 +21,6 @@
     "notes": []
   },
   "eventRequest": {
-    "required": false,
     "reason": "not required",
     "scope": "backendforfrontendservice-sox",
     "summary": "event summary",

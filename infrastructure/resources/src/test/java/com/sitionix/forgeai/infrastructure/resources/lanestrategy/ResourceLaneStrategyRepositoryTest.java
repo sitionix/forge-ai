@@ -2,6 +2,7 @@ package com.sitionix.forgeai.infrastructure.resources.lanestrategy;
 
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStepType;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,9 +43,74 @@ class ResourceLaneStrategyRepositoryTest {
         final LaneStrategy strategy = repository.findByAgentId("api");
         assertThat(strategy.getSteps()).hasSize(2);
         assertThat(strategy.getSteps().get(0).getId()).isEqualTo("preparation");
+        assertThat(strategy.getSteps().get(0).getType()).isEqualTo(LaneStrategyStepType.AGENT);
         assertThat(strategy.getSteps().get(0).getValidator()).isEqualTo("gitPreparation");
         assertThat(strategy.getSteps().get(1).getId()).isEqualTo("contract_changes");
         assertThat(strategy.getSteps().get(1).getTaskPlaceholder()).isEqualTo("TASKS");
+    }
+
+    @Test
+    void givenOrchestratorStepWithHandler_whenInit_thenLoadTypeAndHandler() {
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
+        properties.getConfigs().put("api", strategy(
+                step("preparation", "Preparation", null, List.of("additional-instructions/preparation-to-work.md")),
+                orchestratorStep("generation", "Generation", "apiArtifactGeneration")
+        ));
+
+        final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
+
+        repository.init();
+
+        final LaneStrategyStep step = repository.findByAgentId("api").getSteps().get(1);
+        assertThat(step.getType()).isEqualTo(LaneStrategyStepType.ORCHESTRATOR);
+        assertThat(step.getHandler()).isEqualTo("apiArtifactGeneration");
+    }
+
+    @Test
+    void givenOrchestratorStepWithoutHandler_whenInit_thenReject() {
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
+        final LaneStrategiesProperties.StepConfig step = step("generation", "Generation", null, List.of("additional-instructions/generation-workflow.md"));
+        step.setType("orchestrator");
+        properties.getConfigs().put("api", strategy(step));
+
+        final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
+
+        assertThatThrownBy(repository::init)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Orchestrator step requires handler");
+    }
+
+    @Test
+    void givenAgentStepWithHandler_whenInit_thenReject() {
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
+        final LaneStrategiesProperties.StepConfig step = step("generation", "Generation", null, List.of("additional-instructions/generation-workflow.md"));
+        step.setType("agent");
+        step.setHandler("apiArtifactGeneration");
+        properties.getConfigs().put("api", strategy(step));
+
+        final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
+
+        assertThatThrownBy(repository::init)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Agent step must not define handler");
+    }
+
+    @Test
+    void givenUnsupportedStepType_whenInit_thenReject() {
+        final LaneStrategiesProperties properties = baseProperties();
+        properties.setConfigs(new LinkedHashMap<>(baseStrategyMap()));
+        final LaneStrategiesProperties.StepConfig step = step("generation", "Generation", null, List.of("additional-instructions/generation-workflow.md"));
+        step.setType("external");
+        properties.getConfigs().put("api", strategy(step));
+
+        final ResourceLaneStrategyRepository repository = new ResourceLaneStrategyRepository(properties, new DefaultResourceLoader());
+
+        assertThatThrownBy(repository::init)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Unsupported step type");
     }
 
     @Test
@@ -275,6 +341,15 @@ class ResourceLaneStrategyRepositoryTest {
                                                                          final List<String> refs) {
         final LaneStrategiesProperties.StepConfig step = step(id, title, null, refs);
         step.setValidator(validator);
+        return step;
+    }
+
+    private static LaneStrategiesProperties.StepConfig orchestratorStep(final String id,
+                                                                        final String title,
+                                                                        final String handler) {
+        final LaneStrategiesProperties.StepConfig step = step(id, title, null, List.of());
+        step.setType("orchestrator");
+        step.setHandler(handler);
         return step;
     }
 }

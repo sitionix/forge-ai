@@ -2,7 +2,7 @@
 
 Always prepare the event request object according to the provided final-step completion payload contract.
 
-Use `required: true` only when event boundary contract work is needed, such as:
+Set the output-level `required` flag to `true` only when event boundary contract work is needed, such as:
 
 - new event topic;
 - changed event topic;
@@ -11,9 +11,9 @@ Use `required: true` only when event boundary contract work is needed, such as:
 - changed producer/consumer contract;
 - changed event schema.
 
-Use `required: false` when no event contract work is needed.
+Set the output-level `required` flag to `false` when no event contract work is needed.
 
-When `required: false`:
+When the output-level `required` flag is `false`:
 
 - provide a clear reason;
 - provide a concise summary;
@@ -28,11 +28,10 @@ When `required: false`:
 - do not omit the event request object.
 
 Do not request event work for purely internal implementation changes.
-Expected `required: false` shape:
+Expected payload shape when the output-level `required` flag is `false`:
 
 ```json
 {
-  "required": false,
   "reason": "No event contract work is required for this scope.",
   "scope": "GLOBAL",
   "summary": "No event contract changes are needed.",
