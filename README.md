@@ -25,6 +25,23 @@ Root modules:
 
 ## 3. Runtime Entry Points
 
+### 3.0 Local MongoDB
+Local application startup uses Spring Boot Docker Compose support. When the app starts from IntelliJ IDEA or with Maven, it reads `compose.yaml`, starts `forge-ai-mongodb`, and Docker pulls `mongo:7.0` when the image is missing locally. The same file is also present in `boot/` so module-root launches in IntelliJ work without extra setup.
+
+Default MongoDB connection:
+
+```bash
+mongodb://localhost:27019/forge_ai
+```
+
+Manual database startup is also available:
+
+```bash
+docker compose up -d forge-ai-mongodb
+```
+
+If the app is launched with a working directory other than the repository root, set the IDE working directory to the repository root or set `SPRING_DOCKER_COMPOSE_FILE` to the absolute path of `compose.yaml`.
+
 ### 3.1 Start ticket
 REST endpoint implemented in `ForgeAiStartController.startForge(...)`:
 - receives `StartForgeRequestDTO`;
