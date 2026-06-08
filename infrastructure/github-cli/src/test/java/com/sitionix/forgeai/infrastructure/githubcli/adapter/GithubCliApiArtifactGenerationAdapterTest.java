@@ -48,6 +48,8 @@ class GithubCliApiArtifactGenerationAdapterTest {
                 "Sitionix/app-afesox",
                 "app-afesox-bffssox-api-first-stable",
                 "backendforfrontendservice-sox",
+                "bffssox",
+                "bffssox",
                 "api-first"
         ));
 
@@ -100,6 +102,8 @@ class GithubCliApiArtifactGenerationAdapterTest {
                 "Sitionix/app-afesox",
                 "@sitionix/app-afesox-bffssox-frontend-stable",
                 "sitionix-spa",
+                "bffssox",
+                "bffssox",
                 "frontend"
         ));
 

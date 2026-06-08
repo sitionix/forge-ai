@@ -15,15 +15,27 @@ class ApiGenerationMetadataResolver {
     }
 
     String resolveGenerationName(final ApiArtifactGenerationRequest request, final String metadata) {
-        final String serviceCode = this.artifactNaming.serviceCode(request.expectedArtifact(), request.generationType());
         final String execution = request.generationType();
         return this.metadataEntries(metadata).stream()
                 .filter(entry -> execution.equals(entry.execution()))
-                .filter(entry -> entry.definitionPath().contains("/" + serviceCode + "/rest"))
+                .filter(entry -> this.matchesDefinitionPath(entry.definitionPath(), request))
                 .findFirst()
                 .map(MetadataEntry::name)
                 .orElseThrow(() -> new IllegalStateException("No /generate metadata entry found for expectedArtifact="
-                        + request.expectedArtifact() + ", execution=" + execution + ", serviceCode=" + serviceCode));
+                        + request.expectedArtifact() + ", execution=" + execution
+                        + ", apiFamily=" + request.apiFamily() + ", serviceCode=" + request.serviceCode()));
+    }
+
+    private boolean matchesDefinitionPath(final String definitionPath, final ApiArtifactGenerationRequest request) {
+        if (definitionPath == null) {
+            return false;
+        }
+        if (request.serviceCode() != null && !request.serviceCode().isBlank()
+                && definitionPath.contains("/" + request.serviceCode() + "/")) {
+            return true;
+        }
+        return request.apiFamily() != null && !request.apiFamily().isBlank()
+                && definitionPath.contains("/" + request.apiFamily() + "/");
     }
 
     private List<MetadataEntry> metadataEntries(final String metadata) {

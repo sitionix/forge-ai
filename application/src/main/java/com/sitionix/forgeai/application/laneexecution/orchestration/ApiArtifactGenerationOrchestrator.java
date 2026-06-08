@@ -79,13 +79,13 @@ public class ApiArtifactGenerationOrchestrator implements LaneStepOrchestratorHa
         final Map<String, ApiArtifactGenerationRequest> requests = new LinkedHashMap<>();
         for (final ApiArtifactGenerationTarget target : targets) {
             for (final String artifact : target.generatedArtifacts()) {
-                this.putRequest(requests, pullRequestUrl, repository, artifact, target.scope(), "api-first");
+                this.putRequest(requests, pullRequestUrl, repository, target, artifact, "api-first");
             }
             for (final String artifact : target.consumerArtifacts()) {
-                this.putRequest(requests, pullRequestUrl, repository, artifact, target.scope(), "client");
+                this.putRequest(requests, pullRequestUrl, repository, target, artifact, "client");
             }
             for (final String artifact : target.frontendPackages()) {
-                this.putRequest(requests, pullRequestUrl, repository, artifact, target.scope(), "frontend");
+                this.putRequest(requests, pullRequestUrl, repository, target, artifact, "frontend");
             }
         }
         return List.copyOf(requests.values());
@@ -94,8 +94,8 @@ public class ApiArtifactGenerationOrchestrator implements LaneStepOrchestratorHa
     private void putRequest(final Map<String, ApiArtifactGenerationRequest> requests,
                             final String pullRequestUrl,
                             final String repository,
+                            final ApiArtifactGenerationTarget target,
                             final String artifact,
-                            final String scope,
                             final String generationType) {
         if (artifact == null || artifact.isBlank()) {
             return;
@@ -104,7 +104,9 @@ public class ApiArtifactGenerationOrchestrator implements LaneStepOrchestratorHa
                 pullRequestUrl,
                 repository,
                 artifact,
-                scope,
+                target.scope(),
+                target.apiFamily(),
+                target.serviceCode(),
                 generationType
         ));
     }

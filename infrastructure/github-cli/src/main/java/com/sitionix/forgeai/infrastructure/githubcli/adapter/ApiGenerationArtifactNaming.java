@@ -5,16 +5,6 @@ import org.springframework.stereotype.Component;
 @Component
 class ApiGenerationArtifactNaming {
 
-    String serviceCode(final String expectedArtifact, final String generationType) {
-        final String normalized = this.normalize(expectedArtifact);
-        final String prefix = "app-afesox-";
-        final String suffix = "-" + generationType + "-stable";
-        if (!normalized.startsWith(prefix) || !normalized.endsWith(suffix)) {
-            throw new IllegalArgumentException("Unsupported API artifact format: " + expectedArtifact);
-        }
-        return normalized.substring(prefix.length(), normalized.length() - suffix.length());
-    }
-
     boolean matchesExpected(final String expectedArtifact, final String actualArtifact) {
         final String expected = this.normalize(expectedArtifact);
         final String actual = this.normalize(actualArtifact);

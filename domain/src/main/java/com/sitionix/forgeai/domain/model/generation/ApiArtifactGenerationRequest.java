@@ -5,6 +5,8 @@ public record ApiArtifactGenerationRequest(
         String repository,
         String expectedArtifact,
         String scope,
+        String apiFamily,
+        String serviceCode,
         String generationType
 ) {
 }
