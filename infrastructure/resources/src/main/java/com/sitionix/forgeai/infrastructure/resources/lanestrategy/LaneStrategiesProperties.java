@@ -30,6 +30,8 @@ public class LaneStrategiesProperties implements LaneStrategyPromptConfig {
     public static class StepConfig {
         private String id;
         private String title;
+        private String type;
+        private String handler;
         private String taskPlaceholder;
         private String completionContractPlaceholder;
         private String validator;

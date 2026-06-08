@@ -2,7 +2,6 @@
   "payloadType": "ApiPayload",
   "description": "Architect output used as API lane input for API-first contract work.",
   "fields": [
-    { "name": "required", "type": "BOOLEAN", "required": true, "description": "Whether API contract work is required for this target scope." },
     { "name": "reason", "type": "STRING", "required": true, "description": "Short reason why API work is or is not required." },
     { "name": "scope", "type": "STRING", "required": true, "description": "Exact target service scope affected by the API contract decision." },
     { "name": "summary", "type": "STRING", "required": true, "description": "Concise API work summary for the API lane." },

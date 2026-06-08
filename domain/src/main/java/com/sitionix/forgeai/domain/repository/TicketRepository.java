@@ -29,6 +29,8 @@ public interface TicketRepository {
 
     void updateLaneStatus(UUID laneId, LaneStatus laneStatus);
 
+    void restartLane(UUID ticketId, UUID laneId);
+
     boolean moveLaneToInProgressIfReady(UUID laneId);
 
     boolean isReadyToStart(UUID laneId);

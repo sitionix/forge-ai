@@ -8,7 +8,12 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
+import com.sitionix.forgeai.domain.props.ContractRefView;
+import com.sitionix.forgeai.domain.props.DbConfigView;
+import com.sitionix.forgeai.domain.props.DeployConfigView;
+import com.sitionix.forgeai.domain.props.ServiceConfigView;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import java.nio.file.Files;
@@ -71,7 +76,7 @@ class ServiceConfigCodexLaneWorkspaceResolverTest {
                         this.lane("global")
                 ))
                 .build()));
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = new LinkedHashMap<>();
+        final Map<String, ServiceConfigView> services = new LinkedHashMap<>();
         services.put("first-service-id", this.service(firstServiceRoot, Map.of("api", this.contractRef(contractRoot))));
         services.put("second-service-id", this.service(secondServiceRoot, Map.of("api", this.contractRef(contractRoot))));
         final ServiceConfigCodexLaneWorkspaceResolver resolver = new ServiceConfigCodexLaneWorkspaceResolver(
@@ -95,6 +100,51 @@ class ServiceConfigCodexLaneWorkspaceResolverTest {
                 secondServiceRoot.toString()
         );
         verify(ticketRepository).findById(ticketId);
+    }
+
+    @Test
+    void givenContractSourceRepoMatchesConfiguredService_whenResolve_thenUseConfiguredContractServicePath() throws Exception {
+        final Path workspaceRoot = Files.createDirectories(this.tempDir.resolve("workspace"));
+        final Path forgeAiRoot = Files.createDirectories(workspaceRoot.resolve("forge-ai"));
+        Files.createFile(forgeAiRoot.resolve("pom.xml"));
+        Files.createDirectories(forgeAiRoot.resolve("boot/src/main/resources"));
+        Files.createFile(forgeAiRoot.resolve("boot/src/main/resources/services.yaml"));
+        final Path serviceRoot = Files.createDirectories(workspaceRoot.resolve("backendforfrontendservice-sox"));
+        final Path configuredContractRoot = Files.createDirectories(workspaceRoot.resolve("contract-repositories/afesox-contracts"));
+        final UUID ticketId = UUID.randomUUID();
+        final TicketRepository ticketRepository = mock(TicketRepository.class);
+        when(ticketRepository.findById(ticketId)).thenReturn(Optional.of(Ticket.builder()
+                .id(ticketId)
+                .lanes(List.of(this.lane("bff-service-id")))
+                .build()));
+        final Map<String, ServiceConfigView> services = new LinkedHashMap<>();
+        services.put("bff-service-id", new FakeServiceConfigView("backendforfrontendservice-sox", Map.of("api", this.contractRef("app-afesox"))));
+        services.put("app-afesox", new FakeServiceConfigView("contract-repositories/afesox-contracts", Map.of()));
+        final String previousUserDir = System.getProperty("user.dir");
+        System.setProperty("user.dir", forgeAiRoot.toString());
+        try {
+            final ServiceConfigCodexLaneWorkspaceResolver resolver = new ServiceConfigCodexLaneWorkspaceResolver(
+                    new FakeAgentPropertiesProvider(List.of(this.agentConfig(Agent.API, "api"))),
+                    new FakeServicePropertiesProvider(services),
+                    ticketRepository
+            );
+            final ReadyToStartLane lane = ReadyToStartLane.builder()
+                    .ticketId(ticketId)
+                    .agent(Agent.API)
+                    .scope(ScopeMode.GLOBAL_SCOPE)
+                    .serviceId("global")
+                    .build();
+
+            final CodexLaneWorkspace actual = resolver.resolve(lane);
+
+            assertThat(actual.cwd()).isEqualTo(configuredContractRoot.toString());
+            assertThat(actual.runtimeWorkspaceRoots()).containsExactly(
+                    configuredContractRoot.toString(),
+                    serviceRoot.toString()
+            );
+        } finally {
+            System.setProperty("user.dir", previousUserDir);
+        }
     }
 
     @Test
@@ -168,23 +218,27 @@ class ServiceConfigCodexLaneWorkspaceResolverTest {
                 .build();
     }
 
-    private ServicePropertiesProvider.ServiceConfigView service(
+    private ServiceConfigView service(
             final Path path,
-            final Map<String, ServicePropertiesProvider.ContractRefView> refs
+            final Map<String, ContractRefView> refs
     ) {
         return new FakeServiceConfigView(path.toString(), refs);
     }
 
-    private ServicePropertiesProvider.ContractRefView contractRef(final Path sourceRepo) {
+    private ContractRefView contractRef(final Path sourceRepo) {
         return new FakeContractRefView(sourceRepo.toString());
     }
 
-    private AgentPropertiesProvider.AgentConfigView agentConfig(final Agent agent, final String workspaceContractRef) {
+    private ContractRefView contractRef(final String sourceRepo) {
+        return new FakeContractRefView(sourceRepo);
+    }
+
+    private AgentConfigView agentConfig(final Agent agent, final String workspaceContractRef) {
         return new FakeAgentConfigView(agent.getId(), workspaceContractRef);
     }
 
     private record FakeAgentPropertiesProvider(
-            List<AgentPropertiesProvider.AgentConfigView> agents
+            List<AgentConfigView> agents
     ) implements AgentPropertiesProvider {
 
         @Override
@@ -196,7 +250,7 @@ class ServiceConfigCodexLaneWorkspaceResolverTest {
     private record FakeAgentConfigView(
             String id,
             String workspaceContractRef
-    ) implements AgentPropertiesProvider.AgentConfigView {
+    ) implements AgentConfigView {
 
         @Override
         public String getId() {
@@ -235,7 +289,7 @@ class ServiceConfigCodexLaneWorkspaceResolverTest {
     }
 
     private record FakeServicePropertiesProvider(
-            Map<String, ServicePropertiesProvider.ServiceConfigView> services
+            Map<String, ServiceConfigView> services
     ) implements ServicePropertiesProvider {
 
         @Override
@@ -246,8 +300,8 @@ class ServiceConfigCodexLaneWorkspaceResolverTest {
 
     private record FakeServiceConfigView(
             String path,
-            Map<String, ServicePropertiesProvider.ContractRefView> contractRefs
-    ) implements ServicePropertiesProvider.ServiceConfigView {
+            Map<String, ContractRefView> contractRefs
+    ) implements ServiceConfigView {
 
         @Override
         public String getLabel() {
@@ -257,6 +311,11 @@ class ServiceConfigCodexLaneWorkspaceResolverTest {
         @Override
         public String getPath() {
             return this.path;
+        }
+
+        @Override
+        public String getRepo() {
+            return null;
         }
 
         @Override
@@ -290,22 +349,22 @@ class ServiceConfigCodexLaneWorkspaceResolverTest {
         }
 
         @Override
-        public Map<String, ServicePropertiesProvider.ContractRefView> getContractRefs() {
+        public Map<String, ContractRefView> getContractRefs() {
             return this.contractRefs;
         }
 
         @Override
-        public ServicePropertiesProvider.DeployConfigView getDeploy() {
+        public DeployConfigView getDeploy() {
             return null;
         }
 
         @Override
-        public ServicePropertiesProvider.DbConfigView getDb() {
+        public DbConfigView getDb() {
             return null;
         }
     }
 
-    private record FakeContractRefView(String sourceRepo) implements ServicePropertiesProvider.ContractRefView {
+    private record FakeContractRefView(String sourceRepo) implements ContractRefView {
 
         @Override
         public String getSourceRepo() {

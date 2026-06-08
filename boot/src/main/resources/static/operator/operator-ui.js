@@ -4,6 +4,7 @@
     ? window.location.pathname.slice(0, window.location.pathname.indexOf('/operator/'))
     : '';
   const apiBase = `${contextPath}/api/v1/forge-ai/operator/ui`;
+  const operatorApiBase = `${contextPath}/api/v1/forge-ai/operator`;
   const infrastructureApiBase = `${contextPath}/api/v1/infrastructure`;
   const graphLayoutConfig = {
     paddingX: 22,
@@ -110,6 +111,13 @@
               <small>config</small>
             </span>
           </a>
+          <a class="sidebar-link ${page === 'services' || page === 'service' ? 'active' : ''}" href="./services.html">
+            <span class="sidebar-icon">S</span>
+            <span class="sidebar-label">
+              <strong>Services</strong>
+              <small>local sanity</small>
+            </span>
+          </a>
           ${currentTicketLink}
           ${currentLaneLink}
           <a class="sidebar-link" href="../actuator/health">
@@ -214,6 +222,19 @@
 
   async function getInfrastructureJson(path) {
     return fetchInfrastructureJson('GET', path);
+  }
+
+  async function postOperatorJson(path, body) {
+    const response = await fetch(`${operatorApiBase}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(text || `${response.status} ${response.statusText}`);
+    }
+    return text ? JSON.parse(text) : {};
   }
 
   async function postInfrastructureJson(path, body) {
@@ -531,6 +552,380 @@
     });
   }
 
+  async function loadOperatorServices() {
+    try {
+      const data = await getJson('/local-services');
+      window.__forgeOperatorServices = data.services || [];
+      setError('servicesError', null);
+      renderOperatorServicesList(window.__forgeOperatorServices);
+    } catch (error) {
+      setError('servicesError', error);
+    }
+  }
+
+  async function loadOperatorServiceDetail() {
+    const serviceId = serviceIdFromUrl();
+    if (!serviceId) {
+      setError('servicesError', new Error('Missing serviceId query parameter.'));
+      return;
+    }
+    try {
+      const detail = await getJson(`/local-services/${encodeURIComponent(serviceId)}`);
+      window.__forgeCurrentServiceDetail = detail;
+      setError('servicesError', null);
+      renderOperatorServiceDetail(detail);
+    } catch (error) {
+      setError('servicesError', error);
+    }
+  }
+
+  function renderOperatorServicesList(services) {
+    const list = document.getElementById('operatorServicesList');
+    if (!list) {
+      return;
+    }
+    if (services.length === 0) {
+      list.innerHTML = '<div class="empty-state">No services found in services.yaml.</div>';
+      return;
+    }
+    list.innerHTML = groupOperatorServices(services).map(renderOperatorServiceGroup).join('');
+    list.querySelectorAll('[data-clone-service]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        runServiceAction('clone', event.currentTarget.dataset.cloneService, { reload: 'services' });
+      });
+    });
+  }
+
+  function groupOperatorServices(services) {
+    const groups = new Map();
+    services.forEach((service) => {
+      const group = serviceGroup(service);
+      if (!groups.has(group)) {
+        groups.set(group, []);
+      }
+      groups.get(group).push(service);
+    });
+    const preferred = ['BACKEND', 'FRONTEND', 'TOOL'];
+    const unknown = Array.from(groups.keys()).filter((group) => !preferred.includes(group)).sort();
+    return preferred.concat(unknown)
+            .filter((group) => groups.has(group))
+            .map((group) => ({ group, services: groups.get(group) }));
+  }
+
+  function renderOperatorServiceGroup(group) {
+    return `
+      <section class="operator-services-group" data-service-group="${escapeHtml(group.group)}">
+        <header class="operator-services-group-head">
+          <h3>${escapeHtml(serviceGroupLabel(group.group))}</h3>
+          <span>${group.services.length}</span>
+        </header>
+        <div class="operator-services-group-grid">
+          ${group.services.map(renderOperatorServiceCard).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderOperatorServiceCard(service) {
+    const serviceId = service.serviceId || '';
+    const serviceUrl = `./service.html?serviceId=${encodeURIComponent(serviceId)}`;
+    const runtimeVisible = serviceRuntimeVisible(service);
+    return `
+      <article class="operator-service-card" data-service-id="${escapeHtml(serviceId)}">
+        <a class="operator-service-card-main" href="${escapeHtml(serviceUrl)}">
+          <header>
+            <div>
+              <h4>${escapeHtml(service.label || serviceId || 'service')}</h4>
+              <p>${escapeHtml(service.path || '-')}</p>
+            </div>
+            ${runtimeVisible ? `<div class="service-card-status">${serviceRuntimeStatusMarkup(serviceRuntimeView(service.serviceRuntimeStatus))}</div>` : ''}
+          </header>
+          <small>${escapeHtml(service.branch || service.defaultBranch || 'no branch')}</small>
+        </a>
+        ${service.cloneAvailable ? `<button class="service-clone-button" type="button" data-clone-service="${escapeHtml(serviceId)}">Clone</button>` : ''}
+      </article>
+    `;
+  }
+
+  function renderOperatorServiceDetail(detail) {
+    const service = detail.service || {};
+    const title = document.getElementById('serviceDetailTitle');
+    const subtitle = document.getElementById('serviceDetailSubtitle');
+    const status = document.getElementById('serviceDetailStatus');
+    const target = document.getElementById('operatorServiceDetail');
+    if (!target) {
+      return;
+    }
+    if (title) {
+      title.textContent = service.label || service.serviceId || 'Service';
+    }
+    if (subtitle) {
+      subtitle.textContent = `${service.path || '-'} / ${service.group || '-'}`;
+    }
+    if (status) {
+      status.outerHTML = serviceRuntimeVisible(service)
+              ? serviceRuntimeStatusMarkup(
+                      serviceRuntimeView(service.serviceRuntimeStatus),
+                      'service-runtime-status',
+                      'serviceDetailStatus'
+              )
+              : '';
+    }
+    target.innerHTML = `
+      ${renderServiceWorkspace(service)}
+      ${serviceRuntimeVisible(service) ? renderServiceRuntime(service) : ''}
+      ${renderServiceDatabase(detail.database)}
+      ${renderServiceContractRefs(detail.contractReferences || [])}
+      ${renderServiceDetailActions(service)}
+    `;
+    target.querySelector('[data-clone-service]')?.addEventListener('click', (event) => {
+      runServiceAction('clone', event.currentTarget.dataset.cloneService, { reload: 'detail' });
+    });
+    target.querySelector('[data-default-service]')?.addEventListener('click', (event) => {
+      requestDefaultService(event.currentTarget.dataset.defaultService);
+    });
+  }
+
+  function renderServiceWorkspace(service) {
+    return `
+      <section class="service-section">
+        <div class="service-section-head">
+          <h3>Workspace</h3>
+          ${service.cloneAvailable ? `<button class="button" type="button" data-clone-service="${escapeHtml(service.serviceId || '')}">Clone</button>` : ''}
+        </div>
+        <div class="service-kv-grid">
+          ${kv('Path', escapeHtml(service.absolutePath || service.path || '-'))}
+          ${kv('Repository', escapeHtml(service.repository || '-'))}
+          ${kv('Branch', escapeHtml(service.branch || '-'))}
+          ${kv('Default branch', escapeHtml(service.defaultBranch || '-'))}
+          ${kv('Git state', service.gitRepository ? 'git repository' : (service.exists ? 'directory without git' : 'missing'))}
+          ${kv('Changes', service.dirty ? '<span class="danger-text">dirty</span>' : 'clean')}
+        </div>
+        ${renderServiceWarnings(service.warnings || [])}
+      </section>
+    `;
+  }
+
+  function renderServiceRuntime(service) {
+    if (!service.serviceContainer) {
+      return '';
+    }
+    return `
+      <section class="service-section">
+        <div class="service-section-head">
+          <h3>Runtime</h3>
+          ${serviceRuntimeStatusMarkup(serviceRuntimeView(service.serviceRuntimeStatus))}
+        </div>
+        <div class="service-kv-grid compact">
+          ${kv('Healthcheck', escapeHtml(service.serviceContainer || '-'))}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderServiceWarnings(warnings) {
+    if (!warnings.length) {
+      return '';
+    }
+    return `<div class="notice-box inline">${warnings.map(escapeHtml).join('<br>')}</div>`;
+  }
+
+  function renderServiceDatabase(database) {
+    if (!database) {
+      return '';
+    }
+    if (!serviceDatabaseConfigured(database)) {
+      return '';
+    }
+    return `
+      <section class="service-section">
+        <div class="service-section-head">
+          <h3>Database</h3>
+          ${serviceRuntimeStatusMarkup(serviceRuntimeView(database.runtimeStatus))}
+        </div>
+        <div class="service-kv-grid">
+          ${kv('Required', escapeHtml(database.required ? 'yes' : 'no'))}
+          ${kv('Type', escapeHtml(database.type || '-'))}
+          ${kv('Mode', escapeHtml(database.mode || '-'))}
+          ${kv('Key', escapeHtml(database.key || '-'))}
+          ${kv('Container', escapeHtml(database.containerName || '-'))}
+          ${kv('Message', escapeHtml(database.message || '-'))}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderServiceContractRefs(refs) {
+    if (!refs.length) {
+      return '';
+    }
+    return `
+      <section class="service-section">
+        <h3>Contracts</h3>
+        <div class="contract-ref-grid">
+          ${refs.map(renderServiceContractRef).join('')}
+        </div>
+      </section>
+    `;
+  }
+
+  function serviceDatabaseConfigured(database) {
+    const type = String(database.type || '').toLowerCase();
+    return Boolean(database.required || database.key || (type && type !== 'none'));
+  }
+
+  function renderServiceContractRef(ref) {
+    return `
+      <article class="contract-ref-card">
+        <header>
+          <div>
+            <span>${escapeHtml(ref.refKey || 'contract')}</span>
+            <h4>${escapeHtml(ref.sourceRepo || '-')}</h4>
+          </div>
+          ${serviceRuntimeStatusMarkup({ up: ref.sourceExists, label: ref.sourceExists ? 'UP' : 'DOWN' })}
+        </header>
+        <div class="service-kv-grid compact">
+          ${kv('Source path', escapeHtml(ref.sourcePath || '-'))}
+          ${kv('Service code', escapeHtml(ref.serviceCode || '-'))}
+          ${kv('API family', escapeHtml(ref.apiFamily || '-'))}
+          ${kv('Event family', escapeHtml(ref.eventFamily || '-'))}
+          ${kv('Root', escapeHtml(ref.root || '-'))}
+          ${kv('Schemas', tokens(ref.schemas || []))}
+          ${kv('Operations', tokens(ref.operations || []))}
+          ${kv('Topics', tokens(ref.topics || []))}
+          ${kv('Payloads', tokens(ref.payloads || []))}
+          ${kv('Generated', tokens(ref.generatedArtifacts || []))}
+          ${kv('Consumers', tokens(ref.consumerArtifacts || []))}
+          ${kv('Frontend packages', tokens(ref.frontendPackages || []))}
+        </div>
+      </article>
+    `;
+  }
+
+  function renderServiceDetailActions(service) {
+    if (!service.defaultAvailable) {
+      return '';
+    }
+    return `
+      <div class="service-detail-actions">
+        <button class="button danger" type="button" data-default-service="${escapeHtml(service.serviceId || '')}">Default Service</button>
+      </div>
+    `;
+  }
+
+  function requestDefaultService(serviceId) {
+    const service = window.__forgeCurrentServiceDetail?.service || {};
+    if (!serviceId) {
+      return;
+    }
+    if (!service.dirty) {
+      runServiceAction('default', serviceId, { mode: 'CHECKOUT', reload: 'detail' });
+      return;
+    }
+    window.__forgeDefaultServiceId = serviceId;
+    const title = document.getElementById('defaultServiceDialogTitle');
+    if (title) {
+      title.textContent = service.label || serviceId;
+    }
+    openDialog('defaultServiceDialog');
+  }
+
+  function closeDefaultServiceDialog() {
+    closeDialog('defaultServiceDialog');
+    window.__forgeDefaultServiceId = null;
+  }
+
+  function submitDefaultServiceMode(mode) {
+    const serviceId = window.__forgeDefaultServiceId;
+    closeDefaultServiceDialog();
+    if (serviceId && mode) {
+      runServiceAction('default', serviceId, { mode, reload: 'detail' });
+    }
+  }
+
+  function openDialog(id) {
+    const dialog = document.getElementById(id);
+    if (dialog?.showModal) {
+      dialog.showModal();
+      return;
+    }
+    dialog?.classList.add('open');
+  }
+
+  function closeDialog(id) {
+    const dialog = document.getElementById(id);
+    if (dialog?.close) {
+      dialog.close();
+      return;
+    }
+    dialog?.classList.remove('open');
+  }
+
+  async function runServiceAction(action, serviceId, options = {}) {
+    if (!serviceId) {
+      return;
+    }
+    const result = document.getElementById('servicesActionResult');
+    if (result) {
+      result.classList.add('hidden');
+      result.textContent = '';
+    }
+    try {
+      const query = options.mode ? `?mode=${encodeURIComponent(options.mode)}` : '';
+      const response = await postJson(`/local-services/${encodeURIComponent(serviceId)}/${action}${query}`);
+      if (result) {
+        result.classList.remove('hidden');
+        result.textContent = response.message || `${action} completed`;
+      }
+      if (options.reload === 'detail') {
+        await loadOperatorServiceDetail();
+      } else {
+        await loadOperatorServices();
+      }
+    } catch (error) {
+      setError('servicesError', error);
+    }
+  }
+
+  function serviceIdFromUrl() {
+    return new URLSearchParams(window.location.search).get('serviceId');
+  }
+
+  function serviceRuntimeView(status) {
+    const up = String(status || '').toUpperCase() === 'UP';
+    return { up, label: up ? 'UP' : 'DOWN' };
+  }
+
+  function serviceRuntimeVisible(service) {
+    const group = serviceGroup(service);
+    return group === 'BACKEND' || group === 'FRONTEND';
+  }
+
+  function serviceGroup(service) {
+    return String(service?.group || 'OTHER').toUpperCase();
+  }
+
+  function serviceGroupLabel(group) {
+    return {
+      BACKEND: 'Backend',
+      FRONTEND: 'Frontend',
+      TOOL: 'Tools'
+    }[group] || group;
+  }
+
+  function serviceRuntimeStatusMarkup(runtime, className = 'service-runtime-status', id = '') {
+    const state = runtime?.up ? 'up' : 'down';
+    const idAttribute = id ? ` id="${escapeHtml(id)}"` : '';
+    return `
+      <div${idAttribute} class="${escapeHtml(className)} ${state}">
+        <span></span>
+        <strong>${escapeHtml(runtime?.label || 'DOWN')}</strong>
+      </div>
+    `;
+  }
+
   function ticketIdFromUrl() {
     return new URLSearchParams(window.location.search).get('ticketId');
   }
@@ -663,11 +1058,105 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     setTextPreservingScroll(document.getElementById('laneTaskDescription'), data.taskDescription || '');
     document.getElementById('laneTaskDialogTitle').textContent = data.ticketKey || data.ticketId;
     document.getElementById('laneUpdated').textContent = `updated ${new Date().toLocaleTimeString()}`;
+    syncLaneStopButton(data);
+    syncLaneRetryButton(data);
     replaceHtmlIfChanged(document.getElementById('laneDependencies'), renderLaneDependencies(data.dependencies || []));
     replaceHtmlIfChanged(document.getElementById('laneInputs'), renderInputTasks(data.inputTasks || []));
     replaceHtmlIfChanged(document.getElementById('laneTrace'), renderLaneTrace(data));
     replaceHtmlIfChanged(document.getElementById('laneEvents'), renderLaneEvents(data.events || []));
     restoreDetailViewState(viewState);
+  }
+
+  function isInterruptibleExecution(execution) {
+    const status = String(execution?.status || '').toUpperCase();
+    if (!execution?.executionId || !status) {
+      return false;
+    }
+    return !['COMPLETED', 'FAILED', 'INTERRUPTED', 'CANCELLED'].includes(status);
+  }
+
+  function isRetryableExecution(execution) {
+    const status = String(execution?.status || '').toUpperCase();
+    if (!execution?.executionId || !status) {
+      return false;
+    }
+    return ['FAILED', 'INTERRUPTED', 'CANCELLED'].includes(status);
+  }
+
+  function syncLaneStopButton(data) {
+    const button = document.getElementById('stopLane');
+    if (!button) {
+      return;
+    }
+    const execution = data?.execution || {};
+    const interruptible = isInterruptibleExecution(execution);
+    button.disabled = !interruptible;
+    button.dataset.executionId = interruptible ? execution.executionId : '';
+    button.dataset.laneLabel = `${data?.agent || 'UNKNOWN'} / ${data?.scope || '-'}`;
+    button.textContent = interruptible ? 'Stop' : 'Stopped';
+  }
+
+  async function stopCurrentLaneExecution() {
+    const button = document.getElementById('stopLane');
+    const executionId = button?.dataset.executionId;
+    const laneLabel = button?.dataset.laneLabel || 'this lane';
+    if (!executionId || !button || button.disabled) {
+      return;
+    }
+    const confirmed = window.confirm(`Stop ${laneLabel}? Active supervised execution will be interrupted.`);
+    if (!confirmed) {
+      return;
+    }
+    const originalLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Stopping...';
+    try {
+      await postOperatorJson(`/executions/${encodeURIComponent(executionId)}/interrupt`);
+      await loadLane();
+    } catch (error) {
+      setError('laneError', error);
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
+  }
+
+  function syncLaneRetryButton(data) {
+    const button = document.getElementById('retryLane');
+    if (!button) {
+      return;
+    }
+    const execution = data?.execution || {};
+    const retryable = isRetryableExecution(execution);
+    button.disabled = !retryable;
+    button.dataset.ticketId = retryable ? data.ticketId : '';
+    button.dataset.laneId = retryable ? data.laneId : '';
+    button.dataset.laneLabel = `${data?.agent || 'UNKNOWN'} / ${data?.scope || '-'}`;
+    button.textContent = retryable ? 'Retry' : 'Retry unavailable';
+  }
+
+  async function retryCurrentLaneExecution() {
+    const button = document.getElementById('retryLane');
+    const ticketId = button?.dataset.ticketId;
+    const laneId = button?.dataset.laneId;
+    const laneLabel = button?.dataset.laneLabel || 'this lane';
+    if (!ticketId || !laneId || !button || button.disabled) {
+      return;
+    }
+    const confirmed = window.confirm(`Retry ${laneLabel}? Completed persisted steps will be reused and the first missing step will run again.`);
+    if (!confirmed) {
+      return;
+    }
+    const originalLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Retrying...';
+    try {
+      await postOperatorJson(`/ui/tickets/${encodeURIComponent(ticketId)}/lanes/${encodeURIComponent(laneId)}/retry`);
+      await loadLane();
+    } catch (error) {
+      setError('laneError', error);
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
   }
 
   function renderLaneDependencies(dependencies) {
@@ -740,10 +1229,20 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
             <p>${escapeHtml(step.stepTitle || '-')}</p>
           </div>
           ${pill(step.status || 'PENDING', step.status)}
+          ${isRetryableExecution(execution) && isCurrentFailedStep(execution, step)
+            ? '<button class="button warning small" data-retry-current-lane type="button">Retry from here</button>'
+            : ''}
           ${renderStepJsonSections(step)}
         </article>
       `).join('');
     return executionBlock + stepBlock;
+  }
+
+  function isCurrentFailedStep(execution, step) {
+    if (!execution || !step) {
+      return false;
+    }
+    return String(execution.currentStepId || '') === String(step.stepId || '');
   }
 
   function renderStderr(stderrTail) {
@@ -2001,6 +2500,13 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
 
   if (page === 'lane') {
     document.getElementById('refreshLane')?.addEventListener('click', loadLane);
+    document.getElementById('stopLane')?.addEventListener('click', stopCurrentLaneExecution);
+    document.getElementById('retryLane')?.addEventListener('click', retryCurrentLaneExecution);
+    document.getElementById('laneTrace')?.addEventListener('click', (event) => {
+      if (event.target.closest?.('[data-retry-current-lane]')) {
+        retryCurrentLaneExecution();
+      }
+    });
     document.getElementById('openLaneTask')?.addEventListener('click', () => {
       const dialog = document.getElementById('laneTaskDialog');
       if (dialog?.showModal) {
@@ -2025,6 +2531,21 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     document.getElementById('refreshAgents')?.addEventListener('click', loadAgentsConfig);
     document.getElementById('saveResource')?.addEventListener('click', saveSelectedResource);
     loadAgentsConfig();
+  }
+
+  if (page === 'services') {
+    document.getElementById('refreshServices')?.addEventListener('click', loadOperatorServices);
+    loadOperatorServices();
+  }
+
+  if (page === 'service') {
+    document.getElementById('refreshService')?.addEventListener('click', loadOperatorServiceDetail);
+    document.getElementById('cancelDefaultService')?.addEventListener('click', closeDefaultServiceDialog);
+    document.getElementById('cancelDefaultServiceTop')?.addEventListener('click', closeDefaultServiceDialog);
+    document.querySelectorAll('[data-default-mode]').forEach((button) => {
+      button.addEventListener('click', () => submitDefaultServiceMode(button.dataset.defaultMode));
+    });
+    loadOperatorServiceDetail();
   }
 
   if (page === 'jarvis') {

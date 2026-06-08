@@ -79,6 +79,28 @@ public final class FakeCodexAppServerMain {
                 writeResult(writer, message.path("id").asText(), result);
                 continue;
             }
+            if ("thread/resume".equals(method)) {
+                if (!initializeSeen || !initializedSeen) {
+                    writeError(writer, message.path("id").asText(), -32002, "Server not initialized", "{\"expected\":\"initialize->initialized->thread/resume\"}");
+                    return;
+                }
+                final JsonNode params = message.path("params");
+                threadId = params.path("threadId").asText();
+                if (threadId.isBlank()) {
+                    writeError(writer, message.path("id").asText(), -32602, "thread/resume requires threadId", "{\"field\":\"threadId\"}");
+                    return;
+                }
+                if (params.path("cwd").asText().isBlank()) {
+                    writeError(writer, message.path("id").asText(), -32602, "thread/resume requires cwd", "{\"field\":\"cwd\"}");
+                    return;
+                }
+                final ObjectNode thread = mapper.createObjectNode();
+                thread.put("id", threadId);
+                final ObjectNode result = mapper.createObjectNode();
+                result.set("thread", thread);
+                writeResult(writer, message.path("id").asText(), result);
+                continue;
+            }
             if ("turn/start".equals(method)) {
                 final JsonNode params = message.path("params");
                 final String receivedThreadId = params.path("threadId").asText();

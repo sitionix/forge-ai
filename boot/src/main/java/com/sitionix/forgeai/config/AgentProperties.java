@@ -4,6 +4,7 @@ import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.AgentTicketPayloadType;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import java.util.LinkedHashMap;
 import java.util.List;

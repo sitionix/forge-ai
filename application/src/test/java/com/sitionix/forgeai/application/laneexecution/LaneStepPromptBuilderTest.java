@@ -94,7 +94,14 @@ class LaneStepPromptBuilderTest {
     @Test
     void buildCorrectionPrompt_forFinalStep_includesCompletionContract() {
         final LaneStrategyStep completionStep = this.strategy().getSteps().getLast();
-        final String prompt = this.laneStepPromptBuilder.buildCorrectionPrompt(this.lane(), completionStep, "summary must be non-empty", true);
+        final String prompt = this.laneStepPromptBuilder.buildCorrectionPrompt(
+                this.lane(),
+                completionStep,
+                "summary must be non-empty",
+                true,
+                1,
+                2
+        );
 
         assertThat(prompt).contains("CORRECTION_PROMPT");
         assertThat(prompt).contains("Active step id: completion");
@@ -153,6 +160,7 @@ class LaneStepPromptBuilderTest {
         assertThat(prompt).contains("\"payloadScope\" : \"backendforfrontendservice-sox\"");
         assertThat(prompt).contains("\"payload\" : {");
         assertThat(prompt).contains("\"scope\" : \"backendforfrontendservice-sox\"");
+        assertThat(prompt).doesNotContain("\"payload\" : {\n      \"required\"");
     }
 
     private ReadyToStartLane lane() {

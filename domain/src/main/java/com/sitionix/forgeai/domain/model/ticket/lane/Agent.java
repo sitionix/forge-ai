@@ -1,7 +1,7 @@
 package com.sitionix.forgeai.domain.model.ticket.lane;
 
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
-import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Optional;
@@ -28,7 +28,7 @@ public enum Agent {
     private final String executorBeanName;
 
     @Setter
-    private AgentPropertiesProvider.AgentConfigView info;
+    private AgentConfigView info;
 
     @Setter
     private ExecuteAgent<? extends AgentTicketPayload> executor;
@@ -40,7 +40,7 @@ public enum Agent {
         return this.executor;
     }
 
-    public AgentPropertiesProvider.AgentConfigView getInfo() {
+    public AgentConfigView getInfo() {
         if (this.info == null) {
             throw new IllegalStateException("No agent info configured for agent: " + this.id);
         }

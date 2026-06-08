@@ -4,10 +4,14 @@ import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPaylo
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
 import com.sitionix.forgeai.domain.model.operator.OperatorConfigResource;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorAgentConfigResponse;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorConfigResourceSaveRequest;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorConfigResourceView;
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.AgentTicketPayloadType;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import com.sitionix.forgeai.domain.repository.CompletionPayloadContractRepository;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
@@ -59,7 +63,7 @@ class ManageOperatorAgentConfigUseCaseTest {
 
     @Test
     void givenConfiguredAgentResources_whenConfig_thenReturnAgentsStrategiesContractsAndEditableResources() {
-        final AgentPropertiesProvider.AgentConfigView analyzer = this.agent(
+        final AgentConfigView analyzer = this.agent(
                 "analyzer",
                 ScopeMode.PER_SCOPE,
                 Set.of(ServiceGroup.BACKEND),
@@ -90,7 +94,7 @@ class ManageOperatorAgentConfigUseCaseTest {
                 List.of()
         ));
 
-        final ManageOperatorAgentConfig.OperatorAgentConfigResponse actual = this.useCase.config();
+        final OperatorAgentConfigResponse actual = this.useCase.config();
 
         assertThat(actual.agents()).singleElement()
                 .satisfies(agent -> {
@@ -115,15 +119,15 @@ class ManageOperatorAgentConfigUseCaseTest {
                                 assertThat(contract.resourceKey()).isEqualTo("contract:ArchitectPayload");
                             });
                 });
-        assertThat(actual.editableResources()).extracting(ManageOperatorAgentConfig.OperatorConfigResourceView::resourceKey)
+        assertThat(actual.editableResources()).extracting(OperatorConfigResourceView::resourceKey)
                 .contains("agent-yml", "lane-strategies-yml", "instruction:" + INSTRUCTION_REF, "contract:ArchitectPayload");
         assertThat(actual.restartRequiredMessage()).contains("Restart Forge AI");
     }
 
     @Test
     void givenValidYamlResource_whenSaveResource_thenWriteAllowlistedSourceResource() throws Exception {
-        final ManageOperatorAgentConfig.OperatorConfigResourceView actual = this.useCase.saveResource(
-                new ManageOperatorAgentConfig.OperatorConfigResourceSaveRequest("agent-yml", "agents: []\n")
+        final OperatorConfigResourceView actual = this.useCase.saveResource(
+                new OperatorConfigResourceSaveRequest("agent-yml", "agents: []\n")
         );
 
         assertThat(actual.resourceKey()).isEqualTo("agent-yml");
@@ -131,12 +135,12 @@ class ManageOperatorAgentConfigUseCaseTest {
         assertThat(this.operatorConfigResourceRepository.agentYaml().content()).isEqualTo("agents: []\n");
     }
 
-    private AgentPropertiesProvider.AgentConfigView agent(final String id,
+    private AgentConfigView agent(final String id,
                                                           final ScopeMode scopeMode,
                                                           final Set<ServiceGroup> groups,
                                                           final List<Agent> dependsOn,
                                                           final List<Agent> produces) {
-        final AgentPropertiesProvider.AgentConfigView agent = mock(AgentPropertiesProvider.AgentConfigView.class);
+        final AgentConfigView agent = mock(AgentConfigView.class);
         when(agent.getId()).thenReturn(id);
         when(agent.getScopeMode()).thenReturn(scopeMode);
         when(agent.getGroups()).thenReturn(groups);

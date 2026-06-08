@@ -113,9 +113,7 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
         final String stepId = this.matchValue(STEP_ID_PATTERN, prompt, "unknown");
         final String agentId = this.matchValue(AGENT_ID_PATTERN, prompt, "unknown");
         final String scope = this.matchValue(SCOPE_PATTERN, prompt, "GLOBAL");
-        final String evidence = "completion".equals(stepId)
-                ? "\"completionPayload\":" + this.completionPayload(agentId, scope, prompt)
-                : "\"detail\":\"ok\"";
+        final String evidence = this.evidence(stepId, agentId, scope, prompt);
         return """
                 {
                   "type": "LANE_STEP_DONE",
@@ -124,6 +122,19 @@ public class ItCodexSessionRepositoryStub implements CodexSessionRepository {
                   "evidence": { %s }
                 }
                 """.formatted(stepId, evidence);
+    }
+
+    private String evidence(final String stepId, final String agentId, final String scope, final String prompt) {
+        if ("completion".equals(stepId)) {
+            return "\"completionPayload\":" + this.completionPayload(agentId, scope, prompt);
+        }
+        if ("pr".equals(stepId)) {
+            return """
+                    "prUrl": "https://github.com/sitionix/example/pull/1",
+                    "repo": "sitionix/example"
+                    """;
+        }
+        return "\"detail\":\"ok\"";
     }
 
     private String completionPayload(final String agentId, final String scope, final String prompt) {

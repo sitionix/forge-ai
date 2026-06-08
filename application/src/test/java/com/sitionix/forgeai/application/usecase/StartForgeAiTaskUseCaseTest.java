@@ -11,7 +11,9 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneDependency;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
+import com.sitionix.forgeai.domain.props.ServiceConfigView;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
@@ -76,7 +78,7 @@ class StartForgeAiTaskUseCaseTest {
     void givenStartCommand_whenExecute_thenCreatesPerScopeAnalyzerLanes() {
         //given
         final ForgeAiStartCommand command = this.getCommand();
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.getServiceMap();
+        final Map<String, ServiceConfigView> services = this.getServiceMap();
         when(this.props.getServices()).thenReturn(services);
 
         //when
@@ -101,7 +103,7 @@ class StartForgeAiTaskUseCaseTest {
     void givenCreateOpenCommand_whenCreateOpen_thenCreatesOpenTicketWithoutTerminalAutoOpen() {
         //given
         final ForgeAiStartCommand command = this.getCommand();
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.getServiceMap();
+        final Map<String, ServiceConfigView> services = this.getServiceMap();
         when(this.props.getServices()).thenReturn(services);
 
         //when
@@ -139,7 +141,7 @@ class StartForgeAiTaskUseCaseTest {
     void givenStartCommand_whenExecute_thenCreatesSingleGlobalApiLane() {
         //given
         final ForgeAiStartCommand command = this.getCommand();
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.getServiceMap();
+        final Map<String, ServiceConfigView> services = this.getServiceMap();
         when(this.props.getServices()).thenReturn(services);
 
         //when
@@ -158,7 +160,7 @@ class StartForgeAiTaskUseCaseTest {
     void givenStartCommand_whenExecute_thenApiDependsOnAllArchitectScopes() {
         //given
         final ForgeAiStartCommand command = this.getCommand();
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.getServiceMap();
+        final Map<String, ServiceConfigView> services = this.getServiceMap();
         when(this.props.getServices()).thenReturn(services);
 
         //when
@@ -180,7 +182,7 @@ class StartForgeAiTaskUseCaseTest {
     void givenStartCommand_whenExecute_thenCreatesSingleGlobalReviewerLane() {
         //given
         final ForgeAiStartCommand command = this.getCommand();
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.getServiceMap();
+        final Map<String, ServiceConfigView> services = this.getServiceMap();
         when(this.props.getServices()).thenReturn(services);
 
         //when
@@ -200,7 +202,7 @@ class StartForgeAiTaskUseCaseTest {
     void givenStartCommand_whenExecute_thenImplementBeDependsOnArchitectAndGlobalApiAndGlobalEvent() {
         //given
         final ForgeAiStartCommand command = this.getCommand();
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.getServiceMap();
+        final Map<String, ServiceConfigView> services = this.getServiceMap();
         when(this.props.getServices()).thenReturn(services);
 
         //when
@@ -224,7 +226,7 @@ class StartForgeAiTaskUseCaseTest {
     void givenBackendServices_whenExecute_thenDoesNotCreateFrontendLanes() {
         //given
         final ForgeAiStartCommand command = this.getCommand();
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.getServiceMap();
+        final Map<String, ServiceConfigView> services = this.getServiceMap();
         when(this.props.getServices()).thenReturn(services);
 
         //when
@@ -243,7 +245,7 @@ class StartForgeAiTaskUseCaseTest {
                 .task("hi")
                 .serviceIds(List.of("spa"))
                 .build();
-        final ServicePropertiesProvider.ServiceConfigView spa = mock(ServicePropertiesProvider.ServiceConfigView.class);
+        final ServiceConfigView spa = mock(ServiceConfigView.class);
         when(spa.getPath()).thenReturn("sitionix-spa");
         when(spa.getGroup()).thenReturn(ServiceGroup.FRONTEND);
         when(this.props.getServices()).thenReturn(Map.of("spa", spa));
@@ -267,15 +269,15 @@ class StartForgeAiTaskUseCaseTest {
                 .build();
     }
 
-    private Map<String, ServicePropertiesProvider.ServiceConfigView> getServiceMap() {
+    private Map<String, ServiceConfigView> getServiceMap() {
         return Map.of(
                 "atmssox", this.getService("automationservice-sox"),
                 "bffssox", this.getService("backendforfrontendservice-sox")
         );
     }
 
-    private ServicePropertiesProvider.ServiceConfigView getService(final String path) {
-        final ServicePropertiesProvider.ServiceConfigView service = mock(ServicePropertiesProvider.ServiceConfigView.class);
+    private ServiceConfigView getService(final String path) {
+        final ServiceConfigView service = mock(ServiceConfigView.class);
         when(service.getPath()).thenReturn(path);
         when(service.getGroup()).thenReturn(ServiceGroup.BACKEND);
         return service;
@@ -289,17 +291,17 @@ class StartForgeAiTaskUseCaseTest {
     }
 
     private void configureAgents() {
-        final AgentPropertiesProvider.AgentConfigView analyzer = this.getAgent("analyzer", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of());
-        final AgentPropertiesProvider.AgentConfigView architect = this.getAgent("architect", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of(Agent.ANALYZER));
-        final AgentPropertiesProvider.AgentConfigView api = this.getAgent("api", ScopeMode.GLOBAL, Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of(Agent.ARCHITECT));
-        final AgentPropertiesProvider.AgentConfigView event = this.getAgent("event", ScopeMode.GLOBAL, Set.of(ServiceGroup.BACKEND), List.of(Agent.ARCHITECT));
-        final AgentPropertiesProvider.AgentConfigView qaLead = this.getAgent("qa_lead", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of(Agent.ANALYZER));
-        final AgentPropertiesProvider.AgentConfigView implementBe = this.getAgent("implement_be", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.ARCHITECT, Agent.API, Agent.EVENT));
-        final AgentPropertiesProvider.AgentConfigView implementFe = this.getAgent("implement_fe", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.FRONTEND), List.of(Agent.ARCHITECT, Agent.API));
-        final AgentPropertiesProvider.AgentConfigView testUnit = this.getAgent("test_unit", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.IMPLEMENT_BE));
-        final AgentPropertiesProvider.AgentConfigView testIt = this.getAgent("test_it", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.IMPLEMENT_BE, Agent.QA_LEAD));
-        final AgentPropertiesProvider.AgentConfigView testUi = this.getAgent("test_ui", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.FRONTEND), List.of(Agent.IMPLEMENT_FE, Agent.QA_LEAD));
-        final AgentPropertiesProvider.AgentConfigView reviewer = this.getAgent("reviewer", ScopeMode.GLOBAL,
+        final AgentConfigView analyzer = this.getAgent("analyzer", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of());
+        final AgentConfigView architect = this.getAgent("architect", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of(Agent.ANALYZER));
+        final AgentConfigView api = this.getAgent("api", ScopeMode.GLOBAL, Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of(Agent.ARCHITECT));
+        final AgentConfigView event = this.getAgent("event", ScopeMode.GLOBAL, Set.of(ServiceGroup.BACKEND), List.of(Agent.ARCHITECT));
+        final AgentConfigView qaLead = this.getAgent("qa_lead", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of(Agent.ANALYZER));
+        final AgentConfigView implementBe = this.getAgent("implement_be", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.ARCHITECT, Agent.API, Agent.EVENT));
+        final AgentConfigView implementFe = this.getAgent("implement_fe", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.FRONTEND), List.of(Agent.ARCHITECT, Agent.API));
+        final AgentConfigView testUnit = this.getAgent("test_unit", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.IMPLEMENT_BE));
+        final AgentConfigView testIt = this.getAgent("test_it", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.BACKEND), List.of(Agent.IMPLEMENT_BE, Agent.QA_LEAD));
+        final AgentConfigView testUi = this.getAgent("test_ui", ScopeMode.PER_SCOPE, Set.of(ServiceGroup.FRONTEND), List.of(Agent.IMPLEMENT_FE, Agent.QA_LEAD));
+        final AgentConfigView reviewer = this.getAgent("reviewer", ScopeMode.GLOBAL,
                 Set.of(ServiceGroup.BACKEND, ServiceGroup.FRONTEND), List.of());
         lenient().when(testUi.isEnabled()).thenReturn(false);
 
@@ -316,15 +318,15 @@ class StartForgeAiTaskUseCaseTest {
         this.bind(Agent.REVIEWER, reviewer);
     }
 
-    private void bind(final Agent agent, final AgentPropertiesProvider.AgentConfigView view) {
+    private void bind(final Agent agent, final AgentConfigView view) {
         agent.setInfo(view);
     }
 
-    private AgentPropertiesProvider.AgentConfigView getAgent(final String id,
+    private AgentConfigView getAgent(final String id,
                                                              final ScopeMode scopeMode,
                                                              final Set<ServiceGroup> groups,
                                                              final List<Agent> dependsOn) {
-        final AgentPropertiesProvider.AgentConfigView view = mock(AgentPropertiesProvider.AgentConfigView.class);
+        final AgentConfigView view = mock(AgentConfigView.class);
         final List<Agent> mutableDependsOn = new ArrayList<>(dependsOn);
         lenient().when(view.getScopeMode()).thenReturn(scopeMode);
         lenient().when(view.getGroups()).thenReturn(groups);

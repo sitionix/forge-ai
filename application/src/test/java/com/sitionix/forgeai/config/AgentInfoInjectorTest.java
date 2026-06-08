@@ -2,6 +2,7 @@ package com.sitionix.forgeai.config;
 
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -61,9 +62,9 @@ class AgentInfoInjectorTest {
     @Test
     void givenAgentConfigs_whenInjectInfo_thenBindInfoAndExecutorsToAllAgents() {
         //given
-        final List<AgentPropertiesProvider.AgentConfigView> configs = Arrays.stream(Agent.values())
+        final List<AgentConfigView> configs = Arrays.stream(Agent.values())
                 .map(agent -> {
-                    final AgentPropertiesProvider.AgentConfigView view = mock(AgentPropertiesProvider.AgentConfigView.class);
+                    final AgentConfigView view = mock(AgentConfigView.class);
                     when(view.getId()).thenReturn(agent.getId());
                     return view;
                 })

@@ -4,26 +4,27 @@ import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPaylo
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
 import com.sitionix.forgeai.domain.model.operator.OperatorConfigResource;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorAgentCompletionView;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorAgentConfigResponse;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorAgentConfigView;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorAgentInputPayloadView;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorConfigResourceSaveRequest;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorConfigResourceView;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorInstructionResourceView;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorLaneStrategyStepView;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorLaneStrategyView;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorPayloadContractResourceView;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorPayloadContractSummary;
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.AgentTicketPayloadType;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import com.sitionix.forgeai.domain.repository.CompletionPayloadContractRepository;
 import com.sitionix.forgeai.domain.repository.InstructionRepository;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import com.sitionix.forgeai.domain.repository.OperatorConfigResourceRepository;
 import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorAgentCompletionView;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorAgentConfigResponse;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorAgentConfigView;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorAgentInputPayloadView;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorConfigResourceSaveRequest;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorConfigResourceView;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorInstructionResourceView;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorLaneStrategyStepView;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorLaneStrategyView;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorPayloadContractResourceView;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorPayloadContractSummary;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -81,7 +82,7 @@ public class ManageOperatorAgentConfigUseCase implements ManageOperatorAgentConf
         return this.resource(this.operatorConfigResourceRepository.save(request.resourceKey(), request.content()));
     }
 
-    private OperatorAgentConfigView agent(final AgentPropertiesProvider.AgentConfigView agent,
+    private OperatorAgentConfigView agent(final AgentConfigView agent,
                                           final Map<String, OperatorPayloadContractResourceView> contractsByPayloadType) {
         final LaneStrategy strategy = this.laneStrategy(agent.getId());
         final List<OperatorAgentInputPayloadView> inputPayloads = agent.getInputPayloadTypes().entrySet().stream()
@@ -111,7 +112,7 @@ public class ManageOperatorAgentConfigUseCase implements ManageOperatorAgentConf
         );
     }
 
-    private List<OperatorPayloadContractSummary> payloadContractSummaries(final AgentPropertiesProvider.AgentConfigView agent,
+    private List<OperatorPayloadContractSummary> payloadContractSummaries(final AgentConfigView agent,
                                                                           final List<OperatorAgentInputPayloadView> inputPayloads,
                                                                           final Map<String, OperatorPayloadContractResourceView> contractsByPayloadType) {
         final Set<String> payloadTypes = new LinkedHashSet<>();
@@ -149,6 +150,8 @@ public class ManageOperatorAgentConfigUseCase implements ManageOperatorAgentConf
                                 step.getOrder(),
                                 step.getId(),
                                 step.getTitle(),
+                                step.getType() == null ? null : step.getType().name(),
+                                step.getHandler(),
                                 step.getTaskPlaceholder(),
                                 step.getCompletionContractPlaceholder(),
                                 step.getInstructionRefs()

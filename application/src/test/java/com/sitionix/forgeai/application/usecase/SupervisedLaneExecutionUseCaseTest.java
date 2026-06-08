@@ -9,6 +9,10 @@ import com.sitionix.forgeai.application.laneexecution.LaneExecutionProgressServi
 import com.sitionix.forgeai.application.laneexecution.LaneStepDoneResultParser;
 import com.sitionix.forgeai.application.laneexecution.LaneStepPromptBuilder;
 import com.sitionix.forgeai.application.laneexecution.SupervisedExecutionProperties;
+import com.sitionix.forgeai.application.laneexecution.orchestration.LaneStepOrchestrator;
+import com.sitionix.forgeai.application.laneexecution.orchestration.LaneStepOrchestratorContext;
+import com.sitionix.forgeai.application.laneexecution.orchestration.LaneStepOrchestratorHandler;
+import com.sitionix.forgeai.application.laneexecution.orchestration.LaneStepOrchestratorRegistry;
 import com.sitionix.forgeai.application.laneexecution.support.FakeInteractiveCodexSessionRepository;
 import com.sitionix.forgeai.application.laneexecution.validation.LaneStepEvidenceValidatorRegistry;
 import com.sitionix.forgeai.application.operator.TicketOperatorRunService;
@@ -22,8 +26,10 @@ import com.sitionix.forgeai.domain.model.codex.ScopeContext;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecutionStatus;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepExecution;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStepDoneResult;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStepType;
 import com.sitionix.forgeai.domain.model.lanecompletion.contract.CompletionPayloadObjectContract;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorRun;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorRunStatus;
@@ -41,9 +47,11 @@ import com.sitionix.forgeai.domain.usecase.ManageTicketOperatorRuns;
 import com.sitionix.forgeai.domain.usecase.ResolveCodexLaneWorkspace;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -131,6 +139,26 @@ class SupervisedLaneExecutionUseCaseTest {
     }
 
     @Test
+    void givenSeveralInvalidResponses_whenExecute_thenKeepCorrectingUntilValid() {
+        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(this.strategy());
+        final int[] attempts = {0};
+        final FakeInteractiveCodexSessionRepository sessions = new FakeInteractiveCodexSessionRepository(command -> {
+            attempts[0]++;
+            if (attempts[0] < 4) {
+                return "```json\n{\"bad\":true}\n```";
+            }
+            return this.validResult(this.stepIdFromPrompt(command.prompt()));
+        });
+        final SupervisedLaneExecutionUseCase useCase = this.useCase(sessions);
+
+        useCase.execute(this.lane(), this.input(), 3);
+
+        assertThat(sessions.submittedPrompts().stream().filter(prompt -> prompt.contains("CORRECTION_PROMPT")).count())
+                .isGreaterThanOrEqualTo(3);
+        verify(this.laneCompletionDispatcher).completeLane(eq(this.lane()), any());
+    }
+
+    @Test
     void givenTimeout_whenExecute_thenDoNotPersistOrCompleteLane() {
         when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(this.strategy());
         final SupervisedLaneExecutionUseCase useCase = this.useCase(new TimeoutCodexSessionRepository());
@@ -164,12 +192,105 @@ class SupervisedLaneExecutionUseCaseTest {
         });
     }
 
+    @Test
+    void givenPreviousFailedExecutionWithThreadId_whenExecuteAgain_thenResumeCodexThread() {
+        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(this.strategy());
+        final ReadyToStartLane lane = this.lane();
+        this.laneExecutionRepository.saveExecution(LaneExecution.builder()
+                .id(UUID.randomUUID())
+                .ticketId(lane.getTicketId())
+                .laneId(lane.getLaneId())
+                .agentId(lane.getAgent().getId())
+                .scope(lane.getScope())
+                .status(LaneExecutionStatus.FAILED)
+                .threadId("thr_previous_failed")
+                .updatedAt(LocalDateTime.now().minusMinutes(1))
+                .build());
+        final FakeInteractiveCodexSessionRepository sessions = new FakeInteractiveCodexSessionRepository(command -> this.validResult(this.stepIdFromPrompt(command.prompt())));
+        final SupervisedLaneExecutionUseCase useCase = this.useCase(sessions);
+
+        useCase.execute(lane, this.input(), 1);
+
+        assertThat(sessions.openSessionCommands()).singleElement()
+                .extracting(CodexSessionStartCommand::resumeThreadId)
+                .isEqualTo("thr_previous_failed");
+    }
+
+    @Test
+    void givenPreviousFailedExecutionWithDoneStep_whenExecuteAgain_thenSkipPersistedStepAndResumeNextStep() {
+        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(this.strategy());
+        final ReadyToStartLane lane = this.lane();
+        final UUID previousExecutionId = UUID.randomUUID();
+        this.laneExecutionRepository.saveExecution(LaneExecution.builder()
+                .id(previousExecutionId)
+                .ticketId(lane.getTicketId())
+                .laneId(lane.getLaneId())
+                .agentId(lane.getAgent().getId())
+                .scope(lane.getScope())
+                .status(LaneExecutionStatus.FAILED)
+                .threadId("thr_previous_failed")
+                .currentStepId("architect_handoff")
+                .updatedAt(LocalDateTime.now().minusMinutes(1))
+                .build());
+        this.laneExecutionRepository.saveStepExecution(LaneStepExecution.builder()
+                .id(UUID.randomUUID())
+                .executionId(previousExecutionId)
+                .stepId("scope_slicing")
+                .stepOrder(1)
+                .startedAt(LocalDateTime.now().minusMinutes(2))
+                .completedAt(LocalDateTime.now().minusMinutes(1))
+                .done(true)
+                .resultJson("{\"stepId\":\"scope_slicing\"}")
+                .evidenceJson("{\"detail\":\"ok\"}")
+                .build());
+        final FakeInteractiveCodexSessionRepository sessions = new FakeInteractiveCodexSessionRepository(command -> this.validResult(this.stepIdFromPrompt(command.prompt())));
+        final SupervisedLaneExecutionUseCase useCase = this.useCase(sessions);
+
+        useCase.execute(lane, this.input(), 1);
+
+        assertThat(sessions.submittedPrompts()).hasSize(2);
+        assertThat(sessions.submittedPrompts().getFirst()).contains("stepId: architect_handoff");
+        assertThat(((InMemoryLaneExecutionRepository) this.laneExecutionRepository).savedStepExecutions())
+                .extracting(LaneStepExecution::getStepId)
+                .containsExactly("scope_slicing", "scope_slicing", "architect_handoff", "completion");
+        verify(this.laneCompletionDispatcher).completeLane(eq(lane), any());
+    }
+
+    @Test
+    void givenMixedAgentAndOrchestratorSteps_whenExecute_thenCodexReceivesOnlyAgentSteps() {
+        when(this.laneStrategyRepository.findByAgentId("analyzer")).thenReturn(this.mixedStrategy());
+        final FakeInteractiveCodexSessionRepository sessions = new FakeInteractiveCodexSessionRepository(command -> this.validResult(this.stepIdFromPrompt(command.prompt())));
+        final RecordingOrchestratorHandler handler = new RecordingOrchestratorHandler();
+        final SupervisedLaneExecutionUseCase useCase = this.useCase(
+                sessions,
+                lane -> new CodexLaneWorkspace(System.getProperty("user.dir"), List.of(System.getProperty("user.dir"))),
+                List.of(handler)
+        );
+
+        useCase.execute(this.lane(), this.input(), 1);
+
+        assertThat(sessions.submittedPrompts()).hasSize(2);
+        assertThat(sessions.submittedPrompts()).noneMatch(prompt -> prompt.contains("artifact_collection"));
+        assertThat(handler.seenInput).isNotNull();
+        assertThat(handler.seenInput.previousEvidence()).containsEntry("detail", "ok");
+        assertThat(((InMemoryLaneExecutionRepository) this.laneExecutionRepository).savedStepExecutions())
+                .extracting(LaneStepExecution::getStepId)
+                .containsExactly("scope_slicing", "artifact_collection", "completion");
+        verify(this.laneCompletionDispatcher).completeLane(eq(this.lane()), any());
+    }
+
     private SupervisedLaneExecutionUseCase useCase(final CodexSessionRepository sessions) {
         return this.useCase(sessions, lane -> new CodexLaneWorkspace(System.getProperty("user.dir"), List.of(System.getProperty("user.dir"))));
     }
 
     private SupervisedLaneExecutionUseCase useCase(final CodexSessionRepository sessions,
                                                    final ResolveCodexLaneWorkspace resolveCodexLaneWorkspace) {
+        return this.useCase(sessions, resolveCodexLaneWorkspace, List.of());
+    }
+
+    private SupervisedLaneExecutionUseCase useCase(final CodexSessionRepository sessions,
+                                                   final ResolveCodexLaneWorkspace resolveCodexLaneWorkspace,
+                                                   final List<LaneStepOrchestratorHandler<?>> orchestratorHandlers) {
         final FakeLaneCompletionContractResolver completionContractResolver = new FakeLaneCompletionContractResolver();
         final FakeCompletionPayloadContractRepository completionPayloadContractRepository = new FakeCompletionPayloadContractRepository();
         return new SupervisedLaneExecutionUseCase(
@@ -190,7 +311,8 @@ class SupervisedLaneExecutionUseCaseTest {
                 this.objectMapper,
                 this.manageTicketOperatorRuns,
                 resolveCodexLaneWorkspace,
-                new LaneStepEvidenceValidatorRegistry(this.objectMapper, List.of())
+                new LaneStepEvidenceValidatorRegistry(this.objectMapper, List.of()),
+                new LaneStepOrchestratorRegistry(this.objectMapper, orchestratorHandlers)
         );
     }
 
@@ -220,6 +342,26 @@ class SupervisedLaneExecutionUseCaseTest {
                 .build();
     }
 
+    private LaneStrategy mixedStrategy() {
+        return LaneStrategy.builder()
+                .agentId("analyzer")
+                .version(1)
+                .sessionMode("single_session")
+                .steps(List.of(
+                        LaneStrategyStep.builder().id("scope_slicing").title("Scope Slicing").order(1).taskPlaceholder("TASKS").instructionRefs(List.of("lane-instructions/analyzer/scope-slicing.md")).build(),
+                        LaneStrategyStep.builder()
+                                .id("artifact_collection")
+                                .title("Artifact Collection")
+                                .order(2)
+                                .type(LaneStrategyStepType.ORCHESTRATOR)
+                                .handler("testOrchestrator")
+                                .instructionRefs(List.of())
+                                .build(),
+                        LaneStrategyStep.builder().id("completion").title("Completion").order(3).instructionRefs(List.of("lane-instructions/analyzer/completion-content.md")).build()
+                ))
+                .build();
+    }
+
     private AgentExecutionInput<AgentTicketPayload> input() {
         final ApiPayload task = ApiPayload.builder().scope("backendforfrontendservice-sox").summary("summary").build();
         return AgentExecutionInput.<AgentTicketPayload>builder()
@@ -229,6 +371,15 @@ class SupervisedLaneExecutionUseCaseTest {
     }
 
     private String stepIdFromPrompt(final String prompt) {
+        if (prompt.contains("stepId: scope_slicing")) {
+            return "scope_slicing";
+        }
+        if (prompt.contains("stepId: architect_handoff")) {
+            return "architect_handoff";
+        }
+        if (prompt.contains("stepId: completion")) {
+            return "completion";
+        }
         if (prompt.contains("scope_slicing")) {
             return "scope_slicing";
         }
@@ -331,6 +482,32 @@ class SupervisedLaneExecutionUseCaseTest {
 
         @Override
         public void interruptTurn(final String sessionId, final String turnId, final Duration timeout) {
+        }
+    }
+
+    private record TestOrchestratorInput(
+            String stepId,
+            Map<String, Object> previousEvidence,
+            Map<String, Map<String, Object>> stepEvidence
+    ) {
+    }
+
+    @LaneStepOrchestrator(value = "testOrchestrator", input = TestOrchestratorInput.class)
+    private static final class RecordingOrchestratorHandler implements LaneStepOrchestratorHandler<TestOrchestratorInput> {
+
+        private TestOrchestratorInput seenInput;
+
+        @Override
+        public LaneStepDoneResult execute(final LaneStepOrchestratorContext context, final TestOrchestratorInput input) {
+            this.seenInput = input;
+            return LaneStepDoneResult.builder()
+                    .stepId(context.step().getId())
+                    .summary("orchestrated")
+                    .evidence(Map.of(
+                            "handled", true,
+                            "previousStepCount", input.stepEvidence().size()
+                    ))
+                    .build();
         }
     }
 

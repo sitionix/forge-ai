@@ -14,6 +14,7 @@ public record CodexSessionStartCommand(
         String sourceTerminalTty,
         String ticketKey,
         String agentId,
-        String scope
+        String scope,
+        String resumeThreadId
 ) {
 }

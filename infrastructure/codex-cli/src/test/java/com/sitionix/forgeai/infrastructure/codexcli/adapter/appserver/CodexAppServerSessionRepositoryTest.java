@@ -77,6 +77,26 @@ class CodexAppServerSessionRepositoryTest {
         repository.closeSession(session.id());
     }
 
+    @Test
+    void givenResumeThreadId_whenOpenSession_thenResumeExistingThread() {
+        final CodexAppServerSessionRepository repository = this.repositoryFor("resume");
+
+        final CodexSession session = repository.openSession(this.startCommand().toBuilder()
+                .resumeThreadId("thr_existing")
+                .build());
+        final CodexTurnResponse response = repository.submitTurn(session.id(), CodexTurnCommand.builder()
+                .prompt("retry step")
+                .timeout(Duration.ofSeconds(5))
+                .promptType("STEP_PROMPT")
+                .stepId("contract_changes")
+                .build());
+
+        assertThat(session.threadId()).isEqualTo("thr_existing");
+        assertThat(response.threadId()).isEqualTo("thr_existing");
+        assertThat(response.assistantResponse()).isEqualTo("retry step");
+        repository.closeSession(session.id());
+    }
+
 
     @Test
     void givenMultilinePrompt_whenSubmitTurn_thenSentAsSingleInputTextAndReturnedAsSingleAssistantTurn() {

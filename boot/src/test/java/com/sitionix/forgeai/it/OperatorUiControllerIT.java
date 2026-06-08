@@ -51,6 +51,8 @@ class OperatorUiControllerIT extends AbstractForgeAiIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.services[?(@.id == 'atmssox' && @.group == 'BACKEND')]").isNotEmpty())
                 .andExpect(jsonPath("$.services[?(@.id == 'sitionix-spa' && @.group == 'FRONTEND')]").isNotEmpty())
+                .andExpect(jsonPath("$.services[?(@.id == 'forge-ai' && @.group == 'BACKEND')]").isNotEmpty())
+                .andExpect(jsonPath("$.services[?(@.id == 'app-afesox' && @.group == 'TOOL')]").isNotEmpty())
                 .andExpect(jsonPath("$.services[?(@.id == 'forge-it' && @.group == 'TOOL')]").isNotEmpty());
 
         final MvcResult createResult = this.mockMvc.perform(post("/api/v1/forge-ai/operator/ui/tickets")
@@ -144,6 +146,28 @@ class OperatorUiControllerIT extends AbstractForgeAiIT {
                                 }
                                 """))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("Should expose local services sanity view from services yaml")
+    void givenLocalServicesRequest_whenInspectServices_thenReturnWorkspaceRuntimeAndContractData() throws Exception {
+        this.mockMvc.perform(get("/api/v1/forge-ai/operator/ui/local-services")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.services[?(@.serviceId == 'forge-ai' && @.path == 'forge-ai')]").isNotEmpty())
+                .andExpect(jsonPath("$.services[?(@.serviceId == 'app-afesox' && @.path == 'app-afesox')]").isNotEmpty())
+                .andExpect(jsonPath("$.services[?(@.serviceId == 'app-afesox' && @.repository == 'Sitionix/app-afesox')]").isNotEmpty())
+                .andExpect(jsonPath("$.services[?(@.serviceId == 'forge-ai')].exists").isNotEmpty())
+                .andExpect(jsonPath("$.services[?(@.serviceId == 'forge-ai')].serviceRuntimeStatus").isNotEmpty());
+
+        this.mockMvc.perform(get("/api/v1/forge-ai/operator/ui/local-services/{serviceId}", "forge-ai")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.service.serviceId").value("forge-ai"))
+                .andExpect(jsonPath("$.service.repository").value("Sitionix/forge-ai"))
+                .andExpect(jsonPath("$.database.required").value(true))
+                .andExpect(jsonPath("$.database.type").value("mongodb"))
+                .andExpect(jsonPath("$.contractReferences[?(@.refKey == 'api' && @.sourceRepo == 'app-afesox')]").isNotEmpty());
     }
 
     private UUID ticketId(final MvcResult result) throws Exception {

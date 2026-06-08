@@ -75,6 +75,10 @@
             </dependency>
             <dependency>
                 <groupId>${project.groupId}</groupId>
+                <artifactId>local-cli</artifactId>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
                 <artifactId>jarvis-client</artifactId>
             </dependency>
             <dependency>

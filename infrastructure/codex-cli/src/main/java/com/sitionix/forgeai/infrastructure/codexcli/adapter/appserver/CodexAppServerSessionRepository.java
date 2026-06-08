@@ -76,7 +76,7 @@ public class CodexAppServerSessionRepository implements CodexSessionRepository {
                 .build());
         try {
             this.initialize(client);
-            final JsonNode threadStartResult = client.request("thread/start", this.threadStartParams(command), STARTUP_TIMEOUT);
+            final JsonNode threadStartResult = this.startOrResumeThread(client, command);
             final String threadId = threadStartResult.path("thread").path("id").asText(null);
             if (threadId == null || threadId.isBlank()) {
                 throw new IllegalStateException("Codex app-server did not return thread id");
@@ -181,6 +181,28 @@ public class CodexAppServerSessionRepository implements CodexSessionRepository {
         params.put("approvalPolicy", this.properties.getApprovalPolicy());
         params.put("sandbox", this.properties.getSandbox());
         params.put("serviceName", this.properties.getServiceName());
+        if (this.hasText(this.properties.getModel())) {
+            params.put("model", this.properties.getModel());
+        }
+        if (this.hasText(this.properties.getModelProvider())) {
+            params.put("modelProvider", this.properties.getModelProvider());
+        }
+        return params;
+    }
+
+    private JsonNode startOrResumeThread(final CodexJsonRpcClient client, final CodexSessionStartCommand command) {
+        if (this.hasText(command.resumeThreadId())) {
+            return client.request("thread/resume", this.threadResumeParams(command), STARTUP_TIMEOUT);
+        }
+        return client.request("thread/start", this.threadStartParams(command), STARTUP_TIMEOUT);
+    }
+
+    private JsonNode threadResumeParams(final CodexSessionStartCommand command) {
+        final ObjectNode params = this.objectMapper.createObjectNode();
+        params.put("threadId", command.resumeThreadId());
+        params.put("cwd", this.workspaceRoot(command));
+        params.put("approvalPolicy", this.properties.getApprovalPolicy());
+        params.put("sandbox", this.properties.getSandbox());
         if (this.hasText(this.properties.getModel())) {
             params.put("model", this.properties.getModel());
         }

@@ -18,6 +18,7 @@ public class FakeInteractiveCodexSessionRepository implements CodexSessionReposi
 
     private final Function<CodexTurnCommand, String> responsePlanner;
     private final Map<String, List<String>> historyBySession = new LinkedHashMap<>();
+    private final Map<String, String> threadBySession = new LinkedHashMap<>();
     private final List<String> submittedPrompts = new ArrayList<>();
     private final List<CodexSessionStartCommand> openSessionCommands = new ArrayList<>();
 
@@ -29,8 +30,11 @@ public class FakeInteractiveCodexSessionRepository implements CodexSessionReposi
     public CodexSession openSession(final CodexSessionStartCommand command) {
         this.openSessionCommands.add(command);
         final String sessionId = UUID.randomUUID().toString();
-        final String threadId = "thread-" + sessionId;
+        final String threadId = command.resumeThreadId() == null || command.resumeThreadId().isBlank()
+                ? "thread-" + sessionId
+                : command.resumeThreadId();
         this.historyBySession.put(sessionId, new ArrayList<>());
+        this.threadBySession.put(sessionId, threadId);
         return CodexSession.builder()
                 .id(sessionId)
                 .threadId(threadId)
@@ -53,7 +57,7 @@ public class FakeInteractiveCodexSessionRepository implements CodexSessionReposi
         }
         return CodexTurnResponse.builder()
                 .sessionId(sessionId)
-                .threadId("thread-" + sessionId)
+                .threadId(this.threadBySession.get(sessionId))
                 .turnId(UUID.randomUUID().toString())
                 .assistantResponse(response)
                 .build();
@@ -62,6 +66,7 @@ public class FakeInteractiveCodexSessionRepository implements CodexSessionReposi
     @Override
     public void closeSession(final String sessionId) {
         this.historyBySession.remove(sessionId);
+        this.threadBySession.remove(sessionId);
     }
 
     @Override

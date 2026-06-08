@@ -139,18 +139,29 @@ public class LaneStepPromptBuilder {
     public String buildCorrectionPrompt(final ReadyToStartLane lane,
                                         final LaneStrategyStep step,
                                         final String validationError,
-                                        final boolean finalStep) {
+                                        final boolean finalStep,
+                                        final int correctionCount,
+                                        final int configuredCorrectionAttempts) {
         final StringBuilder prompt = new StringBuilder()
                 .append("CORRECTION_PROMPT\n\n")
                 .append("Active step id: ").append(step.getId()).append('\n')
                 .append("Active step title: ").append(step.getTitle()).append('\n')
                 .append("Active step validator: ").append(this.renderOptional(step.getValidator())).append('\n')
+                .append("Correction attempt: ").append(correctionCount).append('\n')
+                .append("Configured correction budget: ").append(configuredCorrectionAttempts).append('\n')
                 .append("Validation error: ").append(Objects.toString(validationError, "invalid response")).append('\n')
                 .append('\n')
                 .append("Correct only the active step result and evidence. If the active validator requires current-step state correction, do it inside this active step only. Do not repeat previous step work.\n")
-                .append("Return only one corrected JSON object. No prose. No markdown fences.");
+                .append("Return only one corrected JSON object. No prose. No markdown fences.\n")
+                .append("Keep the JSON compact. Do not restate the full task or previous-step content. Prefer short strings and only the minimum items required by the contract.");
         if (finalStep && this.shouldRenderCompletionPayloadContract(step)) {
             prompt.append('\n')
+                    .append('\n')
+                    .append("Final-step compactness rules:\n")
+                    .append("- include only the minimum downstream handoff facts required by the contract;\n")
+                    .append("- keep lists short and high-signal only;\n")
+                    .append("- for QA cases, keep given/when/then concise;\n")
+                    .append("- for API evidence, include only generated artifact and contract facts needed downstream.\n")
                     .append('\n')
                     .append("Final-step completion payload contract:\n")
                     .append(this.completionPayloadContractRenderer.render(this.completionPayloadContractBuilder.build(lane)));

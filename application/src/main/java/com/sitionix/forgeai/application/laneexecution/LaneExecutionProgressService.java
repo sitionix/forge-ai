@@ -96,6 +96,10 @@ public class LaneExecutionProgressService implements CodexProgressObserver {
         return this.updateStatus(executionId, LaneExecutionStatus.WAITING_FOR_CODEX);
     }
 
+    public LaneExecution markOrchestratorRunning(final UUID executionId) {
+        return this.updateStatus(executionId, LaneExecutionStatus.STEP_RUNNING);
+    }
+
     public LaneExecution markValidatingResponse(final UUID executionId) {
         return this.updateStatus(executionId, LaneExecutionStatus.VALIDATING_RESPONSE);
     }

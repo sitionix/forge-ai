@@ -10,6 +10,7 @@ import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneDependency;
 import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
+import com.sitionix.forgeai.domain.props.ServiceConfigView;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
@@ -102,15 +103,15 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
         if (command.getServiceIds() == null || command.getServiceIds().isEmpty()) {
             throw new IllegalArgumentException("At least one service id is required");
         }
-        final Map<String, ServicePropertiesProvider.ServiceConfigView> services = this.props.getServices();
+        final Map<String, ServiceConfigView> services = this.props.getServices();
         return command.getServiceIds().stream()
                 .distinct()
                 .map(serviceId -> new SelectedService(serviceId, this.service(services, serviceId)))
                 .toList();
     }
 
-    private ServicePropertiesProvider.ServiceConfigView service(
-            final Map<String, ServicePropertiesProvider.ServiceConfigView> services,
+    private ServiceConfigView service(
+            final Map<String, ServiceConfigView> services,
             final String serviceId
     ) {
         if (services == null || !services.containsKey(serviceId) || services.get(serviceId) == null) {
@@ -211,9 +212,9 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
 
     private static class SelectedService {
         private final String serviceId;
-        private final ServicePropertiesProvider.ServiceConfigView service;
+        private final ServiceConfigView service;
 
-        private SelectedService(final String serviceId, final ServicePropertiesProvider.ServiceConfigView service) {
+        private SelectedService(final String serviceId, final ServiceConfigView service) {
             this.serviceId = serviceId;
             this.service = service;
         }
@@ -222,7 +223,7 @@ public class StartForgeAiTaskUseCase implements StartForgeAiTask {
             return this.serviceId;
         }
 
-        public ServicePropertiesProvider.ServiceConfigView getService() {
+        public ServiceConfigView getService() {
             return this.service;
         }
     }

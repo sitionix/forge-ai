@@ -17,6 +17,17 @@ Use only these semantic content groups when the final-step completion payload co
 - DTO/client hints;
 - downstream consumption notes.
 
+## Compactness
+
+Keep completion output dry and compact.
+
+- Do not restate the full ticket, architecture, or prior-step reasoning.
+- Use only the minimum downstream handoff facts required by the contract.
+- Prefer short list items.
+- Keep one artifact entry per generated dependency only.
+- Keep one contract result per required scope/operation pair only.
+- Do not duplicate the same generation fact in `summary`, `notes`, and artifact notes.
+
 ## Artifact Evidence Discipline
 
 Use generated artifact evidence from trusted generation outputs.

@@ -6,18 +6,23 @@ import com.app_afesox.fgaisox.api_first.dto.OperatorUiServiceCatalogResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.OperatorUiTaskMutationResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.OperatorUiTicketGraphResponseDTO;
 import com.app_afesox.fgaisox.api_first.dto.OperatorUiTicketListResponseDTO;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorAgentConfigResponse;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorConfigResourceSaveRequest;
+import com.sitionix.forgeai.domain.model.operator.config.OperatorConfigResourceView;
+import com.sitionix.forgeai.domain.model.operator.read.OperatorUiLaneDetailResponse;
+import com.sitionix.forgeai.domain.model.operator.read.OperatorUiTicketGraphResponse;
+import com.sitionix.forgeai.domain.model.operator.read.OperatorUiTicketListResponse;
+import com.sitionix.forgeai.domain.model.operator.task.OperatorUiCreateTaskCommand;
+import com.sitionix.forgeai.domain.model.operator.task.OperatorUiServiceCatalogResponse;
+import com.sitionix.forgeai.domain.model.operator.task.OperatorUiTaskMutationResponse;
+import com.sitionix.forgeai.domain.model.operator.service.OperatorServiceActionResponse;
+import com.sitionix.forgeai.domain.model.operator.service.OperatorServiceDefaultMode;
+import com.sitionix.forgeai.domain.model.operator.service.OperatorServiceDetailResponse;
+import com.sitionix.forgeai.domain.model.operator.service.OperatorServicesResponse;
 import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel;
-import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiLaneDetailResponse;
-import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiTicketGraphResponse;
-import com.sitionix.forgeai.domain.usecase.GetOperatorUiReadModel.OperatorUiTicketListResponse;
 import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorAgentConfigResponse;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorConfigResourceSaveRequest;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorAgentConfig.OperatorConfigResourceView;
+import com.sitionix.forgeai.domain.usecase.ManageOperatorServices;
 import com.sitionix.forgeai.domain.usecase.ManageOperatorUiTasks;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorUiTasks.OperatorUiCreateTaskCommand;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorUiTasks.OperatorUiServiceCatalogResponse;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorUiTasks.OperatorUiTaskMutationResponse;
 import com.sitionix.forgeai.mapper.ForgeAiOperatorApiMapper;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -49,6 +54,8 @@ class ForgeAiOperatorUiControllerTest {
     @Mock
     private ManageOperatorAgentConfig manageOperatorAgentConfig;
     @Mock
+    private ManageOperatorServices manageOperatorServices;
+    @Mock
     private ForgeAiOperatorApiMapper forgeAiOperatorApiMapper;
 
     @BeforeEach
@@ -57,6 +64,7 @@ class ForgeAiOperatorUiControllerTest {
                 this.getOperatorUiReadModel,
                 this.manageOperatorUiTasks,
                 this.manageOperatorAgentConfig,
+                this.manageOperatorServices,
                 this.forgeAiOperatorApiMapper
         );
     }
@@ -227,6 +235,63 @@ class ForgeAiOperatorUiControllerTest {
         when(this.manageOperatorAgentConfig.saveResource(request)).thenReturn(response);
 
         final ResponseEntity<OperatorConfigResourceView> result = this.controller.saveOperatorAgentConfigResource(request);
+
+        assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(result.getBody()).isSameAs(response);
+    }
+
+    @Test
+    void givenLocalServicesRequest_whenGetOperatorLocalServices_thenDelegateToUseCase() {
+        final OperatorServicesResponse response = new OperatorServicesResponse(List.of());
+        when(this.manageOperatorServices.services()).thenReturn(response);
+
+        final ResponseEntity<OperatorServicesResponse> result = this.controller.getOperatorLocalServices();
+
+        assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(result.getBody()).isSameAs(response);
+    }
+
+    @Test
+    void givenServiceId_whenGetOperatorLocalService_thenDelegateToUseCase() {
+        final OperatorServiceDetailResponse response = new OperatorServiceDetailResponse(null, List.of(), null);
+        when(this.manageOperatorServices.service("atmssox")).thenReturn(response);
+
+        final ResponseEntity<OperatorServiceDetailResponse> result = this.controller.getOperatorLocalService("atmssox");
+
+        assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(result.getBody()).isSameAs(response);
+    }
+
+    @Test
+    void givenServiceId_whenCloneOperatorLocalService_thenDelegateToUseCase() {
+        final OperatorServiceActionResponse response = new OperatorServiceActionResponse(
+                "atmssox",
+                "CLONED",
+                "done",
+                null
+        );
+        when(this.manageOperatorServices.cloneService("atmssox")).thenReturn(response);
+
+        final ResponseEntity<OperatorServiceActionResponse> result = this.controller.cloneOperatorLocalService("atmssox");
+
+        assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(result.getBody()).isSameAs(response);
+    }
+
+    @Test
+    void givenServiceId_whenDefaultOperatorLocalService_thenDelegateToUseCase() {
+        final OperatorServiceActionResponse response = new OperatorServiceActionResponse(
+                "atmssox",
+                "DEFAULTED",
+                "done",
+                null
+        );
+        when(this.manageOperatorServices.defaultService("atmssox", OperatorServiceDefaultMode.COMMIT)).thenReturn(response);
+
+        final ResponseEntity<OperatorServiceActionResponse> result = this.controller.defaultOperatorLocalService(
+                "atmssox",
+                "commit"
+        );
 
         assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(result.getBody()).isSameAs(response);

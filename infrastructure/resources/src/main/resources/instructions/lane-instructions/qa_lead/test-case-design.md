@@ -5,6 +5,7 @@
 Create downstream test cases for the assigned scope.
 Each case covers one concrete behavior or risk.
 Cover the flow deeper than happy path
+Prefer a compact set of high-value cases over exhaustive repetition.
 Use relevant case categories:
 
 - happy path;
@@ -126,8 +127,20 @@ For UI flows, use route/page/component names only when they exist in runtime con
 `when` describes the tested action.
 `then` describes observable expected results.
 
+Keep them short.
+
+- Prefer one concise item per section.
+- Use two items only when the case is genuinely two-step.
+- Avoid prose paragraphs.
+
 Use data checks only for relevant persistence, projection, event, or UI state.
 Data checks describe expected state, not test implementation code.
+
+## Volume Limits
+
+- Backend scope: usually 4-6 integration cases is enough.
+- Frontend scope: usually 3-5 UI cases is enough.
+- Prefer fewer, sharper cases over broad repetition.
 
 ## Boundary
 
