@@ -1,0 +1,16 @@
+package com.sitionix.forgeai.application.infrastructure.knowledge;
+
+public interface KnowledgeGateway {
+
+    KnowledgeStatusView status();
+
+    KnowledgeSourcesView sources();
+
+    KnowledgeInventoryBuildResultView buildInventory(KnowledgeInventoryBuildRequest request);
+
+    KnowledgeInventoryStatusView inventoryStatus();
+
+    KnowledgeFilesView files(KnowledgeFilesRequest request);
+
+    KnowledgeSearchResultView search(KnowledgeSearchRequest request);
+}

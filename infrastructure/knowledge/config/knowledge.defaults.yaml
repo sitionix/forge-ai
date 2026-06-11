@@ -1,0 +1,39 @@
+knowledge:
+  service:
+    host: 127.0.0.1
+    port: 7081
+
+  inventory:
+    store_path: infrastructure/knowledge/var/knowledge.sqlite
+
+  indexing:
+    chunk_size_chars: 3000
+    chunk_overlap_chars: 300
+    max_file_size_bytes: 500000
+
+  include_defaults:
+    - "**/*.java"
+    - "**/*.kt"
+    - "**/*.ts"
+    - "**/*.tsx"
+    - "**/*.js"
+    - "**/*.md"
+    - "**/*.yaml"
+    - "**/*.yml"
+    - "**/*.json"
+    - "**/*.xml"
+    - "**/pom.xml"
+    - "**/README*"
+
+  exclude_defaults:
+    - ".git/**"
+    - "target/**"
+    - "build/**"
+    - "dist/**"
+    - "node_modules/**"
+    - ".venv/**"
+    - "var/**"
+    - "logs/**"
+    - "**/.env"
+    - "**/*.class"
+    - "**/*.jar"

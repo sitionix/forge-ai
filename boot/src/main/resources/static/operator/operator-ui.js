@@ -135,6 +135,13 @@
               <small>local assistant</small>
             </span>
           </a>
+          <a class="sidebar-link ${page === 'knowledge' ? 'active' : ''}" href="./knowledge.html">
+            <span class="sidebar-icon">K</span>
+            <span class="sidebar-label">
+              <strong>Knowledge</strong>
+              <small>catalog search</small>
+            </span>
+          </a>
         </nav>
         <div class="sidebar-footer">ticket-scoped monitor UI</div>
       </aside>
@@ -1976,6 +1983,178 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     `;
   }
 
+  async function loadKnowledge() {
+    const updated = document.getElementById('knowledgeUpdated');
+    try {
+      const [status, sources, inventory, files] = await Promise.all([
+        getInfrastructureJson('/knowledge/status'),
+        getInfrastructureJson('/knowledge/sources'),
+        getInfrastructureJson('/knowledge/inventory/status'),
+        getInfrastructureJson('/knowledge/inventory/files?limit=20')
+      ]);
+      setError('knowledgeError', null);
+      renderKnowledgeStatus(status);
+      renderKnowledgeSources(sources);
+      renderKnowledgeInventory(inventory);
+      renderKnowledgeFiles(files);
+      if (updated) {
+        updated.textContent = `updated ${new Date().toLocaleTimeString()}`;
+      }
+    } catch (error) {
+      setError('knowledgeError', error);
+      if (updated) {
+        updated.textContent = 'failed';
+      }
+    }
+  }
+
+  function renderKnowledgeStatus(data) {
+    const cards = document.getElementById('knowledgeStatusCards');
+    if (!cards) {
+      return;
+    }
+    cards.innerHTML = [
+      renderJarvisStatusCard('Knowledge', data.status || 'UNKNOWN', data.module || 'knowledge'),
+      renderJarvisStatusCard('Catalog', data.catalog?.configured ? 'configured' : 'not configured', data.catalog?.type || '-'),
+      renderJarvisStatusCard('Inventory', String(data.inventory?.fileCount ?? 0), `${data.inventory?.sourceCount ?? 0} sources`),
+      renderJarvisStatusCard('Search', data.search?.mode || 'keyword', 'no embeddings/vector DB')
+    ].join('');
+    const notice = document.getElementById('knowledgeStatusMessage');
+    if (notice) {
+      notice.textContent = data.message || 'Knowledge uses service catalog as source of truth. No embeddings/vector DB in v1.';
+    }
+  }
+
+  function renderKnowledgeSources(data) {
+    const body = document.getElementById('knowledgeSourcesBody');
+    const diagnostics = document.getElementById('knowledgeDiagnostics');
+    if (!body) {
+      return;
+    }
+    const sources = data.sources || [];
+    if (sources.length === 0) {
+      body.innerHTML = '<tr><td colspan="6">No catalog sources reported.</td></tr>';
+    } else {
+      body.innerHTML = sources.map((source) => `
+        <tr>
+          <td>${escapeHtml(source.sourceId || '-')}</td>
+          <td>${escapeHtml(source.displayName || '-')}</td>
+          <td>${escapeHtml(source.group || '-')}</td>
+          <td>${escapeHtml(source.path || '-')}</td>
+          <td>${escapeHtml(source.rootExists ? 'true' : 'false')}</td>
+          <td>${escapeHtml((source.tags || []).join(', '))}</td>
+        </tr>
+      `).join('');
+    }
+    if (diagnostics) {
+      const items = data.diagnostics || [];
+      diagnostics.textContent = items.length === 0
+        ? 'No diagnostics.'
+        : items.map((item) => `${item.sourceId || '-'} ${item.code}: ${item.message}`).join('\n');
+    }
+  }
+
+  function renderKnowledgeInventory(data) {
+    const target = document.getElementById('knowledgeInventoryStatus');
+    if (!target) {
+      return;
+    }
+    target.innerHTML = `
+      <article class="detail-card">
+        <div class="detail-card-head">
+          <div>
+            <strong>${escapeHtml(data.status || 'EMPTY')}</strong>
+            <p>last build ${escapeHtml(fmtDate(data.lastBuildAt))}</p>
+          </div>
+          ${pill(String(data.fileCount ?? 0), data.status || 'UNKNOWN')}
+        </div>
+        <p class="detail-meta">sources ${escapeHtml(data.sourceCount ?? 0)} / skipped ${escapeHtml(data.skippedCount ?? 0)}</p>
+      </article>
+    `;
+  }
+
+  function renderKnowledgeFiles(data) {
+    const body = document.getElementById('knowledgeFilesBody');
+    if (!body) {
+      return;
+    }
+    const files = data.files || [];
+    if (files.length === 0) {
+      body.innerHTML = '<tr><td colspan="5">No indexed files.</td></tr>';
+      return;
+    }
+    body.innerHTML = files.map((file) => `
+      <tr>
+        <td>${escapeHtml(file.sourceId || '-')}</td>
+        <td>${escapeHtml(file.relativePath || '-')}</td>
+        <td>${escapeHtml(file.extension || '-')}</td>
+        <td>${escapeHtml(file.sizeBytes ?? '-')}</td>
+        <td>${escapeHtml(file.lastModified ? new Date(file.lastModified).toLocaleString() : '-')}</td>
+      </tr>
+    `).join('');
+  }
+
+  async function buildKnowledgeInventory() {
+    const button = document.getElementById('buildKnowledgeInventory');
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Building...';
+    }
+    try {
+      await postInfrastructureJson('/knowledge/inventory/build', {});
+      await loadKnowledge();
+    } catch (error) {
+      setError('knowledgeError', error);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Build inventory';
+      }
+    }
+  }
+
+  async function submitKnowledgeSearch(event) {
+    event.preventDefault();
+    const input = document.getElementById('knowledgeSearchQuery');
+    const query = input?.value?.trim() || '';
+    if (!query) {
+      setError('knowledgeSearchError', new Error('Search query is required.'));
+      return;
+    }
+    try {
+      const response = await postInfrastructureJson('/knowledge/search', { query, limit: 20 });
+      setError('knowledgeSearchError', null);
+      renderKnowledgeSearch(response);
+    } catch (error) {
+      setError('knowledgeSearchError', error);
+    }
+  }
+
+  function renderKnowledgeSearch(data) {
+    const target = document.getElementById('knowledgeSearchResults');
+    if (!target) {
+      return;
+    }
+    const results = data.results || [];
+    if (results.length === 0) {
+      target.innerHTML = `<div class="empty-state">${escapeHtml(data.message || 'No matches.')}</div>`;
+      return;
+    }
+    target.innerHTML = results.map((result) => `
+      <article class="detail-card">
+        <div class="detail-card-head">
+          <div>
+            <strong>${escapeHtml(result.sourceId || '-')}</strong>
+            <p>${escapeHtml(result.relativePath || '-')}</p>
+          </div>
+          ${pill(result.matchType || 'match', 'READY_TO_START')}
+        </div>
+        <p class="detail-meta">lines ${escapeHtml(result.lineStart ?? '-')} - ${escapeHtml(result.lineEnd ?? '-')} / ${escapeHtml(result.displayName || '-')}</p>
+        <pre class="stacktrace">${escapeHtml(result.snippet || '')}</pre>
+      </article>
+    `).join('');
+  }
+
   async function loadAgentsConfig() {
     const status = document.getElementById('resourceSaveStatus');
     if (status) {
@@ -2556,5 +2735,12 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     document.getElementById('jarvisCommandForm')?.addEventListener('submit', submitJarvisCommand);
     loadJarvisStatus();
     loadJarvisActions();
+  }
+
+  if (page === 'knowledge') {
+    document.getElementById('refreshKnowledge')?.addEventListener('click', loadKnowledge);
+    document.getElementById('buildKnowledgeInventory')?.addEventListener('click', buildKnowledgeInventory);
+    document.getElementById('knowledgeSearchForm')?.addEventListener('submit', submitKnowledgeSearch);
+    loadKnowledge();
   }
 })();

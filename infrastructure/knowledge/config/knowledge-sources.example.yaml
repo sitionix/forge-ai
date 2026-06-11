@@ -1,0 +1,27 @@
+catalog:
+  type: service_catalog
+  path: "/absolute/path/to/forge-ai/boot/src/main/resources/services.yaml"
+  workspace_root: "/absolute/path/to/workspace/root"
+
+selection:
+  include_groups: []
+  include_services: []
+  exclude_services: []
+
+indexing:
+  include:
+    - "**/*.java"
+    - "**/*.md"
+    - "**/*.yaml"
+    - "**/*.yml"
+    - "**/*.xml"
+    - "**/*.json"
+  exclude:
+    - ".git/**"
+    - "target/**"
+    - "build/**"
+    - "node_modules/**"
+    - ".venv/**"
+    - "var/**"
+    - "logs/**"
+    - "**/.env"

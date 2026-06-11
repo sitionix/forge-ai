@@ -18,6 +18,16 @@ infrastructure/jarvis/services/jarvis-agent/src/*.egg-info/
 *.py[cod]
 .pytest_cache/
 
+# Python / Knowledge local module
+infrastructure/knowledge/var/**
+!infrastructure/knowledge/var/.gitkeep
+infrastructure/knowledge/config/knowledge-sources.yaml
+infrastructure/knowledge/services/knowledge-service/.venv/**
+infrastructure/knowledge/services/knowledge-service/.pytest_cache/**
+infrastructure/knowledge/services/knowledge-service/**/__pycache__/**
+infrastructure/knowledge/services/knowledge-service/*.egg-info/**
+infrastructure/knowledge/services/knowledge-service/src/*.egg-info/**
+
 # Local runtime state
 var/
 *.pid
