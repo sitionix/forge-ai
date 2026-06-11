@@ -16,6 +16,11 @@ public class GitCliRepositoryAdapter implements GitRepositoryPort {
     private static final Duration GIT_TIMEOUT = Duration.ofSeconds(10);
 
     @Override
+    public boolean isInsideWorkTree(final Path repository) {
+        return this.git(repository, "rev-parse", "--is-inside-work-tree").success();
+    }
+
+    @Override
     public String currentBranch(final Path repository) {
         return this.requireSuccess(repository, "branch", "--show-current").stdout();
     }
@@ -31,6 +36,20 @@ public class GitCliRepositoryAdapter implements GitRepositoryPort {
     }
 
     @Override
+    public String defaultBranch(final Path repository, final List<String> branchCandidates) {
+        final String originHead = this.text(this.git(repository, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").stdout());
+        if (originHead != null && originHead.startsWith("origin/")) {
+            return originHead.substring("origin/".length());
+        }
+        for (String candidate : branchCandidates) {
+            if (this.refExists(repository, "origin/" + candidate) || this.refExists(repository, candidate)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    @Override
     public boolean refExists(final Path repository, final String ref) {
         return this.git(repository, "rev-parse", "--verify", ref).success();
     }
@@ -38,6 +57,50 @@ public class GitCliRepositoryAdapter implements GitRepositoryPort {
     @Override
     public boolean isAncestor(final Path repository, final String ancestorRef, final String descendantRef) {
         return this.git(repository, "merge-base", "--is-ancestor", ancestorRef, descendantRef).success();
+    }
+
+    @Override
+    public void clone(final String cloneUrl, final Path targetDirectory) {
+        this.requireSuccess(null, "clone", cloneUrl, targetDirectory.toString());
+    }
+
+    @Override
+    public void addAll(final Path repository) {
+        this.requireSuccess(repository, "add", "-A");
+    }
+
+    @Override
+    public void commit(final Path repository, final String userName, final String userEmail, final String message) {
+        this.requireSuccess(
+                repository,
+                "-c",
+                "user.name=" + userName,
+                "-c",
+                "user.email=" + userEmail,
+                "commit",
+                "-m",
+                message
+        );
+    }
+
+    @Override
+    public void stash(final Path repository, final String message) {
+        this.requireSuccess(repository, "stash", "push", "-u", "-m", message);
+    }
+
+    @Override
+    public void fetch(final Path repository, final String remote, final String branch) {
+        this.requireSuccess(repository, "fetch", remote, branch);
+    }
+
+    @Override
+    public void checkout(final Path repository, final String branch) {
+        this.requireSuccess(repository, "checkout", branch);
+    }
+
+    @Override
+    public void pullFastForwardOnly(final Path repository, final String remote, final String branch) {
+        this.requireSuccess(repository, "pull", "--ff-only", remote, branch);
     }
 
     private CommandResult requireSuccess(final Path repository, final String... args) {
@@ -51,8 +114,10 @@ public class GitCliRepositoryAdapter implements GitRepositoryPort {
     private CommandResult git(final Path repository, final String... args) {
         final List<String> command = new ArrayList<>();
         command.add("git");
-        command.add("-C");
-        command.add(repository.toString());
+        if (repository != null) {
+            command.add("-C");
+            command.add(repository.toString());
+        }
         command.addAll(List.of(args));
         try {
             final Process process = new ProcessBuilder(command)
@@ -71,6 +136,11 @@ public class GitCliRepositoryAdapter implements GitRepositoryPort {
             Thread.currentThread().interrupt();
             throw new IllegalArgumentException("Git command interrupted: " + String.join(" ", command), ex);
         }
+    }
+
+    private String text(final String value) {
+        final String trimmed = value == null ? "" : value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private record CommandResult(boolean success, String stdout, String command) {

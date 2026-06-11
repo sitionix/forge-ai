@@ -97,6 +97,11 @@ class GitPreparationEvidenceValidatorTest {
         private String statusPorcelain = "";
 
         @Override
+        public boolean isInsideWorkTree(final Path repository) {
+            return true;
+        }
+
+        @Override
         public String currentBranch(final Path repository) {
             return "feature/SITIONIX-1\n";
         }
@@ -112,6 +117,11 @@ class GitPreparationEvidenceValidatorTest {
         }
 
         @Override
+        public String defaultBranch(final Path repository, final List<String> branchCandidates) {
+            return "develop";
+        }
+
+        @Override
         public boolean refExists(final Path repository, final String ref) {
             return "develop^{commit}".equals(ref);
         }
@@ -119,6 +129,34 @@ class GitPreparationEvidenceValidatorTest {
         @Override
         public boolean isAncestor(final Path repository, final String ancestorRef, final String descendantRef) {
             return "develop".equals(ancestorRef) && "HEAD".equals(descendantRef);
+        }
+
+        @Override
+        public void clone(final String cloneUrl, final Path targetDirectory) {
+        }
+
+        @Override
+        public void addAll(final Path repository) {
+        }
+
+        @Override
+        public void commit(final Path repository, final String userName, final String userEmail, final String message) {
+        }
+
+        @Override
+        public void stash(final Path repository, final String message) {
+        }
+
+        @Override
+        public void fetch(final Path repository, final String remote, final String branch) {
+        }
+
+        @Override
+        public void checkout(final Path repository, final String branch) {
+        }
+
+        @Override
+        public void pullFastForwardOnly(final Path repository, final String remote, final String branch) {
         }
     }
 }

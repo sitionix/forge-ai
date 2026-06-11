@@ -2,9 +2,9 @@ package com.sitionix.forgeai.infrastructure.localcli.adapter;
 
 import com.sitionix.forgeai.domain.model.operator.service.OperatorServiceDefaultMode;
 import com.sitionix.forgeai.domain.model.operator.service.OperatorServiceWorkspaceState;
+import com.sitionix.forgeai.domain.port.GitRepositoryPort;
 import com.sitionix.forgeai.domain.port.OperatorServiceWorkspacePort;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -19,6 +19,12 @@ public class LocalCliOperatorServiceWorkspaceAdapter implements OperatorServiceW
 
     private static final List<String> DEFAULT_BRANCH_CANDIDATES = List.of("develop", "main", "master");
     private static final Pattern TICKET_KEY_PATTERN = Pattern.compile("(SITIONIX-\\d+)");
+
+    private final GitRepositoryPort gitRepositoryPort;
+
+    public LocalCliOperatorServiceWorkspaceAdapter(final GitRepositoryPort gitRepositoryPort) {
+        this.gitRepositoryPort = gitRepositoryPort;
+    }
 
     @Override
     public OperatorServiceWorkspaceState inspect(
@@ -44,7 +50,7 @@ public class LocalCliOperatorServiceWorkspaceAdapter implements OperatorServiceW
                     warnings
             );
         }
-        final boolean gitRepository = this.git(path, "rev-parse", "--is-inside-work-tree").success();
+        final boolean gitRepository = this.gitRepositoryPort.isInsideWorkTree(path);
         if (!gitRepository) {
             warnings.add("Path exists but is not a git repository.");
             return new OperatorServiceWorkspaceState(
@@ -67,9 +73,9 @@ public class LocalCliOperatorServiceWorkspaceAdapter implements OperatorServiceW
                 cloneUrl,
                 true,
                 true,
-                this.text(this.git(path, "branch", "--show-current")),
-                this.defaultBranch(path),
-                this.hasText(this.git(path, "status", "--porcelain").stdout()),
+                this.text(this.gitRepositoryPort.currentBranch(path)),
+                this.gitRepositoryPort.defaultBranch(path, DEFAULT_BRANCH_CANDIDATES),
+                this.hasText(this.gitRepositoryPort.statusPorcelain(path)),
                 warnings
         );
     }
@@ -96,7 +102,11 @@ public class LocalCliOperatorServiceWorkspaceAdapter implements OperatorServiceW
         } catch (IOException exception) {
             return this.inspect(serviceId, configuredPath, repository);
         }
-        this.run(path.getParent(), "git", "clone", cloneUrl, path.getFileName().toString());
+        try {
+            this.gitRepositoryPort.clone(cloneUrl, path);
+        } catch (IllegalArgumentException exception) {
+            return this.inspect(serviceId, configuredPath, repository);
+        }
         return this.inspect(serviceId, configuredPath, repository);
     }
 
@@ -118,28 +128,39 @@ public class LocalCliOperatorServiceWorkspaceAdapter implements OperatorServiceW
         }
         if (before.dirty()) {
             if (mode == OperatorServiceDefaultMode.COMMIT) {
-                this.git(path, "add", "-A");
-                this.git(
+                this.gitRepositoryPort.addAll(path);
+                this.gitRepositoryPort.commit(
                         path,
-                        "-c",
-                        "user.name=Forge AI",
-                        "-c",
-                        "user.email=forge-ai@sitionix.local",
-                        "commit",
-                        "-m",
+                        "Forge AI",
+                        "forge-ai@sitionix.local",
                         this.defaultCommitMessage(before.branch())
                 );
             } else if (mode == OperatorServiceDefaultMode.STASH) {
-                this.git(path, "stash", "push", "-u", "-m", "forge-ai default " + this.ticketKey(before.branch())
-                        + " " + Instant.now());
+                this.gitRepositoryPort.stash(path, "forge-ai default " + this.ticketKey(before.branch()) + " " + Instant.now());
             } else {
                 return this.withWarning(before, "Workspace has local changes. Commit or stash before defaulting.");
             }
         }
-        this.git(path, "fetch", "origin", defaultBranch);
-        this.git(path, "checkout", defaultBranch);
-        this.git(path, "pull", "--ff-only", "origin", defaultBranch);
+        this.tryFetch(path, defaultBranch);
+        this.gitRepositoryPort.checkout(path, defaultBranch);
+        this.tryPull(path, defaultBranch);
         return this.inspect(serviceId, configuredPath, repository);
+    }
+
+    private void tryFetch(final Path path, final String branch) {
+        try {
+            this.gitRepositoryPort.fetch(path, "origin", branch);
+        } catch (IllegalArgumentException ignored) {
+            // Local-only workspaces may not have origin configured.
+        }
+    }
+
+    private void tryPull(final Path path, final String branch) {
+        try {
+            this.gitRepositoryPort.pullFastForwardOnly(path, "origin", branch);
+        } catch (IllegalArgumentException ignored) {
+            // Local-only workspaces may not have origin configured.
+        }
     }
 
     private Path resolvePath(final String configuredPath) {
@@ -170,48 +191,6 @@ public class LocalCliOperatorServiceWorkspaceAdapter implements OperatorServiceW
         return Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
     }
 
-    private String defaultBranch(final Path path) {
-        final String originHead = this.text(this.git(path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"));
-        if (this.hasText(originHead) && originHead.startsWith("origin/")) {
-            return originHead.substring("origin/".length());
-        }
-        for (String candidate : DEFAULT_BRANCH_CANDIDATES) {
-            if (this.git(path, "rev-parse", "--verify", "origin/" + candidate).success()
-                    || this.git(path, "rev-parse", "--verify", candidate).success()) {
-                return candidate;
-            }
-        }
-        return null;
-    }
-
-    private CommandResult git(final Path path, final String... args) {
-        final List<String> command = new ArrayList<>();
-        command.add("git");
-        command.add("-C");
-        command.add(path.toString());
-        command.addAll(List.of(args));
-        return this.run(null, command.toArray(String[]::new));
-    }
-
-    private CommandResult run(final Path cwd, final String... command) {
-        try {
-            final ProcessBuilder builder = new ProcessBuilder(command);
-            if (cwd != null) {
-                builder.directory(cwd.toFile());
-            }
-            final Process process = builder.start();
-            final String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            final String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-            final int exitCode = process.waitFor();
-            return new CommandResult(exitCode, stdout, stderr);
-        } catch (IOException exception) {
-            return new CommandResult(-1, "", exception.getMessage());
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            return new CommandResult(-1, "", exception.getMessage());
-        }
-    }
-
     private String cloneUrl(final String repository) {
         if (!this.hasText(repository)) {
             return null;
@@ -223,8 +202,8 @@ public class LocalCliOperatorServiceWorkspaceAdapter implements OperatorServiceW
         return "git@github.com:" + value + ".git";
     }
 
-    private String text(final CommandResult result) {
-        final String value = result.stdout().trim();
+    private String text(final String result) {
+        final String value = result == null ? "" : result.trim();
         return value.isEmpty() ? null : value;
     }
 
@@ -265,12 +244,5 @@ public class LocalCliOperatorServiceWorkspaceAdapter implements OperatorServiceW
 
     private boolean hasText(final String value) {
         return value != null && !value.isBlank();
-    }
-
-    private record CommandResult(int exitCode, String stdout, String stderr) {
-
-        private boolean success() {
-            return this.exitCode == 0;
-        }
     }
 }

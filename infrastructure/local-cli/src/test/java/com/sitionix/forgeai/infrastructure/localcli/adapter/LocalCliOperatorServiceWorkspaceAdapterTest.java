@@ -2,9 +2,11 @@ package com.sitionix.forgeai.infrastructure.localcli.adapter;
 
 import com.sitionix.forgeai.domain.model.operator.service.OperatorServiceDefaultMode;
 import com.sitionix.forgeai.domain.model.operator.service.OperatorServiceWorkspaceState;
+import com.sitionix.forgeai.domain.port.GitRepositoryPort;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -12,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LocalCliOperatorServiceWorkspaceAdapterTest {
 
-    private final LocalCliOperatorServiceWorkspaceAdapter adapter = new LocalCliOperatorServiceWorkspaceAdapter();
+    private final LocalCliOperatorServiceWorkspaceAdapter adapter = new LocalCliOperatorServiceWorkspaceAdapter(new TestGitRepositoryPort());
 
     @TempDir
     private Path tempDir;
@@ -116,5 +118,127 @@ class LocalCliOperatorServiceWorkspaceAdapterTest {
                 .as(String.join(" ", command))
                 .isZero();
         return stdout.trim();
+    }
+
+    private final class TestGitRepositoryPort implements GitRepositoryPort {
+
+        @Override
+        public boolean isInsideWorkTree(final Path repository) {
+            return this.git(repository, "rev-parse", "--is-inside-work-tree").exitCode() == 0;
+        }
+
+        @Override
+        public String currentBranch(final Path repository) {
+            return this.requireGit(repository, "branch", "--show-current");
+        }
+
+        @Override
+        public String headCommit(final Path repository) {
+            return this.requireGit(repository, "rev-parse", "HEAD");
+        }
+
+        @Override
+        public String statusPorcelain(final Path repository) {
+            return this.requireGit(repository, "status", "--porcelain=v1");
+        }
+
+        @Override
+        public String defaultBranch(final Path repository, final List<String> branchCandidates) {
+            final CommandResult originHead = this.git(repository, "symbolic-ref", "--short", "refs/remotes/origin/HEAD");
+            final String originHeadText = originHead.stdout().trim();
+            if (originHead.exitCode() == 0 && originHeadText.startsWith("origin/")) {
+                return originHeadText.substring("origin/".length());
+            }
+            for (String candidate : branchCandidates) {
+                if (this.refExists(repository, "origin/" + candidate) || this.refExists(repository, candidate)) {
+                    return candidate;
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public boolean refExists(final Path repository, final String ref) {
+            return this.git(repository, "rev-parse", "--verify", ref).exitCode() == 0;
+        }
+
+        @Override
+        public boolean isAncestor(final Path repository, final String ancestorRef, final String descendantRef) {
+            return this.git(repository, "merge-base", "--is-ancestor", ancestorRef, descendantRef).exitCode() == 0;
+        }
+
+        @Override
+        public void clone(final String cloneUrl, final Path targetDirectory) {
+            this.requireCommand("git", "clone", cloneUrl, targetDirectory.toString());
+        }
+
+        @Override
+        public void addAll(final Path repository) {
+            this.requireGit(repository, "add", "-A");
+        }
+
+        @Override
+        public void commit(final Path repository, final String userName, final String userEmail, final String message) {
+            this.requireGit(repository, "-c", "user.name=" + userName, "-c", "user.email=" + userEmail, "commit", "-m", message);
+        }
+
+        @Override
+        public void stash(final Path repository, final String message) {
+            this.requireGit(repository, "stash", "push", "-u", "-m", message);
+        }
+
+        @Override
+        public void fetch(final Path repository, final String remote, final String branch) {
+            this.requireGit(repository, "fetch", remote, branch);
+        }
+
+        @Override
+        public void checkout(final Path repository, final String branch) {
+            this.requireGit(repository, "checkout", branch);
+        }
+
+        @Override
+        public void pullFastForwardOnly(final Path repository, final String remote, final String branch) {
+            this.requireGit(repository, "pull", "--ff-only", remote, branch);
+        }
+
+        private String requireGit(final Path repository, final String... args) {
+            final CommandResult result = this.git(repository, args);
+            if (result.exitCode() != 0) {
+                throw new IllegalArgumentException(result.stderr());
+            }
+            return result.stdout();
+        }
+
+        private CommandResult git(final Path repository, final String... args) {
+            final List<String> command = new java.util.ArrayList<>();
+            command.add("git");
+            command.add("-C");
+            command.add(repository.toString());
+            command.addAll(List.of(args));
+            return this.command(command.toArray(String[]::new));
+        }
+
+        private void requireCommand(final String... command) {
+            final CommandResult result = this.command(command);
+            if (result.exitCode() != 0) {
+                throw new IllegalArgumentException(result.stderr());
+            }
+        }
+
+        private CommandResult command(final String... command) {
+            try {
+                final Process process = new ProcessBuilder(command).start();
+                final String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                final String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+                final int exitCode = process.waitFor();
+                return new CommandResult(exitCode, stdout, stderr);
+            } catch (Exception exception) {
+                return new CommandResult(-1, "", exception.getMessage());
+            }
+        }
+    }
+
+    private record CommandResult(int exitCode, String stdout, String stderr) {
     }
 }
