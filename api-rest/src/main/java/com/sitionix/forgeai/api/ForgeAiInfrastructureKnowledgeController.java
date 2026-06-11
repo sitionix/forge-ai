@@ -1,5 +1,7 @@
 package com.sitionix.forgeai.api;
 
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
@@ -62,6 +64,11 @@ public class ForgeAiInfrastructureKnowledgeController {
         return ResponseEntity.ok(this.manageKnowledgeInfrastructure.search(request));
     }
 
+    @PostMapping("/api/v1/infrastructure/knowledge/context")
+    public ResponseEntity<KnowledgeContextView> context(@RequestBody final KnowledgeContextRequest request) {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.context(request));
+    }
+
     @ExceptionHandler(KnowledgeGatewayException.class)
     public ResponseEntity<KnowledgeErrorResponse> handleKnowledgeGatewayException(final KnowledgeGatewayException exception) {
         return ResponseEntity
@@ -71,7 +78,7 @@ public class ForgeAiInfrastructureKnowledgeController {
 
     private HttpStatus httpStatus(final KnowledgeGatewayErrorCode code) {
         return switch (code) {
-            case SEARCH_QUERY_INVALID -> HttpStatus.BAD_REQUEST;
+            case SEARCH_QUERY_INVALID, CONTEXT_QUERY_INVALID -> HttpStatus.BAD_REQUEST;
             case KNOWLEDGE_TIMEOUT -> HttpStatus.GATEWAY_TIMEOUT;
             case KNOWLEDGE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             case KNOWLEDGE_BAD_RESPONSE -> HttpStatus.BAD_GATEWAY;

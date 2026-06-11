@@ -1,0 +1,4 @@
+{
+  "code": "CONTEXT_QUERY_INVALID",
+  "message": "Context query must not be empty"
+}

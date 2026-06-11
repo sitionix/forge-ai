@@ -40,6 +40,8 @@ class SourceMetadata:
             "ownsBusinessAreas": self.ownsBusinessAreas,
             "tests": self.tests,
         }
+        if self.contractRefs:
+            result["contractRefs"] = self.contractRefs
         if include_absolute_root:
             result["absoluteRoot"] = str(self.absoluteRoot)
         return result

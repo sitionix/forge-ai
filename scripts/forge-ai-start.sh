@@ -33,6 +33,11 @@ FORGE_AI_PID_FILE="${REPO_ROOT}/.forge-ai-local.pid"
 FORGE_AI_LOG_FILE="${REPO_ROOT}/.forge-ai-local.log"
 FORGE_AI_JAR_RELATIVE_PATH="boot/target/boot-0.0.1-SNAPSHOT.jar"
 FORGE_AI_STARTED_LOCAL_THIS_RUN="0"
+FORGE_AI_MONGODB_URI="${MONGODB_URI:-mongodb://localhost:27019/forge_ai}"
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
 
 validate_repo_root() {
   [[ "$(pwd)" == "$REPO_ROOT" ]] || die "run this command from repository root: $REPO_ROOT"
@@ -214,7 +219,7 @@ start_local_forge_ai_process() {
     sleep 1
   fi
 
-  if docker compose ps --status running forge-ai-service | grep -q 'fgaisox-service'; then
+  if command_exists docker && docker compose ps --status running forge-ai-service 2>/dev/null | grep -q 'fgaisox-service'; then
     log_step "Stopping docker forge-ai-service to free port 9099 for local JVM..."
     docker compose stop forge-ai-service >/dev/null
   fi
@@ -238,7 +243,7 @@ start_local_forge_ai_process() {
   : > "$FORGE_AI_LOG_FILE"
   (
     cd "$FORGE_AI_DIR"
-    WORKSPACE_ROOT="$REPO_ROOT" MONGODB_URI="mongodb://localhost:27018/forge_ai" java -jar "$FORGE_AI_JAR_RELATIVE_PATH"
+    WORKSPACE_ROOT="$REPO_ROOT" MONGODB_URI="$FORGE_AI_MONGODB_URI" java -jar "$FORGE_AI_JAR_RELATIVE_PATH"
   ) >>"$FORGE_AI_LOG_FILE" 2>&1 &
   echo "$!" > "$FORGE_AI_PID_FILE"
   FORGE_AI_STARTED_LOCAL_THIS_RUN="1"
@@ -256,8 +261,12 @@ ensure_forge_ai_up() {
     return 0
   fi
 
-  log_step "Starting MongoDB for Forge AI..."
-  just infra-up forge-ai-mongo
+  if [[ -n "${MONGODB_URI:-}" ]]; then
+    log_step "Using externally configured MongoDB for Forge AI: ${FORGE_AI_MONGODB_URI}"
+  else
+    require_command docker
+    log_step "MongoDB will be started by Spring Boot Docker Compose."
+  fi
 
   if [[ "$SKIP_FORGE_AI_REBUILD" != "1" ]]; then
     start_local_forge_ai_process "1"
@@ -361,7 +370,6 @@ main() {
   require_command fzf
   require_command curl
   require_command jq
-  require_command just
 
   validate_repo_root
 

@@ -6,6 +6,8 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
 from knowledge_service.config import load_app_config
+from knowledge_service.context_schema import ContextRequest
+from knowledge_service.context_service import ContextService
 from knowledge_service.errors import ConfigMissingError, KnowledgeError
 from knowledge_service.inventory_builder import InventoryBuilder
 from knowledge_service.inventory_store import InventoryStore
@@ -101,3 +103,15 @@ async def search(request: SearchRequest) -> Dict[str, Any]:
     if not request.query or not request.query.strip():
         raise KnowledgeError("SEARCH_QUERY_INVALID", "Search query must not be empty")
     return SearchService(store).search(request.query, request.sourceIds, request.groups, max(1, min(request.limit, 100)))
+
+
+@app.post("/api/v1/knowledge/context")
+async def context(request: ContextRequest) -> Dict[str, Any]:
+    if not request.query or not request.query.strip():
+        raise KnowledgeError("CONTEXT_QUERY_INVALID", "Context query must not be empty")
+    try:
+        return ContextService(store).context(request)
+    except Exception as exc:
+        if isinstance(exc, KnowledgeError):
+            raise
+        raise KnowledgeError("CONTEXT_BUILD_FAILED", "Context build failed") from exc

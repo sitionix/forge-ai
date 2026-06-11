@@ -3,6 +3,8 @@ package com.sitionix.forgeai.infrastructure.knowledgeclient;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGateway;
@@ -26,10 +28,12 @@ import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(name = "forge.ai.infrastructure.knowledge.mode", havingValue = "http", matchIfMissing = true)
 public class HttpKnowledgeGateway implements KnowledgeGateway {
 
     private final ObjectMapper objectMapper;
@@ -85,6 +89,14 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
             throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.SEARCH_QUERY_INVALID, "Search query must not be empty");
         }
         return this.convert(this.send("POST", "/api/v1/knowledge/search", normalizeSearchRequest(request)), KnowledgeSearchResultView.class);
+    }
+
+    @Override
+    public KnowledgeContextView context(final KnowledgeContextRequest request) {
+        if (request == null || request.query() == null || request.query().isBlank()) {
+            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID, "Context query must not be empty");
+        }
+        return this.convert(this.send("POST", "/api/v1/knowledge/context", normalizeContextRequest(request)), KnowledgeContextView.class);
     }
 
     private JsonNode send(final String method, final String path, final Object body) {
@@ -161,6 +173,17 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
         body.put("sourceIds", request.sourceIds() == null ? java.util.List.of() : request.sourceIds());
         body.put("groups", request.groups() == null ? java.util.List.of() : request.groups());
         body.put("limit", request.limit() == null ? 20 : request.limit());
+        return body;
+    }
+
+    private Map<String, Object> normalizeContextRequest(final KnowledgeContextRequest request) {
+        final Map<String, Object> body = new LinkedHashMap<>();
+        body.put("query", request.query());
+        body.put("sourceIds", request.sourceIds() == null ? java.util.List.of() : request.sourceIds());
+        body.put("groups", request.groups() == null ? java.util.List.of() : request.groups());
+        body.put("maxChars", request.maxChars() == null ? 12000 : request.maxChars());
+        body.put("maxItems", request.maxItems() == null ? 12 : request.maxItems());
+        body.put("includeContent", request.includeContent() == null || request.includeContent());
         return body;
     }
 

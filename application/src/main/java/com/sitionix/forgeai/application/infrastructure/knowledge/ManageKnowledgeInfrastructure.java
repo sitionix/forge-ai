@@ -13,4 +13,6 @@ public interface ManageKnowledgeInfrastructure {
     KnowledgeFilesView files(KnowledgeFilesRequest request);
 
     KnowledgeSearchResultView search(KnowledgeSearchRequest request);
+
+    KnowledgeContextView context(KnowledgeContextRequest request);
 }

@@ -1,0 +1,12 @@
+{
+  "id": 1,
+  "sourceId": "forge-ai",
+  "sourcePath": "/workspace/forge-ai",
+  "absolutePath": "/workspace/forge-ai/application/src/main/java/com/sitionix/forgeai/application/infrastructure/jarvis/JarvisGateway.java",
+  "relativePath": "application/src/main/java/com/sitionix/forgeai/application/infrastructure/jarvis/JarvisGateway.java",
+  "extension": ".java",
+  "sizeBytes": 512,
+  "contentHash": "jarvis-gateway-hash",
+  "lastModified": "2026-06-11T09:59:59Z",
+  "indexedAt": "2026-06-11T10:00:02Z"
+}

@@ -10,6 +10,9 @@ public class KnowledgeHttpErrorMapper {
         if ("SEARCH_QUERY_INVALID".equals(code)) {
             return KnowledgeGatewayErrorCode.SEARCH_QUERY_INVALID;
         }
+        if ("CONTEXT_QUERY_INVALID".equals(code)) {
+            return KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID;
+        }
         if (status == 400 || status == 422) {
             return KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE;
         }

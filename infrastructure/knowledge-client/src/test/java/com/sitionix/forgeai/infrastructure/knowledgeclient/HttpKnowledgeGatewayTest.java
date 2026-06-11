@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
@@ -78,6 +79,19 @@ class HttpKnowledgeGatewayTest {
     }
 
     @Test
+    void contextProxyMapsSuccess() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
+                {"query":"JarvisGateway","context":[{"sourceId":"svc","displayName":"Service","group":"backend","relativePath":"JarvisGateway.java","lineStart":1,"lineEnd":2,"content":"interface JarvisGateway","matchType":"content","reason":"matched content","score":1.0,"metadata":{"tags":["java"],"domainKeywords":[],"ownsBusinessAreas":[]}}],"sourcesUsed":[{"sourceId":"svc","displayName":"Service","reason":"matched"}],"budget":{"maxChars":12000,"usedChars":23,"truncated":false},"diagnostics":[]}
+                """));
+
+        final var result = gateway.context(new KnowledgeContextRequest("JarvisGateway", List.of(), List.of(), 12000, 10, true));
+
+        assertThat(result.context()).hasSize(1);
+        assertThat(result.context().getFirst().relativePath()).isEqualTo("JarvisGateway.java");
+        assertThat(result.budget().truncated()).isFalse();
+    }
+
+    @Test
     void connectionFailureMapsToUnavailable() {
         final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(new ConnectException("refused")));
 
@@ -113,6 +127,55 @@ class HttpKnowledgeGatewayTest {
                 .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
                         assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.SEARCH_QUERY_INVALID));
         assertThat(client.calls).isZero();
+    }
+
+    @Test
+    void blankContextRejectedBeforeProxying() {
+        final FakeHttpClient client = new FakeHttpClient(200, "{}");
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest(" ", List.of(), List.of(), 12000, 10, true)))
+                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID));
+        assertThat(client.calls).isZero();
+    }
+
+    @Test
+    void contextConnectionFailureMapsToUnavailable() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(new ConnectException("refused")));
+
+        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest("Jarvis", List.of(), List.of(), 12000, 10, true)))
+                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_UNAVAILABLE));
+    }
+
+    @Test
+    void contextTimeoutMapsToTimeout() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(new HttpTimeoutException("timeout")));
+
+        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest("Jarvis", List.of(), List.of(), 12000, 10, true)))
+                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_TIMEOUT));
+    }
+
+    @Test
+    void contextInvalidJsonMapsToBadResponse() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, "not-json"));
+
+        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest("Jarvis", List.of(), List.of(), 12000, 10, true)))
+                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE));
+    }
+
+    @Test
+    void nonLocalhostBaseUrlRejected() {
+        final KnowledgeClientProperties properties = new KnowledgeClientProperties();
+        properties.setBaseUrl(URI.create("http://example.com:7081"));
+        final HttpKnowledgeGateway gateway = new HttpKnowledgeGateway(new ObjectMapper(), properties, new FakeHttpClient(200, "{}"), new KnowledgeHttpErrorMapper());
+
+        assertThatThrownBy(gateway::status)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Knowledge base URL must point to localhost");
     }
 
     private static HttpKnowledgeGateway gateway(final HttpClient client) {

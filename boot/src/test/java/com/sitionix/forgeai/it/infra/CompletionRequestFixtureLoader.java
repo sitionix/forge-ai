@@ -21,7 +21,9 @@ public class CompletionRequestFixtureLoader {
         final List<String> candidates = List.of(
                 resourceName,
                 "forge-it/mockmvc/default/request/" + resourceName,
-                "forge-it/mockmvc/request/" + resourceName
+                "forge-it/mockmvc/request/" + resourceName,
+                "forge-it/mockmvc/default/response/" + resourceName,
+                "forge-it/mockmvc/response/" + resourceName
         );
         IOException lastException = null;
         for (final String candidate : candidates) {

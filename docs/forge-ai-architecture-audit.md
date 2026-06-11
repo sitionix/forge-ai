@@ -2,7 +2,7 @@
 
 ## Scope
 
-This audit documents the current local Forge AI implementation in `/home/chekoteela/Documents/java/Sitionix/forge-ai` on branch `feature/SITIONIX-27`.
+This audit documents the local Forge AI implementation in the repository checkout used for the audit.
 
 It is based on actual repository files and is intentionally separate from Jarvis implementation work. Jarvis is infrastructure-local under `infrastructure/jarvis`; it is not part of the Forge AI Maven module graph.
 
@@ -66,7 +66,7 @@ github-cli
 | Forge AI Spring Boot | `9099` | `boot/src/main/resources/application.yml` | Not listening during audit. |
 | Forge AI context path | `/fgaisox` | `boot/src/main/resources/application.yml` | Applies to REST and static Operator UI. |
 | MongoDB | `27019` | `spring.data.mongodb.uri=${MONGODB_URI:mongodb://localhost:27019/forge_ai}` | Not listening during audit. |
-| Old standalone Jarvis | `7070` | `/home/chekoteela/local-ai/jarvis-local` | Listening on `127.0.0.1:7070` by `uvicorn` PID `14045`. |
+| Old standalone Jarvis | `7070` | external local Jarvis checkout | Historical audit observation; not owned by this repository. |
 | Forge-owned Jarvis | `7071` during verification | `JARVIS_PORT=7071 scripts/jarvis/*` | Listening on `127.0.0.1:7071` by `uvicorn` PID `54759`. |
 | Ollama | `11434` | Jarvis model config / start script | Not listening during audit. |
 

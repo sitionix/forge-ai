@@ -6,6 +6,9 @@ server:
 spring:
   config:
     import: optional:classpath:services.yaml,optional:classpath:agent.yml,optional:classpath:instructions.yaml,optional:classpath:lane-strategies.yml
+  docker:
+    compose:
+      file: compose.yaml
   mvc:
     async:
       request-timeout: -1
