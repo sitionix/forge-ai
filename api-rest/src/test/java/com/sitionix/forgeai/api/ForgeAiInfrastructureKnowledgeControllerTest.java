@@ -9,6 +9,7 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewa
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeViews;
 import com.sitionix.forgeai.application.infrastructure.knowledge.ManageKnowledgeInfrastructure;
 import org.junit.jupiter.api.Test;
 
@@ -17,7 +18,16 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
     @Test
     void statusDelegatesToUseCase() {
         final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
-        when(useCase.status()).thenReturn(new KnowledgeStatusView("UP", "knowledge", null, null, null, null, null, null));
+        when(useCase.status()).thenReturn(new KnowledgeStatusView(
+                "UP",
+                "knowledge",
+                null,
+                null,
+                new KnowledgeViews.KnowledgeFeatureView(true, true, "keyword"),
+                null,
+                null,
+                null
+        ));
         final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
 
         final var response = controller.status();

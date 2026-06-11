@@ -39,7 +39,7 @@ class HttpKnowledgeGatewayTest {
 
         assertThat(status.status()).isEqualTo("UP");
         assertThat(status.catalog().configured()).isTrue();
-        assertThat(status.search().get("mode")).isEqualTo("keyword");
+        assertThat(status.search().mode()).isEqualTo("keyword");
     }
 
     @Test

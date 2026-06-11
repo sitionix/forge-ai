@@ -1,7 +1,5 @@
 package com.sitionix.forgeai.application.infrastructure.knowledge;
 
-import java.util.Map;
-
 public record KnowledgeContextItemView(
         String sourceId,
         String displayName,
@@ -13,6 +11,6 @@ public record KnowledgeContextItemView(
         String matchType,
         String reason,
         Double score,
-        Map<String, Object> metadata
+        KnowledgeContextMetadataView metadata
 ) {
 }

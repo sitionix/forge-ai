@@ -21,7 +21,7 @@ import static com.sitionix.forgeit.domain.contract.DbContractsDsl.entity;
 @Import(ForgeItSqliteEntityManagerConfiguration.class)
 @IntegrationTest
 @ActiveProfiles({"it", "knowledge-it"})
-@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
+@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_EACH_TEST_METHOD)
 class KnowledgeInfrastructureContextIT extends AbstractForgeAiIT {
 
     private static final DbContract<KnowledgeInventoryBuildEntity> INVENTORY_BUILD =
@@ -35,6 +35,32 @@ class KnowledgeInfrastructureContextIT extends AbstractForgeAiIT {
 
     @Autowired
     private KnowledgeTestManager testManager;
+
+    @Test
+    @DisplayName("Should build Knowledge inventory through controller and persist SQLite rows")
+    void givenCatalogSource_whenBuildInventory_thenPersistInventoryInSqlite() throws Exception {
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.knowledgeInventoryBuild())
+                .andExpectPath(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.status").value("COMPLETED"))
+                .andExpectPath(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.sourceCount").value(1))
+                .assertDefault();
+
+        this.testManager.sqlite()
+                .get(KnowledgeInventoryBuildEntity.class)
+                .hasSize(1)
+                .singleElement()
+                .andExpected(build -> "COMPLETED".equals(build.getStatus()))
+                .andExpected(build -> Integer.valueOf(1).equals(build.getSourceCount()))
+                .andExpected(build -> build.getFileCount() != null && build.getFileCount() > 0)
+                .assertEntity();
+
+        this.testManager.sqlite()
+                .get(KnowledgeSourceEntity.class)
+                .hasSize(1)
+                .singleElement()
+                .andExpected(source -> "forge-ai".equals(source.getSourceId()))
+                .assertEntity();
+    }
 
     @Test
     @DisplayName("Should expose Knowledge context through Forge infrastructure API")

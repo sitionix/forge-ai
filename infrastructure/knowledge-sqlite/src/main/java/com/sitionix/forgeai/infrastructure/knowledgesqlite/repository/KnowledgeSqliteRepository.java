@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,6 +19,31 @@ import java.util.Optional;
 public class KnowledgeSqliteRepository {
 
     private final JdbcTemplate jdbcTemplate;
+
+    @Transactional
+    public KnowledgeInventoryBuildEntity replaceInventory(final List<KnowledgeSourceEntity> sources,
+                                                          final List<KnowledgeFileEntity> files,
+                                                          final int skipped,
+                                                          final String startedAt,
+                                                          final String completedAt) {
+        this.jdbcTemplate.update("DELETE FROM files");
+        this.jdbcTemplate.update("DELETE FROM sources");
+        sources.forEach(this::insertSource);
+        files.forEach(this::insertFile);
+        this.jdbcTemplate.update("""
+                        INSERT INTO inventory_builds(started_at, completed_at, status, source_count, file_count, skipped_count, error_message)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                startedAt,
+                completedAt,
+                "COMPLETED",
+                sources.size(),
+                files.size(),
+                skipped,
+                null
+        );
+        return this.latestBuild().orElseThrow(() -> new IllegalStateException("Knowledge inventory build was not persisted"));
+    }
 
     public Optional<KnowledgeInventoryBuildEntity> latestBuild() {
         final List<KnowledgeInventoryBuildEntity> builds = this.jdbcTemplate.query("""
@@ -121,4 +147,36 @@ public class KnowledgeSqliteRepository {
         );
     }
 
+    private void insertSource(final KnowledgeSourceEntity source) {
+        this.jdbcTemplate.update("""
+                        INSERT INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                source.getSourceId(),
+                source.getDisplayName(),
+                source.getGroup(),
+                source.getPath(),
+                Boolean.TRUE.equals(source.getRootExists()) ? 1 : 0,
+                source.getTagsJson(),
+                source.getMetadataJson(),
+                source.getLastSeenAt()
+        );
+    }
+
+    private void insertFile(final KnowledgeFileEntity file) {
+        this.jdbcTemplate.update("""
+                        INSERT INTO files(source_id, source_path, absolute_path, relative_path, extension, size_bytes, content_hash, last_modified, indexed_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                file.getSourceId(),
+                file.getSourcePath(),
+                file.getAbsolutePath(),
+                file.getRelativePath(),
+                file.getExtension(),
+                file.getSizeBytes(),
+                file.getContentHash(),
+                file.getLastModified(),
+                file.getIndexedAt()
+        );
+    }
 }

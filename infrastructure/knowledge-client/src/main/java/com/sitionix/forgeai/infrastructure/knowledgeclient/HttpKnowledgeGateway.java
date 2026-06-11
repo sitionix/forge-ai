@@ -26,8 +26,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.List;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -153,38 +152,38 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
 
     private String serialize(final Object body) {
         try {
-            return this.objectMapper.writeValueAsString(body == null ? Map.of() : body);
+            return this.objectMapper.writeValueAsString(body);
         } catch (final JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize Knowledge request", e);
         }
     }
 
-    private Map<String, Object> normalizeBuildRequest(final KnowledgeInventoryBuildRequest request) {
-        final Map<String, Object> body = new LinkedHashMap<>();
-        body.put("sourceIds", request == null || request.sourceIds() == null ? java.util.List.of() : request.sourceIds());
-        body.put("groups", request == null || request.groups() == null ? java.util.List.of() : request.groups());
-        body.put("force", request != null && Boolean.TRUE.equals(request.force()));
-        return body;
+    private KnowledgeInventoryBuildRequest normalizeBuildRequest(final KnowledgeInventoryBuildRequest request) {
+        return new KnowledgeInventoryBuildRequest(
+                request == null || request.sourceIds() == null ? List.of() : request.sourceIds(),
+                request == null || request.groups() == null ? List.of() : request.groups(),
+                request != null && Boolean.TRUE.equals(request.force())
+        );
     }
 
-    private Map<String, Object> normalizeSearchRequest(final KnowledgeSearchRequest request) {
-        final Map<String, Object> body = new LinkedHashMap<>();
-        body.put("query", request.query());
-        body.put("sourceIds", request.sourceIds() == null ? java.util.List.of() : request.sourceIds());
-        body.put("groups", request.groups() == null ? java.util.List.of() : request.groups());
-        body.put("limit", request.limit() == null ? 20 : request.limit());
-        return body;
+    private KnowledgeSearchRequest normalizeSearchRequest(final KnowledgeSearchRequest request) {
+        return new KnowledgeSearchRequest(
+                request.query(),
+                request.sourceIds() == null ? List.of() : request.sourceIds(),
+                request.groups() == null ? List.of() : request.groups(),
+                request.limit() == null ? 20 : request.limit()
+        );
     }
 
-    private Map<String, Object> normalizeContextRequest(final KnowledgeContextRequest request) {
-        final Map<String, Object> body = new LinkedHashMap<>();
-        body.put("query", request.query());
-        body.put("sourceIds", request.sourceIds() == null ? java.util.List.of() : request.sourceIds());
-        body.put("groups", request.groups() == null ? java.util.List.of() : request.groups());
-        body.put("maxChars", request.maxChars() == null ? 12000 : request.maxChars());
-        body.put("maxItems", request.maxItems() == null ? 12 : request.maxItems());
-        body.put("includeContent", request.includeContent() == null || request.includeContent());
-        return body;
+    private KnowledgeContextRequest normalizeContextRequest(final KnowledgeContextRequest request) {
+        return new KnowledgeContextRequest(
+                request.query(),
+                request.sourceIds() == null ? List.of() : request.sourceIds(),
+                request.groups() == null ? List.of() : request.groups(),
+                request.maxChars() == null ? 12000 : request.maxChars(),
+                request.maxItems() == null ? 12 : request.maxItems(),
+                request.includeContent() == null || request.includeContent()
+        );
     }
 
     private String query(final KnowledgeFilesRequest request) {
