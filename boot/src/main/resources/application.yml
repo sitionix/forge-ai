@@ -52,6 +52,12 @@ forge:
     launcher:
       default-base-url: http://127.0.0.1:9099/fgaisox
       services-config-resource: classpath:services.yaml
+    infrastructure:
+      knowledge:
+        enabled: true
+        base-url: http://127.0.0.1:7081
+        connect-timeout: 2s
+        read-timeout: 120s
 forge-ai:
   jobs:
     ready-to-start:

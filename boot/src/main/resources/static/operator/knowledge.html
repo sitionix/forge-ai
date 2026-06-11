@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Infrastructure / Knowledge</title>
+  <link rel="stylesheet" href="./operator-ui.css">
+</head>
+<body data-page="knowledge">
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Infrastructure</p>
+        <h1>Knowledge</h1>
+        <p class="muted">Catalog-driven local source inventory and keyword search.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshKnowledge" class="button">Refresh</button>
+      </div>
+    </header>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Runtime</h2>
+          <p>Forge AI proxies to Knowledge. Browser calls stay inside Forge AI.</p>
+        </div>
+        <span id="knowledgeUpdated" class="muted">loading</span>
+      </div>
+      <div id="knowledgeStatusCards" class="jarvis-status-grid"></div>
+      <div id="knowledgeStatusMessage" class="notice-box">Knowledge uses service catalog as source of truth. No embeddings/vector DB in v1.</div>
+      <div id="knowledgeError" class="error-box hidden"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head compact">
+        <div>
+          <h2>Sources</h2>
+          <p>Derived from the configured service catalog.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="operator-table">
+          <thead>
+            <tr>
+              <th>sourceId</th>
+              <th>label</th>
+              <th>group</th>
+              <th>path</th>
+              <th>rootExists</th>
+              <th>tags</th>
+            </tr>
+          </thead>
+          <tbody id="knowledgeSourcesBody"></tbody>
+        </table>
+      </div>
+      <pre id="knowledgeDiagnostics" class="stacktrace">No diagnostics.</pre>
+    </section>
+
+    <div class="jarvis-grid">
+      <section class="panel">
+        <div class="panel-head compact">
+          <div>
+            <h2>Inventory</h2>
+            <p>SQLite metadata only. Source files are not modified.</p>
+          </div>
+          <button id="buildKnowledgeInventory" class="button">Build inventory</button>
+        </div>
+        <div id="knowledgeInventoryStatus"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head compact">
+          <div>
+            <h2>Search</h2>
+            <p>Keyword and path search over indexed files.</p>
+          </div>
+        </div>
+        <form id="knowledgeSearchForm" class="jarvis-command-form">
+          <label class="field">
+            <span>Query</span>
+            <input id="knowledgeSearchQuery" type="text" placeholder="JarvisGateway" autocomplete="off">
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="button">Search</button>
+          </div>
+        </form>
+        <div id="knowledgeSearchError" class="error-box hidden"></div>
+        <div id="knowledgeSearchResults" class="jarvis-command-result"></div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head compact">
+        <div>
+          <h2>Files Preview</h2>
+          <p>First indexed files from the local inventory.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="operator-table">
+          <thead>
+            <tr>
+              <th>source</th>
+              <th>relative path</th>
+              <th>extension</th>
+              <th>size</th>
+              <th>modified</th>
+            </tr>
+          </thead>
+          <tbody id="knowledgeFilesBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="./operator-ui.js"></script>
+</body>
+</html>

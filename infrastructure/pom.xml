@@ -19,5 +19,6 @@
         <module>github-cli</module>
         <module>local-cli</module>
         <module>jarvis-client</module>
+        <module>knowledge-client</module>
     </modules>
 </project>
