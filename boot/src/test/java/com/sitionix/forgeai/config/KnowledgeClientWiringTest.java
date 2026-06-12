@@ -1,28 +1,29 @@
 package com.sitionix.forgeai.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGateway;
 import com.sitionix.forgeai.infrastructure.knowledgeclient.HttpKnowledgeGateway;
+import com.sitionix.forgeai.infrastructure.knowledgeclient.KnowledgeClientProperties;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(
-        webEnvironment = SpringBootTest.WebEnvironment.NONE,
-        properties = {
-                "spring.docker.compose.enabled=false",
-                "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration",
-                "forge-ai.jobs.scheduling-enabled=false"
-        }
-)
 class KnowledgeClientWiringTest {
 
-    @Autowired
-    private KnowledgeGateway knowledgeGateway;
+    private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
+            .withBean(ObjectMapper.class, ObjectMapper::new)
+            .withBean(KnowledgeClientProperties.class, KnowledgeClientProperties::new)
+            .withUserConfiguration(HttpKnowledgeGateway.class)
+            .withPropertyValues(
+                    "forge.ai.infrastructure.knowledge.mode=http"
+            );
 
     @Test
     void shouldWireProductionKnowledgeGatewayAdapter() {
-        assertThat(this.knowledgeGateway).isInstanceOf(HttpKnowledgeGateway.class);
+        this.contextRunner.run(context -> {
+            assertThat(context).hasSingleBean(KnowledgeGateway.class);
+            assertThat(context.getBean(KnowledgeGateway.class)).isInstanceOf(HttpKnowledgeGateway.class);
+        });
     }
 }

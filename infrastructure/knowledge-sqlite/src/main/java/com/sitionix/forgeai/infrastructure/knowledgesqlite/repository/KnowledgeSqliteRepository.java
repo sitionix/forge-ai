@@ -5,10 +5,13 @@ import com.sitionix.forgeai.infrastructure.knowledgesqlite.entity.KnowledgeInven
 import com.sitionix.forgeai.infrastructure.knowledgesqlite.entity.KnowledgeSourceEntity;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -18,60 +21,66 @@ import java.util.Optional;
 @ConditionalOnProperty(name = "forge.ai.infrastructure.knowledge.mode", havingValue = "sqlite")
 public class KnowledgeSqliteRepository {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final DataSource dataSource;
 
-    @Transactional
     public KnowledgeInventoryBuildEntity replaceInventory(final List<KnowledgeSourceEntity> sources,
                                                           final List<KnowledgeFileEntity> files,
                                                           final int skipped,
                                                           final String startedAt,
                                                           final String completedAt) {
-        this.jdbcTemplate.update("DELETE FROM files");
-        this.jdbcTemplate.update("DELETE FROM sources");
-        sources.forEach(this::insertSource);
-        files.forEach(this::insertFile);
-        this.jdbcTemplate.update("""
-                        INSERT INTO inventory_builds(started_at, completed_at, status, source_count, file_count, skipped_count, error_message)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                startedAt,
-                completedAt,
-                "COMPLETED",
-                sources.size(),
-                files.size(),
-                skipped,
-                null
-        );
-        return this.latestBuild().orElseThrow(() -> new IllegalStateException("Knowledge inventory build was not persisted"));
+        try (Connection connection = this.dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                this.update(connection, "DELETE FROM files");
+                this.update(connection, "DELETE FROM sources");
+                for (KnowledgeSourceEntity source : sources) {
+                    this.insertSource(connection, source);
+                }
+                for (KnowledgeFileEntity file : files) {
+                    this.insertFile(connection, file);
+                }
+                this.update(connection, """
+                                INSERT INTO inventory_builds(started_at, completed_at, status, source_count, file_count, skipped_count, error_message)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                """,
+                        startedAt,
+                        completedAt,
+                        "COMPLETED",
+                        sources.size(),
+                        files.size(),
+                        skipped,
+                        null
+                );
+                final KnowledgeInventoryBuildEntity build = this.latestBuild(connection)
+                        .orElseThrow(() -> new IllegalStateException("Knowledge inventory build was not persisted"));
+                connection.commit();
+                return build;
+            } catch (RuntimeException | SQLException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("Failed to replace Knowledge SQLite inventory", exception);
+        }
     }
 
     public Optional<KnowledgeInventoryBuildEntity> latestBuild() {
-        final List<KnowledgeInventoryBuildEntity> builds = this.jdbcTemplate.query("""
-                        SELECT id, started_at, completed_at, status, source_count, file_count, skipped_count, error_message
-                        FROM inventory_builds
-                        ORDER BY id DESC
-                        LIMIT 1
-                        """,
-                (rs, rowNum) -> new KnowledgeInventoryBuildEntity(
-                        rs.getLong("id"),
-                        rs.getString("started_at"),
-                        rs.getString("completed_at"),
-                        rs.getString("status"),
-                        rs.getInt("source_count"),
-                        rs.getInt("file_count"),
-                        rs.getInt("skipped_count"),
-                        rs.getString("error_message")
-                ));
-        return builds.stream().findFirst();
+        try (Connection connection = this.dataSource.getConnection()) {
+            return this.latestBuild(connection);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("Failed to read Knowledge SQLite inventory build", exception);
+        }
     }
 
     public List<KnowledgeSourceEntity> sources() {
-        return this.jdbcTemplate.query("""
+        return this.query("""
                         SELECT source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at
                         FROM sources
                         ORDER BY source_id
                         """,
-                (rs, rowNum) -> new KnowledgeSourceEntity(
+                rs -> new KnowledgeSourceEntity(
                         rs.getString("source_id"),
                         rs.getString("display_name"),
                         rs.getString("group_name"),
@@ -92,7 +101,7 @@ public class KnowledgeSqliteRepository {
         final List<Object> params = new ArrayList<>(filter.params());
         params.add(limit);
         params.add(offset);
-        return this.jdbcTemplate.query("""
+        return this.query("""
                         SELECT f.*, s.display_name, s.group_name, s.tags_json, s.metadata_json
                         FROM files f
                         JOIN sources s ON s.source_id = f.source_id
@@ -104,11 +113,9 @@ public class KnowledgeSqliteRepository {
 
     public int fileCount(final String sourceId, final String pathContains, final String extension) {
         final KnowledgeSqlFilter filter = KnowledgeSqlFilter.files(sourceId, pathContains, extension);
-        return this.jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM files f %s".formatted(filter.where()),
-                Integer.class,
-                filter.params().toArray()
-        );
+        return this.query("SELECT COUNT(*) AS count FROM files f %s".formatted(filter.where()),
+                rs -> rs.getInt("count"),
+                filter.params().toArray()).stream().findFirst().orElse(0);
     }
 
     public List<KnowledgeFileEntity> contextFiles(final String query,
@@ -118,7 +125,7 @@ public class KnowledgeSqliteRepository {
         final KnowledgeSqlFilter filter = KnowledgeSqlFilter.context(query, sourceIds, groups);
         final List<Object> params = new ArrayList<>(filter.params());
         params.add(maxItems);
-        return this.jdbcTemplate.query("""
+        return this.query("""
                         SELECT f.*, s.display_name, s.group_name, s.tags_json, s.metadata_json
                         FROM files f
                         JOIN sources s ON s.source_id = f.source_id
@@ -128,8 +135,8 @@ public class KnowledgeSqliteRepository {
                         """.formatted(filter.where()), fileMapper(), params.toArray());
     }
 
-    private org.springframework.jdbc.core.RowMapper<KnowledgeFileEntity> fileMapper() {
-        return (rs, rowNum) -> new KnowledgeFileEntity(
+    private SqlRowMapper<KnowledgeFileEntity> fileMapper() {
+        return rs -> new KnowledgeFileEntity(
                 rs.getLong("id"),
                 rs.getString("source_id"),
                 rs.getString("source_path"),
@@ -147,8 +154,27 @@ public class KnowledgeSqliteRepository {
         );
     }
 
-    private void insertSource(final KnowledgeSourceEntity source) {
-        this.jdbcTemplate.update("""
+    private Optional<KnowledgeInventoryBuildEntity> latestBuild(final Connection connection) {
+        return this.query(connection, """
+                        SELECT id, started_at, completed_at, status, source_count, file_count, skipped_count, error_message
+                        FROM inventory_builds
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """,
+                rs -> new KnowledgeInventoryBuildEntity(
+                        rs.getLong("id"),
+                        rs.getString("started_at"),
+                        rs.getString("completed_at"),
+                        rs.getString("status"),
+                        rs.getInt("source_count"),
+                        rs.getInt("file_count"),
+                        rs.getInt("skipped_count"),
+                        rs.getString("error_message")
+                )).stream().findFirst();
+    }
+
+    private void insertSource(final Connection connection, final KnowledgeSourceEntity source) {
+        this.update(connection, """
                         INSERT INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
@@ -163,8 +189,8 @@ public class KnowledgeSqliteRepository {
         );
     }
 
-    private void insertFile(final KnowledgeFileEntity file) {
-        this.jdbcTemplate.update("""
+    private void insertFile(final Connection connection, final KnowledgeFileEntity file) {
+        this.update(connection, """
                         INSERT INTO files(source_id, source_path, absolute_path, relative_path, extension, size_bytes, content_hash, last_modified, indexed_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
@@ -178,5 +204,52 @@ public class KnowledgeSqliteRepository {
                 file.getLastModified(),
                 file.getIndexedAt()
         );
+    }
+
+    private <T> List<T> query(final String sql, final SqlRowMapper<T> mapper, final Object... params) {
+        try (Connection connection = this.dataSource.getConnection()) {
+            return this.query(connection, sql, mapper, params);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("Failed to query Knowledge SQLite inventory", exception);
+        }
+    }
+
+    private <T> List<T> query(final Connection connection,
+                              final String sql,
+                              final SqlRowMapper<T> mapper,
+                              final Object... params) {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            this.bind(statement, params);
+            try (ResultSet rs = statement.executeQuery()) {
+                final List<T> results = new ArrayList<>();
+                while (rs.next()) {
+                    results.add(mapper.map(rs));
+                }
+                return results;
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("Failed to query Knowledge SQLite inventory", exception);
+        }
+    }
+
+    private void update(final Connection connection, final String sql, final Object... params) {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            this.bind(statement, params);
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("Failed to update Knowledge SQLite inventory", exception);
+        }
+    }
+
+    private void bind(final PreparedStatement statement, final Object... params) throws SQLException {
+        for (int index = 0; index < params.length; index++) {
+            statement.setObject(index + 1, params[index]);
+        }
+    }
+
+    @FunctionalInterface
+    private interface SqlRowMapper<T> {
+
+        T map(ResultSet resultSet) throws SQLException;
     }
 }

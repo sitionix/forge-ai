@@ -4,25 +4,30 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.Statement;
 
 @Component
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "forge.ai.infrastructure.knowledge.mode", havingValue = "sqlite")
 public class KnowledgeSqliteSchemaInitializer {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final DataSource dataSource;
 
     @PostConstruct
     void initialize() throws Exception {
         final String schema = new ClassPathResource("db/migration/V1__create_knowledge_inventory_tables.sql")
                 .getContentAsString(StandardCharsets.UTF_8);
-        for (final String statement : schema.split(";")) {
-            if (!statement.isBlank()) {
-                this.jdbcTemplate.execute(statement);
+        try (Connection connection = this.dataSource.getConnection();
+             Statement sql = connection.createStatement()) {
+            for (final String statement : schema.split(";")) {
+                if (!statement.isBlank()) {
+                    sql.execute(statement);
+                }
             }
         }
     }

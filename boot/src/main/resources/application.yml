@@ -58,6 +58,7 @@ forge:
     infrastructure:
       knowledge:
         enabled: true
+        mode: http
         base-url: http://127.0.0.1:7081
         connect-timeout: 2s
         read-timeout: 120s
