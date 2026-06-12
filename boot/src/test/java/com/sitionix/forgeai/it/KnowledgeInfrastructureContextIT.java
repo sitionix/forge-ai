@@ -13,8 +13,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
 import static com.sitionix.forgeit.domain.contract.DbContractsDsl.entity;
 
@@ -41,8 +42,8 @@ class KnowledgeInfrastructureContextIT extends AbstractForgeAiIT {
     void givenCatalogSource_whenBuildInventory_thenPersistInventoryInSqlite() throws Exception {
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.knowledgeInventoryBuild())
-                .andExpectPath(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.status").value("COMPLETED"))
-                .andExpectPath(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.sourceCount").value(1))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("COMPLETED"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.sourceCount").value(1))
                 .assertDefault();
 
         this.testManager.sqlite()
@@ -59,13 +60,27 @@ class KnowledgeInfrastructureContextIT extends AbstractForgeAiIT {
                 .hasSize(1)
                 .singleElement()
                 .andExpected(source -> "forge-ai".equals(source.getSourceId()))
+                .andExpected(source -> "Forge AI Service SOX".equals(source.getDisplayName()))
+                .andExpected(source -> "backend".equals(source.getGroupName()))
                 .assertEntity();
+
+        this.testManager.sqlite()
+                .get(KnowledgeFileEntity.class)
+                .andExpected(file -> "forge-ai".equals(file.getSourceId()))
+                .andExpected(file -> file.getRelativePath() != null && file.getRelativePath().endsWith(".java"))
+                .andExpected(file -> file.getContentHash() != null && !file.getContentHash().isBlank())
+                .anyMatch();
     }
 
     @Test
     @DisplayName("Should expose Knowledge context through Forge infrastructure API")
     void givenValidContextRequest_whenPostContext_thenReturnContextBundleFromSqliteInventory() throws Exception {
-        seedKnowledgeInventory();
+        this.testManager.sqlite()
+                .create()
+                .to(INVENTORY_BUILD)
+                .to(KNOWLEDGE_SOURCE)
+                .to(KNOWLEDGE_FILE)
+                .build();
 
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.knowledgeContext())
@@ -91,15 +106,20 @@ class KnowledgeInfrastructureContextIT extends AbstractForgeAiIT {
     @Test
     @DisplayName("Should reject blank Knowledge context query before gateway")
     void givenBlankContextQuery_whenPostContext_thenReturnBadRequest() throws Exception {
-        seedKnowledgeInventory();
+        this.testManager.sqlite()
+                .create()
+                .to(INVENTORY_BUILD)
+                .to(KNOWLEDGE_SOURCE)
+                .to(KNOWLEDGE_FILE)
+                .build();
 
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.knowledgeContext())
                 .withRequest("requestKnowledgeContextBlank.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
                 .expectResponse("responseKnowledgeContextBlank.json")
-                .andExpectPath(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value("CONTEXT_QUERY_INVALID"))
-                .andExpectPath(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.message").value("Context query must not be empty"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("CONTEXT_QUERY_INVALID"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("Context query must not be empty"))
                 .assertDefault();
 
         this.testManager.sqlite()
@@ -110,12 +130,17 @@ class KnowledgeInfrastructureContextIT extends AbstractForgeAiIT {
                 .assertEntity();
     }
 
-    private void seedKnowledgeInventory() {
+    @Test
+    @DisplayName("Should expose empty inventory diagnostic through Knowledge context endpoint")
+    void givenEmptyInventory_whenPostContext_thenReturnDiagnosticWithoutPersistingRows() throws Exception {
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.knowledgeContextDynamicResponse())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.context").isEmpty())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics[0].code").value("INVENTORY_EMPTY"))
+                .assertDefault();
+
         this.testManager.sqlite()
-                .create()
-                .to(INVENTORY_BUILD)
-                .to(KNOWLEDGE_SOURCE)
-                .to(KNOWLEDGE_FILE)
-                .build();
+                .get(KnowledgeFileEntity.class)
+                .hasSize(0);
     }
 }

@@ -19,6 +19,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 @Component
@@ -121,19 +125,15 @@ public class KnowledgeSqliteMapper {
 
     public KnowledgeContextItemView contextItem(final KnowledgeFileEntity file, final boolean includeContent) {
         final KnowledgeSourceMetadata metadata = metadata(file.getMetadataJson());
-        final String content = includeContent ? """
-                SQLite indexed file
-                sourceId: %s
-                path: %s
-                hash: %s""".formatted(file.getSourceId(), file.getRelativePath(), file.getContentHash()) : null;
+        final ContextSnippet snippet = this.snippet(file, metadata, includeContent);
         return new KnowledgeContextItemView(
                 file.getSourceId(),
                 file.getDisplayName(),
                 file.getGroup(),
                 file.getRelativePath(),
-                1,
-                40,
-                content,
+                snippet.lineStart(),
+                snippet.lineEnd(),
+                snippet.content(),
                 "path",
                 "Matched query against SQLite inventory metadata",
                 1.0,
@@ -174,5 +174,45 @@ public class KnowledgeSqliteMapper {
                     .ownsBusinessAreas(List.of())
                     .build();
         }
+    }
+
+    private ContextSnippet snippet(final KnowledgeFileEntity file,
+                                   final KnowledgeSourceMetadata metadata,
+                                   final boolean includeContent) {
+        if (!includeContent) {
+            return new ContextSnippet(1, 40, null);
+        }
+        final List<String> lines = this.readLines(file, metadata);
+        if (!lines.isEmpty()) {
+            final int lineEnd = Math.min(lines.size(), 40);
+            return new ContextSnippet(1, lineEnd, String.join("\n", lines.subList(0, lineEnd)));
+        }
+        return new ContextSnippet(1, 40, """
+                SQLite indexed file
+                sourceId: %s
+                path: %s
+                hash: %s""".formatted(file.getSourceId(), file.getRelativePath(), file.getContentHash()));
+    }
+
+    private List<String> readLines(final KnowledgeFileEntity file, final KnowledgeSourceMetadata metadata) {
+        final String root = metadata.getAbsoluteRoot() == null || metadata.getAbsoluteRoot().isBlank()
+                ? file.getSourcePath()
+                : metadata.getAbsoluteRoot();
+        if (root == null || root.isBlank() || file.getAbsolutePath() == null || file.getAbsolutePath().isBlank()) {
+            return List.of();
+        }
+        try {
+            final Path rootPath = Path.of(root).toRealPath().normalize();
+            final Path filePath = Path.of(file.getAbsolutePath()).toRealPath().normalize();
+            if (!filePath.startsWith(rootPath)) {
+                return List.of();
+            }
+            return Files.readAllLines(filePath, StandardCharsets.UTF_8);
+        } catch (IOException exception) {
+            return List.of();
+        }
+    }
+
+    private record ContextSnippet(Integer lineStart, Integer lineEnd, String content) {
     }
 }

@@ -7,6 +7,7 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContex
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextSourceView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeDiagnosticView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGateway;
@@ -21,8 +22,8 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSource
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
 import com.sitionix.forgeai.domain.props.ServiceConfigView;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
-import com.sitionix.forgeai.infrastructure.knowledgesqlite.entity.KnowledgeInventoryBuildEntity;
 import com.sitionix.forgeai.infrastructure.knowledgesqlite.entity.KnowledgeFileEntity;
+import com.sitionix.forgeai.infrastructure.knowledgesqlite.entity.KnowledgeInventoryBuildEntity;
 import com.sitionix.forgeai.infrastructure.knowledgesqlite.entity.KnowledgeSourceEntity;
 import com.sitionix.forgeai.infrastructure.knowledgesqlite.mapper.KnowledgeSqliteMapper;
 import com.sitionix.forgeai.infrastructure.knowledgesqlite.repository.KnowledgeSqliteRepository;
@@ -30,14 +31,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.Instant;
 
 @Component
 @RequiredArgsConstructor
@@ -129,6 +130,15 @@ public class SqliteKnowledgeGateway implements KnowledgeGateway {
             throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID, "Context query must not be empty");
         }
         final int maxChars = request.maxChars() == null ? 12000 : request.maxChars();
+        if (this.repository.latestBuild().isEmpty()) {
+            return new KnowledgeContextView(
+                    request.query(),
+                    List.of(),
+                    List.of(),
+                    new KnowledgeContextBudgetView(maxChars, 0, false),
+                    List.of(new KnowledgeDiagnosticView("INVENTORY_EMPTY", "Inventory is empty. Build inventory first."))
+            );
+        }
         final int maxItems = request.maxItems() == null ? 12 : request.maxItems();
         final boolean includeContent = request.includeContent() == null || request.includeContent();
         final List<KnowledgeContextItemView> context = new ArrayList<>();

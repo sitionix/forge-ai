@@ -52,6 +52,18 @@ public class ControllerEndpoint {
         );
     }
 
+    public static Endpoint<KnowledgeContextRequest, KnowledgeContextView> knowledgeContextDynamicResponse() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/knowledge/context",
+                HttpMethod.POST,
+                KnowledgeContextRequest.class,
+                KnowledgeContextView.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestKnowledgeContext.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
     public static Endpoint<KnowledgeInventoryBuildRequest, KnowledgeInventoryBuildResultView> knowledgeInventoryBuild() {
         return Endpoint.createContract(
                 "/api/v1/infrastructure/knowledge/inventory/build",
