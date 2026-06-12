@@ -87,7 +87,7 @@ class KnowledgeInfrastructureContextIT extends AbstractForgeAiIT {
 
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.knowledgeInventoryStatus())
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("COMPLETED"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("READY"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.sourceCount").value(1))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.fileCount").value(1))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.skippedCount").value(0))
