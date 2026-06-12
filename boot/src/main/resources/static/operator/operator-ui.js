@@ -2019,7 +2019,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       renderKnowledgeStatusCard('Knowledge', data.status || 'UNKNOWN', data.module || 'knowledge'),
       renderKnowledgeStatusCard('Catalog', data.catalog?.configured ? 'configured' : 'missing', data.catalog?.type || '-'),
       renderKnowledgeStatusCard('Sources', String(sourceCount), 'catalog entries'),
-      renderKnowledgeStatusCard('Inventory', `${inventory.fileCount ?? 0} files`, `${inventory.sourceCount ?? 0} sources`),
+      renderKnowledgeStatusCard('Inventory', `${inventory.fileCount ?? 0} files`, `${inventory.sourceCount ?? 0} sources, ${inventory.skippedCount ?? 0} skipped`),
       renderKnowledgeStatusCard('Retrieval', 'keyword context', data.search?.mode || 'keyword')
     ].join('');
     const notice = document.getElementById('knowledgeStatusMessage');
@@ -2098,6 +2098,45 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         ${renderKnowledgeStat('sources', data.sourceCount ?? 0)}
         ${renderKnowledgeStat('files', data.fileCount ?? 0)}
         ${renderKnowledgeStat('skipped', data.skippedCount ?? 0)}
+      </div>
+      ${renderKnowledgeSkippedBreakdown(data.skippedBreakdown)}
+    `;
+  }
+
+  function renderKnowledgeSkippedBreakdown(breakdown) {
+    if (!breakdown || !breakdown.byReason) {
+      return `
+        <div class="knowledge-skipped-breakdown">
+          <div class="knowledge-breakdown-head">
+            <strong>Skipped breakdown</strong>
+          </div>
+          <p class="knowledge-breakdown-empty">No skipped breakdown available. Rebuild inventory.</p>
+          <p class="knowledge-breakdown-note">Skipped means files or paths ignored by inventory rules, not already processed files.</p>
+        </div>
+      `;
+    }
+    const rows = Object.entries(breakdown.byReason)
+      .filter(([, count]) => Number(count) > 0)
+      .sort(([, left], [, right]) => Number(right) - Number(left));
+    const content = rows.length > 0
+      ? `<div class="knowledge-breakdown-list">
+          ${rows.map(([reason, count]) => `
+            <div class="knowledge-breakdown-row">
+              <span>${escapeHtml(reason)}</span>
+              <strong>${escapeHtml(count)}</strong>
+            </div>
+          `).join('')}
+        </div>`
+      : '<p class="knowledge-breakdown-empty">No skipped files in the latest inventory build.</p>';
+    return `
+      <div class="knowledge-skipped-breakdown">
+        <div class="knowledge-breakdown-head">
+          <strong>Skipped breakdown</strong>
+          <span>${escapeHtml(breakdown.total ?? 0)} total</span>
+        </div>
+        ${content}
+        <p class="knowledge-breakdown-note">Skipped means files or paths ignored by inventory rules, not already processed files.</p>
+        <p class="knowledge-breakdown-note">Skipped items were seen during inventory build but not indexed because they matched exclude rules, were too large, binary, unsafe, unreadable, or outside configured sources.</p>
       </div>
     `;
   }

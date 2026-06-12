@@ -34,6 +34,9 @@ public class KnowledgeInventoryBuildEntity {
     @Column(name = "skipped_count", nullable = false)
     private Integer skippedCount;
 
+    @Column(name = "skipped_reasons_json")
+    private String skippedReasonsJson;
+
     @Column(name = "error_message")
     private String errorMessage;
 }

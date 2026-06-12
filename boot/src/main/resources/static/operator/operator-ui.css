@@ -2018,6 +2018,64 @@ body.sidebar-collapsed .sidebar-link {
   font-size: 14px;
 }
 
+.knowledge-skipped-breakdown {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid rgba(27, 36, 31, 0.1);
+  padding: 0 18px 18px;
+}
+
+.knowledge-breakdown-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.knowledge-breakdown-head strong,
+.knowledge-breakdown-head span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.knowledge-breakdown-list {
+  display: grid;
+  gap: 6px;
+}
+
+.knowledge-breakdown-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(27, 36, 31, 0.09);
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.knowledge-breakdown-row span {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.knowledge-breakdown-row strong {
+  font-size: 12px;
+}
+
+.knowledge-breakdown-empty,
+.knowledge-breakdown-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .knowledge-results {
   display: grid;
   gap: 12px;

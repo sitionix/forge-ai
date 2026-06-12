@@ -15,8 +15,10 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInvent
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchResultView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSkippedBreakdownView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSourcesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeViews;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.URI;
@@ -27,6 +29,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -59,7 +62,7 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
 
     @Override
     public KnowledgeStatusView status() {
-        return this.convert(this.send("GET", "/api/v1/knowledge/status", null), KnowledgeStatusView.class);
+        return this.normalize(this.convert(this.send("GET", "/api/v1/knowledge/status", null), KnowledgeStatusView.class));
     }
 
     @Override
@@ -69,12 +72,12 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
 
     @Override
     public KnowledgeInventoryBuildResultView buildInventory(final KnowledgeInventoryBuildRequest request) {
-        return this.convert(this.send("POST", "/api/v1/knowledge/inventory/build", normalizeBuildRequest(request)), KnowledgeInventoryBuildResultView.class);
+        return this.normalize(this.convert(this.send("POST", "/api/v1/knowledge/inventory/build", normalizeBuildRequest(request)), KnowledgeInventoryBuildResultView.class));
     }
 
     @Override
     public KnowledgeInventoryStatusView inventoryStatus() {
-        return this.convert(this.send("GET", "/api/v1/knowledge/inventory/status", null), KnowledgeInventoryStatusView.class);
+        return this.normalize(this.convert(this.send("GET", "/api/v1/knowledge/inventory/status", null), KnowledgeInventoryStatusView.class));
     }
 
     @Override
@@ -163,6 +166,71 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
                 request == null || request.sourceIds() == null ? List.of() : request.sourceIds(),
                 request == null || request.groups() == null ? List.of() : request.groups(),
                 request != null && Boolean.TRUE.equals(request.force())
+        );
+    }
+
+    private KnowledgeStatusView normalize(final KnowledgeStatusView view) {
+        if (view == null || view.inventory() == null) {
+            return view;
+        }
+        final KnowledgeViews.KnowledgeInventorySummaryView inventory = view.inventory();
+        return new KnowledgeStatusView(
+                view.status(),
+                view.module(),
+                view.catalog(),
+                new KnowledgeViews.KnowledgeInventorySummaryView(
+                        inventory.implemented(),
+                        inventory.status(),
+                        inventory.lastBuildAt(),
+                        inventory.sourceCount(),
+                        inventory.fileCount(),
+                        inventory.skippedCount(),
+                        this.normalize(inventory.skippedBreakdown(), inventory.skippedCount())
+                ),
+                view.search(),
+                view.vectorStore(),
+                view.rag(),
+                view.message()
+        );
+    }
+
+    private KnowledgeInventoryBuildResultView normalize(final KnowledgeInventoryBuildResultView view) {
+        if (view == null) {
+            return null;
+        }
+        return new KnowledgeInventoryBuildResultView(
+                view.status(),
+                view.sourceCount(),
+                view.fileCount(),
+                view.skippedCount(),
+                this.normalize(view.skippedBreakdown(), view.skippedCount()),
+                view.startedAt(),
+                view.completedAt()
+        );
+    }
+
+    private KnowledgeInventoryStatusView normalize(final KnowledgeInventoryStatusView view) {
+        if (view == null) {
+            return null;
+        }
+        return new KnowledgeInventoryStatusView(
+                view.status(),
+                view.lastBuildAt(),
+                view.sourceCount(),
+                view.fileCount(),
+                view.skippedCount(),
+                this.normalize(view.skippedBreakdown(), view.skippedCount())
+        );
+    }
+
+    private KnowledgeSkippedBreakdownView normalize(final KnowledgeSkippedBreakdownView breakdown,
+                                                    final Integer skippedCount) {
+        if (breakdown == null) {
+            return new KnowledgeSkippedBreakdownView(skippedCount == null ? 0 : skippedCount, Map.of());
+        }
+        return new KnowledgeSkippedBreakdownView(
+                breakdown.total() == null ? skippedCount == null ? 0 : skippedCount : breakdown.total(),
+                breakdown.byReason() == null ? Map.of() : breakdown.byReason()
         );
     }
 

@@ -5,6 +5,7 @@ public record KnowledgeInventoryStatusView(
         String lastBuildAt,
         Integer sourceCount,
         Integer fileCount,
-        Integer skippedCount
+        Integer skippedCount,
+        KnowledgeSkippedBreakdownView skippedBreakdown
 ) {
 }

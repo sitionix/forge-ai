@@ -29,6 +29,21 @@ public class KnowledgeSqliteSchemaInitializer {
                     sql.execute(statement);
                 }
             }
+            this.addColumnIfMissing(sql, "inventory_builds", "skipped_reasons_json", "TEXT");
         }
+    }
+
+    private void addColumnIfMissing(final Statement sql,
+                                    final String table,
+                                    final String column,
+                                    final String declaration) throws Exception {
+        try (var columns = sql.executeQuery("PRAGMA table_info(%s)".formatted(table))) {
+            while (columns.next()) {
+                if (column.equals(columns.getString("name"))) {
+                    return;
+                }
+            }
+        }
+        sql.execute("ALTER TABLE %s ADD COLUMN %s %s".formatted(table, column, declaration));
     }
 }

@@ -44,9 +44,12 @@ async def status() -> Dict[str, Any]:
         "catalog": {"configured": config is not None, "type": config.catalog.type if config else None},
         "inventory": {
             "implemented": True,
+            "status": inventory.get("status"),
             "lastBuildAt": inventory.get("lastBuildAt"),
             "sourceCount": inventory.get("sourceCount", 0),
             "fileCount": inventory.get("fileCount", 0),
+            "skippedCount": inventory.get("skippedCount", 0),
+            "skippedBreakdown": inventory.get("skippedBreakdown", {"total": 0, "byReason": {}}),
         },
         "search": {"implemented": True, "mode": "keyword"},
         "vectorStore": {"implemented": False, "enabled": False},

@@ -44,6 +44,8 @@ class KnowledgeInfrastructureContextIT extends AbstractForgeAiIT {
                 .ping(ControllerEndpoint.knowledgeInventoryBuild())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("COMPLETED"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.sourceCount").value(1))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.skippedBreakdown.total").exists())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.skippedBreakdown.byReason").exists())
                 .assertDefault();
 
         this.testManager.sqlite()
@@ -53,6 +55,7 @@ class KnowledgeInfrastructureContextIT extends AbstractForgeAiIT {
                 .andExpected(build -> "COMPLETED".equals(build.getStatus()))
                 .andExpected(build -> Integer.valueOf(1).equals(build.getSourceCount()))
                 .andExpected(build -> build.getFileCount() != null && build.getFileCount() > 0)
+                .andExpected(build -> build.getSkippedReasonsJson() != null && build.getSkippedReasonsJson().contains("\"total\""))
                 .assertEntity();
 
         this.testManager.sqlite()
@@ -70,6 +73,27 @@ class KnowledgeInfrastructureContextIT extends AbstractForgeAiIT {
                 .andExpected(file -> file.getRelativePath() != null && file.getRelativePath().endsWith(".java"))
                 .andExpected(file -> file.getContentHash() != null && !file.getContentHash().isBlank())
                 .anyMatch();
+    }
+
+    @Test
+    @DisplayName("Should expose Knowledge inventory status with persisted skipped breakdown")
+    void givenSeededInventory_whenGetInventoryStatus_thenReturnSkippedBreakdownFromSqlite() throws Exception {
+        this.testManager.sqlite()
+                .create()
+                .to(INVENTORY_BUILD)
+                .to(KNOWLEDGE_SOURCE)
+                .to(KNOWLEDGE_FILE)
+                .build();
+
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.knowledgeInventoryStatus())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("COMPLETED"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.sourceCount").value(1))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.fileCount").value(1))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.skippedCount").value(0))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.skippedBreakdown.total").value(0))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.skippedBreakdown.byReason").isMap())
+                .assertDefault();
     }
 
     @Test

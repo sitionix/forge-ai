@@ -19,6 +19,22 @@ The generated `config/knowledge-sources.yaml` is local and gitignored. It points
 
 Inventory metadata is stored in `infrastructure/knowledge/var/knowledge.sqlite`. Knowledge never mutates source files.
 
+Inventory builds persist indexed file metadata and a skipped summary only. `fileCount` is the number of indexed files. `skippedCount` is the number of files or paths seen during the build but not indexed because inventory rules or safety checks rejected them. Skipped files are not errors by default.
+
+Skipped reasons are:
+
+- `EXCLUDED_BY_PATTERN`
+- `NOT_INCLUDED`
+- `TOO_LARGE`
+- `BINARY`
+- `UNREADABLE`
+- `UNSAFE_PATH`
+- `SYMLINK_OUTSIDE_ROOT`
+- `MISSING_SOURCE_ROOT`
+- `UNKNOWN`
+
+Missing source roots are catalog/configured roots that do not exist locally. They are counted in the skipped breakdown as `MISSING_SOURCE_ROOT`; no source files are created or changed.
+
 ## APIs
 
 - `POST /api/v1/knowledge/search` returns keyword/path matches.

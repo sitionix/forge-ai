@@ -14,5 +14,6 @@ public class KnowledgeInventoryBuildEntity {
     private Integer sourceCount;
     private Integer fileCount;
     private Integer skippedCount;
+    private String skippedReasonsJson;
     private String errorMessage;
 }

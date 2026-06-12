@@ -40,8 +40,8 @@ public class KnowledgeSqliteRepository {
                     this.insertFile(connection, file);
                 }
                 this.update(connection, """
-                                INSERT INTO inventory_builds(started_at, completed_at, status, source_count, file_count, skipped_count, error_message)
-                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                                INSERT INTO inventory_builds(started_at, completed_at, status, source_count, file_count, skipped_count, skipped_reasons_json, error_message)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                                 """,
                         startedAt,
                         completedAt,
@@ -49,6 +49,7 @@ public class KnowledgeSqliteRepository {
                         sources.size(),
                         files.size(),
                         skipped,
+                        "{\"total\":%d,\"byReason\":{}}".formatted(skipped),
                         null
                 );
                 final KnowledgeInventoryBuildEntity build = this.latestBuild(connection)
@@ -156,7 +157,7 @@ public class KnowledgeSqliteRepository {
 
     private Optional<KnowledgeInventoryBuildEntity> latestBuild(final Connection connection) {
         return this.query(connection, """
-                        SELECT id, started_at, completed_at, status, source_count, file_count, skipped_count, error_message
+                        SELECT id, started_at, completed_at, status, source_count, file_count, skipped_count, skipped_reasons_json, error_message
                         FROM inventory_builds
                         ORDER BY id DESC
                         LIMIT 1
@@ -169,6 +170,7 @@ public class KnowledgeSqliteRepository {
                         rs.getInt("source_count"),
                         rs.getInt("file_count"),
                         rs.getInt("skipped_count"),
+                        rs.getString("skipped_reasons_json"),
                         rs.getString("error_message")
                 )).stream().findFirst();
     }

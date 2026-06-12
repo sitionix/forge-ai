@@ -8,6 +8,7 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesV
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchResultView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSkippedBreakdownView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSourcesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeViews;
@@ -24,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -39,9 +41,12 @@ public class KnowledgeSqliteMapper {
                 new KnowledgeViews.KnowledgeCatalogView(true, "sqlite"),
                 new KnowledgeViews.KnowledgeInventorySummaryView(
                         true,
+                        build == null ? "EMPTY" : "COMPLETED".equals(build.getStatus()) ? "READY" : build.getStatus(),
                         build == null ? null : build.getCompletedAt(),
                         build == null ? 0 : build.getSourceCount(),
-                        fileCount
+                        fileCount,
+                        build == null ? 0 : build.getSkippedCount(),
+                        this.skippedBreakdown(build)
                 ),
                 new KnowledgeViews.KnowledgeFeatureView(true, true, "keyword"),
                 new KnowledgeViews.KnowledgeFeatureView(false, false, null),
@@ -61,13 +66,14 @@ public class KnowledgeSqliteMapper {
 
     public KnowledgeInventoryBuildResultView buildResult(final KnowledgeInventoryBuildEntity build) {
         if (build == null) {
-            return new KnowledgeInventoryBuildResultView("EMPTY", 0, 0, 0, null, null);
+            return new KnowledgeInventoryBuildResultView("EMPTY", 0, 0, 0, this.emptySkippedBreakdown(0), null, null);
         }
         return new KnowledgeInventoryBuildResultView(
                 build.getStatus(),
                 build.getSourceCount(),
                 build.getFileCount(),
                 build.getSkippedCount(),
+                this.skippedBreakdown(build),
                 build.getStartedAt(),
                 build.getCompletedAt()
         );
@@ -75,14 +81,15 @@ public class KnowledgeSqliteMapper {
 
     public KnowledgeInventoryStatusView inventoryStatus(final KnowledgeInventoryBuildEntity build) {
         if (build == null) {
-            return new KnowledgeInventoryStatusView("EMPTY", null, 0, 0, 0);
+            return new KnowledgeInventoryStatusView("EMPTY", null, 0, 0, 0, this.emptySkippedBreakdown(0));
         }
         return new KnowledgeInventoryStatusView(
                 "COMPLETED".equals(build.getStatus()) ? "READY" : build.getStatus(),
                 build.getCompletedAt(),
                 build.getSourceCount(),
                 build.getFileCount(),
-                build.getSkippedCount()
+                build.getSkippedCount(),
+                this.skippedBreakdown(build)
         );
     }
 
@@ -176,6 +183,27 @@ public class KnowledgeSqliteMapper {
         }
     }
 
+    private KnowledgeSkippedBreakdownView skippedBreakdown(final KnowledgeInventoryBuildEntity build) {
+        if (build == null) {
+            return this.emptySkippedBreakdown(0);
+        }
+        if (build.getSkippedReasonsJson() == null || build.getSkippedReasonsJson().isBlank()) {
+            return this.emptySkippedBreakdown(build.getSkippedCount());
+        }
+        try {
+            final SkippedBreakdownJson json = this.objectMapper.readValue(build.getSkippedReasonsJson(), SkippedBreakdownJson.class);
+            final Map<String, Integer> byReason = json.byReason() == null ? Map.of() : json.byReason();
+            final Integer total = json.total() == null ? byReason.values().stream().mapToInt(Integer::intValue).sum() : json.total();
+            return new KnowledgeSkippedBreakdownView(total, byReason);
+        } catch (Exception exception) {
+            return this.emptySkippedBreakdown(build.getSkippedCount());
+        }
+    }
+
+    private KnowledgeSkippedBreakdownView emptySkippedBreakdown(final Integer skippedCount) {
+        return new KnowledgeSkippedBreakdownView(skippedCount == null ? 0 : skippedCount, Map.of());
+    }
+
     private ContextSnippet snippet(final KnowledgeFileEntity file,
                                    final KnowledgeSourceMetadata metadata,
                                    final boolean includeContent) {
@@ -214,5 +242,8 @@ public class KnowledgeSqliteMapper {
     }
 
     private record ContextSnippet(Integer lineStart, Integer lineEnd, String content) {
+    }
+
+    private record SkippedBreakdownJson(Integer total, Map<String, Integer> byReason) {
     }
 }

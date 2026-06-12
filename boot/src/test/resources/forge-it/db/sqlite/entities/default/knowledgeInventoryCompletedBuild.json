@@ -6,5 +6,6 @@
   "sourceCount": 1,
   "fileCount": 1,
   "skippedCount": 0,
+  "skippedReasonsJson": "{\"total\":0,\"byReason\":{}}",
   "errorMessage": null
 }

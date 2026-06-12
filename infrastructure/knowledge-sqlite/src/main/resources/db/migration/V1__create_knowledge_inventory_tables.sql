@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS inventory_builds (
     source_count INTEGER NOT NULL,
     file_count INTEGER NOT NULL,
     skipped_count INTEGER NOT NULL,
+    skipped_reasons_json TEXT,
     error_message TEXT
 );
 

@@ -19,6 +19,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -32,7 +33,7 @@ class HttpKnowledgeGatewayTest {
     @Test
     void statusProxyMapsSuccess() {
         final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
-                {"status":"UP","module":"knowledge","catalog":{"configured":true,"type":"service_catalog"},"inventory":{"implemented":true,"sourceCount":1,"fileCount":2},"search":{"implemented":true,"mode":"keyword"},"vectorStore":{"implemented":false,"enabled":false},"rag":{"implemented":false,"enabled":false}}
+                {"status":"UP","module":"knowledge","catalog":{"configured":true,"type":"service_catalog"},"inventory":{"implemented":true,"status":"READY","sourceCount":1,"fileCount":2,"skippedCount":7,"skippedBreakdown":{"total":7,"byReason":{"EXCLUDED_BY_PATTERN":5,"BINARY":2}}},"search":{"implemented":true,"mode":"keyword"},"vectorStore":{"implemented":false,"enabled":false},"rag":{"implemented":false,"enabled":false}}
                 """));
 
         final var status = gateway.status();
@@ -40,6 +41,8 @@ class HttpKnowledgeGatewayTest {
         assertThat(status.status()).isEqualTo("UP");
         assertThat(status.catalog().configured()).isTrue();
         assertThat(status.search().mode()).isEqualTo("keyword");
+        assertThat(status.inventory().skippedBreakdown().total()).isEqualTo(7);
+        assertThat(status.inventory().skippedBreakdown().byReason()).containsEntry("EXCLUDED_BY_PATTERN", 5);
     }
 
     @Test
@@ -57,13 +60,28 @@ class HttpKnowledgeGatewayTest {
     @Test
     void inventoryBuildProxyMapsSuccess() {
         final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
-                {"status":"COMPLETED","sourceCount":1,"fileCount":3,"skippedCount":2,"startedAt":"a","completedAt":"b"}
+                {"status":"COMPLETED","sourceCount":1,"fileCount":3,"skippedCount":2,"skippedBreakdown":{"total":2,"byReason":{"NOT_INCLUDED":1,"TOO_LARGE":1}},"startedAt":"a","completedAt":"b"}
                 """));
 
         final var result = gateway.buildInventory(new KnowledgeInventoryBuildRequest(List.of(), List.of(), false));
 
         assertThat(result.status()).isEqualTo("COMPLETED");
         assertThat(result.fileCount()).isEqualTo(3);
+        assertThat(result.skippedBreakdown().total()).isEqualTo(2);
+        assertThat(result.skippedBreakdown().byReason()).isEqualTo(Map.of("NOT_INCLUDED", 1, "TOO_LARGE", 1));
+    }
+
+    @Test
+    void inventoryStatusProxyDefaultsMissingSkippedBreakdown() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
+                {"status":"READY","lastBuildAt":"b","sourceCount":1,"fileCount":3,"skippedCount":2}
+                """));
+
+        final var result = gateway.inventoryStatus();
+
+        assertThat(result.status()).isEqualTo("READY");
+        assertThat(result.skippedBreakdown().total()).isEqualTo(2);
+        assertThat(result.skippedBreakdown().byReason()).isEmpty();
     }
 
     @Test

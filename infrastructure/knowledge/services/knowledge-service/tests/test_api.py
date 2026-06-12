@@ -13,6 +13,8 @@ def test_health_and_status_endpoint_reports_vector_and_rag_not_implemented(tmp_p
 
     assert payload["status"] == "UP"
     assert payload["catalog"]["configured"] is False
+    assert payload["inventory"]["skippedCount"] == 0
+    assert payload["inventory"]["skippedBreakdown"] == {"total": 0, "byReason": {}}
     assert payload["vectorStore"]["implemented"] is False
     assert payload["rag"]["implemented"] is False
 
