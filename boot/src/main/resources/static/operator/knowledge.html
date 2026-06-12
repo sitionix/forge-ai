@@ -7,32 +7,32 @@
   <link rel="stylesheet" href="./operator-ui.css">
 </head>
 <body data-page="knowledge">
-  <main class="shell">
-    <header class="hero">
+  <main class="shell knowledge-shell">
+    <header class="hero knowledge-hero">
       <div>
         <p class="eyebrow">Infrastructure</p>
         <h1>Knowledge</h1>
-        <p class="muted">Catalog-driven local source inventory and keyword search.</p>
+        <p class="muted">Catalog-driven local source inventory, keyword search, and retrieval context.</p>
       </div>
       <div class="hero-actions">
         <button id="refreshKnowledge" class="button">Refresh</button>
       </div>
     </header>
 
-    <section class="panel">
+    <section class="panel knowledge-runtime-panel">
       <div class="panel-head">
         <div>
           <h2>Runtime</h2>
-          <p>Forge AI proxies to Knowledge. Browser calls stay inside Forge AI.</p>
+          <p>Forge AI proxies Knowledge endpoints; browser calls stay inside Forge AI.</p>
         </div>
         <span id="knowledgeUpdated" class="muted">loading</span>
       </div>
-      <div id="knowledgeStatusCards" class="jarvis-status-grid"></div>
-      <div id="knowledgeStatusMessage" class="notice-box">Knowledge uses service catalog as source of truth. No embeddings/vector DB in v1.</div>
+      <div id="knowledgeStatusCards" class="knowledge-status-grid"></div>
+      <div id="knowledgeStatusMessage" class="notice-box knowledge-notice">Knowledge uses service catalog as source of truth. No embeddings/vector DB in v1.</div>
       <div id="knowledgeError" class="error-box hidden"></div>
     </section>
 
-    <section class="panel">
+    <section class="panel knowledge-panel">
       <div class="panel-head compact">
         <div>
           <h2>Sources</h2>
@@ -47,37 +47,36 @@
               <th>label</th>
               <th>group</th>
               <th>path</th>
-              <th>rootExists</th>
-              <th>tags</th>
+              <th>root</th>
             </tr>
           </thead>
           <tbody id="knowledgeSourcesBody"></tbody>
         </table>
       </div>
-      <pre id="knowledgeDiagnostics" class="stacktrace">No diagnostics.</pre>
+      <div id="knowledgeDiagnostics" class="knowledge-diagnostics">No diagnostics.</div>
     </section>
 
-    <div class="jarvis-grid">
-      <section class="panel">
+    <div class="knowledge-main-grid">
+      <section class="panel knowledge-panel">
         <div class="panel-head compact">
           <div>
             <h2>Inventory</h2>
-            <p>SQLite metadata only. Source files are not modified.</p>
+            <p>SQLite metadata only. Skipped means ignored by inventory rules; source files are not modified.</p>
           </div>
           <button id="buildKnowledgeInventory" class="button">Build inventory</button>
         </div>
         <div id="knowledgeInventoryStatus"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel knowledge-panel">
         <div class="panel-head compact">
           <div>
             <h2>Search</h2>
             <p>Keyword and path search over indexed files.</p>
           </div>
         </div>
-        <form id="knowledgeSearchForm" class="jarvis-command-form">
-          <label class="field">
+        <form id="knowledgeSearchForm" class="jarvis-command-form knowledge-inline-form">
+          <label class="field knowledge-query-field">
             <span>Query</span>
             <input id="knowledgeSearchQuery" type="text" placeholder="JarvisGateway" autocomplete="off">
           </label>
@@ -90,13 +89,39 @@
       </section>
     </div>
 
-    <section class="panel">
+    <section class="panel knowledge-panel">
       <div class="panel-head compact">
         <div>
-          <h2>Files Preview</h2>
-          <p>First indexed files from the local inventory.</p>
+          <h2>Retrieval Context</h2>
+          <p>Builds a structured snippet bundle for later model augmentation.</p>
         </div>
       </div>
+      <form id="knowledgeContextForm" class="jarvis-command-form knowledge-context-form">
+        <label class="field knowledge-context-query">
+          <span>Query</span>
+          <textarea id="knowledgeContextQuery" rows="5" placeholder="поясни як працює Jarvis"></textarea>
+        </label>
+        <label class="field knowledge-small-field">
+          <span>Max chars</span>
+          <input id="knowledgeContextMaxChars" type="number" min="1000" max="50000" step="1000" value="12000">
+        </label>
+        <label class="field knowledge-small-field">
+          <span>Max items</span>
+          <input id="knowledgeContextMaxItems" type="number" min="1" max="50" step="1" value="12">
+        </label>
+        <div class="form-actions">
+          <button id="buildKnowledgeContext" type="submit" class="button">Build Context</button>
+        </div>
+      </form>
+      <div id="knowledgeContextError" class="error-box hidden"></div>
+      <div id="knowledgeContextResults" class="jarvis-command-result"></div>
+    </section>
+
+    <details class="panel knowledge-panel knowledge-debug-panel">
+      <summary>
+        <span>Files Preview / Debug</span>
+        <small>first indexed files</small>
+      </summary>
       <div class="table-wrap">
         <table class="operator-table">
           <thead>
@@ -111,7 +136,7 @@
           <tbody id="knowledgeFilesBody"></tbody>
         </table>
       </div>
-    </section>
+    </details>
   </main>
   <script src="./operator-ui.js"></script>
 </body>

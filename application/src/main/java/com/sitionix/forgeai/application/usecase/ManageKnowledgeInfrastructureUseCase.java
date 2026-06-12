@@ -2,6 +2,8 @@ package com.sitionix.forgeai.application.usecase;
 
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGateway;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
@@ -53,5 +55,13 @@ public class ManageKnowledgeInfrastructureUseCase implements ManageKnowledgeInfr
             throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.SEARCH_QUERY_INVALID, "Search query must not be empty");
         }
         return this.knowledgeGateway.search(request);
+    }
+
+    @Override
+    public KnowledgeContextView context(final KnowledgeContextRequest request) {
+        if (request == null || request.query() == null || request.query().isBlank()) {
+            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID, "Context query must not be empty");
+        }
+        return this.knowledgeGateway.context(request);
     }
 }

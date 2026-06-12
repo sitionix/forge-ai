@@ -8,6 +8,7 @@ import com.sitionix.forgeai.domain.model.generation.GeneratedApiArtifact;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStepDoneResult;
 import com.sitionix.forgeai.domain.port.ApiArtifactGenerationPort;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,7 +36,7 @@ class ApiArtifactGenerationOrchestratorTest {
                 this.scopeContext(),
                 Map.of(),
                 Map.of(
-                        "preparation", Map.of("repository", "/Users/vladvinskevitch/Documents/Java/sitionix/app-afesox"),
+                        "preparation", Map.of("repository", "/workspace/app-afesox"),
                         "pr", Map.of("prUrl", "https://github.com/sitionix/app-afesox/pull/174")
                 )
         );
@@ -72,7 +73,7 @@ class ApiArtifactGenerationOrchestratorTest {
 
     private static final class RecordingApiArtifactGenerationPort implements ApiArtifactGenerationPort {
 
-        private final List<ApiArtifactGenerationRequest> requests = new ArrayList<>();
+        private final List<ApiArtifactGenerationRequest> requests = Collections.synchronizedList(new ArrayList<>());
 
         @Override
         public GeneratedApiArtifact generate(final ApiArtifactGenerationRequest request) {
@@ -88,7 +89,9 @@ class ApiArtifactGenerationOrchestratorTest {
         }
 
         private List<ApiArtifactGenerationRequest> requests() {
-            return List.copyOf(this.requests);
+            synchronized (this.requests) {
+                return List.copyOf(this.requests);
+            }
         }
     }
 }

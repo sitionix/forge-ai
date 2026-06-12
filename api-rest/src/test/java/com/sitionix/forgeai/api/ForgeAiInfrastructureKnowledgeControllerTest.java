@@ -6,8 +6,10 @@ import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeViews;
 import com.sitionix.forgeai.application.infrastructure.knowledge.ManageKnowledgeInfrastructure;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +18,16 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
     @Test
     void statusDelegatesToUseCase() {
         final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
-        when(useCase.status()).thenReturn(new KnowledgeStatusView("UP", "knowledge", null, null, null, null, null, null));
+        when(useCase.status()).thenReturn(new KnowledgeStatusView(
+                "UP",
+                "knowledge",
+                null,
+                null,
+                new KnowledgeViews.KnowledgeFeatureView(true, true, "keyword"),
+                null,
+                null,
+                null
+        ));
         final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
 
         final var response = controller.status();
@@ -36,6 +47,17 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
     }
 
     @Test
+    void contextDelegatesToUseCase() {
+        final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
+        final KnowledgeContextRequest request = new KnowledgeContextRequest("query", java.util.List.of(), java.util.List.of(), 12000, 12, true);
+        final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
+
+        controller.context(request);
+
+        org.mockito.Mockito.verify(useCase).context(request);
+    }
+
+    @Test
     void knowledgeUnavailableMapsControlledError() {
         final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(mock(ManageKnowledgeInfrastructure.class));
 
@@ -52,6 +74,16 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
 
         final var response = controller.handleKnowledgeGatewayException(
                 new KnowledgeGatewayException(KnowledgeGatewayErrorCode.SEARCH_QUERY_INVALID, "Search query must not be empty"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+    }
+
+    @Test
+    void contextValidationMapsBadRequest() {
+        final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(mock(ManageKnowledgeInfrastructure.class));
+
+        final var response = controller.handleKnowledgeGatewayException(
+                new KnowledgeGatewayException(KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID, "Context query must not be empty"));
 
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }

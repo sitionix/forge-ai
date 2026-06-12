@@ -1,0 +1,7 @@
+services:
+  forge-ai-mongo:
+    image: mongo:7.0
+    ports:
+      - "27019:27017"
+    environment:
+      MONGO_INITDB_DATABASE: forge_ai

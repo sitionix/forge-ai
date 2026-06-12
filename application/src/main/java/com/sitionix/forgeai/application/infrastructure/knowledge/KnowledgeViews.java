@@ -11,7 +11,15 @@ public final class KnowledgeViews {
     public record KnowledgeCatalogView(Boolean configured, String type) {
     }
 
-    public record KnowledgeInventorySummaryView(Boolean implemented, String lastBuildAt, Integer sourceCount, Integer fileCount) {
+    public record KnowledgeInventorySummaryView(
+            Boolean implemented,
+            String status,
+            String lastBuildAt,
+            Integer sourceCount,
+            Integer fileCount,
+            Integer skippedCount,
+            KnowledgeSkippedBreakdownView skippedBreakdown
+    ) {
     }
 
     public record KnowledgeFeatureView(Boolean implemented, Boolean enabled, String mode) {

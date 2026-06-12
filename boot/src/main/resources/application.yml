@@ -6,6 +6,9 @@ server:
 spring:
   config:
     import: optional:classpath:services.yaml,optional:classpath:agent.yml,optional:classpath:instructions.yaml,optional:classpath:lane-strategies.yml
+  docker:
+    compose:
+      file: compose.yaml
   mvc:
     async:
       request-timeout: -1
@@ -55,6 +58,7 @@ forge:
     infrastructure:
       knowledge:
         enabled: true
+        mode: http
         base-url: http://127.0.0.1:7081
         connect-timeout: 2s
         read-timeout: 120s

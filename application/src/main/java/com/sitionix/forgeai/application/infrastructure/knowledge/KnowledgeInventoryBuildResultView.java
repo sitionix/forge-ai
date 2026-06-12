@@ -5,6 +5,7 @@ public record KnowledgeInventoryBuildResultView(
         Integer sourceCount,
         Integer fileCount,
         Integer skippedCount,
+        KnowledgeSkippedBreakdownView skippedBreakdown,
         String startedAt,
         String completedAt
 ) {

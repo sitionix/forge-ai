@@ -2,7 +2,7 @@
 
 ## Repository
 
-- Path: `/home/chekoteela/Documents/java/Sitionix/forge-ai`
+- Path: current repository checkout
 - Remote: `git@github.com:sitionix/forge-ai.git`
 - Branch used for this integration: `feature/SITIONIX-27`
 

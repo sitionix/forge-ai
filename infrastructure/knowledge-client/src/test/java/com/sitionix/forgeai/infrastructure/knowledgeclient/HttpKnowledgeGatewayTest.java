@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
@@ -18,6 +19,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -31,14 +33,16 @@ class HttpKnowledgeGatewayTest {
     @Test
     void statusProxyMapsSuccess() {
         final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
-                {"status":"UP","module":"knowledge","catalog":{"configured":true,"type":"service_catalog"},"inventory":{"implemented":true,"sourceCount":1,"fileCount":2},"search":{"implemented":true,"mode":"keyword"},"vectorStore":{"implemented":false,"enabled":false},"rag":{"implemented":false,"enabled":false}}
+                {"status":"UP","module":"knowledge","catalog":{"configured":true,"type":"service_catalog"},"inventory":{"implemented":true,"status":"READY","sourceCount":1,"fileCount":2,"skippedCount":7,"skippedBreakdown":{"total":7,"byReason":{"EXCLUDED_BY_PATTERN":5,"BINARY":2}}},"search":{"implemented":true,"mode":"keyword"},"vectorStore":{"implemented":false,"enabled":false},"rag":{"implemented":false,"enabled":false}}
                 """));
 
         final var status = gateway.status();
 
         assertThat(status.status()).isEqualTo("UP");
         assertThat(status.catalog().configured()).isTrue();
-        assertThat(status.search().get("mode")).isEqualTo("keyword");
+        assertThat(status.search().mode()).isEqualTo("keyword");
+        assertThat(status.inventory().skippedBreakdown().total()).isEqualTo(7);
+        assertThat(status.inventory().skippedBreakdown().byReason()).containsEntry("EXCLUDED_BY_PATTERN", 5);
     }
 
     @Test
@@ -56,13 +60,28 @@ class HttpKnowledgeGatewayTest {
     @Test
     void inventoryBuildProxyMapsSuccess() {
         final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
-                {"status":"COMPLETED","sourceCount":1,"fileCount":3,"skippedCount":2,"startedAt":"a","completedAt":"b"}
+                {"status":"COMPLETED","sourceCount":1,"fileCount":3,"skippedCount":2,"skippedBreakdown":{"total":2,"byReason":{"NOT_INCLUDED":1,"TOO_LARGE":1}},"startedAt":"a","completedAt":"b"}
                 """));
 
         final var result = gateway.buildInventory(new KnowledgeInventoryBuildRequest(List.of(), List.of(), false));
 
         assertThat(result.status()).isEqualTo("COMPLETED");
         assertThat(result.fileCount()).isEqualTo(3);
+        assertThat(result.skippedBreakdown().total()).isEqualTo(2);
+        assertThat(result.skippedBreakdown().byReason()).isEqualTo(Map.of("NOT_INCLUDED", 1, "TOO_LARGE", 1));
+    }
+
+    @Test
+    void inventoryStatusProxyDefaultsMissingSkippedBreakdown() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
+                {"status":"READY","lastBuildAt":"b","sourceCount":1,"fileCount":3,"skippedCount":2}
+                """));
+
+        final var result = gateway.inventoryStatus();
+
+        assertThat(result.status()).isEqualTo("READY");
+        assertThat(result.skippedBreakdown().total()).isEqualTo(2);
+        assertThat(result.skippedBreakdown().byReason()).isEmpty();
     }
 
     @Test
@@ -75,6 +94,19 @@ class HttpKnowledgeGatewayTest {
 
         assertThat(result.results()).hasSize(1);
         assertThat(result.results().getFirst().matchType()).isEqualTo("content");
+    }
+
+    @Test
+    void contextProxyMapsSuccess() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
+                {"query":"JarvisGateway","context":[{"sourceId":"svc","displayName":"Service","group":"backend","relativePath":"JarvisGateway.java","lineStart":1,"lineEnd":2,"content":"interface JarvisGateway","matchType":"content","reason":"matched content","score":1.0,"metadata":{"tags":["java"],"domainKeywords":[],"ownsBusinessAreas":[]}}],"sourcesUsed":[{"sourceId":"svc","displayName":"Service","reason":"matched"}],"budget":{"maxChars":12000,"usedChars":23,"truncated":false},"diagnostics":[]}
+                """));
+
+        final var result = gateway.context(new KnowledgeContextRequest("JarvisGateway", List.of(), List.of(), 12000, 10, true));
+
+        assertThat(result.context()).hasSize(1);
+        assertThat(result.context().getFirst().relativePath()).isEqualTo("JarvisGateway.java");
+        assertThat(result.budget().truncated()).isFalse();
     }
 
     @Test
@@ -113,6 +145,55 @@ class HttpKnowledgeGatewayTest {
                 .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
                         assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.SEARCH_QUERY_INVALID));
         assertThat(client.calls).isZero();
+    }
+
+    @Test
+    void blankContextRejectedBeforeProxying() {
+        final FakeHttpClient client = new FakeHttpClient(200, "{}");
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest(" ", List.of(), List.of(), 12000, 10, true)))
+                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID));
+        assertThat(client.calls).isZero();
+    }
+
+    @Test
+    void contextConnectionFailureMapsToUnavailable() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(new ConnectException("refused")));
+
+        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest("Jarvis", List.of(), List.of(), 12000, 10, true)))
+                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_UNAVAILABLE));
+    }
+
+    @Test
+    void contextTimeoutMapsToTimeout() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(new HttpTimeoutException("timeout")));
+
+        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest("Jarvis", List.of(), List.of(), 12000, 10, true)))
+                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_TIMEOUT));
+    }
+
+    @Test
+    void contextInvalidJsonMapsToBadResponse() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, "not-json"));
+
+        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest("Jarvis", List.of(), List.of(), 12000, 10, true)))
+                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE));
+    }
+
+    @Test
+    void nonLocalhostBaseUrlRejected() {
+        final KnowledgeClientProperties properties = new KnowledgeClientProperties();
+        properties.setBaseUrl(URI.create("http://example.com:7081"));
+        final HttpKnowledgeGateway gateway = new HttpKnowledgeGateway(new ObjectMapper(), properties, new FakeHttpClient(200, "{}"), new KnowledgeHttpErrorMapper());
+
+        assertThatThrownBy(gateway::status)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Knowledge base URL must point to localhost");
     }
 
     private static HttpKnowledgeGateway gateway(final HttpClient client) {

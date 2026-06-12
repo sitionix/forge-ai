@@ -63,6 +63,11 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>knowledge-sqlite</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
             <version>${spring.version}</version>
@@ -70,6 +75,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-docker-compose</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -85,6 +95,12 @@
         <dependency>
             <groupId>com.sitionix.forgeit</groupId>
             <artifactId>forge-it-mongodb</artifactId>
+            <version>${forgeit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.sitionix.forgeit</groupId>
+            <artifactId>forge-it-sqlite</artifactId>
             <version>${forgeit.version}</version>
             <scope>test</scope>
         </dependency>
@@ -141,6 +157,7 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
+                    <excludeDockerCompose>false</excludeDockerCompose>
                     <mainClass>com.sitionix.forgeai.Application</mainClass>
                 </configuration>
             </plugin>

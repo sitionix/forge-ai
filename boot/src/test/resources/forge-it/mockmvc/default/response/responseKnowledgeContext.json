@@ -1,0 +1,35 @@
+{
+  "query": "JarvisGateway",
+  "context": [
+    {
+      "sourceId": "forge-ai",
+      "displayName": "Forge AI Service SOX",
+      "group": "backend",
+      "relativePath": "application/src/main/java/com/sitionix/forgeai/application/infrastructure/jarvis/JarvisGateway.java",
+      "lineStart": 1,
+      "lineEnd": 40,
+      "content": "SQLite indexed file\nsourceId: forge-ai\npath: application/src/main/java/com/sitionix/forgeai/application/infrastructure/jarvis/JarvisGateway.java\nhash: jarvis-gateway-hash",
+      "matchType": "path",
+      "reason": "Matched query against SQLite inventory metadata",
+      "score": 1.0,
+      "metadata": {
+        "tags": ["java", "spring-boot", "backend"],
+        "domainKeywords": ["knowledge", "jarvis"],
+        "ownsBusinessAreas": ["operator"]
+      }
+    }
+  ],
+  "sourcesUsed": [
+    {
+      "sourceId": "forge-ai",
+      "displayName": "Forge AI Service SOX",
+      "reason": "Read from SQLite inventory"
+    }
+  ],
+  "budget": {
+    "maxChars": 12000,
+    "usedChars": 170,
+    "truncated": false
+  },
+  "diagnostics": []
+}

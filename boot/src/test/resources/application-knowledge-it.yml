@@ -1,0 +1,15 @@
+forge:
+  ai:
+    infrastructure:
+      knowledge:
+        mode: sqlite
+
+forge-it:
+  modules:
+    sqlite:
+      paths:
+        entity:
+          defaults: /db/sqlite/entities/default
+          custom: /db/sqlite/entities/custom
+        ddl:
+          path: /db/sqlite

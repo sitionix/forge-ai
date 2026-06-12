@@ -1993,7 +1993,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         getInfrastructureJson('/knowledge/inventory/files?limit=20')
       ]);
       setError('knowledgeError', null);
-      renderKnowledgeStatus(status);
+      renderKnowledgeStatus(status, sources, inventory);
       renderKnowledgeSources(sources);
       renderKnowledgeInventory(inventory);
       renderKnowledgeFiles(files);
@@ -2008,21 +2008,34 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     }
   }
 
-  function renderKnowledgeStatus(data) {
+  function renderKnowledgeStatus(data, sourcesData, inventoryData) {
     const cards = document.getElementById('knowledgeStatusCards');
     if (!cards) {
       return;
     }
+    const sourceCount = (sourcesData?.sources || []).length;
+    const inventory = inventoryData || data.inventory || {};
     cards.innerHTML = [
-      renderJarvisStatusCard('Knowledge', data.status || 'UNKNOWN', data.module || 'knowledge'),
-      renderJarvisStatusCard('Catalog', data.catalog?.configured ? 'configured' : 'not configured', data.catalog?.type || '-'),
-      renderJarvisStatusCard('Inventory', String(data.inventory?.fileCount ?? 0), `${data.inventory?.sourceCount ?? 0} sources`),
-      renderJarvisStatusCard('Search', data.search?.mode || 'keyword', 'no embeddings/vector DB')
+      renderKnowledgeStatusCard('Knowledge', data.status || 'UNKNOWN', data.module || 'knowledge'),
+      renderKnowledgeStatusCard('Catalog', data.catalog?.configured ? 'configured' : 'missing', data.catalog?.type || '-'),
+      renderKnowledgeStatusCard('Sources', String(sourceCount), 'catalog entries'),
+      renderKnowledgeStatusCard('Inventory', `${inventory.fileCount ?? 0} files`, `${inventory.sourceCount ?? 0} sources, ${inventory.skippedCount ?? 0} skipped`),
+      renderKnowledgeStatusCard('Retrieval', 'keyword context', data.search?.mode || 'keyword')
     ].join('');
     const notice = document.getElementById('knowledgeStatusMessage');
     if (notice) {
       notice.textContent = data.message || 'Knowledge uses service catalog as source of truth. No embeddings/vector DB in v1.';
     }
+  }
+
+  function renderKnowledgeStatusCard(title, value, note) {
+    return `
+      <article class="knowledge-status-card">
+        <span>${escapeHtml(title)}</span>
+        <strong>${escapeHtml(value || '-')}</strong>
+        <small>${escapeHtml(note || '-')}</small>
+      </article>
+    `;
   }
 
   function renderKnowledgeSources(data) {
@@ -2033,18 +2046,9 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     }
     const sources = data.sources || [];
     if (sources.length === 0) {
-      body.innerHTML = '<tr><td colspan="6">No catalog sources reported.</td></tr>';
+      body.innerHTML = '<tr><td colspan="5">No sources configured.</td></tr>';
     } else {
-      body.innerHTML = sources.map((source) => `
-        <tr>
-          <td>${escapeHtml(source.sourceId || '-')}</td>
-          <td>${escapeHtml(source.displayName || '-')}</td>
-          <td>${escapeHtml(source.group || '-')}</td>
-          <td>${escapeHtml(source.path || '-')}</td>
-          <td>${escapeHtml(source.rootExists ? 'true' : 'false')}</td>
-          <td>${escapeHtml((source.tags || []).join(', '))}</td>
-        </tr>
-      `).join('');
+      body.innerHTML = sources.map(renderKnowledgeSourceRow).join('');
     }
     if (diagnostics) {
       const items = data.diagnostics || [];
@@ -2054,22 +2058,95 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     }
   }
 
+  function renderKnowledgeSourceRow(source) {
+    const tags = source.tags || [];
+    const visibleTags = tags.slice(0, 3);
+    const extraTags = Math.max(0, tags.length - visibleTags.length);
+    const rootLabel = source.rootExists ? 'OK' : (source.rootExists === false ? 'missing' : 'false');
+    const rootClass = source.rootExists ? 'knowledge-root-ok' : 'knowledge-root-missing';
+    const tagHtml = visibleTags.length || extraTags
+      ? `<div class="knowledge-chip-row">
+          ${visibleTags.map((tag) => `<span class="knowledge-chip">${escapeHtml(tag)}</span>`).join('')}
+          ${extraTags ? `<span class="knowledge-chip">+${escapeHtml(extraTags)}</span>` : ''}
+        </div>`
+      : '';
+    return `
+      <tr>
+        <td>${escapeHtml(source.sourceId || '-')}</td>
+        <td>
+          <div class="knowledge-source-label">
+            <strong>${escapeHtml(source.displayName || '-')}</strong>
+            ${tagHtml}
+          </div>
+        </td>
+        <td>${escapeHtml(source.group || '-')}</td>
+        <td class="knowledge-path-cell">${escapeHtml(source.path || '-')}</td>
+        <td class="${rootClass}">${escapeHtml(rootLabel)}</td>
+      </tr>
+    `;
+  }
+
   function renderKnowledgeInventory(data) {
     const target = document.getElementById('knowledgeInventoryStatus');
     if (!target) {
       return;
     }
     target.innerHTML = `
-      <article class="detail-card">
-        <div class="detail-card-head">
-          <div>
-            <strong>${escapeHtml(data.status || 'EMPTY')}</strong>
-            <p>last build ${escapeHtml(fmtDate(data.lastBuildAt))}</p>
+      <div class="knowledge-stat-grid">
+        ${renderKnowledgeStat('status', data.status || 'EMPTY')}
+        ${renderKnowledgeStat('last build', fmtDate(data.lastBuildAt))}
+        ${renderKnowledgeStat('sources', data.sourceCount ?? 0)}
+        ${renderKnowledgeStat('files', data.fileCount ?? 0)}
+        ${renderKnowledgeStat('skipped', data.skippedCount ?? 0)}
+      </div>
+      ${renderKnowledgeSkippedBreakdown(data.skippedBreakdown)}
+    `;
+  }
+
+  function renderKnowledgeSkippedBreakdown(breakdown) {
+    if (!breakdown || !breakdown.byReason) {
+      return `
+        <div class="knowledge-skipped-breakdown">
+          <div class="knowledge-breakdown-head">
+            <strong>Skipped breakdown</strong>
           </div>
-          ${pill(String(data.fileCount ?? 0), data.status || 'UNKNOWN')}
+          <p class="knowledge-breakdown-empty">No skipped breakdown available. Rebuild inventory.</p>
+          <p class="knowledge-breakdown-note">Skipped means files or paths ignored by inventory rules, not already processed files.</p>
         </div>
-        <p class="detail-meta">sources ${escapeHtml(data.sourceCount ?? 0)} / skipped ${escapeHtml(data.skippedCount ?? 0)}</p>
-      </article>
+      `;
+    }
+    const rows = Object.entries(breakdown.byReason)
+      .filter(([, count]) => Number(count) > 0)
+      .sort(([, left], [, right]) => Number(right) - Number(left));
+    const content = rows.length > 0
+      ? `<div class="knowledge-breakdown-list">
+          ${rows.map(([reason, count]) => `
+            <div class="knowledge-breakdown-row">
+              <span>${escapeHtml(reason)}</span>
+              <strong>${escapeHtml(count)}</strong>
+            </div>
+          `).join('')}
+        </div>`
+      : '<p class="knowledge-breakdown-empty">No skipped files in the latest inventory build.</p>';
+    return `
+      <div class="knowledge-skipped-breakdown">
+        <div class="knowledge-breakdown-head">
+          <strong>Skipped breakdown</strong>
+          <span>${escapeHtml(breakdown.total ?? 0)} total</span>
+        </div>
+        ${content}
+        <p class="knowledge-breakdown-note">Skipped means files or paths ignored by inventory rules, not already processed files.</p>
+        <p class="knowledge-breakdown-note">Skipped items were seen during inventory build but not indexed because they matched exclude rules, were too large, binary, unsafe, unreadable, or outside configured sources.</p>
+      </div>
+    `;
+  }
+
+  function renderKnowledgeStat(label, value) {
+    return `
+      <div class="knowledge-stat">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(value ?? '-')}</strong>
+      </div>
     `;
   }
 
@@ -2080,7 +2157,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     }
     const files = data.files || [];
     if (files.length === 0) {
-      body.innerHTML = '<tr><td colspan="5">No indexed files.</td></tr>';
+      body.innerHTML = '<tr><td colspan="5">No files indexed yet.</td></tr>';
       return;
     }
     body.innerHTML = files.map((file) => `
@@ -2137,22 +2214,138 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     }
     const results = data.results || [];
     if (results.length === 0) {
-      target.innerHTML = `<div class="empty-state">${escapeHtml(data.message || 'No matches.')}</div>`;
+      target.innerHTML = `<div class="empty-state">${escapeHtml(data.message || 'No search results.')}</div>`;
       return;
     }
-    target.innerHTML = results.map((result) => `
-      <article class="detail-card">
+    target.innerHTML = `<div class="knowledge-results">${results.map((result) => `
+      <article class="detail-card knowledge-result-card">
         <div class="detail-card-head">
-          <div>
+          <div class="knowledge-card-title">
             <strong>${escapeHtml(result.sourceId || '-')}</strong>
             <p>${escapeHtml(result.relativePath || '-')}</p>
           </div>
           ${pill(result.matchType || 'match', 'READY_TO_START')}
         </div>
-        <p class="detail-meta">lines ${escapeHtml(result.lineStart ?? '-')} - ${escapeHtml(result.lineEnd ?? '-')} / ${escapeHtml(result.displayName || '-')}</p>
-        <pre class="stacktrace">${escapeHtml(result.snippet || '')}</pre>
+        <div class="knowledge-card-meta">
+          <span>${escapeHtml(result.displayName || '-')}</span>
+          <span>lines ${escapeHtml(result.lineStart ?? '-')} - ${escapeHtml(result.lineEnd ?? '-')}</span>
+          <span>${escapeHtml(result.matchType || 'match')}</span>
+        </div>
+        <pre class="stacktrace knowledge-snippet knowledge-search-snippet">${escapeHtml(result.snippet || '')}</pre>
       </article>
-    `).join('');
+    `).join('')}</div>`;
+  }
+
+  async function submitKnowledgeContext(event) {
+    event.preventDefault();
+    const queryInput = document.getElementById('knowledgeContextQuery');
+    const maxCharsInput = document.getElementById('knowledgeContextMaxChars');
+    const maxItemsInput = document.getElementById('knowledgeContextMaxItems');
+    const button = document.getElementById('buildKnowledgeContext');
+    const query = queryInput?.value?.trim() || '';
+    const maxChars = Number(maxCharsInput?.value || 12000);
+    const maxItems = Number(maxItemsInput?.value || 12);
+    if (!query) {
+      setError('knowledgeContextError', new Error('Context query is required.'));
+      return;
+    }
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Building...';
+    }
+    try {
+      const response = await postInfrastructureJson('/knowledge/context', {
+        query,
+        sourceIds: [],
+        groups: [],
+        maxChars: Number.isFinite(maxChars) ? maxChars : 12000,
+        maxItems: Number.isFinite(maxItems) ? maxItems : 12,
+        includeContent: true
+      });
+      setError('knowledgeContextError', null);
+      renderKnowledgeContext(response);
+    } catch (error) {
+      setError('knowledgeContextError', error);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Build Context';
+      }
+    }
+  }
+
+  function renderKnowledgeContext(data) {
+    const target = document.getElementById('knowledgeContextResults');
+    if (!target) {
+      return;
+    }
+    const diagnostics = data.diagnostics || [];
+    const items = data.context || [];
+    const budget = data.budget || {};
+    const sources = data.sourcesUsed || [];
+    const diagnosticsHtml = diagnostics.length === 0
+      ? ''
+      : `<div class="error-box">${escapeHtml(diagnostics.map((item) => `${item.code}: ${item.message}`).join('\n'))}</div>`;
+    const budgetHtml = renderKnowledgeBudget(budget, sources);
+    if (items.length === 0) {
+      target.innerHTML = `
+        <div class="knowledge-results">
+          ${budgetHtml}
+          ${diagnosticsHtml || '<div class="empty-state">No context returned.</div>'}
+        </div>
+      `;
+      return;
+    }
+    target.innerHTML = `
+      <div class="knowledge-results">
+        ${budgetHtml}
+        ${diagnosticsHtml}
+        ${items.map((item) => `
+        <article class="detail-card knowledge-result-card">
+          <div class="detail-card-head">
+            <div class="knowledge-card-title">
+              <strong>${escapeHtml(item.sourceId || '-')}${item.displayName ? ` / ${escapeHtml(item.displayName)}` : ''}</strong>
+              <p>${escapeHtml(item.relativePath || '-')}</p>
+            </div>
+            ${pill(item.matchType || 'context', 'READY_TO_START')}
+          </div>
+          <div class="knowledge-card-meta">
+            <span>lines ${escapeHtml(item.lineStart ?? '-')} - ${escapeHtml(item.lineEnd ?? '-')}</span>
+            <span>score ${escapeHtml(formatScore(item.score))}</span>
+            <span>${escapeHtml(item.matchType || 'context')}</span>
+          </div>
+          <p class="detail-meta">${escapeHtml(item.reason || '-')}</p>
+          <pre class="stacktrace knowledge-snippet">${escapeHtml(item.content || '')}</pre>
+        </article>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderKnowledgeBudget(budget, sources) {
+    const sourceLabels = sources.map((source) => source.sourceId || source.displayName).filter(Boolean);
+    return `
+      <article class="detail-card knowledge-budget-card">
+        <div class="detail-card-head">
+          <div class="knowledge-card-title">
+            <strong>Budget</strong>
+            <p>${escapeHtml(budget.usedChars ?? 0)} / ${escapeHtml(budget.maxChars ?? '-')} chars</p>
+          </div>
+          ${pill(budget.truncated ? 'truncated' : 'complete', budget.truncated ? 'FAILED' : 'COMPLETED')}
+        </div>
+        <div class="knowledge-card-meta knowledge-source-list">
+          <span>used ${escapeHtml(budget.usedChars ?? 0)}</span>
+          <span>max ${escapeHtml(budget.maxChars ?? '-')}</span>
+          <span>truncated ${escapeHtml(Boolean(budget.truncated))}</span>
+        </div>
+        <p class="detail-meta">sources ${escapeHtml(sourceLabels.join(', ') || '-')}</p>
+      </article>
+    `;
+  }
+
+  function formatScore(value) {
+    const score = Number(value);
+    return Number.isFinite(score) ? score.toFixed(3).replace(/\.?0+$/, '') : (value ?? '-');
   }
 
   async function loadAgentsConfig() {
@@ -2741,6 +2934,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     document.getElementById('refreshKnowledge')?.addEventListener('click', loadKnowledge);
     document.getElementById('buildKnowledgeInventory')?.addEventListener('click', buildKnowledgeInventory);
     document.getElementById('knowledgeSearchForm')?.addEventListener('submit', submitKnowledgeSearch);
+    document.getElementById('knowledgeContextForm')?.addEventListener('submit', submitKnowledgeContext);
     loadKnowledge();
   }
 })();

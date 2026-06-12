@@ -2,6 +2,11 @@ package com.sitionix.forgeai.it.infra;
 
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
 import com.sitionix.forgeit.domain.endpoint.Endpoint;
 import com.sitionix.forgeit.domain.endpoint.HttpMethod;
 import com.sitionix.forgeit.domain.endpoint.mockmvc.MockmvcDefault;
@@ -32,6 +37,53 @@ public class ControllerEndpoint {
                         .withRequest("requestStartForgeFrontend.json")
                         .expectStatus(HttpStatus.CREATED.value())
                         .header("X-Terminal-TTY", "/dev/ttys999")
+        );
+    }
+
+    public static Endpoint<KnowledgeContextRequest, KnowledgeContextView> knowledgeContext() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/knowledge/context",
+                HttpMethod.POST,
+                KnowledgeContextRequest.class,
+                KnowledgeContextView.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestKnowledgeContext.json")
+                        .expectResponse("responseKnowledgeContext.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<KnowledgeContextRequest, KnowledgeContextView> knowledgeContextDynamicResponse() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/knowledge/context",
+                HttpMethod.POST,
+                KnowledgeContextRequest.class,
+                KnowledgeContextView.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestKnowledgeContext.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<KnowledgeInventoryBuildRequest, KnowledgeInventoryBuildResultView> knowledgeInventoryBuild() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/knowledge/inventory/build",
+                HttpMethod.POST,
+                KnowledgeInventoryBuildRequest.class,
+                KnowledgeInventoryBuildResultView.class,
+                (MockmvcDefault) context -> context
+                        .withRequest("requestKnowledgeInventoryBuild.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<Void, KnowledgeInventoryStatusView> knowledgeInventoryStatus() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/knowledge/inventory/status",
+                HttpMethod.GET,
+                Void.class,
+                KnowledgeInventoryStatusView.class,
+                (MockmvcDefault) context -> context.expectStatus(HttpStatus.OK.value())
         );
     }
 

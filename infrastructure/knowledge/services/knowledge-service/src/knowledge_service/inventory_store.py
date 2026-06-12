@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from knowledge_service.file_metadata import FileMetadata
+from knowledge_service.skipped_reasons import SkippedBreakdown, normalize_skipped_breakdown
 from knowledge_service.source_catalog import SourceMetadata
 
 
@@ -26,9 +27,11 @@ class InventoryStore:
                     source_count INTEGER NOT NULL,
                     file_count INTEGER NOT NULL,
                     skipped_count INTEGER NOT NULL,
+                    skipped_reasons_json TEXT,
                     error_message TEXT
                 )
             """)
+            self._ensure_column(conn, "inventory_builds", "skipped_reasons_json", "TEXT")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS sources (
                     source_id TEXT PRIMARY KEY,
@@ -56,9 +59,11 @@ class InventoryStore:
                 )
             """)
 
-    def replace_inventory(self, sources: List[SourceMetadata], files: List[FileMetadata], skipped: int, started_at: str, completed_at: str) -> Dict[str, Any]:
+    def replace_inventory(self, sources: List[SourceMetadata], files: List[FileMetadata], skipped: SkippedBreakdown, started_at: str, completed_at: str) -> Dict[str, Any]:
         self.init()
         now = datetime.now(timezone.utc).isoformat()
+        skipped_breakdown = skipped.public_dict()
+        skipped_count = skipped_breakdown["total"]
         with self._connect() as conn:
             conn.execute("DELETE FROM files")
             conn.execute("DELETE FROM sources")
@@ -76,18 +81,37 @@ class InventoryStore:
                     (file.sourceId, file.sourcePath, file.absolutePath, file.relativePath, file.extension, file.sizeBytes, file.contentHash, file.lastModified, now),
                 )
             conn.execute(
-                "INSERT INTO inventory_builds(started_at, completed_at, status, source_count, file_count, skipped_count, error_message) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (started_at, completed_at, "COMPLETED", len(sources), len(files), skipped, None),
+                "INSERT INTO inventory_builds(started_at, completed_at, status, source_count, file_count, skipped_count, skipped_reasons_json, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (started_at, completed_at, "COMPLETED", len(sources), len(files), skipped_count, json.dumps(skipped_breakdown), None),
             )
-        return {"status": "COMPLETED", "sourceCount": len(sources), "fileCount": len(files), "skippedCount": skipped, "startedAt": started_at, "completedAt": completed_at}
+        return {
+            "status": "COMPLETED",
+            "sourceCount": len(sources),
+            "fileCount": len(files),
+            "skippedCount": skipped_count,
+            "skippedBreakdown": skipped_breakdown,
+            "startedAt": started_at,
+            "completedAt": completed_at,
+        }
 
     def status(self) -> Dict[str, Any]:
         self.init()
         with self._connect() as conn:
-            build = conn.execute("SELECT completed_at, status, source_count, file_count, skipped_count FROM inventory_builds ORDER BY id DESC LIMIT 1").fetchone()
+            build = conn.execute("SELECT completed_at, status, source_count, file_count, skipped_count, skipped_reasons_json FROM inventory_builds ORDER BY id DESC LIMIT 1").fetchone()
         if not build:
-            return {"status": "EMPTY", "sourceCount": 0, "fileCount": 0}
-        return {"status": "READY" if build["status"] == "COMPLETED" else build["status"], "lastBuildAt": build["completed_at"], "sourceCount": build["source_count"], "fileCount": build["file_count"], "skippedCount": build["skipped_count"]}
+            return {"status": "EMPTY", "sourceCount": 0, "fileCount": 0, "skippedCount": 0, "skippedBreakdown": {"total": 0, "byReason": {}}}
+        skipped_breakdown = normalize_skipped_breakdown(
+            self._decode_json(build["skipped_reasons_json"]),
+            build["skipped_count"],
+        )
+        return {
+            "status": "READY" if build["status"] == "COMPLETED" else build["status"],
+            "lastBuildAt": build["completed_at"],
+            "sourceCount": build["source_count"],
+            "fileCount": build["file_count"],
+            "skippedCount": build["skipped_count"],
+            "skippedBreakdown": skipped_breakdown,
+        }
 
     def files(self, source_id: Optional[str], path_contains: Optional[str], extension: Optional[str], limit: int, offset: int) -> Dict[str, Any]:
         self.init()
@@ -137,3 +161,17 @@ class InventoryStore:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, declaration: str) -> None:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+    def _decode_json(self, value: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not value:
+            return None
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return decoded if isinstance(decoded, dict) else None

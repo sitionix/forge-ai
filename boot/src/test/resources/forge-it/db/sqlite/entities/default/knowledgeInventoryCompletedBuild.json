@@ -1,0 +1,11 @@
+{
+  "id": 1,
+  "startedAt": "2026-06-11T10:00:00Z",
+  "completedAt": "2026-06-11T10:00:02Z",
+  "status": "COMPLETED",
+  "sourceCount": 1,
+  "fileCount": 1,
+  "skippedCount": 0,
+  "skippedReasonsJson": "{\"total\":0,\"byReason\":{}}",
+  "errorMessage": null
+}
