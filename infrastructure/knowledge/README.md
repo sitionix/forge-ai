@@ -41,3 +41,5 @@ Missing source roots are catalog/configured roots that do not exist locally. The
 - `POST /api/v1/knowledge/context` returns line-bounded snippets with source metadata, scores, reasons, budget usage, and diagnostics.
 
 Context retrieval reads only files already present in the inventory. It uses catalog-derived source metadata and indexed file paths; it does not scan arbitrary directories.
+
+Context ranking is keyword based. It prioritizes service catalog metadata, source IDs, path and file-name matches, then content matches. For general explanation and flow queries, runtime source files rank above tests. Test files are still preferred for test-specific queries, workflow/action files are preferred for workflow/deploy/CI queries, and OpenAPI/API contract files are boosted when the query asks for APIs, endpoints, contracts, schemas, or OpenAPI.

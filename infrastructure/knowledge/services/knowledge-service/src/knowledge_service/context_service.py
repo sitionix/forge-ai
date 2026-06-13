@@ -10,6 +10,42 @@ from knowledge_service.retrieval_ranker import RetrievalRanker
 from knowledge_service.snippet_extractor import SnippetExtractor
 
 
+_QUERY_STOP_TERMS = {
+    "about",
+    "describe",
+    "explain",
+    "flow",
+    "how",
+    "please",
+    "show",
+    "work",
+    "working",
+    "works",
+    "як",
+    "працює",
+    "працюють",
+    "поясни",
+    "розкажи",
+}
+
+_AUTH_QUERY_TERMS = {
+    "auth",
+    "authentication",
+    "authorization",
+    "authorisation",
+    "авторизація",
+    "автентифікація",
+    "аутентифікація",
+}
+
+_AUTH_QUERY_EXPANSION = [
+    "auth",
+    "authentication",
+    "authorization",
+    "authorisation",
+]
+
+
 class ContextService:
     def __init__(self, store: InventoryStore):
         self.store = store
@@ -31,7 +67,7 @@ class ContextService:
             if lines is None:
                 continue
             content_matches = self._content_matches(lines, query_terms)
-            score, match_type, reason = self.ranker.score(row, metadata, query_terms, content_matches)
+            score, match_type, reason = self.ranker.score(row, metadata, query_terms, content_matches, request.query)
             if score <= 0:
                 continue
             matched_lines = content_matches or [0]
@@ -59,11 +95,15 @@ class ContextService:
         cleaned = []
         for raw in query.replace("/", " ").replace("\\", " ").replace(".", " ").replace("_", " ").replace("-", " ").split():
             term = raw.strip().lower()
-            if term and term not in cleaned:
+            if term and term not in _QUERY_STOP_TERMS and term not in cleaned:
                 cleaned.append(term)
         compact = query.strip().lower()
-        if compact and compact not in cleaned:
+        if compact and len(cleaned) <= 1 and compact not in _QUERY_STOP_TERMS and compact not in cleaned:
             cleaned.insert(0, compact)
+        if any(term in _AUTH_QUERY_TERMS for term in cleaned):
+            for term in _AUTH_QUERY_EXPANSION:
+                if term not in cleaned:
+                    cleaned.append(term)
         return cleaned
 
     def _content_matches(self, lines: List[str], query_terms: List[str]) -> List[int]:
