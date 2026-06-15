@@ -7,16 +7,8 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from knowledge_service.errors import ConfigMissingError, KnowledgeError
-
-
-DEFAULT_INCLUDE = [
-    "**/*.java", "**/*.kt", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.md",
-    "**/*.yaml", "**/*.yml", "**/*.json", "**/*.xml", "**/pom.xml", "**/README*",
-]
-DEFAULT_EXCLUDE = [
-    ".git/**", "target/**", "build/**", "dist/**", "node_modules/**", ".venv/**",
-    "var/**", "logs/**", "**/.env", "**/*.class", "**/*.jar",
-]
+from knowledge_service.file_classification import FileClassifier
+from knowledge_service.knowledge_defaults import load_knowledge_defaults
 
 
 @dataclass(frozen=True)
@@ -35,8 +27,8 @@ class SelectionConfig:
 
 @dataclass(frozen=True)
 class IndexingConfig:
-    include: List[str] = field(default_factory=lambda: list(DEFAULT_INCLUDE))
-    exclude: List[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDE))
+    include: List[str] = field(default_factory=list)
+    exclude: List[str] = field(default_factory=list)
     max_file_size_bytes: int = 500000
     chunk_size_chars: int = 3000
     chunk_overlap_chars: int = 300
@@ -47,6 +39,7 @@ class SourceConfig:
     catalog: CatalogConfig
     selection: SelectionConfig
     indexing: IndexingConfig
+    file_classifier: FileClassifier
 
 
 def load_source_config(path: Path) -> Optional[SourceConfig]:
@@ -71,6 +64,11 @@ def load_source_config(path: Path) -> Optional[SourceConfig]:
 
     selection = data.get("selection") or {}
     indexing = data.get("indexing") or {}
+    defaults = load_knowledge_defaults()
+    knowledge_defaults = defaults.get("knowledge") or {}
+    indexing_defaults = knowledge_defaults.get("indexing") or {}
+    default_include = _string_list(knowledge_defaults.get("include_defaults"))
+    default_exclude = _string_list(knowledge_defaults.get("exclude_defaults"))
     return SourceConfig(
         catalog=CatalogConfig(
             type=str(catalog.get("type") or "service_catalog"),
@@ -83,12 +81,13 @@ def load_source_config(path: Path) -> Optional[SourceConfig]:
             exclude_services=_string_list(selection.get("exclude_services")),
         ),
         indexing=IndexingConfig(
-            include=_string_list(indexing.get("include")) or list(DEFAULT_INCLUDE),
-            exclude=_string_list(indexing.get("exclude")) or list(DEFAULT_EXCLUDE),
-            max_file_size_bytes=int(indexing.get("max_file_size_bytes") or 500000),
-            chunk_size_chars=int(indexing.get("chunk_size_chars") or 3000),
-            chunk_overlap_chars=int(indexing.get("chunk_overlap_chars") or 300),
+            include=_string_list(indexing.get("include")) or default_include,
+            exclude=_string_list(indexing.get("exclude")) or default_exclude,
+            max_file_size_bytes=int(indexing.get("max_file_size_bytes") or indexing_defaults.get("max_file_size_bytes") or 500000),
+            chunk_size_chars=int(indexing.get("chunk_size_chars") or indexing_defaults.get("chunk_size_chars") or 3000),
+            chunk_overlap_chars=int(indexing.get("chunk_overlap_chars") or indexing_defaults.get("chunk_overlap_chars") or 300),
         ),
+        file_classifier=FileClassifier.from_config(knowledge_defaults.get("file_classification") or {}),
     )
 
 

@@ -28,8 +28,12 @@ CREATE TABLE IF NOT EXISTS files (
     absolute_path TEXT NOT NULL,
     relative_path TEXT NOT NULL,
     extension TEXT,
+    language TEXT,
+    flow_domain TEXT,
     size_bytes INTEGER NOT NULL,
     content_hash TEXT NOT NULL,
     last_modified TEXT NOT NULL,
+    line_count INTEGER NOT NULL DEFAULT 0,
+    decode_policy TEXT NOT NULL DEFAULT 'utf-8:replace',
     indexed_at TEXT NOT NULL
 );

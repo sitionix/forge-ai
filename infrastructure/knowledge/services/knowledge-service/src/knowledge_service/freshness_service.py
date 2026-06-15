@@ -45,7 +45,7 @@ class KnowledgeFreshnessService:
     def _current_files(self, sources) -> List[FileMetadata]:
         files: List[FileMetadata] = []
         for source in sources:
-            source_files, _ = scan_source(source, self.config.indexing)
+            source_files, _ = scan_source(source, self.config.indexing, self.config.file_classifier)
             files.extend(source_files)
         return files
 

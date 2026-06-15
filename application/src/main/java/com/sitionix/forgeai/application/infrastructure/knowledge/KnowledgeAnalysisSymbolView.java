@@ -13,6 +13,18 @@ public record KnowledgeAnalysisSymbolView(
         Integer lineStart,
         Integer lineEnd,
         String summary,
-        Map<String, Object> metadata
+        Map<String, Object> metadata,
+        String graphNodeId,
+        String stableKey,
+        String nodeKind,
+        String displayName,
+        String qualifiedName,
+        String responsibilitySummary,
+        Double confidence,
+        String factStatus,
+        String factOrigin,
+        String flowDomain,
+        Integer evidenceCount,
+        Integer diagnosticCount
 ) {
 }

@@ -13,6 +13,17 @@ public record KnowledgeAnalysisRelationView(
         List<String> evidence,
         Integer lineStart,
         Integer lineEnd,
-        Map<String, Object> metadata
+        Map<String, Object> metadata,
+        String graphEdgeId,
+        String fromGraphNodeId,
+        String toGraphNodeId,
+        String edgeType,
+        String resolutionStatus,
+        String factStatus,
+        String factOrigin,
+        String flowDomain,
+        Map<String, Object> unresolvedTarget,
+        Integer evidenceCount,
+        Integer diagnosticCount
 ) {
 }

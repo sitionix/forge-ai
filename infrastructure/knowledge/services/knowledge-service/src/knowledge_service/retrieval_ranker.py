@@ -22,26 +22,11 @@ class RetrievalRanker:
         ]).lower()
         source_path = str(metadata.get("path") or "").lower()
         source_id = str(row["source_id"]).lower()
-        is_runtime_source = "/src/main/" in f"/{haystack_path}"
-        is_test_file = (
-            "/src/test/" in f"/{haystack_path}"
-            or "/__tests__/" in f"/{haystack_path}"
-            or haystack_filename.endswith("test.java")
-            or ".test." in haystack_filename
-            or ".spec." in haystack_filename
-        )
-        is_workflow_file = (
-            haystack_path.startswith(".github/workflows/")
-            or haystack_path.startswith(".github/actions/")
-            or "/.github/workflows/" in haystack_path
-            or "/.github/actions/" in haystack_path
-        )
-        is_contract_file = (
-            "openapi" in haystack_path
-            or "/apis/" in f"/{haystack_path}"
-            or "/paths/" in f"/{haystack_path}"
-            or "/schemas/" in f"/{haystack_path}"
-        )
+        flow_domain = str(self._row_value(row, "flow_domain") or "").upper()
+        is_runtime_source = flow_domain == "CODE"
+        is_test_file = flow_domain == "TEST"
+        is_workflow_file = flow_domain == "WORKFLOW"
+        has_contract_metadata = bool(metadata.get("contractRefs"))
         wants_workflow = any(term in query_terms for term in ["workflow", "workflows", "deploy", "deployment", "ci", "cd", "pipeline", "github", "action", "actions"])
         wants_tests = any(term in query_terms for term in ["test", "tests", "testing", "unit", "it", "integration", "spec", "coverage"])
         wants_contract = any(term in query_terms for term in ["api", "apis", "endpoint", "endpoints", "contract", "contracts", "openapi", "schema", "schemas", "path", "paths"])
@@ -79,24 +64,33 @@ class RetrievalRanker:
         if any(term == source_id for term in query_terms):
             score += 0.5
             reasons.append("matched source id")
-        if is_runtime_source and not wants_contract and not wants_workflow and not wants_tests:
+        has_match = score > 0
+        if has_match and is_runtime_source and not wants_contract and not wants_workflow and not wants_tests:
             score += 0.35
             reasons.append("preferred runtime source")
-        if is_test_file and not wants_tests:
+        if has_match and is_test_file and not wants_tests:
             score -= 0.45
             reasons.append("down-ranked test file")
-        elif is_test_file:
+        elif has_match and is_test_file:
             score += 0.35
             reasons.append("preferred test file")
-        if is_workflow_file and not wants_workflow:
+        if has_match and is_workflow_file and not wants_workflow:
             score -= 0.8
             reasons.append("down-ranked workflow file")
-        elif is_workflow_file:
+        elif has_match and is_workflow_file:
             score += 0.45
             reasons.append("preferred workflow file")
-        if is_contract_file and wants_contract:
+        if has_match and has_contract_metadata and wants_contract:
             score += 1.0
             reasons.append("preferred contract file")
         if not reasons:
             reasons.append("selected by keyword search")
         return round(max(score, 0.0), 4), match_type, "; ".join(reasons)
+
+    def _row_value(self, row: Any, key: str) -> Any:
+        try:
+            if hasattr(row, "keys") and key not in row.keys():
+                return None
+            return row[key]
+        except (KeyError, IndexError):
+            return None

@@ -127,9 +127,13 @@ public class KnowledgeSqliteRepository {
                 rs.getString("absolute_path"),
                 rs.getString("relative_path"),
                 rs.getString("extension"),
+                rs.getString("language"),
+                rs.getString("flow_domain"),
                 rs.getLong("size_bytes"),
                 rs.getString("content_hash"),
                 rs.getString("last_modified"),
+                rs.getLong("line_count"),
+                rs.getString("decode_policy"),
                 rs.getString("indexed_at"),
                 rs.getString("display_name"),
                 rs.getString("group_name"),
@@ -176,17 +180,21 @@ public class KnowledgeSqliteRepository {
 
     private void insertFile(final Connection connection, final KnowledgeFileEntity file) {
         this.update(connection, """
-                        INSERT INTO files(source_id, source_path, absolute_path, relative_path, extension, size_bytes, content_hash, last_modified, indexed_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO files(source_id, source_path, absolute_path, relative_path, extension, language, flow_domain, size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                 file.getSourceId(),
                 file.getSourcePath(),
                 file.getAbsolutePath(),
                 file.getRelativePath(),
                 file.getExtension(),
+                file.getLanguage(),
+                file.getFlowDomain(),
                 file.getSizeBytes(),
                 file.getContentHash(),
                 file.getLastModified(),
+                file.getLineCount(),
+                file.getDecodePolicy(),
                 file.getIndexedAt()
         );
     }

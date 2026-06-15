@@ -30,6 +30,11 @@ public class KnowledgeFileEntity {
 
     private String extension;
 
+    private String language;
+
+    @Column(name = "flow_domain")
+    private String flowDomain;
+
     @Column(name = "size_bytes", nullable = false)
     private Long sizeBytes;
 
@@ -38,6 +43,12 @@ public class KnowledgeFileEntity {
 
     @Column(name = "last_modified", nullable = false)
     private String lastModified;
+
+    @Column(name = "line_count", nullable = false)
+    private Long lineCount;
+
+    @Column(name = "decode_policy", nullable = false)
+    private String decodePolicy;
 
     @Column(name = "indexed_at", nullable = false)
     private String indexedAt;

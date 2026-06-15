@@ -30,6 +30,10 @@ public class KnowledgeSqliteSchemaInitializer {
                 }
             }
             this.addColumnIfMissing(sql, "inventory_builds", "skipped_reasons_json", "TEXT");
+            this.addColumnIfMissing(sql, "files", "line_count", "INTEGER NOT NULL DEFAULT 0");
+            this.addColumnIfMissing(sql, "files", "decode_policy", "TEXT NOT NULL DEFAULT 'utf-8:replace'");
+            this.addColumnIfMissing(sql, "files", "language", "TEXT");
+            this.addColumnIfMissing(sql, "files", "flow_domain", "TEXT");
         }
     }
 

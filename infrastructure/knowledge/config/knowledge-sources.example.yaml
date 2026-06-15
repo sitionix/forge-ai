@@ -9,19 +9,19 @@ selection:
   exclude_services: []
 
 indexing:
-  include:
-    - "**/*.java"
-    - "**/*.md"
-    - "**/*.yaml"
-    - "**/*.yml"
-    - "**/*.xml"
-    - "**/*.json"
   exclude:
     - ".git/**"
+    - "**/.git/**"
     - "target/**"
+    - "**/target/**"
     - "build/**"
+    - "**/build/**"
     - "node_modules/**"
+    - "**/node_modules/**"
     - ".venv/**"
+    - "**/.venv/**"
     - "var/**"
+    - "**/var/**"
     - "logs/**"
+    - "**/logs/**"
     - "**/.env"

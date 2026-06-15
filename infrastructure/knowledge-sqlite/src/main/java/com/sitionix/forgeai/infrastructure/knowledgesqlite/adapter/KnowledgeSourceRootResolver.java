@@ -35,11 +35,15 @@ public class KnowledgeSourceRootResolver {
     private Path repoRoot() {
         Path current = Path.of(this.properties.getWorkspaceRoot()).toAbsolutePath().normalize();
         while (current != null) {
-            if (Files.exists(current.resolve(".git")) || Files.exists(current.resolve("boot/src/main/resources/services.yaml"))) {
+            if (this.hasRootMarker(current)) {
                 return current;
             }
             current = current.getParent();
         }
         return Path.of(this.properties.getWorkspaceRoot()).toAbsolutePath().normalize();
+    }
+
+    private boolean hasRootMarker(final Path candidate) {
+        return this.properties.getRootMarkerPaths().stream().anyMatch(marker -> Files.exists(candidate.resolve(marker)));
     }
 }

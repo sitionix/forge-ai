@@ -7,6 +7,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,6 +23,8 @@ import java.util.stream.Stream;
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "forge.ai.infrastructure.knowledge.mode", havingValue = "sqlite")
 public class KnowledgeSqliteFileScanner {
+
+    private static final String DECODE_POLICY = "utf-8:replace";
 
     private final KnowledgeSqliteProperties properties;
 
@@ -71,9 +74,13 @@ public class KnowledgeSqliteFileScanner {
                     path.toRealPath().toString(),
                     normalizedRelativePath,
                     this.extension(path),
+                    null,
+                    null,
                     size,
                     this.sha256(path),
                     Files.getLastModifiedTime(path).toInstant().toString(),
+                    this.lineCount(path),
+                    DECODE_POLICY,
                     indexedAt,
                     null,
                     null,
@@ -114,11 +121,12 @@ public class KnowledgeSqliteFileScanner {
         }
     }
 
+    private long lineCount(final Path path) throws IOException {
+        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8).lines().count();
+    }
+
     private String extension(final Path path) {
         final String fileName = path.getFileName().toString();
-        if ("pom.xml".equals(fileName)) {
-            return ".xml";
-        }
         final int index = fileName.lastIndexOf('.');
         return index < 0 ? "" : fileName.substring(index);
     }

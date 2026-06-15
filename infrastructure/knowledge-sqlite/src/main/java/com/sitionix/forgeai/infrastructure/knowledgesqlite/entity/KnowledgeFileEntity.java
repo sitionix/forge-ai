@@ -13,9 +13,13 @@ public class KnowledgeFileEntity {
     private String absolutePath;
     private String relativePath;
     private String extension;
+    private String language;
+    private String flowDomain;
     private Long sizeBytes;
     private String contentHash;
     private String lastModified;
+    private Long lineCount;
+    private String decodePolicy;
     private String indexedAt;
     private String displayName;
     private String group;

@@ -10,6 +10,10 @@ class FileMetadata:
     absolutePath: str
     relativePath: str
     extension: str
+    language: str
+    flowDomain: str
     sizeBytes: int
     contentHash: str
     lastModified: str
+    lineCount: int
+    decodePolicy: str

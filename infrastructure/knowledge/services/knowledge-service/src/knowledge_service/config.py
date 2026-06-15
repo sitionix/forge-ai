@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
+import os
+
+from knowledge_service.knowledge_defaults import knowledge_module_dir, load_knowledge_defaults
 
 
 @dataclass(frozen=True)
@@ -26,7 +27,7 @@ class AppConfig:
     analysis_max_chunk_chars: int = 20000
     analysis_concurrency: int = 1
     analysis_max_attempts_per_file: int = 3
-    analysis_repair_attempts_per_file: int = 1
+    analysis_repair_attempts_per_file: int = 2
 
     @property
     def analysis_retry_attempts(self) -> int:
@@ -34,9 +35,8 @@ class AppConfig:
 
 
 def load_app_config() -> AppConfig:
-    module_dir = Path(os.environ.get("KNOWLEDGE_MODULE_DIR", Path(__file__).resolve().parents[4])).resolve()
-    defaults_path = module_dir / "config" / "knowledge.defaults.yaml"
-    defaults = yaml.safe_load(defaults_path.read_text(encoding="utf-8")) if defaults_path.exists() else {}
+    module_dir = knowledge_module_dir()
+    defaults = load_knowledge_defaults(module_dir / "config" / "knowledge.defaults.yaml")
     knowledge = defaults.get("knowledge") or {}
     service = knowledge.get("service") or {}
     inventory = knowledge.get("inventory") or {}
@@ -79,6 +79,6 @@ def load_app_config() -> AppConfig:
         analysis_repair_attempts_per_file=max(0, int(
             os.environ.get("KNOWLEDGE_ANALYSIS_REPAIR_ATTEMPTS_PER_FILE")
             or analysis.get("repair_attempts_per_file")
-            or 1
+            or 2
         )),
     )

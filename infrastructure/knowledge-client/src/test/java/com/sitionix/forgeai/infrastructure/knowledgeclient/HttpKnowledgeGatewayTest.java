@@ -10,6 +10,7 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalys
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
 import java.io.IOException;
 import java.net.ConnectException;
@@ -62,7 +63,7 @@ class HttpKnowledgeGatewayTest {
     @Test
     void servicesStatusProxyMapsSuccess() {
         final FakeHttpClient client = new FakeHttpClient(200, """
-                {"services":[{"sourceId":"svc","label":"Service","group":"backend","path":"svc","rootExists":true,"tags":["java"],"inventory":{"status":"READY","eligibleFileCount":2,"skippedCount":1},"analysis":{"status":"PARTIAL","inventoryFileCount":2,"analyzedFileCount":1,"percent":50.0,"failedFileCount":0},"facts":{"symbolCount":3,"relationCount":4},"diagnostics":[]}],"activeJob":null}
+                {"services":[{"sourceId":"svc","label":"Service","group":"backend","path":"svc","rootExists":true,"tags":["java"],"inventory":{"status":"READY","eligibleFileCount":2,"skippedCount":1},"analysis":{"status":"PARTIAL","inventoryFileCount":2,"analyzedFileCount":1,"percent":50.0,"failedFileCount":0},"facts":{"symbolCount":3,"relationCount":4},"diagnostics":[],"details":{"symbols":{"symbols":[{"symbolId":"n1","sourceId":"svc","relativePath":"A.java","name":"run","kind":"CALLABLE","roles":[]}],"total":1,"limit":20,"offset":0},"relations":{"relations":[],"total":0,"limit":20,"offset":0},"failures":{"files":[],"total":0,"limit":10,"offset":0}}}],"activeJob":null}
                 """);
         final HttpKnowledgeGateway gateway = gateway(client);
 
@@ -71,7 +72,21 @@ class HttpKnowledgeGatewayTest {
         assertThat(result.services()).hasSize(1);
         assertThat(result.services().getFirst().analysis().analyzedFileCount()).isEqualTo(1);
         assertThat(result.services().getFirst().facts().relationCount()).isEqualTo(4);
+        assertThat(result.services().getFirst().details().symbols().total()).isEqualTo(1);
         assertThat(client.lastRequest.uri().getPath()).isEqualTo("/api/v1/knowledge/services/status");
+    }
+
+    @Test
+    void servicesStatusProxyPassesDetailsSourceId() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"services":[],"activeJob":null}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        gateway.servicesStatus("svc");
+
+        assertThat(client.lastRequest.uri().getPath()).isEqualTo("/api/v1/knowledge/services/status");
+        assertThat(client.lastRequest.uri().getQuery()).isEqualTo("detailsSourceId=svc");
     }
 
     @Test
@@ -99,6 +114,22 @@ class HttpKnowledgeGatewayTest {
         assertThat(result.status()).isEqualTo("READY");
         assertThat(result.skippedBreakdown().total()).isEqualTo(2);
         assertThat(result.skippedBreakdown().byReason()).isEmpty();
+    }
+
+    @Test
+    void inventoryFilesProxyMapsLineCountAndDecodePolicy() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"files":[{"sourceId":"svc","sourcePath":"svc","relativePath":"src/App.java","extension":".java","sizeBytes":12,"contentHash":"hash","lastModified":"m","lineCount":2,"decodePolicy":"utf-8:replace"}],"limit":100,"offset":0,"total":1}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        final var result = gateway.files(new KnowledgeFilesRequest("svc", null, null, null, null));
+
+        assertThat(result.files()).hasSize(1);
+        assertThat(result.files().getFirst().lineCount()).isEqualTo(2);
+        assertThat(result.files().getFirst().decodePolicy()).isEqualTo("utf-8:replace");
+        assertThat(client.lastRequest.uri().getPath()).isEqualTo("/api/v1/knowledge/inventory/files");
+        assertThat(client.lastRequest.uri().getQuery()).isEqualTo("sourceId=svc");
     }
 
     @Test
@@ -174,9 +205,28 @@ class HttpKnowledgeGatewayTest {
                 """);
         final HttpKnowledgeGateway gateway = gateway(client);
 
-        gateway.analysisSymbols(new KnowledgeAnalysisSymbolsRequest("svc", "HTTP_HANDLER", "CLASS", "A", "name", 5, 0));
+        gateway.analysisSymbols(new KnowledgeAnalysisSymbolsRequest("svc", "HTTP_HANDLER", "CLASS", "A", "name", "CODE", "STATIC", 5, 0));
 
-        assertThat(client.lastRequest.uri().getRawQuery()).contains("sourceId=svc", "role=HTTP_HANDLER", "kind=CLASS", "pathContains=A", "nameContains=name");
+        assertThat(client.lastRequest.uri().getRawQuery()).contains("sourceId=svc", "role=HTTP_HANDLER", "kind=CLASS", "pathContains=A", "nameContains=name", "flowDomain=CODE", "factOrigin=STATIC");
+    }
+
+    @Test
+    void analysisSymbolsMapsOptionalGraphFields() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"symbols":[{"symbolId":"s1","sourceId":"svc","relativePath":"A.java","name":"findById","kind":"CALLABLE","roles":[],"lineStart":2,"lineEnd":4,"summary":"Finds by id.","metadata":{},"graphNodeId":"n1","stableKey":"stable-node","nodeKind":"CALLABLE","displayName":"TicketRepository.findById","qualifiedName":"TicketRepository.findById","responsibilitySummary":"Finds by id.","confidence":0.88,"factStatus":"TRUSTED","factOrigin":"LLM","flowDomain":"CODE","evidenceCount":1,"diagnosticCount":0}],"total":1,"limit":5,"offset":0}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        final var result = gateway.analysisSymbols(new KnowledgeAnalysisSymbolsRequest("svc", null, null, null, null, 5, 0));
+
+        assertThat(result.symbols()).hasSize(1);
+        assertThat(result.symbols().getFirst().graphNodeId()).isEqualTo("n1");
+        assertThat(result.symbols().getFirst().stableKey()).isEqualTo("stable-node");
+        assertThat(result.symbols().getFirst().factOrigin()).isEqualTo("LLM");
+        assertThat(result.symbols().getFirst().flowDomain()).isEqualTo("CODE");
+        assertThat(result.symbols().getFirst().responsibilitySummary()).isEqualTo("Finds by id.");
+        assertThat(result.symbols().getFirst().factStatus()).isEqualTo("TRUSTED");
+        assertThat(result.symbols().getFirst().evidenceCount()).isEqualTo(1);
     }
 
     @Test
@@ -186,9 +236,30 @@ class HttpKnowledgeGatewayTest {
                 """);
         final HttpKnowledgeGateway gateway = gateway(client);
 
-        gateway.analysisRelations(new KnowledgeAnalysisRelationsRequest("svc", "CALLS", "from", "to", 5, 0));
+        gateway.analysisRelations(new KnowledgeAnalysisRelationsRequest("svc", "CALLS", "from", "to", "CODE", "LLM", 5, 0));
 
-        assertThat(client.lastRequest.uri().getRawQuery()).contains("sourceId=svc", "relation=CALLS", "fromSymbolId=from", "toSymbolId=to");
+        assertThat(client.lastRequest.uri().getRawQuery()).contains("sourceId=svc", "relation=CALLS", "fromSymbolId=from", "toSymbolId=to", "flowDomain=CODE", "factOrigin=LLM");
+    }
+
+    @Test
+    void analysisRelationsMapsOptionalGraphFields() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"relations":[{"relationId":"r1","sourceId":"svc","fromSymbolId":"s1","toSymbolId":"s2","relation":"CALLS","confidence":0.91,"evidence":["line 4-4"],"lineStart":4,"lineEnd":4,"metadata":{},"graphEdgeId":"e1","fromGraphNodeId":"n1","toGraphNodeId":"n2","edgeType":"CALLS","resolutionStatus":"RESOLVED","factStatus":"TRUSTED","factOrigin":"LLM","flowDomain":"CODE","unresolvedTarget":null,"evidenceCount":1,"diagnosticCount":0}],"total":1,"limit":5,"offset":0}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        final var result = gateway.analysisRelations(new KnowledgeAnalysisRelationsRequest("svc", "CALLS", null, null, 5, 0));
+
+        assertThat(result.relations()).hasSize(1);
+        assertThat(result.relations().getFirst().graphEdgeId()).isEqualTo("e1");
+        assertThat(result.relations().getFirst().fromGraphNodeId()).isEqualTo("n1");
+        assertThat(result.relations().getFirst().toGraphNodeId()).isEqualTo("n2");
+        assertThat(result.relations().getFirst().edgeType()).isEqualTo("CALLS");
+        assertThat(result.relations().getFirst().factOrigin()).isEqualTo("LLM");
+        assertThat(result.relations().getFirst().flowDomain()).isEqualTo("CODE");
+        assertThat(result.relations().getFirst().resolutionStatus()).isEqualTo("RESOLVED");
+        assertThat(result.relations().getFirst().factStatus()).isEqualTo("TRUSTED");
+        assertThat(result.relations().getFirst().evidenceCount()).isEqualTo(1);
     }
 
     @Test

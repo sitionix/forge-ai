@@ -46,6 +46,14 @@ public class ManageKnowledgeInfrastructureUseCase implements ManageKnowledgeInfr
     }
 
     @Override
+    public KnowledgeServicesStatusView servicesStatus(final String detailsSourceId) {
+        if (detailsSourceId == null || detailsSourceId.isBlank()) {
+            return this.knowledgeGateway.servicesStatus();
+        }
+        return this.knowledgeGateway.servicesStatus(detailsSourceId);
+    }
+
+    @Override
     public KnowledgeInventoryBuildResultView buildInventory(final KnowledgeInventoryBuildRequest request) {
         return this.knowledgeGateway.buildInventory(request);
     }

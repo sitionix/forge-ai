@@ -26,14 +26,14 @@ class SnippetExtractor:
         end = min(len(lines), matched_line + self.after_lines)
         return start, end
 
-    def first_meaningful_range(self, lines: List[str], extension: str, relative_path: str) -> tuple[int, int]:
+    def first_meaningful_range(self, lines: List[str], language: str, flow_domain: str) -> tuple[int, int]:
         if not lines:
             return 1, 1
-        if extension == ".md" or relative_path.lower().endswith("readme"):
+        if (language or "").lower() == "markdown":
             first_heading = self._first_line(lines, lambda line: line.strip().startswith("#"))
             if first_heading:
                 return self._markdown_section(lines, first_heading)
-        if extension in {".java", ".kt", ".ts", ".tsx", ".js"}:
+        if (flow_domain or "").upper() in {"CODE", "TEST"}:
             declaration = self._first_line(lines, self._looks_like_declaration)
             if declaration:
                 return max(1, declaration - 8), min(len(lines), declaration + 40)

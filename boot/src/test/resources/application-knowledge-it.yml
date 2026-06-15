@@ -3,6 +3,22 @@ forge:
     infrastructure:
       knowledge:
         mode: sqlite
+        sqlite:
+          include-patterns:
+            - "*"
+            - "**/*"
+          excluded-dir-names:
+            - ".git"
+            - "target"
+            - "build"
+            - "dist"
+            - "node_modules"
+            - ".venv"
+            - "var"
+            - "logs"
+          root-marker-paths:
+            - ".git"
+            - "boot/src/main/resources/services.yaml"
 
 forge-it:
   modules:

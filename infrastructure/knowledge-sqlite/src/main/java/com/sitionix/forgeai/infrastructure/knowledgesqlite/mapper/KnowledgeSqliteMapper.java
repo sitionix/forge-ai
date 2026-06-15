@@ -97,7 +97,9 @@ public class KnowledgeSqliteMapper {
                         file.getExtension(),
                         file.getSizeBytes(),
                         file.getContentHash(),
-                        file.getLastModified()
+                        file.getLastModified(),
+                        file.getLineCount(),
+                        file.getDecodePolicy()
                 )).toList(),
                 limit,
                 offset,

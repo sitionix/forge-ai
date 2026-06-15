@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from knowledge_service.file_metadata import FileMetadata
+from knowledge_service.graph_schema import GRAPH_ANALYSIS_ENGINE_VERSION
 from knowledge_service.skipped_reasons import SkippedBreakdown, normalize_skipped_breakdown
 from knowledge_service.source_catalog import SourceMetadata
 
@@ -52,12 +53,20 @@ class InventoryStore:
                     absolute_path TEXT NOT NULL,
                     relative_path TEXT NOT NULL,
                     extension TEXT,
+                    language TEXT,
+                    flow_domain TEXT,
                     size_bytes INTEGER NOT NULL,
                     content_hash TEXT NOT NULL,
                     last_modified TEXT NOT NULL,
+                    line_count INTEGER NOT NULL DEFAULT 0,
+                    decode_policy TEXT NOT NULL DEFAULT 'utf-8:replace',
                     indexed_at TEXT NOT NULL
                 )
             """)
+            self._ensure_column(conn, "files", "line_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "files", "decode_policy", "TEXT NOT NULL DEFAULT 'utf-8:replace'")
+            self._ensure_column(conn, "files", "language", "TEXT")
+            self._ensure_column(conn, "files", "flow_domain", "TEXT")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS inventory_source_state (
                     source_id TEXT PRIMARY KEY,
@@ -104,8 +113,12 @@ class InventoryStore:
                 )
             for file in files:
                 conn.execute(
-                    "INSERT INTO files(source_id, source_path, absolute_path, relative_path, extension, size_bytes, content_hash, last_modified, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (file.sourceId, file.sourcePath, file.absolutePath, file.relativePath, file.extension, file.sizeBytes, file.contentHash, file.lastModified, now),
+                    "INSERT INTO files(source_id, source_path, absolute_path, relative_path, extension, language, flow_domain, size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        file.sourceId, file.sourcePath, file.absolutePath, file.relativePath, file.extension,
+                        file.language, file.flowDomain, file.sizeBytes, file.contentHash, file.lastModified,
+                        file.lineCount, file.decodePolicy, now,
+                    ),
                 )
             files_by_source: Dict[str, int] = {}
             for file in files:
@@ -179,13 +192,15 @@ class InventoryStore:
         with self._connect() as conn:
             total = conn.execute(f"SELECT COUNT(*) AS count FROM files {where}", params).fetchone()["count"]
             rows = conn.execute(
-                f"SELECT source_id, source_path, relative_path, extension, size_bytes, content_hash, last_modified FROM files {where} ORDER BY source_id, relative_path LIMIT ? OFFSET ?",
+                f"SELECT source_id, source_path, relative_path, extension, language, flow_domain, size_bytes, content_hash, last_modified, line_count, decode_policy FROM files {where} ORDER BY source_id, relative_path LIMIT ? OFFSET ?",
                 [*params, limit, offset],
             ).fetchall()
         return {
             "files": [{
                 "sourceId": row["source_id"], "sourcePath": row["source_path"], "relativePath": row["relative_path"],
-                "extension": row["extension"], "sizeBytes": row["size_bytes"], "contentHash": row["content_hash"], "lastModified": row["last_modified"],
+                "extension": row["extension"], "language": row["language"], "flowDomain": row["flow_domain"],
+                "sizeBytes": row["size_bytes"], "contentHash": row["content_hash"],
+                "lastModified": row["last_modified"], "lineCount": row["line_count"], "decodePolicy": row["decode_policy"],
             } for row in rows],
             "limit": limit, "offset": offset, "total": total,
         }
@@ -200,7 +215,7 @@ class InventoryStore:
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT id, source_id, relative_path, content_hash, size_bytes, last_modified FROM files {where}",
+                f"SELECT id, source_id, relative_path, content_hash, size_bytes, last_modified, line_count, decode_policy FROM files {where}",
                 params,
             ).fetchall()
         return [{
@@ -210,6 +225,8 @@ class InventoryStore:
             "contentHash": row["content_hash"],
             "sizeBytes": row["size_bytes"],
             "lastModified": row["last_modified"],
+            "lineCount": row["line_count"],
+            "decodePolicy": row["decode_policy"],
         } for row in rows]
 
     def analyzed_file_ids(self, file_ids: List[int]) -> set[int]:
@@ -223,8 +240,18 @@ class InventoryStore:
             ).fetchall()
         return {row["file_id"] for row in rows}
 
-    def search_rows(self, source_ids: List[str], groups: List[str]) -> Tuple[List[sqlite3.Row], Dict[str, sqlite3.Row]]:
+    def search_rows(
+        self,
+        source_ids: List[str],
+        groups: List[str],
+        analyzer_name: Optional[str] = None,
+        analyzer_version: Optional[str] = None,
+        only_needing_analysis: bool = False,
+        engine_version: str = GRAPH_ANALYSIS_ENGINE_VERSION,
+    ) -> Tuple[List[sqlite3.Row], Dict[str, sqlite3.Row]]:
         self.init()
+        if only_needing_analysis and (not analyzer_name or not analyzer_version or not self._table_exists("analysis_files")):
+            only_needing_analysis = False
         clauses: list[str] = []
         params: list[Any] = []
         if source_ids:
@@ -233,6 +260,20 @@ class InventoryStore:
         if groups:
             clauses.append("s.group_name IN (%s)" % ",".join("?" for _ in groups))
             params.extend(groups)
+        if only_needing_analysis:
+            clauses.append("""
+                NOT EXISTS (
+                    SELECT 1 FROM analysis_files af
+                    WHERE af.source_id = f.source_id
+                      AND af.relative_path = f.relative_path
+                      AND af.content_hash = f.content_hash
+                      AND af.analyzer_name = ?
+                      AND af.analyzer_version = ?
+                      AND af.engine_version = ?
+                      AND af.status = 'ANALYZED'
+                )
+            """)
+            params.extend([analyzer_name or "", analyzer_version or "", engine_version])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as conn:
             files = conn.execute(
@@ -257,6 +298,11 @@ class InventoryStore:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+    def _table_exists(self, table: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
+        return row is not None
 
     def _decode_json(self, value: Optional[str]) -> Optional[Dict[str, Any]]:
         if not value:

@@ -22,6 +22,8 @@ def test_valid_local_config_loads_catalog(tmp_path):
 
     assert loaded.catalog.path == catalog
     assert loaded.catalog.workspace_root == workspace
+    assert loaded.file_classifier.classify("pom.xml").flow_domain == "BUILD"
+    assert loaded.file_classifier.classify("src/main/java/example/App.java").language == "java"
 
 
 def test_invalid_catalog_path_rejected(tmp_path):
