@@ -237,6 +237,7 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
                         inventory.skippedCount(),
                         this.normalize(inventory.skippedBreakdown(), inventory.skippedCount())
                 ),
+                view.inventoryRefresh(),
                 view.coverage(),
                 view.freshness(),
                 view.message()

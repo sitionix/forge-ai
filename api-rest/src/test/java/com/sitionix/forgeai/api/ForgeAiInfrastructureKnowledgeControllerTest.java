@@ -25,6 +25,7 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
                 "knowledge",
                 null,
                 null,
+                null,
                 new KnowledgeViews.KnowledgeCoverageView(100, 100, "2026-06-14T10:00:00Z"),
                 new KnowledgeViews.KnowledgeFreshnessView("UP_TO_DATE", "2026-06-14T10:01:00Z", 0, 0, 0, 0),
                 null

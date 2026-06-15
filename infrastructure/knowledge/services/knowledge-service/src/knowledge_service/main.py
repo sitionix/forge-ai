@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, Query, Request
@@ -12,19 +13,32 @@ from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.config import load_app_config
 from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
-from knowledge_service.errors import ConfigMissingError, KnowledgeError
+from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
-from knowledge_service.inventory_builder import InventoryBuilder
+from knowledge_service.inventory_refresh import BackgroundInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.inventory_schema import InventoryBuildRequest
 from knowledge_service.service_catalog_provider import ServiceYamlCatalogProvider
-from knowledge_service.source_config import load_source_config, require_source_config
+from knowledge_service.source_config import load_source_config
 
 app_config = load_app_config()
 store = InventoryStore(app_config.store_path)
 analysis_runner = AnalysisJobRunner(store, app_config)
+inventory_refresh = InventoryRefreshService(app_config, store)
+inventory_scheduler = BackgroundInventoryScheduler(inventory_refresh, app_config)
 AnalysisStore(app_config.store_path).mark_interrupted_jobs()
-app = FastAPI(title="Knowledge Service", version="0.1.0")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    get_inventory_scheduler().start()
+    try:
+        yield
+    finally:
+        get_inventory_scheduler().stop()
+
+
+app = FastAPI(title="Knowledge Service", version="0.1.0", lifespan=lifespan)
 
 
 @app.exception_handler(KnowledgeError)
@@ -34,9 +48,22 @@ async def knowledge_error_handler(_: Request, exc: KnowledgeError) -> JSONRespon
         status = 200
     elif exc.code.endswith("_NOT_FOUND") or exc.code == "SERVICE_CATALOG_NOT_FOUND":
         status = 404
-    elif exc.code in {"ANALYSIS_JOB_ALREADY_RUNNING"}:
+    elif exc.code in {"ANALYSIS_JOB_ALREADY_RUNNING", "INVENTORY_BUILD_ALREADY_RUNNING", "INVENTORY_BUILD_BLOCKED_BY_ANALYSIS"}:
         status = 409
     return JSONResponse(status_code=status, content={"code": exc.code, "message": exc.message})
+
+
+def get_inventory_refresh() -> InventoryRefreshService:
+    global inventory_refresh, inventory_scheduler
+    if inventory_refresh.config != app_config or inventory_refresh.store is not store:
+        inventory_refresh = InventoryRefreshService(app_config, store)
+        inventory_scheduler = BackgroundInventoryScheduler(inventory_refresh, app_config)
+    return inventory_refresh
+
+
+def get_inventory_scheduler() -> BackgroundInventoryScheduler:
+    get_inventory_refresh()
+    return inventory_scheduler
 
 
 @app.get("/health")
@@ -65,6 +92,7 @@ async def status() -> Dict[str, Any]:
             "skippedCount": inventory.get("skippedCount", 0),
             "skippedBreakdown": inventory.get("skippedBreakdown", {"total": 0, "byReason": {}}),
         },
+        "inventoryRefresh": get_inventory_scheduler().status(),
         "coverage": {
             "scannedFiles": analysis.get("scannedFileCount", 0),
             "eligibleFiles": analysis.get("fileCount", 0),
@@ -93,9 +121,8 @@ async def sources() -> Dict[str, Any]:
 
 @app.post("/api/v1/knowledge/inventory/build")
 async def inventory_build(request: InventoryBuildRequest) -> Dict[str, Any]:
-    config = require_source_config(app_config.local_config_path)
     try:
-        return InventoryBuilder(config, store).build(request.sourceIds, request.groups)
+        return get_inventory_refresh().build(request.sourceIds, request.groups)
     except Exception as exc:
         if isinstance(exc, KnowledgeError):
             raise
@@ -133,10 +160,12 @@ async def context(request: ContextRequest) -> Dict[str, Any]:
 @app.post("/api/v1/knowledge/analysis/build")
 async def analysis_build(request: AnalysisBuildRequest) -> Dict[str, Any]:
     request = request or AnalysisBuildRequest()
-    config = require_source_config(app_config.local_config_path)
     try:
-        InventoryBuilder(config, store).build(request.sourceIds, request.groups)
-        return analysis_runner.start(request)
+        return get_inventory_refresh().build_then(
+            request.sourceIds,
+            request.groups,
+            lambda: analysis_runner.start(request),
+        )
     except Exception as exc:
         if isinstance(exc, KnowledgeError):
             raise

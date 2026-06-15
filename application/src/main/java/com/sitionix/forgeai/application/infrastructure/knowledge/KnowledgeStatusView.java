@@ -5,6 +5,7 @@ public record KnowledgeStatusView(
         String module,
         KnowledgeViews.KnowledgeCatalogView catalog,
         KnowledgeViews.KnowledgeInventorySummaryView inventory,
+        KnowledgeViews.KnowledgeInventoryRefreshView inventoryRefresh,
         KnowledgeViews.KnowledgeCoverageView coverage,
         KnowledgeViews.KnowledgeFreshnessView freshness,
         String message

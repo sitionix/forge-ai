@@ -22,6 +22,19 @@ public final class KnowledgeViews {
     ) {
     }
 
+    public record KnowledgeInventoryRefreshView(
+            Boolean enabled,
+            Integer intervalSeconds,
+            String status,
+            String lastStartedAt,
+            String lastCompletedAt,
+            String lastErrorCode,
+            String lastErrorMessage,
+            Integer runCount,
+            Integer skipCount
+    ) {
+    }
+
     public record KnowledgeCoverageView(
             Integer scannedFiles,
             Integer eligibleFiles,

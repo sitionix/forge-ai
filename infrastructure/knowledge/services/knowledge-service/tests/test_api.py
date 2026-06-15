@@ -18,6 +18,8 @@ def test_health_and_status_endpoint_reports_inventory_state(tmp_path, monkeypatc
     assert payload["catalog"]["configured"] is False
     assert payload["inventory"]["skippedCount"] == 0
     assert payload["inventory"]["skippedBreakdown"] == {"total": 0, "byReason": {}}
+    assert payload["inventoryRefresh"]["enabled"] is True
+    assert payload["inventoryRefresh"]["intervalSeconds"] == 300
     assert "search" not in payload
     assert "vectorStore" not in payload
     assert "rag" not in payload

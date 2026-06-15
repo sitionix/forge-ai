@@ -35,7 +35,7 @@ class HttpKnowledgeGatewayTest {
     @Test
     void statusProxyMapsSuccess() {
         final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
-                {"status":"UP","module":"knowledge","catalog":{"configured":true,"type":"service_catalog"},"inventory":{"implemented":true,"status":"READY","sourceCount":1,"fileCount":2,"skippedCount":7,"skippedBreakdown":{"total":7,"byReason":{"EXCLUDED_BY_PATTERN":5,"BINARY":2}}}}
+                {"status":"UP","module":"knowledge","catalog":{"configured":true,"type":"service_catalog"},"inventory":{"implemented":true,"status":"READY","sourceCount":1,"fileCount":2,"skippedCount":7,"skippedBreakdown":{"total":7,"byReason":{"EXCLUDED_BY_PATTERN":5,"BINARY":2}}},"inventoryRefresh":{"enabled":true,"intervalSeconds":300,"status":"READY","runCount":1,"skipCount":0}}
                 """));
 
         final var status = gateway.status();
@@ -44,6 +44,7 @@ class HttpKnowledgeGatewayTest {
         assertThat(status.catalog().configured()).isTrue();
         assertThat(status.inventory().skippedBreakdown().total()).isEqualTo(7);
         assertThat(status.inventory().skippedBreakdown().byReason()).containsEntry("EXCLUDED_BY_PATTERN", 5);
+        assertThat(status.inventoryRefresh().intervalSeconds()).isEqualTo(300);
     }
 
     @Test

@@ -40,6 +40,7 @@ public class KnowledgeSqliteMapper {
                         build == null ? 0 : build.getSkippedCount(),
                         this.skippedBreakdown(build)
                 ),
+                new KnowledgeViews.KnowledgeInventoryRefreshView(false, null, "DISABLED", null, null, null, null, 0, 0),
                 new KnowledgeViews.KnowledgeCoverageView(0, fileCount, null),
                 new KnowledgeViews.KnowledgeFreshnessView("UNKNOWN", null, 0, 0, 0, 0),
                 null

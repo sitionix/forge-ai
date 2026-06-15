@@ -14,6 +14,8 @@ class AppConfig:
     port: int
     local_config_path: Path
     store_path: Path
+    inventory_auto_refresh_enabled: bool = True
+    inventory_auto_refresh_interval_seconds: int = 300
     analysis_enabled: bool = True
     analysis_provider: str = "ollama"
     analysis_base_url: str = "http://localhost:11434"
@@ -48,6 +50,16 @@ def load_app_config() -> AppConfig:
         port=int(os.environ.get("KNOWLEDGE_PORT") or service.get("port") or 7081),
         local_config_path=Path(os.environ.get("KNOWLEDGE_CONFIG") or module_dir / "config" / "knowledge-sources.yaml"),
         store_path=store,
+        inventory_auto_refresh_enabled=str(
+            os.environ.get("KNOWLEDGE_INVENTORY_AUTO_REFRESH_ENABLED")
+            or inventory.get("auto_refresh_enabled")
+            or True
+        ).lower() != "false",
+        inventory_auto_refresh_interval_seconds=max(1, int(
+            os.environ.get("KNOWLEDGE_INVENTORY_AUTO_REFRESH_INTERVAL_SECONDS")
+            or inventory.get("auto_refresh_interval_seconds")
+            or 300
+        )),
         analysis_enabled=str(os.environ.get("KNOWLEDGE_ANALYSIS_ENABLED", analysis.get("enabled", True))).lower() != "false",
         analysis_provider=str(os.environ.get("KNOWLEDGE_ANALYSIS_PROVIDER") or analysis.get("provider") or "ollama"),
         analysis_base_url=str(os.environ.get("KNOWLEDGE_ANALYSIS_BASE_URL") or analysis.get("base_url") or "http://localhost:11434"),

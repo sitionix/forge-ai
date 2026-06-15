@@ -20,6 +20,7 @@ from knowledge_service.config import AppConfig
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.inventory_builder import InventoryBuilder
+from knowledge_service.inventory_refresh import BackgroundInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.source_config import load_source_config
 
@@ -521,6 +522,82 @@ def test_analyze_refreshes_inventory_and_restores_freshness(tmp_path):
     assert freshness["status"] == "UP_TO_DATE"
     assert AnalysisStore(store.db_path).status()["fileCount"] == 1
     assert files["total"] == 2
+
+
+def test_inventory_refresh_removes_analysis_for_deleted_files(tmp_path):
+    store, _, service = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    (service / "src/main/java/example/ObjectHandler.java").unlink()
+
+    result = InventoryRefreshService(app_config(tmp_path), store).build([], [])
+    files = AnalysisStore(store.db_path).files(None, None, None, 10, 0)
+    symbols = AnalysisStore(store.db_path).symbols(None, None, None, None, None, 10, 0)
+    relations = AnalysisStore(store.db_path).relations(None, None, None, None, 10, 0)
+
+    assert result["fileCount"] == 0
+    assert files["total"] == 0
+    assert symbols["total"] == 0
+    assert relations["total"] == 0
+
+
+def test_inventory_refresh_makes_new_files_available_for_next_analysis(tmp_path):
+    store, _, service = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    (service / "src/main/java/example/SecondHandler.java").write_text(
+        "public class SecondHandler {\n  @PostMapping\n  public void create() {\n  }\n}\n",
+        encoding="utf-8",
+    )
+    InventoryRefreshService(app_config(tmp_path), store).build([], [])
+    analyzer = StubAnalyzer()
+
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
+    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
+
+    assert final["fileCount"] == 1
+    assert final["processedFileCount"] == 1
+    assert analyzer.calls == 1
+    assert files["total"] == 2
+
+
+def test_inventory_refresh_blocked_while_analysis_running(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    AnalysisStore(store.db_path).create_job({
+        "jobId": "job-running",
+        "status": "RUNNING",
+        "startedAt": "now",
+        "sourceCount": 1,
+        "fileCount": 1,
+        "processedFileCount": 0,
+        "failedFileCount": 0,
+    })
+
+    with pytest.raises(KnowledgeError) as exc:
+        InventoryRefreshService(app_config(tmp_path), store).build([], [])
+
+    assert exc.value.code == "INVENTORY_BUILD_BLOCKED_BY_ANALYSIS"
+
+
+def test_background_inventory_scheduler_skips_while_analysis_running(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    AnalysisStore(store.db_path).create_job({
+        "jobId": "job-running",
+        "status": "RUNNING",
+        "startedAt": "now",
+        "sourceCount": 1,
+        "fileCount": 1,
+        "processedFileCount": 0,
+        "failedFileCount": 0,
+    })
+    refresh = InventoryRefreshService(app_config(tmp_path), store)
+    scheduler = BackgroundInventoryScheduler(refresh, app_config(tmp_path))
+
+    state = scheduler.run_once()
+
+    assert state["status"] == "SKIPPED"
+    assert state["lastErrorCode"] == "INVENTORY_BUILD_BLOCKED_BY_ANALYSIS"
+    assert state["skipCount"] == 1
 
 
 def test_background_job_returns_id_and_updates_progress(tmp_path):
