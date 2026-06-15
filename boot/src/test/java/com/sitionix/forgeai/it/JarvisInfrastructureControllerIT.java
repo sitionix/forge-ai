@@ -32,13 +32,16 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 @IntegrationTest(properties = {
         "forge-ai.jobs.scheduling-enabled=false"
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class JarvisInfrastructureControllerIT extends AbstractForgeAiIT {
+
+    private static final String COMMAND_TEXT = "check ollama";
+    private static final String CHAT_MESSAGE = "explain how JarvisGateway works";
+    private static final String CHAT_ERROR_MESSAGE = "explain JarvisGateway";
 
     @Autowired
     private TestManager testManager;
@@ -60,13 +63,9 @@ class JarvisInfrastructureControllerIT extends AbstractForgeAiIT {
 
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.jarvisStatus())
-                .andExpectPath(jsonPath("$.status").value("UP"))
-                .andExpectPath(jsonPath("$.host").value("127.0.0.1"))
-                .andExpectPath(jsonPath("$.port").value(7071))
-                .andExpectPath(jsonPath("$.model.defaultModel").value("qwen2.5-coder:7b"))
-                .andExpectPath(jsonPath("$.ollama.status").value("UP"))
-                .andExpectPath(jsonPath("$.actions.count").value(2))
                 .assertDefault();
+
+        verify(this.jarvisGateway).status();
     }
 
     @Test
@@ -78,30 +77,23 @@ class JarvisInfrastructureControllerIT extends AbstractForgeAiIT {
 
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.jarvisActions())
-                .andExpectPath(jsonPath("$.actions[0].action").value("ollama_status"))
-                .andExpectPath(jsonPath("$.actions[0].description").value("Check Ollama local API"))
-                .andExpectPath(jsonPath("$.actions[0].targets[0]").value("health"))
-                .andExpectPath(jsonPath("$.actions[0].command").doesNotExist())
                 .assertDefault();
+
+        verify(this.jarvisGateway).actions();
     }
 
     @Test
     @DisplayName("Should delegate command text through application use case to Jarvis gateway")
     void givenValidCommand_whenPostCommand_thenReturnJarvisExecutionResult() throws Exception {
-        final JarvisCommandRequest request = new JarvisCommandRequest("перевір ollama");
+        final JarvisCommandRequest request = new JarvisCommandRequest(COMMAND_TEXT);
         when(this.jarvisGateway.command(request)).thenReturn(new JarvisCommandResultView(
-                "перевір ollama",
+                COMMAND_TEXT,
                 new JarvisIntentView("ollama_status", "health", Map.of()),
                 new JarvisExecutionView(true, "Action executed: ollama_status.health", "Ollama is reachable")
         ));
 
         this.testManager.mockMvc()
                 .ping(ControllerEndpoint.jarvisCommand())
-                .andExpectPath(jsonPath("$.input").value("перевір ollama"))
-                .andExpectPath(jsonPath("$.intent.action").value("ollama_status"))
-                .andExpectPath(jsonPath("$.intent.target").value("health"))
-                .andExpectPath(jsonPath("$.execution.executed").value(true))
-                .andExpectPath(jsonPath("$.execution.output").value("Ollama is reachable"))
                 .assertDefault();
 
         verify(this.jarvisGateway).command(request);
@@ -115,8 +107,6 @@ class JarvisInfrastructureControllerIT extends AbstractForgeAiIT {
                 .withRequest("requestJarvisCommandBlank.json")
                 .expectResponse("responseJarvisCommandBlank.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
-                .andExpectPath(jsonPath("$.code").value("INVALID_COMMAND"))
-                .andExpectPath(jsonPath("$.message").value("Command text must not be empty"))
                 .assertDefault();
 
         verify(this.jarvisGateway, never()).command(any());
@@ -136,15 +126,15 @@ class JarvisInfrastructureControllerIT extends AbstractForgeAiIT {
                 .withRequest("requestJarvisCommandUnsupported.json")
                 .expectResponse("responseJarvisCommandUnsupported.json")
                 .expectStatus(HttpStatus.FORBIDDEN)
-                .andExpectPath(jsonPath("$.code").value("UNSUPPORTED_ACTION"))
-                .andExpectPath(jsonPath("$.message").value("The requested action is not allowlisted"))
                 .assertDefault();
+
+        verify(this.jarvisGateway).command(request);
     }
 
     @Test
     @DisplayName("Should proxy Jarvis chat request through application use case to Jarvis gateway")
     void givenValidChat_whenPostChat_thenReturnJarvisChatResponse() throws Exception {
-        final JarvisChatRequest request = new JarvisChatRequest("поясни як працює JarvisGateway", 12000);
+        final JarvisChatRequest request = new JarvisChatRequest(CHAT_MESSAGE, 12000);
         when(this.jarvisGateway.chat(request)).thenReturn(new JarvisChatResponse(
                 "JarvisGateway proxies Forge requests to Jarvis.",
                 List.of(new JarvisChatContextView(
@@ -174,8 +164,6 @@ class JarvisInfrastructureControllerIT extends AbstractForgeAiIT {
                 .withRequest("requestJarvisChatBlank.json")
                 .expectResponse("responseJarvisChatBlank.json")
                 .expectStatus(HttpStatus.BAD_REQUEST)
-                .andExpectPath(jsonPath("$.code").value("INVALID_COMMAND"))
-                .andExpectPath(jsonPath("$.message").value("Chat message must not be empty"))
                 .assertDefault();
 
         verify(this.jarvisGateway, never()).chat(any());
@@ -184,7 +172,7 @@ class JarvisInfrastructureControllerIT extends AbstractForgeAiIT {
     @Test
     @DisplayName("Should map Jarvis unavailable during chat to controlled error")
     void givenJarvisUnavailable_whenPostChat_thenReturnControlledServiceUnavailable() throws Exception {
-        final JarvisChatRequest request = new JarvisChatRequest("поясни JarvisGateway", 12000);
+        final JarvisChatRequest request = new JarvisChatRequest(CHAT_ERROR_MESSAGE, 12000);
         when(this.jarvisGateway.chat(request)).thenThrow(new JarvisGatewayException(
                 JarvisGatewayErrorCode.JARVIS_UNAVAILABLE,
                 "Jarvis is unavailable"
@@ -195,15 +183,15 @@ class JarvisInfrastructureControllerIT extends AbstractForgeAiIT {
                 .withRequest("requestJarvisChatUnavailable.json")
                 .expectResponse("responseJarvisChatUnavailable.json")
                 .expectStatus(HttpStatus.SERVICE_UNAVAILABLE)
-                .andExpectPath(jsonPath("$.code").value("JARVIS_UNAVAILABLE"))
-                .andExpectPath(jsonPath("$.message").value("Jarvis is unavailable"))
                 .assertDefault();
+
+        verify(this.jarvisGateway).chat(request);
     }
 
     @Test
     @DisplayName("Should map invalid Jarvis chat response to controlled error")
     void givenInvalidJarvisChatResponse_whenPostChat_thenReturnControlledBadGateway() throws Exception {
-        final JarvisChatRequest request = new JarvisChatRequest("поясни JarvisGateway", 12000);
+        final JarvisChatRequest request = new JarvisChatRequest(CHAT_ERROR_MESSAGE, 12000);
         when(this.jarvisGateway.chat(request)).thenThrow(new JarvisGatewayException(
                 JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE,
                 "Jarvis chat response is invalid"
@@ -214,15 +202,15 @@ class JarvisInfrastructureControllerIT extends AbstractForgeAiIT {
                 .withRequest("requestJarvisChatBadResponse.json")
                 .expectResponse("responseJarvisChatBadResponse.json")
                 .expectStatus(HttpStatus.BAD_GATEWAY)
-                .andExpectPath(jsonPath("$.code").value("JARVIS_BAD_RESPONSE"))
-                .andExpectPath(jsonPath("$.message").value("Jarvis chat response is invalid"))
                 .assertDefault();
+
+        verify(this.jarvisGateway).chat(request);
     }
 
     @Test
     @DisplayName("Should map Jarvis chat timeout to controlled error")
     void givenJarvisTimeout_whenPostChat_thenReturnControlledGatewayTimeout() throws Exception {
-        final JarvisChatRequest request = new JarvisChatRequest("поясни JarvisGateway", 12000);
+        final JarvisChatRequest request = new JarvisChatRequest(CHAT_ERROR_MESSAGE, 12000);
         when(this.jarvisGateway.chat(request)).thenThrow(new JarvisGatewayException(
                 JarvisGatewayErrorCode.JARVIS_TIMEOUT,
                 "Jarvis request timed out"
@@ -233,8 +221,8 @@ class JarvisInfrastructureControllerIT extends AbstractForgeAiIT {
                 .withRequest("requestJarvisChatTimeout.json")
                 .expectResponse("responseJarvisChatTimeout.json")
                 .expectStatus(HttpStatus.GATEWAY_TIMEOUT)
-                .andExpectPath(jsonPath("$.code").value("JARVIS_TIMEOUT"))
-                .andExpectPath(jsonPath("$.message").value("Jarvis request timed out"))
                 .assertDefault();
+
+        verify(this.jarvisGateway).chat(request);
     }
 }

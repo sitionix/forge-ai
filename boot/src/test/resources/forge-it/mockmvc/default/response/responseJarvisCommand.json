@@ -1,5 +1,5 @@
 {
-  "input": "перевір ollama",
+  "input": "check ollama",
   "intent": {
     "action": "ollama_status",
     "target": "health",
