@@ -5,9 +5,9 @@ public record KnowledgeStatusView(
         String module,
         KnowledgeViews.KnowledgeCatalogView catalog,
         KnowledgeViews.KnowledgeInventorySummaryView inventory,
-        KnowledgeViews.KnowledgeFeatureView search,
-        KnowledgeViews.KnowledgeFeatureView vectorStore,
-        KnowledgeViews.KnowledgeFeatureView rag,
+        KnowledgeViews.KnowledgeInventoryRefreshView inventoryRefresh,
+        KnowledgeViews.KnowledgeCoverageView coverage,
+        KnowledgeViews.KnowledgeFreshnessView freshness,
         String message
 ) {
 }

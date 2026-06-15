@@ -4,10 +4,16 @@ The Operator UI page is `boot/src/main/resources/static/operator/knowledge.html`
 
 The browser calls Forge AI backend endpoints only. It does not call the local Knowledge service port directly.
 
-The page shows runtime status, catalog state, catalog-derived sources, inventory status, a build button, indexed files, keyword search results, and retrieval context results.
+The page shows runtime status, catalog state, catalog-derived sources, inventory status, indexed files, and AI analysis status/results.
 
-The Inventory card shows indexed file count, skipped count, and a compact skipped breakdown. Zero-count reasons are hidden. If the backend response does not contain breakdown metadata, the page asks the operator to rebuild inventory.
+The Inventory card shows indexed file count, skipped count, and a compact skipped breakdown. Zero-count reasons are hidden. Analyze refreshes inventory automatically before semantic scanning.
 
 Skipped means files or paths were seen during inventory build but were not indexed because they matched exclude rules, did not match include rules, were too large, binary, unsafe, unreadable, symlinked outside the source root, or came from missing configured roots. Skipped items are not already processed files and are not errors by default.
 
-The Retrieval Context section calls `/fgaisox/api/v1/infrastructure/knowledge/context` through Forge AI only. It displays budget usage, sources used, diagnostics, context item path, line range, score, reason, and snippet content. It does not implement chat, RAG answer generation, Jarvis integration, or Ollama calls.
+The Retrieval Context UI section was removed. Jarvis chat still has a transitional direct Knowledge `/api/v1/knowledge/context` dependency until semantic retrieval is rebuilt on AI analysis results.
+
+The Structural Facts UI section was removed from the primary Knowledge screen. Semantic symbols and relations are shown through AI analysis service details.
+
+The AI Structural Analysis section calls Forge analysis endpoints only. It displays latest status, active job progress, processed/skipped/failed counts, current source/file, symbol and relation totals, and previews roles/confidence/evidence. It polls job status while queued or running and never calls Ollama directly from the browser.
+
+The Flow Context UI section was removed. Flow-level semantics should be produced or retrieved from AI analysis results, not from manual inventory/facts builders.

@@ -2,12 +2,17 @@ package com.sitionix.forgeai.infrastructure.knowledgesqlite.adapter;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextBudgetView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextItemView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextSourceView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeDiagnosticView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisJobView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStatusView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStopView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGateway;
@@ -16,8 +21,11 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewa
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchResultView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeServiceAnalysisView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeServiceFactsView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeServiceInventoryView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeServiceStatusView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeServicesStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSourcesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
 import com.sitionix.forgeai.domain.props.ServiceConfigView;
@@ -35,10 +43,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 @Component
 @RequiredArgsConstructor
@@ -61,6 +67,41 @@ public class SqliteKnowledgeGateway implements KnowledgeGateway {
     @Override
     public KnowledgeSourcesView sources() {
         return this.mapper.sources(this.repository.sources());
+    }
+
+    @Override
+    public KnowledgeServicesStatusView servicesStatus() {
+        final List<KnowledgeServiceStatusView> services = new ArrayList<>();
+        for (final KnowledgeSourceEntity source : this.repository.sources()) {
+            final int fileCount = this.repository.fileCount(source.getSourceId(), null, null);
+            services.add(new KnowledgeServiceStatusView(
+                    source.getSourceId(),
+                    source.getDisplayName(),
+                    source.getDisplayName(),
+                    source.getGroup(),
+                    source.getPath(),
+                    Boolean.TRUE.equals(source.getRootExists()),
+                    this.readStringList(source.getTagsJson()),
+                    new KnowledgeServiceInventoryView(fileCount > 0 ? "READY" : "EMPTY", fileCount, null, null, source.getLastSeenAt()),
+                    new KnowledgeServiceAnalysisView(
+                            "NOT_ANALYZED",
+                            fileCount,
+                            0,
+                            0.0,
+                            0,
+                            0,
+                            fileCount,
+                            0,
+                            0,
+                            null,
+                            null,
+                            null
+                    ),
+                    new KnowledgeServiceFactsView(0, 0),
+                    List.of()
+            ));
+        }
+        return new KnowledgeServicesStatusView(services, null);
     }
 
     @Override
@@ -113,66 +154,38 @@ public class SqliteKnowledgeGateway implements KnowledgeGateway {
     }
 
     @Override
-    public KnowledgeSearchResultView search(final KnowledgeSearchRequest request) {
-        if (request == null || request.query() == null || request.query().isBlank()) {
-            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.SEARCH_QUERY_INVALID, "Search query must not be empty");
-        }
-        final int limit = request.limit() == null ? 20 : request.limit();
-        return this.mapper.search(
-                request.query(),
-                this.repository.contextFiles(request.query(), request.sourceIds(), request.groups(), limit)
-        );
+    public KnowledgeAnalysisBuildView buildAnalysis(final KnowledgeAnalysisBuildRequest request) {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
     }
 
     @Override
-    public KnowledgeContextView context(final KnowledgeContextRequest request) {
-        if (request == null || request.query() == null || request.query().isBlank()) {
-            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID, "Context query must not be empty");
-        }
-        final int maxChars = request.maxChars() == null ? 12000 : request.maxChars();
-        if (this.repository.latestBuild().isEmpty()) {
-            return new KnowledgeContextView(
-                    request.query(),
-                    List.of(),
-                    List.of(),
-                    new KnowledgeContextBudgetView(maxChars, 0, false),
-                    List.of(new KnowledgeDiagnosticView("INVENTORY_EMPTY", "Inventory is empty. Build inventory first."))
-            );
-        }
-        final int maxItems = request.maxItems() == null ? 12 : request.maxItems();
-        final boolean includeContent = request.includeContent() == null || request.includeContent();
-        final List<KnowledgeContextItemView> context = new ArrayList<>();
-        int usedChars = 0;
-        boolean truncated = false;
-        for (final KnowledgeContextItemView candidate : this.repository
-                .contextFiles(request.query(), request.sourceIds(), request.groups(), maxItems)
-                .stream()
-                .map(file -> this.mapper.contextItem(file, includeContent))
-                .toList()) {
-            final String content = candidate.content();
-            final int contentChars = content == null ? 0 : content.length();
-            if (usedChars + contentChars > maxChars) {
-                truncated = true;
-                break;
-            }
-            context.add(candidate);
-            usedChars += contentChars;
-        }
-        return new KnowledgeContextView(
-                request.query(),
-                context,
-                sourcesUsed(context),
-                new KnowledgeContextBudgetView(maxChars, usedChars, truncated),
-                List.of()
-        );
+    public KnowledgeAnalysisJobView analysisJob(final String jobId) {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
     }
 
-    private List<KnowledgeContextSourceView> sourcesUsed(final List<KnowledgeContextItemView> context) {
-        final Set<String> seen = new LinkedHashSet<>();
-        return context.stream()
-                .filter(item -> seen.add(item.sourceId()))
-                .map(this.mapper::contextSource)
-                .toList();
+    @Override
+    public KnowledgeAnalysisStopView stopAnalysis(final String jobId) {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
+    }
+
+    @Override
+    public KnowledgeAnalysisStatusView analysisStatus() {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
+    }
+
+    @Override
+    public KnowledgeAnalysisFilesView analysisFiles(final KnowledgeAnalysisFilesRequest request) {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
+    }
+
+    @Override
+    public KnowledgeAnalysisSymbolsView analysisSymbols(final KnowledgeAnalysisSymbolsRequest request) {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
+    }
+
+    @Override
+    public KnowledgeAnalysisRelationsView analysisRelations(final KnowledgeAnalysisRelationsRequest request) {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
     }
 
     private boolean matches(final KnowledgeInventoryBuildRequest request,
@@ -225,6 +238,24 @@ public class SqliteKnowledgeGateway implements KnowledgeGateway {
             return this.objectMapper.writeValueAsString(value);
         } catch (JsonProcessingException exception) {
             throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "Failed to serialize Knowledge SQLite metadata", exception);
+        }
+    }
+
+    private List<String> readStringList(final String value) {
+        try {
+            final var node = this.objectMapper.readTree(value == null || value.isBlank() ? "[]" : value);
+            if (!node.isArray()) {
+                return List.of();
+            }
+            final List<String> values = new ArrayList<>();
+            node.forEach(item -> {
+                if (item.isTextual()) {
+                    values.add(item.asText());
+                }
+            });
+            return values;
+        } catch (final JsonProcessingException exception) {
+            return List.of();
         }
     }
 }

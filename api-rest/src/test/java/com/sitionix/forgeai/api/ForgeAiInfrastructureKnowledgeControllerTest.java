@@ -6,8 +6,10 @@ import static org.mockito.Mockito.when;
 
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeViews;
 import com.sitionix.forgeai.application.infrastructure.knowledge.ManageKnowledgeInfrastructure;
@@ -23,9 +25,9 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
                 "knowledge",
                 null,
                 null,
-                new KnowledgeViews.KnowledgeFeatureView(true, true, "keyword"),
                 null,
-                null,
+                new KnowledgeViews.KnowledgeCoverageView(100, 100, "2026-06-14T10:00:00Z"),
+                new KnowledgeViews.KnowledgeFreshnessView("UP_TO_DATE", "2026-06-14T10:01:00Z", 0, 0, 0, 0),
                 null
         ));
         final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
@@ -36,25 +38,84 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
     }
 
     @Test
-    void searchDelegatesToUseCase() {
+    void analysisBuildDelegatesToUseCase() {
         final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
-        final KnowledgeSearchRequest request = new KnowledgeSearchRequest("query", java.util.List.of(), java.util.List.of(), 10);
+        final KnowledgeAnalysisBuildRequest request = new KnowledgeAnalysisBuildRequest(java.util.List.of("svc"), java.util.List.of(), false, 5, 1);
         final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
 
-        controller.search(request);
+        controller.buildAnalysis(request);
 
-        org.mockito.Mockito.verify(useCase).search(request);
+        org.mockito.Mockito.verify(useCase).buildAnalysis(request);
     }
 
     @Test
-    void contextDelegatesToUseCase() {
+    void analysisJobDelegatesToUseCase() {
         final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
-        final KnowledgeContextRequest request = new KnowledgeContextRequest("query", java.util.List.of(), java.util.List.of(), 12000, 12, true);
         final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
 
-        controller.context(request);
+        controller.analysisJob("job-1");
 
-        org.mockito.Mockito.verify(useCase).context(request);
+        org.mockito.Mockito.verify(useCase).analysisJob("job-1");
+    }
+
+    @Test
+    void analysisStopDelegatesToUseCase() {
+        final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
+        final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
+
+        controller.stopAnalysis("job-1");
+
+        org.mockito.Mockito.verify(useCase).stopAnalysis("job-1");
+    }
+
+    @Test
+    void analysisStatusDelegatesToUseCase() {
+        final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
+        final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
+
+        controller.analysisStatus();
+
+        org.mockito.Mockito.verify(useCase).analysisStatus();
+    }
+
+    @Test
+    void servicesStatusDelegatesToUseCase() {
+        final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
+        final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
+
+        controller.servicesStatus();
+
+        org.mockito.Mockito.verify(useCase).servicesStatus();
+    }
+
+    @Test
+    void analysisFilesDelegatesQueryParamsToUseCase() {
+        final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
+        final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
+
+        controller.analysisFiles("svc", "ANALYZED", "path", 10, 1);
+
+        org.mockito.Mockito.verify(useCase).analysisFiles(new KnowledgeAnalysisFilesRequest("svc", "ANALYZED", "path", 10, 1));
+    }
+
+    @Test
+    void analysisSymbolsDelegatesQueryParamsToUseCase() {
+        final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
+        final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
+
+        controller.analysisSymbols("svc", "HTTP_HANDLER", "CLASS", "path", "name", 10, 1);
+
+        org.mockito.Mockito.verify(useCase).analysisSymbols(new KnowledgeAnalysisSymbolsRequest("svc", "HTTP_HANDLER", "CLASS", "path", "name", 10, 1));
+    }
+
+    @Test
+    void analysisRelationsDelegatesQueryParamsToUseCase() {
+        final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
+        final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
+
+        controller.analysisRelations("svc", "CALLS", "from", "to", 10, 1);
+
+        org.mockito.Mockito.verify(useCase).analysisRelations(new KnowledgeAnalysisRelationsRequest("svc", "CALLS", "from", "to", 10, 1));
     }
 
     @Test
@@ -69,22 +130,25 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
     }
 
     @Test
-    void searchValidationMapsBadRequest() {
+    void knowledgeNotFoundMapsControlledError() {
         final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(mock(ManageKnowledgeInfrastructure.class));
 
         final var response = controller.handleKnowledgeGatewayException(
-                new KnowledgeGatewayException(KnowledgeGatewayErrorCode.SEARCH_QUERY_INVALID, "Search query must not be empty"));
+                new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_NOT_FOUND, "ANALYSIS_JOB_NOT_FOUND", "Analysis job not found"));
 
-        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(response.getStatusCode().value()).isEqualTo(404);
+        assertThat(response.getBody().code()).isEqualTo("ANALYSIS_JOB_NOT_FOUND");
     }
 
     @Test
-    void contextValidationMapsBadRequest() {
+    void knowledgeConflictMapsControlledError() {
         final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(mock(ManageKnowledgeInfrastructure.class));
 
         final var response = controller.handleKnowledgeGatewayException(
-                new KnowledgeGatewayException(KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID, "Context query must not be empty"));
+                new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_CONFLICT, "ANALYSIS_JOB_ALREADY_RUNNING", "Knowledge analysis job already running"));
 
-        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
+        assertThat(response.getBody().code()).isEqualTo("ANALYSIS_JOB_ALREADY_RUNNING");
     }
+
 }

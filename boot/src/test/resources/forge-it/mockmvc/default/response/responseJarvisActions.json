@@ -1,0 +1,11 @@
+{
+  "actions": [
+    {
+      "action": "ollama_status",
+      "description": "Check Ollama local API",
+      "targets": [
+        "health"
+      ]
+    }
+  ]
+}

@@ -65,6 +65,71 @@ indexing:
     return store, svc
 
 
+def build_ranking_store(tmp_path):
+    workspace = tmp_path / "workspace"
+    auth = workspace / "auth-service"
+    other = workspace / "other-service"
+    (auth / "src/main/java/demo").mkdir(parents=True)
+    (auth / "src/test/java/demo").mkdir(parents=True)
+    (auth / ".github/workflows").mkdir(parents=True)
+    (auth / "apis/auth/rest").mkdir(parents=True)
+    (other / "src/main/java/demo").mkdir(parents=True)
+    (auth / "src/main/java/demo/AuthFlow.java").write_text(
+        "package demo;\nclass AuthFlow { void login() { /* auth token refresh provider */ } }\n",
+        encoding="utf-8",
+    )
+    (auth / "src/test/java/demo/AuthFlowTest.java").write_text(
+        "package demo;\nclass AuthFlowTest { void testAuthTokenRefreshProvider() {} }\n",
+        encoding="utf-8",
+    )
+    (auth / ".github/workflows/auth-deploy.yml").write_text(
+        "name: auth deploy workflow\non: workflow_dispatch\njobs: { deploy: {} }\n",
+        encoding="utf-8",
+    )
+    (auth / "apis/auth/rest/openapi.yml").write_text(
+        "openapi: 3.0.3\ninfo: { title: Auth API, version: '1' }\npaths: { /auth/login: {} }\n",
+        encoding="utf-8",
+    )
+    (other / "src/main/java/demo/AuthClient.java").write_text(
+        "package demo;\nclass AuthClient { void auth() {} }\n",
+        encoding="utf-8",
+    )
+    catalog = tmp_path / "services.yaml"
+    catalog.write_text(
+        """services:
+  authsvc:
+    label: Authorisation Service
+    path: auth-service
+    group: backend
+    tags: [java, auth]
+    domain_keywords: [login, token, authentication]
+    owns_business_areas: [Authorisation]
+    contract_refs:
+      api:
+        root: auth-service/apis/auth/rest/openapi.yml
+  other:
+    label: Other Service
+    path: other-service
+    group: backend
+    tags: [java]
+""",
+        encoding="utf-8",
+    )
+    config_file = tmp_path / "knowledge-sources.yaml"
+    config_file.write_text(
+        f"""catalog:
+  path: "{catalog}"
+  workspace_root: "{workspace}"
+indexing:
+  include: ["**/*.java", "**/*.yml"]
+""",
+        encoding="utf-8",
+    )
+    store = InventoryStore(tmp_path / "knowledge.sqlite")
+    InventoryBuilder(load_source_config(config_file), store).build([], [])
+    return store
+
+
 def test_context_request_validation():
     with pytest_raises_validation():
         ContextRequest(query="x", maxChars=999)
@@ -155,6 +220,49 @@ def test_context_never_reads_outside_indexed_inventory(tmp_path):
     result = ContextService(store).context(ContextRequest(query="OutsideInventory"))
 
     assert result["context"] == []
+
+
+def test_runtime_source_ranks_above_test_for_explanation_query(tmp_path):
+    store = build_ranking_store(tmp_path)
+    result = ContextService(store).context(ContextRequest(query="explain auth flow", maxItems=5, includeContent=False))
+
+    assert result["context"][0]["relativePath"] == "src/main/java/demo/AuthFlow.java"
+
+
+def test_workflow_down_ranked_for_runtime_query(tmp_path):
+    store = build_ranking_store(tmp_path)
+    result = ContextService(store).context(ContextRequest(query="auth runtime", maxItems=5, includeContent=False))
+    paths = [item["relativePath"] for item in result["context"]]
+
+    assert paths.index("src/main/java/demo/AuthFlow.java") < paths.index(".github/workflows/auth-deploy.yml")
+
+
+def test_workflow_preferred_for_deploy_query(tmp_path):
+    store = build_ranking_store(tmp_path)
+    result = ContextService(store).context(ContextRequest(query="auth deploy workflow", maxItems=5, includeContent=False))
+
+    assert result["context"][0]["relativePath"] == ".github/workflows/auth-deploy.yml"
+
+
+def test_tests_preferred_for_test_specific_query(tmp_path):
+    store = build_ranking_store(tmp_path)
+    result = ContextService(store).context(ContextRequest(query="auth tests", maxItems=5, includeContent=False))
+
+    assert result["context"][0]["relativePath"] == "src/test/java/demo/AuthFlowTest.java"
+
+
+def test_service_metadata_match_boosts_correct_source(tmp_path):
+    store = build_ranking_store(tmp_path)
+    result = ContextService(store).context(ContextRequest(query="authorisation auth", maxItems=5, includeContent=False))
+
+    assert result["context"][0]["sourceId"] == "authsvc"
+
+
+def test_contract_files_preferred_for_contract_query(tmp_path):
+    store = build_ranking_store(tmp_path)
+    result = ContextService(store).context(ContextRequest(query="auth openapi contract", maxItems=5, includeContent=False))
+
+    assert result["context"][0]["relativePath"] == "apis/auth/rest/openapi.yml"
 
 
 class pytest_raises_validation:

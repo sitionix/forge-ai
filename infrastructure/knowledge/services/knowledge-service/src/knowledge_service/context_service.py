@@ -31,7 +31,7 @@ class ContextService:
             if lines is None:
                 continue
             content_matches = self._content_matches(lines, query_terms)
-            score, match_type, reason = self.ranker.score(row, metadata, query_terms, content_matches)
+            score, match_type, reason = self.ranker.score(row, metadata, query_terms, content_matches, request.query)
             if score <= 0:
                 continue
             matched_lines = content_matches or [0]
@@ -62,7 +62,7 @@ class ContextService:
             if term and term not in cleaned:
                 cleaned.append(term)
         compact = query.strip().lower()
-        if compact and compact not in cleaned:
+        if compact and len(cleaned) <= 1 and compact not in cleaned:
             cleaned.insert(0, compact)
         return cleaned
 

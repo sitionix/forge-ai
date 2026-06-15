@@ -9,7 +9,7 @@ fail() {
 command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 
 HOST="${JARVIS_HOST:-127.0.0.1}"
-PORT="${JARVIS_PORT:-7070}"
+PORT="${JARVIS_PORT:-7071}"
 
 curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1 || fail "Ollama API is not reachable"
 curl -fsS "http://${HOST}:${PORT}/health" >/dev/null 2>&1 || fail "Jarvis health endpoint is not reachable"

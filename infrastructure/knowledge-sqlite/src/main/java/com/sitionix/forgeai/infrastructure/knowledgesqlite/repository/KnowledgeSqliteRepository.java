@@ -119,23 +119,6 @@ public class KnowledgeSqliteRepository {
                 filter.params().toArray()).stream().findFirst().orElse(0);
     }
 
-    public List<KnowledgeFileEntity> contextFiles(final String query,
-                                                  final List<String> sourceIds,
-                                                  final List<String> groups,
-                                                  final int maxItems) {
-        final KnowledgeSqlFilter filter = KnowledgeSqlFilter.context(query, sourceIds, groups);
-        final List<Object> params = new ArrayList<>(filter.params());
-        params.add(maxItems);
-        return this.query("""
-                        SELECT f.*, s.display_name, s.group_name, s.tags_json, s.metadata_json
-                        FROM files f
-                        JOIN sources s ON s.source_id = f.source_id
-                        %s
-                        ORDER BY f.source_id, f.relative_path
-                        LIMIT ?
-                        """.formatted(filter.where()), fileMapper(), params.toArray());
-    }
-
     private SqlRowMapper<KnowledgeFileEntity> fileMapper() {
         return rs -> new KnowledgeFileEntity(
                 rs.getLong("id"),

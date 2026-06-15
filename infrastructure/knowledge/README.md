@@ -1,8 +1,10 @@
 # Knowledge Infrastructure
 
-Knowledge is a generic Forge AI infrastructure module for local source discovery, inventory, keyword search, and retrieval context bundles. Its source of truth is the Forge AI service catalog YAML configured by local runtime config.
+Knowledge is a generic Forge AI infrastructure module for local source discovery, deterministic inventory, and AI-assisted semantic analysis. Its source of truth is the Forge AI service catalog YAML configured by local runtime config.
 
-V1 does not implement embeddings, a vector database, semantic search, RAG answer generation, Ollama calls, or Jarvis integration.
+V1 does not implement embeddings, a vector database, semantic search, or RAG answer generation. Ollama is used only by the local AI structural analysis layer.
+
+Knowledge also includes an optional AI-assisted structural analysis layer. It analyzes indexed files with local Ollama, validates strict JSON output, and stores roles, confidence, evidence, and relations in SQLite. AI analysis is local-only and does not mutate source files.
 
 ## Local Setup
 
@@ -37,7 +39,15 @@ Missing source roots are catalog/configured roots that do not exist locally. The
 
 ## APIs
 
-- `POST /api/v1/knowledge/search` returns keyword/path matches.
-- `POST /api/v1/knowledge/context` returns line-bounded snippets with source metadata, scores, reasons, budget usage, and diagnostics.
+- `POST /api/v1/knowledge/context` returns a transitional line-bounded context bundle for local Jarvis chat. It is not exposed through the Forge AI Knowledge UI or Java proxy.
+- `POST /api/v1/knowledge/analysis/build` queues an AI structural analysis job.
+- `GET /api/v1/knowledge/analysis/jobs/{jobId}` returns background job progress.
+- `POST /api/v1/knowledge/analysis/jobs/{jobId}/stop` requests cooperative cancellation for a running analysis job.
+- `GET /api/v1/knowledge/analysis/status` returns latest/active analysis state.
+- `GET /api/v1/knowledge/analysis/files` previews analyzed file state.
+- `GET /api/v1/knowledge/analysis/symbols` previews AI-classified symbols and roles.
+- `GET /api/v1/knowledge/analysis/relations` previews AI-classified relations.
 
-Context retrieval reads only files already present in the inventory. It uses catalog-derived source metadata and indexed file paths; it does not scan arbitrary directories.
+Context retrieval is a transitional internal Jarvis chat dependency. New user-facing semantic UI and future Q&A flows should consume AI analysis results rather than treating inventory as a semantic knowledge system.
+
+AI structural analysis is a separate evidence layer. Naming conventions may appear in evidence, but suffixes are not role truth. The model must choose from generic roles and relations, provide evidence, and may return `UNKNOWN` when uncertain. Invalid JSON, unsupported enums, missing evidence, and invalid line ranges are rejected.

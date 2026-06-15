@@ -1,0 +1,4 @@
+{
+  "code": "INVALID_COMMAND",
+  "message": "Chat message must not be empty"
+}

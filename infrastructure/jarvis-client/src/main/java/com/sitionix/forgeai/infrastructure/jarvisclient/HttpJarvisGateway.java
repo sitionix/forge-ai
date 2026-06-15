@@ -1,20 +1,15 @@
 package com.sitionix.forgeai.infrastructure.jarvisclient;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeai.domain.model.jarvis.JarvisActionView;
-import com.sitionix.forgeai.domain.model.jarvis.JarvisActionsSummaryView;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisActionsView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisChatRequest;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisChatResponse;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandRequest;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandResultView;
-import com.sitionix.forgeai.domain.model.jarvis.JarvisExecutionView;
 import com.sitionix.forgeai.domain.port.JarvisGateway;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisGatewayErrorCode;
 import com.sitionix.forgeai.domain.exception.JarvisGatewayException;
-import com.sitionix.forgeai.domain.model.jarvis.JarvisIntentView;
-import com.sitionix.forgeai.domain.model.jarvis.JarvisModelView;
-import com.sitionix.forgeai.domain.model.jarvis.JarvisRuntimeView;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisStatusView;
 import java.io.IOException;
 import java.net.ConnectException;
@@ -23,9 +18,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -54,34 +47,19 @@ public class HttpJarvisGateway implements JarvisGateway {
 
     @Override
     public JarvisStatusView status() {
-        final JsonNode node = this.send("GET", "/api/v1/jarvis/status", null);
-        final JsonNode model = node.path("model");
-        final JsonNode ollama = node.path("ollama");
-        final JsonNode actions = node.path("actions");
-        return new JarvisStatusView(
-                this.requiredText(node, "status"),
-                this.optionalText(node, "host"),
-                node.path("port").isInt() ? node.path("port").asInt() : null,
-                new JarvisModelView(this.optionalText(model, "defaultModel")),
-                new JarvisRuntimeView(this.optionalText(ollama, "baseUrl"), this.optionalText(ollama, "status")),
-                new JarvisActionsSummaryView(actions.path("count").isInt() ? actions.path("count").asInt() : null)
-        );
+        final JarvisStatusView view = this.convert(this.send("GET", "/api/v1/jarvis/status", null), JarvisStatusView.class);
+        this.required(view.status(), "status");
+        return view;
     }
 
     @Override
     public JarvisActionsView actions() {
-        final JsonNode node = this.send("GET", "/api/v1/jarvis/actions", null);
-        final JsonNode actionsNode = node.path("actions");
-        if (!actionsNode.isArray()) {
+        final JarvisActionsView view = this.convert(this.send("GET", "/api/v1/jarvis/actions", null), JarvisActionsView.class);
+        if (view.actions() == null) {
             throw new JarvisGatewayException(JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE, "Jarvis actions response is invalid");
         }
-        final List<JarvisActionView> actions = new ArrayList<>();
-        actionsNode.forEach(action -> actions.add(new JarvisActionView(
-                this.requiredText(action, "action"),
-                this.optionalText(action, "description"),
-                this.stringList(action.path("targets"))
-        )));
-        return new JarvisActionsView(actions);
+        view.actions().forEach(action -> this.required(action.action(), "actions.action"));
+        return view;
     }
 
     @Override
@@ -89,25 +67,35 @@ public class HttpJarvisGateway implements JarvisGateway {
         if (command == null || command.text() == null || command.text().isBlank()) {
             throw new JarvisGatewayException(JarvisGatewayErrorCode.INVALID_COMMAND, "Command text must not be empty");
         }
-        final JsonNode node = this.send("POST", "/api/v1/jarvis/command", Map.of("text", command.text()));
-        final JsonNode intent = node.path("intent");
-        final JsonNode execution = node.path("execution");
-        return new JarvisCommandResultView(
-                this.requiredText(node, "input"),
-                new JarvisIntentView(
-                        this.requiredText(intent, "action"),
-                        this.optionalText(intent, "target"),
-                        this.objectMap(intent.path("arguments"))
-                ),
-                new JarvisExecutionView(
-                        execution.path("executed").asBoolean(false),
-                        this.requiredText(execution, "message"),
-                        this.optionalText(execution, "output")
-                )
-        );
+        final JarvisCommandResultView view = this.convert(this.send("POST", "/api/v1/jarvis/command", Map.of("text", command.text())), JarvisCommandResultView.class);
+        this.required(view.input(), "input");
+        if (view.intent() == null || view.execution() == null) {
+            throw new JarvisGatewayException(JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE, "Jarvis command response is invalid");
+        }
+        this.required(view.intent().action(), "intent.action");
+        this.required(view.execution().message(), "execution.message");
+        return view;
     }
 
-    private JsonNode send(final String method, final String path, final Object body) {
+    @Override
+    public JarvisChatResponse chat(final JarvisChatRequest request) {
+        if (request == null || request.message() == null || request.message().isBlank()) {
+            throw new JarvisGatewayException(JarvisGatewayErrorCode.INVALID_COMMAND, "Chat message must not be empty");
+        }
+        final Map<String, Object> body = new LinkedHashMap<>();
+        body.put("message", request.message());
+        if (request.maxContextChars() != null) {
+            body.put("maxContextChars", request.maxContextChars());
+        }
+        final JarvisChatResponse view = this.convert(this.send("POST", "/api/v1/jarvis/chat", body), JarvisChatResponse.class);
+        this.required(view.answer(), "answer");
+        if (view.usedContext() == null || view.diagnostics() == null) {
+            throw new JarvisGatewayException(JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE, "Jarvis chat response is invalid");
+        }
+        return view;
+    }
+
+    private String send(final String method, final String path, final Object body) {
         this.properties.validateBaseUrl();
         final HttpRequest.Builder builder = HttpRequest.newBuilder(this.resolve(path))
                 // Uvicorn logs Java's default HTTP/2 upgrade probe as an invalid request on local POST calls.
@@ -135,13 +123,14 @@ public class HttpJarvisGateway implements JarvisGateway {
         }
     }
 
-    private JsonNode handle(final HttpResponse<String> response) {
-        final JsonNode node = this.parse(response.body());
+    private String handle(final HttpResponse<String> response) {
+        final String responseBody = response.body() == null || response.body().isBlank() ? "{}" : response.body();
         if (response.statusCode() >= 200 && response.statusCode() < 300) {
-            return node;
+            return responseBody;
         }
-        final JarvisGatewayErrorCode code = this.errorCode(node.path("code").asText(null), response.statusCode());
-        final String message = node.path("message").asText(code.name());
+        final JarvisErrorResponse error = this.parseError(responseBody);
+        final JarvisGatewayErrorCode code = this.errorCode(error == null ? null : error.code(), response.statusCode());
+        final String message = this.firstText(error == null ? null : error.message(), code.name());
         throw new JarvisGatewayException(code, message);
     }
 
@@ -151,6 +140,9 @@ public class HttpJarvisGateway implements JarvisGateway {
         }
         if ("OLLAMA_UNAVAILABLE".equals(code)) {
             return JarvisGatewayErrorCode.OLLAMA_UNAVAILABLE;
+        }
+        if ("KNOWLEDGE_UNAVAILABLE".equals(code)) {
+            return JarvisGatewayErrorCode.KNOWLEDGE_UNAVAILABLE;
         }
         if ("INVALID_MODEL_RESPONSE".equals(code)) {
             return JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE;
@@ -170,11 +162,19 @@ public class HttpJarvisGateway implements JarvisGateway {
         return JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE;
     }
 
-    private JsonNode parse(final String body) {
+    private JarvisErrorResponse parseError(final String body) {
         try {
-            return this.objectMapper.readTree(body == null || body.isBlank() ? "{}" : body);
+            return this.objectMapper.readValue(body == null || body.isBlank() ? "{}" : body, JarvisErrorResponse.class);
         } catch (final JsonProcessingException e) {
-            throw new JarvisGatewayException(JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE, "Jarvis returned invalid JSON", e);
+            return null;
+        }
+    }
+
+    private <T> T convert(final String body, final Class<T> type) {
+        try {
+            return this.objectMapper.readValue(body == null || body.isBlank() ? "{}" : body, type);
+        } catch (final JsonProcessingException e) {
+            throw new JarvisGatewayException(JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE, "Jarvis response is invalid", e);
         }
     }
 
@@ -190,35 +190,19 @@ public class HttpJarvisGateway implements JarvisGateway {
         return this.properties.getBaseUrl().resolve(path);
     }
 
-    private String requiredText(final JsonNode node, final String field) {
-        final String value = this.optionalText(node, field);
+    private void required(final String value, final String field) {
         if (value == null || value.isBlank()) {
             throw new JarvisGatewayException(JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE, "Jarvis response is missing field: " + field);
         }
-        return value;
     }
 
-    private String optionalText(final JsonNode node, final String field) {
-        final JsonNode value = node.path(field);
-        if (value.isMissingNode() || value.isNull()) {
-            return null;
+    private String firstText(final String primary, final String fallback) {
+        if (primary != null && !primary.isBlank()) {
+            return primary;
         }
-        return value.asText();
+        return fallback;
     }
 
-    private List<String> stringList(final JsonNode node) {
-        if (!node.isArray()) {
-            return List.of();
-        }
-        final List<String> values = new ArrayList<>();
-        node.forEach(value -> values.add(value.asText()));
-        return values;
-    }
-
-    private Map<String, Object> objectMap(final JsonNode node) {
-        if (!node.isObject()) {
-            return Map.of();
-        }
-        return this.objectMapper.convertValue(node, LinkedHashMap.class);
+    private record JarvisErrorResponse(String code, String message) {
     }
 }

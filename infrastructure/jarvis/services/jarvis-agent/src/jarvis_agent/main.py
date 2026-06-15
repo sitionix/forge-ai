@@ -10,9 +10,12 @@ from fastapi.responses import JSONResponse
 
 from jarvis_agent.action_executor import ActionExecutionError, ActionExecutor
 from jarvis_agent.action_registry import ActionNotAllowedError, ActionRegistry
+from jarvis_agent.chat_prompt import build_chat_prompt
+from jarvis_agent.chat_schema import ChatDiagnostic, ChatRequest, ChatResponse
 from jarvis_agent.config import load_app_config
 from jarvis_agent.intent_parser import IntentParseError, parse_intent
 from jarvis_agent.intent_schema import CommandRequest, CommandResponse
+from jarvis_agent.knowledge_client import KnowledgeClient, KnowledgeUnavailableError, diagnostics, used_context_items
 from jarvis_agent.ollama_client import OllamaClient, OllamaUnavailableError
 from jarvis_agent.security import SecurityError
 
@@ -25,6 +28,10 @@ ollama = OllamaClient(
     base_url=config.model.ollama_base_url,
     model=config.model.default_model,
     timeout_seconds=config.model.request_timeout_seconds,
+)
+knowledge = KnowledgeClient(
+    base_url=config.knowledge.base_url,
+    timeout_seconds=config.knowledge.request_timeout_seconds,
 )
 
 
@@ -131,6 +138,54 @@ async def command(request: CommandRequest):
         return error_response(500, "ACTION_EXECUTION_FAILED", "Failed to execute allowlisted action")
 
     return CommandResponse(input=text, intent=intent, execution=execution)
+
+
+@app.post("/api/v1/jarvis/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    message = request.message.strip()
+    if not message:
+        return error_response(400, "INVALID_CHAT_MESSAGE", "Chat message must not be empty")
+
+    max_context_chars = request.maxContextChars or config.knowledge.default_max_context_chars
+    logger.info("chat received")
+    try:
+        context_bundle = await knowledge.context(message, max_context_chars)
+    except KnowledgeUnavailableError:
+        logger.warning("knowledge unavailable")
+        return error_response(
+            503,
+            "KNOWLEDGE_UNAVAILABLE",
+            f"Knowledge is not reachable at {config.knowledge.base_url}",
+        )
+
+    context_items = used_context_items(context_bundle)
+    chat_diagnostics = diagnostics(context_bundle)
+    if not context_items:
+        chat_diagnostics.append(ChatDiagnostic(
+            code="CONTEXT_EMPTY",
+            message="No relevant local Knowledge context was found.",
+        ))
+        return ChatResponse(
+            answer="No relevant local Knowledge context was found, so I cannot answer from local files with confidence.",
+            usedContext=[],
+            diagnostics=chat_diagnostics,
+        )
+
+    prompt = build_chat_prompt(config.chat_prompt, message, context_items)
+    try:
+        answer = await ollama.generate_text(prompt)
+    except OllamaUnavailableError:
+        logger.warning("ollama unavailable")
+        return error_response(
+            503,
+            "OLLAMA_UNAVAILABLE",
+            f"Ollama is not reachable at {config.model.ollama_base_url}",
+        )
+    if not answer:
+        answer = "Ollama returned an empty answer."
+        chat_diagnostics.append(ChatDiagnostic(code="OLLAMA_EMPTY_RESPONSE", message=answer))
+
+    return ChatResponse(answer=answer, usedContext=context_items, diagnostics=chat_diagnostics)
 
 
 def error_response(status_code: int, code: str, message: str) -> JSONResponse:

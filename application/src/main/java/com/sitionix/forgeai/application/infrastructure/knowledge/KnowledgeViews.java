@@ -22,7 +22,34 @@ public final class KnowledgeViews {
     ) {
     }
 
-    public record KnowledgeFeatureView(Boolean implemented, Boolean enabled, String mode) {
+    public record KnowledgeInventoryRefreshView(
+            Boolean enabled,
+            Integer intervalSeconds,
+            String status,
+            String lastStartedAt,
+            String lastCompletedAt,
+            String lastErrorCode,
+            String lastErrorMessage,
+            Integer runCount,
+            Integer skipCount
+    ) {
+    }
+
+    public record KnowledgeCoverageView(
+            Integer scannedFiles,
+            Integer eligibleFiles,
+            String completedAt
+    ) {
+    }
+
+    public record KnowledgeFreshnessView(
+            String status,
+            String checkedAt,
+            Integer newFiles,
+            Integer modifiedFiles,
+            Integer deletedFiles,
+            Integer affectedScannedFiles
+    ) {
     }
 
     public record KnowledgeSourceView(
@@ -49,18 +76,6 @@ public final class KnowledgeViews {
             Long sizeBytes,
             String contentHash,
             String lastModified
-    ) {
-    }
-
-    public record KnowledgeSearchMatchView(
-            String sourceId,
-            String displayName,
-            String relativePath,
-            Integer lineStart,
-            Integer lineEnd,
-            String snippet,
-            String matchType,
-            Double score
     ) {
     }
 }

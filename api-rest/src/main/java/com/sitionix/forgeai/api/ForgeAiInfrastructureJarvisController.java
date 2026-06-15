@@ -1,6 +1,8 @@
 package com.sitionix.forgeai.api;
 
 import com.sitionix.forgeai.domain.model.jarvis.JarvisActionsView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisChatRequest;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisChatResponse;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandRequest;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandResultView;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisGatewayErrorCode;
@@ -37,6 +39,11 @@ public class ForgeAiInfrastructureJarvisController {
         return ResponseEntity.ok(this.manageJarvisInfrastructure.command(request));
     }
 
+    @PostMapping("/api/v1/infrastructure/jarvis/chat")
+    public ResponseEntity<JarvisChatResponse> chat(@RequestBody final JarvisChatRequest request) {
+        return ResponseEntity.ok(this.manageJarvisInfrastructure.chat(request));
+    }
+
     @ExceptionHandler(JarvisGatewayException.class)
     public ResponseEntity<JarvisErrorResponse> handleJarvisGatewayException(final JarvisGatewayException exception) {
         return ResponseEntity
@@ -47,7 +54,7 @@ public class ForgeAiInfrastructureJarvisController {
     private HttpStatus httpStatus(final JarvisGatewayErrorCode code) {
         return switch (code) {
             case INVALID_COMMAND -> HttpStatus.BAD_REQUEST;
-            case JARVIS_UNAVAILABLE, OLLAMA_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case JARVIS_UNAVAILABLE, KNOWLEDGE_UNAVAILABLE, OLLAMA_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             case JARVIS_TIMEOUT -> HttpStatus.GATEWAY_TIMEOUT;
             case JARVIS_BAD_RESPONSE, ACTION_EXECUTION_FAILED -> HttpStatus.BAD_GATEWAY;
             case UNSUPPORTED_ACTION -> HttpStatus.FORBIDDEN;
