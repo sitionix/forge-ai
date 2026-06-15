@@ -86,10 +86,13 @@ class AnalysisJobRunner:
     def _run(self, job_id: str, request: AnalysisBuildRequest, analyzer: OllamaAnalysisClient) -> None:
         started_at = datetime.now(timezone.utc).isoformat()
         rows, _ = self.inventory_store.search_rows(request.sourceIds, request.groups)
-        if request.maxFiles is not None:
-            rows = rows[:max(0, request.maxFiles)]
         scoped_source_ids = sorted({row["source_id"] for row in rows}) or request.sourceIds
         self.analysis_store.cleanup_stale_files(scoped_source_ids or None)
+        if not request.force:
+            unchanged_ids = self.analysis_store.unchanged_file_ids(rows, analyzer.name, analyzer.version)
+            rows = [row for row in rows if row["id"] not in unchanged_ids]
+        if request.maxFiles is not None:
+            rows = rows[:max(0, request.maxFiles)]
         if self._stop_requested(job_id):
             self._mark_job_stopped(job_id)
             return
@@ -100,7 +103,7 @@ class AnalysisJobRunner:
             "sourceCount": len({row["source_id"] for row in rows}),
             "fileCount": len(rows),
         })
-        processed = skipped = failed = symbols_total = relations_total = 0
+        processed = failed = symbols_total = relations_total = 0
         diagnostics: List[Dict[str, Any]] = []
         try:
             for row in rows:
@@ -112,16 +115,6 @@ class AnalysisJobRunner:
                     "currentRelativePath": row["relative_path"],
                     "lastProgressAt": self._now(),
                 })
-                analyzer_version = analyzer.version
-                if not request.force and self.analysis_store.unchanged(row["id"], row["content_hash"], analyzer.name, analyzer_version):
-                    processed += 1
-                    skipped += 1
-                    self.analysis_store.update_job(job_id, {
-                        "processedFileCount": processed,
-                        "skippedUnchangedFileCount": skipped,
-                        "lastProgressAt": self._now(),
-                    })
-                    continue
                 metadata = json.loads(row["metadata_json"])
                 lines = self.snippets.read_lines(row["absolute_path"], metadata.get("absoluteRoot") or row["source_path"])
                 if lines is None:
@@ -138,10 +131,8 @@ class AnalysisJobRunner:
                 if len(content) > self.config.analysis_max_file_chars:
                     processed += 1
                     self._mark(row, analyzer, "SKIPPED_TOO_LARGE_FOR_AI_ANALYSIS", [{"code": "ANALYSIS_FILE_TOO_LARGE", "message": "File exceeds AI analysis size limit"}])
-                    skipped += 1
                     self.analysis_store.update_job(job_id, {
                         "processedFileCount": processed,
-                        "skippedUnchangedFileCount": skipped,
                         "lastProgressAt": self._now(),
                     })
                     continue
@@ -167,7 +158,6 @@ class AnalysisJobRunner:
                     self._mark(row, analyzer, "FAILED", file_diagnostics, self._attempt_state(exc))
                 self.analysis_store.update_job(job_id, {
                     "processedFileCount": processed,
-                    "skippedUnchangedFileCount": skipped,
                     "failedFileCount": failed,
                     "symbolCount": symbols_total,
                     "relationCount": relations_total,

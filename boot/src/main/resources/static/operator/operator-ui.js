@@ -2288,7 +2288,6 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
             <h3>AI Analysis</h3>
             ${renderKnowledgeKv('status', analysis.status)}
             ${renderKnowledgeAnalysisDetailMetrics(analysis)}
-            ${renderKnowledgeKv('skipped unchanged', analysis.skippedUnchangedFileCount ?? 0)}
             ${renderKnowledgeKv('skipped too large', analysis.skippedTooLargeFileCount ?? 0)}
             ${renderKnowledgeKv('failed', analysis.failedFileCount ?? 0)}
             ${renderKnowledgeKv('stale', analysis.staleFileCount ?? 0)}
@@ -2516,7 +2515,6 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
           pending ${escapeHtml(pending)}
           failed ${escapeHtml(failed)}
           ${analysis.staleFileCount > 0 ? ` stale ${escapeHtml(analysis.staleFileCount)}` : ''}
-          ${analysis.skippedUnchangedFileCount > 0 ? ` skipped unchanged ${escapeHtml(analysis.skippedUnchangedFileCount)}` : ''}
         </small>
         ${status === 'RUNNING' && analysis.currentRelativePath ? `<div class="knowledge-current-file">${escapeHtml(analysis.currentRelativePath)}</div>` : ''}
         ${renderKnowledgeProgressWarning(analysis)}

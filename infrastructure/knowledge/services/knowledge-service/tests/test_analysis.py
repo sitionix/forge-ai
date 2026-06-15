@@ -337,15 +337,60 @@ def test_large_file_skipped(tmp_path):
     assert files["total"] == 1
 
 
-def test_unchanged_file_skipped_by_hash(tmp_path):
+def test_unchanged_file_not_picked_by_new_job(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = AnalysisJobRunner(store, app_config(tmp_path))
     analyzer = StubAnalyzer()
     wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
     second = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
 
-    assert second["skippedUnchangedFileCount"] == 1
+    assert second["fileCount"] == 0
+    assert second["processedFileCount"] == 0
+    assert second["skippedUnchangedFileCount"] == 0
     assert analyzer.calls == 1
+
+
+def test_failed_file_with_unchanged_hash_is_picked_for_retry(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    first = wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(fail=True))["jobId"])
+    retry_analyzer = StubAnalyzer()
+
+    second = wait_job(store, runner.start(AnalysisBuildRequest(), retry_analyzer)["jobId"])
+    analyzed = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
+
+    assert first["failedFileCount"] == 1
+    assert second["fileCount"] == 1
+    assert second["processedFileCount"] == 1
+    assert second["failedFileCount"] == 0
+    assert retry_analyzer.calls == 1
+    assert analyzed["total"] == 1
+
+
+def test_unchanged_file_lookup_batches_large_inventory(tmp_path):
+    extra_files = {
+        f"src/main/java/example/Generated{i:03d}Handler.java": "public class GeneratedHandler {\n  public void create() {\n  }\n\n}\n"
+        for i in range(405)
+    }
+    store, _, _ = build_inventory(tmp_path, extra_files=extra_files)
+    rows, _ = store.search_rows([], [])
+    analysis_store = AnalysisStore(store.db_path)
+    for row in rows:
+        analysis_store.mark_file(row["id"], {
+            "source_id": row["source_id"],
+            "relative_path": row["relative_path"],
+            "content_hash": row["content_hash"],
+            "analyzer_name": StubAnalyzer.name,
+            "analyzer_version": StubAnalyzer.version,
+            "status": "ANALYZED",
+            "symbol_count": 0,
+            "relation_count": 0,
+            "diagnostics": [],
+        })
+
+    unchanged_ids = analysis_store.unchanged_file_ids(rows, StubAnalyzer.name, StubAnalyzer.version)
+
+    assert unchanged_ids == {row["id"] for row in rows}
 
 
 def test_analysis_max_files_uses_stable_inventory_order(tmp_path):
@@ -358,6 +403,29 @@ def test_analysis_max_files_uses_stable_inventory_order(tmp_path):
 
     assert files["total"] == 1
     assert files["files"][0]["relativePath"] == "src/main/java/example/AaaHandler.java"
+
+
+def test_analysis_max_files_applies_after_current_files_are_filtered(tmp_path):
+    store, _, _ = build_inventory(tmp_path, extra_files={
+        "src/main/java/example/AaaHandler.java": "public class AaaHandler {\n  public void create() {\n  }\n\n}\n",
+    })
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    analyzer = StubAnalyzer()
+
+    first = wait_job(store, runner.start(AnalysisBuildRequest(maxFiles=1), analyzer)["jobId"])
+    second = wait_job(store, runner.start(AnalysisBuildRequest(maxFiles=1), analyzer)["jobId"])
+    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
+
+    assert first["fileCount"] == 1
+    assert second["fileCount"] == 1
+    assert second["processedFileCount"] == 1
+    assert second["skippedUnchangedFileCount"] == 0
+    assert analyzer.calls == 2
+    assert files["total"] == 2
+    assert [item["relativePath"] for item in files["files"]] == [
+        "src/main/java/example/AaaHandler.java",
+        "src/main/java/example/ObjectHandler.java",
+    ]
 
 
 def test_changed_file_reanalyzed_and_previous_analysis_removed(tmp_path):
@@ -437,15 +505,21 @@ def test_analyze_refreshes_inventory_and_restores_freshness(tmp_path):
     store, config, service = build_inventory(tmp_path)
     runner = AnalysisJobRunner(store, app_config(tmp_path))
     wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
-    (service / "src/main/java/example/SecondHandler.java").write_text("public class SecondHandler {}\n", encoding="utf-8")
+    (service / "src/main/java/example/SecondHandler.java").write_text(
+        "public class SecondHandler {\n  @PostMapping\n  public void create() {\n  }\n}\n",
+        encoding="utf-8",
+    )
     assert KnowledgeFreshnessService(load_source_config(config), store).check()["status"] == "OUTDATED"
 
     InventoryBuilder(load_source_config(config), store).build([], [])
     wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
 
     freshness = KnowledgeFreshnessService(load_source_config(config), store).check()
+    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
+
     assert freshness["status"] == "UP_TO_DATE"
-    assert AnalysisStore(store.db_path).status()["fileCount"] == 2
+    assert AnalysisStore(store.db_path).status()["fileCount"] == 1
+    assert files["total"] == 2
 
 
 def test_background_job_returns_id_and_updates_progress(tmp_path):

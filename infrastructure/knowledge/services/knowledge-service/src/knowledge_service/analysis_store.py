@@ -453,6 +453,29 @@ class AnalysisStore:
             """, (file_id, content_hash, analyzer_name, analyzer_version)).fetchone()
         return row is not None
 
+    def unchanged_file_ids(self, rows: List[sqlite3.Row], analyzer_name: str, analyzer_version: str) -> set[int]:
+        if not rows:
+            return set()
+        self.init()
+        result: set[int] = set()
+        with self._connect() as conn:
+            for offset in range(0, len(rows), 400):
+                batch = rows[offset:offset + 400]
+                clauses: list[str] = []
+                params: list[Any] = [analyzer_name, analyzer_version]
+                for row in batch:
+                    clauses.append("(file_id = ? AND content_hash = ?)")
+                    params.extend([row["id"], row["content_hash"]])
+                matches = conn.execute(f"""
+                    SELECT file_id FROM analysis_files
+                    WHERE analyzer_name = ?
+                      AND analyzer_version = ?
+                      AND status = 'ANALYZED'
+                      AND ({' OR '.join(clauses)})
+                """, params).fetchall()
+                result.update(row["file_id"] for row in matches)
+        return result
+
     def replace_file_analysis(self, file_id: int, state: Dict[str, Any], symbols: List[Dict[str, Any]], roles: List[Dict[str, Any]], relations: List[Dict[str, Any]]) -> None:
         self.init()
         with self._connect() as conn:
