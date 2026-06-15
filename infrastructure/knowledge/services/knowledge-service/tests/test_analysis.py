@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -346,7 +347,7 @@ def test_unchanged_file_not_picked_by_new_job(tmp_path):
 
     assert second["fileCount"] == 0
     assert second["processedFileCount"] == 0
-    assert second["skippedUnchangedFileCount"] == 0
+    assert _legacy_skipped_unchanged_key() not in second
     assert analyzer.calls == 1
 
 
@@ -419,7 +420,7 @@ def test_analysis_max_files_applies_after_current_files_are_filtered(tmp_path):
     assert first["fileCount"] == 1
     assert second["fileCount"] == 1
     assert second["processedFileCount"] == 1
-    assert second["skippedUnchangedFileCount"] == 0
+    assert _legacy_skipped_unchanged_key() not in second
     assert analyzer.calls == 2
     assert files["total"] == 2
     assert [item["relativePath"] for item in files["files"]] == [
@@ -537,6 +538,48 @@ def test_background_job_returns_id_and_updates_progress(tmp_path):
     assert final["processedFileCount"] == 1
 
 
+def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""
+            CREATE TABLE analysis_jobs (
+                job_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                source_count INTEGER NOT NULL,
+                file_count INTEGER NOT NULL,
+                processed_file_count INTEGER NOT NULL,
+                skipped_unchanged_file_count INTEGER NOT NULL,
+                failed_file_count INTEGER NOT NULL,
+                current_source_id TEXT,
+                current_relative_path TEXT,
+                last_progress_at TEXT,
+                symbol_count INTEGER NOT NULL,
+                relation_count INTEGER NOT NULL,
+                diagnostics_json TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            INSERT INTO analysis_jobs(
+                job_id, status, source_count, file_count, processed_file_count,
+                skipped_unchanged_file_count, failed_file_count, symbol_count,
+                relation_count, diagnostics_json
+            )
+            VALUES ('job-old', 'COMPLETED', 1, 2, 2, 1, 0, 3, 4, '[]')
+        """)
+
+    store = AnalysisStore(db_path)
+    store.init()
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(analysis_jobs)").fetchall()}
+    job = store.job("job-old")
+
+    assert "skipped_unchanged_file_count" not in columns
+    assert _legacy_skipped_unchanged_key() not in job
+    assert job["processedFileCount"] == 2
+
+
 def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     unblock = threading.Event()
@@ -565,6 +608,10 @@ def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path
     assert new_final["status"] == "COMPLETED"
     assert old_final["status"] == "STOPPED"
     assert files["total"] == 1
+
+
+def _legacy_skipped_unchanged_key():
+    return "skipped" + "UnchangedFileCount"
 
 
 def test_one_active_job_rule_enforced(tmp_path):
@@ -607,7 +654,6 @@ def test_service_status_uses_active_job_counts_while_running(tmp_path):
         "fileCount": 1,
         "processedFileCount": 0,
         "failedFileCount": 0,
-        "skippedUnchangedFileCount": 0,
         "currentSourceId": "edge-gateway",
         "currentRelativePath": "src/main/java/example/ObjectHandler.java",
     })

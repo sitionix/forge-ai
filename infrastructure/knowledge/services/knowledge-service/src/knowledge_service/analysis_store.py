@@ -25,7 +25,6 @@ class AnalysisStore:
                     source_count INTEGER NOT NULL,
                     file_count INTEGER NOT NULL,
                     processed_file_count INTEGER NOT NULL,
-                    skipped_unchanged_file_count INTEGER NOT NULL,
                     failed_file_count INTEGER NOT NULL,
                     current_source_id TEXT,
                     current_relative_path TEXT,
@@ -38,6 +37,7 @@ class AnalysisStore:
             self._ensure_column(conn, "analysis_jobs", "current_source_id", "TEXT")
             self._ensure_column(conn, "analysis_jobs", "current_relative_path", "TEXT")
             self._ensure_column(conn, "analysis_jobs", "last_progress_at", "TEXT")
+            self._drop_legacy_analysis_job_columns(conn)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS analysis_files (
                     file_id INTEGER PRIMARY KEY,
@@ -111,8 +111,8 @@ class AnalysisStore:
         self.init()
         with self._connect() as conn:
             conn.execute("""
-                INSERT INTO analysis_jobs(job_id, status, started_at, completed_at, source_count, file_count, processed_file_count, skipped_unchanged_file_count, failed_file_count, current_source_id, current_relative_path, last_progress_at, symbol_count, relation_count, diagnostics_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO analysis_jobs(job_id, status, started_at, completed_at, source_count, file_count, processed_file_count, failed_file_count, current_source_id, current_relative_path, last_progress_at, symbol_count, relation_count, diagnostics_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, self._job_params(job))
 
     def update_job(self, job_id: str, updates: Dict[str, Any]) -> None:
@@ -125,7 +125,7 @@ class AnalysisStore:
             conn.execute("""
                 UPDATE analysis_jobs
                 SET status = ?, started_at = ?, completed_at = ?, source_count = ?, file_count = ?, processed_file_count = ?,
-                    skipped_unchanged_file_count = ?, failed_file_count = ?, current_source_id = ?, current_relative_path = ?, last_progress_at = ?,
+                    failed_file_count = ?, current_source_id = ?, current_relative_path = ?, last_progress_at = ?,
                     symbol_count = ?, relation_count = ?, diagnostics_json = ?
                 WHERE job_id = ?
             """, (*self._job_params(current)[1:], job_id))
@@ -218,7 +218,6 @@ class AnalysisStore:
             "fileCount": latest_job["fileCount"] if latest_job else 0,
             "scannedFileCount": latest_job["processedFileCount"] if latest_job else 0,
             "failedFileCount": latest_job["failedFileCount"] if latest_job else 0,
-            "skippedUnchangedFileCount": latest_job["skippedUnchangedFileCount"] if latest_job else 0,
             "symbolCount": counts["symbols"],
             "relationCount": relations["relations"],
         }
@@ -309,7 +308,6 @@ class AnalysisStore:
             skipped_count = source_inventory.get("skippedCount")
             skipped_breakdown = source_inventory.get("skippedBreakdown")
             is_running = active is not None and active_source == source_id
-            skipped_unchanged = active.get("skippedUnchangedFileCount") if is_running else 0
             processed = active.get("processedFileCount") if is_running else analyzed + failed + skipped_too_large
             pending = max(inventory_count - analyzed - failed - skipped_too_large, 0)
             percent = round((analyzed / inventory_count) * 100, 1) if inventory_count else 0.0
@@ -337,7 +335,6 @@ class AnalysisStore:
                     "failedFileCount": failed,
                     "pendingFileCount": pending,
                     "staleFileCount": stale,
-                    "skippedUnchangedFileCount": skipped_unchanged,
                     "skippedTooLargeFileCount": skipped_too_large,
                     "currentRelativePath": active.get("currentRelativePath") if is_running else None,
                     "lastProgressAt": active.get("lastProgressAt") if is_running else None,
@@ -650,7 +647,7 @@ class AnalysisStore:
     def _job_params(self, job: Dict[str, Any]):
         return (
             job["jobId"], job["status"], job.get("startedAt"), job.get("completedAt"), job.get("sourceCount", 0), job.get("fileCount", 0),
-            job.get("processedFileCount", 0), job.get("skippedUnchangedFileCount", 0), job.get("failedFileCount", 0),
+            job.get("processedFileCount", 0), job.get("failedFileCount", 0),
             job.get("currentSourceId"), job.get("currentRelativePath"), job.get("lastProgressAt"),
             job.get("symbolCount", 0), job.get("relationCount", 0),
             json.dumps(job.get("diagnostics") or []),
@@ -660,7 +657,7 @@ class AnalysisStore:
         return {
             "jobId": row["job_id"], "status": row["status"], "startedAt": row["started_at"], "completedAt": row["completed_at"],
             "sourceCount": row["source_count"], "fileCount": row["file_count"], "processedFileCount": row["processed_file_count"],
-            "skippedUnchangedFileCount": row["skipped_unchanged_file_count"], "failedFileCount": row["failed_file_count"],
+            "failedFileCount": row["failed_file_count"],
             "currentSourceId": row["current_source_id"], "currentRelativePath": row["current_relative_path"],
             "lastProgressAt": row["last_progress_at"],
             "symbolCount": row["symbol_count"], "relationCount": row["relation_count"],
@@ -715,6 +712,44 @@ class AnalysisStore:
     def _drop_legacy_fact_tables(self, conn: sqlite3.Connection) -> None:
         for table in ("symbol_tokens", "edges", "symbols", "file_extraction_state", "fact_builds"):
             conn.execute(f"DROP TABLE IF EXISTS {table}")
+
+    def _drop_legacy_analysis_job_columns(self, conn: sqlite3.Connection) -> None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_jobs)").fetchall()}
+        if "skipped_unchanged_file_count" not in columns:
+            return
+        try:
+            conn.execute("ALTER TABLE analysis_jobs DROP COLUMN skipped_unchanged_file_count")
+        except sqlite3.OperationalError:
+            self._rebuild_analysis_jobs_without_legacy_coverage_counter(conn)
+
+    def _rebuild_analysis_jobs_without_legacy_coverage_counter(self, conn: sqlite3.Connection) -> None:
+        kept_columns = [
+            "job_id", "status", "started_at", "completed_at", "source_count", "file_count",
+            "processed_file_count", "failed_file_count", "current_source_id", "current_relative_path",
+            "last_progress_at", "symbol_count", "relation_count", "diagnostics_json",
+        ]
+        conn.execute("""
+            CREATE TABLE analysis_jobs_new (
+                job_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                source_count INTEGER NOT NULL,
+                file_count INTEGER NOT NULL,
+                processed_file_count INTEGER NOT NULL,
+                failed_file_count INTEGER NOT NULL,
+                current_source_id TEXT,
+                current_relative_path TEXT,
+                last_progress_at TEXT,
+                symbol_count INTEGER NOT NULL,
+                relation_count INTEGER NOT NULL,
+                diagnostics_json TEXT NOT NULL
+            )
+        """)
+        joined = ", ".join(kept_columns)
+        conn.execute(f"INSERT INTO analysis_jobs_new({joined}) SELECT {joined} FROM analysis_jobs")
+        conn.execute("DROP TABLE analysis_jobs")
+        conn.execute("ALTER TABLE analysis_jobs_new RENAME TO analysis_jobs")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, declaration: str) -> None:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}

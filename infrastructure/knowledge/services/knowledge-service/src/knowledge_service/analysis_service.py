@@ -52,7 +52,6 @@ class AnalysisJobRunner:
                 "sourceCount": len(request.sourceIds),
                 "fileCount": 0,
                 "processedFileCount": 0,
-                "skippedUnchangedFileCount": 0,
                 "failedFileCount": 0,
                 "currentSourceId": request.sourceIds[0] if request.sourceIds else None,
                 "currentRelativePath": None,

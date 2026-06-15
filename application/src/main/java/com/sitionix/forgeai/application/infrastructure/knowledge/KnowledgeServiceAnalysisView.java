@@ -9,7 +9,6 @@ public record KnowledgeServiceAnalysisView(
         Integer failedFileCount,
         Integer pendingFileCount,
         Integer staleFileCount,
-        Integer skippedUnchangedFileCount,
         Integer skippedTooLargeFileCount,
         String currentRelativePath,
         String lastProgressAt,

@@ -10,7 +10,6 @@ public record KnowledgeAnalysisJobView(
         Integer sourceCount,
         Integer fileCount,
         Integer processedFileCount,
-        Integer skippedUnchangedFileCount,
         Integer failedFileCount,
         String currentSourceId,
         String currentRelativePath,

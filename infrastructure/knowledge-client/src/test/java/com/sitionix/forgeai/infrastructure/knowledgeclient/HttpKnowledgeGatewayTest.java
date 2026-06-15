@@ -116,7 +116,7 @@ class HttpKnowledgeGatewayTest {
     @Test
     void analysisJobProxyMapsSuccess() {
         final FakeHttpClient client = new FakeHttpClient(200, """
-                {"jobId":"job-1","status":"RUNNING","startedAt":"a","sourceCount":1,"fileCount":2,"processedFileCount":1,"skippedUnchangedFileCount":0,"failedFileCount":0,"currentSourceId":"svc","currentRelativePath":"A.java","lastProgressAt":"p","symbolCount":3,"relationCount":4,"diagnostics":[]}
+                {"jobId":"job-1","status":"RUNNING","startedAt":"a","sourceCount":1,"fileCount":2,"processedFileCount":1,"failedFileCount":0,"currentSourceId":"svc","currentRelativePath":"A.java","lastProgressAt":"p","symbolCount":3,"relationCount":4,"diagnostics":[]}
                 """);
         final HttpKnowledgeGateway gateway = gateway(client);
 

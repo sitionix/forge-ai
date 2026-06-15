@@ -93,7 +93,6 @@ public class SqliteKnowledgeGateway implements KnowledgeGateway {
                             fileCount,
                             0,
                             0,
-                            0,
                             null,
                             null,
                             null

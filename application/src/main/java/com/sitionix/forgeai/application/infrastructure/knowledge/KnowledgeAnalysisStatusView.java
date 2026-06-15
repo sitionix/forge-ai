@@ -9,7 +9,6 @@ public record KnowledgeAnalysisStatusView(
         Integer fileCount,
         Integer scannedFileCount,
         Integer failedFileCount,
-        Integer skippedUnchangedFileCount,
         Integer symbolCount,
         Integer relationCount,
         KnowledgeViews.KnowledgeFreshnessView freshness
