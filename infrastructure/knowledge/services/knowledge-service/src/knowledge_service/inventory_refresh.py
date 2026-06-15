@@ -49,6 +49,29 @@ class InventoryRefreshService:
 
         return self._with_lock(run, wait=True, block_if_analysis_active=True)
 
+    def build_available_while_analysis_runs(self, *, wait: bool = False) -> Dict[str, Any]:
+        def run(source_config: SourceConfig) -> Dict[str, Any]:
+            active_source_ids = self._active_analysis_source_ids()
+            if active_source_ids is None:
+                raise KnowledgeError(
+                    "INVENTORY_BUILD_BLOCKED_BY_ANALYSIS",
+                    "Inventory refresh is blocked because active AI analysis source scope is not known",
+                )
+            if not active_source_ids:
+                return self._build_locked(source_config, [], [])
+            catalog = ServiceYamlCatalogProvider(source_config).load()
+            known_source_ids = {source.sourceId for source in catalog.sources}
+            known_source_ids.update(self.store.source_ids())
+            refresh_source_ids = sorted(known_source_ids - active_source_ids)
+            if not refresh_source_ids:
+                raise KnowledgeError(
+                    "INVENTORY_REFRESH_NO_AVAILABLE_SOURCES",
+                    "No inventory sources are available while AI analysis is running",
+                )
+            return self._build_locked(source_config, refresh_source_ids, [])
+
+        return self._with_lock(run, wait=wait, block_if_analysis_active=False)
+
     def _with_lock(
         self,
         action: Callable[[SourceConfig], Dict[str, Any]],
@@ -71,6 +94,15 @@ class InventoryRefreshService:
         result = InventoryBuilder(source_config, self.store).build(source_ids, groups)
         AnalysisStore(self.store.db_path).cleanup_stale_files(self._cleanup_source_scope(source_config, source_ids, groups))
         return result
+
+    def _active_analysis_source_ids(self) -> Optional[set[str]]:
+        active_job = AnalysisStore(self.store.db_path).active_job()
+        if active_job is None:
+            return set()
+        source_ids = active_job.get("sourceIds") or []
+        if not source_ids:
+            return None
+        return set(source_ids)
 
     def _cleanup_source_scope(self, source_config: SourceConfig, source_ids: List[str], groups: List[str]) -> Optional[List[str]]:
         if source_ids:
@@ -122,10 +154,15 @@ class BackgroundInventoryScheduler:
         started_at = self._now()
         self._set_state(status="RUNNING", lastStartedAt=started_at, lastErrorCode=None, lastErrorMessage=None)
         try:
-            self.refresh.build([], [], wait=False, block_if_analysis_active=True)
+            self.refresh.build_available_while_analysis_runs(wait=False)
             self._set_state(status="READY", lastCompletedAt=self._now(), increment="runCount")
         except KnowledgeError as exc:
-            if exc.code in {"INVENTORY_BUILD_BLOCKED_BY_ANALYSIS", "INVENTORY_BUILD_ALREADY_RUNNING", "KNOWLEDGE_CONFIG_MISSING"}:
+            if exc.code in {
+                "INVENTORY_BUILD_BLOCKED_BY_ANALYSIS",
+                "INVENTORY_BUILD_ALREADY_RUNNING",
+                "INVENTORY_REFRESH_NO_AVAILABLE_SOURCES",
+                "KNOWLEDGE_CONFIG_MISSING",
+            }:
                 self._set_state(
                     status="SKIPPED",
                     lastCompletedAt=self._now(),

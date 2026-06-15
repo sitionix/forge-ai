@@ -11,6 +11,7 @@ from knowledge_service.source_catalog import SourceMetadata
 
 ANALYSIS_SCHEMA_MIGRATIONS = (
     (1, "remove_legacy_analysis_job_counter"),
+    (2, "add_analysis_job_source_scope"),
 )
 
 
@@ -33,6 +34,7 @@ class AnalysisStore:
                     failed_file_count INTEGER NOT NULL,
                     current_source_id TEXT,
                     current_relative_path TEXT,
+                    source_ids_json TEXT,
                     last_progress_at TEXT,
                     symbol_count INTEGER NOT NULL,
                     relation_count INTEGER NOT NULL,
@@ -116,8 +118,8 @@ class AnalysisStore:
         self.init()
         with self._connect() as conn:
             conn.execute("""
-                INSERT INTO analysis_jobs(job_id, status, started_at, completed_at, source_count, file_count, processed_file_count, failed_file_count, current_source_id, current_relative_path, last_progress_at, symbol_count, relation_count, diagnostics_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO analysis_jobs(job_id, status, started_at, completed_at, source_count, file_count, processed_file_count, failed_file_count, current_source_id, current_relative_path, source_ids_json, last_progress_at, symbol_count, relation_count, diagnostics_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, self._job_params(job))
 
     def update_job(self, job_id: str, updates: Dict[str, Any]) -> None:
@@ -130,7 +132,7 @@ class AnalysisStore:
             conn.execute("""
                 UPDATE analysis_jobs
                 SET status = ?, started_at = ?, completed_at = ?, source_count = ?, file_count = ?, processed_file_count = ?,
-                    failed_file_count = ?, current_source_id = ?, current_relative_path = ?, last_progress_at = ?,
+                    failed_file_count = ?, current_source_id = ?, current_relative_path = ?, source_ids_json = ?, last_progress_at = ?,
                     symbol_count = ?, relation_count = ?, diagnostics_json = ?
                 WHERE job_id = ?
             """, (*self._job_params(current)[1:], job_id))
@@ -653,7 +655,7 @@ class AnalysisStore:
         return (
             job["jobId"], job["status"], job.get("startedAt"), job.get("completedAt"), job.get("sourceCount", 0), job.get("fileCount", 0),
             job.get("processedFileCount", 0), job.get("failedFileCount", 0),
-            job.get("currentSourceId"), job.get("currentRelativePath"), job.get("lastProgressAt"),
+            job.get("currentSourceId"), job.get("currentRelativePath"), json.dumps(job.get("sourceIds") or []), job.get("lastProgressAt"),
             job.get("symbolCount", 0), job.get("relationCount", 0),
             json.dumps(job.get("diagnostics") or []),
         )
@@ -664,6 +666,7 @@ class AnalysisStore:
             "sourceCount": row["source_count"], "fileCount": row["file_count"], "processedFileCount": row["processed_file_count"],
             "failedFileCount": row["failed_file_count"],
             "currentSourceId": row["current_source_id"], "currentRelativePath": row["current_relative_path"],
+            "sourceIds": json.loads(row["source_ids_json"] or "[]"),
             "lastProgressAt": row["last_progress_at"],
             "symbolCount": row["symbol_count"], "relationCount": row["relation_count"],
             "diagnostics": json.loads(row["diagnostics_json"] or "[]"),
@@ -746,6 +749,9 @@ class AnalysisStore:
     def _apply_schema_migration(self, conn: sqlite3.Connection, version: int) -> None:
         if version == 1:
             self._drop_legacy_analysis_job_counter(conn)
+            return
+        if version == 2:
+            self._ensure_column(conn, "analysis_jobs", "source_ids_json", "TEXT")
             return
         raise RuntimeError(f"Unknown analysis schema migration: {version}")
 

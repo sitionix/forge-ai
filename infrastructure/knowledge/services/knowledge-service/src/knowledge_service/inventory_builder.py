@@ -42,7 +42,7 @@ class InventoryBuilder:
             skipped.merge(source_skipped)
         completed_at = datetime.now(timezone.utc).isoformat()
         replace_all = not source_ids and not groups
-        replace_source_ids = [source.sourceId for source in selected_candidates]
+        replace_source_ids = sorted(set(source_ids)) if source_ids else [source.sourceId for source in selected_candidates]
         return self.store.replace_inventory(
             selected,
             files,

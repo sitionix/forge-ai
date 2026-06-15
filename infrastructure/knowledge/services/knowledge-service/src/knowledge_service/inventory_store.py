@@ -156,6 +156,12 @@ class InventoryStore:
             "skippedBreakdown": skipped_breakdown,
         }
 
+    def source_ids(self) -> List[str]:
+        self.init()
+        with self._connect() as conn:
+            rows = conn.execute("SELECT source_id FROM sources ORDER BY source_id").fetchall()
+        return [row["source_id"] for row in rows]
+
     def files(self, source_id: Optional[str], path_contains: Optional[str], extension: Optional[str], limit: int, offset: int) -> Dict[str, Any]:
         self.init()
         clauses: list[str] = []

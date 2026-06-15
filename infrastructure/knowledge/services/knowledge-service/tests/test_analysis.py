@@ -136,6 +136,43 @@ indexing:
     return store, config, service
 
 
+def build_two_service_inventory(tmp_path):
+    workspace = tmp_path / "workspace"
+    first = workspace / "first-service"
+    second = workspace / "second-service"
+    (first / "src").mkdir(parents=True)
+    (second / "src").mkdir(parents=True)
+    (first / "src" / "First.java").write_text("class First {}\n", encoding="utf-8")
+    (second / "src" / "Second.java").write_text("class Second {}\n", encoding="utf-8")
+    catalog = tmp_path / "services.yaml"
+    catalog.write_text(
+        """services:
+  first-service:
+    label: First Service
+    path: first-service
+    group: backend
+  second-service:
+    label: Second Service
+    path: second-service
+    group: backend
+""",
+        encoding="utf-8",
+    )
+    config = tmp_path / "knowledge-sources.yaml"
+    config.write_text(
+        f"""catalog:
+  path: "{catalog}"
+  workspace_root: "{workspace}"
+indexing:
+  include: ["**/*.java"]
+""",
+        encoding="utf-8",
+    )
+    store = InventoryStore(tmp_path / "knowledge.sqlite")
+    InventoryBuilder(load_source_config(config), store).build([], [])
+    return store, config, first, second
+
+
 def create_source_config(tmp_path, content=None):
     workspace = tmp_path / "workspace"
     service = workspace / "edge-gateway"
@@ -600,6 +637,34 @@ def test_background_inventory_scheduler_skips_while_analysis_running(tmp_path):
     assert state["skipCount"] == 1
 
 
+def test_background_inventory_refresh_skips_only_running_source(tmp_path):
+    store, _, first, second = build_two_service_inventory(tmp_path)
+    AnalysisStore(store.db_path).create_job({
+        "jobId": "job-running",
+        "status": "RUNNING",
+        "startedAt": "now",
+        "sourceCount": 1,
+        "fileCount": 1,
+        "processedFileCount": 0,
+        "failedFileCount": 0,
+        "currentSourceId": "first-service",
+        "sourceIds": ["first-service"],
+    })
+    (first / "src" / "First.java").unlink()
+    (second / "src" / "Second.java").unlink()
+    (second / "src" / "SecondNew.java").write_text("class SecondNew {}\n", encoding="utf-8")
+    scheduler = BackgroundInventoryScheduler(InventoryRefreshService(app_config(tmp_path), store), app_config(tmp_path))
+
+    state = scheduler.run_once()
+    first_files = store.files("first-service", None, None, 10, 0)
+    second_files = store.files("second-service", None, None, 10, 0)
+
+    assert state["status"] == "READY"
+    assert state["runCount"] == 1
+    assert [item["relativePath"] for item in first_files["files"]] == ["src/First.java"]
+    assert [item["relativePath"] for item in second_files["files"]] == ["src/SecondNew.java"]
+
+
 def test_background_job_returns_id_and_updates_progress(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     unblock = threading.Event()
@@ -657,10 +722,15 @@ def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
         migration_count = conn.execute("SELECT COUNT(*) FROM analysis_schema_migrations").fetchone()[0]
 
     assert "skipped_unchanged_file_count" not in columns
+    assert "source_ids_json" in columns
     assert _legacy_skipped_unchanged_key() not in job
+    assert job["sourceIds"] == []
     assert job["processedFileCount"] == 2
-    assert migrations == [(1, "remove_legacy_analysis_job_counter")]
-    assert migration_count == 1
+    assert migrations == [
+        (1, "remove_legacy_analysis_job_counter"),
+        (2, "add_analysis_job_source_scope"),
+    ]
+    assert migration_count == 2
 
 
 def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path):

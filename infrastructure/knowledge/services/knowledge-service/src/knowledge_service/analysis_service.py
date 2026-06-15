@@ -55,6 +55,7 @@ class AnalysisJobRunner:
                 "failedFileCount": 0,
                 "currentSourceId": request.sourceIds[0] if request.sourceIds else None,
                 "currentRelativePath": None,
+                "sourceIds": sorted(set(request.sourceIds)),
                 "lastProgressAt": None,
                 "symbolCount": 0,
                 "relationCount": 0,
@@ -101,6 +102,7 @@ class AnalysisJobRunner:
             "lastProgressAt": started_at,
             "sourceCount": len({row["source_id"] for row in rows}),
             "fileCount": len(rows),
+            "sourceIds": scoped_source_ids,
         })
         processed = failed = symbols_total = relations_total = 0
         diagnostics: List[Dict[str, Any]] = []

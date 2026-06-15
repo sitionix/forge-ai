@@ -13,6 +13,7 @@ public record KnowledgeAnalysisJobView(
         Integer failedFileCount,
         String currentSourceId,
         String currentRelativePath,
+        List<String> sourceIds,
         String lastProgressAt,
         Integer symbolCount,
         Integer relationCount,
