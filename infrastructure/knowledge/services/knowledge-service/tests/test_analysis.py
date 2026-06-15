@@ -573,11 +573,17 @@ def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
     store.init()
     with sqlite3.connect(db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(analysis_jobs)").fetchall()}
+        migrations = conn.execute("SELECT version, name FROM analysis_schema_migrations ORDER BY version").fetchall()
     job = store.job("job-old")
+    store.init()
+    with sqlite3.connect(db_path) as conn:
+        migration_count = conn.execute("SELECT COUNT(*) FROM analysis_schema_migrations").fetchone()[0]
 
     assert "skipped_unchanged_file_count" not in columns
     assert _legacy_skipped_unchanged_key() not in job
     assert job["processedFileCount"] == 2
+    assert migrations == [(1, "remove_legacy_analysis_job_counter")]
+    assert migration_count == 1
 
 
 def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path):

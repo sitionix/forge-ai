@@ -9,6 +9,11 @@ from typing import Any, Dict, List, Optional
 from knowledge_service.source_catalog import SourceMetadata
 
 
+ANALYSIS_SCHEMA_MIGRATIONS = (
+    (1, "remove_legacy_analysis_job_counter"),
+)
+
+
 class AnalysisStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -37,7 +42,6 @@ class AnalysisStore:
             self._ensure_column(conn, "analysis_jobs", "current_source_id", "TEXT")
             self._ensure_column(conn, "analysis_jobs", "current_relative_path", "TEXT")
             self._ensure_column(conn, "analysis_jobs", "last_progress_at", "TEXT")
-            self._drop_legacy_analysis_job_columns(conn)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS analysis_files (
                     file_id INTEGER PRIMARY KEY,
@@ -106,6 +110,7 @@ class AnalysisStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_roles_role ON analysis_symbol_roles(role)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_relations_relation ON analysis_relations(source_id, relation)")
             self._drop_legacy_fact_tables(conn)
+            self._run_schema_migrations(conn)
 
     def create_job(self, job: Dict[str, Any]) -> None:
         self.init()
@@ -713,7 +718,38 @@ class AnalysisStore:
         for table in ("symbol_tokens", "edges", "symbols", "file_extraction_state", "fact_builds"):
             conn.execute(f"DROP TABLE IF EXISTS {table}")
 
-    def _drop_legacy_analysis_job_columns(self, conn: sqlite3.Connection) -> None:
+    def _run_schema_migrations(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )
+        """)
+        applied = {
+            row["version"]
+            for row in conn.execute("SELECT version FROM analysis_schema_migrations").fetchall()
+        }
+        expected_version = 1
+        for version, name in ANALYSIS_SCHEMA_MIGRATIONS:
+            if version != expected_version:
+                raise RuntimeError("Analysis schema migrations must be sequential")
+            expected_version += 1
+            if version in applied:
+                continue
+            self._apply_schema_migration(conn, version)
+            conn.execute(
+                "INSERT INTO analysis_schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                (version, name, datetime.now(timezone.utc).isoformat()),
+            )
+
+    def _apply_schema_migration(self, conn: sqlite3.Connection, version: int) -> None:
+        if version == 1:
+            self._drop_legacy_analysis_job_counter(conn)
+            return
+        raise RuntimeError(f"Unknown analysis schema migration: {version}")
+
+    def _drop_legacy_analysis_job_counter(self, conn: sqlite3.Connection) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_jobs)").fetchall()}
         if "skipped_unchanged_file_count" not in columns:
             return
