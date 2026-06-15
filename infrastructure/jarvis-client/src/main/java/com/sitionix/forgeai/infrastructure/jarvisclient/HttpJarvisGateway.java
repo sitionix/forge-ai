@@ -6,6 +6,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisActionView;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisActionsSummaryView;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisActionsView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisChatContextView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisChatDiagnosticView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisChatRequest;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisChatResponse;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandRequest;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandResultView;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisExecutionView;
@@ -107,6 +111,29 @@ public class HttpJarvisGateway implements JarvisGateway {
         );
     }
 
+    @Override
+    public JarvisChatResponse chat(final JarvisChatRequest request) {
+        if (request == null || request.message() == null || request.message().isBlank()) {
+            throw new JarvisGatewayException(JarvisGatewayErrorCode.INVALID_COMMAND, "Chat message must not be empty");
+        }
+        final Map<String, Object> body = new LinkedHashMap<>();
+        body.put("message", request.message());
+        if (request.maxContextChars() != null) {
+            body.put("maxContextChars", request.maxContextChars());
+        }
+        final JsonNode node = this.send("POST", "/api/v1/jarvis/chat", body);
+        final JsonNode usedContext = node.path("usedContext");
+        final JsonNode diagnostics = node.path("diagnostics");
+        if (!usedContext.isArray() || !diagnostics.isArray()) {
+            throw new JarvisGatewayException(JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE, "Jarvis chat response is invalid");
+        }
+        return new JarvisChatResponse(
+                this.requiredText(node, "answer"),
+                this.contextItems(usedContext),
+                this.diagnostics(diagnostics)
+        );
+    }
+
     private JsonNode send(final String method, final String path, final Object body) {
         this.properties.validateBaseUrl();
         final HttpRequest.Builder builder = HttpRequest.newBuilder(this.resolve(path))
@@ -151,6 +178,9 @@ public class HttpJarvisGateway implements JarvisGateway {
         }
         if ("OLLAMA_UNAVAILABLE".equals(code)) {
             return JarvisGatewayErrorCode.OLLAMA_UNAVAILABLE;
+        }
+        if ("KNOWLEDGE_UNAVAILABLE".equals(code)) {
+            return JarvisGatewayErrorCode.KNOWLEDGE_UNAVAILABLE;
         }
         if ("INVALID_MODEL_RESPONSE".equals(code)) {
             return JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE;
@@ -220,5 +250,28 @@ public class HttpJarvisGateway implements JarvisGateway {
             return Map.of();
         }
         return this.objectMapper.convertValue(node, LinkedHashMap.class);
+    }
+
+    private List<JarvisChatContextView> contextItems(final JsonNode node) {
+        final List<JarvisChatContextView> items = new ArrayList<>();
+        node.forEach(item -> items.add(new JarvisChatContextView(
+                this.requiredText(item, "sourceId"),
+                this.optionalText(item, "displayName"),
+                this.requiredText(item, "relativePath"),
+                item.path("lineStart").isInt() ? item.path("lineStart").asInt() : null,
+                item.path("lineEnd").isInt() ? item.path("lineEnd").asInt() : null,
+                this.optionalText(item, "reason"),
+                item.path("score").isNumber() ? item.path("score").asDouble() : null
+        )));
+        return items;
+    }
+
+    private List<JarvisChatDiagnosticView> diagnostics(final JsonNode node) {
+        final List<JarvisChatDiagnosticView> values = new ArrayList<>();
+        node.forEach(item -> values.add(new JarvisChatDiagnosticView(
+                this.optionalText(item, "code"),
+                this.optionalText(item, "message")
+        )));
+        return values;
     }
 }

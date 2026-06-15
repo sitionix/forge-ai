@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MODULE_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 HOST="${JARVIS_HOST:-127.0.0.1}"
-PORT="${JARVIS_PORT:-7070}"
+PORT="${JARVIS_PORT:-7071}"
 export OLLAMA_HOME="${OLLAMA_HOME:-${MODULE_DIR}/var/data/ollama}"
 
 if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then

@@ -1,13 +1,9 @@
 package com.sitionix.forgeai.infrastructure.knowledgesqlite.mapper;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextMetadataView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextItemView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextSourceView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSkippedBreakdownView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSourcesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
@@ -20,10 +16,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -48,9 +40,8 @@ public class KnowledgeSqliteMapper {
                         build == null ? 0 : build.getSkippedCount(),
                         this.skippedBreakdown(build)
                 ),
-                new KnowledgeViews.KnowledgeFeatureView(true, true, "keyword"),
-                new KnowledgeViews.KnowledgeFeatureView(false, false, null),
-                new KnowledgeViews.KnowledgeFeatureView(false, false, null),
+                new KnowledgeViews.KnowledgeCoverageView(0, fileCount, null),
+                new KnowledgeViews.KnowledgeFreshnessView("UNKNOWN", null, 0, 0, 0, 0),
                 null
         );
     }
@@ -113,49 +104,6 @@ public class KnowledgeSqliteMapper {
         );
     }
 
-    public KnowledgeSearchResultView search(final String query, final List<KnowledgeFileEntity> files) {
-        return new KnowledgeSearchResultView(
-                query,
-                files.stream().map(file -> new KnowledgeViews.KnowledgeSearchMatchView(
-                        file.getSourceId(),
-                        file.getDisplayName(),
-                        file.getRelativePath(),
-                        1,
-                        1,
-                        file.getRelativePath(),
-                        "path",
-                        1.0
-                )).toList(),
-                null
-        );
-    }
-
-    public KnowledgeContextItemView contextItem(final KnowledgeFileEntity file, final boolean includeContent) {
-        final KnowledgeSourceMetadata metadata = metadata(file.getMetadataJson());
-        final ContextSnippet snippet = this.snippet(file, metadata, includeContent);
-        return new KnowledgeContextItemView(
-                file.getSourceId(),
-                file.getDisplayName(),
-                file.getGroup(),
-                file.getRelativePath(),
-                snippet.lineStart(),
-                snippet.lineEnd(),
-                snippet.content(),
-                "path",
-                "Matched query against SQLite inventory metadata",
-                1.0,
-                new KnowledgeContextMetadataView(
-                        metadata.getTags(),
-                        metadata.getDomainKeywords(),
-                        metadata.getOwnsBusinessAreas()
-                )
-        );
-    }
-
-    public KnowledgeContextSourceView contextSource(final KnowledgeContextItemView item) {
-        return new KnowledgeContextSourceView(item.sourceId(), item.displayName(), "Read from SQLite inventory");
-    }
-
     private KnowledgeViews.KnowledgeSourceView source(final KnowledgeSourceEntity source) {
         final KnowledgeSourceMetadata metadata = metadata(source.getMetadataJson());
         return new KnowledgeViews.KnowledgeSourceView(
@@ -202,46 +150,6 @@ public class KnowledgeSqliteMapper {
 
     private KnowledgeSkippedBreakdownView emptySkippedBreakdown(final Integer skippedCount) {
         return new KnowledgeSkippedBreakdownView(skippedCount == null ? 0 : skippedCount, Map.of());
-    }
-
-    private ContextSnippet snippet(final KnowledgeFileEntity file,
-                                   final KnowledgeSourceMetadata metadata,
-                                   final boolean includeContent) {
-        if (!includeContent) {
-            return new ContextSnippet(1, 40, null);
-        }
-        final List<String> lines = this.readLines(file, metadata);
-        if (!lines.isEmpty()) {
-            final int lineEnd = Math.min(lines.size(), 40);
-            return new ContextSnippet(1, lineEnd, String.join("\n", lines.subList(0, lineEnd)));
-        }
-        return new ContextSnippet(1, 40, """
-                SQLite indexed file
-                sourceId: %s
-                path: %s
-                hash: %s""".formatted(file.getSourceId(), file.getRelativePath(), file.getContentHash()));
-    }
-
-    private List<String> readLines(final KnowledgeFileEntity file, final KnowledgeSourceMetadata metadata) {
-        final String root = metadata.getAbsoluteRoot() == null || metadata.getAbsoluteRoot().isBlank()
-                ? file.getSourcePath()
-                : metadata.getAbsoluteRoot();
-        if (root == null || root.isBlank() || file.getAbsolutePath() == null || file.getAbsolutePath().isBlank()) {
-            return List.of();
-        }
-        try {
-            final Path rootPath = Path.of(root).toRealPath().normalize();
-            final Path filePath = Path.of(file.getAbsolutePath()).toRealPath().normalize();
-            if (!filePath.startsWith(rootPath)) {
-                return List.of();
-            }
-            return Files.readAllLines(filePath, StandardCharsets.UTF_8);
-        } catch (IOException exception) {
-            return List.of();
-        }
-    }
-
-    private record ContextSnippet(Integer lineStart, Integer lineEnd, String content) {
     }
 
     private record SkippedBreakdownJson(Integer total, Map<String, Integer> byReason) {

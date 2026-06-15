@@ -47,3 +47,21 @@ class OllamaClient:
 
         data = response.json()
         return str(data.get("response", ""))
+
+    async def generate_text(self, prompt: str) -> str:
+        await self.health()
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0},
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.post(f"{self.base_url}/api/generate", json=payload)
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise OllamaUnavailableError(f"Ollama is not reachable at {self.base_url}") from exc
+
+        data = response.json()
+        return str(data.get("response", "")).strip()

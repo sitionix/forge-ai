@@ -4,11 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchRequest;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.URI;
@@ -33,14 +35,13 @@ class HttpKnowledgeGatewayTest {
     @Test
     void statusProxyMapsSuccess() {
         final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
-                {"status":"UP","module":"knowledge","catalog":{"configured":true,"type":"service_catalog"},"inventory":{"implemented":true,"status":"READY","sourceCount":1,"fileCount":2,"skippedCount":7,"skippedBreakdown":{"total":7,"byReason":{"EXCLUDED_BY_PATTERN":5,"BINARY":2}}},"search":{"implemented":true,"mode":"keyword"},"vectorStore":{"implemented":false,"enabled":false},"rag":{"implemented":false,"enabled":false}}
+                {"status":"UP","module":"knowledge","catalog":{"configured":true,"type":"service_catalog"},"inventory":{"implemented":true,"status":"READY","sourceCount":1,"fileCount":2,"skippedCount":7,"skippedBreakdown":{"total":7,"byReason":{"EXCLUDED_BY_PATTERN":5,"BINARY":2}}}}
                 """));
 
         final var status = gateway.status();
 
         assertThat(status.status()).isEqualTo("UP");
         assertThat(status.catalog().configured()).isTrue();
-        assertThat(status.search().mode()).isEqualTo("keyword");
         assertThat(status.inventory().skippedBreakdown().total()).isEqualTo(7);
         assertThat(status.inventory().skippedBreakdown().byReason()).containsEntry("EXCLUDED_BY_PATTERN", 5);
     }
@@ -55,6 +56,21 @@ class HttpKnowledgeGatewayTest {
 
         assertThat(sources.sources()).hasSize(1);
         assertThat(sources.sources().getFirst().sourceId()).isEqualTo("svc");
+    }
+
+    @Test
+    void servicesStatusProxyMapsSuccess() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"services":[{"sourceId":"svc","label":"Service","group":"backend","path":"svc","rootExists":true,"tags":["java"],"inventory":{"status":"READY","eligibleFileCount":2,"skippedCount":1},"analysis":{"status":"PARTIAL","inventoryFileCount":2,"analyzedFileCount":1,"percent":50.0,"failedFileCount":0},"facts":{"symbolCount":3,"relationCount":4},"diagnostics":[]}],"activeJob":null}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        final var result = gateway.servicesStatus();
+
+        assertThat(result.services()).hasSize(1);
+        assertThat(result.services().getFirst().analysis().analyzedFileCount()).isEqualTo(1);
+        assertThat(result.services().getFirst().facts().relationCount()).isEqualTo(4);
+        assertThat(client.lastRequest.uri().getPath()).isEqualTo("/api/v1/knowledge/services/status");
     }
 
     @Test
@@ -85,28 +101,92 @@ class HttpKnowledgeGatewayTest {
     }
 
     @Test
-    void searchProxyMapsSuccess() {
-        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
-                {"query":"JarvisGateway","results":[{"sourceId":"svc","displayName":"Service","relativePath":"README.md","lineStart":1,"lineEnd":1,"snippet":"JarvisGateway","matchType":"content","score":1.0}]}
-                """));
+    void analysisBuildProxyMapsSuccess() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"jobId":"job-1","status":"QUEUED","message":"Knowledge analysis job queued"}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
 
-        final var result = gateway.search(new KnowledgeSearchRequest("JarvisGateway", List.of(), List.of(), 10));
+        final var result = gateway.buildAnalysis(new KnowledgeAnalysisBuildRequest(List.of("svc"), List.of(), false, 5, 1));
 
-        assertThat(result.results()).hasSize(1);
-        assertThat(result.results().getFirst().matchType()).isEqualTo("content");
+        assertThat(result.jobId()).isEqualTo("job-1");
+        assertThat(client.lastRequest.uri().getPath()).isEqualTo("/api/v1/knowledge/analysis/build");
     }
 
     @Test
-    void contextProxyMapsSuccess() {
+    void analysisJobProxyMapsSuccess() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"jobId":"job-1","status":"RUNNING","startedAt":"a","sourceCount":1,"fileCount":2,"processedFileCount":1,"skippedUnchangedFileCount":0,"failedFileCount":0,"currentSourceId":"svc","currentRelativePath":"A.java","lastProgressAt":"p","symbolCount":3,"relationCount":4,"diagnostics":[]}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        final var result = gateway.analysisJob("job-1");
+
+        assertThat(result.status()).isEqualTo("RUNNING");
+        assertThat(result.lastProgressAt()).isEqualTo("p");
+        assertThat(client.lastRequest.uri().getPath()).isEqualTo("/api/v1/knowledge/analysis/jobs/job-1");
+    }
+
+    @Test
+    void analysisStopProxyMapsSuccess() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"jobId":"job-1","status":"STOP_REQUESTED","message":"Knowledge analysis stop requested"}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        final var result = gateway.stopAnalysis("job-1");
+
+        assertThat(result.status()).isEqualTo("STOP_REQUESTED");
+        assertThat(client.lastRequest.method()).isEqualTo("POST");
+        assertThat(client.lastRequest.uri().getPath()).isEqualTo("/api/v1/knowledge/analysis/jobs/job-1/stop");
+    }
+
+    @Test
+    void analysisStatusProxyMapsSuccess() {
         final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
-                {"query":"JarvisGateway","context":[{"sourceId":"svc","displayName":"Service","group":"backend","relativePath":"JarvisGateway.java","lineStart":1,"lineEnd":2,"content":"interface JarvisGateway","matchType":"content","reason":"matched content","score":1.0,"metadata":{"tags":["java"],"domainKeywords":[],"ownsBusinessAreas":[]}}],"sourcesUsed":[{"sourceId":"svc","displayName":"Service","reason":"matched"}],"budget":{"maxChars":12000,"usedChars":23,"truncated":false},"diagnostics":[]}
+                {"status":"READY","latestJobId":"job-1","activeJob":null,"lastCompletedAt":"b","sourceCount":1,"fileCount":2,"symbolCount":3,"relationCount":4}
                 """));
 
-        final var result = gateway.context(new KnowledgeContextRequest("JarvisGateway", List.of(), List.of(), 12000, 10, true));
+        final var result = gateway.analysisStatus();
 
-        assertThat(result.context()).hasSize(1);
-        assertThat(result.context().getFirst().relativePath()).isEqualTo("JarvisGateway.java");
-        assertThat(result.budget().truncated()).isFalse();
+        assertThat(result.status()).isEqualTo("READY");
+        assertThat(result.symbolCount()).isEqualTo(3);
+    }
+
+    @Test
+    void analysisFilesProxyMapsQueryParams() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"files":[],"total":0,"limit":5,"offset":0}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        gateway.analysisFiles(new KnowledgeAnalysisFilesRequest("svc", "ANALYZED", "A", 5, 0));
+
+        assertThat(client.lastRequest.uri().getRawQuery()).contains("sourceId=svc", "status=ANALYZED", "pathContains=A");
+    }
+
+    @Test
+    void analysisSymbolsProxyMapsQueryParams() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"symbols":[],"total":0,"limit":5,"offset":0}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        gateway.analysisSymbols(new KnowledgeAnalysisSymbolsRequest("svc", "HTTP_HANDLER", "CLASS", "A", "name", 5, 0));
+
+        assertThat(client.lastRequest.uri().getRawQuery()).contains("sourceId=svc", "role=HTTP_HANDLER", "kind=CLASS", "pathContains=A", "nameContains=name");
+    }
+
+    @Test
+    void analysisRelationsProxyMapsQueryParams() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"relations":[],"total":0,"limit":5,"offset":0}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        gateway.analysisRelations(new KnowledgeAnalysisRelationsRequest("svc", "CALLS", "from", "to", 5, 0));
+
+        assertThat(client.lastRequest.uri().getRawQuery()).contains("sourceId=svc", "relation=CALLS", "fromSymbolId=from", "toSymbolId=to");
     }
 
     @Test
@@ -137,52 +217,43 @@ class HttpKnowledgeGatewayTest {
     }
 
     @Test
-    void blankSearchRejectedBeforeProxying() {
-        final FakeHttpClient client = new FakeHttpClient(200, "{}");
-        final HttpKnowledgeGateway gateway = gateway(client);
+    void backendNotFoundPreservesControlledCode() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(404, """
+                {"code":"ANALYSIS_JOB_NOT_FOUND","message":"Analysis job not found"}
+                """));
 
-        assertThatThrownBy(() -> gateway.search(new KnowledgeSearchRequest(" ", List.of(), List.of(), 10)))
-                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
-                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.SEARCH_QUERY_INVALID));
-        assertThat(client.calls).isZero();
+        assertThatThrownBy(() -> gateway.analysisJob("missing-job"))
+                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception -> {
+                    assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_NOT_FOUND);
+                    assertThat(exception.getResponseCode()).isEqualTo("ANALYSIS_JOB_NOT_FOUND");
+                    assertThat(exception.getMessage()).isEqualTo("Analysis job not found");
+                });
     }
 
     @Test
-    void blankContextRejectedBeforeProxying() {
-        final FakeHttpClient client = new FakeHttpClient(200, "{}");
-        final HttpKnowledgeGateway gateway = gateway(client);
+    void backendConflictMapsToConflict() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(409, """
+                {"code":"ANALYSIS_JOB_ALREADY_RUNNING","message":"Knowledge analysis job already running"}
+                """));
 
-        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest(" ", List.of(), List.of(), 12000, 10, true)))
-                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
-                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID));
-        assertThat(client.calls).isZero();
+        assertThatThrownBy(() -> gateway.buildAnalysis(new KnowledgeAnalysisBuildRequest(List.of(), List.of(), false, null, 1)))
+                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception -> {
+                    assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_CONFLICT);
+                    assertThat(exception.getResponseCode()).isEqualTo("ANALYSIS_JOB_ALREADY_RUNNING");
+                });
     }
 
     @Test
-    void contextConnectionFailureMapsToUnavailable() {
-        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(new ConnectException("refused")));
+    void backendBadRequestMapsToRequestFailed() {
+        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(400, """
+                {"code":"ANALYSIS_BUILD_FAILED","message":"Analysis build failed"}
+                """));
 
-        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest("Jarvis", List.of(), List.of(), 12000, 10, true)))
-                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
-                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_UNAVAILABLE));
-    }
-
-    @Test
-    void contextTimeoutMapsToTimeout() {
-        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(new HttpTimeoutException("timeout")));
-
-        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest("Jarvis", List.of(), List.of(), 12000, 10, true)))
-                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
-                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_TIMEOUT));
-    }
-
-    @Test
-    void contextInvalidJsonMapsToBadResponse() {
-        final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, "not-json"));
-
-        assertThatThrownBy(() -> gateway.context(new KnowledgeContextRequest("Jarvis", List.of(), List.of(), 12000, 10, true)))
-                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception ->
-                        assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE));
+        assertThatThrownBy(() -> gateway.buildAnalysis(new KnowledgeAnalysisBuildRequest(List.of(), List.of(), false, null, 1)))
+                .isInstanceOfSatisfying(KnowledgeGatewayException.class, exception -> {
+                    assertThat(exception.getCode()).isEqualTo(KnowledgeGatewayErrorCode.KNOWLEDGE_REQUEST_FAILED);
+                    assertThat(exception.getResponseCode()).isEqualTo("ANALYSIS_BUILD_FAILED");
+                });
     }
 
     @Test
@@ -208,6 +279,7 @@ class HttpKnowledgeGatewayTest {
         private final String body;
         private final IOException failure;
         private int calls;
+        private HttpRequest lastRequest;
 
         private FakeHttpClient(final int status, final String body) {
             this.status = status;
@@ -270,6 +342,7 @@ class HttpKnowledgeGatewayTest {
         public <T> HttpResponse<T> send(final HttpRequest request,
                                         final HttpResponse.BodyHandler<T> responseBodyHandler) throws IOException {
             this.calls++;
+            this.lastRequest = request;
             if (this.failure != null) {
                 throw this.failure;
             }

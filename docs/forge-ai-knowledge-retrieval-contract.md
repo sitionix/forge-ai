@@ -42,6 +42,6 @@ Content matches include the matched line with default surrounding context of 8 l
 
 ## Boundaries
 
-There is no vector DB, embeddings, semantic search, RAG answer generation, Ollama call, or Jarvis integration in this contract. Jarvis can later call the Forge proxy and use the returned bundle as prompt augmentation input.
+There is no vector DB, embeddings, semantic search, RAG answer generation, or Ollama call in this contract.
 
-Forge AI Java exposes `POST /api/v1/infrastructure/knowledge/context` and only proxies the request to Knowledge. Java must not scan files or assemble snippets because source discovery, inventory safety, ranking, and snippet extraction belong to the Knowledge infrastructure module.
+Forge AI Java no longer exposes `POST /api/v1/infrastructure/knowledge/context`. The remaining Python `/api/v1/knowledge/context` endpoint is a transitional internal Jarvis chat dependency until retrieval is rebuilt on semantic analysis results.

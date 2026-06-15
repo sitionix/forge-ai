@@ -9,10 +9,15 @@ Endpoints:
 - `POST /inventory/build`
 - `GET /inventory/status`
 - `GET /inventory/files`
-- `POST /search`
-- `POST /context`
+- `POST /analysis/build`
+- `GET /analysis/jobs/{jobId}`
+- `POST /analysis/jobs/{jobId}/stop`
+- `GET /analysis/status`
+- `GET /analysis/files`
+- `GET /analysis/symbols`
+- `GET /analysis/relations`
 
-`/context` forwards `KnowledgeContextRequest` to the Python Knowledge service and returns `KnowledgeContextView`. Forge AI Java does not read source files, build snippets, or duplicate catalog discovery.
+Forge AI Java no longer exposes public inventory-backed search, retrieval context, facts, or flow context proxy endpoints. Browser Knowledge flows use status, source, inventory diagnostics, and AI analysis endpoints only.
 
 Inventory build, inventory status, and status responses keep the backward-compatible `skippedCount` field and also expose `skippedBreakdown`:
 
@@ -31,6 +36,8 @@ Inventory build, inventory status, and status responses keep the backward-compat
 
 Forge AI Java only proxies this shape. It does not compute skipped reasons, inspect local files, or scan source roots. If an older Knowledge response omits `skippedBreakdown`, Forge maps it safely to `{ "total": skippedCount, "byReason": {} }`.
 
-Skipped means the inventory builder saw a file/path/root candidate but did not index it. Valid reasons are `EXCLUDED_BY_PATTERN`, `NOT_INCLUDED`, `TOO_LARGE`, `BINARY`, `UNREADABLE`, `UNSAFE_PATH`, `SYMLINK_OUTSIDE_ROOT`, `MISSING_SOURCE_ROOT`, and `UNKNOWN`. Skipped files are not errors by default; they are excluded from search/context because only indexed files participate in retrieval.
+Skipped means the inventory builder saw a file/path/root candidate but did not index it. Valid reasons are `EXCLUDED_BY_PATTERN`, `NOT_INCLUDED`, `TOO_LARGE`, `BINARY`, `UNREADABLE`, `UNSAFE_PATH`, `SYMLINK_OUTSIDE_ROOT`, `MISSING_SOURCE_ROOT`, and `UNKNOWN`. Skipped files are not errors by default and are excluded from AI analysis candidates.
 
-Controlled proxy failures are mapped to `KNOWLEDGE_UNAVAILABLE`, `KNOWLEDGE_TIMEOUT`, and `KNOWLEDGE_BAD_RESPONSE`. Blank context queries are rejected as `CONTEXT_QUERY_INVALID`.
+Controlled proxy failures are mapped to `KNOWLEDGE_UNAVAILABLE`, `KNOWLEDGE_TIMEOUT`, and `KNOWLEDGE_BAD_RESPONSE`.
+
+Analysis endpoints are proxy-only in Forge Java. `POST /analysis/build` returns a queued job id immediately. `POST /analysis/jobs/{jobId}/stop` requests cooperative cancellation and frees the active slot for a new analysis job; any in-flight per-file Ollama call is prevented from writing results after it returns or times out. Job/status endpoints expose progress counters, current source/file, failures, and diagnostics. Files/symbols/relations endpoints expose validated Knowledge service JSON; Forge does not call Ollama, scan files, parse source, or classify roles.

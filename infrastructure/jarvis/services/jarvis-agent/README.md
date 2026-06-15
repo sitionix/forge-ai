@@ -23,5 +23,5 @@ JARVIS_LOG_FILE="$PWD/var/logs/jarvis-agent.log" \
 services/jarvis-agent/.venv/bin/uvicorn jarvis_agent.main:app \
   --app-dir services/jarvis-agent/src \
   --host 127.0.0.1 \
-  --port 7070
+  --port 7071
 ```

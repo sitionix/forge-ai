@@ -1,10 +1,18 @@
 package com.sitionix.forgeai.infrastructure.knowledgeclient;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisJobView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStatusView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStopView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGateway;
@@ -13,15 +21,13 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewa
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchResultView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeServicesStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSkippedBreakdownView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSourcesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeViews;
 import java.io.IOException;
 import java.net.ConnectException;
-import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -71,6 +77,11 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
     }
 
     @Override
+    public KnowledgeServicesStatusView servicesStatus() {
+        return this.convert(this.send("GET", "/api/v1/knowledge/services/status", null), KnowledgeServicesStatusView.class);
+    }
+
+    @Override
     public KnowledgeInventoryBuildResultView buildInventory(final KnowledgeInventoryBuildRequest request) {
         return this.normalize(this.convert(this.send("POST", "/api/v1/knowledge/inventory/build", normalizeBuildRequest(request)), KnowledgeInventoryBuildResultView.class));
     }
@@ -86,22 +97,41 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
     }
 
     @Override
-    public KnowledgeSearchResultView search(final KnowledgeSearchRequest request) {
-        if (request == null || request.query() == null || request.query().isBlank()) {
-            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.SEARCH_QUERY_INVALID, "Search query must not be empty");
-        }
-        return this.convert(this.send("POST", "/api/v1/knowledge/search", normalizeSearchRequest(request)), KnowledgeSearchResultView.class);
+    public KnowledgeAnalysisBuildView buildAnalysis(final KnowledgeAnalysisBuildRequest request) {
+        return this.convert(this.send("POST", "/api/v1/knowledge/analysis/build", normalizeAnalysisBuildRequest(request)), KnowledgeAnalysisBuildView.class);
     }
 
     @Override
-    public KnowledgeContextView context(final KnowledgeContextRequest request) {
-        if (request == null || request.query() == null || request.query().isBlank()) {
-            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID, "Context query must not be empty");
-        }
-        return this.convert(this.send("POST", "/api/v1/knowledge/context", normalizeContextRequest(request)), KnowledgeContextView.class);
+    public KnowledgeAnalysisJobView analysisJob(final String jobId) {
+        return this.convert(this.send("GET", "/api/v1/knowledge/analysis/jobs/" + encode(jobId), null), KnowledgeAnalysisJobView.class);
     }
 
-    private JsonNode send(final String method, final String path, final Object body) {
+    @Override
+    public KnowledgeAnalysisStopView stopAnalysis(final String jobId) {
+        return this.convert(this.send("POST", "/api/v1/knowledge/analysis/jobs/" + encode(jobId) + "/stop", Map.of()), KnowledgeAnalysisStopView.class);
+    }
+
+    @Override
+    public KnowledgeAnalysisStatusView analysisStatus() {
+        return this.convert(this.send("GET", "/api/v1/knowledge/analysis/status", null), KnowledgeAnalysisStatusView.class);
+    }
+
+    @Override
+    public KnowledgeAnalysisFilesView analysisFiles(final KnowledgeAnalysisFilesRequest request) {
+        return this.convert(this.send("GET", "/api/v1/knowledge/analysis/files" + query(request), null), KnowledgeAnalysisFilesView.class);
+    }
+
+    @Override
+    public KnowledgeAnalysisSymbolsView analysisSymbols(final KnowledgeAnalysisSymbolsRequest request) {
+        return this.convert(this.send("GET", "/api/v1/knowledge/analysis/symbols" + query(request), null), KnowledgeAnalysisSymbolsView.class);
+    }
+
+    @Override
+    public KnowledgeAnalysisRelationsView analysisRelations(final KnowledgeAnalysisRelationsRequest request) {
+        return this.convert(this.send("GET", "/api/v1/knowledge/analysis/relations" + query(request), null), KnowledgeAnalysisRelationsView.class);
+    }
+
+    private String send(final String method, final String path, final Object body) {
         this.properties.validateBaseUrl();
         final HttpRequest.Builder builder = HttpRequest.newBuilder(this.properties.getBaseUrl().resolve(path))
                 .version(HttpClient.Version.HTTP_1_1)
@@ -128,29 +158,49 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
         }
     }
 
-    private JsonNode handle(final HttpResponse<String> response) {
-        final JsonNode node = this.parse(response.body());
+    private String handle(final HttpResponse<String> response) {
+        final String responseBody = response.body() == null || response.body().isBlank() ? "{}" : response.body();
         if (response.statusCode() >= 200 && response.statusCode() < 300) {
-            return node;
+            return responseBody;
         }
-        final KnowledgeGatewayErrorCode code = this.errorMapper.map(node, response.statusCode());
-        throw new KnowledgeGatewayException(code, node.path("message").asText(code.name()));
+        final KnowledgeBackendErrorResponse error = this.parseError(responseBody);
+        final KnowledgeGatewayErrorCode code = this.errorMapper.map(response.statusCode());
+        final String responseCode = this.firstText(error == null ? null : error.code(), code.name());
+        final String message = this.firstText(error == null ? null : error.message(), error == null ? null : error.detail(), responseCode);
+        throw new KnowledgeGatewayException(code, responseCode, message);
     }
 
-    private JsonNode parse(final String body) {
+    private KnowledgeBackendErrorResponse parseError(final String body) {
         try {
-            return this.objectMapper.readTree(body == null || body.isBlank() ? "{}" : body);
+            return this.objectMapper.readValue(body == null || body.isBlank() ? "{}" : body, KnowledgeBackendErrorResponse.class);
         } catch (final JsonProcessingException e) {
-            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "Knowledge returned invalid JSON", e);
+            return null;
         }
     }
 
-    private <T> T convert(final JsonNode node, final Class<T> type) {
+    private <T> T convert(final String body, final Class<T> type) {
         try {
-            return this.objectMapper.treeToValue(node, type);
+            return this.objectMapper.readValue(body == null || body.isBlank() ? "{}" : body, type);
         } catch (final JsonProcessingException e) {
             throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "Knowledge response is invalid", e);
         }
+    }
+
+    private String firstText(final String primary, final String fallback) {
+        return this.firstText(primary, fallback, fallback);
+    }
+
+    private String firstText(final String primary, final String secondary, final String fallback) {
+        if (primary != null && !primary.isBlank()) {
+            return primary;
+        }
+        if (secondary != null && !secondary.isBlank()) {
+            return secondary;
+        }
+        return fallback;
+    }
+
+    private record KnowledgeBackendErrorResponse(String code, String message, String detail) {
     }
 
     private String serialize(final Object body) {
@@ -187,9 +237,8 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
                         inventory.skippedCount(),
                         this.normalize(inventory.skippedBreakdown(), inventory.skippedCount())
                 ),
-                view.search(),
-                view.vectorStore(),
-                view.rag(),
+                view.coverage(),
+                view.freshness(),
                 view.message()
         );
     }
@@ -234,23 +283,13 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
         );
     }
 
-    private KnowledgeSearchRequest normalizeSearchRequest(final KnowledgeSearchRequest request) {
-        return new KnowledgeSearchRequest(
-                request.query(),
-                request.sourceIds() == null ? List.of() : request.sourceIds(),
-                request.groups() == null ? List.of() : request.groups(),
-                request.limit() == null ? 20 : request.limit()
-        );
-    }
-
-    private KnowledgeContextRequest normalizeContextRequest(final KnowledgeContextRequest request) {
-        return new KnowledgeContextRequest(
-                request.query(),
-                request.sourceIds() == null ? List.of() : request.sourceIds(),
-                request.groups() == null ? List.of() : request.groups(),
-                request.maxChars() == null ? 12000 : request.maxChars(),
-                request.maxItems() == null ? 12 : request.maxItems(),
-                request.includeContent() == null || request.includeContent()
+    private KnowledgeAnalysisBuildRequest normalizeAnalysisBuildRequest(final KnowledgeAnalysisBuildRequest request) {
+        return new KnowledgeAnalysisBuildRequest(
+                request == null || request.sourceIds() == null ? List.of() : request.sourceIds(),
+                request == null || request.groups() == null ? List.of() : request.groups(),
+                request != null && Boolean.TRUE.equals(request.force()),
+                request == null ? null : request.maxFiles(),
+                request == null || request.concurrency() == null ? 1 : request.concurrency()
         );
     }
 
@@ -265,6 +304,52 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
         append(query, "limit", request.limit());
         append(query, "offset", request.offset());
         return query.toString();
+    }
+
+    private String query(final KnowledgeAnalysisFilesRequest request) {
+        if (request == null) {
+            return "";
+        }
+        final StringBuilder query = new StringBuilder();
+        append(query, "sourceId", request.sourceId());
+        append(query, "status", request.status());
+        append(query, "pathContains", request.pathContains());
+        append(query, "limit", request.limit());
+        append(query, "offset", request.offset());
+        return query.toString();
+    }
+
+    private String query(final KnowledgeAnalysisSymbolsRequest request) {
+        if (request == null) {
+            return "";
+        }
+        final StringBuilder query = new StringBuilder();
+        append(query, "sourceId", request.sourceId());
+        append(query, "role", request.role());
+        append(query, "kind", request.kind());
+        append(query, "pathContains", request.pathContains());
+        append(query, "nameContains", request.nameContains());
+        append(query, "limit", request.limit());
+        append(query, "offset", request.offset());
+        return query.toString();
+    }
+
+    private String query(final KnowledgeAnalysisRelationsRequest request) {
+        if (request == null) {
+            return "";
+        }
+        final StringBuilder query = new StringBuilder();
+        append(query, "sourceId", request.sourceId());
+        append(query, "relation", request.relation());
+        append(query, "fromSymbolId", request.fromSymbolId());
+        append(query, "toSymbolId", request.toSymbolId());
+        append(query, "limit", request.limit());
+        append(query, "offset", request.offset());
+        return query.toString();
+    }
+
+    private String encode(final String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     private void append(final StringBuilder query, final String key, final Object value) {

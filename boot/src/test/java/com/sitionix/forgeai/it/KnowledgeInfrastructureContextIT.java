@@ -12,7 +12,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
-import org.springframework.http.HttpStatus;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
@@ -96,75 +95,4 @@ class KnowledgeInfrastructureContextIT extends AbstractForgeAiIT {
                 .assertDefault();
     }
 
-    @Test
-    @DisplayName("Should expose Knowledge context through Forge infrastructure API")
-    void givenValidContextRequest_whenPostContext_thenReturnContextBundleFromSqliteInventory() throws Exception {
-        this.testManager.sqlite()
-                .create()
-                .to(INVENTORY_BUILD)
-                .to(KNOWLEDGE_SOURCE)
-                .to(KNOWLEDGE_FILE)
-                .build();
-
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.knowledgeContext())
-                .assertDefault();
-
-        this.testManager.sqlite()
-                .get(KnowledgeSourceEntity.class)
-                .hasSize(1)
-                .singleElement()
-                .andExpected(source -> "forge-ai".equals(source.getSourceId()))
-                .assertEntity();
-
-        this.testManager.sqlite()
-                .get(KnowledgeFileEntity.class)
-                .hasSize(1)
-                .singleElement()
-                .andExpected(file -> "forge-ai".equals(file.getSourceId()))
-                .andExpected(file -> file.getRelativePath().endsWith("JarvisGateway.java"))
-                .andExpected(file -> "jarvis-gateway-hash".equals(file.getContentHash()))
-                .assertEntity();
-    }
-
-    @Test
-    @DisplayName("Should reject blank Knowledge context query before gateway")
-    void givenBlankContextQuery_whenPostContext_thenReturnBadRequest() throws Exception {
-        this.testManager.sqlite()
-                .create()
-                .to(INVENTORY_BUILD)
-                .to(KNOWLEDGE_SOURCE)
-                .to(KNOWLEDGE_FILE)
-                .build();
-
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.knowledgeContext())
-                .withRequest("requestKnowledgeContextBlank.json")
-                .expectStatus(HttpStatus.BAD_REQUEST)
-                .expectResponse("responseKnowledgeContextBlank.json")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("CONTEXT_QUERY_INVALID"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("Context query must not be empty"))
-                .assertDefault();
-
-        this.testManager.sqlite()
-                .get(KnowledgeFileEntity.class)
-                .hasSize(1)
-                .singleElement()
-                .andExpected(file -> "jarvis-gateway-hash".equals(file.getContentHash()))
-                .assertEntity();
-    }
-
-    @Test
-    @DisplayName("Should expose empty inventory diagnostic through Knowledge context endpoint")
-    void givenEmptyInventory_whenPostContext_thenReturnDiagnosticWithoutPersistingRows() throws Exception {
-        this.testManager.mockMvc()
-                .ping(ControllerEndpoint.knowledgeContextDynamicResponse())
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.context").isEmpty())
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics[0].code").value("INVENTORY_EMPTY"))
-                .assertDefault();
-
-        this.testManager.sqlite()
-                .get(KnowledgeFileEntity.class)
-                .hasSize(0);
-    }
 }

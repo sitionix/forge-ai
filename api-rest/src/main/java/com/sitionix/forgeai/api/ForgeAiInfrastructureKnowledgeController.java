@@ -1,7 +1,16 @@
 package com.sitionix.forgeai.api;
 
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisJobView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStatusView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStopView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
@@ -9,8 +18,7 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewa
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchResultView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeServicesStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSourcesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.ManageKnowledgeInfrastructure;
@@ -19,6 +27,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -40,6 +49,11 @@ public class ForgeAiInfrastructureKnowledgeController {
         return ResponseEntity.ok(this.manageKnowledgeInfrastructure.sources());
     }
 
+    @GetMapping("/api/v1/infrastructure/knowledge/services/status")
+    public ResponseEntity<KnowledgeServicesStatusView> servicesStatus() {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.servicesStatus());
+    }
+
     @PostMapping("/api/v1/infrastructure/knowledge/inventory/build")
     public ResponseEntity<KnowledgeInventoryBuildResultView> buildInventory(@RequestBody(required = false) final KnowledgeInventoryBuildRequest request) {
         return ResponseEntity.ok(this.manageKnowledgeInfrastructure.buildInventory(request));
@@ -59,28 +73,70 @@ public class ForgeAiInfrastructureKnowledgeController {
         return ResponseEntity.ok(this.manageKnowledgeInfrastructure.files(new KnowledgeFilesRequest(sourceId, pathContains, extension, limit, offset)));
     }
 
-    @PostMapping("/api/v1/infrastructure/knowledge/search")
-    public ResponseEntity<KnowledgeSearchResultView> search(@RequestBody final KnowledgeSearchRequest request) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.search(request));
+    @PostMapping("/api/v1/infrastructure/knowledge/analysis/build")
+    public ResponseEntity<KnowledgeAnalysisBuildView> buildAnalysis(@RequestBody(required = false) final KnowledgeAnalysisBuildRequest request) {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.buildAnalysis(request));
     }
 
-    @PostMapping("/api/v1/infrastructure/knowledge/context")
-    public ResponseEntity<KnowledgeContextView> context(@RequestBody final KnowledgeContextRequest request) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.context(request));
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/jobs/{jobId}")
+    public ResponseEntity<KnowledgeAnalysisJobView> analysisJob(@PathVariable final String jobId) {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisJob(jobId));
+    }
+
+    @PostMapping("/api/v1/infrastructure/knowledge/analysis/jobs/{jobId}/stop")
+    public ResponseEntity<KnowledgeAnalysisStopView> stopAnalysis(@PathVariable final String jobId) {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.stopAnalysis(jobId));
+    }
+
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/status")
+    public ResponseEntity<KnowledgeAnalysisStatusView> analysisStatus() {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisStatus());
+    }
+
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/files")
+    public ResponseEntity<KnowledgeAnalysisFilesView> analysisFiles(@RequestParam(required = false) final String sourceId,
+                                                                    @RequestParam(required = false) final String status,
+                                                                    @RequestParam(required = false) final String pathContains,
+                                                                    @RequestParam(required = false) final Integer limit,
+                                                                    @RequestParam(required = false) final Integer offset) {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisFiles(new KnowledgeAnalysisFilesRequest(sourceId, status, pathContains, limit, offset)));
+    }
+
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/symbols")
+    public ResponseEntity<KnowledgeAnalysisSymbolsView> analysisSymbols(@RequestParam(required = false) final String sourceId,
+                                                                        @RequestParam(required = false) final String role,
+                                                                        @RequestParam(required = false) final String kind,
+                                                                        @RequestParam(required = false) final String pathContains,
+                                                                        @RequestParam(required = false) final String nameContains,
+                                                                        @RequestParam(required = false) final Integer limit,
+                                                                        @RequestParam(required = false) final Integer offset) {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisSymbols(new KnowledgeAnalysisSymbolsRequest(sourceId, role, kind, pathContains, nameContains, limit, offset)));
+    }
+
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/relations")
+    public ResponseEntity<KnowledgeAnalysisRelationsView> analysisRelations(@RequestParam(required = false) final String sourceId,
+                                                                            @RequestParam(required = false) final String relation,
+                                                                            @RequestParam(required = false) final String fromSymbolId,
+                                                                            @RequestParam(required = false) final String toSymbolId,
+                                                                            @RequestParam(required = false) final Integer limit,
+                                                                            @RequestParam(required = false) final Integer offset) {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisRelations(new KnowledgeAnalysisRelationsRequest(sourceId, relation, fromSymbolId, toSymbolId, limit, offset)));
     }
 
     @ExceptionHandler(KnowledgeGatewayException.class)
     public ResponseEntity<KnowledgeErrorResponse> handleKnowledgeGatewayException(final KnowledgeGatewayException exception) {
         return ResponseEntity
                 .status(this.httpStatus(exception.getCode()))
-                .body(new KnowledgeErrorResponse(exception.getCode().name(), exception.getMessage()));
+                .body(new KnowledgeErrorResponse(exception.getResponseCode(), exception.getMessage()));
     }
 
     private HttpStatus httpStatus(final KnowledgeGatewayErrorCode code) {
         return switch (code) {
-            case SEARCH_QUERY_INVALID, CONTEXT_QUERY_INVALID -> HttpStatus.BAD_REQUEST;
             case KNOWLEDGE_TIMEOUT -> HttpStatus.GATEWAY_TIMEOUT;
             case KNOWLEDGE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case KNOWLEDGE_REQUEST_FAILED -> HttpStatus.BAD_REQUEST;
+            case KNOWLEDGE_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case KNOWLEDGE_CONFLICT -> HttpStatus.CONFLICT;
             case KNOWLEDGE_BAD_RESPONSE -> HttpStatus.BAD_GATEWAY;
         };
     }

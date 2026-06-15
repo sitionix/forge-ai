@@ -2,6 +2,8 @@ package com.sitionix.forgeai.application.usecase;
 
 import com.sitionix.forgeai.domain.exception.JarvisGatewayException;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisActionsView;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisChatRequest;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisChatResponse;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandRequest;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandResultView;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisGatewayErrorCode;
@@ -33,5 +35,13 @@ public class ManageJarvisInfrastructureUseCase implements ManageJarvisInfrastruc
             throw new JarvisGatewayException(JarvisGatewayErrorCode.INVALID_COMMAND, "Command text must not be empty");
         }
         return this.jarvisGateway.command(command);
+    }
+
+    @Override
+    public JarvisChatResponse chat(final JarvisChatRequest request) {
+        if (request == null || request.message() == null || request.message().isBlank()) {
+            throw new JarvisGatewayException(JarvisGatewayErrorCode.INVALID_COMMAND, "Chat message must not be empty");
+        }
+        return this.jarvisGateway.chat(request);
     }
 }

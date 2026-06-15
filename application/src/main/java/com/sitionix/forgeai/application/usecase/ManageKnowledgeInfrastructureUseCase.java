@@ -2,16 +2,22 @@ package com.sitionix.forgeai.application.usecase;
 
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeContextView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisJobView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStatusView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStopView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGateway;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSearchResultView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeServicesStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSourcesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.ManageKnowledgeInfrastructure;
@@ -35,6 +41,11 @@ public class ManageKnowledgeInfrastructureUseCase implements ManageKnowledgeInfr
     }
 
     @Override
+    public KnowledgeServicesStatusView servicesStatus() {
+        return this.knowledgeGateway.servicesStatus();
+    }
+
+    @Override
     public KnowledgeInventoryBuildResultView buildInventory(final KnowledgeInventoryBuildRequest request) {
         return this.knowledgeGateway.buildInventory(request);
     }
@@ -50,18 +61,37 @@ public class ManageKnowledgeInfrastructureUseCase implements ManageKnowledgeInfr
     }
 
     @Override
-    public KnowledgeSearchResultView search(final KnowledgeSearchRequest request) {
-        if (request == null || request.query() == null || request.query().isBlank()) {
-            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.SEARCH_QUERY_INVALID, "Search query must not be empty");
-        }
-        return this.knowledgeGateway.search(request);
+    public KnowledgeAnalysisBuildView buildAnalysis(final KnowledgeAnalysisBuildRequest request) {
+        return this.knowledgeGateway.buildAnalysis(request);
     }
 
     @Override
-    public KnowledgeContextView context(final KnowledgeContextRequest request) {
-        if (request == null || request.query() == null || request.query().isBlank()) {
-            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.CONTEXT_QUERY_INVALID, "Context query must not be empty");
-        }
-        return this.knowledgeGateway.context(request);
+    public KnowledgeAnalysisJobView analysisJob(final String jobId) {
+        return this.knowledgeGateway.analysisJob(jobId);
+    }
+
+    @Override
+    public KnowledgeAnalysisStopView stopAnalysis(final String jobId) {
+        return this.knowledgeGateway.stopAnalysis(jobId);
+    }
+
+    @Override
+    public KnowledgeAnalysisStatusView analysisStatus() {
+        return this.knowledgeGateway.analysisStatus();
+    }
+
+    @Override
+    public KnowledgeAnalysisFilesView analysisFiles(final KnowledgeAnalysisFilesRequest request) {
+        return this.knowledgeGateway.analysisFiles(request);
+    }
+
+    @Override
+    public KnowledgeAnalysisSymbolsView analysisSymbols(final KnowledgeAnalysisSymbolsRequest request) {
+        return this.knowledgeGateway.analysisSymbols(request);
+    }
+
+    @Override
+    public KnowledgeAnalysisRelationsView analysisRelations(final KnowledgeAnalysisRelationsRequest request) {
+        return this.knowledgeGateway.analysisRelations(request);
     }
 }

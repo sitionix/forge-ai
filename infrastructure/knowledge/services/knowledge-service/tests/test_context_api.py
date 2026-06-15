@@ -1,5 +1,8 @@
 import asyncio
 import json
+import os
+
+os.environ.setdefault("KNOWLEDGE_STORE_PATH", "/tmp/forge-ai-knowledge-test-main.sqlite")
 
 from knowledge_service import main
 from knowledge_service.config import AppConfig

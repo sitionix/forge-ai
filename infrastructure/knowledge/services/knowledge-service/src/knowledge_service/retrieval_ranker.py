@@ -10,7 +10,6 @@ class RetrievalRanker:
         filename = Path(relative_path).name
         haystack_path = relative_path.lower()
         haystack_filename = filename.lower()
-        query_text = query.lower()
         source_text = " ".join([
             str(row["source_id"]),
             str(row["display_name"]),
@@ -46,7 +45,6 @@ class RetrievalRanker:
         wants_workflow = any(term in query_terms for term in ["workflow", "workflows", "deploy", "deployment", "ci", "cd", "pipeline", "github", "action", "actions"])
         wants_tests = any(term in query_terms for term in ["test", "tests", "testing", "unit", "it", "integration", "spec", "coverage"])
         wants_contract = any(term in query_terms for term in ["api", "apis", "endpoint", "endpoints", "contract", "contracts", "openapi", "schema", "schemas", "path", "paths"])
-        wants_explanation = any(term in query_text for term in ["explain", "how", "works", "work", "flow", "поясни", "працює", "як"])
 
         score = 0.0
         reasons: list[str] = []
@@ -81,7 +79,7 @@ class RetrievalRanker:
         if any(term == source_id for term in query_terms):
             score += 0.5
             reasons.append("matched source id")
-        if is_runtime_source and not wants_contract and not wants_workflow and (wants_explanation or not wants_tests):
+        if is_runtime_source and not wants_contract and not wants_workflow and not wants_tests:
             score += 0.35
             reasons.append("preferred runtime source")
         if is_test_file and not wants_tests:

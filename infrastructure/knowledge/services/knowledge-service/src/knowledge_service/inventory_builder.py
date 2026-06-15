@@ -28,12 +28,28 @@ class InventoryBuilder:
         selected = [source for source in selected_candidates if source.rootExists]
         files: list[FileMetadata] = []
         skipped = SkippedBreakdown()
+        skipped_by_source: dict[str, SkippedBreakdown] = {}
         for source in selected_candidates:
             if not source.rootExists:
-                skipped.increment(SkippedReason.MISSING_SOURCE_ROOT)
+                missing = SkippedBreakdown()
+                missing.increment(SkippedReason.MISSING_SOURCE_ROOT)
+                skipped_by_source[source.sourceId] = missing
+                skipped.merge(missing)
         for source in selected:
             source_files, source_skipped = scan_source(source, self.config.indexing)
             files.extend(source_files)
+            skipped_by_source[source.sourceId] = source_skipped
             skipped.merge(source_skipped)
         completed_at = datetime.now(timezone.utc).isoformat()
-        return self.store.replace_inventory(selected, files, skipped, started_at, completed_at)
+        replace_all = not source_ids and not groups
+        replace_source_ids = [source.sourceId for source in selected_candidates]
+        return self.store.replace_inventory(
+            selected,
+            files,
+            skipped,
+            started_at,
+            completed_at,
+            replace_all=replace_all,
+            replace_source_ids=replace_source_ids,
+            source_skipped=skipped_by_source,
+        )

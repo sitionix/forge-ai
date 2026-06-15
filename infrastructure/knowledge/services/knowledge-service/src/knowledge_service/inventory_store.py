@@ -58,15 +58,42 @@ class InventoryStore:
                     indexed_at TEXT NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS inventory_source_state (
+                    source_id TEXT PRIMARY KEY,
+                    eligible_file_count INTEGER NOT NULL,
+                    skipped_count INTEGER,
+                    skipped_reasons_json TEXT,
+                    last_inventory_at TEXT NOT NULL
+                )
+            """)
 
-    def replace_inventory(self, sources: List[SourceMetadata], files: List[FileMetadata], skipped: SkippedBreakdown, started_at: str, completed_at: str) -> Dict[str, Any]:
+    def replace_inventory(
+        self,
+        sources: List[SourceMetadata],
+        files: List[FileMetadata],
+        skipped: SkippedBreakdown,
+        started_at: str,
+        completed_at: str,
+        replace_all: bool = True,
+        replace_source_ids: Optional[List[str]] = None,
+        source_skipped: Optional[Dict[str, SkippedBreakdown]] = None,
+    ) -> Dict[str, Any]:
         self.init()
         now = datetime.now(timezone.utc).isoformat()
         skipped_breakdown = skipped.public_dict()
         skipped_count = skipped_breakdown["total"]
+        scoped_source_ids = sorted(set(replace_source_ids or [source.sourceId for source in sources]))
         with self._connect() as conn:
-            conn.execute("DELETE FROM files")
-            conn.execute("DELETE FROM sources")
+            if replace_all:
+                conn.execute("DELETE FROM files")
+                conn.execute("DELETE FROM sources")
+                conn.execute("DELETE FROM inventory_source_state")
+            elif scoped_source_ids:
+                placeholders = ",".join("?" for _ in scoped_source_ids)
+                conn.execute(f"DELETE FROM files WHERE source_id IN ({placeholders})", scoped_source_ids)
+                conn.execute(f"DELETE FROM sources WHERE source_id IN ({placeholders})", scoped_source_ids)
+                conn.execute(f"DELETE FROM inventory_source_state WHERE source_id IN ({placeholders})", scoped_source_ids)
             for source in sources:
                 conn.execute(
                     "INSERT INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -79,6 +106,22 @@ class InventoryStore:
                 conn.execute(
                     "INSERT INTO files(source_id, source_path, absolute_path, relative_path, extension, size_bytes, content_hash, last_modified, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (file.sourceId, file.sourcePath, file.absolutePath, file.relativePath, file.extension, file.sizeBytes, file.contentHash, file.lastModified, now),
+                )
+            files_by_source: Dict[str, int] = {}
+            for file in files:
+                files_by_source[file.sourceId] = files_by_source.get(file.sourceId, 0) + 1
+            for source_id in scoped_source_ids:
+                breakdown = (source_skipped or {}).get(source_id)
+                skipped_public = breakdown.public_dict() if breakdown is not None else None
+                conn.execute(
+                    "INSERT OR REPLACE INTO inventory_source_state(source_id, eligible_file_count, skipped_count, skipped_reasons_json, last_inventory_at) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        source_id,
+                        files_by_source.get(source_id, 0),
+                        skipped_public.get("total") if skipped_public else None,
+                        json.dumps(skipped_public) if skipped_public else None,
+                        now,
+                    ),
                 )
             conn.execute(
                 "INSERT INTO inventory_builds(started_at, completed_at, status, source_count, file_count, skipped_count, skipped_reasons_json, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -141,6 +184,39 @@ class InventoryStore:
             "limit": limit, "offset": offset, "total": total,
         }
 
+    def snapshot_files(self, source_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        self.init()
+        clauses: list[str] = []
+        params: list[Any] = []
+        if source_ids:
+            clauses.append("source_id IN (%s)" % ",".join("?" for _ in source_ids))
+            params.extend(source_ids)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT id, source_id, relative_path, content_hash, size_bytes, last_modified FROM files {where}",
+                params,
+            ).fetchall()
+        return [{
+            "id": row["id"],
+            "sourceId": row["source_id"],
+            "relativePath": row["relative_path"],
+            "contentHash": row["content_hash"],
+            "sizeBytes": row["size_bytes"],
+            "lastModified": row["last_modified"],
+        } for row in rows]
+
+    def analyzed_file_ids(self, file_ids: List[int]) -> set[int]:
+        if not file_ids:
+            return set()
+        self.init()
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT file_id FROM analysis_files WHERE file_id IN ({','.join('?' for _ in file_ids)})",
+                file_ids,
+            ).fetchall()
+        return {row["file_id"] for row in rows}
+
     def search_rows(self, source_ids: List[str], groups: List[str]) -> Tuple[List[sqlite3.Row], Dict[str, sqlite3.Row]]:
         self.init()
         clauses: list[str] = []
@@ -153,7 +229,16 @@ class InventoryStore:
             params.extend(groups)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as conn:
-            files = conn.execute(f"SELECT f.*, s.display_name, s.group_name, s.tags_json, s.metadata_json FROM files f JOIN sources s ON s.source_id = f.source_id {where}", params).fetchall()
+            files = conn.execute(
+                f"""
+                SELECT f.*, s.display_name, s.group_name, s.tags_json, s.metadata_json
+                FROM files f
+                JOIN sources s ON s.source_id = f.source_id
+                {where}
+                ORDER BY f.source_id, f.relative_path
+                """,
+                params,
+            ).fetchall()
             sources = {row["source_id"]: row for row in conn.execute("SELECT * FROM sources").fetchall()}
         return files, sources
 

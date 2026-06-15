@@ -105,6 +105,77 @@ class OperatorStaticUiRegressionTest {
     }
 
     @Test
+    void givenKnowledgePage_whenRendered_thenExposeServiceStatusWorkflowWithoutRemovedPanels() throws Exception {
+        final String html = this.read("knowledge.html");
+
+        assertThat(html)
+                .contains("data-page=\"knowledge\"")
+                .contains("id=\"knowledgeSourcesBody\"")
+                .contains("Catalog-driven file inventory, AI analysis coverage, and extracted facts.")
+                .contains("<th>Service</th>")
+                .contains("<th>Inventory</th>")
+                .contains("<th>Analysis</th>")
+                .contains("<th>Facts</th>")
+                .contains("<th>Actions</th>")
+                .doesNotContain("id=\"knowledgeStatusCards\"")
+                .doesNotContain("id=\"knowledgeStatusMessage\"")
+                .doesNotContain("id=\"knowledgeInventoryStatus\"")
+                .doesNotContain("id=\"knowledgeFilesBody\"")
+                .doesNotContain("Files Preview / Debug")
+                .doesNotContain("<h2>Runtime</h2>")
+                .doesNotContain("Keyword Search")
+                .doesNotContain("Retrieval Context")
+                .doesNotContain("Flow Context")
+                .doesNotContain("Build Facts")
+                .doesNotContain("Build Inventory")
+                .doesNotContain("first indexed files");
+    }
+
+    @Test
+    void givenOperatorJs_whenRendered_thenKnowledgeUsesServiceStatusInventoryAnalysisAndFacts() throws Exception {
+        final String js = this.read("operator-ui.js");
+
+        assertThat(js)
+                .doesNotContain("function renderKnowledgeStatus(")
+                .doesNotContain("renderKnowledgeStatusCard")
+                .doesNotContain("getInfrastructureJson('/knowledge/status')")
+                .doesNotContain("getInfrastructureJson('/knowledge/inventory/status')")
+                .doesNotContain("getInfrastructureJson('/knowledge/inventory/files")
+                .doesNotContain("renderKnowledgeFiles")
+                .doesNotContain("function renderKnowledgeFreshnessLabel(")
+                .doesNotContain("Knowledge is outdated:")
+                .doesNotContain("Analyze changed files")
+                .doesNotContain("Refresh project state")
+                .doesNotContain("Knowledge:")
+                .doesNotContain("AI scan:")
+                .doesNotContain("Legacy facts")
+                .doesNotContain("Coverage: unknown")
+                .doesNotContain("coverageKnown")
+                .doesNotContain("indexed facts")
+                .doesNotContain("Project changes since AI scan")
+                .contains("getInfrastructureJson('/knowledge/services/status')")
+                .contains("renderKnowledgeInventoryMini")
+                .contains("renderKnowledgeAnalysisProgress")
+                .contains("renderKnowledgeFactsCell")
+                .contains("symbols")
+                .contains("relations")
+                .contains("knowledge-source-stop-button")
+                .contains("/knowledge/analysis/jobs/${encodeURIComponent(jobId)}/stop")
+                .contains("pending ${escapeHtml(pending)}")
+                .contains("failed ${escapeHtml(failed)}")
+                .contains("knowledge-state-badge")
+                .contains("<h3>Inventory</h3>")
+                .contains("Not analyzed")
+                .contains("RUNNING")
+                .contains("lastProgressAt")
+                .doesNotContain("last analysis")
+                .doesNotContain("0 indexed")
+                .doesNotContain("const currentEligible")
+                .doesNotContain("analysis.eligibleFilesAtScan ?? analysis.fileCount ?? currentEligible")
+                .doesNotContain("postInfrastructureJson('/knowledge/inventory/build'");
+    }
+
+    @Test
     void givenServiceDetailPage_whenRendered_thenExposeServiceDetailActions() throws Exception {
         final String html = this.read("service.html");
 

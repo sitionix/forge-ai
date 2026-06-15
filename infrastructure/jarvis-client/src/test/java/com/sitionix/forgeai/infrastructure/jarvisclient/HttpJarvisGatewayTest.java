@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sitionix.forgeai.domain.model.jarvis.JarvisChatRequest;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisCommandRequest;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisGatewayErrorCode;
 import com.sitionix.forgeai.domain.exception.JarvisGatewayException;
@@ -82,6 +83,57 @@ class HttpJarvisGatewayTest {
     }
 
     @Test
+    void chatProxiesMessageAndMapsResponse() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"answer":"JarvisGateway proxies calls.","usedContext":[{"sourceId":"forge-ai","displayName":"Forge AI Service SOX","relativePath":"application/src/main/java/JarvisGateway.java","lineStart":1,"lineEnd":40,"reason":"Matched JarvisGateway","score":1.0}],"diagnostics":[]}
+                """);
+        final HttpJarvisGateway gateway = gateway(client);
+
+        final var response = gateway.chat(new JarvisChatRequest("поясни JarvisGateway", 12000));
+
+        assertThat(response.answer()).isEqualTo("JarvisGateway proxies calls.");
+        assertThat(response.usedContext()).hasSize(1);
+        assertThat(response.usedContext().getFirst().sourceId()).isEqualTo("forge-ai");
+        assertThat(response.usedContext().getFirst().relativePath()).isEqualTo("application/src/main/java/JarvisGateway.java");
+        assertThat(client.lastRequest.uri().getPath()).isEqualTo("/api/v1/jarvis/chat");
+        assertThat(client.lastRequestBody).contains("\"message\":\"поясни JarvisGateway\"");
+        assertThat(client.lastRequestBody).contains("\"maxContextChars\":12000");
+    }
+
+    @Test
+    void blankChatMessageRejectedBeforeProxying() {
+        final FakeHttpClient client = new FakeHttpClient(200, "{}");
+        final HttpJarvisGateway gateway = gateway(client);
+
+        assertThatThrownBy(() -> gateway.chat(new JarvisChatRequest("   ", 12000)))
+                .isInstanceOfSatisfying(JarvisGatewayException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(JarvisGatewayErrorCode.INVALID_COMMAND));
+        assertThat(client.calls).isZero();
+    }
+
+    @Test
+    void invalidChatResponseMapsToBadResponse() {
+        final HttpJarvisGateway gateway = gateway(new FakeHttpClient(200, """
+                {"answer":"ok","usedContext":{},"diagnostics":[]}
+                """));
+
+        assertThatThrownBy(() -> gateway.chat(new JarvisChatRequest("поясни JarvisGateway", 12000)))
+                .isInstanceOfSatisfying(JarvisGatewayException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(JarvisGatewayErrorCode.JARVIS_BAD_RESPONSE));
+    }
+
+    @Test
+    void chatKnowledgeUnavailableMapsToGatewayCode() {
+        final HttpJarvisGateway gateway = gateway(new FakeHttpClient(503, """
+                {"code":"KNOWLEDGE_UNAVAILABLE","message":"Knowledge is not reachable at http://127.0.0.1:7081"}
+                """));
+
+        assertThatThrownBy(() -> gateway.chat(new JarvisChatRequest("поясни JarvisGateway", 12000)))
+                .isInstanceOfSatisfying(JarvisGatewayException.class, exception ->
+                        assertThat(exception.getCode()).isEqualTo(JarvisGatewayErrorCode.KNOWLEDGE_UNAVAILABLE));
+    }
+
+    @Test
     void requestsUseHttp11ForUvicornCompatibility() {
         final FakeHttpClient client = new FakeHttpClient(200, """
                 {"status":"UP","host":"127.0.0.1","port":7071,"model":{"defaultModel":"qwen2.5-coder:7b"},"ollama":{"baseUrl":"http://localhost:11434","status":"UP"},"actions":{"count":2}}
@@ -144,6 +196,7 @@ class HttpJarvisGatewayTest {
         private final IOException failure;
         private int calls;
         private HttpRequest lastRequest;
+        private String lastRequestBody;
 
         private FakeHttpClient(final int status, final String body) {
             this.status = status;
@@ -207,6 +260,13 @@ class HttpJarvisGatewayTest {
                                         final HttpResponse.BodyHandler<T> responseBodyHandler) throws IOException {
             this.calls++;
             this.lastRequest = request;
+            this.lastRequestBody = request.bodyPublisher()
+                    .map(publisher -> {
+                        final BodyCaptureSubscriber subscriber = new BodyCaptureSubscriber();
+                        publisher.subscribe(subscriber);
+                        return subscriber.body();
+                    })
+                    .orElse("");
             if (this.failure != null) {
                 throw this.failure;
             }
@@ -224,6 +284,36 @@ class HttpJarvisGatewayTest {
                                                                 final HttpResponse.BodyHandler<T> responseBodyHandler,
                                                                 final HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
             throw new UnsupportedOperationException("not used");
+        }
+    }
+
+    private static final class BodyCaptureSubscriber implements java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer> {
+
+        private final java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
+
+        @Override
+        public void onSubscribe(final java.util.concurrent.Flow.Subscription subscription) {
+            subscription.request(Long.MAX_VALUE);
+        }
+
+        @Override
+        public void onNext(final java.nio.ByteBuffer item) {
+            final byte[] bytes = new byte[item.remaining()];
+            item.get(bytes);
+            this.output.writeBytes(bytes);
+        }
+
+        @Override
+        public void onError(final Throwable throwable) {
+            throw new IllegalStateException("Failed to capture request body", throwable);
+        }
+
+        @Override
+        public void onComplete() {
+        }
+
+        private String body() {
+            return this.output.toString(java.nio.charset.StandardCharsets.UTF_8);
         }
     }
 
