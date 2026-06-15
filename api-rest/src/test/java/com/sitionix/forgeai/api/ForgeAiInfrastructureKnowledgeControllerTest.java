@@ -83,9 +83,19 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
         final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
         final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
 
-        controller.servicesStatus();
+        controller.servicesStatus(null);
 
-        org.mockito.Mockito.verify(useCase).servicesStatus();
+        org.mockito.Mockito.verify(useCase).servicesStatus(null);
+    }
+
+    @Test
+    void servicesStatusDelegatesDetailsSourceIdToUseCase() {
+        final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
+        final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
+
+        controller.servicesStatus("svc");
+
+        org.mockito.Mockito.verify(useCase).servicesStatus("svc");
     }
 
     @Test
@@ -103,9 +113,9 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
         final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
         final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
 
-        controller.analysisSymbols("svc", "HTTP_HANDLER", "CLASS", "path", "name", 10, 1);
+        controller.analysisSymbols("svc", "HTTP_HANDLER", "CLASS", "path", "name", "CODE", "STATIC", 10, 1);
 
-        org.mockito.Mockito.verify(useCase).analysisSymbols(new KnowledgeAnalysisSymbolsRequest("svc", "HTTP_HANDLER", "CLASS", "path", "name", 10, 1));
+        org.mockito.Mockito.verify(useCase).analysisSymbols(new KnowledgeAnalysisSymbolsRequest("svc", "HTTP_HANDLER", "CLASS", "path", "name", "CODE", "STATIC", 10, 1));
     }
 
     @Test
@@ -113,9 +123,9 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
         final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
         final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
 
-        controller.analysisRelations("svc", "CALLS", "from", "to", 10, 1);
+        controller.analysisRelations("svc", "CALLS", "from", "to", "CODE", "LLM", 10, 1);
 
-        org.mockito.Mockito.verify(useCase).analysisRelations(new KnowledgeAnalysisRelationsRequest("svc", "CALLS", "from", "to", 10, 1));
+        org.mockito.Mockito.verify(useCase).analysisRelations(new KnowledgeAnalysisRelationsRequest("svc", "CALLS", "from", "to", "CODE", "LLM", 10, 1));
     }
 
     @Test

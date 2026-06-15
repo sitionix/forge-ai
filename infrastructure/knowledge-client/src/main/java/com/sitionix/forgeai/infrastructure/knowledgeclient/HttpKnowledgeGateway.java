@@ -78,7 +78,14 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
 
     @Override
     public KnowledgeServicesStatusView servicesStatus() {
-        return this.convert(this.send("GET", "/api/v1/knowledge/services/status", null), KnowledgeServicesStatusView.class);
+        return this.servicesStatus(null);
+    }
+
+    @Override
+    public KnowledgeServicesStatusView servicesStatus(final String detailsSourceId) {
+        final StringBuilder query = new StringBuilder();
+        append(query, "detailsSourceId", detailsSourceId);
+        return this.convert(this.send("GET", "/api/v1/knowledge/services/status" + query, null), KnowledgeServicesStatusView.class);
     }
 
     @Override
@@ -330,6 +337,8 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
         append(query, "kind", request.kind());
         append(query, "pathContains", request.pathContains());
         append(query, "nameContains", request.nameContains());
+        append(query, "flowDomain", request.flowDomain());
+        append(query, "factOrigin", request.factOrigin());
         append(query, "limit", request.limit());
         append(query, "offset", request.offset());
         return query.toString();
@@ -344,6 +353,8 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
         append(query, "relation", request.relation());
         append(query, "fromSymbolId", request.fromSymbolId());
         append(query, "toSymbolId", request.toSymbolId());
+        append(query, "flowDomain", request.flowDomain());
+        append(query, "factOrigin", request.factOrigin());
         append(query, "limit", request.limit());
         append(query, "offset", request.offset());
         return query.toString();

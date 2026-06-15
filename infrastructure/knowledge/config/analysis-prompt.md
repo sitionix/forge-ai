@@ -1,60 +1,95 @@
-You are analyzing one source file for a local structural knowledge index.
+You are extracting evidence-bound graph candidates from one local source file.
 
 Return one valid JSON object only.
 No markdown.
 No explanations outside JSON.
 No code fences.
 No comments.
-Invalid JSON causes this file analysis to fail.
 
-Use only the provided file content and metadata.
-Do not infer files that are not present.
-Do not invent paths.
+Use only the provided file metadata and content.
 Do not execute anything.
-If uncertain, use UNKNOWN with low confidence.
-Evidence must be based on file content.
-Naming conventions are weak evidence only.
-Prefer behavior and structure over class/file names.
-Do not use business-specific assumptions.
+Do not mutate source files.
+Do not infer cross-file implementations without evidence.
+Do not invent business facts, paths, files, services, databases, queues, topics, or APIs.
+Do not classify by file, class, method, or suffix name alone.
+Use UNKNOWN or unresolvedTarget when uncertain.
+Lower confidence is better than false certainty.
 
-Allowed symbol kinds:
-FILE, CLASS, INTERFACE, METHOD, FUNCTION, FIELD, CONFIG_ENTRY, CONTRACT_OPERATION, DTO, RECORD, UNKNOWN
+Every node with a source location must include lineStart and lineEnd.
+Every edge must include lineStart and lineEnd unless it is derived, but you should not output derived edges.
+Every claim must include evidence line ranges.
+Line ranges must be inside the provided file lineCount.
+Responsibility summaries must be short, factual, and evidence-bound.
+Method/function/callable responsibility is the primary source of truth.
+Class/type responsibility should only be stated when directly evidenced in this file.
 
-Allowed roles:
-ENTRYPOINT, HTTP_HANDLER, EVENT_HANDLER, COMMAND_HANDLER, QUERY_HANDLER, USE_CASE, APPLICATION_SERVICE, DOMAIN_MODEL, REPOSITORY, CLIENT, MAPPER, DTO, CONFIGURATION, CONTRACT, TEST, UTILITY, UNKNOWN
+Allowed nodeKind values:
+FILE, MODULE, TYPE, CALLABLE, FIELD, DATA, CONFIG, RESOURCE, EXTERNAL, UNKNOWN
 
-Allowed relations:
-DECLARES, CONTAINS, CALLS, IMPLEMENTS, EXTENDS, INJECTS, MAPS_TO, USES, READS_FROM, WRITES_TO, PUBLISHES, CONSUMES, CONFIGURES, REFERENCES_CONTRACT, REFERENCES_DTO, RELATED_TO, UNKNOWN
+Allowed edgeType values:
+CONTAINS, DECLARES, CALLS, REFERENCES, IMPORTS, IMPLEMENTS, EXTENDS, OVERRIDES, RETURNS, READS, WRITES, CONFIGURES, PUBLISHES, CONSUMES, DEPENDS_ON, UNKNOWN
 
-Required compact schema:
+Allowed claimKind values:
+RESPONSIBILITY, ROLE, SIDE_EFFECT, ENTRYPOINT_HINT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, TEST_HINT, UNKNOWN
+
+Allowed factOrigin metadata hint values:
+STATIC, LLM, DERIVED, RESOLVER, REPAIR, IMPORT, UNKNOWN
+
+Allowed flowDomain file metadata values:
+CODE, TEST, CONFIG, WORKFLOW, DATA, DOC, BUILD, UNKNOWN
+
+Required schema:
 {
-  "fileSummary": "Short neutral summary",
-  "symbols": [
+  "schemaVersion": "knowledge.graph.analysis.v1",
+  "file": {
+    "sourceId": "same as input sourceId",
+    "inventoryFileId": 123,
+    "relativePath": "same as input relativePath",
+    "contentHash": "same as input contentHash",
+    "lineCount": 100
+  },
+  "nodes": [
     {
-      "localId": "symbol-1",
-      "name": "Name",
-      "kind": "CLASS",
-      "roles": [
-        {
-          "role": "UNKNOWN",
-          "confidence": 0.2,
-          "evidence": ["Exact or specific evidence from this file"]
-        }
-      ],
-      "lineStart": 1,
-      "lineEnd": 10,
+      "localId": "n1",
+      "nodeKind": "CALLABLE",
+      "name": "findById",
+      "qualifiedName": "TicketRepository.findById",
+      "displayName": "TicketRepository.findById",
+      "parentLocalId": "n0",
+      "lineStart": 21,
+      "lineEnd": 25,
+      "confidence": 0.91,
+      "metadata": {
+        "signature": "findById(TicketId id)"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "localId": "e1",
+      "edgeType": "CALLS",
+      "fromLocalId": "n1",
+      "toLocalId": null,
+      "unresolvedTarget": {
+        "name": "ticketRepository.findById",
+        "kindHint": "CALLABLE"
+      },
+      "lineStart": 44,
+      "lineEnd": 44,
+      "confidence": 0.78,
       "metadata": {}
     }
   ],
-  "relations": [
+  "claims": [
     {
-      "fromLocalId": "symbol-1",
-      "toLocalId": "symbol-2",
-      "relation": "RELATED_TO",
-      "confidence": 0.5,
-      "evidence": ["Exact or specific evidence from this file"],
-      "lineStart": 5,
-      "lineEnd": 5,
+      "localId": "c1",
+      "nodeLocalId": "n1",
+      "claimKind": "RESPONSIBILITY",
+      "summary": "Finds a ticket by id.",
+      "evidence": [
+        { "lineStart": 21, "lineEnd": 25 }
+      ],
+      "confidence": 0.86,
       "metadata": {}
     }
   ],

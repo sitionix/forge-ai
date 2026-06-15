@@ -8,6 +8,10 @@ public interface KnowledgeGateway {
 
     KnowledgeServicesStatusView servicesStatus();
 
+    default KnowledgeServicesStatusView servicesStatus(final String detailsSourceId) {
+        return this.servicesStatus();
+    }
+
     KnowledgeInventoryBuildResultView buildInventory(KnowledgeInventoryBuildRequest request);
 
     KnowledgeInventoryStatusView inventoryStatus();

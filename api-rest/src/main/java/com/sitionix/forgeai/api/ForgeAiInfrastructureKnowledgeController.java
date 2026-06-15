@@ -50,8 +50,8 @@ public class ForgeAiInfrastructureKnowledgeController {
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/services/status")
-    public ResponseEntity<KnowledgeServicesStatusView> servicesStatus() {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.servicesStatus());
+    public ResponseEntity<KnowledgeServicesStatusView> servicesStatus(@RequestParam(required = false) final String detailsSourceId) {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.servicesStatus(detailsSourceId));
     }
 
     @PostMapping("/api/v1/infrastructure/knowledge/inventory/build")
@@ -108,9 +108,11 @@ public class ForgeAiInfrastructureKnowledgeController {
                                                                         @RequestParam(required = false) final String kind,
                                                                         @RequestParam(required = false) final String pathContains,
                                                                         @RequestParam(required = false) final String nameContains,
+                                                                        @RequestParam(required = false) final String flowDomain,
+                                                                        @RequestParam(required = false) final String factOrigin,
                                                                         @RequestParam(required = false) final Integer limit,
                                                                         @RequestParam(required = false) final Integer offset) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisSymbols(new KnowledgeAnalysisSymbolsRequest(sourceId, role, kind, pathContains, nameContains, limit, offset)));
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisSymbols(new KnowledgeAnalysisSymbolsRequest(sourceId, role, kind, pathContains, nameContains, flowDomain, factOrigin, limit, offset)));
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/analysis/relations")
@@ -118,9 +120,11 @@ public class ForgeAiInfrastructureKnowledgeController {
                                                                             @RequestParam(required = false) final String relation,
                                                                             @RequestParam(required = false) final String fromSymbolId,
                                                                             @RequestParam(required = false) final String toSymbolId,
+                                                                            @RequestParam(required = false) final String flowDomain,
+                                                                            @RequestParam(required = false) final String factOrigin,
                                                                             @RequestParam(required = false) final Integer limit,
                                                                             @RequestParam(required = false) final Integer offset) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisRelations(new KnowledgeAnalysisRelationsRequest(sourceId, relation, fromSymbolId, toSymbolId, limit, offset)));
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisRelations(new KnowledgeAnalysisRelationsRequest(sourceId, relation, fromSymbolId, toSymbolId, flowDomain, factOrigin, limit, offset)));
     }
 
     @ExceptionHandler(KnowledgeGatewayException.class)

@@ -2104,7 +2104,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   async function loadKnowledge() {
     const updated = document.getElementById('knowledgeUpdated');
     try {
-      const serviceStatus = await getInfrastructureJson('/knowledge/services/status');
+      const serviceStatus = await getInfrastructureJson(knowledgeServicesStatusPath());
       setError('knowledgeError', null);
       renderKnowledgeSources(serviceStatus);
       scheduleKnowledgeStatusPoll(serviceStatus?.activeJob);
@@ -2145,9 +2145,18 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     }
     if (detailRow && knowledgeSelectedSourceId) {
       const sourceRow = body.querySelector(`[data-source-row="${cssEscape(knowledgeSelectedSourceId)}"]`);
+      const selectedService = services.find((service) => service.sourceId === knowledgeSelectedSourceId);
       if (sourceRow) {
         sourceRow.classList.add('expanded');
         sourceRow.querySelector('.knowledge-source-details-button')?.setAttribute('aria-expanded', 'true');
+        if (selectedService?.details) {
+          replaceHtmlIfChanged(detailRow, `<td colspan="5">${renderKnowledgeServiceDetails(
+            selectedService,
+            selectedService.details.symbols || { symbols: [] },
+            selectedService.details.relations || { relations: [] },
+            selectedService.details.failures || { files: [] }
+          )}</td>`);
+        }
         sourceRow.insertAdjacentElement('afterend', detailRow);
       }
     }
@@ -2235,21 +2244,23 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     loadingRow.innerHTML = '<td colspan="5"><div class="empty-state">Loading service details...</div></td>';
     sourceRow.insertAdjacentElement('afterend', loadingRow);
     try {
-      const [sourceStatus, symbols, relations, failures] = await Promise.all([
-        getInfrastructureJson('/knowledge/services/status'),
-        getInfrastructureJson(`/knowledge/analysis/symbols?sourceId=${encodeURIComponent(sourceId)}&limit=20`),
-        getInfrastructureJson(`/knowledge/analysis/relations?sourceId=${encodeURIComponent(sourceId)}&limit=20`),
-        getInfrastructureJson(`/knowledge/analysis/files?sourceId=${encodeURIComponent(sourceId)}&status=FAILED&limit=10`)
-      ]);
+      const sourceStatus = await getInfrastructureJson(knowledgeServicesStatusPath(sourceId));
       const source = (sourceStatus.services || []).find((item) => item.sourceId === sourceId);
       if (!source) {
         loadingRow.innerHTML = '<td colspan="5"><div class="empty-state">Service details not available.</div></td>';
         return;
       }
-      loadingRow.innerHTML = `<td colspan="5">${renderKnowledgeServiceDetails(source, symbols, relations, failures)}</td>`;
+      renderKnowledgeSources(sourceStatus);
     } catch (error) {
       loadingRow.innerHTML = `<td colspan="5"><div class="error-box">${escapeHtml(error.message || error)}</div></td>`;
     }
+  }
+
+  function knowledgeServicesStatusPath(detailsSourceId = knowledgeSelectedSourceId) {
+    if (!detailsSourceId) {
+      return '/knowledge/services/status';
+    }
+    return `/knowledge/services/status?detailsSourceId=${encodeURIComponent(detailsSourceId)}`;
   }
 
   function renderKnowledgeServiceDetails(source, symbolsData, relationsData, failuresData) {
@@ -2465,24 +2476,45 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   }
 
   function renderKnowledgeAnalysisDetailMetrics(analysis) {
-    const analyzed = analysis?.analyzedFileCount ?? 0;
-    const total = analysis?.inventoryFileCount ?? 0;
-    const percent = knowledgeAnalysisPercent(analysis);
+    const metrics = knowledgeAnalysisMetrics(analysis);
     return `
-      ${renderKnowledgeKv('analyzed / total', `${analyzed} / ${total}`)}
-      ${renderKnowledgeKv('coverage', `${percent}%`)}
-      ${renderKnowledgeKv('processed', analysis?.processedFileCount ?? 0)}
+      ${renderKnowledgeKv('processed / total', `${metrics.processed} / ${metrics.total}`)}
+      ${renderKnowledgeKv('successful', metrics.analyzed)}
+      ${renderKnowledgeKv('progress', `${metrics.percent}%`)}
     `;
   }
 
-  function knowledgeAnalysisPercent(analysis) {
-    const percent = Number(analysis?.percent);
-    if (Number.isFinite(percent)) {
-      return Math.round(percent * 10) / 10;
+  function knowledgeAnalysisMetrics(analysis) {
+    const total = nonNegativeNumber(analysis?.inventoryFileCount);
+    const analyzed = nonNegativeNumber(analysis?.analyzedFileCount);
+    const failed = nonNegativeNumber(analysis?.failedFileCount);
+    const skipped = nonNegativeNumber(analysis?.skippedTooLargeFileCount);
+    const explicitProcessed = optionalNonNegativeNumber(analysis?.processedFileCount);
+    const explicitPending = optionalNonNegativeNumber(analysis?.pendingFileCount);
+    const completedOutcomes = analyzed + failed + skipped;
+    const pendingDerivedProcessed = explicitPending !== null && total > 0 ? Math.max(total - explicitPending, 0) : 0;
+    const processedRaw = Math.max(explicitProcessed ?? 0, completedOutcomes, pendingDerivedProcessed);
+    const processed = total > 0 ? Math.min(processedRaw, total) : processedRaw;
+    const derivedPending = Math.max(total - processed, 0);
+    const pending = explicitPending !== null ? Math.min(explicitPending, derivedPending) : derivedPending;
+    const percent = total > 0 ? Math.round((processed / total) * 1000) / 10 : 0;
+    return {total, analyzed, failed, skipped, processed, pending, percent};
+  }
+
+  function nonNegativeNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : 0;
+  }
+
+  function optionalNonNegativeNumber(value) {
+    if (value === null || value === undefined || value === '') {
+      return null;
     }
-    const analyzed = Number(analysis?.analyzedFileCount ?? 0);
-    const total = Number(analysis?.inventoryFileCount ?? 0);
-    return total > 0 ? Math.round((analyzed / total) * 1000) / 10 : 0;
+    return nonNegativeNumber(value);
+  }
+
+  function knowledgeAnalysisPercent(analysis) {
+    return knowledgeAnalysisMetrics(analysis).percent;
   }
 
   function renderKnowledgeAnalysisProgress(analysis) {
@@ -2496,11 +2528,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         </div>
       `;
     }
-    const analyzed = analysis.analyzedFileCount ?? 0;
-    const total = analysis.inventoryFileCount ?? 0;
-    const percent = knowledgeAnalysisPercent(analysis);
-    const failed = analysis.failedFileCount ?? 0;
-    const pending = analysis.pendingFileCount ?? Math.max((Number(total) || 0) - (Number(analyzed) || 0) - (Number(failed) || 0), 0);
+    const metrics = knowledgeAnalysisMetrics(analysis);
     const status = String(analysis.status || '').toUpperCase();
     return `
       <div class="knowledge-progress">
@@ -2508,15 +2536,15 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
           <strong class="knowledge-state-badge ${escapeHtml(statusClass(status))}">${escapeHtml(status || 'NOT_ANALYZED')}</strong>
         </div>
         <div class="knowledge-progress-meta">
-          <strong>${escapeHtml(analyzed)} / ${escapeHtml(total)}</strong>
-          <span>${escapeHtml(percent)}%</span>
+          <strong>${escapeHtml(metrics.processed)} / ${escapeHtml(metrics.total)}</strong>
+          <span>${escapeHtml(metrics.percent)}%</span>
         </div>
         <div class="knowledge-progress-track">
-          <span style="width:${Math.max(0, Math.min(100, percent))}%"></span>
+          <span style="width:${Math.max(0, Math.min(100, metrics.percent))}%"></span>
         </div>
         <small>
-          pending ${escapeHtml(pending)}
-          failed ${escapeHtml(failed)}
+          pending ${escapeHtml(metrics.pending)}
+          failed ${escapeHtml(metrics.failed)}
           ${analysis.staleFileCount > 0 ? ` stale ${escapeHtml(analysis.staleFileCount)}` : ''}
         </small>
         ${status === 'RUNNING' && analysis.currentRelativePath ? `<div class="knowledge-current-file">${escapeHtml(analysis.currentRelativePath)}</div>` : ''}
@@ -2645,7 +2673,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   }
 
   async function refreshKnowledgeSourcesOnly() {
-    const serviceStatus = await getInfrastructureJson('/knowledge/services/status');
+    const serviceStatus = await getInfrastructureJson(knowledgeServicesStatusPath());
     const updated = document.getElementById('knowledgeUpdated');
     renderKnowledgeSources(serviceStatus);
     if (updated) {

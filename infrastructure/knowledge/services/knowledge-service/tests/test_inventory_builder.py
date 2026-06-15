@@ -66,6 +66,8 @@ def test_inventory_build_scans_existing_selected_sources_and_respects_filters(tm
     files = store.files(None, None, None, 100, 0)
     assert files["total"] == 1
     assert files["files"][0]["relativePath"] == "src/App.java"
+    assert files["files"][0]["lineCount"] == 1
+    assert files["files"][0]["decodePolicy"] == "utf-8:replace"
 
 
 def test_inventory_status_returns_counts_and_files_paginate(tmp_path):

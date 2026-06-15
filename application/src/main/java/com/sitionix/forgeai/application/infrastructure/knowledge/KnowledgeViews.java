@@ -75,7 +75,9 @@ public final class KnowledgeViews {
             String extension,
             Long sizeBytes,
             String contentHash,
-            String lastModified
+            String lastModified,
+            Long lineCount,
+            String decodePolicy
     ) {
     }
 }

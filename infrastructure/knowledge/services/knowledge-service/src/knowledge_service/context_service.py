@@ -39,7 +39,7 @@ class ContextService:
                 if matched_line > 0:
                     start, end = self.extractor.content_range(lines, matched_line)
                 else:
-                    start, end = self.extractor.first_meaningful_range(lines, row["extension"] or "", row["relative_path"])
+                    start, end = self.extractor.first_meaningful_range(lines, row["language"] or "", row["flow_domain"] or "")
                 candidates.append({
                     "row": row,
                     "metadata": metadata,

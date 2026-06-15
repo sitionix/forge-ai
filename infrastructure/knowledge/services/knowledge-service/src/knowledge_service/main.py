@@ -197,7 +197,7 @@ async def analysis_status() -> Dict[str, Any]:
 
 
 @app.get("/api/v1/knowledge/services/status")
-async def services_status() -> Dict[str, Any]:
+async def services_status(detailsSourceId: Optional[str] = None) -> Dict[str, Any]:
     analysis_store = AnalysisStore(app_config.store_path)
     config = load_source_config(app_config.local_config_path)
     catalog_result = ServiceYamlCatalogProvider(config).load() if config is not None else None
@@ -206,6 +206,7 @@ async def services_status() -> Dict[str, Any]:
         OllamaAnalysisClient.name,
         OllamaAnalysisClient.version,
         store.status(),
+        detailsSourceId,
     )
 
 
@@ -227,10 +228,12 @@ async def analysis_symbols(
     kind: Optional[str] = None,
     pathContains: Optional[str] = None,
     nameContains: Optional[str] = None,
+    flowDomain: Optional[str] = None,
+    factOrigin: Optional[str] = None,
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> Dict[str, Any]:
-    return AnalysisStore(app_config.store_path).symbols(sourceId, role, kind, pathContains, nameContains, limit, offset)
+    return AnalysisStore(app_config.store_path).symbols(sourceId, role, kind, pathContains, nameContains, limit, offset, flowDomain, factOrigin)
 
 
 @app.get("/api/v1/knowledge/analysis/relations")
@@ -239,7 +242,9 @@ async def analysis_relations(
     relation: Optional[str] = None,
     fromSymbolId: Optional[str] = None,
     toSymbolId: Optional[str] = None,
+    flowDomain: Optional[str] = None,
+    factOrigin: Optional[str] = None,
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ) -> Dict[str, Any]:
-    return AnalysisStore(app_config.store_path).relations(sourceId, relation, fromSymbolId, toSymbolId, limit, offset)
+    return AnalysisStore(app_config.store_path).relations(sourceId, relation, fromSymbolId, toSymbolId, limit, offset, flowDomain, factOrigin)
