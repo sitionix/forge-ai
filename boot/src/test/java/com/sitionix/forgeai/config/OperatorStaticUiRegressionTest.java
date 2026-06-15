@@ -141,6 +141,7 @@ class OperatorStaticUiRegressionTest {
                 .doesNotContain("getInfrastructureJson('/knowledge/status')")
                 .doesNotContain("getInfrastructureJson('/knowledge/inventory/status')")
                 .doesNotContain("getInfrastructureJson('/knowledge/inventory/files")
+                .doesNotContain("getInfrastructureJson(`/knowledge/analysis/jobs/")
                 .doesNotContain("renderKnowledgeFiles")
                 .doesNotContain("function renderKnowledgeFreshnessLabel(")
                 .doesNotContain("Knowledge is outdated:")

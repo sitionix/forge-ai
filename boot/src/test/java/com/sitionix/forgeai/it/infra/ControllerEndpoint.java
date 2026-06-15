@@ -6,6 +6,7 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalys
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeServicesStatusView;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisActionsView;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisChatRequest;
 import com.sitionix.forgeai.domain.model.jarvis.JarvisChatResponse;
@@ -115,6 +116,18 @@ public class ControllerEndpoint {
                 KnowledgeAnalysisStopView.class,
                 (MockmvcDefault) context -> context
                         .expectResponse("responseKnowledgeAnalysisStop.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<Void, KnowledgeServicesStatusView> knowledgeServicesStatus() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/knowledge/services/status",
+                HttpMethod.GET,
+                Void.class,
+                KnowledgeServicesStatusView.class,
+                (MockmvcDefault) context -> context
+                        .expectResponse("responseKnowledgeServicesStatus.json")
                         .expectStatus(HttpStatus.OK.value())
         );
     }

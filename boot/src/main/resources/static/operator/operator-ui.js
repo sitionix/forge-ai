@@ -6,6 +6,8 @@
   const apiBase = `${contextPath}/api/v1/forge-ai/operator/ui`;
   const operatorApiBase = `${contextPath}/api/v1/forge-ai/operator`;
   const infrastructureApiBase = `${contextPath}/api/v1/infrastructure`;
+  const knowledgeStatusActivePollMs = 1500;
+  const knowledgeStatusIdlePollMs = 15000;
   const graphLayoutConfig = {
     paddingX: 22,
     paddingY: 28,
@@ -16,7 +18,8 @@
     cardMinHeight: 84
   };
   const layoutStoragePrefix = 'forge-ai.operator.layout.';
-  let knowledgeAnalysisPollTimer = null;
+  let knowledgeStatusPollTimer = null;
+  let knowledgeStatusPollDelayMs = null;
   let knowledgeSelectedSourceId = null;
 
   const statusClass = (value) => String(value || 'unknown').toLowerCase().replaceAll('_', '-');
@@ -2104,7 +2107,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       const serviceStatus = await getInfrastructureJson('/knowledge/services/status');
       setError('knowledgeError', null);
       renderKnowledgeSources(serviceStatus);
-      scheduleKnowledgeAnalysisPoll(serviceStatus?.activeJob?.jobId);
+      scheduleKnowledgeStatusPoll(serviceStatus?.activeJob);
       if (updated) {
         updated.textContent = `updated ${new Date().toLocaleTimeString()}`;
       }
@@ -2556,7 +2559,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         concurrency: 1
       });
       setError('knowledgeAnalysisError', null);
-      scheduleKnowledgeAnalysisPoll(response.jobId);
+      scheduleKnowledgeStatusPoll(response.jobId ? { jobId: response.jobId, status: 'QUEUED' } : null);
       await refreshKnowledgeSourcesOnly();
     } catch (error) {
       setError('knowledgeAnalysisError', error);
@@ -2579,11 +2582,8 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     try {
       await postInfrastructureJson(`/knowledge/analysis/jobs/${encodeURIComponent(jobId)}/stop`, {});
       setError('knowledgeAnalysisError', null);
-      if (knowledgeAnalysisPollTimer) {
-        clearInterval(knowledgeAnalysisPollTimer);
-        knowledgeAnalysisPollTimer = null;
-      }
-      await refreshKnowledgeSourcesOnly();
+      const serviceStatus = await refreshKnowledgeSourcesOnly();
+      scheduleKnowledgeStatusPoll(serviceStatus?.activeJob);
     } catch (error) {
       setError('knowledgeAnalysisError', error);
       if (button) {
@@ -2617,35 +2617,41 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     }
   }
 
-  function scheduleKnowledgeAnalysisPoll(jobId) {
-    if (knowledgeAnalysisPollTimer) {
-      clearInterval(knowledgeAnalysisPollTimer);
-      knowledgeAnalysisPollTimer = null;
-    }
-    if (!jobId) {
+  function isActiveAnalysisJob(job) {
+    return job && ['QUEUED', 'RUNNING'].includes(String(job.status || '').toUpperCase());
+  }
+
+  function scheduleKnowledgeStatusPoll(activeJob) {
+    const nextDelay = isActiveAnalysisJob(activeJob) ? knowledgeStatusActivePollMs : knowledgeStatusIdlePollMs;
+    if (knowledgeStatusPollTimer && knowledgeStatusPollDelayMs === nextDelay) {
       return;
     }
-    knowledgeAnalysisPollTimer = setInterval(async () => {
+    if (knowledgeStatusPollTimer) {
+      clearInterval(knowledgeStatusPollTimer);
+      knowledgeStatusPollTimer = null;
+    }
+    knowledgeStatusPollDelayMs = nextDelay;
+    knowledgeStatusPollTimer = setInterval(async () => {
       try {
-        const job = await getInfrastructureJson(`/knowledge/analysis/jobs/${encodeURIComponent(jobId)}`);
-        await refreshKnowledgeSourcesOnly();
-        if (!['QUEUED', 'RUNNING'].includes(job.status)) {
-          clearInterval(knowledgeAnalysisPollTimer);
-          knowledgeAnalysisPollTimer = null;
-          const serviceStatus = await getInfrastructureJson('/knowledge/services/status');
-          renderKnowledgeSources(serviceStatus);
-        }
+        const serviceStatus = await refreshKnowledgeSourcesOnly();
+        scheduleKnowledgeStatusPoll(serviceStatus?.activeJob);
       } catch (error) {
         setError('knowledgeAnalysisError', error);
-        clearInterval(knowledgeAnalysisPollTimer);
-        knowledgeAnalysisPollTimer = null;
+        clearInterval(knowledgeStatusPollTimer);
+        knowledgeStatusPollTimer = null;
+        knowledgeStatusPollDelayMs = null;
       }
-    }, 1500);
+    }, nextDelay);
   }
 
   async function refreshKnowledgeSourcesOnly() {
     const serviceStatus = await getInfrastructureJson('/knowledge/services/status');
+    const updated = document.getElementById('knowledgeUpdated');
     renderKnowledgeSources(serviceStatus);
+    if (updated) {
+      updated.textContent = `updated ${new Date().toLocaleTimeString()}`;
+    }
+    return serviceStatus;
   }
 
   function shortSymbol(value) {
