@@ -13,3 +13,5 @@ class FileMetadata:
     sizeBytes: int
     contentHash: str
     lastModified: str
+    lineCount: int = 0
+    decodePolicy: str = "utf-8:replace"

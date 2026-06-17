@@ -53,6 +53,7 @@ def scan_source(source: SourceMetadata, indexing: IndexingConfig) -> Tuple[list[
         except OSError:
             skipped.increment(SkippedReason.UNREADABLE)
             continue
+        decoded = content.decode("utf-8", errors="replace")
         files.append(FileMetadata(
             sourceId=source.sourceId,
             sourcePath=source.path,
@@ -62,6 +63,8 @@ def scan_source(source: SourceMetadata, indexing: IndexingConfig) -> Tuple[list[
             sizeBytes=stat.st_size,
             contentHash=hashlib.sha256(content).hexdigest(),
             lastModified=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+            lineCount=_line_count(decoded),
+            decodePolicy="utf-8:replace",
         ))
     return files, skipped
 
@@ -81,3 +84,9 @@ def _extension(path: Path) -> str:
 def _is_binary_file(path: Path, sample_size: int = 8192) -> bool:
     sample = path.read_bytes()[:sample_size]
     return b"\0" in sample
+
+
+def _line_count(text: str) -> int:
+    if text == "":
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)

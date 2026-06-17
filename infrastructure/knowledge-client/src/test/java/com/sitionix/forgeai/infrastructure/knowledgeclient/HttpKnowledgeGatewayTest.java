@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphSliceRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
@@ -35,7 +37,7 @@ class HttpKnowledgeGatewayTest {
     @Test
     void statusProxyMapsSuccess() {
         final HttpKnowledgeGateway gateway = gateway(new FakeHttpClient(200, """
-                {"status":"UP","module":"knowledge","catalog":{"configured":true,"type":"service_catalog"},"inventory":{"implemented":true,"status":"READY","sourceCount":1,"fileCount":2,"skippedCount":7,"skippedBreakdown":{"total":7,"byReason":{"EXCLUDED_BY_PATTERN":5,"BINARY":2}}},"inventoryRefresh":{"enabled":true,"intervalSeconds":300,"status":"READY","runCount":1,"skipCount":0}}
+                {"status":"UP","module":"knowledge","catalog":{"configured":true,"type":"service_catalog"},"inventory":{"implemented":true,"status":"READY","sourceCount":1,"fileCount":2,"skippedCount":7,"skippedBreakdown":{"total":7,"byReason":{"EXCLUDED_BY_PATTERN":5,"BINARY":2}}},"inventoryRefresh":{"enabled":true,"intervalSeconds":60,"status":"READY","runCount":1,"skipCount":0}}
                 """));
 
         final var status = gateway.status();
@@ -44,7 +46,7 @@ class HttpKnowledgeGatewayTest {
         assertThat(status.catalog().configured()).isTrue();
         assertThat(status.inventory().skippedBreakdown().total()).isEqualTo(7);
         assertThat(status.inventory().skippedBreakdown().byReason()).containsEntry("EXCLUDED_BY_PATTERN", 5);
-        assertThat(status.inventoryRefresh().intervalSeconds()).isEqualTo(300);
+        assertThat(status.inventoryRefresh().intervalSeconds()).isEqualTo(60);
     }
 
     @Test
@@ -189,6 +191,90 @@ class HttpKnowledgeGatewayTest {
         gateway.analysisRelations(new KnowledgeAnalysisRelationsRequest("svc", "CALLS", "from", "to", 5, 0));
 
         assertThat(client.lastRequest.uri().getRawQuery()).contains("sourceId=svc", "relation=CALLS", "fromSymbolId=from", "toSymbolId=to");
+    }
+
+    @Test
+    void analysisGraphProxyMapsSuccessAndQueryParams() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"sourceId":"svc","sourceName":"Service","status":{"analysisStatus":"RUNNING","jobId":"job-1","engineVersion":"GRAPH_V1","processedFileCount":1,"fileCount":2,"failedFileCount":0,"progressPercent":50.0,"currentFile":"A.java","trustedFactsCount":2,"diagnosticsCount":0,"lastUpdatedAt":"now"},"filters":{"flowDomain":"CODE","depth":2},"nodes":[{"id":"n1","label":"A"}],"edges":[],"claims":[],"evidence":[],"selected":{"node":null,"edge":null},"diagnostics":[],"meta":{"truncated":true,"totalNodeCount":1,"totalEdgeCount":3,"returnedNodeCount":1,"returnedEdgeCount":0,"skippedEdgeCount":3,"skippedMissingEndpointCount":2,"skippedByLimitCount":1,"truncationReason":"NODE_LIMIT,EDGE_ENDPOINT_NOT_RETURNED","maxNodeLimit":500,"maxEdgeLimit":1000,"futureProjectionMetric":42}}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        final var result = gateway.analysisGraph(new KnowledgeAnalysisGraphRequest("svc", "n1", null, "7", "CODE", "LLM", "CALLABLE", "CALLS", 2, 25, true, false, true));
+
+        assertThat(result.status().analysisStatus()).isEqualTo("RUNNING");
+        assertThat(result.nodes()).hasSize(1);
+        assertThat(result.meta().totalNodeCount()).isEqualTo(1);
+        assertThat(result.meta().skippedEdgeCount()).isEqualTo(3);
+        assertThat(result.meta().skippedMissingEndpointCount()).isEqualTo(2);
+        assertThat(result.meta().skippedByLimitCount()).isEqualTo(1);
+        assertThat(result.meta().truncationReason()).isEqualTo("NODE_LIMIT,EDGE_ENDPOINT_NOT_RETURNED");
+        assertThat(result.meta().additionalProperties()).containsEntry("futureProjectionMetric", 42);
+        assertThat(client.lastRequest.uri().getPath()).isEqualTo("/api/v1/knowledge/analysis/graph");
+        assertThat(client.lastRequest.uri().getRawQuery()).contains(
+                "sourceId=svc",
+                "graphNodeId=n1",
+                "inventoryFileId=7",
+                "flowDomain=CODE",
+                "factOrigin=LLM",
+                "nodeKind=CALLABLE",
+                "edgeType=CALLS",
+                "depth=2",
+                "limit=25",
+                "includeEvidence=true",
+                "includeClaims=false",
+                "includeDiagnostics=true"
+        );
+    }
+
+    @Test
+    void analysisGraphProxyMapsLegacyMetaWhenProjectionFieldsAreAbsent() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"sourceId":"svc","sourceName":"Service","status":{"analysisStatus":"READY","jobId":"job-1","engineVersion":"GRAPH_V1","processedFileCount":2,"fileCount":2,"failedFileCount":0,"progressPercent":100.0,"currentFile":null,"trustedFactsCount":2,"diagnosticsCount":0,"lastUpdatedAt":"now"},"filters":{"flowDomain":"CODE"},"nodes":[],"edges":[],"claims":[],"evidence":[],"selected":{"node":null,"edge":null},"diagnostics":[],"meta":{"truncated":false,"totalNodeCount":0,"totalEdgeCount":0,"returnedNodeCount":0,"returnedEdgeCount":0,"maxNodeLimit":500,"maxEdgeLimit":1000}}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        final var result = gateway.analysisGraph(new KnowledgeAnalysisGraphRequest("svc", null, null, null, null, null, null, null, null, null, null, null, null));
+
+        assertThat(result.meta().totalNodeCount()).isZero();
+        assertThat(result.meta().skippedEdgeCount()).isNull();
+        assertThat(result.meta().truncationReason()).isNull();
+    }
+
+    @Test
+    void analysisGraphSliceProxyMapsSuccessAndQueryParams() {
+        final FakeHttpClient client = new FakeHttpClient(200, """
+                {"sourceId":"svc","sourceName":"Service","status":{"analysisStatus":"READY","jobId":"job-1","engineVersion":"GRAPH_V1","processedFileCount":2,"fileCount":2,"failedFileCount":0,"progressPercent":100.0,"currentFile":null,"trustedFactsCount":10,"diagnosticsCount":0,"lastUpdatedAt":"now"},"filters":{"flowDomain":"CODE","depth":2},"nodes":[{"id":"n1","label":"A"}],"edges":[],"claims":[],"evidence":[],"selected":{"node":{"id":"n1"},"edge":null},"groups":[{"groupType":"EXTERNAL_JDK","count":3}],"uncertainties":[],"diagnostics":[],"metrics":{"sliceNodeCount":1},"meta":{"truncated":false,"totalNodeCount":1,"totalEdgeCount":0,"returnedNodeCount":1,"returnedEdgeCount":0,"maxNodeLimit":80,"maxEdgeLimit":120}}
+                """);
+        final HttpKnowledgeGateway gateway = gateway(client);
+
+        final var result = gateway.analysisGraphSlice(new KnowledgeAnalysisGraphSliceRequest(
+                "svc", "n1", "stable", "CODE", "OUTBOUND", 2, 80, 120,
+                "collapsed", true, false, false, "CALLS", "CALLABLE", true, false, false
+        ));
+
+        assertThat(result.groups()).hasSize(1);
+        assertThat(result.metrics()).containsEntry("sliceNodeCount", 1);
+        assertThat(client.lastRequest.uri().getPath()).isEqualTo("/api/v1/knowledge/analysis/graph/slice");
+        assertThat(client.lastRequest.uri().getRawQuery()).contains(
+                "sourceId=svc",
+                "rootGraphNodeId=n1",
+                "stableKey=stable",
+                "flowDomain=CODE",
+                "direction=OUTBOUND",
+                "depth=2",
+                "maxNodes=80",
+                "maxEdges=120",
+                "includeExternal=collapsed",
+                "includeUnresolved=true",
+                "includeTests=false",
+                "includeWorkflow=false",
+                "edgeTypes=CALLS",
+                "nodeKinds=CALLABLE",
+                "includeEvidence=true",
+                "includeClaims=false",
+                "includeIsolated=false"
+        );
     }
 
     @Test

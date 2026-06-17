@@ -15,6 +15,7 @@ from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
+from knowledge_service.graph_slice_service import GraphSliceRequest, GraphSliceService
 from knowledge_service.inventory_refresh import BackgroundInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.inventory_schema import InventoryBuildRequest
@@ -243,3 +244,83 @@ async def analysis_relations(
     offset: int = Query(0, ge=0),
 ) -> Dict[str, Any]:
     return AnalysisStore(app_config.store_path).relations(sourceId, relation, fromSymbolId, toSymbolId, limit, offset)
+
+
+@app.get("/api/v1/knowledge/analysis/graph")
+async def analysis_graph(
+    sourceId: Optional[str] = None,
+    graphNodeId: Optional[str] = None,
+    graphEdgeId: Optional[str] = None,
+    inventoryFileId: Optional[str] = None,
+    flowDomain: Optional[str] = None,
+    factOrigin: Optional[str] = None,
+    nodeKind: Optional[str] = None,
+    edgeType: Optional[str] = None,
+    depth: int = Query(2, ge=0, le=4),
+    limit: int = Query(150, ge=0),
+    includeEvidence: bool = False,
+    includeClaims: bool = True,
+    includeDiagnostics: bool = True,
+) -> Dict[str, Any]:
+    return AnalysisStore(app_config.store_path).graph(
+        sourceId,
+        graphNodeId,
+        graphEdgeId,
+        inventoryFileId,
+        flowDomain,
+        factOrigin,
+        nodeKind,
+        edgeType,
+        depth,
+        limit,
+        includeEvidence,
+        includeDiagnostics,
+        includeClaims,
+    )
+
+
+@app.get("/api/v1/knowledge/analysis/graph/slice")
+async def analysis_graph_slice(
+    sourceId: Optional[str] = None,
+    rootGraphNodeId: Optional[str] = None,
+    stableKey: Optional[str] = None,
+    flowDomain: str = "CODE",
+    direction: str = "OUTBOUND",
+    depth: int = Query(2, ge=0, le=4),
+    maxNodes: int = Query(80, ge=0),
+    maxEdges: int = Query(120, ge=0),
+    includeExternal: str = "collapsed",
+    includeUnresolved: bool = True,
+    includeTests: bool = False,
+    includeWorkflow: bool = False,
+    edgeTypes: Optional[str] = None,
+    nodeKinds: Optional[str] = None,
+    includeEvidence: bool = False,
+    includeClaims: bool = True,
+    includeIsolated: bool = False,
+) -> Dict[str, Any]:
+    return GraphSliceService(AnalysisStore(app_config.store_path)).slice(GraphSliceRequest(
+        source_id=sourceId,
+        root_graph_node_id=rootGraphNodeId,
+        stable_key=stableKey,
+        flow_domain=flowDomain,
+        direction=direction,
+        depth=depth,
+        max_nodes=maxNodes,
+        max_edges=maxEdges,
+        include_external=includeExternal,
+        include_unresolved=includeUnresolved,
+        include_tests=includeTests,
+        include_workflow=includeWorkflow,
+        edge_types=_csv_set(edgeTypes),
+        node_kinds=_csv_set(nodeKinds),
+        include_evidence=includeEvidence,
+        include_claims=includeClaims,
+        include_isolated=includeIsolated,
+    ))
+
+
+def _csv_set(value: Optional[str]) -> Optional[set[str]]:
+    if not value:
+        return None
+    return {item.strip() for item in value.split(",") if item.strip()}

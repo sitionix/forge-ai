@@ -27,4 +27,8 @@ public interface KnowledgeGateway {
     KnowledgeAnalysisSymbolsView analysisSymbols(KnowledgeAnalysisSymbolsRequest request);
 
     KnowledgeAnalysisRelationsView analysisRelations(KnowledgeAnalysisRelationsRequest request);
+
+    KnowledgeAnalysisGraphView analysisGraph(KnowledgeAnalysisGraphRequest request);
+
+    KnowledgeAnalysisGraphView analysisGraphSlice(KnowledgeAnalysisGraphSliceRequest request);
 }

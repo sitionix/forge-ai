@@ -80,6 +80,35 @@ def test_inventory_status_returns_counts_and_files_paginate(tmp_path):
     assert page["total"] == 1
 
 
+def test_inventory_build_excludes_idea_project_files(tmp_path):
+    workspace = tmp_path / "workspace"
+    service = workspace / "svc"
+    (service / "src").mkdir(parents=True)
+    (service / ".idea").mkdir()
+    (service / "src" / "App.java").write_text("class App {}\n", encoding="utf-8")
+    (service / ".idea" / "workspace.xml").write_text("<project />\n", encoding="utf-8")
+    catalog = tmp_path / "services.yaml"
+    catalog.write_text("services:\n  svc:\n    label: Service\n    path: svc\n    group: backend\n", encoding="utf-8")
+    config_file = tmp_path / "knowledge-sources.yaml"
+    config_file.write_text(
+        f"""catalog:
+  path: "{catalog}"
+  workspace_root: "{workspace}"
+indexing:
+  include: ["**/*.java", "**/*.xml"]
+""",
+        encoding="utf-8",
+    )
+    store = InventoryStore(tmp_path / "knowledge.sqlite")
+
+    result = InventoryBuilder(load_source_config(config_file), store).build([], [])
+
+    assert result["fileCount"] == 1
+    assert result["skippedBreakdown"]["byReason"]["EXCLUDED_BY_PATTERN"] == 1
+    files = store.files("svc", None, None, 100, 0)["files"]
+    assert [file["relativePath"] for file in files] == ["src/App.java"]
+
+
 def test_inventory_build_counts_symlink_outside_root_when_supported(tmp_path):
     workspace = tmp_path / "workspace"
     service = workspace / "svc"

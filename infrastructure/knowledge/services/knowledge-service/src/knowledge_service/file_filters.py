@@ -4,7 +4,7 @@ import fnmatch
 from pathlib import Path
 from typing import Iterable
 
-EXCLUDED_DIR_NAMES = {".git", "target", "build", "dist", "node_modules", ".venv", "var", "logs"}
+EXCLUDED_DIR_NAMES = {".git", ".idea", "target", "build", "dist", "node_modules", ".venv", "var", "logs"}
 
 
 def matches_any(relative_path: str, patterns: Iterable[str]) -> bool:

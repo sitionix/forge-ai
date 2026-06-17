@@ -8,6 +8,8 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewa
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphSliceRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
@@ -116,6 +118,58 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
         controller.analysisRelations("svc", "CALLS", "from", "to", 10, 1);
 
         org.mockito.Mockito.verify(useCase).analysisRelations(new KnowledgeAnalysisRelationsRequest("svc", "CALLS", "from", "to", 10, 1));
+    }
+
+    @Test
+    void analysisGraphDelegatesQueryParamsToUseCase() {
+        final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
+        final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
+
+        controller.analysisGraph("svc", "node", "edge", "7", "CODE", "LLM", "CALLABLE", "CALLS", 2, 25, true, false, false);
+
+        org.mockito.Mockito.verify(useCase).analysisGraph(new KnowledgeAnalysisGraphRequest(
+                "svc",
+                "node",
+                "edge",
+                "7",
+                "CODE",
+                "LLM",
+                "CALLABLE",
+                "CALLS",
+                2,
+                25,
+                true,
+                false,
+                false
+        ));
+    }
+
+    @Test
+    void analysisGraphSliceDelegatesQueryParamsToUseCase() {
+        final ManageKnowledgeInfrastructure useCase = mock(ManageKnowledgeInfrastructure.class);
+        final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(useCase);
+
+        controller.analysisGraphSlice("svc", "node", "stable", "CODE", "OUTBOUND", 2, 80, 120, "collapsed", true, false, false, "CALLS", "CALLABLE", true, false, false);
+
+        org.mockito.Mockito.verify(useCase).analysisGraphSlice(new KnowledgeAnalysisGraphSliceRequest(
+                "svc",
+                "node",
+                "stable",
+                "CODE",
+                "OUTBOUND",
+                2,
+                80,
+                120,
+                "collapsed",
+                true,
+                false,
+                false,
+                "CALLS",
+                "CALLABLE",
+                true,
+                false,
+                false
+        ));
     }
 
     @Test

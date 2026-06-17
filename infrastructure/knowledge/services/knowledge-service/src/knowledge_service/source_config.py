@@ -14,7 +14,7 @@ DEFAULT_INCLUDE = [
     "**/*.yaml", "**/*.yml", "**/*.json", "**/*.xml", "**/pom.xml", "**/README*",
 ]
 DEFAULT_EXCLUDE = [
-    ".git/**", "target/**", "build/**", "dist/**", "node_modules/**", ".venv/**",
+    ".git/**", ".idea/**", "target/**", "build/**", "dist/**", "node_modules/**", ".venv/**",
     "var/**", "logs/**", "**/.env", "**/*.class", "**/*.jar",
 ]
 

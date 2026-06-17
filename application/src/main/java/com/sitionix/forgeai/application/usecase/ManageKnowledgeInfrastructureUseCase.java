@@ -6,6 +6,9 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalys
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphSliceRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisJobView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsView;
@@ -93,5 +96,15 @@ public class ManageKnowledgeInfrastructureUseCase implements ManageKnowledgeInfr
     @Override
     public KnowledgeAnalysisRelationsView analysisRelations(final KnowledgeAnalysisRelationsRequest request) {
         return this.knowledgeGateway.analysisRelations(request);
+    }
+
+    @Override
+    public KnowledgeAnalysisGraphView analysisGraph(final KnowledgeAnalysisGraphRequest request) {
+        return this.knowledgeGateway.analysisGraph(request);
+    }
+
+    @Override
+    public KnowledgeAnalysisGraphView analysisGraphSlice(final KnowledgeAnalysisGraphSliceRequest request) {
+        return this.knowledgeGateway.analysisGraphSlice(request);
     }
 }

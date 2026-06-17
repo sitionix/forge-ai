@@ -4,6 +4,9 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalys
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphSliceRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisJobView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsView;
@@ -121,6 +124,76 @@ public class ForgeAiInfrastructureKnowledgeController {
                                                                             @RequestParam(required = false) final Integer limit,
                                                                             @RequestParam(required = false) final Integer offset) {
         return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisRelations(new KnowledgeAnalysisRelationsRequest(sourceId, relation, fromSymbolId, toSymbolId, limit, offset)));
+    }
+
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph")
+    public ResponseEntity<KnowledgeAnalysisGraphView> analysisGraph(@RequestParam(required = false) final String sourceId,
+                                                                    @RequestParam(required = false) final String graphNodeId,
+                                                                    @RequestParam(required = false) final String graphEdgeId,
+                                                                    @RequestParam(required = false) final String inventoryFileId,
+                                                                    @RequestParam(required = false) final String flowDomain,
+                                                                    @RequestParam(required = false) final String factOrigin,
+                                                                    @RequestParam(required = false) final String nodeKind,
+                                                                    @RequestParam(required = false) final String edgeType,
+                                                                    @RequestParam(required = false) final Integer depth,
+                                                                    @RequestParam(required = false) final Integer limit,
+                                                                    @RequestParam(required = false) final Boolean includeEvidence,
+                                                                    @RequestParam(required = false) final Boolean includeClaims,
+                                                                    @RequestParam(required = false) final Boolean includeDiagnostics) {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisGraph(new KnowledgeAnalysisGraphRequest(
+                sourceId,
+                graphNodeId,
+                graphEdgeId,
+                inventoryFileId,
+                flowDomain,
+                factOrigin,
+                nodeKind,
+                edgeType,
+                depth,
+                limit,
+                includeEvidence,
+                includeClaims,
+                includeDiagnostics
+        )));
+    }
+
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/slice")
+    public ResponseEntity<KnowledgeAnalysisGraphView> analysisGraphSlice(@RequestParam(required = false) final String sourceId,
+                                                                         @RequestParam(required = false) final String rootGraphNodeId,
+                                                                         @RequestParam(required = false) final String stableKey,
+                                                                         @RequestParam(required = false) final String flowDomain,
+                                                                         @RequestParam(required = false) final String direction,
+                                                                         @RequestParam(required = false) final Integer depth,
+                                                                         @RequestParam(required = false) final Integer maxNodes,
+                                                                         @RequestParam(required = false) final Integer maxEdges,
+                                                                         @RequestParam(required = false) final String includeExternal,
+                                                                         @RequestParam(required = false) final Boolean includeUnresolved,
+                                                                         @RequestParam(required = false) final Boolean includeTests,
+                                                                         @RequestParam(required = false) final Boolean includeWorkflow,
+                                                                         @RequestParam(required = false) final String edgeTypes,
+                                                                         @RequestParam(required = false) final String nodeKinds,
+                                                                         @RequestParam(required = false) final Boolean includeEvidence,
+                                                                         @RequestParam(required = false) final Boolean includeClaims,
+                                                                         @RequestParam(required = false) final Boolean includeIsolated) {
+        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisGraphSlice(new KnowledgeAnalysisGraphSliceRequest(
+                sourceId,
+                rootGraphNodeId,
+                stableKey,
+                flowDomain,
+                direction,
+                depth,
+                maxNodes,
+                maxEdges,
+                includeExternal,
+                includeUnresolved,
+                includeTests,
+                includeWorkflow,
+                edgeTypes,
+                nodeKinds,
+                includeEvidence,
+                includeClaims,
+                includeIsolated
+        )));
     }
 
     @ExceptionHandler(KnowledgeGatewayException.class)

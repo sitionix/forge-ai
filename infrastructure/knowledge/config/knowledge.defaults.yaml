@@ -6,7 +6,7 @@ knowledge:
   inventory:
     store_path: infrastructure/knowledge/var/knowledge.sqlite
     auto_refresh_enabled: true
-    auto_refresh_interval_seconds: 300
+    auto_refresh_interval_seconds: 60
 
   indexing:
     chunk_size_chars: 3000

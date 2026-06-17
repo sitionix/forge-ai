@@ -6,6 +6,9 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalys
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphSliceRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisJobView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsView;
@@ -185,6 +188,16 @@ public class SqliteKnowledgeGateway implements KnowledgeGateway {
 
     @Override
     public KnowledgeAnalysisRelationsView analysisRelations(final KnowledgeAnalysisRelationsRequest request) {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
+    }
+
+    @Override
+    public KnowledgeAnalysisGraphView analysisGraph(final KnowledgeAnalysisGraphRequest request) {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
+    }
+
+    @Override
+    public KnowledgeAnalysisGraphView analysisGraphSlice(final KnowledgeAnalysisGraphSliceRequest request) {
         throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
     }
 

@@ -11,10 +11,14 @@ from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
 from knowledge_service.analysis_schema import AnalysisBuildRequest, AnalysisResult
 from knowledge_service.analysis_store import AnalysisStore
+from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.config import AppConfig
 from knowledge_service.errors import KnowledgeError
+from knowledge_service.graph_analysis import GraphAnalysisEngine, LegacyAnalysisProjectionAdapter
+from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.snippet_extractor import SnippetExtractor
+from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer, StructuralAnalysisEngine
 
 
 class AnalysisJobRunner:
@@ -36,6 +40,11 @@ class AnalysisJobRunner:
         self.config = config
         self.analysis_store = AnalysisStore(inventory_store.db_path)
         self.snippets = SnippetExtractor()
+        self.graph_engine = GraphAnalysisEngine()
+        self.legacy_adapter = LegacyAnalysisProjectionAdapter()
+        self.structural_engine = StructuralAnalysisEngine()
+        self.static_materializer = StaticGraphMaterializer()
+        self.anchor_validator = AnchorAwareGraphValidator()
         self._lock = threading.Lock()
 
     def start(self, request: AnalysisBuildRequest, client: Optional[OllamaAnalysisClient] = None) -> Dict[str, Any]:
@@ -60,6 +69,7 @@ class AnalysisJobRunner:
                 "symbolCount": 0,
                 "relationCount": 0,
                 "diagnostics": [],
+                "engineVersion": GRAPH_ENGINE_VERSION,
             }
             self.analysis_store.create_job(job)
             analyzer = client or OllamaAnalysisClient(
@@ -93,6 +103,11 @@ class AnalysisJobRunner:
             rows = [row for row in rows if row["id"] not in unchanged_ids]
         if request.maxFiles is not None:
             rows = rows[:max(0, request.maxFiles)]
+        flow_domain_by_file_id = {
+            int(row["id"]): self.structural_engine.flow_domain(row["relative_path"])
+            for row in rows
+        }
+        self.analysis_store.create_job_files(job_id, rows, flow_domain_by_file_id, GRAPH_ENGINE_VERSION)
         if self._stop_requested(job_id):
             self._mark_job_stopped(job_id)
             return
@@ -116,12 +131,31 @@ class AnalysisJobRunner:
                     "currentRelativePath": row["relative_path"],
                     "lastProgressAt": self._now(),
                 })
+                flow_domain = flow_domain_by_file_id.get(int(row["id"]), self.structural_engine.flow_domain(row["relative_path"]))
+                self.analysis_store.update_job_file(
+                    job_id,
+                    int(row["id"]),
+                    "RUNNING",
+                    flow_domain=flow_domain,
+                    engine_version=GRAPH_ENGINE_VERSION,
+                    started=True,
+                )
                 metadata = json.loads(row["metadata_json"])
                 lines = self.snippets.read_lines(row["absolute_path"], metadata.get("absoluteRoot") or row["source_path"])
                 if lines is None:
                     processed += 1
                     failed += 1
-                    self._mark(row, analyzer, "FAILED", [{"code": "FILE_UNREADABLE", "message": "Indexed file could not be read safely"}])
+                    file_diagnostics = [{"code": "FILE_UNREADABLE", "message": "Indexed file could not be read safely"}]
+                    self._mark(row, analyzer, "FAILED", file_diagnostics, flow_domain=flow_domain)
+                    self.analysis_store.update_job_file(
+                        job_id,
+                        int(row["id"]),
+                        "FAILED",
+                        diagnostics=file_diagnostics,
+                        flow_domain=flow_domain,
+                        engine_version=GRAPH_ENGINE_VERSION,
+                        completed=True,
+                    )
                     self.analysis_store.update_job(job_id, {
                         "processedFileCount": processed,
                         "failedFileCount": failed,
@@ -129,24 +163,72 @@ class AnalysisJobRunner:
                     })
                     continue
                 content = "\n".join(lines)
-                if len(content) > self.config.analysis_max_file_chars:
-                    processed += 1
-                    self._mark(row, analyzer, "SKIPPED_TOO_LARGE_FOR_AI_ANALYSIS", [{"code": "ANALYSIS_FILE_TOO_LARGE", "message": "File exceeds AI analysis size limit"}])
-                    self.analysis_store.update_job(job_id, {
-                        "processedFileCount": processed,
-                        "lastProgressAt": self._now(),
-                    })
-                    continue
                 try:
-                    result, retry_diagnostics, attempt_state = self._analyze_with_retry(analyzer, self._payload(row, metadata, content), len(lines))
+                    structural_result = self.structural_engine.parse(row, lines)
+                    static_graph = self.static_materializer.to_graph(structural_result)
+                    enrichment_result: GraphAnalysisResult | None = None
+                    retry_diagnostics: List[Dict[str, Any]] = []
+                    attempt_state: Dict[str, Any] = {
+                        "attempt_count": 0,
+                        "last_attempt_at": None,
+                        "last_error_code": None,
+                        "last_error_message": None,
+                        "last_raw_response_preview": None,
+                    }
+                    if len(content) > self.config.analysis_max_file_chars:
+                        retry_diagnostics.append({
+                            "code": "ANALYSIS_FILE_TOO_LARGE",
+                            "message": "File exceeds AI analysis size limit; static parser facts were stored without LLM enrichment.",
+                            "sourceId": row["source_id"],
+                            "relativePath": row["relative_path"],
+                        })
+                    else:
+                        try:
+                            result, retry_diagnostics, attempt_state = self._analyze_with_retry(
+                                analyzer,
+                                self._payload(row, metadata, content, structural_result, static_graph),
+                                len(lines),
+                            )
+                            enrichment_result = self._graph_result(result)
+                        except Exception as exc:
+                            attempt_state = self._attempt_state(exc)
+                            diag = self._diagnostic(row, exc, getattr(exc, "details", {}).get("attempt"))
+                            diag["message"] = f"{diag['message']}; static parser facts were stored."
+                            retry_diagnostics = [*getattr(exc, "details", {}).get("diagnostics", []), diag]
                     if self._stop_requested(job_id):
                         self._mark_job_stopped(job_id, diagnostics)
                         return
-                    symbols, roles, relations = self._materialize(row, analyzer, result)
-                    self.analysis_store.replace_file_analysis(row["id"], self._state(row, analyzer, "ANALYZED", len(symbols), len(relations), retry_diagnostics, attempt_state), symbols, roles, relations)
+                    graph_result = self.anchor_validator.merge(static_graph, enrichment_result, len(lines))
+                    graph_diagnostics = self._file_diagnostics_from_graph(graph_result)
+                    for diagnostic in retry_diagnostics:
+                        graph_result.diagnostics.append({
+                            "severity": "WARN" if diagnostic.get("code") != "ANALYSIS_FILE_FAILED" else "ERROR",
+                            "stage": diagnostic.get("stage") or "LLM_ENRICHMENT",
+                            **diagnostic,
+                        })
+                    graph = self.graph_engine.materialize(row, job_id, analyzer.name, analyzer.version, graph_result, lines)
+                    file_diagnostics = [*retry_diagnostics, *graph_diagnostics]
+                    self.analysis_store.replace_file_graph_analysis(
+                        row["id"],
+                        self._state(row, analyzer, "ANALYZED", len(graph["nodes"]), len(graph["edges"]), file_diagnostics, attempt_state, flow_domain=flow_domain),
+                        graph,
+                    )
+                    job_file_status = "ANALYZED_WITH_DIAGNOSTICS" if file_diagnostics else "ANALYZED"
+                    self.analysis_store.update_job_file(
+                        job_id,
+                        int(row["id"]),
+                        job_file_status,
+                        analysis_file_id=int(row["id"]),
+                        attempt_count=attempt_state.get("attempt_count", 0),
+                        diagnostics=file_diagnostics,
+                        line_count=len(lines),
+                        flow_domain=flow_domain,
+                        engine_version=GRAPH_ENGINE_VERSION,
+                        completed=True,
+                    )
                     processed += 1
-                    symbols_total += len(symbols)
-                    relations_total += len(relations)
+                    symbols_total += len(graph["nodes"])
+                    relations_total += len(graph["edges"])
                 except Exception as exc:
                     if self._stop_requested(job_id):
                         self._mark_job_stopped(job_id, diagnostics)
@@ -156,7 +238,18 @@ class AnalysisJobRunner:
                     diag = self._diagnostic(row, exc, getattr(exc, "details", {}).get("attempt"))
                     diagnostics.append(diag)
                     file_diagnostics = [*getattr(exc, "details", {}).get("diagnostics", []), diag]
-                    self._mark(row, analyzer, "FAILED", file_diagnostics, self._attempt_state(exc))
+                    self._mark(row, analyzer, "FAILED", file_diagnostics, self._attempt_state(exc), flow_domain=flow_domain)
+                    self.analysis_store.update_job_file(
+                        job_id,
+                        int(row["id"]),
+                        "FAILED",
+                        attempt_count=self._attempt_state(exc).get("attempt_count", 0),
+                        diagnostics=file_diagnostics,
+                        line_count=len(lines),
+                        flow_domain=flow_domain,
+                        engine_version=GRAPH_ENGINE_VERSION,
+                        completed=True,
+                    )
                 self.analysis_store.update_job(job_id, {
                     "processedFileCount": processed,
                     "failedFileCount": failed,
@@ -189,6 +282,7 @@ class AnalysisJobRunner:
 
     def _mark_job_stopped(self, job_id: str, diagnostics: Optional[List[Dict[str, Any]]] = None) -> None:
         job = self.analysis_store.job(job_id)
+        self.analysis_store.stop_incomplete_job_files(job_id)
         merged = [*(job or {}).get("diagnostics", []), *(diagnostics or [])]
         if not any(item.get("code") == "ANALYSIS_JOB_STOPPED" for item in merged):
             merged.append({
@@ -204,7 +298,12 @@ class AnalysisJobRunner:
             "diagnostics": merged[-20:],
         })
 
-    def _payload(self, row, metadata: Dict[str, Any], content: str) -> Dict[str, Any]:
+    def _payload(self,
+                 row,
+                 metadata: Dict[str, Any],
+                 content: str,
+                 structural_result,
+                 static_graph: GraphAnalysisResult) -> Dict[str, Any]:
         return {
             "sourceId": row["source_id"],
             "serviceLabel": row["display_name"],
@@ -214,7 +313,11 @@ class AnalysisJobRunner:
             "extension": row["extension"],
             "sizeBytes": row["size_bytes"],
             "contentHash": row["content_hash"],
+            "lineCount": structural_result.file.line_count,
+            "language": structural_result.file.language,
+            "flowDomain": structural_result.file.flow_domain,
             "metadata": {k: v for k, v in metadata.items() if k != "absoluteRoot"},
+            "staticAnchors": self._static_anchor_payload(static_graph),
             "content": content,
         }
 
@@ -267,68 +370,82 @@ class AnalysisJobRunner:
                 })
         raise KnowledgeError("ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED", "AI analysis exceeded maximum attempts")
 
-    def _materialize(self, row, analyzer: OllamaAnalysisClient, result: AnalysisResult):
-        local_to_stable: Dict[str, str] = {}
-        symbols: List[Dict[str, Any]] = []
-        roles: List[Dict[str, Any]] = []
-        for symbol in result.symbols:
-            symbol_id = self._stable_id("analysis-symbol", row["source_id"], row["relative_path"], symbol.localId, symbol.name, str(symbol.lineStart))
-            local_to_stable[symbol.localId] = symbol_id
-            symbols.append({
-                "symbol_id": symbol_id,
-                "source_id": row["source_id"],
-                "relative_path": row["relative_path"],
-                "name": symbol.name,
-                "kind": symbol.kind,
-                "line_start": symbol.lineStart,
-                "line_end": symbol.lineEnd,
-                "summary": result.fileSummary,
-                "metadata": symbol.metadata,
-            })
-            for role in symbol.roles:
-                roles.append({
-                    "symbol_id": symbol_id,
-                    "role": role.role,
-                    "confidence": role.confidence,
-                    "evidence": role.evidence,
-                    "classifier": analyzer.name,
-                    "classifier_version": analyzer.version,
-                })
-        relations: List[Dict[str, Any]] = []
-        seen_relations: set[str] = set()
-        for relation in result.relations:
-            from_id = local_to_stable.get(relation.fromLocalId)
-            to_id = local_to_stable.get(relation.toLocalId)
-            if not from_id or not to_id:
-                continue
-            relation_id = self._stable_id("analysis-relation", row["source_id"], row["relative_path"], from_id, to_id, relation.relation, str(relation.lineStart))
-            if relation_id in seen_relations:
-                continue
-            seen_relations.add(relation_id)
-            relations.append({
-                "relation_id": relation_id,
-                "source_id": row["source_id"],
-                "from_symbol_id": from_id,
-                "to_symbol_id": to_id,
-                "relation": relation.relation,
-                "confidence": relation.confidence,
-                "evidence": relation.evidence,
-                "line_start": relation.lineStart,
-                "line_end": relation.lineEnd,
-                "metadata": relation.metadata,
-            })
-        return symbols, roles, relations
+    def _graph_result(self, result: GraphAnalysisResult | AnalysisResult) -> GraphAnalysisResult:
+        if isinstance(result, GraphAnalysisResult):
+            return result
+        if isinstance(result, AnalysisResult):
+            return self.legacy_adapter.convert(result)
+        raise KnowledgeError("ANALYSIS_AI_SCHEMA_INVALID", "AI analyzer returned an unsupported analysis result")
 
-    def _mark(self, row, analyzer: OllamaAnalysisClient, status: str, diagnostics: List[Dict[str, Any]], attempt_state: Optional[Dict[str, Any]] = None) -> None:
-        self.analysis_store.mark_file(row["id"], self._state(row, analyzer, status, 0, 0, diagnostics, attempt_state))
+    def _static_anchor_payload(self, static_graph: GraphAnalysisResult) -> Dict[str, Any]:
+        return {
+            "nodes": [
+                {
+                    "targetStableKey": node.localId,
+                    "nodeKind": node.nodeKind,
+                    "name": node.name,
+                    "qualifiedName": node.qualifiedName,
+                    "lineStart": node.lineStart,
+                    "lineEnd": node.lineEnd,
+                    "parentStableKey": node.parentLocalId,
+                    "metadata": node.metadata,
+                }
+                for node in static_graph.nodes
+            ],
+            "callsites": [
+                {
+                    "callsiteStableKey": edge.localId,
+                    "fromStableKey": edge.fromNodeLocalId,
+                    "toStableKey": edge.toNodeLocalId,
+                    "edgeType": edge.edgeType,
+                    "resolutionStatus": edge.metadata.get("resolutionStatus"),
+                    "lineStart": edge.evidence[0].lineStart if edge.evidence else None,
+                    "lineEnd": edge.evidence[0].lineEnd if edge.evidence else None,
+                    "unresolvedTarget": edge.unresolvedTarget,
+                    "metadata": edge.metadata,
+                }
+                for edge in static_graph.edges
+                if edge.edgeType == "CALLS"
+            ],
+            "diagnostics": static_graph.diagnostics,
+        }
 
-    def _state(self, row, analyzer: OllamaAnalysisClient, status: str, symbol_count: int, relation_count: int, diagnostics: List[Dict[str, Any]], attempt_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _file_diagnostics_from_graph(self, graph_result: GraphAnalysisResult) -> List[Dict[str, Any]]:
+        result: List[Dict[str, Any]] = []
+        for diagnostic in graph_result.diagnostics or []:
+            result.append({
+                key: value
+                for key, value in diagnostic.items()
+                if key in {"code", "message", "severity", "stage", "sourceId", "relativePath", "attempt", "rawPreview"}
+            })
+        return result
+
+    def _mark(self,
+              row,
+              analyzer: OllamaAnalysisClient,
+              status: str,
+              diagnostics: List[Dict[str, Any]],
+              attempt_state: Optional[Dict[str, Any]] = None,
+              flow_domain: Optional[str] = None) -> None:
+        self.analysis_store.mark_file(row["id"], self._state(row, analyzer, status, 0, 0, diagnostics, attempt_state, flow_domain=flow_domain))
+
+    def _state(self,
+               row,
+               analyzer: OllamaAnalysisClient,
+               status: str,
+               symbol_count: int,
+               relation_count: int,
+               diagnostics: List[Dict[str, Any]],
+               attempt_state: Optional[Dict[str, Any]] = None,
+               flow_domain: Optional[str] = None) -> Dict[str, Any]:
         state = {
             "source_id": row["source_id"],
             "relative_path": row["relative_path"],
             "content_hash": row["content_hash"],
             "analyzer_name": analyzer.name,
             "analyzer_version": analyzer.version,
+            "engine_version": GRAPH_ENGINE_VERSION,
+            "flow_domain": flow_domain or self.structural_engine.flow_domain(row["relative_path"]),
             "status": status,
             "analyzed_at": datetime.now(timezone.utc).isoformat(),
             "symbol_count": symbol_count,
@@ -345,6 +462,7 @@ class AnalysisJobRunner:
     def _diagnostic(self, row, exc: Exception, attempt: Optional[int]) -> Dict[str, Any]:
         code = getattr(exc, "code", "ANALYSIS_FILE_FAILED")
         message = str(getattr(exc, "message", "AI analysis failed"))
+        details = getattr(exc, "details", {})
         if getattr(exc, "details", {}).get("max_attempts_exceeded"):
             code = "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"
             message = f"AI analysis exceeded maximum attempts: {message}"
@@ -354,7 +472,17 @@ class AnalysisJobRunner:
             "code": code,
             "message": message,
         }
-        details = getattr(exc, "details", {})
+        if details.get("stage"):
+            diagnostic["stage"] = details["stage"]
+        if details.get("severity"):
+            diagnostic["severity"] = details["severity"]
+        metadata = {
+            key: details[key]
+            for key in ("exceptionType", "sqliteMessage", "table", "operation")
+            if key in details
+        }
+        if metadata:
+            diagnostic["metadata"] = metadata
         if attempt:
             diagnostic["attempt"] = attempt
         if details.get("raw_preview"):

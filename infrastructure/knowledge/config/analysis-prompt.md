@@ -1,62 +1,82 @@
-You are analyzing one source file for a local structural knowledge index.
+You enrich one source file for a local structural knowledge graph.
 
 Return one valid JSON object only.
 No markdown.
 No explanations outside JSON.
 No code fences.
 No comments.
-Invalid JSON causes this file analysis to fail.
+Invalid JSON causes this file enrichment to fail.
 
-Use only the provided file content and metadata.
-Do not infer files that are not present.
-Do not invent paths.
-Do not execute anything.
-If uncertain, use UNKNOWN with low confidence.
-Evidence must be based on file content.
-Naming conventions are weak evidence only.
-Prefer behavior and structure over class/file names.
-Do not use business-specific assumptions.
+Use only the provided file content, metadata, and staticAnchors.
+The staticAnchors were produced by a deterministic parser and are the source of truth for FILE, TYPE, CALLABLE, FIELD, IMPORT, and CALLSITE structure.
+Do not discover classes, methods, fields, or callsites.
+Do not change anchor line ranges.
+Do not create trusted structure.
+Use targetStableKey/fromStableKey/toStableKey values from staticAnchors exactly.
+If a target anchor is missing, omit the claim or edge.
 
-Allowed symbol kinds:
-FILE, CLASS, INTERFACE, METHOD, FUNCTION, FIELD, CONFIG_ENTRY, CONTRACT_OPERATION, DTO, RECORD, UNKNOWN
+Allowed claimKind values:
+RESPONSIBILITY, ROLE, CONTRACT, DIAGNOSTIC, ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE, UNKNOWN
 
-Allowed roles:
-ENTRYPOINT, HTTP_HANDLER, EVENT_HANDLER, COMMAND_HANDLER, QUERY_HANDLER, USE_CASE, APPLICATION_SERVICE, DOMAIN_MODEL, REPOSITORY, CLIENT, MAPPER, DTO, CONFIGURATION, CONTRACT, TEST, UTILITY, UNKNOWN
+Allowed semantic edgeType values:
+READS, WRITES, PUBLISHES, CONSUMES, CONFIGURES, REFERENCES, USES, DEPENDS_ON, RELATED_TO, UNKNOWN
 
-Allowed relations:
-DECLARES, CONTAINS, CALLS, IMPLEMENTS, EXTENDS, INJECTS, MAPS_TO, USES, READS_FROM, WRITES_TO, PUBLISHES, CONSUMES, CONFIGURES, REFERENCES_CONTRACT, REFERENCES_DTO, RELATED_TO, UNKNOWN
-
-Required compact schema:
+Required response schema:
 {
-  "fileSummary": "Short neutral summary",
-  "symbols": [
+  "schemaVersion": "knowledge.graph.enrichment.v1",
+  "file": {
+    "sourceId": "...",
+    "inventoryFileId": 123,
+    "relativePath": "...",
+    "contentHash": "...",
+    "lineCount": 120
+  },
+  "claims": [
     {
-      "localId": "symbol-1",
-      "name": "Name",
-      "kind": "CLASS",
-      "roles": [
-        {
-          "role": "UNKNOWN",
-          "confidence": 0.2,
-          "evidence": ["Exact or specific evidence from this file"]
-        }
+      "localId": "claim1",
+      "targetStableKey": "copy-a-static-anchor-targetStableKey-here",
+      "claimKind": "RESPONSIBILITY",
+      "summary": "Handles validation exceptions and returns the related HTTP response.",
+      "evidence": [
+        {"lineStart": 56, "lineEnd": 64, "text": "short evidence excerpt", "metadata": {}}
       ],
-      "lineStart": 1,
-      "lineEnd": 10,
+      "confidence": 0.86,
       "metadata": {}
     }
   ],
-  "relations": [
+  "semanticEdges": [
     {
-      "fromLocalId": "symbol-1",
-      "toLocalId": "symbol-2",
-      "relation": "RELATED_TO",
-      "confidence": 0.5,
-      "evidence": ["Exact or specific evidence from this file"],
-      "lineStart": 5,
-      "lineEnd": 5,
+      "localId": "semantic1",
+      "fromStableKey": "copy-a-static-anchor-targetStableKey-here",
+      "toStableKey": null,
+      "edgeType": "REFERENCES",
+      "unresolvedTarget": {"name": "externalName", "kindHint": "EXTERNAL"},
+      "evidence": [
+        {"lineStart": 42, "lineEnd": 42, "text": "short evidence excerpt", "metadata": {}}
+      ],
+      "confidence": 0.72,
       "metadata": {}
     }
   ],
   "diagnostics": []
 }
+
+Responsibility rules:
+- Create RESPONSIBILITY claims for meaningful FILE, TYPE, and CALLABLE anchors only when evidence supports them.
+- A FILE responsibility describes what the file contains and belongs only to the FILE anchor.
+- A TYPE responsibility describes the class/interface/enum/record itself and belongs only to that TYPE anchor.
+- A CALLABLE responsibility describes the method/function itself and belongs only to that CALLABLE anchor.
+- Do not copy FILE or TYPE summary text into CALLABLE responsibility claims.
+- Method/callable evidence must overlap the callable anchor line range.
+- Type evidence must overlap the type anchor line range or its declaration annotations.
+- If evidence does not exist inside the method range, omit the method claim.
+- If unsure, omit rather than invent.
+- Summaries must be short, factual, and evidence-bound.
+
+Semantic hint rules:
+- Add ROLE, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, or semanticEdges only when the code evidence is clear.
+- Prefer REFERENCES/USES for uncertain external or data interactions.
+- Do not infer business/domain behavior from names alone.
+- Do not classify controller/service/repository roles by suffix alone.
+- Annotation evidence is allowed.
+- Use UNKNOWN only where allowed and with low confidence.

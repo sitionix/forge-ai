@@ -58,6 +58,8 @@ class InventoryStore:
                     indexed_at TEXT NOT NULL
                 )
             """)
+            self._ensure_column(conn, "files", "line_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "files", "decode_policy", "TEXT")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS inventory_source_state (
                     source_id TEXT PRIMARY KEY,
@@ -104,8 +106,26 @@ class InventoryStore:
                 )
             for file in files:
                 conn.execute(
-                    "INSERT INTO files(source_id, source_path, absolute_path, relative_path, extension, size_bytes, content_hash, last_modified, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (file.sourceId, file.sourcePath, file.absolutePath, file.relativePath, file.extension, file.sizeBytes, file.contentHash, file.lastModified, now),
+                    """
+                    INSERT INTO files(
+                        source_id, source_path, absolute_path, relative_path, extension, size_bytes,
+                        content_hash, last_modified, indexed_at, line_count, decode_policy
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        file.sourceId,
+                        file.sourcePath,
+                        file.absolutePath,
+                        file.relativePath,
+                        file.extension,
+                        file.sizeBytes,
+                        file.contentHash,
+                        file.lastModified,
+                        now,
+                        file.lineCount,
+                        file.decodePolicy,
+                    ),
                 )
             files_by_source: Dict[str, int] = {}
             for file in files:
@@ -179,13 +199,14 @@ class InventoryStore:
         with self._connect() as conn:
             total = conn.execute(f"SELECT COUNT(*) AS count FROM files {where}", params).fetchone()["count"]
             rows = conn.execute(
-                f"SELECT source_id, source_path, relative_path, extension, size_bytes, content_hash, last_modified FROM files {where} ORDER BY source_id, relative_path LIMIT ? OFFSET ?",
+                f"SELECT source_id, source_path, relative_path, extension, size_bytes, content_hash, last_modified, line_count, decode_policy FROM files {where} ORDER BY source_id, relative_path LIMIT ? OFFSET ?",
                 [*params, limit, offset],
             ).fetchall()
         return {
             "files": [{
                 "sourceId": row["source_id"], "sourcePath": row["source_path"], "relativePath": row["relative_path"],
                 "extension": row["extension"], "sizeBytes": row["size_bytes"], "contentHash": row["content_hash"], "lastModified": row["last_modified"],
+                "lineCount": row["line_count"], "decodePolicy": row["decode_policy"],
             } for row in rows],
             "limit": limit, "offset": offset, "total": total,
         }
@@ -200,7 +221,7 @@ class InventoryStore:
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT id, source_id, relative_path, content_hash, size_bytes, last_modified FROM files {where}",
+                f"SELECT id, source_id, relative_path, content_hash, size_bytes, last_modified, line_count, decode_policy FROM files {where}",
                 params,
             ).fetchall()
         return [{
@@ -210,6 +231,8 @@ class InventoryStore:
             "contentHash": row["content_hash"],
             "sizeBytes": row["size_bytes"],
             "lastModified": row["last_modified"],
+            "lineCount": row["line_count"],
+            "decodePolicy": row["decode_policy"],
         } for row in rows]
 
     def analyzed_file_ids(self, file_ids: List[int]) -> set[int]:

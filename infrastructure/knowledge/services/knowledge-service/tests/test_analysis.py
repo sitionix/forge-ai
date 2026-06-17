@@ -1,9 +1,12 @@
+import hashlib
 import json
 import os
 import sqlite3
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from pydantic import ValidationError
@@ -19,10 +22,16 @@ from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.config import AppConfig
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
+from knowledge_service.graph_analysis import GraphAnalysisEngine
+from knowledge_service.graph_schema import GraphAnalysisResult
+from knowledge_service.graph_slice_service import GraphSliceRequest, GraphSliceService
 from knowledge_service.inventory_builder import InventoryBuilder
 from knowledge_service.inventory_refresh import BackgroundInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
+from knowledge_service.java_parser_adapter import JavaParserAdapter
 from knowledge_service.source_config import load_source_config
+from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer
+from knowledge_service.structural_model import StructuralFileMetadata
 
 
 class StubAnalyzer:
@@ -96,7 +105,242 @@ def valid_result():
     })
 
 
-def build_inventory(tmp_path, content=None, include_large=False, extra_files=None):
+def responsibility_graph_result(method_claim=True, type_claim=True, file_claim=False, method_confidence=0.86, method_summary="Handles object creation."):
+    nodes = [
+        {
+            "localId": "type1",
+            "nodeKind": "TYPE",
+            "name": "ObjectHandler",
+            "language": "java",
+            "qualifiedName": "example.ObjectHandler",
+            "displayName": "ObjectHandler",
+            "parentLocalId": "file1" if file_claim else None,
+            "lineStart": 1,
+            "lineEnd": 5,
+            "confidence": 0.91,
+            "metadata": {"sourceKind": "CLASS"},
+        },
+        {
+            "localId": "method1",
+            "nodeKind": "CALLABLE",
+            "name": "create",
+            "language": "java",
+            "qualifiedName": "example.ObjectHandler.create",
+            "displayName": "create",
+            "parentLocalId": "type1",
+            "lineStart": 3,
+            "lineEnd": 4,
+            "confidence": method_confidence,
+            "metadata": {"sourceKind": "METHOD"},
+        },
+    ]
+    edges = [
+        {
+            "localId": "declares-create",
+            "fromNodeLocalId": "type1",
+            "toNodeLocalId": "method1",
+            "edgeType": "DECLARES",
+            "confidence": 0.95,
+            "evidence": [{"lineStart": 3, "lineEnd": 4, "text": "create method declaration", "metadata": {}}],
+            "unresolvedTarget": None,
+            "metadata": {},
+        }
+    ]
+    claims = []
+    if file_claim:
+        nodes.insert(0, {
+            "localId": "file1",
+            "nodeKind": "FILE",
+            "name": "ObjectHandler.java",
+            "language": "java",
+            "qualifiedName": None,
+            "displayName": "ObjectHandler.java",
+            "parentLocalId": None,
+            "lineStart": 1,
+            "lineEnd": 5,
+            "confidence": 0.9,
+            "metadata": {"sourceKind": "FILE"},
+        })
+        edges.insert(0, {
+            "localId": "file-declares-type",
+            "fromNodeLocalId": "file1",
+            "toNodeLocalId": "type1",
+            "edgeType": "DECLARES",
+            "confidence": 0.9,
+            "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "class declaration", "metadata": {}}],
+            "unresolvedTarget": None,
+            "metadata": {},
+        })
+        claims.append({
+            "localId": "file-responsibility",
+            "nodeLocalId": "file1",
+            "claimKind": "RESPONSIBILITY",
+            "summary": "Defines an object handler file.",
+            "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "file content", "metadata": {}}],
+            "confidence": 0.82,
+            "metadata": {},
+        })
+    if type_claim:
+        claims.append({
+            "localId": "type-responsibility",
+            "nodeLocalId": "type1",
+            "claimKind": "RESPONSIBILITY",
+            "summary": "Handles object requests.",
+            "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "class body", "metadata": {}}],
+            "confidence": 0.88,
+            "metadata": {},
+        })
+    if method_claim:
+        claims.append({
+            "localId": "method-responsibility",
+            "nodeLocalId": "method1",
+            "claimKind": "RESPONSIBILITY",
+            "summary": method_summary,
+            "evidence": [{"lineStart": 3, "lineEnd": 4, "text": "method body", "metadata": {}}],
+            "confidence": method_confidence,
+            "metadata": {},
+        })
+    return GraphAnalysisResult.parse_obj({
+        "nodes": nodes,
+        "edges": edges,
+        "claims": claims,
+        "diagnostics": [],
+    })
+
+
+def shared_evidence_graph_result():
+    return GraphAnalysisResult.parse_obj({
+        "nodes": [
+            {
+                "localId": "file1",
+                "nodeKind": "FILE",
+                "name": "EmailVerificationLinkClientImpl.java",
+                "language": "java",
+                "lineStart": 1,
+                "lineEnd": 6,
+                "confidence": 1.0,
+                "metadata": {"sourceKind": "FILE", "factOrigin": "STATIC", "flowDomain": "CODE"},
+            },
+            {
+                "localId": "type1",
+                "nodeKind": "TYPE",
+                "name": "EmailVerificationLinkClientImpl",
+                "language": "java",
+                "qualifiedName": "example.EmailVerificationLinkClientImpl",
+                "parentLocalId": "file1",
+                "lineStart": 1,
+                "lineEnd": 6,
+                "confidence": 1.0,
+                "metadata": {"sourceKind": "CLASS", "factOrigin": "STATIC", "flowDomain": "CODE"},
+            },
+            {
+                "localId": "method1",
+                "nodeKind": "CALLABLE",
+                "name": "createLink",
+                "language": "java",
+                "qualifiedName": "example.EmailVerificationLinkClientImpl.createLink",
+                "parentLocalId": "type1",
+                "lineStart": 3,
+                "lineEnd": 5,
+                "confidence": 1.0,
+                "metadata": {"sourceKind": "METHOD", "factOrigin": "STATIC", "flowDomain": "CODE"},
+            },
+            {
+                "localId": "method2",
+                "nodeKind": "CALLABLE",
+                "name": "helper",
+                "language": "java",
+                "qualifiedName": "example.EmailVerificationLinkClientImpl.helper",
+                "parentLocalId": "type1",
+                "lineStart": 6,
+                "lineEnd": 6,
+                "confidence": 1.0,
+                "metadata": {"sourceKind": "METHOD", "factOrigin": "STATIC", "flowDomain": "CODE"},
+            },
+        ],
+        "edges": [
+            {
+                "localId": "declares-method",
+                "fromNodeLocalId": "type1",
+                "toNodeLocalId": "method1",
+                "edgeType": "DECLARES",
+                "confidence": 1.0,
+                "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "String createLink()", "metadata": {}}],
+                "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE"},
+            },
+            {
+                "localId": "same-callsite",
+                "fromNodeLocalId": "method1",
+                "toNodeLocalId": "method2",
+                "edgeType": "CALLS",
+                "confidence": 1.0,
+                "evidence": [{"lineStart": 4, "lineEnd": 4, "text": "helper(); helper();", "metadata": {"evidenceKind": "CALLSITE"}}],
+                "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "resolutionStatus": "RESOLVED", "methodName": "helper"},
+            },
+            {
+                "localId": "same-callsite",
+                "fromNodeLocalId": "method1",
+                "toNodeLocalId": "method2",
+                "edgeType": "CALLS",
+                "confidence": 1.0,
+                "evidence": [{"lineStart": 4, "lineEnd": 4, "text": "helper(); helper();", "metadata": {"evidenceKind": "CALLSITE"}}],
+                "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "resolutionStatus": "RESOLVED", "methodName": "helper"},
+            },
+        ],
+        "claims": [
+            {
+                "localId": "shared-claim",
+                "nodeLocalId": "method1",
+                "claimKind": "RESPONSIBILITY",
+                "summary": "Creates an email verification link.",
+                "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "method body", "metadata": {}}],
+                "confidence": 0.9,
+                "metadata": {"factOrigin": "LLM", "flowDomain": "CODE"},
+            },
+            {
+                "localId": "shared-claim",
+                "nodeLocalId": "method1",
+                "claimKind": "ROLE",
+                "summary": "Client helper method.",
+                "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "method body", "metadata": {}}],
+                "confidence": 0.8,
+                "metadata": {"factOrigin": "LLM", "flowDomain": "CODE"},
+            },
+        ],
+        "diagnostics": [],
+    })
+
+
+def materialize_graph_for_test(result, content=None, file_id=1, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java"):
+    content = content or "class EmailVerificationLinkClientImpl {\n  WebClient client;\n  String createLink() {\n    helper(); helper();\n  }\n  void helper() {}\n}\n"
+    row = {
+        "id": file_id,
+        "source_id": "edge-gateway",
+        "relative_path": relative_path,
+        "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    }
+    return GraphAnalysisEngine().materialize(row, "job-1", "test-analyzer", "1", result, content.splitlines())
+
+
+def graph_state_for_test(content=None, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java"):
+    content = content or "class EmailVerificationLinkClientImpl {}\n"
+    return {
+        "source_id": "edge-gateway",
+        "relative_path": relative_path,
+        "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "analyzer_name": "test-analyzer",
+        "analyzer_version": "1",
+        "engine_version": GRAPH_ENGINE_VERSION,
+        "flow_domain": "CODE",
+        "status": "ANALYZED",
+        "analyzed_at": "now",
+        "symbol_count": 0,
+        "relation_count": 0,
+        "diagnostics": [],
+    }
+
+
+def build_inventory(tmp_path, content=None, include_large=False, extra_files=None, include_patterns=None):
     workspace = tmp_path / "workspace"
     service = workspace / "edge-gateway"
     (service / "src/main/java/example").mkdir(parents=True)
@@ -127,13 +371,257 @@ def build_inventory(tmp_path, content=None, include_large=False, extra_files=Non
   path: "{catalog}"
   workspace_root: "{workspace}"
 indexing:
-  include: ["**/*.java"]
+  include: {json.dumps(include_patterns or ["**/*.java"])}
 """,
         encoding="utf-8",
     )
     store = InventoryStore(tmp_path / "knowledge.sqlite")
     InventoryBuilder(load_source_config(config), store).build([], [])
     return store, config, service
+
+
+def test_analysis_store_migrates_old_integer_graph_diagnostics_schema(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE sources (source_id TEXT PRIMARY KEY, display_name TEXT)")
+        conn.execute("INSERT INTO sources(source_id, display_name) VALUES ('edge-gateway', 'Edge Gateway')")
+        conn.execute("""
+            CREATE TABLE files (
+                id INTEGER PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                relative_path TEXT NOT NULL
+            )
+        """)
+        conn.execute("INSERT INTO files(id, source_id, relative_path) VALUES (1, 'edge-gateway', 'workflow.yml')")
+        conn.execute("""
+            CREATE TABLE analysis_graph_diagnostics (
+                id INTEGER PRIMARY KEY,
+                job_id TEXT,
+                source_id TEXT NOT NULL,
+                inventory_file_id INTEGER,
+                analysis_file_id INTEGER,
+                relative_path TEXT,
+                stage TEXT NOT NULL,
+                code TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                message TEXT NOT NULL,
+                candidate_id TEXT,
+                line_start INTEGER,
+                line_end INTEGER,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                fact_origin TEXT,
+                flow_domain TEXT
+            )
+        """)
+        conn.execute("""
+            INSERT INTO analysis_graph_diagnostics(
+                source_id, stage, code, severity, message, metadata_json, created_at
+            )
+            VALUES ('edge-gateway', 'OLD', 'OLD_DIAGNOSTIC', 'WARN', 'old', '{}', 'now')
+        """)
+
+    AnalysisStore(db_path).init()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(analysis_graph_diagnostics)").fetchall()}
+        assert str(columns["id"]["type"]).upper() == "TEXT"
+        assert columns["id"]["pk"] == 1
+        conn.execute("""
+            INSERT INTO analysis_graph_diagnostics(
+                id, job_id, source_id, severity, stage, code, message, metadata_json, created_at
+            )
+            VALUES ('diagnostic:text-id', 'job-1', 'edge-gateway', 'WARN', 'STRUCTURAL_PARSE',
+                    'STRUCTURAL_PARSER_NOT_AVAILABLE', 'No parser.', '{}', 'now')
+        """)
+        assert conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT 1 FROM analysis_schema_migrations WHERE version = 4"
+        ).fetchone()
+
+    AnalysisStore(db_path).init()
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM analysis_graph_diagnostics WHERE id = 'diagnostic:text-id'"
+        ).fetchone()[0] == 1
+
+
+def test_graph_persistence_failure_is_reported_as_graph_store_error(tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    bad_graph = {
+        "nodes": [{
+            "id": "node-1",
+            "job_id": "job-1",
+            "source_id": "edge-gateway",
+            "inventory_file_id": 1,
+            "analysis_file_id": 1,
+            "stable_key": "edge-gateway|bad.yml|FILE",
+            "node_kind": "FILE",
+            "language": "yaml",
+            "name": None,
+            "qualified_name": None,
+            "display_name": None,
+            "parent_node_id": None,
+            "line_start": 1,
+            "line_end": 1,
+            "confidence": 1.0,
+            "status": "TRUSTED",
+            "metadata": {},
+            "fact_origin": "STATIC",
+            "flow_domain": "WORKFLOW",
+        }],
+        "edges": [],
+        "claims": [],
+        "evidence": [],
+        "diagnostics": [],
+    }
+
+    with pytest.raises(KnowledgeError) as raised:
+        store.replace_file_graph_analysis(1, {
+            "source_id": "edge-gateway",
+            "relative_path": "bad.yml",
+            "content_hash": "hash",
+            "analyzer_name": "ai-file-analyzer",
+            "analyzer_version": "1",
+            "engine_version": GRAPH_ENGINE_VERSION,
+            "flow_domain": "WORKFLOW",
+            "status": "ANALYZED",
+            "analyzed_at": "now",
+            "symbol_count": 1,
+            "relation_count": 0,
+            "diagnostics": [],
+        }, bad_graph)
+
+    assert raised.value.code == "ANALYSIS_GRAPH_STORE_FAILED"
+    assert raised.value.details["stage"] == "GRAPH_STORE"
+    assert raised.value.details["table"] == "analysis_graph_nodes"
+    assert raised.value.details["operation"] == "insert_nodes"
+    assert "NOT NULL" in raised.value.details["sqliteMessage"]
+
+
+def test_analysis_store_init_is_safe_for_parallel_graph_requests(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+
+    def initialize_store(_index: int) -> None:
+        AnalysisStore(db_path).init()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(initialize_store, range(24)))
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_nodes'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_edges'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_diagnostics'").fetchone()[0] == 1
+
+
+def test_graph_materialization_generates_unique_evidence_ids_for_shared_ranges():
+    graph = materialize_graph_for_test(shared_evidence_graph_result())
+    evidence_ids = [item["id"] for item in graph["evidence"]]
+    edge_ids = [item["id"] for item in graph["edges"]]
+    claim_ids = [item["id"] for item in graph["claims"]]
+
+    assert len(evidence_ids) == len(set(evidence_ids))
+    assert len(edge_ids) == len(set(edge_ids))
+    assert len(claim_ids) == len(set(claim_ids))
+    assert len(graph["evidence"]) == 5
+
+
+def test_graph_store_accepts_shared_evidence_ranges_and_replaces_file_twice(tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    content = "class EmailVerificationLinkClientImpl {\n  WebClient client;\n  String createLink() {\n    helper(); helper();\n  }\n  void helper() {}\n}\n"
+    first_graph = materialize_graph_for_test(shared_evidence_graph_result(), content=content)
+    second_graph = materialize_graph_for_test(shared_evidence_graph_result(), content=content)
+    state = graph_state_for_test(content)
+
+    assert {item["id"] for item in first_graph["evidence"]} == {item["id"] for item in second_graph["evidence"]}
+
+    store.replace_file_graph_analysis(1, state, first_graph)
+    store.replace_file_graph_analysis(1, state, second_graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        counts = {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in [
+                "analysis_graph_nodes",
+                "analysis_graph_edges",
+                "analysis_graph_claims",
+                "analysis_graph_evidence",
+            ]
+        }
+
+    assert counts["analysis_graph_nodes"] == len(second_graph["nodes"])
+    assert counts["analysis_graph_edges"] == len(second_graph["edges"])
+    assert counts["analysis_graph_claims"] == len(second_graph["claims"])
+    assert counts["analysis_graph_evidence"] == len(second_graph["evidence"])
+
+
+def test_duplicate_evidence_id_is_reported_as_graph_store_error_without_partial_rows(tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    content = "class EmailVerificationLinkClientImpl {\n  void createLink() { helper(); helper(); }\n  void helper() {}\n}\n"
+    graph = materialize_graph_for_test(shared_evidence_graph_result(), content=content)
+    graph["evidence"][1]["id"] = graph["evidence"][0]["id"]
+
+    with pytest.raises(KnowledgeError) as raised:
+        store.replace_file_graph_analysis(1, graph_state_for_test(content), graph)
+
+    assert raised.value.code == "ANALYSIS_GRAPH_STORE_FAILED"
+    assert raised.value.details["stage"] == "GRAPH_STORE"
+    assert raised.value.details["table"] == "analysis_graph_evidence"
+    assert raised.value.details["operation"] == "insert_evidence"
+    assert "UNIQUE constraint failed: analysis_graph_evidence.id" in raised.value.details["sqliteMessage"]
+    with sqlite3.connect(store.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence").fetchone()[0] == 0
+
+
+def test_reduced_email_verification_client_chained_calls_store_without_evidence_collision(tmp_path):
+    content = """package example;
+
+import org.springframework.web.reactive.function.client.WebClient;
+
+class EmailVerificationLinkClientImpl {
+  private final WebClient client;
+
+  String createLink(String email) {
+    return client.get().uri("/verify", email).retrieve().bodyToMono(String.class).block();
+  }
+}
+"""
+    file_metadata = StructuralFileMetadata(
+        source_id="edge-gateway",
+        inventory_file_id=1,
+        relative_path="clients/client-athssox/src/main/java/com/sitionix/ntfssox/client/EmailVerificationLinkClientImpl.java",
+        language="java",
+        flow_domain="CODE",
+        content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        line_count=len(content.splitlines()),
+        decode_policy="utf-8:replace",
+    )
+    structural = JavaParserAdapter().parse(content, file_metadata)
+    graph_result = StaticGraphMaterializer().to_graph(structural)
+    graph = materialize_graph_for_test(graph_result, content=content, relative_path=file_metadata.relative_path)
+    evidence_ids = [item["id"] for item in graph["evidence"]]
+
+    assert len(evidence_ids) == len(set(evidence_ids))
+    assert any(edge["edge_type"] == "CALLS" for edge in graph["edges"])
+
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(1, graph_state_for_test(content, file_metadata.relative_path), graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        edge_count = conn.execute("SELECT COUNT(*) FROM analysis_graph_edges WHERE edge_type = 'CALLS'").fetchone()[0]
+        evidence_count = conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence").fetchone()[0]
+
+    assert edge_count > 0
+    assert evidence_count == len(evidence_ids)
 
 
 def build_two_service_inventory(tmp_path):
@@ -370,10 +858,13 @@ def test_large_file_skipped(tmp_path):
 
     job = runner.start(AnalysisBuildRequest(), StubAnalyzer())
     final = wait_job(store, job["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "SKIPPED_TOO_LARGE_FOR_AI_ANALYSIS", None, 10, 0)
+    skipped = AnalysisStore(store.db_path).files(None, "SKIPPED_TOO_LARGE_FOR_AI_ANALYSIS", None, 10, 0)
+    analyzed = AnalysisStore(store.db_path).files(None, "ANALYZED", "LargeFile", 10, 0)
 
     assert final["status"] == "COMPLETED"
-    assert files["total"] == 1
+    assert skipped["total"] == 0
+    assert analyzed["total"] == 1
+    assert {item["code"] for item in analyzed["files"][0]["diagnostics"]} >= {"ANALYSIS_FILE_TOO_LARGE"}
 
 
 def test_unchanged_file_not_picked_by_new_job(tmp_path):
@@ -398,7 +889,7 @@ def test_failed_file_with_unchanged_hash_is_picked_for_retry(tmp_path):
     second = wait_job(store, runner.start(AnalysisBuildRequest(), retry_analyzer)["jobId"])
     analyzed = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
 
-    assert first["failedFileCount"] == 1
+    assert first["failedFileCount"] == 0
     assert second["fileCount"] == 1
     assert second["processedFileCount"] == 1
     assert second["failedFileCount"] == 0
@@ -429,7 +920,7 @@ def test_unchanged_file_lookup_batches_large_inventory(tmp_path):
 
     unchanged_ids = analysis_store.unchanged_file_ids(rows, StubAnalyzer.name, StubAnalyzer.version)
 
-    assert unchanged_ids == {row["id"] for row in rows}
+    assert unchanged_ids == set()
 
 
 def test_analysis_max_files_uses_stable_inventory_order(tmp_path):
@@ -482,9 +973,10 @@ def test_changed_file_reanalyzed_and_previous_analysis_removed(tmp_path):
     })))["jobId"])
     second_symbols = AnalysisStore(store.db_path).symbols(None, None, None, None, None, 100, 0)
 
-    assert first_symbols["total"] == 2
-    assert second_symbols["total"] == 1
-    assert second_symbols["symbols"][0]["name"] == "updated"
+    assert first_symbols["total"] == 3
+    assert second_symbols["total"] == 3
+    assert "updated" in {symbol["name"] for symbol in second_symbols["symbols"]}
+    assert "create" not in {symbol["name"] for symbol in second_symbols["symbols"]}
 
 
 def test_freshness_up_to_date_after_completed_scan_with_unchanged_files(tmp_path):
@@ -729,8 +1221,10 @@ def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
     assert migrations == [
         (1, "remove_legacy_analysis_job_counter"),
         (2, "add_analysis_job_source_scope"),
+        (3, "reset_analysis_cache_for_graph_v1_cutover"),
+        (4, "reconcile_graph_diagnostics_schema"),
     ]
-    assert migration_count == 2
+    assert migration_count == 4
 
 
 def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path):
@@ -757,10 +1251,16 @@ def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path
     unblock.set()
     old_final = wait_job(store, old_job_id)
     files = analysis_store.files(None, "ANALYZED", None, 10, 0)
+    with sqlite3.connect(store.db_path) as conn:
+        old_job_file_statuses = {
+            row[0]
+            for row in conn.execute("SELECT status FROM analysis_job_files WHERE job_id = ?", (old_job_id,)).fetchall()
+        }
 
     assert new_final["status"] == "COMPLETED"
     assert old_final["status"] == "STOPPED"
     assert files["total"] == 1
+    assert old_job_file_statuses == {"STOPPED"}
 
 
 def _legacy_skipped_unchanged_key():
@@ -785,10 +1285,11 @@ def test_failed_ai_file_does_not_crash_whole_service(tmp_path):
 
     assert final["status"] == "COMPLETED"
     assert final["processedFileCount"] == 1
-    assert final["failedFileCount"] == 1
+    assert final["failedFileCount"] == 0
     service = AnalysisStore(store.db_path).service_status(None, StubAnalyzer.name, StubAnalyzer.version, store.status())["services"][0]
     assert service["analysis"]["processedFileCount"] == 1
-    assert service["analysis"]["failedFileCount"] == 1
+    assert service["analysis"]["analyzedFileCount"] == 1
+    assert service["analysis"]["failedFileCount"] == 0
     assert service["analysis"]["pendingFileCount"] == 0
     assert service["diagnostics"][0]["code"] == "ANALYSIS_FILE_FAILED"
     assert service["diagnostics"][0]["count"] == 1
@@ -815,7 +1316,7 @@ def test_service_status_uses_active_job_counts_while_running(tmp_path):
 
     assert service["analysis"]["status"] == "RUNNING"
     assert service["analysis"]["processedFileCount"] == 0
-    assert service["analysis"]["failedFileCount"] == 1
+    assert service["analysis"]["failedFileCount"] == 0
     assert service["analysis"]["pendingFileCount"] == 0
     assert service["analysis"]["currentRelativePath"] == "src/main/java/example/ObjectHandler.java"
 
@@ -843,9 +1344,9 @@ def test_max_attempts_exceeded_marks_file_failed_with_preview(tmp_path):
     ])
     runner = AnalysisJobRunner(store, app_config_with_retries(tmp_path, 2))
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "FAILED", None, 10, 0)
+    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
 
-    assert final["failedFileCount"] == 1
+    assert final["failedFileCount"] == 0
     assert files["files"][0]["attemptCount"] == 2
     assert files["files"][0]["lastErrorCode"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"
     assert files["files"][0]["lastRawResponsePreview"] == "{bad again"
@@ -863,15 +1364,15 @@ def test_timeout_marks_file_failed_and_continues(tmp_path):
     runner = AnalysisJobRunner(store, app_config_with_retries(tmp_path, 3))
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
     files = AnalysisStore(store.db_path).files(None, None, None, 10, 0)
-    failed = AnalysisStore(store.db_path).files(None, "FAILED", None, 10, 0)
+    first = AnalysisStore(store.db_path).files(None, "ANALYZED", "ObjectHandler", 10, 0)
 
     assert final["status"] == "COMPLETED"
     assert final["processedFileCount"] == 2
-    assert final["failedFileCount"] == 1
+    assert final["failedFileCount"] == 0
     assert analyzer.calls == 2
-    assert {file["analysisStatus"] for file in files["files"]} == {"ANALYZED", "FAILED"}
-    assert failed["files"][0]["attemptCount"] == 1
-    assert failed["files"][0]["lastErrorCode"] == "ANALYSIS_AI_TIMEOUT"
+    assert {file["analysisStatus"] for file in files["files"]} == {"ANALYZED"}
+    assert first["files"][0]["attemptCount"] == 1
+    assert first["files"][0]["lastErrorCode"] == "ANALYSIS_AI_TIMEOUT"
 
 
 def test_transport_error_marks_file_failed_and_continues_after_attempts(tmp_path):
@@ -886,7 +1387,7 @@ def test_transport_error_marks_file_failed_and_continues_after_attempts(tmp_path
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
 
     assert final["processedFileCount"] == 2
-    assert final["failedFileCount"] == 1
+    assert final["failedFileCount"] == 0
 
 
 def test_last_progress_at_updates(tmp_path):
@@ -926,6 +1427,382 @@ def test_symbols_and_relations_endpoints_return_roles_and_evidence(tmp_path):
 
     assert symbols["symbols"][0]["roles"][0]["evidence"]
     assert relations["relations"][0]["evidence"]
+
+
+def test_runtime_analysis_writes_graph_tables_and_not_legacy_symbols(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result()))["jobId"])
+
+    with sqlite3.connect(store.db_path) as conn:
+        counts = {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in [
+                "analysis_graph_nodes",
+                "analysis_graph_edges",
+                "analysis_graph_claims",
+                "analysis_graph_evidence",
+                "analysis_symbols",
+                "analysis_relations",
+            ]
+        }
+
+    assert counts["analysis_graph_nodes"] > 0
+    assert counts["analysis_graph_edges"] > 0
+    assert counts["analysis_graph_claims"] > 0
+    assert counts["analysis_graph_evidence"] > 0
+    assert counts["analysis_symbols"] == 0
+    assert counts["analysis_relations"] == 0
+
+
+def test_runtime_analysis_writes_graph_engine_job_file_flow_and_line_metadata(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        job = conn.execute("SELECT engine_version FROM analysis_jobs WHERE job_id = ?", (final["jobId"],)).fetchone()
+        analysis_file = conn.execute("SELECT engine_version, flow_domain FROM analysis_files").fetchone()
+        job_file = conn.execute("SELECT status, engine_version, flow_domain, line_count FROM analysis_job_files").fetchone()
+        inventory_file = conn.execute("SELECT line_count, decode_policy FROM files").fetchone()
+        static_nodes = conn.execute("SELECT COUNT(*) AS count FROM analysis_graph_nodes WHERE fact_origin = 'STATIC'").fetchone()
+
+    assert job["engine_version"] == GRAPH_ENGINE_VERSION
+    assert analysis_file["engine_version"] == GRAPH_ENGINE_VERSION
+    assert analysis_file["flow_domain"] == "CODE"
+    assert job_file["status"] == "ANALYZED"
+    assert job_file["engine_version"] == GRAPH_ENGINE_VERSION
+    assert job_file["flow_domain"] == "CODE"
+    assert job_file["line_count"] > 0
+    assert inventory_file["line_count"] > 0
+    assert inventory_file["decode_policy"] == "utf-8:replace"
+    assert static_nodes["count"] > 0
+
+
+def test_runtime_analysis_persists_unsupported_yaml_file_node_and_structural_diagnostic(tmp_path):
+    store, _, _ = build_inventory(
+        tmp_path,
+        extra_files={
+            ".github/workflows/build.yml": "name: build\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n",
+        },
+        include_patterns=["**/*.yml"],
+    )
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        node = conn.execute("""
+            SELECT node_kind, fact_origin, flow_domain
+            FROM analysis_graph_nodes
+            WHERE source_id = 'edge-gateway'
+        """).fetchone()
+        diagnostic = conn.execute("""
+            SELECT id, stage, code, severity, fact_origin, flow_domain
+            FROM analysis_graph_diagnostics
+            WHERE source_id = 'edge-gateway'
+        """).fetchone()
+        analysis_file = conn.execute("SELECT status, last_error_code FROM analysis_files").fetchone()
+        job_file = conn.execute("SELECT status, flow_domain FROM analysis_job_files").fetchone()
+
+    assert final["status"] == "COMPLETED"
+    assert final["failedFileCount"] == 0
+    assert node["node_kind"] == "FILE"
+    assert node["fact_origin"] == "STATIC"
+    assert node["flow_domain"] == "WORKFLOW"
+    assert diagnostic["id"].startswith("analysis-graph-diagnostic:")
+    assert diagnostic["stage"] == "STRUCTURAL_PARSE"
+    assert diagnostic["code"] == "STRUCTURAL_PARSER_NOT_AVAILABLE"
+    assert diagnostic["severity"] == "WARN"
+    assert diagnostic["fact_origin"] == "STATIC"
+    assert diagnostic["flow_domain"] == "WORKFLOW"
+    assert analysis_file["status"] == "ANALYZED"
+    assert analysis_file["last_error_code"] is None
+    assert job_file["status"] == "ANALYZED_WITH_DIAGNOSTICS"
+    assert job_file["flow_domain"] == "WORKFLOW"
+    graph = AnalysisStore(store.db_path).graph(
+        "edge-gateway", None, None, None, None, None, None, None, 2, 150, False, True
+    )
+    assert graph["nodes"][0]["nodeKind"] == "FILE"
+    assert graph["diagnostics"][0]["code"] == "STRUCTURAL_PARSER_NOT_AVAILABLE"
+
+
+def test_runtime_resolves_field_receiver_calls_when_target_type_is_unique(tmp_path):
+    store, _, _ = build_inventory(tmp_path, extra_files={
+        "src/main/java/example/Controller.java": """package example;
+class Controller {
+  private final TicketMapper mapper;
+  TicketDto handle(Ticket ticket) {
+    return mapper.toApi(ticket);
+  }
+}
+""",
+        "src/main/java/example/TicketMapper.java": """package example;
+class TicketMapper {
+  TicketDto toApi(Ticket ticket) {
+    return new TicketDto();
+  }
+}
+""",
+    })
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""
+            SELECT e.resolution_status, e.metadata_json, from_node.name AS from_name, to_node.name AS to_name
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes from_node ON from_node.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes to_node ON to_node.id = e.to_node_id
+            WHERE e.edge_type = 'CALLS'
+              AND from_node.name = 'handle'
+        """).fetchall()
+    row = next(item for item in rows if json.loads(item["metadata_json"]).get("methodName") == "toApi")
+
+    assert row["resolution_status"] == "RESOLVED"
+    assert row["from_name"] == "handle"
+    assert row["to_name"] == "toApi"
+    assert json.loads(row["metadata_json"])["resolver"] == "STATIC_TYPE_HINT"
+
+
+def test_graph_slice_service_returns_compact_callable_slice_with_groups_and_uncertainties(tmp_path):
+    store, _, _ = build_inventory(tmp_path, content="""package example;
+class Controller {
+  private final TicketMapper mapper;
+  void handle(String id, MissingClient missingClient) {
+    TicketDto dto = mapper.toApi(new Ticket());
+    missingClient.send(dto);
+    java.util.Objects.requireNonNull(id);
+  }
+}
+class TicketMapper {
+  TicketDto toApi(Ticket ticket) { return new TicketDto(); }
+}
+class TicketDto {}
+class Ticket {}
+""")
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+    method = next(
+        item for item in AnalysisStore(store.db_path).symbols("edge-gateway", None, None, None, "handle", 20, 0)["symbols"]
+        if item["nodeKind"] == "CALLABLE" and item["name"] == "handle"
+    )
+
+    result = GraphSliceService(AnalysisStore(store.db_path)).slice(GraphSliceRequest(
+        source_id="edge-gateway",
+        root_graph_node_id=method["symbolId"],
+        flow_domain="CODE",
+        direction="OUTBOUND",
+        depth=2,
+        max_nodes=40,
+        max_edges=60,
+        include_external="collapsed",
+        include_unresolved=True,
+    ))
+
+    assert result["root"]["label"] == "handle"
+    assert any(node["label"] == "toApi" for node in result["nodes"])
+    assert any(edge["edgeType"] == "CALLS" for edge in result["edges"])
+    assert_node_closed_graph_response(result)
+    assert result["groups"]
+    assert any(item["unresolvedReason"] == "TARGET_NOT_ANALYZED" for item in result["uncertainties"])
+    assert result["metrics"]["callsTaxonomy"]["callKind"]["FIELD_RECEIVER"] >= 1
+
+
+def test_graph_slice_endpoint_returns_slice_response(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+    method = next(
+        item for item in AnalysisStore(store.db_path).symbols("edge-gateway", None, None, None, "create", 20, 0)["symbols"]
+        if item["nodeKind"] == "CALLABLE" and item["name"] == "create"
+    )
+
+    result = get_json(f"/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&rootGraphNodeId={quote(method['symbolId'])}&flowDomain=CODE&depth=1")
+
+    assert result["status"] == 200
+    assert result["json"]["root"]["id"] == method["symbolId"]
+    assert result["json"]["metrics"]["sliceNodeCount"] >= 1
+    assert "groups" in result["json"]
+    assert "uncertainties" in result["json"]
+    assert_node_closed_graph_response(result["json"])
+
+
+def test_graph_slice_endpoint_returns_source_overview_without_selected_root(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&flowDomain=CODE&depth=1")
+
+    assert result["status"] == 200
+    assert result["json"]["sourceId"] == "edge-gateway"
+    assert result["json"]["root"] is None
+    assert result["json"]["nodes"]
+    assert result["json"]["metrics"]["sliceNodeCount"] >= 1
+    assert_node_closed_graph_response(result["json"])
+
+
+def test_graph_slice_endpoint_source_overview_hides_isolated_nodes_by_default(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+    insert_isolated_graph_nodes(store.db_path, count=6)
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&flowDomain=CODE&depth=1&maxNodes=80&maxEdges=120")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert_node_closed_graph_response(body)
+    assert body["metrics"]["overviewSelectionReason"] == "CONNECTED_COMPONENTS_FIRST"
+    assert body["metrics"]["hiddenIsolatedCount"] >= 6
+    assert not any(node["id"].startswith("test-isolated-node-") for node in body["nodes"])
+    assert any(group["groupType"] == "ISOLATED_NODES" for group in body["groups"])
+
+
+def test_graph_slice_endpoint_source_overview_can_include_isolated_nodes(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+    insert_isolated_graph_nodes(store.db_path, count=3)
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&flowDomain=CODE&depth=1&maxNodes=80&maxEdges=120&includeIsolated=true")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert_node_closed_graph_response(body)
+    assert body["metrics"]["hiddenIsolatedCount"] == 0
+    assert any(node["id"].startswith("test-isolated-node-") for node in body["nodes"])
+
+
+def test_graph_slice_endpoint_can_omit_claim_payload_for_lightweight_canvas(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&flowDomain=CODE&depth=1&includeClaims=false")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert body["nodes"]
+    assert body["claims"] == []
+    assert all(node["claims"] == [] for node in body["nodes"])
+    assert body["request"]["includeClaims"] is False
+
+
+def test_graph_slice_endpoint_max_nodes_zero_returns_all_available_nodes(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+    insert_isolated_graph_nodes(store.db_path, count=300)
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&flowDomain=CODE&depth=1&maxNodes=0&maxEdges=0&includeIsolated=true")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert len(body["nodes"]) > 250
+    assert body["metrics"]["hiddenIsolatedCount"] == 0
+    assert body["metrics"]["sliceNodeCount"] == len(body["nodes"])
+    assert any(node["id"].startswith("test-isolated-node-") for node in body["nodes"])
+    assert_node_closed_graph_response(body)
+
+
+def test_graph_slice_endpoint_stale_selected_root_falls_back_to_source_overview(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&rootGraphNodeId=stale-node&flowDomain=CODE&depth=1")
+
+    assert result["status"] == 200
+    assert result["json"]["sourceId"] == "edge-gateway"
+    assert result["json"]["root"] is None
+    assert result["json"]["nodes"]
+    assert result["json"]["diagnostics"][0]["code"] == "GRAPH_SLICE_ROOT_NOT_FOUND"
+    assert result["json"]["diagnostics"][0]["metadata"]["fallback"] == "SOURCE_OVERVIEW"
+    assert_node_closed_graph_response(result["json"])
+
+
+def test_graph_slice_endpoint_missing_root_without_source_remains_controlled_not_found(tmp_path, monkeypatch):
+    configure_api(tmp_path, monkeypatch)
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?rootGraphNodeId=stale-node&flowDomain=CODE&depth=1")
+
+    assert result["status"] == 404
+    assert result["json"]["code"] == "GRAPH_NODE_NOT_FOUND"
+
+
+def test_callable_endpoint_returns_direct_callable_responsibility(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result()))["jobId"])
+    method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
+
+    graph = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, True, False)
+    selected = graph["selected"]["node"]
+
+    assert selected["nodeKind"] == "CALLABLE"
+    assert selected["claimSummary"] == "Handles object creation."
+    assert selected["summarySource"] == "DIRECT"
+    assert selected["summaryClaimNodeId"] == selected["id"]
+    assert selected["summaryConfidence"] == 0.86
+
+
+def test_callable_without_direct_claim_uses_parent_fallback_with_provenance(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(method_claim=False, type_claim=True)))["jobId"])
+    method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
+
+    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, False, False)["selected"]["node"]
+
+    assert selected["claimSummary"] == "Handles object requests."
+    assert selected["summarySource"] == "PARENT_FALLBACK"
+    assert selected["summaryClaimNodeId"] == selected["parentNodeId"]
+
+
+def test_callable_without_type_claim_uses_file_fallback_with_provenance(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(method_claim=False, type_claim=False, file_claim=True)))["jobId"])
+    method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
+
+    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, False, False)["selected"]["node"]
+
+    assert selected["claimSummary"] == "Defines an object handler file."
+    assert selected["summarySource"] == "FILE_FALLBACK"
+    assert selected["summaryClaimNodeId"] != selected["id"]
+
+
+def test_low_confidence_callable_claim_is_debug_only_and_not_trusted(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(method_claim=True, type_claim=False, method_confidence=0.2)))["jobId"])
+    method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
+
+    graph = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, True, False)
+    selected = graph["selected"]["node"]
+    responsibility = next(claim for claim in selected["claims"] if claim["claimKind"] == "RESPONSIBILITY")
+
+    assert selected["status"] == "TRUSTED"
+    assert selected["summarySource"] == "NONE"
+    assert responsibility["status"] == "DEBUG_ONLY"
+    assert responsibility["rejectionReason"] is None or responsibility["rejectionReason"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD"
+    assert selected["summaryConfidence"] is None
+
+
+def test_generic_file_level_callable_summary_is_not_used_as_direct_summary(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(
+        method_claim=True,
+        type_claim=False,
+        method_summary="This Java file contains an object handler.",
+    )))["jobId"])
+    method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
+
+    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, True, False)["selected"]["node"]
+    responsibility = next(claim for claim in selected["claims"] if claim["claimKind"] == "RESPONSIBILITY")
+
+    assert selected["summarySource"] == "NONE"
+    assert selected["claimSummary"] is None
+    assert responsibility["status"] == "DEBUG_ONLY"
+    assert responsibility["rejectionReason"] == "GENERIC_FILE_LEVEL_CALLABLE_SUMMARY"
 
 
 def test_no_source_file_mutation(tmp_path):
@@ -971,6 +1848,96 @@ def post_json(path, payload):
 def get_json(path):
     import asyncio
     return asyncio.run(asgi_json("GET", path, None))
+
+
+def assert_node_closed_graph_response(body):
+    node_ids = {node["id"] for node in body["nodes"]}
+    for edge in body["edges"]:
+        assert edge["from"] in node_ids
+        assert edge["to"] in node_ids
+
+
+def insert_isolated_graph_nodes(db_path, count=5):
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        base = conn.execute("""
+            SELECT job_id, source_id, inventory_file_id, analysis_file_id, language, flow_domain
+            FROM analysis_graph_nodes
+            WHERE source_id = 'edge-gateway'
+            LIMIT 1
+        """).fetchone()
+        assert base is not None
+        for index in range(count):
+            conn.execute("""
+                INSERT INTO analysis_graph_nodes(
+                    id, job_id, source_id, inventory_file_id, analysis_file_id, stable_key,
+                    node_kind, language, name, qualified_name, display_name, parent_node_id,
+                    line_start, line_end, confidence, status, metadata_json, created_at,
+                    fact_origin, flow_domain
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                f"test-isolated-node-{index}",
+                base["job_id"],
+                base["source_id"],
+                base["inventory_file_id"],
+                base["analysis_file_id"],
+                f"edge-gateway|isolated|{index}",
+                "CALLABLE",
+                base["language"],
+                f"isolated{index}",
+                f"example.Isolated{index}.isolated",
+                f"isolated{index}",
+                1,
+                1,
+                1.0,
+                "TRUSTED",
+                json.dumps({"testFixture": True}),
+                "now",
+                "STATIC",
+                base["flow_domain"] or "CODE",
+            ))
+
+
+def insert_unresolved_graph_edge(db_path):
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        from_node = conn.execute("""
+            SELECT *
+            FROM analysis_graph_nodes
+            WHERE source_id = 'edge-gateway'
+            ORDER BY node_kind = 'CALLABLE' DESC, confidence DESC
+            LIMIT 1
+        """).fetchone()
+        assert from_node is not None
+        conn.execute("""
+            INSERT INTO analysis_graph_edges(
+                id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id,
+                to_node_id, edge_type, resolution_status, confidence, evidence_id,
+                unresolved_target_json, metadata_json, status, created_at, fact_origin, flow_domain
+            )
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+        """, (
+            "test-unresolved-edge-without-endpoint",
+            from_node["job_id"],
+            from_node["source_id"],
+            from_node["inventory_file_id"],
+            from_node["analysis_file_id"],
+            from_node["id"],
+            "CALLS",
+            "UNRESOLVED",
+            1.0,
+            json.dumps({"name": "MissingTarget", "methodName": "missing"}),
+            json.dumps({
+                "methodName": "missing",
+                "unresolvedReason": "TARGET_NOT_ANALYZED",
+                "sliceDefaultVisibility": "SHOW_AS_UNCERTAINTY",
+            }),
+            "TRUSTED",
+            "now",
+            "STATIC",
+            from_node["flow_domain"] or "CODE",
+        ))
 
 
 async def asgi_json(method, path, payload):
@@ -1059,10 +2026,187 @@ def test_analysis_api_status_files_symbols_relations(tmp_path, monkeypatch):
     symbols = get_json("/api/v1/knowledge/analysis/symbols?role=HTTP_HANDLER")
     relations = get_json("/api/v1/knowledge/analysis/relations?relation=CONTAINS")
 
-    assert status["json"]["symbolCount"] == 2
+    assert status["json"]["symbolCount"] == 3
     assert files["json"]["total"] == 1
     assert symbols["json"]["symbols"][0]["roles"][0]["role"] == "HTTP_HANDLER"
     assert relations["json"]["relations"][0]["relation"] == "CONTAINS"
+
+
+def test_analysis_graph_api_returns_overview_with_progress_and_facts(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert body["sourceId"] == "edge-gateway"
+    assert body["status"]["analysisStatus"] == "READY"
+    assert body["status"]["progressPercent"] == 100.0
+    assert body["nodes"]
+    assert body["edges"][0]["edgeType"] == "CONTAINS"
+    assert body["nodes"][0]["graphNodeId"]
+    assert body["meta"]["totalNodeCount"] == 3
+    assert_node_closed_graph_response(body)
+
+
+def test_analysis_graph_api_can_omit_claim_payload_for_lightweight_canvas(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&includeClaims=false")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert body["nodes"]
+    assert body["claims"] == []
+    assert all(node["claims"] == [] for node in body["nodes"])
+    assert body["filters"]["includeClaims"] is False
+
+
+def test_analysis_graph_api_omits_edges_with_missing_returned_endpoints(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    insert_unresolved_graph_edge(store.db_path)
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&limit=80")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert_node_closed_graph_response(body)
+    assert body["meta"]["skippedMissingEndpointCount"] >= 1
+    assert body["meta"]["skippedEdgeCount"] >= 1
+    assert "EDGE_ENDPOINT_NOT_RETURNED" in body["meta"]["truncationReason"]
+
+
+def test_analysis_graph_api_limit_zero_returns_all_available_nodes(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    insert_isolated_graph_nodes(store.db_path, count=520)
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&limit=0")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert len(body["nodes"]) > 500
+    assert body["meta"]["returnedNodeCount"] == body["meta"]["totalNodeCount"]
+    assert_node_closed_graph_response(body)
+
+
+def test_analysis_graph_api_returns_slice_around_selected_node_and_depth_limit(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    symbols = get_json("/api/v1/knowledge/analysis/symbols?sourceId=edge-gateway")["json"]["symbols"]
+    selected = symbols[0]["symbolId"]
+
+    depth_zero = get_json(f"/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&graphNodeId={quote(selected)}&depth=0")
+    depth_one = get_json(f"/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&graphNodeId={quote(selected)}&depth=1")
+
+    assert [node["id"] for node in depth_zero["json"]["nodes"]] == [selected]
+    assert depth_zero["json"]["edges"] == []
+    assert depth_one["json"]["selected"]["node"]["id"] == selected
+    assert len(depth_one["json"]["nodes"]) == 2
+    assert len(depth_one["json"]["edges"]) == 1
+    assert_node_closed_graph_response(depth_one["json"])
+
+
+def test_analysis_graph_api_applies_flow_domain_code(tmp_path, monkeypatch):
+    store, _, _ = build_inventory(tmp_path, extra_files={
+        "src/test/java/example/ObjectHandlerTest.java": "class ObjectHandlerTest {}\n",
+    })
+    cfg = app_config(tmp_path)
+    monkeypatch.setattr(main, "app_config", cfg)
+    monkeypatch.setattr(main, "store", store)
+    monkeypatch.setattr(main, "analysis_runner", FakeRunner())
+    wait_job(store, AnalysisJobRunner(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&flowDomain=CODE")
+
+    assert result["status"] == 200
+    assert result["json"]["nodes"]
+    assert {node["flowDomain"] for node in result["json"]["nodes"]} == {"CODE"}
+    assert all("src/test/" not in node["relativePath"] for node in result["json"]["nodes"])
+    assert_node_closed_graph_response(result["json"])
+
+
+def test_analysis_graph_api_returns_selected_edge_resolution_metadata_safely(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    relation = get_json("/api/v1/knowledge/analysis/relations?sourceId=edge-gateway")["json"]["relations"][0]
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute(
+            "UPDATE analysis_graph_edges SET resolution_status = ?, unresolved_target_json = ? WHERE id = ?",
+            ("UNRESOLVED", json.dumps({"name": "MissingTarget"}), relation["relationId"]),
+        )
+
+    result = get_json(f"/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&graphEdgeId={quote(relation['relationId'])}&includeEvidence=true")
+
+    edge = result["json"]["selected"]["edge"]
+    assert edge["id"] == relation["relationId"]
+    assert edge["resolutionStatus"] == "UNRESOLVED"
+    assert edge["unresolvedTarget"] == {"name": "MissingTarget"}
+    assert edge["evidence"]
+
+
+def test_analysis_graph_api_handles_no_analysis_yet(tmp_path, monkeypatch):
+    configure_api(tmp_path, monkeypatch)
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway")
+
+    assert result["status"] == 200
+    assert result["json"]["nodes"] == []
+    assert result["json"]["edges"] == []
+    assert result["json"]["status"]["analysisStatus"] == "NOT_ANALYZED"
+
+
+def test_analysis_graph_api_shows_running_job_partial_graph(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    AnalysisStore(store.db_path).create_job({
+        "jobId": "job-running",
+        "status": "RUNNING",
+        "startedAt": "now",
+        "sourceCount": 1,
+        "fileCount": 1,
+        "processedFileCount": 0,
+        "failedFileCount": 0,
+        "currentSourceId": "edge-gateway",
+        "currentRelativePath": "src/main/java/example/ObjectHandler.java",
+        "sourceIds": ["edge-gateway"],
+        "lastProgressAt": "now",
+        "symbolCount": 0,
+        "relationCount": 0,
+        "diagnostics": [],
+    })
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway")
+
+    assert result["json"]["status"]["analysisStatus"] == "RUNNING"
+    assert result["json"]["status"]["currentFile"] == "src/main/java/example/ObjectHandler.java"
+    assert result["json"]["nodes"]
+
+
+def test_analysis_graph_api_marks_truncated_when_limit_exceeded(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&limit=1")
+
+    assert result["json"]["meta"]["truncated"] is True
+    assert len(result["json"]["nodes"]) == 1
+
+
+def test_analysis_graph_api_does_not_return_orphan_rows(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("DELETE FROM files")
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway")
+
+    assert result["json"]["nodes"] == []
+    assert result["json"]["edges"] == []
+    assert result["json"]["meta"]["totalNodeCount"] == 0
 
 
 def test_analysis_api_stop_job(tmp_path, monkeypatch):
@@ -1112,7 +2256,7 @@ def test_analysis_api_exposes_failed_file_diagnostics_and_progress(tmp_path, mon
     wait_job(store, AnalysisJobRunner(store, cfg).start(AnalysisBuildRequest(), analyzer)["jobId"])
 
     status = get_json("/api/v1/knowledge/analysis/status")
-    files = get_json("/api/v1/knowledge/analysis/files?status=FAILED")
+    files = get_json("/api/v1/knowledge/analysis/files?pathContains=ObjectHandler")
 
     assert status["json"]["lastCompletedAt"]
     assert files["json"]["total"] == 1
@@ -1138,8 +2282,8 @@ def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, m
     assert service["analysis"]["inventoryFileCount"] == 1
     assert service["analysis"]["analyzedFileCount"] == 1
     assert service["analysis"]["percent"] == 100.0
-    assert service["facts"]["symbolCount"] == 2
-    assert service["facts"]["relationCount"] == 1
+    assert service["facts"]["symbolCount"] == 3
+    assert service["facts"]["relationCount"] == 3
 
 
 def test_services_status_uses_current_content_hash_for_analyzed_and_stale(tmp_path, monkeypatch):
@@ -1173,8 +2317,8 @@ def test_services_status_reports_failed_files_separately_and_groups_diagnostics(
     result = get_json("/api/v1/knowledge/services/status")
     service = result["json"]["services"][0]
 
-    assert service["analysis"]["analyzedFileCount"] == 0
-    assert service["analysis"]["failedFileCount"] == 1
+    assert service["analysis"]["analyzedFileCount"] == 1
+    assert service["analysis"]["failedFileCount"] == 0
     assert service["analysis"]["pendingFileCount"] == 0
     assert {item["code"]: item["count"] for item in service["diagnostics"]}["ANALYSIS_AI_INVALID_JSON"] == 1
 

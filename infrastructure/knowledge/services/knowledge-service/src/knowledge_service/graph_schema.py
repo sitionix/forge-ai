@@ -1,0 +1,164 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Extra, Field, validator
+
+
+ALLOWED_GRAPH_NODE_KINDS = {
+    "FILE", "TYPE", "CALLABLE", "FIELD", "CONFIG", "RESOURCE", "DATA", "EXTERNAL", "UNKNOWN",
+}
+ALLOWED_GRAPH_EDGE_TYPES = {
+    "DECLARES", "CONTAINS", "IMPORTS", "CALLS", "IMPLEMENTS", "EXTENDS", "OVERRIDES", "INJECTS",
+    "MAPS_TO", "USES", "DEPENDS_ON", "READS", "WRITES", "READS_FROM", "WRITES_TO", "PUBLISHES",
+    "CONSUMES", "CONFIGURES", "REFERENCES", "REFERENCES_CONTRACT", "REFERENCES_DTO", "RELATED_TO",
+    "UNKNOWN",
+}
+ALLOWED_GRAPH_CLAIM_KINDS = {
+    "RESPONSIBILITY", "ROLE", "CONTRACT", "DIAGNOSTIC", "ENTRYPOINT_HINT", "SIDE_EFFECT",
+    "DATA_ACCESS_HINT", "EXTERNAL_BOUNDARY_HINT", "CONFIG_REFERENCE", "UNKNOWN",
+}
+
+
+class GraphEvidenceRef(BaseModel):
+    lineStart: int
+    lineEnd: int
+    text: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        extra = Extra.forbid
+
+
+class GraphNode(BaseModel):
+    localId: str
+    nodeKind: str
+    name: str
+    language: Optional[str] = None
+    qualifiedName: Optional[str] = None
+    displayName: Optional[str] = None
+    parentLocalId: Optional[str] = None
+    lineStart: Optional[int] = None
+    lineEnd: Optional[int] = None
+    confidence: float = 1.0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        extra = Extra.forbid
+
+    @validator("nodeKind")
+    def allowed_node_kind(cls, value: str) -> str:
+        value = value.upper()
+        if value not in ALLOWED_GRAPH_NODE_KINDS:
+            raise ValueError("Unsupported graph node kind")
+        return value
+
+    @validator("confidence")
+    def confidence_range(cls, value: float) -> float:
+        if value < 0 or value > 1:
+            raise ValueError("Confidence must be between 0 and 1")
+        return value
+
+
+class GraphEdge(BaseModel):
+    localId: str
+    fromNodeLocalId: str
+    toNodeLocalId: Optional[str] = None
+    edgeType: str
+    confidence: float
+    evidence: List[GraphEvidenceRef] = Field(default_factory=list)
+    unresolvedTarget: Optional[Dict[str, Any]] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        extra = Extra.forbid
+
+    @validator("edgeType")
+    def allowed_edge_type(cls, value: str) -> str:
+        value = value.upper()
+        if value not in ALLOWED_GRAPH_EDGE_TYPES:
+            raise ValueError("Unsupported graph edge type")
+        return value
+
+    @validator("confidence")
+    def edge_confidence_range(cls, value: float) -> float:
+        if value < 0 or value > 1:
+            raise ValueError("Confidence must be between 0 and 1")
+        return value
+
+
+class GraphClaim(BaseModel):
+    localId: str
+    nodeLocalId: str
+    claimKind: str
+    summary: str
+    evidence: List[GraphEvidenceRef] = Field(default_factory=list)
+    confidence: float
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        extra = Extra.forbid
+
+    @validator("claimKind")
+    def allowed_claim_kind(cls, value: str) -> str:
+        value = value.upper()
+        if value not in ALLOWED_GRAPH_CLAIM_KINDS:
+            raise ValueError("Unsupported graph claim kind")
+        return value
+
+    @validator("confidence")
+    def claim_confidence_range(cls, value: float) -> float:
+        if value < 0 or value > 1:
+            raise ValueError("Confidence must be between 0 and 1")
+        return value
+
+    @validator("summary")
+    def summary_required(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Claim summary is required")
+        return value.strip()
+
+
+class GraphAnalysisResult(BaseModel):
+    nodes: List[GraphNode] = Field(default_factory=list)
+    edges: List[GraphEdge] = Field(default_factory=list)
+    claims: List[GraphClaim] = Field(default_factory=list)
+    diagnostics: List[Dict[str, Any]] = Field(default_factory=list)
+
+    class Config:
+        extra = Extra.forbid
+
+    def validate_lines(self, line_count: int) -> None:
+        for node in self.nodes:
+            self._validate_optional_range(node.lineStart, node.lineEnd, line_count)
+        for edge in self.edges:
+            for evidence in edge.evidence:
+                self._validate_range(evidence.lineStart, evidence.lineEnd, line_count)
+        for claim in self.claims:
+            for evidence in claim.evidence:
+                self._validate_range(evidence.lineStart, evidence.lineEnd, line_count)
+
+    def validate_references(self) -> None:
+        local_ids = {node.localId for node in self.nodes}
+        for node in self.nodes:
+            if node.parentLocalId and node.parentLocalId not in local_ids:
+                raise ValueError("Graph node references an unknown parentLocalId")
+        for edge in self.edges:
+            if edge.fromNodeLocalId not in local_ids:
+                raise ValueError("Graph edge references an unknown fromNodeLocalId")
+            if edge.toNodeLocalId and edge.toNodeLocalId not in local_ids:
+                raise ValueError("Graph edge references an unknown toNodeLocalId")
+        for claim in self.claims:
+            if claim.nodeLocalId not in local_ids:
+                raise ValueError("Graph claim references an unknown nodeLocalId")
+
+    def _validate_optional_range(self, line_start: Optional[int], line_end: Optional[int], line_count: int) -> None:
+        if line_start is None and line_end is None:
+            return
+        if line_start is None or line_end is None:
+            raise ValueError("Line range must include both start and end")
+        self._validate_range(line_start, line_end, line_count)
+
+    def _validate_range(self, line_start: int, line_end: int, line_count: int) -> None:
+        if line_start < 1 or line_end < line_start or line_end > max(line_count, 1):
+            raise ValueError("Line range outside file")
