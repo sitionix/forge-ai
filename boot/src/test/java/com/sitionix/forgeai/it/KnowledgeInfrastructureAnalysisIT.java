@@ -1,6 +1,10 @@
 package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStopView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphMetaView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphStatusView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGateway;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeDiagnosticView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeServiceAnalysisView;
@@ -13,6 +17,7 @@ import com.sitionix.forgeai.it.infra.ControllerEndpoint;
 import com.sitionix.forgeai.it.infra.TestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
 import com.sitionix.forgeit.mockmvc.api.PathParams;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -89,6 +94,58 @@ class KnowledgeInfrastructureAnalysisIT extends AbstractForgeAiIT {
                 .assertDefault();
 
         verify(this.knowledgeGateway).servicesStatus();
+    }
+
+    @Test
+    @DisplayName("Should proxy Knowledge analysis graph through Forge infrastructure API")
+    void givenKnowledgeGraph_whenGetAnalysisGraph_thenReturnGraphProjection() throws Exception {
+        final Map<String, Object> selected = new HashMap<>();
+        selected.put("node", null);
+        selected.put("edge", null);
+        final KnowledgeAnalysisGraphMetaView meta = new KnowledgeAnalysisGraphMetaView(false, 1, 3, 1, 0, 500, 1000);
+        meta.skippedEdgeCount(3);
+        meta.skippedMissingEndpointCount(2);
+        meta.skippedByLimitCount(1);
+        meta.truncationReason("NODE_LIMIT,EDGE_ENDPOINT_NOT_RETURNED");
+        meta.setAdditionalProperty("futureProjectionMetric", 42);
+        when(this.knowledgeGateway.analysisGraph(new KnowledgeAnalysisGraphRequest(
+                null, null, null, null, null, null, null, null, null, null, null, null, null
+        ))).thenReturn(new KnowledgeAnalysisGraphView(
+                "svc",
+                "Service",
+                new KnowledgeAnalysisGraphStatusView(
+                        "READY",
+                        "job-1",
+                        "GRAPH_V1",
+                        2,
+                        2,
+                        0,
+                        100.0,
+                        null,
+                        3,
+                        0,
+                        "2026-06-15T07:02:00Z"
+                ),
+                Map.of("depth", 2),
+                List.of(Map.of("id", "n1", "label", "Handler", "nodeKind", "CALLABLE")),
+                List.of(),
+                List.of(),
+                List.of(),
+                selected,
+                List.of(),
+                List.of(),
+                List.of(),
+                Map.of("sliceNodeCount", 1),
+                meta
+        ));
+
+        this.testManager.mockMvc()
+                .ping(ControllerEndpoint.knowledgeAnalysisGraph())
+                .assertDefault();
+
+        verify(this.knowledgeGateway).analysisGraph(new KnowledgeAnalysisGraphRequest(
+                null, null, null, null, null, null, null, null, null, null, null, null, null
+        ));
     }
 
     @Test
