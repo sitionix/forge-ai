@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from knowledge_service.file_metadata import FileMetadata
 from knowledge_service.graph_schema import GRAPH_ANALYSIS_ENGINE_VERSION
@@ -13,69 +14,79 @@ from knowledge_service.source_catalog import SourceMetadata
 
 
 class InventoryStore:
+    _init_lock = threading.Lock()
+    _initialized_paths: Set[str] = set()
+
     def __init__(self, db_path: Path):
         self.db_path = db_path
 
     def init(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS inventory_builds (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    started_at TEXT NOT NULL,
-                    completed_at TEXT,
-                    status TEXT NOT NULL,
-                    source_count INTEGER NOT NULL,
-                    file_count INTEGER NOT NULL,
-                    skipped_count INTEGER NOT NULL,
-                    skipped_reasons_json TEXT,
-                    error_message TEXT
-                )
-            """)
-            self._ensure_column(conn, "inventory_builds", "skipped_reasons_json", "TEXT")
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS sources (
-                    source_id TEXT PRIMARY KEY,
-                    display_name TEXT NOT NULL,
-                    group_name TEXT,
-                    path TEXT NOT NULL,
-                    root_exists INTEGER NOT NULL,
-                    tags_json TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL,
-                    last_seen_at TEXT NOT NULL
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS files (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_id TEXT NOT NULL,
-                    source_path TEXT NOT NULL,
-                    absolute_path TEXT NOT NULL,
-                    relative_path TEXT NOT NULL,
-                    extension TEXT,
-                    language TEXT,
-                    flow_domain TEXT,
-                    size_bytes INTEGER NOT NULL,
-                    content_hash TEXT NOT NULL,
-                    last_modified TEXT NOT NULL,
-                    line_count INTEGER NOT NULL DEFAULT 0,
-                    decode_policy TEXT NOT NULL DEFAULT 'utf-8:replace',
-                    indexed_at TEXT NOT NULL
-                )
-            """)
-            self._ensure_column(conn, "files", "line_count", "INTEGER NOT NULL DEFAULT 0")
-            self._ensure_column(conn, "files", "decode_policy", "TEXT NOT NULL DEFAULT 'utf-8:replace'")
-            self._ensure_column(conn, "files", "language", "TEXT")
-            self._ensure_column(conn, "files", "flow_domain", "TEXT")
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS inventory_source_state (
-                    source_id TEXT PRIMARY KEY,
-                    eligible_file_count INTEGER NOT NULL,
-                    skipped_count INTEGER,
-                    skipped_reasons_json TEXT,
-                    last_inventory_at TEXT NOT NULL
-                )
-            """)
+        init_key = str(self.db_path.resolve())
+        if init_key in InventoryStore._initialized_paths:
+            return
+        with InventoryStore._init_lock:
+            if init_key in InventoryStore._initialized_paths:
+                return
+            with self._connect() as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS inventory_builds (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        started_at TEXT NOT NULL,
+                        completed_at TEXT,
+                        status TEXT NOT NULL,
+                        source_count INTEGER NOT NULL,
+                        file_count INTEGER NOT NULL,
+                        skipped_count INTEGER NOT NULL,
+                        skipped_reasons_json TEXT,
+                        error_message TEXT
+                    )
+                """)
+                self._ensure_column(conn, "inventory_builds", "skipped_reasons_json", "TEXT")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS sources (
+                        source_id TEXT PRIMARY KEY,
+                        display_name TEXT NOT NULL,
+                        group_name TEXT,
+                        path TEXT NOT NULL,
+                        root_exists INTEGER NOT NULL,
+                        tags_json TEXT NOT NULL,
+                        metadata_json TEXT NOT NULL,
+                        last_seen_at TEXT NOT NULL
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS files (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        source_id TEXT NOT NULL,
+                        source_path TEXT NOT NULL,
+                        absolute_path TEXT NOT NULL,
+                        relative_path TEXT NOT NULL,
+                        extension TEXT,
+                        language TEXT,
+                        flow_domain TEXT,
+                        size_bytes INTEGER NOT NULL,
+                        content_hash TEXT NOT NULL,
+                        last_modified TEXT NOT NULL,
+                        line_count INTEGER NOT NULL DEFAULT 0,
+                        decode_policy TEXT NOT NULL DEFAULT 'utf-8:replace',
+                        indexed_at TEXT NOT NULL
+                    )
+                """)
+                self._ensure_column(conn, "files", "line_count", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column(conn, "files", "decode_policy", "TEXT NOT NULL DEFAULT 'utf-8:replace'")
+                self._ensure_column(conn, "files", "language", "TEXT")
+                self._ensure_column(conn, "files", "flow_domain", "TEXT")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS inventory_source_state (
+                        source_id TEXT PRIMARY KEY,
+                        eligible_file_count INTEGER NOT NULL,
+                        skipped_count INTEGER,
+                        skipped_reasons_json TEXT,
+                        last_inventory_at TEXT NOT NULL
+                    )
+                """)
+            InventoryStore._initialized_paths.add(init_key)
 
     def replace_inventory(
         self,
@@ -290,7 +301,8 @@ class InventoryStore:
         return files, sources
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        conn.execute("PRAGMA busy_timeout = 30000")
         conn.row_factory = sqlite3.Row
         return conn
 
