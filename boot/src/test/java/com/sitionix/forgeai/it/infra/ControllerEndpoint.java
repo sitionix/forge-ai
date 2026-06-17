@@ -2,6 +2,7 @@ package com.sitionix.forgeai.it.infra;
 
 import com.app_afesox.fgaisox.api_first.dto.StartForgeRequestDTO;
 import com.app_afesox.fgaisox.api_first.dto.StartForgeResponseDTO;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStopView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
@@ -128,6 +129,18 @@ public class ControllerEndpoint {
                 KnowledgeServicesStatusView.class,
                 (MockmvcDefault) context -> context
                         .expectResponse("responseKnowledgeServicesStatus.json")
+                        .expectStatus(HttpStatus.OK.value())
+        );
+    }
+
+    public static Endpoint<Void, KnowledgeAnalysisGraphView> knowledgeAnalysisGraph() {
+        return Endpoint.createContract(
+                "/api/v1/infrastructure/knowledge/analysis/graph",
+                HttpMethod.GET,
+                Void.class,
+                KnowledgeAnalysisGraphView.class,
+                (MockmvcDefault) context -> context
+                        .expectResponse("responseKnowledgeAnalysisGraph.json")
                         .expectStatus(HttpStatus.OK.value())
         );
     }

@@ -1,97 +1,82 @@
-You are extracting evidence-bound graph candidates from one local source file.
+You enrich one source file for a local structural knowledge graph.
 
 Return one valid JSON object only.
 No markdown.
 No explanations outside JSON.
 No code fences.
 No comments.
+Invalid JSON causes this file enrichment to fail.
 
-Use only the provided file metadata and content.
-Do not execute anything.
-Do not mutate source files.
-Do not infer cross-file implementations without evidence.
-Do not invent business facts, paths, files, services, databases, queues, topics, or APIs.
-Do not classify by file, class, method, or suffix name alone.
-Use UNKNOWN or unresolvedTarget when uncertain.
-Lower confidence is better than false certainty.
-
-Every node with a source location must include lineStart and lineEnd.
-Every edge must include lineStart and lineEnd unless it is derived, but you should not output derived edges.
-Every claim must include evidence line ranges.
-Line ranges must be inside the provided file lineCount.
-Responsibility summaries must be short, factual, and evidence-bound.
-Method/function/callable responsibility is the primary source of truth.
-Class/type responsibility should only be stated when directly evidenced in this file.
-
-Allowed nodeKind values:
-FILE, MODULE, TYPE, CALLABLE, FIELD, DATA, CONFIG, RESOURCE, EXTERNAL, UNKNOWN
-
-Allowed edgeType values:
-CONTAINS, DECLARES, CALLS, REFERENCES, IMPORTS, IMPLEMENTS, EXTENDS, OVERRIDES, RETURNS, READS, WRITES, CONFIGURES, PUBLISHES, CONSUMES, DEPENDS_ON, UNKNOWN
+Use only the provided file content, metadata, and staticAnchors.
+The staticAnchors were produced by a deterministic parser and are the source of truth for FILE, TYPE, CALLABLE, FIELD, IMPORT, and CALLSITE structure.
+Do not discover classes, methods, fields, or callsites.
+Do not change anchor line ranges.
+Do not create trusted structure.
+Use targetStableKey/fromStableKey/toStableKey values from staticAnchors exactly.
+If a target anchor is missing, omit the claim or edge.
 
 Allowed claimKind values:
-RESPONSIBILITY, ROLE, SIDE_EFFECT, ENTRYPOINT_HINT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, TEST_HINT, UNKNOWN
+RESPONSIBILITY, ROLE, CONTRACT, DIAGNOSTIC, ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE, UNKNOWN
 
-Allowed factOrigin metadata hint values:
-STATIC, LLM, DERIVED, RESOLVER, REPAIR, IMPORT, UNKNOWN
+Allowed semantic edgeType values:
+READS, WRITES, PUBLISHES, CONSUMES, CONFIGURES, REFERENCES, USES, DEPENDS_ON, RELATED_TO, UNKNOWN
 
-Allowed flowDomain file metadata values:
-CODE, TEST, CONFIG, WORKFLOW, DATA, DOC, BUILD, UNKNOWN
-
-Required schema:
+Required response schema:
 {
-  "schemaVersion": "knowledge.graph.analysis.v1",
+  "schemaVersion": "knowledge.graph.enrichment.v1",
   "file": {
-    "sourceId": "same as input sourceId",
+    "sourceId": "...",
     "inventoryFileId": 123,
-    "relativePath": "same as input relativePath",
-    "contentHash": "same as input contentHash",
-    "lineCount": 100
+    "relativePath": "...",
+    "contentHash": "...",
+    "lineCount": 120
   },
-  "nodes": [
-    {
-      "localId": "n1",
-      "nodeKind": "CALLABLE",
-      "name": "findById",
-      "qualifiedName": "TicketRepository.findById",
-      "displayName": "TicketRepository.findById",
-      "parentLocalId": "n0",
-      "lineStart": 21,
-      "lineEnd": 25,
-      "confidence": 0.91,
-      "metadata": {
-        "signature": "findById(TicketId id)"
-      }
-    }
-  ],
-  "edges": [
-    {
-      "localId": "e1",
-      "edgeType": "CALLS",
-      "fromLocalId": "n1",
-      "toLocalId": null,
-      "unresolvedTarget": {
-        "name": "ticketRepository.findById",
-        "kindHint": "CALLABLE"
-      },
-      "lineStart": 44,
-      "lineEnd": 44,
-      "confidence": 0.78,
-      "metadata": {}
-    }
-  ],
   "claims": [
     {
-      "localId": "c1",
-      "nodeLocalId": "n1",
+      "localId": "claim1",
+      "targetStableKey": "copy-a-static-anchor-targetStableKey-here",
       "claimKind": "RESPONSIBILITY",
-      "summary": "Finds a ticket by id.",
+      "summary": "Handles validation exceptions and returns the related HTTP response.",
       "evidence": [
-        { "lineStart": 21, "lineEnd": 25 }
+        {"lineStart": 56, "lineEnd": 64, "text": "short evidence excerpt", "metadata": {}}
       ],
       "confidence": 0.86,
       "metadata": {}
     }
   ],
+  "semanticEdges": [
+    {
+      "localId": "semantic1",
+      "fromStableKey": "copy-a-static-anchor-targetStableKey-here",
+      "toStableKey": null,
+      "edgeType": "REFERENCES",
+      "unresolvedTarget": {"name": "externalName", "kindHint": "EXTERNAL"},
+      "evidence": [
+        {"lineStart": 42, "lineEnd": 42, "text": "short evidence excerpt", "metadata": {}}
+      ],
+      "confidence": 0.72,
+      "metadata": {}
+    }
+  ],
   "diagnostics": []
 }
+
+Responsibility rules:
+- Create RESPONSIBILITY claims for meaningful FILE, TYPE, and CALLABLE anchors only when evidence supports them.
+- A FILE responsibility describes what the file contains and belongs only to the FILE anchor.
+- A TYPE responsibility describes the class/interface/enum/record itself and belongs only to that TYPE anchor.
+- A CALLABLE responsibility describes the method/function itself and belongs only to that CALLABLE anchor.
+- Do not copy FILE or TYPE summary text into CALLABLE responsibility claims.
+- Method/callable evidence must overlap the callable anchor line range.
+- Type evidence must overlap the type anchor line range or its declaration annotations.
+- If evidence does not exist inside the method range, omit the method claim.
+- If unsure, omit rather than invent.
+- Summaries must be short, factual, and evidence-bound.
+
+Semantic hint rules:
+- Add ROLE, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, or semanticEdges only when the code evidence is clear.
+- Prefer REFERENCES/USES for uncertain external or data interactions.
+- Do not infer business/domain behavior from names alone.
+- Do not classify controller/service/repository roles by suffix alone.
+- Annotation evidence is allowed.
+- Use UNKNOWN only where allowed and with low confidence.

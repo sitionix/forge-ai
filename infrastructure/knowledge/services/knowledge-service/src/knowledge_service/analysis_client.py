@@ -8,9 +8,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict
 
-from knowledge_service.errors import KnowledgeError
+from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
-from knowledge_service.graph_schema import GraphAnalysisResponse
+from knowledge_service.errors import KnowledgeError
 
 
 class OllamaAnalysisClient:
@@ -25,7 +25,7 @@ class OllamaAnalysisClient:
         self.prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
         self.parser = GraphAnalysisResponseParser()
 
-    def analyze(self, payload: Dict[str, Any], line_count: int, repair_prompt: str | None = None) -> GraphAnalysisResponse:
+    def analyze(self, payload: Dict[str, Any], line_count: int, repair_prompt: str | None = None) -> GraphAnalysisResult:
         prompt = self._prompt(payload, repair_prompt)
         body = json.dumps({
             "model": self.model,
@@ -70,14 +70,9 @@ class OllamaAnalysisClient:
         if not isinstance(response_text, str):
             raise KnowledgeError("ANALYSIS_AI_EMPTY_RESPONSE", "AI analyzer returned no response text", raw_preview="")
         parsed = self.parser.parse(response_text, line_count)
-        if isinstance(parsed, GraphAnalysisResponse):
+        if isinstance(parsed, GraphAnalysisResult):
             return parsed
-        raise KnowledgeError(
-            parsed.code,
-            parsed.message,
-            raw_preview=parsed.raw_preview,
-            validation_errors=[error.to_dict() for error in parsed.validation_errors],
-        )
+        raise KnowledgeError(parsed.code, parsed.message, raw_preview=parsed.raw_preview)
 
     def _prompt(self, payload: Dict[str, Any], repair_prompt: str | None = None) -> str:
         parts = [

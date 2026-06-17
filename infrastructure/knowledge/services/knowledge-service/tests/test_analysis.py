@@ -1,55 +1,49 @@
+import hashlib
 import json
 import os
 import sqlite3
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
+from pydantic import ValidationError
 
 os.environ.setdefault("KNOWLEDGE_STORE_PATH", "/tmp/forge-ai-knowledge-test-main.sqlite")
 
 from knowledge_service import main
 from knowledge_service.analysis_client import OllamaAnalysisClient
-from knowledge_service.analysis_schema import AnalysisBuildRequest
+from knowledge_service.analysis_response_parser import AiAnalysisResponseParser
+from knowledge_service.analysis_schema import AnalysisBuildRequest, AnalysisResult
 from knowledge_service.analysis_service import AnalysisJobRunner
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.config import AppConfig
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.graph_analysis import GraphAnalysisEngine
-from knowledge_service.graph_model import GraphEdgeFact, GraphNodeFact
-from knowledge_service.graph_schema import (
-    GRAPH_ANALYSIS_ENGINE_VERSION,
-    GraphClaimKind,
-    GraphEdgeType,
-    GraphFactOrigin,
-    GraphFlowDomain,
-    GraphNodeKind,
-    classify_flow_domain,
-    enum_values,
-)
-from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
-from knowledge_service.graph_schema import GraphAnalysisResponse
-from knowledge_service.graph_validation import GraphValidationErrorCode
+from knowledge_service.graph_schema import GraphAnalysisResult
+from knowledge_service.graph_slice_service import GraphSliceRequest, GraphSliceService
 from knowledge_service.inventory_builder import InventoryBuilder
-from knowledge_service.inventory_file_resolver import InventoryFileContent, InventoryFileReadResult
 from knowledge_service.inventory_refresh import BackgroundInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
+from knowledge_service.java_parser_adapter import JavaParserAdapter
 from knowledge_service.source_config import load_source_config
+from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer
+from knowledge_service.structural_model import StructuralFileMetadata
 
 
 class StubAnalyzer:
     name = "ai-file-analyzer"
     version = "1"
 
-    def __init__(self, result=None, fail=False, block_event=None, bad_response_attempts=0, outcomes=None, factory=None):
-        self.result = result
+    def __init__(self, result=None, fail=False, block_event=None, bad_response_attempts=0, outcomes=None):
+        self.result = result or valid_result()
         self.fail = fail
         self.block_event = block_event
         self.bad_response_attempts = bad_response_attempts
         self.outcomes = list(outcomes or [])
-        self.factory = factory
         self.repair_prompts = []
         self.calls = 0
 
@@ -63,84 +57,290 @@ class StubAnalyzer:
             outcome = self.outcomes.pop(0)
             if isinstance(outcome, Exception):
                 raise outcome
-            if callable(outcome):
-                return GraphAnalysisResponse.parse_obj(outcome(payload, line_count))
             return outcome
         if self.calls <= self.bad_response_attempts:
             raise KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad", attempt=self.calls)
         if self.fail:
             raise RuntimeError("model failed")
-        if self.factory is not None:
-            return GraphAnalysisResponse.parse_obj(self.factory(payload, line_count))
-        if self.result is not None:
-            return self.result
-        return GraphAnalysisResponse.parse_obj(valid_graph_response(payload, line_count))
+        self.result.validate_lines(line_count)
+        return self.result
 
 
-class GraphStubAnalyzer:
-    name = "ai-file-analyzer"
-    version = "1"
-
-    def __init__(self, factory):
-        self.factory = factory
-        self.calls = 0
-        self.repair_prompts = []
-
-    def analyze(self, payload, line_count, repair_prompt=None):
-        self.calls += 1
-        if repair_prompt:
-            self.repair_prompts.append(repair_prompt)
-        return GraphAnalysisResponse.parse_obj(self.factory(payload, line_count))
-
-
-class CapturingAnalyzer(StubAnalyzer):
-    def __init__(self):
-        super().__init__(factory=lambda payload, line_count: graph_response(payload, line_count, nodes=[
-            {"localId": "s1", "nodeKind": "TYPE", "name": "Resolved", "qualifiedName": "Resolved", "lineStart": 1, "lineEnd": 1, "confidence": 0.7, "metadata": {}},
-        ]))
-        self.payloads = []
-        self.line_counts = []
-
-    def analyze(self, payload, line_count, repair_prompt=None):
-        self.payloads.append(payload)
-        self.line_counts.append(line_count)
-        return super().analyze(payload, line_count, repair_prompt)
-
-
-class StubResolver:
-    def __init__(self):
-        self.calls = []
-
-    def read(self, row):
-        self.calls.append(row["relative_path"])
-        content = "class Resolved {}"
-        return InventoryFileReadResult(InventoryFileContent(
-            row=row,
-            metadata=json.loads(row["metadata_json"]),
-            lines=[content],
-            content=content,
-            lineCount=1,
-            decodePolicy=row["decode_policy"],
-        ))
-
-
-def valid_graph_response(payload, line_count):
-    type_end = max(1, min(line_count, 5))
-    callable_start = max(1, min(line_count, 3))
-    callable_end = max(callable_start, min(line_count, 4))
-    return graph_response(payload, line_count,
-        nodes=[
-            {"localId": "s1", "nodeKind": "TYPE", "name": "ObjectHandler", "qualifiedName": "ObjectHandler", "lineStart": 1, "lineEnd": type_end, "confidence": 0.9, "metadata": {"language": "java"}},
-            {"localId": "s2", "nodeKind": "CALLABLE", "name": "create", "qualifiedName": "ObjectHandler.create", "parentLocalId": "s1", "lineStart": callable_start, "lineEnd": callable_end, "confidence": 0.8, "metadata": {}},
+def valid_result():
+    return AnalysisResult.parse_obj({
+        "fileSummary": "Defines an object handler and helper.",
+        "symbols": [
+            {
+                "localId": "s1",
+                "name": "ObjectHandler",
+                "kind": "CLASS",
+                "roles": [{"role": "HTTP_HANDLER", "confidence": 0.9, "evidence": ["Has a method annotated with an HTTP mapping."]}],
+                "lineStart": 1,
+                "lineEnd": 5,
+                "metadata": {"language": "java"},
+            },
+            {
+                "localId": "s2",
+                "name": "create",
+                "kind": "METHOD",
+                "roles": [{"role": "ENTRYPOINT", "confidence": 0.8, "evidence": ["Method is externally callable in this file."]}],
+                "lineStart": 3,
+                "lineEnd": 4,
+                "metadata": {},
+            },
         ],
-        claims=[
-            {"localId": "c1", "nodeLocalId": "s1", "claimKind": "ROLE", "summary": "HTTP_HANDLER", "evidence": [{"lineStart": 1, "lineEnd": type_end}], "confidence": 0.9, "metadata": {"role": "HTTP_HANDLER"}},
-            {"localId": "c2", "nodeLocalId": "s2", "claimKind": "ROLE", "summary": "ENTRYPOINT", "evidence": [{"lineStart": callable_start, "lineEnd": callable_end}], "confidence": 0.8, "metadata": {"role": "ENTRYPOINT"}},
+        "relations": [
+            {
+                "fromLocalId": "s1",
+                "toLocalId": "s2",
+                "relation": "CONTAINS",
+                "confidence": 1.0,
+                "evidence": ["The method is declared inside the class."],
+                "lineStart": 3,
+                "lineEnd": 3,
+                "metadata": {},
+            }
         ],
-    )
+        "diagnostics": [],
+    })
 
 
-def build_inventory(tmp_path, content=None, include_large=False, extra_files=None):
+def responsibility_graph_result(method_claim=True, type_claim=True, file_claim=False, method_confidence=0.86, method_summary="Handles object creation."):
+    nodes = [
+        {
+            "localId": "type1",
+            "nodeKind": "TYPE",
+            "name": "ObjectHandler",
+            "language": "java",
+            "qualifiedName": "example.ObjectHandler",
+            "displayName": "ObjectHandler",
+            "parentLocalId": "file1" if file_claim else None,
+            "lineStart": 1,
+            "lineEnd": 5,
+            "confidence": 0.91,
+            "metadata": {"sourceKind": "CLASS"},
+        },
+        {
+            "localId": "method1",
+            "nodeKind": "CALLABLE",
+            "name": "create",
+            "language": "java",
+            "qualifiedName": "example.ObjectHandler.create",
+            "displayName": "create",
+            "parentLocalId": "type1",
+            "lineStart": 3,
+            "lineEnd": 4,
+            "confidence": method_confidence,
+            "metadata": {"sourceKind": "METHOD"},
+        },
+    ]
+    edges = [
+        {
+            "localId": "declares-create",
+            "fromNodeLocalId": "type1",
+            "toNodeLocalId": "method1",
+            "edgeType": "DECLARES",
+            "confidence": 0.95,
+            "evidence": [{"lineStart": 3, "lineEnd": 4, "text": "create method declaration", "metadata": {}}],
+            "unresolvedTarget": None,
+            "metadata": {},
+        }
+    ]
+    claims = []
+    if file_claim:
+        nodes.insert(0, {
+            "localId": "file1",
+            "nodeKind": "FILE",
+            "name": "ObjectHandler.java",
+            "language": "java",
+            "qualifiedName": None,
+            "displayName": "ObjectHandler.java",
+            "parentLocalId": None,
+            "lineStart": 1,
+            "lineEnd": 5,
+            "confidence": 0.9,
+            "metadata": {"sourceKind": "FILE"},
+        })
+        edges.insert(0, {
+            "localId": "file-declares-type",
+            "fromNodeLocalId": "file1",
+            "toNodeLocalId": "type1",
+            "edgeType": "DECLARES",
+            "confidence": 0.9,
+            "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "class declaration", "metadata": {}}],
+            "unresolvedTarget": None,
+            "metadata": {},
+        })
+        claims.append({
+            "localId": "file-responsibility",
+            "nodeLocalId": "file1",
+            "claimKind": "RESPONSIBILITY",
+            "summary": "Defines an object handler file.",
+            "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "file content", "metadata": {}}],
+            "confidence": 0.82,
+            "metadata": {},
+        })
+    if type_claim:
+        claims.append({
+            "localId": "type-responsibility",
+            "nodeLocalId": "type1",
+            "claimKind": "RESPONSIBILITY",
+            "summary": "Handles object requests.",
+            "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "class body", "metadata": {}}],
+            "confidence": 0.88,
+            "metadata": {},
+        })
+    if method_claim:
+        claims.append({
+            "localId": "method-responsibility",
+            "nodeLocalId": "method1",
+            "claimKind": "RESPONSIBILITY",
+            "summary": method_summary,
+            "evidence": [{"lineStart": 3, "lineEnd": 4, "text": "method body", "metadata": {}}],
+            "confidence": method_confidence,
+            "metadata": {},
+        })
+    return GraphAnalysisResult.parse_obj({
+        "nodes": nodes,
+        "edges": edges,
+        "claims": claims,
+        "diagnostics": [],
+    })
+
+
+def shared_evidence_graph_result():
+    return GraphAnalysisResult.parse_obj({
+        "nodes": [
+            {
+                "localId": "file1",
+                "nodeKind": "FILE",
+                "name": "EmailVerificationLinkClientImpl.java",
+                "language": "java",
+                "lineStart": 1,
+                "lineEnd": 6,
+                "confidence": 1.0,
+                "metadata": {"sourceKind": "FILE", "factOrigin": "STATIC", "flowDomain": "CODE"},
+            },
+            {
+                "localId": "type1",
+                "nodeKind": "TYPE",
+                "name": "EmailVerificationLinkClientImpl",
+                "language": "java",
+                "qualifiedName": "example.EmailVerificationLinkClientImpl",
+                "parentLocalId": "file1",
+                "lineStart": 1,
+                "lineEnd": 6,
+                "confidence": 1.0,
+                "metadata": {"sourceKind": "CLASS", "factOrigin": "STATIC", "flowDomain": "CODE"},
+            },
+            {
+                "localId": "method1",
+                "nodeKind": "CALLABLE",
+                "name": "createLink",
+                "language": "java",
+                "qualifiedName": "example.EmailVerificationLinkClientImpl.createLink",
+                "parentLocalId": "type1",
+                "lineStart": 3,
+                "lineEnd": 5,
+                "confidence": 1.0,
+                "metadata": {"sourceKind": "METHOD", "factOrigin": "STATIC", "flowDomain": "CODE"},
+            },
+            {
+                "localId": "method2",
+                "nodeKind": "CALLABLE",
+                "name": "helper",
+                "language": "java",
+                "qualifiedName": "example.EmailVerificationLinkClientImpl.helper",
+                "parentLocalId": "type1",
+                "lineStart": 6,
+                "lineEnd": 6,
+                "confidence": 1.0,
+                "metadata": {"sourceKind": "METHOD", "factOrigin": "STATIC", "flowDomain": "CODE"},
+            },
+        ],
+        "edges": [
+            {
+                "localId": "declares-method",
+                "fromNodeLocalId": "type1",
+                "toNodeLocalId": "method1",
+                "edgeType": "DECLARES",
+                "confidence": 1.0,
+                "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "String createLink()", "metadata": {}}],
+                "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE"},
+            },
+            {
+                "localId": "same-callsite",
+                "fromNodeLocalId": "method1",
+                "toNodeLocalId": "method2",
+                "edgeType": "CALLS",
+                "confidence": 1.0,
+                "evidence": [{"lineStart": 4, "lineEnd": 4, "text": "helper(); helper();", "metadata": {"evidenceKind": "CALLSITE"}}],
+                "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "resolutionStatus": "RESOLVED", "methodName": "helper"},
+            },
+            {
+                "localId": "same-callsite",
+                "fromNodeLocalId": "method1",
+                "toNodeLocalId": "method2",
+                "edgeType": "CALLS",
+                "confidence": 1.0,
+                "evidence": [{"lineStart": 4, "lineEnd": 4, "text": "helper(); helper();", "metadata": {"evidenceKind": "CALLSITE"}}],
+                "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "resolutionStatus": "RESOLVED", "methodName": "helper"},
+            },
+        ],
+        "claims": [
+            {
+                "localId": "shared-claim",
+                "nodeLocalId": "method1",
+                "claimKind": "RESPONSIBILITY",
+                "summary": "Creates an email verification link.",
+                "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "method body", "metadata": {}}],
+                "confidence": 0.9,
+                "metadata": {"factOrigin": "LLM", "flowDomain": "CODE"},
+            },
+            {
+                "localId": "shared-claim",
+                "nodeLocalId": "method1",
+                "claimKind": "ROLE",
+                "summary": "Client helper method.",
+                "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "method body", "metadata": {}}],
+                "confidence": 0.8,
+                "metadata": {"factOrigin": "LLM", "flowDomain": "CODE"},
+            },
+        ],
+        "diagnostics": [],
+    })
+
+
+def materialize_graph_for_test(result, content=None, file_id=1, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java"):
+    content = content or "class EmailVerificationLinkClientImpl {\n  WebClient client;\n  String createLink() {\n    helper(); helper();\n  }\n  void helper() {}\n}\n"
+    row = {
+        "id": file_id,
+        "source_id": "edge-gateway",
+        "relative_path": relative_path,
+        "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    }
+    return GraphAnalysisEngine().materialize(row, "job-1", "test-analyzer", "1", result, content.splitlines())
+
+
+def graph_state_for_test(content=None, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java"):
+    content = content or "class EmailVerificationLinkClientImpl {}\n"
+    return {
+        "source_id": "edge-gateway",
+        "relative_path": relative_path,
+        "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "analyzer_name": "test-analyzer",
+        "analyzer_version": "1",
+        "engine_version": GRAPH_ENGINE_VERSION,
+        "flow_domain": "CODE",
+        "status": "ANALYZED",
+        "analyzed_at": "now",
+        "symbol_count": 0,
+        "relation_count": 0,
+        "diagnostics": [],
+    }
+
+
+def build_inventory(tmp_path, content=None, include_large=False, extra_files=None, include_patterns=None):
     workspace = tmp_path / "workspace"
     service = workspace / "edge-gateway"
     (service / "src/main/java/example").mkdir(parents=True)
@@ -171,7 +371,7 @@ def build_inventory(tmp_path, content=None, include_large=False, extra_files=Non
   path: "{catalog}"
   workspace_root: "{workspace}"
 indexing:
-  include: ["**/*.java"]
+  include: {json.dumps(include_patterns or ["**/*.java"])}
 """,
         encoding="utf-8",
     )
@@ -180,70 +380,248 @@ indexing:
     return store, config, service
 
 
-def build_python_inventory(tmp_path, content):
-    workspace = tmp_path / "workspace"
-    service = workspace / "python-service"
-    (service / "app").mkdir(parents=True)
-    (service / "app" / "handlers.py").write_text(content, encoding="utf-8")
-    catalog = tmp_path / "services.yaml"
-    catalog.write_text(
-        f"""services:
-  python-service:
-    label: Python Service
-    path: python-service
-    group: py
-    tags: [python]
-""",
-        encoding="utf-8",
-    )
-    config = tmp_path / "knowledge-sources.yaml"
-    config.write_text(
-        f"""catalog:
-  path: "{catalog}"
-  workspace_root: "{workspace}"
-indexing:
-  include: ["**/*.py"]
-""",
-        encoding="utf-8",
-    )
-    store = InventoryStore(tmp_path / "knowledge.sqlite")
-    InventoryBuilder(load_source_config(config), store).build([], [])
-    return store, config, service
+def test_analysis_store_migrates_old_integer_graph_diagnostics_schema(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE sources (source_id TEXT PRIMARY KEY, display_name TEXT)")
+        conn.execute("INSERT INTO sources(source_id, display_name) VALUES ('edge-gateway', 'Edge Gateway')")
+        conn.execute("""
+            CREATE TABLE files (
+                id INTEGER PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                relative_path TEXT NOT NULL
+            )
+        """)
+        conn.execute("INSERT INTO files(id, source_id, relative_path) VALUES (1, 'edge-gateway', 'workflow.yml')")
+        conn.execute("""
+            CREATE TABLE analysis_graph_diagnostics (
+                id INTEGER PRIMARY KEY,
+                job_id TEXT,
+                source_id TEXT NOT NULL,
+                inventory_file_id INTEGER,
+                analysis_file_id INTEGER,
+                relative_path TEXT,
+                stage TEXT NOT NULL,
+                code TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                message TEXT NOT NULL,
+                candidate_id TEXT,
+                line_start INTEGER,
+                line_end INTEGER,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                fact_origin TEXT,
+                flow_domain TEXT
+            )
+        """)
+        conn.execute("""
+            INSERT INTO analysis_graph_diagnostics(
+                source_id, stage, code, severity, message, metadata_json, created_at
+            )
+            VALUES ('edge-gateway', 'OLD', 'OLD_DIAGNOSTIC', 'WARN', 'old', '{}', 'now')
+        """)
+
+    AnalysisStore(db_path).init()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(analysis_graph_diagnostics)").fetchall()}
+        assert str(columns["id"]["type"]).upper() == "TEXT"
+        assert columns["id"]["pk"] == 1
+        conn.execute("""
+            INSERT INTO analysis_graph_diagnostics(
+                id, job_id, source_id, severity, stage, code, message, metadata_json, created_at
+            )
+            VALUES ('diagnostic:text-id', 'job-1', 'edge-gateway', 'WARN', 'STRUCTURAL_PARSE',
+                    'STRUCTURAL_PARSER_NOT_AVAILABLE', 'No parser.', '{}', 'now')
+        """)
+        assert conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT 1 FROM analysis_schema_migrations WHERE version = 4"
+        ).fetchone()
+
+    AnalysisStore(db_path).init()
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM analysis_graph_diagnostics WHERE id = 'diagnostic:text-id'"
+        ).fetchone()[0] == 1
 
 
-def build_custom_inventory(tmp_path, files, include):
-    workspace = tmp_path / "workspace"
-    service = workspace / "edge-gateway"
-    for relative_path, file_content in files.items():
-        path = service / relative_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(file_content, encoding="utf-8")
-    catalog = tmp_path / "services.yaml"
-    catalog.write_text(
-        f"""services:
-  edge-gateway:
-    label: Edge Gateway
-    path: edge-gateway
-    group: edge
-    tags: [mixed]
-""",
-        encoding="utf-8",
+def test_graph_persistence_failure_is_reported_as_graph_store_error(tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    bad_graph = {
+        "nodes": [{
+            "id": "node-1",
+            "job_id": "job-1",
+            "source_id": "edge-gateway",
+            "inventory_file_id": 1,
+            "analysis_file_id": 1,
+            "stable_key": "edge-gateway|bad.yml|FILE",
+            "node_kind": "FILE",
+            "language": "yaml",
+            "name": None,
+            "qualified_name": None,
+            "display_name": None,
+            "parent_node_id": None,
+            "line_start": 1,
+            "line_end": 1,
+            "confidence": 1.0,
+            "status": "TRUSTED",
+            "metadata": {},
+            "fact_origin": "STATIC",
+            "flow_domain": "WORKFLOW",
+        }],
+        "edges": [],
+        "claims": [],
+        "evidence": [],
+        "diagnostics": [],
+    }
+
+    with pytest.raises(KnowledgeError) as raised:
+        store.replace_file_graph_analysis(1, {
+            "source_id": "edge-gateway",
+            "relative_path": "bad.yml",
+            "content_hash": "hash",
+            "analyzer_name": "ai-file-analyzer",
+            "analyzer_version": "1",
+            "engine_version": GRAPH_ENGINE_VERSION,
+            "flow_domain": "WORKFLOW",
+            "status": "ANALYZED",
+            "analyzed_at": "now",
+            "symbol_count": 1,
+            "relation_count": 0,
+            "diagnostics": [],
+        }, bad_graph)
+
+    assert raised.value.code == "ANALYSIS_GRAPH_STORE_FAILED"
+    assert raised.value.details["stage"] == "GRAPH_STORE"
+    assert raised.value.details["table"] == "analysis_graph_nodes"
+    assert raised.value.details["operation"] == "insert_nodes"
+    assert "NOT NULL" in raised.value.details["sqliteMessage"]
+
+
+def test_analysis_store_init_is_safe_for_parallel_graph_requests(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+
+    def initialize_store(_index: int) -> None:
+        AnalysisStore(db_path).init()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(initialize_store, range(24)))
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_nodes'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_edges'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_diagnostics'").fetchone()[0] == 1
+
+
+def test_graph_materialization_generates_unique_evidence_ids_for_shared_ranges():
+    graph = materialize_graph_for_test(shared_evidence_graph_result())
+    evidence_ids = [item["id"] for item in graph["evidence"]]
+    edge_ids = [item["id"] for item in graph["edges"]]
+    claim_ids = [item["id"] for item in graph["claims"]]
+
+    assert len(evidence_ids) == len(set(evidence_ids))
+    assert len(edge_ids) == len(set(edge_ids))
+    assert len(claim_ids) == len(set(claim_ids))
+    assert len(graph["evidence"]) == 5
+
+
+def test_graph_store_accepts_shared_evidence_ranges_and_replaces_file_twice(tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    content = "class EmailVerificationLinkClientImpl {\n  WebClient client;\n  String createLink() {\n    helper(); helper();\n  }\n  void helper() {}\n}\n"
+    first_graph = materialize_graph_for_test(shared_evidence_graph_result(), content=content)
+    second_graph = materialize_graph_for_test(shared_evidence_graph_result(), content=content)
+    state = graph_state_for_test(content)
+
+    assert {item["id"] for item in first_graph["evidence"]} == {item["id"] for item in second_graph["evidence"]}
+
+    store.replace_file_graph_analysis(1, state, first_graph)
+    store.replace_file_graph_analysis(1, state, second_graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        counts = {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in [
+                "analysis_graph_nodes",
+                "analysis_graph_edges",
+                "analysis_graph_claims",
+                "analysis_graph_evidence",
+            ]
+        }
+
+    assert counts["analysis_graph_nodes"] == len(second_graph["nodes"])
+    assert counts["analysis_graph_edges"] == len(second_graph["edges"])
+    assert counts["analysis_graph_claims"] == len(second_graph["claims"])
+    assert counts["analysis_graph_evidence"] == len(second_graph["evidence"])
+
+
+def test_duplicate_evidence_id_is_reported_as_graph_store_error_without_partial_rows(tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    content = "class EmailVerificationLinkClientImpl {\n  void createLink() { helper(); helper(); }\n  void helper() {}\n}\n"
+    graph = materialize_graph_for_test(shared_evidence_graph_result(), content=content)
+    graph["evidence"][1]["id"] = graph["evidence"][0]["id"]
+
+    with pytest.raises(KnowledgeError) as raised:
+        store.replace_file_graph_analysis(1, graph_state_for_test(content), graph)
+
+    assert raised.value.code == "ANALYSIS_GRAPH_STORE_FAILED"
+    assert raised.value.details["stage"] == "GRAPH_STORE"
+    assert raised.value.details["table"] == "analysis_graph_evidence"
+    assert raised.value.details["operation"] == "insert_evidence"
+    assert "UNIQUE constraint failed: analysis_graph_evidence.id" in raised.value.details["sqliteMessage"]
+    with sqlite3.connect(store.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence").fetchone()[0] == 0
+
+
+def test_reduced_email_verification_client_chained_calls_store_without_evidence_collision(tmp_path):
+    content = """package example;
+
+import org.springframework.web.reactive.function.client.WebClient;
+
+class EmailVerificationLinkClientImpl {
+  private final WebClient client;
+
+  String createLink(String email) {
+    return client.get().uri("/verify", email).retrieve().bodyToMono(String.class).block();
+  }
+}
+"""
+    file_metadata = StructuralFileMetadata(
+        source_id="edge-gateway",
+        inventory_file_id=1,
+        relative_path="clients/client-athssox/src/main/java/com/sitionix/ntfssox/client/EmailVerificationLinkClientImpl.java",
+        language="java",
+        flow_domain="CODE",
+        content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        line_count=len(content.splitlines()),
+        decode_policy="utf-8:replace",
     )
-    config = tmp_path / "knowledge-sources.yaml"
-    include_yaml = "\n".join(f'    - "{pattern}"' for pattern in include)
-    config.write_text(
-        f"""catalog:
-  path: "{catalog}"
-  workspace_root: "{workspace}"
-indexing:
-  include:
-{include_yaml}
-""",
-        encoding="utf-8",
-    )
-    store = InventoryStore(tmp_path / "knowledge.sqlite")
-    InventoryBuilder(load_source_config(config), store).build([], [])
-    return store, config, service
+    structural = JavaParserAdapter().parse(content, file_metadata)
+    graph_result = StaticGraphMaterializer().to_graph(structural)
+    graph = materialize_graph_for_test(graph_result, content=content, relative_path=file_metadata.relative_path)
+    evidence_ids = [item["id"] for item in graph["evidence"]]
+
+    assert len(evidence_ids) == len(set(evidence_ids))
+    assert any(edge["edge_type"] == "CALLS" for edge in graph["edges"])
+
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(1, graph_state_for_test(content, file_metadata.relative_path), graph)
+
+    with sqlite3.connect(store.db_path) as conn:
+        edge_count = conn.execute("SELECT COUNT(*) FROM analysis_graph_edges WHERE edge_type = 'CALLS'").fetchone()[0]
+        evidence_count = conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence").fetchone()[0]
+
+    assert edge_count > 0
+    assert evidence_count == len(evidence_ids)
 
 
 def build_two_service_inventory(tmp_path):
@@ -347,499 +725,126 @@ def wait_job(store, job_id):
     raise AssertionError("job did not finish")
 
 
-def graph_response(payload, line_count, nodes=None, edges=None, claims=None, diagnostics=None):
-    return {
-        "schemaVersion": "knowledge.graph.analysis.v1",
-        "file": {
-            "sourceId": payload["sourceId"],
-            "inventoryFileId": payload["inventoryFileId"],
-            "relativePath": payload["relativePath"],
-            "contentHash": payload["contentHash"],
-            "lineCount": line_count,
-        },
-        "nodes": nodes or [],
-        "edges": edges or [],
-        "claims": claims or [],
-        "diagnostics": diagnostics or [],
-    }
+def test_ai_output_schema_validates_valid_response():
+    result = valid_result()
+
+    assert result.symbols[0].roles[0].role == "HTTP_HANDLER"
 
 
-def graph_rows(store, table, where="", params=()):
-    with sqlite3.connect(store.db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        return conn.execute(f"SELECT * FROM {table} {where}", params).fetchall()
+def test_invalid_json_rejected():
+    with pytest.raises(ValidationError):
+        AnalysisResult.parse_raw("{bad")
 
 
-def graph_node_id(store, qualified_name):
-    rows = graph_rows(store, "analysis_graph_nodes", "WHERE qualified_name = ?", (qualified_name,))
-    assert rows, qualified_name
-    return rows[0]["id"]
+def test_ai_response_parser_parses_valid_json():
+    raw = json.dumps(valid_result().dict())
+
+    result = AiAnalysisResponseParser().parse(raw, 5)
+
+    assert isinstance(result, AnalysisResult)
+    assert result.symbols[0].name == "ObjectHandler"
 
 
-def current_inventory_file(store):
-    return store.search_rows([], [])[0][0]
+def test_ai_response_parser_extracts_markdown_wrapped_json():
+    raw = "```json\n" + json.dumps(valid_result().dict()) + "\n```"
+
+    result = AiAnalysisResponseParser().parse(raw, 5)
+
+    assert isinstance(result, AnalysisResult)
+    assert result.relations[0].relation == "CONTAINS"
 
 
-def seed_current_analysis_file(conn, row, content_hash=None, status="ANALYZED"):
-    conn.execute("""
-        INSERT OR REPLACE INTO analysis_files(
-            file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, engine_version,
-            status, analyzed_at, symbol_count, relation_count, attempt_count, diagnostics_json
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'now', 0, 0, 1, '[]')
-    """, (
-        row["id"],
-        row["source_id"],
-        row["relative_path"],
-        content_hash or row["content_hash"],
-        StubAnalyzer.name,
-        StubAnalyzer.version,
-        GRAPH_ANALYSIS_ENGINE_VERSION,
-        status,
-    ))
-
-
-def seed_graph_node(conn, row, node_id, qualified_name, kind="CALLABLE", status="TRUSTED"):
-    conn.execute("""
-        INSERT INTO analysis_graph_nodes(
-            id, job_id, source_id, inventory_file_id, analysis_file_id, stable_key, node_kind, language,
-            name, qualified_name, display_name, parent_node_id, line_start, line_end, confidence, status,
-            metadata_json, created_at
-        )
-        VALUES (?, 'job-lineage', ?, ?, ?, ?, ?, 'java', ?, ?, ?, NULL, 1, 1, 0.9, ?, '{}', 'now')
-    """, (
-        node_id,
-        row["source_id"],
-        row["id"],
-        row["id"],
-        f"stable:{node_id}",
-        kind,
-        qualified_name.split(".")[-1],
-        qualified_name,
-        qualified_name,
-        status,
-    ))
-
-
-def seed_graph_edge(conn, row, edge_id, from_node_id, to_node_id, edge_type="CALLS", status="TRUSTED"):
-    conn.execute("""
-        INSERT INTO analysis_graph_edges(
-            id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id, to_node_id, edge_type,
-            resolution_status, confidence, evidence_id, unresolved_target_json, metadata_json, status, created_at
-        )
-        VALUES (?, 'job-lineage', ?, ?, ?, ?, ?, ?, 'RESOLVED', 0.9, NULL, NULL, '{}', ?, 'now')
-    """, (
-        edge_id,
-        row["source_id"],
-        row["id"],
-        row["id"],
-        from_node_id,
-        to_node_id,
-        edge_type,
-        status,
-    ))
-
-
-def table_count(store, table):
-    with sqlite3.connect(store.db_path) as conn:
-        return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-
-
-def table_exists(store, table):
-    with sqlite3.connect(store.db_path) as conn:
-        return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
-
-
-def seed_legacy_analysis_rows(store, file_id=None):
-    row = store.search_rows([], [])[0][0]
-    file_id = file_id or row["id"]
-    with sqlite3.connect(store.db_path) as conn:
-        conn.execute("""
-            INSERT INTO analysis_jobs(
-                job_id, status, started_at, completed_at, source_count, file_count,
-                processed_file_count, failed_file_count, current_source_id, current_relative_path,
-                source_ids_json, symbol_count, relation_count, diagnostics_json
-            )
-            VALUES ('legacy-job', 'COMPLETED', 'old', 'old', 1, 1, 1, 0, NULL, NULL, '["edge-gateway"]', 1, 1, '[]')
-        """)
-        conn.execute("""
-            INSERT INTO analysis_files(
-                file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version,
-                status, analyzed_at, symbol_count, relation_count, diagnostics_json
-            )
-            VALUES (?, ?, ?, ?, 'ai-file-analyzer', '1', 'ANALYZED', 'old', 1, 1, '[]')
-        """, (file_id, row["source_id"], row["relative_path"], row["content_hash"]))
-        conn.execute("""
-            INSERT INTO analysis_symbols(
-                symbol_id, file_id, source_id, relative_path, name, kind, line_start, line_end, summary, metadata_json
-            )
-            VALUES ('legacy-symbol', ?, ?, ?, 'LegacyHandler', 'CLASS', 1, 1, 'Old direct analyzer fact.', '{}')
-        """, (file_id, row["source_id"], row["relative_path"]))
-        conn.execute("""
-            INSERT INTO analysis_symbol_roles(symbol_id, role, confidence, evidence_json, classifier, classifier_version)
-            VALUES ('legacy-symbol', 'HTTP_HANDLER', 0.9, '["old"]', 'ai-file-analyzer', '1')
-        """)
-        conn.execute("""
-            INSERT INTO analysis_relations(
-                relation_id, source_id, from_symbol_id, to_symbol_id, relation, confidence,
-                evidence_json, line_start, line_end, metadata_json
-            )
-            VALUES ('legacy-relation', ?, 'legacy-symbol', 'legacy-symbol', 'CALLS', 0.9, '["old"]', 1, 1, '{}')
-        """, (row["source_id"],))
-
-
-def seed_pre_graph_cutover_schema(store):
-    row = store.search_rows([], [])[0][0]
-    with sqlite3.connect(store.db_path) as conn:
-        conn.execute("""
-            CREATE TABLE analysis_jobs (
-                job_id TEXT PRIMARY KEY,
-                status TEXT NOT NULL,
-                started_at TEXT,
-                completed_at TEXT,
-                source_count INTEGER NOT NULL,
-                file_count INTEGER NOT NULL,
-                processed_file_count INTEGER NOT NULL,
-                failed_file_count INTEGER NOT NULL,
-                current_source_id TEXT,
-                current_relative_path TEXT,
-                source_ids_json TEXT,
-                last_progress_at TEXT,
-                symbol_count INTEGER NOT NULL,
-                relation_count INTEGER NOT NULL,
-                diagnostics_json TEXT NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE analysis_files (
-                file_id INTEGER PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                relative_path TEXT NOT NULL,
-                content_hash TEXT NOT NULL,
-                analyzer_name TEXT NOT NULL,
-                analyzer_version TEXT NOT NULL,
-                status TEXT NOT NULL,
-                analyzed_at TEXT,
-                symbol_count INTEGER NOT NULL,
-                relation_count INTEGER NOT NULL,
-                attempt_count INTEGER NOT NULL DEFAULT 0,
-                last_attempt_at TEXT,
-                last_error_code TEXT,
-                last_error_message TEXT,
-                last_raw_response_preview TEXT,
-                diagnostics_json TEXT NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE analysis_symbols (
-                symbol_id TEXT PRIMARY KEY,
-                file_id INTEGER NOT NULL,
-                source_id TEXT NOT NULL,
-                relative_path TEXT NOT NULL,
-                name TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                line_start INTEGER NOT NULL,
-                line_end INTEGER NOT NULL,
-                summary TEXT,
-                metadata_json TEXT NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE analysis_symbol_roles (
-                symbol_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                evidence_json TEXT NOT NULL,
-                classifier TEXT NOT NULL,
-                classifier_version TEXT NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE analysis_relations (
-                relation_id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                from_symbol_id TEXT NOT NULL,
-                to_symbol_id TEXT NOT NULL,
-                relation TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                evidence_json TEXT NOT NULL,
-                line_start INTEGER NOT NULL,
-                line_end INTEGER NOT NULL,
-                metadata_json TEXT NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE analysis_schema_migrations (
-                version INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                applied_at TEXT NOT NULL
-            )
-        """)
-        conn.execute("INSERT INTO analysis_schema_migrations(version, name, applied_at) VALUES (1, 'remove_legacy_analysis_job_counter', 'old')")
-        conn.execute("INSERT INTO analysis_schema_migrations(version, name, applied_at) VALUES (2, 'add_analysis_job_source_scope', 'old')")
-    seed_legacy_analysis_rows(store, file_id=row["id"])
-
-
-def test_graph_response_parser_extracts_markdown_wrapped_json():
-    payload = {
-        "sourceId": "edge-gateway",
-        "inventoryFileId": 7,
-        "relativePath": "src/App.java",
-        "contentHash": "hash",
-    }
-    raw = "```json\n" + json.dumps(valid_graph_response(payload, 5)) + "\n```"
-
-    result = GraphAnalysisResponseParser().parse(raw)
-
-    assert isinstance(result, GraphAnalysisResponse)
-    assert result.nodes[0].name == "ObjectHandler"
-
-
-def test_graph_response_parser_rejects_natural_language():
-    result = GraphAnalysisResponseParser().parse("I cannot analyze this file.")
+def test_ai_response_parser_rejects_natural_language():
+    result = AiAnalysisResponseParser().parse("I cannot analyze this file.", 5)
 
     assert result.code == "ANALYSIS_AI_INVALID_JSON"
-    assert result.validation_errors[0].code == GraphValidationErrorCode.INVALID_JSON
-    assert result.validation_errors[0].path == "$"
-    assert result.validation_errors[0].stage.value == "JSON_PARSE"
 
 
-def test_graph_response_parser_rejects_empty_response():
-    result = GraphAnalysisResponseParser().parse("   ")
+def test_ai_response_parser_rejects_empty_response():
+    result = AiAnalysisResponseParser().parse("   ", 5)
 
     assert result.code == "ANALYSIS_AI_EMPTY_RESPONSE"
-    assert result.validation_errors[0].code == GraphValidationErrorCode.EMPTY_RESPONSE
 
 
-def test_graph_response_parser_rejects_schema_invalid_json():
-    result = GraphAnalysisResponseParser().parse('{"nodes":[],"edges":[]}')
+def test_ai_response_parser_rejects_schema_invalid_json():
+    result = AiAnalysisResponseParser().parse('{"symbols":[],"relations":[]}', 5)
 
     assert result.code == "ANALYSIS_AI_SCHEMA_INVALID"
     assert len(result.message) < 560
-    assert {error.code for error in result.validation_errors} >= {GraphValidationErrorCode.MISSING_REQUIRED_FIELD}
 
 
-def test_graph_response_parser_rejects_json_null_as_schema_invalid():
-    result = GraphAnalysisResponseParser().parse("null")
+def test_ai_response_parser_rejects_json_null_as_schema_invalid():
+    result = AiAnalysisResponseParser().parse("null", 5)
 
     assert result.code == "ANALYSIS_AI_SCHEMA_INVALID"
 
 
-def test_graph_response_parser_truncates_raw_preview():
-    result = GraphAnalysisResponseParser().parse("x" * 5000)
+def test_ai_response_parser_truncates_raw_preview():
+    result = AiAnalysisResponseParser().parse("x" * 5000, 5)
 
     assert result.code == "ANALYSIS_AI_INVALID_JSON"
     assert len(result.raw_preview) == 4000
 
 
-def test_graph_response_parser_accepts_valid_graph_json():
-    payload = {
-        "sourceId": "edge-gateway",
-        "inventoryFileId": 7,
-        "relativePath": "src/App.java",
-        "contentHash": "hash",
-    }
-    raw = json.dumps(graph_response(payload, 3, nodes=[
-        {"localId": "n1", "nodeKind": "CALLABLE", "name": "run", "qualifiedName": "App.run", "lineStart": 1, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-    ]))
+def test_ai_response_parser_rejects_non_critical_schema_noise():
+    payload = valid_result().dict()
+    payload["symbols"][0]["roles"][0]["role"] = "EXCEPTION"
+    payload["symbols"][0]["lineEnd"] = 50
+    payload["relations"][0]["relation"] = "HAS_FIELD"
+    payload["relations"][0]["lineEnd"] = 50
 
-    result = GraphAnalysisResponseParser().parse(raw)
-
-    assert isinstance(result, GraphAnalysisResponse)
-    assert result.schemaVersion == "knowledge.graph.analysis.v1"
-    assert result.nodes[0].nodeKind == "CALLABLE"
-
-
-def test_graph_response_parser_rejects_schema_invalid_graph_json():
-    result = GraphAnalysisResponseParser().parse('{"schemaVersion":"wrong","nodes":[]}')
+    result = AiAnalysisResponseParser().parse(json.dumps(payload), 5)
 
     assert result.code == "ANALYSIS_AI_SCHEMA_INVALID"
 
 
-def test_graph_response_parser_reports_missing_required_field_path_and_allowed_values():
-    payload = {
-        "sourceId": "edge-gateway",
-        "inventoryFileId": 7,
-        "relativePath": "src/App.java",
-        "contentHash": "hash",
-    }
-    raw = json.dumps(graph_response(payload, 3, nodes=[
-        {"localId": "n1", "name": "run", "qualifiedName": "App.run", "lineStart": 1, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-    ]))
+def test_ai_response_parser_rejects_relations_with_unknown_symbol_references():
+    payload = valid_result().dict()
+    payload["relations"][0]["toLocalId"] = "UNKNOWN"
 
-    result = GraphAnalysisResponseParser().parse(raw, line_count=3)
-    error = result.validation_errors[0]
+    result = AiAnalysisResponseParser().parse(json.dumps(payload), 5)
 
     assert result.code == "ANALYSIS_AI_SCHEMA_INVALID"
-    assert error.code == GraphValidationErrorCode.MISSING_REQUIRED_FIELD
-    assert error.path == "$.nodes[0].nodeKind"
-    assert "UNKNOWN" in error.allowed_values
-    assert "nodeKind" in error.repair_hint
 
 
-def test_graph_response_parser_reports_invalid_field_type():
-    payload = {
-        "sourceId": "edge-gateway",
-        "inventoryFileId": 7,
-        "relativePath": "src/App.java",
-        "contentHash": "hash",
-    }
-    response = graph_response(payload, 3, nodes=[
-        {"localId": "n1", "nodeKind": "CALLABLE", "name": "run", "qualifiedName": "App.run", "lineStart": "one", "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-    ])
+def test_ai_output_schema_accepts_java_record_kind():
+    payload = valid_result().dict()
+    payload["symbols"][0]["kind"] = "RECORD"
 
-    result = GraphAnalysisResponseParser().parse(json.dumps(response), line_count=3)
-    error = result.validation_errors[0]
+    result = AnalysisResult.parse_obj(payload)
 
-    assert result.code == "ANALYSIS_AI_SCHEMA_INVALID"
-    assert error.code == GraphValidationErrorCode.INVALID_FIELD_TYPE
-    assert error.path == "$.nodes[0].lineStart"
-    assert "JSON type" in error.repair_hint
+    assert result.symbols[0].kind == "RECORD"
 
 
-def test_prompt_enum_values_match_graph_schema():
-    prompt = (Path(__file__).resolve().parents[3] / "config" / "analysis-prompt.md").read_text(encoding="utf-8")
+def test_unknown_role_rejected():
+    payload = valid_result().dict()
+    payload["symbols"][0]["roles"][0]["role"] = "BUSINESS_ROLE"
 
-    for value in enum_values(GraphNodeKind):
-        assert value in prompt
-    for value in enum_values(GraphEdgeType):
-        assert value in prompt
-    for value in enum_values(GraphClaimKind):
-        assert value in prompt
-    for value in enum_values(GraphFactOrigin):
-        assert value in prompt
-    for value in enum_values(GraphFlowDomain):
-        assert value in prompt
+    with pytest.raises(ValidationError):
+        AnalysisResult.parse_obj(payload)
 
 
-def test_graph_materializer_returns_typed_facts(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
-    row = store.search_rows([], [])[0][0]
-    resolved = StubResolver().read(row)
-    payload = {
-        "sourceId": row["source_id"],
-        "inventoryFileId": row["id"],
-        "relativePath": row["relative_path"],
-        "contentHash": row["content_hash"],
-    }
-    response = GraphAnalysisResponse.parse_obj(graph_response(payload, 1, nodes=[
-        {"localId": "n1", "nodeKind": "CALLABLE", "name": "run", "qualifiedName": "App.run", "parentLocalId": "__file__", "lineStart": 1, "lineEnd": 1, "confidence": 0.9, "metadata": {}},
-    ]))
+def test_unknown_relation_rejected():
+    payload = valid_result().dict()
+    payload["relations"][0]["relation"] = "BUSINESS_RELATION"
 
-    graph = GraphAnalysisEngine().materialize("job-1", row, resolved.content, response, "test", "1")
-
-    assert isinstance(graph.nodes[0], GraphNodeFact)
-    assert graph.nodes[0].node_kind == GraphNodeKind.FILE
-    assert any(isinstance(node, GraphNodeFact) and node.node_kind == GraphNodeKind.CALLABLE and node.qualified_name == "App.run" for node in graph.nodes)
-    assert all(isinstance(edge, GraphEdgeFact) for edge in graph.edges)
+    with pytest.raises(ValidationError):
+        AnalysisResult.parse_obj(payload)
 
 
-def test_graph_v1_cutover_clears_legacy_analysis_cache_without_touching_inventory(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
-    seed_pre_graph_cutover_schema(store)
+def test_line_range_outside_file_rejected():
+    result = valid_result()
 
-    AnalysisStore(store.db_path).init()
-
-    assert table_count(store, "files") == 1
-    assert table_count(store, "sources") == 1
-    assert table_count(store, "analysis_jobs") == 0
-    assert table_count(store, "analysis_files") == 0
-    assert not table_exists(store, "analysis_symbols")
-    assert not table_exists(store, "analysis_symbol_roles")
-    assert not table_exists(store, "analysis_relations")
-    assert table_count(store, "analysis_graph_nodes") == 0
-    assert table_count(store, "analysis_graph_edges") == 0
-    versions = {row["version"] for row in graph_rows(store, "analysis_schema_migrations")}
-    assert 3 in versions
+    with pytest.raises(ValueError):
+        result.validate_lines(2)
 
 
-def test_graph_analysis_endpoints_read_graph_tables_after_legacy_cache_reset(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
-    seed_pre_graph_cutover_schema(store)
-    analysis_store = AnalysisStore(store.db_path)
-    analysis_store.init()
+def test_evidence_required_for_non_unknown_role():
+    payload = valid_result().dict()
+    payload["symbols"][0]["roles"][0]["evidence"] = []
 
-    final = wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
-    files = analysis_store.files(None, "ANALYZED", None, 10, 0)
-    symbols = analysis_store.symbols(None, None, None, None, None, 10, 0)
-    relations = analysis_store.relations(None, None, None, None, 10, 0)
-
-    assert final["status"] == "COMPLETED"
-    assert files["total"] == 1
-    assert files["files"][0]["engineVersion"] == GRAPH_ANALYSIS_ENGINE_VERSION
-    assert symbols["total"] == 2
-    assert all(symbol["graphNodeId"] for symbol in symbols["symbols"])
-    assert all(symbol["factStatus"] == "TRUSTED" for symbol in symbols["symbols"])
-    assert relations["total"] == 1
-    assert relations["relations"][0]["graphEdgeId"]
-    assert relations["relations"][0]["factStatus"] in {"TRUSTED", "DERIVED"}
-    assert not table_exists(store, "analysis_symbols")
-    assert not table_exists(store, "analysis_symbol_roles")
-    assert not table_exists(store, "analysis_relations")
-
-
-def test_projection_hides_orphan_graph_rows_without_analysis_file_lineage(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
-    analysis_store = AnalysisStore(store.db_path)
-    analysis_store.init()
-    row = current_inventory_file(store)
-    with sqlite3.connect(store.db_path) as conn:
-        seed_graph_node(conn, row, "orphan-from", "Orphan.from")
-        seed_graph_node(conn, row, "orphan-to", "Orphan.to")
-        seed_graph_edge(conn, row, "orphan-edge", "orphan-from", "orphan-to")
-
-    symbols = analysis_store.symbols(None, None, None, None, None, 10, 0)
-    relations = analysis_store.relations(None, None, None, None, 10, 0)
-    status = analysis_store.status()
-    service = analysis_store.service_status(None, StubAnalyzer.name, StubAnalyzer.version, store.status())["services"][0]
-
-    assert store.status()["fileCount"] == 1
-    assert symbols["total"] == 0
-    assert relations["total"] == 0
-    assert status["symbolCount"] == 0
-    assert status["relationCount"] == 0
-    assert service["facts"]["symbolCount"] == 0
-    assert service["facts"]["relationCount"] == 0
-
-
-def test_projection_hides_graph_rows_with_stale_content_hash(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
-    analysis_store = AnalysisStore(store.db_path)
-    analysis_store.init()
-    row = current_inventory_file(store)
-    with sqlite3.connect(store.db_path) as conn:
-        seed_current_analysis_file(conn, row, content_hash="stale-hash")
-        seed_graph_node(conn, row, "stale-node", "Stale.run")
-
-    symbols = analysis_store.symbols(None, None, None, None, None, 10, 0)
-    service = analysis_store.service_status(None, StubAnalyzer.name, StubAnalyzer.version, store.status())["services"][0]
-
-    assert symbols["total"] == 0
-    assert service["facts"]["symbolCount"] == 0
-    assert store.status()["fileCount"] == 1
-
-
-def test_projection_returns_only_current_graph_lineage(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
-    analysis_store = AnalysisStore(store.db_path)
-    analysis_store.init()
-    row = current_inventory_file(store)
-    with sqlite3.connect(store.db_path) as conn:
-        seed_current_analysis_file(conn, row)
-        seed_graph_node(conn, row, "current-from", "Current.from")
-        seed_graph_node(conn, row, "current-to", "Current.to")
-        seed_graph_edge(conn, row, "current-edge", "current-from", "current-to")
-
-    symbols = analysis_store.symbols(None, None, None, None, None, 10, 0)
-    relations = analysis_store.relations(None, None, None, None, 10, 0)
-    service = analysis_store.service_status(None, StubAnalyzer.name, StubAnalyzer.version, store.status())["services"][0]
-
-    assert symbols["total"] == 2
-    assert {symbol["graphNodeId"] for symbol in symbols["symbols"]} == {"current-from", "current-to"}
-    assert relations["total"] == 1
-    assert relations["relations"][0]["graphEdgeId"] == "current-edge"
-    assert service["facts"]["symbolCount"] == 2
-    assert service["facts"]["relationCount"] == 1
+    with pytest.raises(ValidationError):
+        AnalysisResult.parse_obj(payload)
 
 
 def test_non_localhost_ollama_base_url_rejected(tmp_path):
@@ -853,26 +858,13 @@ def test_large_file_skipped(tmp_path):
 
     job = runner.start(AnalysisBuildRequest(), StubAnalyzer())
     final = wait_job(store, job["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "SKIPPED_TOO_LARGE_FOR_AI_ANALYSIS", None, 10, 0)
+    skipped = AnalysisStore(store.db_path).files(None, "SKIPPED_TOO_LARGE_FOR_AI_ANALYSIS", None, 10, 0)
+    analyzed = AnalysisStore(store.db_path).files(None, "ANALYZED", "LargeFile", 10, 0)
 
     assert final["status"] == "COMPLETED"
-    assert files["total"] == 1
-
-
-def test_analysis_reads_selected_files_through_inventory_resolver(tmp_path):
-    store, _, service = build_inventory(tmp_path)
-    (service / "src/main/java/example/ObjectHandler.java").unlink()
-    runner = AnalysisJobRunner(store, app_config(tmp_path))
-    resolver = StubResolver()
-    runner.file_resolver = resolver
-    analyzer = CapturingAnalyzer()
-
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-
-    assert final["status"] == "COMPLETED"
-    assert resolver.calls == ["src/main/java/example/ObjectHandler.java"]
-    assert analyzer.payloads[0]["content"] == "class Resolved {}"
-    assert analyzer.line_counts == [1]
+    assert skipped["total"] == 0
+    assert analyzed["total"] == 1
+    assert {item["code"] for item in analyzed["files"][0]["diagnostics"]} >= {"ANALYSIS_FILE_TOO_LARGE"}
 
 
 def test_unchanged_file_not_picked_by_new_job(tmp_path):
@@ -897,7 +889,7 @@ def test_failed_file_with_unchanged_hash_is_picked_for_retry(tmp_path):
     second = wait_job(store, runner.start(AnalysisBuildRequest(), retry_analyzer)["jobId"])
     analyzed = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
 
-    assert first["failedFileCount"] == 1
+    assert first["failedFileCount"] == 0
     assert second["fileCount"] == 1
     assert second["processedFileCount"] == 1
     assert second["failedFileCount"] == 0
@@ -905,7 +897,7 @@ def test_failed_file_with_unchanged_hash_is_picked_for_retry(tmp_path):
     assert analyzed["total"] == 1
 
 
-def test_inventory_search_rows_filters_currently_analyzed_files(tmp_path):
+def test_unchanged_file_lookup_batches_large_inventory(tmp_path):
     extra_files = {
         f"src/main/java/example/Generated{i:03d}Handler.java": "public class GeneratedHandler {\n  public void create() {\n  }\n\n}\n"
         for i in range(405)
@@ -926,15 +918,9 @@ def test_inventory_search_rows_filters_currently_analyzed_files(tmp_path):
             "diagnostics": [],
         })
 
-    pending_rows, _ = store.search_rows(
-        [],
-        [],
-        StubAnalyzer.name,
-        StubAnalyzer.version,
-        only_needing_analysis=True,
-    )
+    unchanged_ids = analysis_store.unchanged_file_ids(rows, StubAnalyzer.name, StubAnalyzer.version)
 
-    assert pending_rows == []
+    assert unchanged_ids == set()
 
 
 def test_analysis_max_files_uses_stable_inventory_order(tmp_path):
@@ -979,13 +965,16 @@ def test_changed_file_reanalyzed_and_previous_analysis_removed(tmp_path):
     first_symbols = AnalysisStore(store.db_path).symbols(None, None, None, None, None, 100, 0)
     (service / "src/main/java/example/ObjectHandler.java").write_text("public class ObjectHandler {\n  public void updated() {}\n}\n", encoding="utf-8")
     InventoryBuilder(load_source_config(config), store).build([], [])
-    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(factory=lambda payload, line_count: graph_response(payload, line_count, nodes=[
-        {"localId": "s3", "nodeKind": "CALLABLE", "name": "updated", "qualifiedName": "ObjectHandler.updated", "lineStart": 2, "lineEnd": 2, "confidence": 0.7, "metadata": {}},
-    ])))["jobId"])
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(AnalysisResult.parse_obj({
+        "fileSummary": "Updated.",
+        "symbols": [{"localId": "s3", "name": "updated", "kind": "METHOD", "roles": [{"role": "UTILITY", "confidence": 0.5, "evidence": ["Method exists."]}], "lineStart": 2, "lineEnd": 2, "metadata": {}}],
+        "relations": [],
+        "diagnostics": [],
+    })))["jobId"])
     second_symbols = AnalysisStore(store.db_path).symbols(None, None, None, None, None, 100, 0)
 
-    assert first_symbols["total"] == 2
-    assert second_symbols["total"] == 2
+    assert first_symbols["total"] == 3
+    assert second_symbols["total"] == 3
     assert "updated" in {symbol["name"] for symbol in second_symbols["symbols"]}
     assert "create" not in {symbol["name"] for symbol in second_symbols["symbols"]}
 
@@ -1226,13 +1215,16 @@ def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
 
     assert "skipped_unchanged_file_count" not in columns
     assert "source_ids_json" in columns
-    assert job is None
+    assert _legacy_skipped_unchanged_key() not in job
+    assert job["sourceIds"] == []
+    assert job["processedFileCount"] == 2
     assert migrations == [
         (1, "remove_legacy_analysis_job_counter"),
         (2, "add_analysis_job_source_scope"),
         (3, "reset_analysis_cache_for_graph_v1_cutover"),
+        (4, "reconcile_graph_diagnostics_schema"),
     ]
-    assert migration_count == 3
+    assert migration_count == 4
 
 
 def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path):
@@ -1259,10 +1251,16 @@ def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path
     unblock.set()
     old_final = wait_job(store, old_job_id)
     files = analysis_store.files(None, "ANALYZED", None, 10, 0)
+    with sqlite3.connect(store.db_path) as conn:
+        old_job_file_statuses = {
+            row[0]
+            for row in conn.execute("SELECT status FROM analysis_job_files WHERE job_id = ?", (old_job_id,)).fetchall()
+        }
 
     assert new_final["status"] == "COMPLETED"
     assert old_final["status"] == "STOPPED"
     assert files["total"] == 1
+    assert old_job_file_statuses == {"STOPPED"}
 
 
 def _legacy_skipped_unchanged_key():
@@ -1287,16 +1285,17 @@ def test_failed_ai_file_does_not_crash_whole_service(tmp_path):
 
     assert final["status"] == "COMPLETED"
     assert final["processedFileCount"] == 1
-    assert final["failedFileCount"] == 1
+    assert final["failedFileCount"] == 0
     service = AnalysisStore(store.db_path).service_status(None, StubAnalyzer.name, StubAnalyzer.version, store.status())["services"][0]
     assert service["analysis"]["processedFileCount"] == 1
-    assert service["analysis"]["failedFileCount"] == 1
+    assert service["analysis"]["analyzedFileCount"] == 1
+    assert service["analysis"]["failedFileCount"] == 0
     assert service["analysis"]["pendingFileCount"] == 0
     assert service["diagnostics"][0]["code"] == "ANALYSIS_FILE_FAILED"
     assert service["diagnostics"][0]["count"] == 1
 
 
-def test_service_status_includes_completed_outcomes_while_running(tmp_path):
+def test_service_status_uses_active_job_counts_while_running(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = AnalysisJobRunner(store, app_config(tmp_path))
     wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(fail=True))["jobId"])
@@ -1316,10 +1315,9 @@ def test_service_status_includes_completed_outcomes_while_running(tmp_path):
     service = analysis_store.service_status(None, StubAnalyzer.name, StubAnalyzer.version, store.status())["services"][0]
 
     assert service["analysis"]["status"] == "RUNNING"
-    assert service["analysis"]["processedFileCount"] == 1
-    assert service["analysis"]["failedFileCount"] == 1
+    assert service["analysis"]["processedFileCount"] == 0
+    assert service["analysis"]["failedFileCount"] == 0
     assert service["analysis"]["pendingFileCount"] == 0
-    assert service["analysis"]["percent"] == 100.0
     assert service["analysis"]["currentRelativePath"] == "src/main/java/example/ObjectHandler.java"
 
 
@@ -1338,25 +1336,6 @@ def test_bad_ai_json_is_retried_before_file_fails(tmp_path):
     assert {item["code"] for item in files["files"][0]["diagnostics"]} >= {"ANALYSIS_AI_INVALID_JSON", "ANALYSIS_AI_RETRY_SUCCEEDED"}
 
 
-def test_invalid_json_repair_prompt_contains_structured_parse_error(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
-    analyzer = StubAnalyzer(outcomes=[
-        KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad", attempt=1),
-        lambda payload, line_count: valid_graph_response(payload, line_count),
-    ])
-    runner = AnalysisJobRunner(store, app_config_with_retries(tmp_path, 2))
-
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-
-    assert final["failedFileCount"] == 0
-    assert analyzer.repair_prompts
-    prompt = analyzer.repair_prompts[0]
-    assert "Structured validation feedback JSON" in prompt
-    assert "INVALID_JSON" in prompt
-    assert '"path": "$"' in prompt
-    assert "{bad" in prompt
-
-
 def test_max_attempts_exceeded_marks_file_failed_with_preview(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     analyzer = StubAnalyzer(outcomes=[
@@ -1365,14 +1344,13 @@ def test_max_attempts_exceeded_marks_file_failed_with_preview(tmp_path):
     ])
     runner = AnalysisJobRunner(store, app_config_with_retries(tmp_path, 2))
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "FAILED", None, 10, 0)
+    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
 
-    assert final["failedFileCount"] == 1
+    assert final["failedFileCount"] == 0
     assert files["files"][0]["attemptCount"] == 2
     assert files["files"][0]["lastErrorCode"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"
     assert files["files"][0]["lastRawResponsePreview"] == "{bad again"
     assert {item["code"] for item in files["files"][0]["diagnostics"]} >= {"ANALYSIS_AI_INVALID_JSON", "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"}
-    assert files["files"][0]["diagnostics"][-1]["validationCode"] == "INVALID_JSON"
 
 
 def test_timeout_marks_file_failed_and_continues(tmp_path):
@@ -1381,20 +1359,20 @@ def test_timeout_marks_file_failed_and_continues(tmp_path):
     })
     analyzer = StubAnalyzer(outcomes=[
         KnowledgeError("ANALYSIS_AI_TIMEOUT", "AI analyzer request timed out", attempt=1),
-        lambda payload, line_count: valid_graph_response(payload, line_count),
+        valid_result(),
     ])
     runner = AnalysisJobRunner(store, app_config_with_retries(tmp_path, 3))
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
     files = AnalysisStore(store.db_path).files(None, None, None, 10, 0)
-    failed = AnalysisStore(store.db_path).files(None, "FAILED", None, 10, 0)
+    first = AnalysisStore(store.db_path).files(None, "ANALYZED", "ObjectHandler", 10, 0)
 
     assert final["status"] == "COMPLETED"
     assert final["processedFileCount"] == 2
-    assert final["failedFileCount"] == 1
+    assert final["failedFileCount"] == 0
     assert analyzer.calls == 2
-    assert {file["analysisStatus"] for file in files["files"]} == {"ANALYZED", "FAILED"}
-    assert failed["files"][0]["attemptCount"] == 1
-    assert failed["files"][0]["lastErrorCode"] == "ANALYSIS_AI_TIMEOUT"
+    assert {file["analysisStatus"] for file in files["files"]} == {"ANALYZED"}
+    assert first["files"][0]["attemptCount"] == 1
+    assert first["files"][0]["lastErrorCode"] == "ANALYSIS_AI_TIMEOUT"
 
 
 def test_transport_error_marks_file_failed_and_continues_after_attempts(tmp_path):
@@ -1403,13 +1381,13 @@ def test_transport_error_marks_file_failed_and_continues_after_attempts(tmp_path
     })
     analyzer = StubAnalyzer(outcomes=[
         KnowledgeError("ANALYSIS_AI_TRANSPORT_ERROR", "AI analyzer transport error", attempt=1),
-        lambda payload, line_count: valid_graph_response(payload, line_count),
+        valid_result(),
     ])
     runner = AnalysisJobRunner(store, app_config_with_retries(tmp_path, 1))
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
 
     assert final["processedFileCount"] == 2
-    assert final["failedFileCount"] == 1
+    assert final["failedFileCount"] == 0
 
 
 def test_last_progress_at_updates(tmp_path):
@@ -1451,624 +1429,380 @@ def test_symbols_and_relations_endpoints_return_roles_and_evidence(tmp_path):
     assert relations["relations"][0]["evidence"]
 
 
-def test_java_static_extractor_creates_type_callable_contains_and_imports_without_ai(tmp_path):
-    content = """package example;
-
-import java.util.List;
-
-public class ObjectHandler {
-  private final TicketRepository ticketRepository;
-
-  public ObjectHandler(TicketRepository ticketRepository) {
-    this.ticketRepository = ticketRepository;
-  }
-
-  public Ticket findById(String id) {
-    return ticketRepository.findById(id);
-  }
-}
-"""
-    store, _, _ = build_inventory(tmp_path, content=content)
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count))
-
-    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), analyzer)["jobId"])
-    nodes = graph_rows(store, "analysis_graph_nodes")
-    edges = graph_rows(store, "analysis_graph_edges")
-    names = {row["qualified_name"] for row in nodes}
-
-    assert "example.ObjectHandler" in names
-    assert "example.ObjectHandler.findById" in names
-    assert "java.util.List" in names
-    assert any(row["node_kind"] == "FIELD" and row["name"] == "ticketRepository" for row in nodes)
-    assert any(row["edge_type"] == "CONTAINS" for row in edges)
-    assert any(row["edge_type"] == "IMPORTS" for row in edges)
-    assert all(row["line_start"] and row["line_end"] for row in nodes if row["node_kind"] != "EXTERNAL")
-
-
-def test_java_static_extractor_ignores_comments_and_strings_and_keeps_overloads_distinct(tmp_path):
-    content = """public class ObjectHandler {
-  String text = "public void fakeString() {}";
-  // public void fakeComment() {}
-  /*
-   public void fakeBlock() {}
-   */
-  public void find(String id) {}
-  public void find(Long id) {}
-}
-"""
-    store, _, _ = build_inventory(tmp_path, content=content)
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count))
-
-    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), analyzer)["jobId"])
-    callables = graph_rows(store, "analysis_graph_nodes", "WHERE node_kind = 'CALLABLE'")
-    callable_names = {row["name"] for row in callables}
-    find_qualified_names = {row["qualified_name"] for row in callables if row["name"] == "find"}
-
-    assert "fakeString" not in callable_names
-    assert "fakeComment" not in callable_names
-    assert "fakeBlock" not in callable_names
-    assert len(find_qualified_names) == 2
-
-
-def test_python_static_extractor_creates_type_callable_contains_and_imports_without_ai(tmp_path):
-    content = """import json
-from collections import defaultdict
-
-class TicketHandler:
-    def find_by_id(self, ticket_id):
-        return ticket_id
-
-async def health():
-    return "ok"
-"""
-    store, _, _ = build_python_inventory(tmp_path, content)
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count))
-
-    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), analyzer)["jobId"])
-    nodes = graph_rows(store, "analysis_graph_nodes")
-    edges = graph_rows(store, "analysis_graph_edges")
-    names = {row["qualified_name"] for row in nodes}
-
-    assert "app.handlers.TicketHandler" in names
-    assert "app.handlers.TicketHandler.find_by_id" in names
-    assert "app.handlers.health" in names
-    assert "json" in names
-    assert "collections.defaultdict" in names
-    assert any(row["edge_type"] == "CONTAINS" for row in edges)
-    assert any(row["edge_type"] == "IMPORTS" for row in edges)
-
-
-def test_flow_domain_classifier_uses_path_and_extension_only():
-    assert classify_flow_domain("src/main/java/example/App.java", ".java") == GraphFlowDomain.CODE
-    assert classify_flow_domain("src/test/java/example/AppTest.java", ".java") == GraphFlowDomain.TEST
-    assert classify_flow_domain(".github/workflows/build.yml", ".yml") == GraphFlowDomain.WORKFLOW
-    assert classify_flow_domain("src/main/resources/application.yml", ".yml") == GraphFlowDomain.CONFIG
-    assert classify_flow_domain("README.md", ".md") == GraphFlowDomain.DOC
-    assert classify_flow_domain("pom.xml", ".xml") == GraphFlowDomain.BUILD
-    assert classify_flow_domain("data/sample.json", ".json") == GraphFlowDomain.DATA
-
-
-def test_analysis_job_files_record_only_job_scoped_processed_files(tmp_path):
-    store, _, _ = build_inventory(tmp_path, extra_files={
-        "src/main/java/example/AaaHandler.java": "public class AaaHandler {\n  public void create() {}\n}\n",
-    })
-    runner = AnalysisJobRunner(store, app_config(tmp_path))
-    first_job_id = runner.start(AnalysisBuildRequest(maxFiles=1), StubAnalyzer())["jobId"]
-    first = wait_job(store, first_job_id)
-    analysis_store = AnalysisStore(store.db_path)
-    first_job_files = analysis_store.job_files(first_job_id)
-
-    second_job_id = runner.start(AnalysisBuildRequest(), StubAnalyzer(fail=True))["jobId"]
-    second = wait_job(store, second_job_id)
-    second_job_files = analysis_store.job_files(second_job_id)
-    current_files = analysis_store.files(None, None, None, 10, 0)
-
-    assert first["status"] == "COMPLETED"
-    assert first_job_files[0]["status"] == "ANALYZED"
-    assert first_job_files[0]["jobId"] == first_job_id
-    assert first_job_files[0]["flowDomain"] == GraphFlowDomain.CODE.value
-    assert second["fileCount"] == 1
-    assert second["processedFileCount"] == 1
-    assert second["failedFileCount"] == 1
-    assert {item["status"] for item in second_job_files} == {"FAILED"}
-    assert [item["relativePath"] for item in second_job_files] == ["src/main/java/example/ObjectHandler.java"]
-    assert current_files["total"] == 2
-    assert {item["analysisStatus"] for item in current_files["files"]} == {"ANALYZED", "FAILED"}
-    assert table_count(store, "files") == 2
-
-
-def test_graph_facts_store_origin_domain_and_visualization_projection_metadata(tmp_path):
+def test_runtime_analysis_writes_graph_tables_and_not_legacy_symbols(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = AnalysisJobRunner(store, app_config(tmp_path))
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "ai-type", "nodeKind": "TYPE", "name": "AiType", "qualifiedName": "AiType", "lineStart": 1, "lineEnd": 1, "confidence": 0.9, "metadata": {}},
-            {"localId": "ai-call", "nodeKind": "CALLABLE", "name": "run", "qualifiedName": "AiType.run", "parentLocalId": "ai-type", "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-        ],
-        claims=[
-            {"localId": "ai-claim", "nodeLocalId": "ai-call", "claimKind": "RESPONSIBILITY", "summary": "Runs the AI-provided action.", "evidence": [{"lineStart": 2, "lineEnd": 2}], "confidence": 0.9, "metadata": {}},
-        ]))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result()))["jobId"])
 
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    analysis_store = AnalysisStore(store.db_path)
-    static_nodes = graph_rows(
-        store,
-        "analysis_graph_nodes",
-        "WHERE fact_origin = ? AND flow_domain = ? AND node_kind IN ('TYPE', 'CALLABLE')",
-        (GraphFactOrigin.STATIC.value, GraphFlowDomain.CODE.value),
-    )
-    llm_claims = graph_rows(
-        store,
-        "analysis_graph_claims",
-        "WHERE fact_origin = ? AND flow_domain = ?",
-        (GraphFactOrigin.LLM.value, GraphFlowDomain.CODE.value),
-    )
-    static_edges = graph_rows(
-        store,
-        "analysis_graph_edges",
-        "WHERE fact_origin = ? AND flow_domain = ? AND edge_type = 'CONTAINS'",
-        (GraphFactOrigin.STATIC.value, GraphFlowDomain.CODE.value),
-    )
-    symbols = analysis_store.symbols(None, None, None, None, None, 100, 0)
-    static_symbols = analysis_store.symbols(None, None, None, None, None, 100, 0, fact_origin=GraphFactOrigin.STATIC.value)
-    code_symbols = analysis_store.symbols(None, None, None, None, None, 100, 0, flow_domain=GraphFlowDomain.CODE.value)
-    static_relations = analysis_store.relations(None, "CONTAINS", None, None, 100, 0, fact_origin=GraphFactOrigin.STATIC.value)
+    with sqlite3.connect(store.db_path) as conn:
+        counts = {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in [
+                "analysis_graph_nodes",
+                "analysis_graph_edges",
+                "analysis_graph_claims",
+                "analysis_graph_evidence",
+                "analysis_symbols",
+                "analysis_relations",
+            ]
+        }
 
-    assert static_nodes
-    assert llm_claims
-    assert static_edges
-    assert static_symbols["total"] > 0
-    assert code_symbols["total"] == symbols["total"]
-    assert static_relations["total"] > 0
-    for symbol in symbols["symbols"]:
-        assert symbol["graphNodeId"]
-        assert symbol["stableKey"]
-        assert symbol["nodeKind"]
-        assert symbol["displayName"]
-        assert symbol["qualifiedName"]
-        assert symbol["factOrigin"] in enum_values(GraphFactOrigin)
-        assert symbol["flowDomain"] == GraphFlowDomain.CODE.value
-    relation = static_relations["relations"][0]
-    assert relation["graphEdgeId"]
-    assert relation["fromGraphNodeId"]
-    assert relation["toGraphNodeId"]
-    assert relation["edgeType"] == GraphEdgeType.CONTAINS.value
-    assert relation["factOrigin"] == GraphFactOrigin.STATIC.value
-    assert relation["flowDomain"] == GraphFlowDomain.CODE.value
+    assert counts["analysis_graph_nodes"] > 0
+    assert counts["analysis_graph_edges"] > 0
+    assert counts["analysis_graph_claims"] > 0
+    assert counts["analysis_graph_evidence"] > 0
+    assert counts["analysis_symbols"] == 0
+    assert counts["analysis_relations"] == 0
 
 
-def test_graph_stable_keys_are_deterministic_for_repeated_analysis_of_unchanged_file(tmp_path):
+def test_runtime_analysis_writes_graph_engine_job_file_flow_and_line_metadata(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = AnalysisJobRunner(store, app_config(tmp_path))
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
 
-    wait_job(store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer())["jobId"])
-    first_keys = {
-        row["stable_key"]
-        for row in graph_rows(store, "analysis_graph_nodes", "WHERE node_kind != 'FILE'")
-    }
-    wait_job(store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer())["jobId"])
-    second_keys = {
-        row["stable_key"]
-        for row in graph_rows(store, "analysis_graph_nodes", "WHERE node_kind != 'FILE'")
-    }
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        job = conn.execute("SELECT engine_version FROM analysis_jobs WHERE job_id = ?", (final["jobId"],)).fetchone()
+        analysis_file = conn.execute("SELECT engine_version, flow_domain FROM analysis_files").fetchone()
+        job_file = conn.execute("SELECT status, engine_version, flow_domain, line_count FROM analysis_job_files").fetchone()
+        inventory_file = conn.execute("SELECT line_count, decode_policy FROM files").fetchone()
+        static_nodes = conn.execute("SELECT COUNT(*) AS count FROM analysis_graph_nodes WHERE fact_origin = 'STATIC'").fetchone()
 
-    assert first_keys
-    assert first_keys == second_keys
-
-
-def test_workflow_yaml_uses_workflow_domain_and_config_graph_semantics(tmp_path):
-    store, _, _ = build_custom_inventory(tmp_path, {
-        ".github/workflows/build.yml": """name: Build
-jobs:
-  test:
-    steps:
-      - uses: actions/checkout@v4
-      - run: mvn test
-""",
-    }, ["**/*.yml"])
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "job", "nodeKind": "CALLABLE", "name": "test", "qualifiedName": "workflow.test", "lineStart": 2, "lineEnd": 5, "confidence": 0.9, "metadata": {}},
-            {"localId": "step", "nodeKind": "CALLABLE", "name": "mvn test", "qualifiedName": "workflow.test.mvn", "lineStart": 6, "lineEnd": 6, "confidence": 0.9, "metadata": {}},
-        ],
-        edges=[
-            {"localId": "call", "edgeType": "CALLS", "fromLocalId": "job", "toLocalId": "step", "lineStart": 6, "lineEnd": 6, "confidence": 0.9, "metadata": {}},
-        ]))
-
-    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), analyzer)["jobId"])
-    nodes = graph_rows(store, "analysis_graph_nodes", "WHERE node_kind != 'FILE'")
-    edges = graph_rows(store, "analysis_graph_edges")
-    symbols = AnalysisStore(store.db_path).symbols(None, None, None, None, None, 100, 0, flow_domain=GraphFlowDomain.WORKFLOW.value)
-    code_symbols = AnalysisStore(store.db_path).symbols(None, None, None, None, None, 100, 0, flow_domain=GraphFlowDomain.CODE.value)
-    code_relations = AnalysisStore(store.db_path).relations(None, None, None, None, 100, 0, flow_domain=GraphFlowDomain.CODE.value)
-
-    assert nodes
-    assert {row["flow_domain"] for row in nodes} == {GraphFlowDomain.WORKFLOW.value}
-    assert {row["node_kind"] for row in nodes} == {GraphNodeKind.CONFIG.value}
-    assert any(row["edge_type"] == GraphEdgeType.CONFIGURES.value for row in edges)
-    assert not any(row["edge_type"] == GraphEdgeType.CALLS.value for row in edges)
-    assert symbols["total"] == 2
-    assert code_symbols["total"] == 0
-    assert code_relations["total"] == 0
+    assert job["engine_version"] == GRAPH_ENGINE_VERSION
+    assert analysis_file["engine_version"] == GRAPH_ENGINE_VERSION
+    assert analysis_file["flow_domain"] == "CODE"
+    assert job_file["status"] == "ANALYZED"
+    assert job_file["engine_version"] == GRAPH_ENGINE_VERSION
+    assert job_file["flow_domain"] == "CODE"
+    assert job_file["line_count"] > 0
+    assert inventory_file["line_count"] > 0
+    assert inventory_file["decode_policy"] == "utf-8:replace"
+    assert static_nodes["count"] > 0
 
 
-def test_valid_graph_response_stores_trusted_nodes_edges_evidence_and_claims(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "type", "nodeKind": "TYPE", "name": "ObjectHandler", "qualifiedName": "ObjectHandler", "lineStart": 1, "lineEnd": 5, "confidence": 0.91, "metadata": {}},
-            {"localId": "create", "nodeKind": "CALLABLE", "name": "create", "qualifiedName": "ObjectHandler.create", "parentLocalId": "type", "lineStart": 3, "lineEnd": 4, "confidence": 0.92, "metadata": {}},
-            {"localId": "helper", "nodeKind": "CALLABLE", "name": "helper", "qualifiedName": "ObjectHandler.helper", "parentLocalId": "type", "lineStart": 4, "lineEnd": 4, "confidence": 0.85, "metadata": {}},
-        ],
-        edges=[
-            {"localId": "call", "edgeType": "CALLS", "fromLocalId": "create", "toLocalId": "helper", "lineStart": 4, "lineEnd": 4, "confidence": 0.8, "metadata": {}},
-        ],
-        claims=[
-            {"localId": "resp", "nodeLocalId": "create", "claimKind": "RESPONSIBILITY", "summary": "Creates an object.", "evidence": [{"lineStart": 3, "lineEnd": 4}], "confidence": 0.86, "metadata": {}},
-            {"localId": "role", "nodeLocalId": "create", "claimKind": "ROLE", "summary": "ENTRYPOINT_HINT", "evidence": [{"lineStart": 3, "lineEnd": 4}], "confidence": 0.75, "metadata": {"role": "ENTRYPOINT"}},
-        ]))
+def test_runtime_analysis_persists_unsupported_yaml_file_node_and_structural_diagnostic(tmp_path):
+    store, _, _ = build_inventory(
+        tmp_path,
+        extra_files={
+            ".github/workflows/build.yml": "name: build\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n",
+        },
+        include_patterns=["**/*.yml"],
+    )
     runner = AnalysisJobRunner(store, app_config(tmp_path))
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
 
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    symbols = AnalysisStore(store.db_path).symbols(None, "ENTRYPOINT", None, None, None, 10, 0)
-    relations = AnalysisStore(store.db_path).relations(None, "CALLS", None, None, 10, 0)
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        node = conn.execute("""
+            SELECT node_kind, fact_origin, flow_domain
+            FROM analysis_graph_nodes
+            WHERE source_id = 'edge-gateway'
+        """).fetchone()
+        diagnostic = conn.execute("""
+            SELECT id, stage, code, severity, fact_origin, flow_domain
+            FROM analysis_graph_diagnostics
+            WHERE source_id = 'edge-gateway'
+        """).fetchone()
+        analysis_file = conn.execute("SELECT status, last_error_code FROM analysis_files").fetchone()
+        job_file = conn.execute("SELECT status, flow_domain FROM analysis_job_files").fetchone()
 
     assert final["status"] == "COMPLETED"
-    assert len(graph_rows(store, "analysis_graph_nodes", "WHERE status = 'TRUSTED'")) >= 4
-    assert len(graph_rows(store, "analysis_graph_edges", "WHERE edge_type = 'CALLS' AND status = 'TRUSTED'")) == 1
-    assert len(graph_rows(store, "analysis_graph_evidence")) >= 5
-    assert len(graph_rows(store, "analysis_graph_claims", "WHERE claim_kind = 'RESPONSIBILITY'")) >= 2
-    assert symbols["symbols"][0]["responsibilitySummary"] == "Creates an object."
-    assert symbols["symbols"][0]["graphNodeId"]
-    assert relations["relations"][0]["resolutionStatus"] == "RESOLVED"
+    assert final["failedFileCount"] == 0
+    assert node["node_kind"] == "FILE"
+    assert node["fact_origin"] == "STATIC"
+    assert node["flow_domain"] == "WORKFLOW"
+    assert diagnostic["id"].startswith("analysis-graph-diagnostic:")
+    assert diagnostic["stage"] == "STRUCTURAL_PARSE"
+    assert diagnostic["code"] == "STRUCTURAL_PARSER_NOT_AVAILABLE"
+    assert diagnostic["severity"] == "WARN"
+    assert diagnostic["fact_origin"] == "STATIC"
+    assert diagnostic["flow_domain"] == "WORKFLOW"
+    assert analysis_file["status"] == "ANALYZED"
+    assert analysis_file["last_error_code"] is None
+    assert job_file["status"] == "ANALYZED_WITH_DIAGNOSTICS"
+    assert job_file["flow_domain"] == "WORKFLOW"
+    graph = AnalysisStore(store.db_path).graph(
+        "edge-gateway", None, None, None, None, None, None, None, 2, 150, False, True
+    )
+    assert graph["nodes"][0]["nodeKind"] == "FILE"
+    assert graph["diagnostics"][0]["code"] == "STRUCTURAL_PARSER_NOT_AVAILABLE"
 
 
-def test_graph_candidate_validation_rejects_unsupported_enums_and_bad_references(tmp_path):
-    store, _, _ = build_inventory(tmp_path, content="// no declarations\n\n")
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "bad-kind", "nodeKind": "CONTROLLER", "name": "Bad", "lineStart": 1, "lineEnd": 1, "confidence": 0.9, "metadata": {}},
-            {"localId": "source", "nodeKind": "CALLABLE", "name": "source", "qualifiedName": "A.source", "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-        ],
-        edges=[
-            {"localId": "bad-edge-kind", "edgeType": "INJECTS", "fromLocalId": "source", "toLocalId": None, "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-            {"localId": "missing-source", "edgeType": "CALLS", "fromLocalId": "missing", "toLocalId": "source", "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-        ],
-        claims=[
-            {"localId": "bad-claim-kind", "nodeLocalId": "source", "claimKind": "BUSINESS_ROLE", "summary": "Does a thing.", "evidence": [{"lineStart": 2, "lineEnd": 2}], "confidence": 0.9, "metadata": {}},
-            {"localId": "missing-evidence", "nodeLocalId": "source", "claimKind": "RESPONSIBILITY", "summary": "Does a thing.", "evidence": [], "confidence": 0.9, "metadata": {}},
-        ]))
-    runner = AnalysisJobRunner(store, app_config(tmp_path))
-
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
-    codes = {diagnostic["code"] for diagnostic in files["files"][0]["diagnostics"]}
-
-    assert "ANALYSIS_GRAPH_UNSUPPORTED_NODE_KIND" in codes
-    assert "ANALYSIS_GRAPH_UNSUPPORTED_EDGE_TYPE" in codes
-    assert "ANALYSIS_GRAPH_EDGE_SOURCE_MISSING" in codes
-    assert "ANALYSIS_GRAPH_UNSUPPORTED_CLAIM_KIND" in codes
-    assert "ANALYSIS_GRAPH_CLAIM_EVIDENCE_MISSING" in codes
-    assert AnalysisStore(store.db_path).symbols(None, None, None, None, None, 10, 0)["total"] == 1
-
-
-def test_file_identity_mismatch_rejects_ai_candidates(tmp_path):
-    store, _, _ = build_inventory(tmp_path, content="// no declarations\n")
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: {
-        **graph_response(payload, line_count, nodes=[
-            {"localId": "ai", "nodeKind": "CALLABLE", "name": "ai", "qualifiedName": "A.ai", "lineStart": 1, "lineEnd": 1, "confidence": 0.9, "metadata": {}},
-        ]),
-        "file": {
-            "sourceId": payload["sourceId"],
-            "inventoryFileId": payload["inventoryFileId"],
-            "relativePath": payload["relativePath"],
-            "contentHash": "wrong-content-hash",
-            "lineCount": line_count,
-        },
-    })
-
-    wait_job(store, AnalysisJobRunner(store, app_config_with_retries(tmp_path, 1)).start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
-    symbols = AnalysisStore(store.db_path).symbols(None, None, None, None, None, 10, 0)
-
-    assert symbols["total"] == 0
-    assert "ANALYSIS_GRAPH_FILE_IDENTITY_MISMATCH" in {diagnostic["code"] for diagnostic in files["files"][0]["diagnostics"]}
-
-
-def test_duplicate_local_ids_are_rejected_with_diagnostics(tmp_path):
-    store, _, _ = build_inventory(tmp_path, content="// no declarations\n\n")
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "source", "nodeKind": "CALLABLE", "name": "source", "qualifiedName": "A.source", "lineStart": 1, "lineEnd": 1, "confidence": 0.9, "metadata": {}},
-            {"localId": "target", "nodeKind": "CALLABLE", "name": "target", "qualifiedName": "A.target", "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-            {"localId": "target", "nodeKind": "CALLABLE", "name": "dupe", "qualifiedName": "A.dupe", "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-        ],
-        edges=[
-            {"localId": "edge", "edgeType": "CALLS", "fromLocalId": "source", "toLocalId": "target", "lineStart": 1, "lineEnd": 1, "confidence": 0.9, "metadata": {}},
-            {"localId": "edge", "edgeType": "CALLS", "fromLocalId": "source", "toLocalId": "target", "lineStart": 1, "lineEnd": 1, "confidence": 0.9, "metadata": {}},
-        ],
-        claims=[
-            {"localId": "claim", "nodeLocalId": "source", "claimKind": "RESPONSIBILITY", "summary": "Does a thing.", "evidence": [{"lineStart": 1, "lineEnd": 1}], "confidence": 0.9, "metadata": {}},
-            {"localId": "claim", "nodeLocalId": "source", "claimKind": "RESPONSIBILITY", "summary": "Does it again.", "evidence": [{"lineStart": 1, "lineEnd": 1}], "confidence": 0.9, "metadata": {}},
-        ]))
-
-    wait_job(store, AnalysisJobRunner(store, app_config_with_retries(tmp_path, 1)).start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
-    codes = {diagnostic["code"] for diagnostic in files["files"][0]["diagnostics"]}
-
-    assert "ANALYSIS_GRAPH_DUPLICATE_NODE_LOCAL_ID" in codes
-    assert "ANALYSIS_GRAPH_DUPLICATE_EDGE_LOCAL_ID" in codes
-    assert "ANALYSIS_GRAPH_DUPLICATE_CLAIM_LOCAL_ID" in codes
-    assert len(graph_rows(store, "analysis_graph_edges", "WHERE edge_type = 'CALLS' AND status = 'TRUSTED'")) == 1
-
-
-def test_low_confidence_candidate_is_not_promoted_or_counted(tmp_path):
-    store, _, _ = build_inventory(tmp_path, content="// no declarations\n")
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "low", "nodeKind": "CALLABLE", "name": "low", "qualifiedName": "A.low", "lineStart": 1, "lineEnd": 1, "confidence": 0.49, "metadata": {}},
-        ]))
-
-    wait_job(store, AnalysisJobRunner(store, app_config_with_retries(tmp_path, 1)).start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
-    service = AnalysisStore(store.db_path).service_status(None, analyzer.name, analyzer.version, store.status())["services"][0]
-
-    assert AnalysisStore(store.db_path).symbols(None, None, None, None, None, 10, 0)["total"] == 0
-    assert service["facts"]["symbolCount"] == 0
-    assert "ANALYSIS_GRAPH_CONFIDENCE_BELOW_THRESHOLD" in {diagnostic["code"] for diagnostic in files["files"][0]["diagnostics"]}
-
-
-def test_semantic_validation_repair_prompt_contains_exact_path_and_allowed_enums(tmp_path):
-    store, _, _ = build_inventory(tmp_path, content="// no declarations\n\n")
-    analyzer = StubAnalyzer(outcomes=[
-        lambda payload, line_count: graph_response(payload, line_count, nodes=[
-            {"localId": "bad-kind", "nodeKind": "CONTROLLER", "name": "Bad", "lineStart": 1, "lineEnd": 1, "confidence": 0.9, "metadata": {}},
-        ]),
-        lambda payload, line_count: graph_response(payload, line_count, nodes=[
-            {"localId": "fixed", "nodeKind": "CALLABLE", "name": "fixed", "qualifiedName": "A.fixed", "lineStart": 1, "lineEnd": 1, "confidence": 0.9, "metadata": {}},
-        ]),
-    ])
-    runner = AnalysisJobRunner(store, app_config(tmp_path))
-
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
-    symbols = AnalysisStore(store.db_path).symbols(None, None, None, None, None, 10, 0)
-
-    assert analyzer.calls == 2
-    assert symbols["total"] == 1
-    assert analyzer.repair_prompts
-    prompt = analyzer.repair_prompts[0]
-    assert "$.nodes[0].nodeKind" in prompt
-    assert "CONTROLLER" in prompt
-    assert "CALLABLE" in prompt
-    assert "UNKNOWN" in prompt
-    assert "ANALYSIS_AI_VALIDATION_REPAIR_REQUESTED" in {item["code"] for item in files["files"][0]["diagnostics"]}
-
-
-def test_semantic_repair_does_not_rerun_when_valid_facts_remain(tmp_path):
-    store, _, _ = build_inventory(tmp_path, content="// no declarations\n\n")
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "source", "nodeKind": "CALLABLE", "name": "source", "qualifiedName": "A.source", "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-        ],
-        edges=[
-            {"localId": "missing-source", "edgeType": "CALLS", "fromLocalId": "missing", "toLocalId": "source", "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-        ]))
-    runner = AnalysisJobRunner(store, app_config(tmp_path))
-
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
-
-    assert analyzer.calls == 1
-    assert not analyzer.repair_prompts
-    assert files["files"][0]["symbolCount"] == 1
-    diagnostic = next(item for item in files["files"][0]["diagnostics"] if item["code"] == "ANALYSIS_GRAPH_EDGE_SOURCE_MISSING")
-    assert diagnostic["validationCode"] == "UNKNOWN_LOCAL_REFERENCE"
-    assert diagnostic["path"] == "$.edges[0].fromLocalId"
-
-
-def test_graph_line_range_outside_file_is_rejected_with_diagnostic(tmp_path):
-    store, _, _ = build_inventory(tmp_path, content="// no declarations\n")
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "outside", "nodeKind": "CALLABLE", "name": "outside", "qualifiedName": "A.outside", "lineStart": 1, "lineEnd": line_count + 10, "confidence": 0.9, "metadata": {}},
-        ]))
-    runner = AnalysisJobRunner(store, app_config(tmp_path))
-
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
-
-    assert files["files"][0]["symbolCount"] == 0
-    assert files["files"][0]["diagnostics"][0]["code"] == "ANALYSIS_GRAPH_LINE_RANGE_INVALID"
-    assert files["files"][0]["diagnostics"][0]["validationCode"] == "LINE_RANGE_OUTSIDE_FILE"
-    assert files["files"][0]["diagnostics"][0]["path"] == "$.nodes[0]"
-
-
-def test_responsibility_without_evidence_produces_structured_validation_error(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "source", "nodeKind": "CALLABLE", "name": "source", "qualifiedName": "A.source", "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-        ],
-        claims=[
-            {"localId": "missing-evidence", "nodeLocalId": "source", "claimKind": "RESPONSIBILITY", "summary": "Does a thing.", "evidence": [], "confidence": 0.9, "metadata": {}},
-        ]))
-    runner = AnalysisJobRunner(store, app_config(tmp_path))
-
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
-    diagnostic = next(item for item in files["files"][0]["diagnostics"] if item["code"] == "ANALYSIS_GRAPH_CLAIM_EVIDENCE_MISSING")
-
-    assert diagnostic["validationCode"] == "MISSING_EVIDENCE"
-    assert diagnostic["path"] == "$.claims[0].evidence"
-    assert "evidence" in diagnostic["repairHint"]
-
-
-def test_unresolved_target_is_allowed_as_trusted_uncertainty(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "caller", "nodeKind": "CALLABLE", "name": "caller", "qualifiedName": "A.caller", "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-        ],
-        edges=[
-            {"localId": "call", "edgeType": "CALLS", "fromLocalId": "caller", "toLocalId": None, "unresolvedTarget": {"name": "Missing.findById", "kindHint": "CALLABLE"}, "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-        ]))
-    runner = AnalysisJobRunner(store, app_config(tmp_path))
-
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    edges = graph_rows(store, "analysis_graph_edges", "WHERE edge_type = 'CALLS'")
-
-    assert edges[0]["status"] == "TRUSTED"
-    assert edges[0]["resolution_status"] == "UNRESOLVED"
-    assert edges[0]["to_node_id"] is None
-
-
-def test_multiple_target_candidates_and_interface_targets_remain_uncertain(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "caller", "nodeKind": "CALLABLE", "name": "caller", "qualifiedName": "A.caller", "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-            {"localId": "repoA", "nodeKind": "CALLABLE", "name": "findById", "qualifiedName": "RepoA.findById", "lineStart": 3, "lineEnd": 3, "confidence": 0.9, "metadata": {}},
-            {"localId": "repoB", "nodeKind": "CALLABLE", "name": "findById", "qualifiedName": "RepoB.findById", "lineStart": 4, "lineEnd": 4, "confidence": 0.9, "metadata": {}},
-            {"localId": "iface", "nodeKind": "CALLABLE", "name": "save", "qualifiedName": "OrderRepository.save", "lineStart": 5, "lineEnd": 5, "confidence": 0.9, "metadata": {"declaringTypeKind": "interface"}},
-        ],
-        edges=[
-            {"localId": "multi", "edgeType": "CALLS", "fromLocalId": "caller", "toLocalId": None, "unresolvedTarget": {"name": "findById", "kindHint": "CALLABLE"}, "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-            {"localId": "iface-call", "edgeType": "CALLS", "fromLocalId": "caller", "toLocalId": None, "unresolvedTarget": {"name": "OrderRepository.save", "kindHint": "INTERFACE"}, "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-        ]))
-    runner = AnalysisJobRunner(store, app_config(tmp_path))
-
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    statuses = {row["resolution_status"] for row in graph_rows(store, "analysis_graph_edges", "WHERE edge_type = 'CALLS'")}
-    candidates = graph_rows(store, "analysis_graph_resolution_candidates")
-
-    assert "MULTIPLE_CANDIDATES" in statuses
-    assert "INTERFACE_TARGET" in statuses
-    assert len(candidates) >= 3
-
-
-def test_resolver_uses_receiver_field_evidence_for_same_name_methods(tmp_path):
-    content = "\n".join(f"// line {index}" for index in range(1, 12)) + "\n"
-    store, _, _ = build_inventory(tmp_path, content=content)
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "svcType", "nodeKind": "TYPE", "name": "OrderService", "qualifiedName": "OrderService", "lineStart": 1, "lineEnd": 1, "confidence": 0.95, "metadata": {}},
-            {"localId": "repoField", "nodeKind": "FIELD", "name": "orderRepository", "qualifiedName": "OrderService.orderRepository", "parentLocalId": "svcType", "lineStart": 2, "lineEnd": 2, "confidence": 0.95, "metadata": {"typeName": "OrderRepository", "receiverName": "orderRepository"}},
-            {"localId": "svcMethod", "nodeKind": "CALLABLE", "name": "getById", "qualifiedName": "OrderService.getById", "parentLocalId": "svcType", "lineStart": 3, "lineEnd": 3, "confidence": 0.95, "metadata": {}},
-            {"localId": "orderRepo", "nodeKind": "CALLABLE", "name": "findById", "qualifiedName": "OrderRepository.findById", "lineStart": 4, "lineEnd": 4, "confidence": 0.95, "metadata": {}},
-            {"localId": "userRepo", "nodeKind": "CALLABLE", "name": "findById", "qualifiedName": "UserRepository.findById", "lineStart": 5, "lineEnd": 5, "confidence": 0.95, "metadata": {}},
-            {"localId": "ticketRepo", "nodeKind": "CALLABLE", "name": "findById", "qualifiedName": "TicketRepository.findById", "lineStart": 6, "lineEnd": 6, "confidence": 0.95, "metadata": {}},
-        ],
-        edges=[
-            {"localId": "call", "edgeType": "CALLS", "fromLocalId": "svcMethod", "toLocalId": None, "unresolvedTarget": {"name": "orderRepository.findById", "kindHint": "CALLABLE"}, "lineStart": 7, "lineEnd": 7, "confidence": 0.9, "metadata": {}},
-        ]))
-
-    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), analyzer)["jobId"])
-    edge = graph_rows(store, "analysis_graph_edges", "WHERE edge_type = 'CALLS'")[0]
-    target = graph_rows(store, "analysis_graph_nodes", "WHERE id = ?", (edge["to_node_id"],))[0]
-    candidates = graph_rows(store, "analysis_graph_resolution_candidates", "WHERE edge_id = ?", (edge["id"],))
-
-    assert edge["resolution_status"] == "RESOLVED"
-    assert target["qualified_name"] == "OrderRepository.findById"
-    assert target["qualified_name"] != "UserRepository.findById"
-    assert len(candidates) == 3
-
-
-def test_resolver_preserves_ambiguity_when_same_name_method_evidence_is_missing(tmp_path):
-    content = "\n".join(f"// line {index}" for index in range(1, 10)) + "\n"
-    store, _, _ = build_inventory(tmp_path, content=content)
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "caller", "nodeKind": "CALLABLE", "name": "getById", "qualifiedName": "OrderService.getById", "lineStart": 1, "lineEnd": 1, "confidence": 0.95, "metadata": {}},
-            {"localId": "orderRepo", "nodeKind": "CALLABLE", "name": "findById", "qualifiedName": "OrderRepository.findById", "lineStart": 2, "lineEnd": 2, "confidence": 0.95, "metadata": {}},
-            {"localId": "userRepo", "nodeKind": "CALLABLE", "name": "findById", "qualifiedName": "UserRepository.findById", "lineStart": 3, "lineEnd": 3, "confidence": 0.95, "metadata": {}},
-            {"localId": "ticketRepo", "nodeKind": "CALLABLE", "name": "findById", "qualifiedName": "TicketRepository.findById", "lineStart": 4, "lineEnd": 4, "confidence": 0.95, "metadata": {}},
-        ],
-        edges=[
-            {"localId": "call", "edgeType": "CALLS", "fromLocalId": "caller", "toLocalId": None, "unresolvedTarget": {"name": "findById", "kindHint": "CALLABLE"}, "lineStart": 5, "lineEnd": 5, "confidence": 0.9, "metadata": {}},
-        ]))
-
-    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), analyzer)["jobId"])
-    edge = graph_rows(store, "analysis_graph_edges", "WHERE edge_type = 'CALLS'")[0]
-
-    assert edge["resolution_status"] == "MULTIPLE_CANDIDATES"
-    assert edge["to_node_id"] is None
-
-
-def test_resolver_does_not_resolve_single_same_name_method_without_supporting_evidence(tmp_path):
-    content = "\n".join(f"// line {index}" for index in range(1, 6)) + "\n"
-    store, _, _ = build_inventory(tmp_path, content=content)
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "caller", "nodeKind": "CALLABLE", "name": "getById", "qualifiedName": "OrderService.getById", "lineStart": 1, "lineEnd": 1, "confidence": 0.95, "metadata": {}},
-            {"localId": "repo", "nodeKind": "CALLABLE", "name": "findById", "qualifiedName": "OrderRepository.findById", "lineStart": 2, "lineEnd": 2, "confidence": 0.95, "metadata": {}},
-        ],
-        edges=[
-            {"localId": "call", "edgeType": "CALLS", "fromLocalId": "caller", "toLocalId": None, "unresolvedTarget": {"name": "findById", "kindHint": "CALLABLE"}, "lineStart": 3, "lineEnd": 3, "confidence": 0.9, "metadata": {}},
-        ]))
-
-    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), analyzer)["jobId"])
-    edge = graph_rows(store, "analysis_graph_edges", "WHERE edge_type = 'CALLS'")[0]
-
-    assert edge["resolution_status"] == "UNRESOLVED"
-    assert edge["to_node_id"] is None
-
-
-def test_services_status_facts_count_uses_trusted_projected_facts_only(tmp_path):
-    store, _, _ = build_inventory(tmp_path, content="// no declarations\n\n")
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "trusted", "nodeKind": "CALLABLE", "name": "trusted", "qualifiedName": "A.trusted", "lineStart": 2, "lineEnd": 2, "confidence": 0.9, "metadata": {}},
-            {"localId": "rejected", "nodeKind": "CALLABLE", "name": "rejected", "qualifiedName": "A.rejected", "lineStart": 50, "lineEnd": 50, "confidence": 0.9, "metadata": {}},
-        ]))
-    runner = AnalysisJobRunner(store, app_config(tmp_path))
-
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    service = AnalysisStore(store.db_path).service_status(None, analyzer.name, analyzer.version, store.status())["services"][0]
-
-    assert service["facts"]["symbolCount"] == 1
-    assert service["diagnostics"][0]["stage"] == "CANDIDATE_VALIDATE"
-
-
-def test_fixture_flow_slice_keeps_find_by_id_and_search_by_status_separate(tmp_path):
-    content = """class Flows {
-  void getById() {}
-  void serviceGetById() {}
-  void findById() {}
-  void searchByStatus() {}
-  void serviceSearchByStatus() {}
-  void findByStatus() {}
+def test_runtime_resolves_field_receiver_calls_when_target_type_is_unique(tmp_path):
+    store, _, _ = build_inventory(tmp_path, extra_files={
+        "src/main/java/example/Controller.java": """package example;
+class Controller {
+  private final TicketMapper mapper;
+  TicketDto handle(Ticket ticket) {
+    return mapper.toApi(ticket);
+  }
 }
-"""
-    store, _, _ = build_inventory(tmp_path, content=content)
-    analyzer = GraphStubAnalyzer(lambda payload, line_count: graph_response(payload, line_count,
-        nodes=[
-            {"localId": "getById", "nodeKind": "CALLABLE", "name": "getById", "qualifiedName": "OrderController.getById", "lineStart": 2, "lineEnd": 2, "confidence": 0.95, "metadata": {}},
-            {"localId": "svcGet", "nodeKind": "CALLABLE", "name": "getById", "qualifiedName": "OrderService.getById", "lineStart": 3, "lineEnd": 3, "confidence": 0.95, "metadata": {}},
-            {"localId": "repoFind", "nodeKind": "CALLABLE", "name": "findById", "qualifiedName": "OrderRepository.findById", "lineStart": 4, "lineEnd": 4, "confidence": 0.95, "metadata": {}},
-            {"localId": "search", "nodeKind": "CALLABLE", "name": "searchByStatus", "qualifiedName": "OrderSearchController.searchByStatus", "lineStart": 5, "lineEnd": 5, "confidence": 0.95, "metadata": {}},
-            {"localId": "svcSearch", "nodeKind": "CALLABLE", "name": "searchByStatus", "qualifiedName": "OrderSearchService.searchByStatus", "lineStart": 6, "lineEnd": 6, "confidence": 0.95, "metadata": {}},
-            {"localId": "repoStatus", "nodeKind": "CALLABLE", "name": "findByStatus", "qualifiedName": "OrderRepository.findByStatus", "lineStart": 7, "lineEnd": 7, "confidence": 0.95, "metadata": {}},
-        ],
-        edges=[
-            {"localId": "e1", "edgeType": "CALLS", "fromLocalId": "getById", "toLocalId": "svcGet", "lineStart": 2, "lineEnd": 2, "confidence": 0.95, "metadata": {}},
-            {"localId": "e2", "edgeType": "CALLS", "fromLocalId": "svcGet", "toLocalId": "repoFind", "lineStart": 3, "lineEnd": 3, "confidence": 0.95, "metadata": {}},
-            {"localId": "e3", "edgeType": "CALLS", "fromLocalId": "search", "toLocalId": "svcSearch", "lineStart": 5, "lineEnd": 5, "confidence": 0.95, "metadata": {}},
-            {"localId": "e4", "edgeType": "CALLS", "fromLocalId": "svcSearch", "toLocalId": "repoStatus", "lineStart": 6, "lineEnd": 6, "confidence": 0.95, "metadata": {}},
-        ]))
+""",
+        "src/main/java/example/TicketMapper.java": """package example;
+class TicketMapper {
+  TicketDto toApi(Ticket ticket) {
+    return new TicketDto();
+  }
+}
+""",
+    })
     runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
 
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    analysis_store = AnalysisStore(store.db_path)
-    by_id_slice = analysis_store.graph_slice(graph_node_id(store, "OrderController.getById"), max_depth=3, edge_types=["CALLS"])
-    search_slice = analysis_store.graph_slice(graph_node_id(store, "OrderSearchController.searchByStatus"), max_depth=3, edge_types=["CALLS"])
-    by_id_names = {node["qualifiedName"] for node in by_id_slice["nodes"]}
-    search_names = {node["qualifiedName"] for node in search_slice["nodes"]}
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""
+            SELECT e.resolution_status, e.metadata_json, from_node.name AS from_name, to_node.name AS to_name
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes from_node ON from_node.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes to_node ON to_node.id = e.to_node_id
+            WHERE e.edge_type = 'CALLS'
+              AND from_node.name = 'handle'
+        """).fetchall()
+    row = next(item for item in rows if json.loads(item["metadata_json"]).get("methodName") == "toApi")
 
-    assert "OrderRepository.findById" in by_id_names
-    assert "OrderRepository.findByStatus" not in by_id_names
-    assert "OrderRepository.findByStatus" in search_names
-    assert "OrderRepository.findById" not in search_names
+    assert row["resolution_status"] == "RESOLVED"
+    assert row["from_name"] == "handle"
+    assert row["to_name"] == "toApi"
+    assert json.loads(row["metadata_json"])["resolver"] == "STATIC_TYPE_HINT"
+
+
+def test_graph_slice_service_returns_compact_callable_slice_with_groups_and_uncertainties(tmp_path):
+    store, _, _ = build_inventory(tmp_path, content="""package example;
+class Controller {
+  private final TicketMapper mapper;
+  void handle(String id, MissingClient missingClient) {
+    TicketDto dto = mapper.toApi(new Ticket());
+    missingClient.send(dto);
+    java.util.Objects.requireNonNull(id);
+  }
+}
+class TicketMapper {
+  TicketDto toApi(Ticket ticket) { return new TicketDto(); }
+}
+class TicketDto {}
+class Ticket {}
+""")
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+    method = next(
+        item for item in AnalysisStore(store.db_path).symbols("edge-gateway", None, None, None, "handle", 20, 0)["symbols"]
+        if item["nodeKind"] == "CALLABLE" and item["name"] == "handle"
+    )
+
+    result = GraphSliceService(AnalysisStore(store.db_path)).slice(GraphSliceRequest(
+        source_id="edge-gateway",
+        root_graph_node_id=method["symbolId"],
+        flow_domain="CODE",
+        direction="OUTBOUND",
+        depth=2,
+        max_nodes=40,
+        max_edges=60,
+        include_external="collapsed",
+        include_unresolved=True,
+    ))
+
+    assert result["root"]["label"] == "handle"
+    assert any(node["label"] == "toApi" for node in result["nodes"])
+    assert any(edge["edgeType"] == "CALLS" for edge in result["edges"])
+    assert_node_closed_graph_response(result)
+    assert result["groups"]
+    assert any(item["unresolvedReason"] == "TARGET_NOT_ANALYZED" for item in result["uncertainties"])
+    assert result["metrics"]["callsTaxonomy"]["callKind"]["FIELD_RECEIVER"] >= 1
+
+
+def test_graph_slice_endpoint_returns_slice_response(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+    method = next(
+        item for item in AnalysisStore(store.db_path).symbols("edge-gateway", None, None, None, "create", 20, 0)["symbols"]
+        if item["nodeKind"] == "CALLABLE" and item["name"] == "create"
+    )
+
+    result = get_json(f"/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&rootGraphNodeId={quote(method['symbolId'])}&flowDomain=CODE&depth=1")
+
+    assert result["status"] == 200
+    assert result["json"]["root"]["id"] == method["symbolId"]
+    assert result["json"]["metrics"]["sliceNodeCount"] >= 1
+    assert "groups" in result["json"]
+    assert "uncertainties" in result["json"]
+    assert_node_closed_graph_response(result["json"])
+
+
+def test_graph_slice_endpoint_returns_source_overview_without_selected_root(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&flowDomain=CODE&depth=1")
+
+    assert result["status"] == 200
+    assert result["json"]["sourceId"] == "edge-gateway"
+    assert result["json"]["root"] is None
+    assert result["json"]["nodes"]
+    assert result["json"]["metrics"]["sliceNodeCount"] >= 1
+    assert_node_closed_graph_response(result["json"])
+
+
+def test_graph_slice_endpoint_source_overview_hides_isolated_nodes_by_default(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+    insert_isolated_graph_nodes(store.db_path, count=6)
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&flowDomain=CODE&depth=1&maxNodes=80&maxEdges=120")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert_node_closed_graph_response(body)
+    assert body["metrics"]["overviewSelectionReason"] == "CONNECTED_COMPONENTS_FIRST"
+    assert body["metrics"]["hiddenIsolatedCount"] >= 6
+    assert not any(node["id"].startswith("test-isolated-node-") for node in body["nodes"])
+    assert any(group["groupType"] == "ISOLATED_NODES" for group in body["groups"])
+
+
+def test_graph_slice_endpoint_source_overview_can_include_isolated_nodes(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+    insert_isolated_graph_nodes(store.db_path, count=3)
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&flowDomain=CODE&depth=1&maxNodes=80&maxEdges=120&includeIsolated=true")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert_node_closed_graph_response(body)
+    assert body["metrics"]["hiddenIsolatedCount"] == 0
+    assert any(node["id"].startswith("test-isolated-node-") for node in body["nodes"])
+
+
+def test_graph_slice_endpoint_can_omit_claim_payload_for_lightweight_canvas(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&flowDomain=CODE&depth=1&includeClaims=false")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert body["nodes"]
+    assert body["claims"] == []
+    assert all(node["claims"] == [] for node in body["nodes"])
+    assert body["request"]["includeClaims"] is False
+
+
+def test_graph_slice_endpoint_max_nodes_zero_returns_all_available_nodes(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+    insert_isolated_graph_nodes(store.db_path, count=300)
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&flowDomain=CODE&depth=1&maxNodes=0&maxEdges=0&includeIsolated=true")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert len(body["nodes"]) > 250
+    assert body["metrics"]["hiddenIsolatedCount"] == 0
+    assert body["metrics"]["sliceNodeCount"] == len(body["nodes"])
+    assert any(node["id"].startswith("test-isolated-node-") for node in body["nodes"])
+    assert_node_closed_graph_response(body)
+
+
+def test_graph_slice_endpoint_stale_selected_root_falls_back_to_source_overview(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?sourceId=edge-gateway&rootGraphNodeId=stale-node&flowDomain=CODE&depth=1")
+
+    assert result["status"] == 200
+    assert result["json"]["sourceId"] == "edge-gateway"
+    assert result["json"]["root"] is None
+    assert result["json"]["nodes"]
+    assert result["json"]["diagnostics"][0]["code"] == "GRAPH_SLICE_ROOT_NOT_FOUND"
+    assert result["json"]["diagnostics"][0]["metadata"]["fallback"] == "SOURCE_OVERVIEW"
+    assert_node_closed_graph_response(result["json"])
+
+
+def test_graph_slice_endpoint_missing_root_without_source_remains_controlled_not_found(tmp_path, monkeypatch):
+    configure_api(tmp_path, monkeypatch)
+
+    result = get_json("/api/v1/knowledge/analysis/graph/slice?rootGraphNodeId=stale-node&flowDomain=CODE&depth=1")
+
+    assert result["status"] == 404
+    assert result["json"]["code"] == "GRAPH_NODE_NOT_FOUND"
+
+
+def test_callable_endpoint_returns_direct_callable_responsibility(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result()))["jobId"])
+    method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
+
+    graph = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, True, False)
+    selected = graph["selected"]["node"]
+
+    assert selected["nodeKind"] == "CALLABLE"
+    assert selected["claimSummary"] == "Handles object creation."
+    assert selected["summarySource"] == "DIRECT"
+    assert selected["summaryClaimNodeId"] == selected["id"]
+    assert selected["summaryConfidence"] == 0.86
+
+
+def test_callable_without_direct_claim_uses_parent_fallback_with_provenance(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(method_claim=False, type_claim=True)))["jobId"])
+    method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
+
+    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, False, False)["selected"]["node"]
+
+    assert selected["claimSummary"] == "Handles object requests."
+    assert selected["summarySource"] == "PARENT_FALLBACK"
+    assert selected["summaryClaimNodeId"] == selected["parentNodeId"]
+
+
+def test_callable_without_type_claim_uses_file_fallback_with_provenance(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(method_claim=False, type_claim=False, file_claim=True)))["jobId"])
+    method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
+
+    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, False, False)["selected"]["node"]
+
+    assert selected["claimSummary"] == "Defines an object handler file."
+    assert selected["summarySource"] == "FILE_FALLBACK"
+    assert selected["summaryClaimNodeId"] != selected["id"]
+
+
+def test_low_confidence_callable_claim_is_debug_only_and_not_trusted(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(method_claim=True, type_claim=False, method_confidence=0.2)))["jobId"])
+    method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
+
+    graph = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, True, False)
+    selected = graph["selected"]["node"]
+    responsibility = next(claim for claim in selected["claims"] if claim["claimKind"] == "RESPONSIBILITY")
+
+    assert selected["status"] == "TRUSTED"
+    assert selected["summarySource"] == "NONE"
+    assert responsibility["status"] == "DEBUG_ONLY"
+    assert responsibility["rejectionReason"] is None or responsibility["rejectionReason"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD"
+    assert selected["summaryConfidence"] is None
+
+
+def test_generic_file_level_callable_summary_is_not_used_as_direct_summary(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(
+        method_claim=True,
+        type_claim=False,
+        method_summary="This Java file contains an object handler.",
+    )))["jobId"])
+    method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
+
+    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, True, False)["selected"]["node"]
+    responsibility = next(claim for claim in selected["claims"] if claim["claimKind"] == "RESPONSIBILITY")
+
+    assert selected["summarySource"] == "NONE"
+    assert selected["claimSummary"] is None
+    assert responsibility["status"] == "DEBUG_ONLY"
+    assert responsibility["rejectionReason"] == "GENERIC_FILE_LEVEL_CALLABLE_SUMMARY"
 
 
 def test_no_source_file_mutation(tmp_path):
@@ -2084,24 +1818,6 @@ def test_no_source_file_mutation(tmp_path):
 def test_no_production_domain_hardcoded_synonyms():
     src = Path("infrastructure/knowledge/services/knowledge-service/src/knowledge_service")
     banned = ["_AUTH_QUERY", "site creation", "авторизація"]
-    combined = "\n".join(path.read_text(encoding="utf-8") for path in src.rglob("*.py"))
-
-    assert all(term not in combined for term in banned)
-
-
-def test_no_production_file_format_classification_hardcodes():
-    src = Path("infrastructure/knowledge/services/knowledge-service/src/knowledge_service")
-    banned = [
-        "pom.xml",
-        "build.gradle",
-        "settings.gradle",
-        "package.json",
-        "pnpm-lock.yaml",
-        "yarn.lock",
-        "package-lock.json",
-        "application.yml",
-        "bootstrap.yml",
-    ]
     combined = "\n".join(path.read_text(encoding="utf-8") for path in src.rglob("*.py"))
 
     assert all(term not in combined for term in banned)
@@ -2132,6 +1848,96 @@ def post_json(path, payload):
 def get_json(path):
     import asyncio
     return asyncio.run(asgi_json("GET", path, None))
+
+
+def assert_node_closed_graph_response(body):
+    node_ids = {node["id"] for node in body["nodes"]}
+    for edge in body["edges"]:
+        assert edge["from"] in node_ids
+        assert edge["to"] in node_ids
+
+
+def insert_isolated_graph_nodes(db_path, count=5):
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        base = conn.execute("""
+            SELECT job_id, source_id, inventory_file_id, analysis_file_id, language, flow_domain
+            FROM analysis_graph_nodes
+            WHERE source_id = 'edge-gateway'
+            LIMIT 1
+        """).fetchone()
+        assert base is not None
+        for index in range(count):
+            conn.execute("""
+                INSERT INTO analysis_graph_nodes(
+                    id, job_id, source_id, inventory_file_id, analysis_file_id, stable_key,
+                    node_kind, language, name, qualified_name, display_name, parent_node_id,
+                    line_start, line_end, confidence, status, metadata_json, created_at,
+                    fact_origin, flow_domain
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                f"test-isolated-node-{index}",
+                base["job_id"],
+                base["source_id"],
+                base["inventory_file_id"],
+                base["analysis_file_id"],
+                f"edge-gateway|isolated|{index}",
+                "CALLABLE",
+                base["language"],
+                f"isolated{index}",
+                f"example.Isolated{index}.isolated",
+                f"isolated{index}",
+                1,
+                1,
+                1.0,
+                "TRUSTED",
+                json.dumps({"testFixture": True}),
+                "now",
+                "STATIC",
+                base["flow_domain"] or "CODE",
+            ))
+
+
+def insert_unresolved_graph_edge(db_path):
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        from_node = conn.execute("""
+            SELECT *
+            FROM analysis_graph_nodes
+            WHERE source_id = 'edge-gateway'
+            ORDER BY node_kind = 'CALLABLE' DESC, confidence DESC
+            LIMIT 1
+        """).fetchone()
+        assert from_node is not None
+        conn.execute("""
+            INSERT INTO analysis_graph_edges(
+                id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id,
+                to_node_id, edge_type, resolution_status, confidence, evidence_id,
+                unresolved_target_json, metadata_json, status, created_at, fact_origin, flow_domain
+            )
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+        """, (
+            "test-unresolved-edge-without-endpoint",
+            from_node["job_id"],
+            from_node["source_id"],
+            from_node["inventory_file_id"],
+            from_node["analysis_file_id"],
+            from_node["id"],
+            "CALLS",
+            "UNRESOLVED",
+            1.0,
+            json.dumps({"name": "MissingTarget", "methodName": "missing"}),
+            json.dumps({
+                "methodName": "missing",
+                "unresolvedReason": "TARGET_NOT_ANALYZED",
+                "sliceDefaultVisibility": "SHOW_AS_UNCERTAINTY",
+            }),
+            "TRUSTED",
+            "now",
+            "STATIC",
+            from_node["flow_domain"] or "CODE",
+        ))
 
 
 async def asgi_json(method, path, payload):
@@ -2220,14 +2026,187 @@ def test_analysis_api_status_files_symbols_relations(tmp_path, monkeypatch):
     symbols = get_json("/api/v1/knowledge/analysis/symbols?role=HTTP_HANDLER")
     relations = get_json("/api/v1/knowledge/analysis/relations?relation=CONTAINS")
 
-    assert status["json"]["symbolCount"] == 2
+    assert status["json"]["symbolCount"] == 3
     assert files["json"]["total"] == 1
     assert symbols["json"]["symbols"][0]["roles"][0]["role"] == "HTTP_HANDLER"
-    assert symbols["json"]["symbols"][0]["graphNodeId"]
-    assert symbols["json"]["symbols"][0]["factStatus"] == "TRUSTED"
     assert relations["json"]["relations"][0]["relation"] == "CONTAINS"
-    assert relations["json"]["relations"][0]["graphEdgeId"]
-    assert relations["json"]["relations"][0]["resolutionStatus"] == "RESOLVED"
+
+
+def test_analysis_graph_api_returns_overview_with_progress_and_facts(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert body["sourceId"] == "edge-gateway"
+    assert body["status"]["analysisStatus"] == "READY"
+    assert body["status"]["progressPercent"] == 100.0
+    assert body["nodes"]
+    assert body["edges"][0]["edgeType"] == "CONTAINS"
+    assert body["nodes"][0]["graphNodeId"]
+    assert body["meta"]["totalNodeCount"] == 3
+    assert_node_closed_graph_response(body)
+
+
+def test_analysis_graph_api_can_omit_claim_payload_for_lightweight_canvas(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&includeClaims=false")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert body["nodes"]
+    assert body["claims"] == []
+    assert all(node["claims"] == [] for node in body["nodes"])
+    assert body["filters"]["includeClaims"] is False
+
+
+def test_analysis_graph_api_omits_edges_with_missing_returned_endpoints(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    insert_unresolved_graph_edge(store.db_path)
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&limit=80")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert_node_closed_graph_response(body)
+    assert body["meta"]["skippedMissingEndpointCount"] >= 1
+    assert body["meta"]["skippedEdgeCount"] >= 1
+    assert "EDGE_ENDPOINT_NOT_RETURNED" in body["meta"]["truncationReason"]
+
+
+def test_analysis_graph_api_limit_zero_returns_all_available_nodes(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    insert_isolated_graph_nodes(store.db_path, count=520)
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&limit=0")
+
+    body = result["json"]
+    assert result["status"] == 200
+    assert len(body["nodes"]) > 500
+    assert body["meta"]["returnedNodeCount"] == body["meta"]["totalNodeCount"]
+    assert_node_closed_graph_response(body)
+
+
+def test_analysis_graph_api_returns_slice_around_selected_node_and_depth_limit(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    symbols = get_json("/api/v1/knowledge/analysis/symbols?sourceId=edge-gateway")["json"]["symbols"]
+    selected = symbols[0]["symbolId"]
+
+    depth_zero = get_json(f"/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&graphNodeId={quote(selected)}&depth=0")
+    depth_one = get_json(f"/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&graphNodeId={quote(selected)}&depth=1")
+
+    assert [node["id"] for node in depth_zero["json"]["nodes"]] == [selected]
+    assert depth_zero["json"]["edges"] == []
+    assert depth_one["json"]["selected"]["node"]["id"] == selected
+    assert len(depth_one["json"]["nodes"]) == 2
+    assert len(depth_one["json"]["edges"]) == 1
+    assert_node_closed_graph_response(depth_one["json"])
+
+
+def test_analysis_graph_api_applies_flow_domain_code(tmp_path, monkeypatch):
+    store, _, _ = build_inventory(tmp_path, extra_files={
+        "src/test/java/example/ObjectHandlerTest.java": "class ObjectHandlerTest {}\n",
+    })
+    cfg = app_config(tmp_path)
+    monkeypatch.setattr(main, "app_config", cfg)
+    monkeypatch.setattr(main, "store", store)
+    monkeypatch.setattr(main, "analysis_runner", FakeRunner())
+    wait_job(store, AnalysisJobRunner(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&flowDomain=CODE")
+
+    assert result["status"] == 200
+    assert result["json"]["nodes"]
+    assert {node["flowDomain"] for node in result["json"]["nodes"]} == {"CODE"}
+    assert all("src/test/" not in node["relativePath"] for node in result["json"]["nodes"])
+    assert_node_closed_graph_response(result["json"])
+
+
+def test_analysis_graph_api_returns_selected_edge_resolution_metadata_safely(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    relation = get_json("/api/v1/knowledge/analysis/relations?sourceId=edge-gateway")["json"]["relations"][0]
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute(
+            "UPDATE analysis_graph_edges SET resolution_status = ?, unresolved_target_json = ? WHERE id = ?",
+            ("UNRESOLVED", json.dumps({"name": "MissingTarget"}), relation["relationId"]),
+        )
+
+    result = get_json(f"/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&graphEdgeId={quote(relation['relationId'])}&includeEvidence=true")
+
+    edge = result["json"]["selected"]["edge"]
+    assert edge["id"] == relation["relationId"]
+    assert edge["resolutionStatus"] == "UNRESOLVED"
+    assert edge["unresolvedTarget"] == {"name": "MissingTarget"}
+    assert edge["evidence"]
+
+
+def test_analysis_graph_api_handles_no_analysis_yet(tmp_path, monkeypatch):
+    configure_api(tmp_path, monkeypatch)
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway")
+
+    assert result["status"] == 200
+    assert result["json"]["nodes"] == []
+    assert result["json"]["edges"] == []
+    assert result["json"]["status"]["analysisStatus"] == "NOT_ANALYZED"
+
+
+def test_analysis_graph_api_shows_running_job_partial_graph(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    AnalysisStore(store.db_path).create_job({
+        "jobId": "job-running",
+        "status": "RUNNING",
+        "startedAt": "now",
+        "sourceCount": 1,
+        "fileCount": 1,
+        "processedFileCount": 0,
+        "failedFileCount": 0,
+        "currentSourceId": "edge-gateway",
+        "currentRelativePath": "src/main/java/example/ObjectHandler.java",
+        "sourceIds": ["edge-gateway"],
+        "lastProgressAt": "now",
+        "symbolCount": 0,
+        "relationCount": 0,
+        "diagnostics": [],
+    })
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway")
+
+    assert result["json"]["status"]["analysisStatus"] == "RUNNING"
+    assert result["json"]["status"]["currentFile"] == "src/main/java/example/ObjectHandler.java"
+    assert result["json"]["nodes"]
+
+
+def test_analysis_graph_api_marks_truncated_when_limit_exceeded(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway&limit=1")
+
+    assert result["json"]["meta"]["truncated"] is True
+    assert len(result["json"]["nodes"]) == 1
+
+
+def test_analysis_graph_api_does_not_return_orphan_rows(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("DELETE FROM files")
+
+    result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway")
+
+    assert result["json"]["nodes"] == []
+    assert result["json"]["edges"] == []
+    assert result["json"]["meta"]["totalNodeCount"] == 0
 
 
 def test_analysis_api_stop_job(tmp_path, monkeypatch):
@@ -2272,12 +2251,12 @@ def test_analysis_api_exposes_failed_file_diagnostics_and_progress(tmp_path, mon
     monkeypatch.setattr(main, "analysis_runner", FakeRunner())
     analyzer = StubAnalyzer(outcomes=[
         KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad", attempt=1),
-        lambda payload, line_count: valid_graph_response(payload, line_count),
+        valid_result(),
     ])
     wait_job(store, AnalysisJobRunner(store, cfg).start(AnalysisBuildRequest(), analyzer)["jobId"])
 
     status = get_json("/api/v1/knowledge/analysis/status")
-    files = get_json("/api/v1/knowledge/analysis/files?status=FAILED")
+    files = get_json("/api/v1/knowledge/analysis/files?pathContains=ObjectHandler")
 
     assert status["json"]["lastCompletedAt"]
     assert files["json"]["total"] == 1
@@ -2303,25 +2282,8 @@ def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, m
     assert service["analysis"]["inventoryFileCount"] == 1
     assert service["analysis"]["analyzedFileCount"] == 1
     assert service["analysis"]["percent"] == 100.0
-    assert service["facts"]["symbolCount"] == 2
-    assert service["facts"]["relationCount"] == 1
-
-
-def test_services_status_can_embed_selected_service_details(tmp_path, monkeypatch):
-    store, _, _ = build_inventory(tmp_path)
-    cfg = app_config(tmp_path)
-    monkeypatch.setattr(main, "app_config", cfg)
-    monkeypatch.setattr(main, "store", store)
-    wait_job(store, AnalysisJobRunner(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
-
-    result = get_json("/api/v1/knowledge/services/status?detailsSourceId=edge-gateway")
-    service = result["json"]["services"][0]
-
-    assert result["status"] == 200
-    assert service["sourceId"] == "edge-gateway"
-    assert service["details"]["symbols"]["total"] == 2
-    assert service["details"]["relations"]["total"] == 1
-    assert service["details"]["failures"]["total"] == 0
+    assert service["facts"]["symbolCount"] == 3
+    assert service["facts"]["relationCount"] == 3
 
 
 def test_services_status_uses_current_content_hash_for_analyzed_and_stale(tmp_path, monkeypatch):
@@ -2355,11 +2317,9 @@ def test_services_status_reports_failed_files_separately_and_groups_diagnostics(
     result = get_json("/api/v1/knowledge/services/status")
     service = result["json"]["services"][0]
 
-    assert service["analysis"]["analyzedFileCount"] == 0
-    assert service["analysis"]["processedFileCount"] == 1
-    assert service["analysis"]["failedFileCount"] == 1
+    assert service["analysis"]["analyzedFileCount"] == 1
+    assert service["analysis"]["failedFileCount"] == 0
     assert service["analysis"]["pendingFileCount"] == 0
-    assert service["analysis"]["percent"] == 100.0
     assert {item["code"]: item["count"] for item in service["diagnostics"]}["ANALYSIS_AI_INVALID_JSON"] == 1
 
 

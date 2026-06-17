@@ -6,6 +6,9 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalys
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesView;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphSliceRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisJobView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsView;
@@ -136,6 +139,16 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
     @Override
     public KnowledgeAnalysisRelationsView analysisRelations(final KnowledgeAnalysisRelationsRequest request) {
         return this.convert(this.send("GET", "/api/v1/knowledge/analysis/relations" + query(request), null), KnowledgeAnalysisRelationsView.class);
+    }
+
+    @Override
+    public KnowledgeAnalysisGraphView analysisGraph(final KnowledgeAnalysisGraphRequest request) {
+        return this.convert(this.send("GET", "/api/v1/knowledge/analysis/graph" + query(request), null), KnowledgeAnalysisGraphView.class);
+    }
+
+    @Override
+    public KnowledgeAnalysisGraphView analysisGraphSlice(final KnowledgeAnalysisGraphSliceRequest request) {
+        return this.convert(this.send("GET", "/api/v1/knowledge/analysis/graph/slice" + query(request), null), KnowledgeAnalysisGraphView.class);
     }
 
     private String send(final String method, final String path, final Object body) {
@@ -357,6 +370,52 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
         append(query, "factOrigin", request.factOrigin());
         append(query, "limit", request.limit());
         append(query, "offset", request.offset());
+        return query.toString();
+    }
+
+    private String query(final KnowledgeAnalysisGraphRequest request) {
+        if (request == null) {
+            return "";
+        }
+        final StringBuilder query = new StringBuilder();
+        append(query, "sourceId", request.sourceId());
+        append(query, "graphNodeId", request.graphNodeId());
+        append(query, "graphEdgeId", request.graphEdgeId());
+        append(query, "inventoryFileId", request.inventoryFileId());
+        append(query, "flowDomain", request.flowDomain());
+        append(query, "factOrigin", request.factOrigin());
+        append(query, "nodeKind", request.nodeKind());
+        append(query, "edgeType", request.edgeType());
+        append(query, "depth", request.depth());
+        append(query, "limit", request.limit());
+        append(query, "includeEvidence", request.includeEvidence());
+        append(query, "includeClaims", request.includeClaims());
+        append(query, "includeDiagnostics", request.includeDiagnostics());
+        return query.toString();
+    }
+
+    private String query(final KnowledgeAnalysisGraphSliceRequest request) {
+        if (request == null) {
+            return "";
+        }
+        final StringBuilder query = new StringBuilder();
+        append(query, "sourceId", request.sourceId());
+        append(query, "rootGraphNodeId", request.rootGraphNodeId());
+        append(query, "stableKey", request.stableKey());
+        append(query, "flowDomain", request.flowDomain());
+        append(query, "direction", request.direction());
+        append(query, "depth", request.depth());
+        append(query, "maxNodes", request.maxNodes());
+        append(query, "maxEdges", request.maxEdges());
+        append(query, "includeExternal", request.includeExternal());
+        append(query, "includeUnresolved", request.includeUnresolved());
+        append(query, "includeTests", request.includeTests());
+        append(query, "includeWorkflow", request.includeWorkflow());
+        append(query, "edgeTypes", request.edgeTypes());
+        append(query, "nodeKinds", request.nodeKinds());
+        append(query, "includeEvidence", request.includeEvidence());
+        append(query, "includeClaims", request.includeClaims());
+        append(query, "includeIsolated", request.includeIsolated());
         return query.toString();
     }
 

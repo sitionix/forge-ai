@@ -16,7 +16,7 @@ class AppConfig:
     local_config_path: Path
     store_path: Path
     inventory_auto_refresh_enabled: bool = True
-    inventory_auto_refresh_interval_seconds: int = 300
+    inventory_auto_refresh_interval_seconds: int = 60
     analysis_enabled: bool = True
     analysis_provider: str = "ollama"
     analysis_base_url: str = "http://localhost:11434"
@@ -58,7 +58,7 @@ def load_app_config() -> AppConfig:
         inventory_auto_refresh_interval_seconds=max(1, int(
             os.environ.get("KNOWLEDGE_INVENTORY_AUTO_REFRESH_INTERVAL_SECONDS")
             or inventory.get("auto_refresh_interval_seconds")
-            or 300
+            or 60
         )),
         analysis_enabled=str(os.environ.get("KNOWLEDGE_ANALYSIS_ENABLED", analysis.get("enabled", True))).lower() != "false",
         analysis_provider=str(os.environ.get("KNOWLEDGE_ANALYSIS_PROVIDER") or analysis.get("provider") or "ollama"),

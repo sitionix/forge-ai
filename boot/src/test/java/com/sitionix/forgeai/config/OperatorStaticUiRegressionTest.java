@@ -132,6 +132,43 @@ class OperatorStaticUiRegressionTest {
     }
 
     @Test
+    void givenKnowledgeGraphPage_whenRendered_thenExposeGraphWorkflow() throws Exception {
+        final String html = this.read("knowledge-graph.html");
+
+        assertThat(html)
+                .contains("data-page=\"knowledge-graph\"")
+                .contains("id=\"analyzeKnowledgeGraph\"")
+                .contains("id=\"refreshKnowledgeGraph\"")
+                .contains("id=\"focusKnowledgeGraph\"")
+                .contains("id=\"knowledgeGraphAutoRefresh\"")
+                .contains("id=\"knowledgeGraphProgress\"")
+                .contains("id=\"knowledgeGraphMode\"")
+                .contains("id=\"knowledgeGraphFlowDomain\"")
+                .contains("id=\"knowledgeGraphDepth\"")
+                .contains("id=\"knowledgeGraphDensity\"")
+                .contains("id=\"knowledgeGraphLabelsMode\"")
+                .contains("id=\"knowledgeGraphExternal\"")
+                .contains("id=\"knowledgeGraphUnresolved\"")
+                .contains("<option value=\"0\">Max</option>")
+                .contains("id=\"knowledgeGraphIsolated\"")
+                .contains("id=\"knowledgeGraphSearch\"")
+                .contains("id=\"fitKnowledgeGraph\"")
+                .contains("id=\"fitKnowledgeGraphTop\"")
+                .contains("id=\"toggleKnowledgeGraphPanel\"")
+                .contains("id=\"knowledgeGraphEmptyAction\"")
+                .contains("id=\"knowledgeGraphSvg\"")
+                .contains("id=\"knowledgeGraphPreview\"")
+                .contains("data-graph-tab=\"overview\"")
+                .contains("data-graph-tab=\"selected\"")
+                .contains("data-graph-tab=\"nodes\"")
+                .contains("data-graph-tab=\"edges\"")
+                .contains("data-graph-tab=\"claims\"")
+                .contains("data-graph-tab=\"diagnostics\"")
+                .contains("id=\"knowledgeGraphDetails\"")
+                .doesNotContain("id=\"analyzeKnowledgeGraphEmpty\"");
+    }
+
+    @Test
     void givenOperatorJs_whenRendered_thenKnowledgeUsesServiceStatusInventoryAnalysisAndFacts() throws Exception {
         final String js = this.read("operator-ui.js");
 
@@ -178,11 +215,107 @@ class OperatorStaticUiRegressionTest {
                 .contains("Not analyzed")
                 .contains("RUNNING")
                 .contains("lastProgressAt")
+                .contains("knowledgeGraphUrl({ sourceId: source.sourceId")
+                .contains("graphNodeId: symbol.symbolId")
+                .contains("graphEdgeId: relation.relationId")
+                .contains("renderKnowledgeGraphSourceContext")
+                .contains("data.sourceStatus")
+                .contains("data.failureFiles")
+                .doesNotContain("knowledge-source-details-button")
+                .doesNotContain("showKnowledgeServiceDetails")
                 .doesNotContain("last analysis")
                 .doesNotContain("0 indexed")
                 .doesNotContain("const currentEligible")
                 .doesNotContain("analysis.eligibleFilesAtScan ?? analysis.fileCount ?? currentEligible")
                 .doesNotContain("postInfrastructureJson('/knowledge/inventory/build'");
+    }
+
+    @Test
+    void givenOperatorJs_whenRendered_thenKnowledgeGraphUsesDedicatedEndpointAndPolling() throws Exception {
+        final String js = this.read("operator-ui.js");
+
+        assertThat(js)
+                .contains("const knowledgeGraphPollMs = 30000")
+                .contains("function loadKnowledgeGraph(")
+                .contains("function renderKnowledgeGraphVisual(")
+                .contains("function renderKnowledgeGraphDetails(")
+                .contains("function scheduleKnowledgeGraphPolling(")
+                .contains("function startKnowledgeGraphAnalysis(")
+                .contains("postInfrastructureJson('/knowledge/analysis/build'")
+                .contains("knowledgeGraphAnalysisRunning")
+                .contains("Analysis running")
+                .contains("toggleKnowledgeGraphFocus")
+                .contains("preview-collapsed")
+                .contains("renderKnowledgeGraphEmptyAction")
+                .contains("knowledgeGraphEmptyState")
+                .contains("knowledgeGraphHasFactsOutsideCurrentView")
+                .contains("knowledgeGraphVisibleGraph")
+                .contains("No graph items match current filters.")
+                .contains("Use Analyze in the toolbar to build the graph.")
+                .contains("unlimitedMax")
+                .contains("query.set('maxEdges', unlimitedMax ? '0'")
+                .contains("query.set('includeEvidence', 'false')")
+                .contains("query.set('includeClaims', 'false')")
+                .contains("query.set('includeDiagnostics', unlimitedMax ? 'false' : 'true')")
+                .contains("loadKnowledgeGraphSelectedDetails")
+                .contains("query.set('includeClaims', 'true')")
+                .contains("Selected item details loaded on demand.")
+                .contains("panKnowledgeGraphWithWheel")
+                .contains("Graph truncated for readability.")
+                .contains("Select a node, narrow filters, increase max, or switch to Full mode")
+                .contains("includeIsolated")
+                .contains("Showing connected overview.")
+                .contains("isolated nodes are hidden")
+                .contains("edges were hidden because their endpoint nodes were outside the current result")
+                .contains("skippedMissingEndpointCount")
+                .contains("skippedByLimitCount")
+                .contains("truncationReason")
+                .contains("edge.from")
+                .contains("edge.to")
+                .contains("node.id")
+                .contains("getInfrastructureJson(endpoint)")
+                .contains("/knowledge/analysis/graph/slice?")
+                .contains("/knowledge/analysis/graph?")
+                .contains("knowledgeGraphMissingRootError")
+                .contains("allowMissingRootFallback")
+                .contains("selectKnowledgeGraphNode")
+                .contains("selectKnowledgeGraphEdge")
+                .contains("if (page === 'knowledge-graph')")
+                .contains("initKnowledgeGraphPage()");
+    }
+
+    @Test
+    void givenOperatorStaticAssets_whenRendered_thenKnowledgeGraphShowsSummaryProvenanceAndConfidence() throws Exception {
+        final String js = this.read("operator-ui.js");
+        final String css = this.read("operator-ui.css");
+
+        assertThat(js)
+                .contains("summarySource")
+                .contains("summaryClaimId")
+                .contains("summaryClaimNodeId")
+                .contains("summaryConfidence")
+                .contains("summaryEvidenceCount")
+                .contains("Direct responsibility")
+                .contains("No direct method summary. Showing parent type summary.")
+                .contains("No direct method summary. Showing file summary.")
+                .contains("No direct responsibility summary for this node yet.")
+                .contains("LOW CONFIDENCE")
+                .contains("DEBUG ONLY")
+                .contains("confidence-${knowledgeGraphConfidenceState(node)}")
+                .contains("knowledge-graph-summary-block");
+
+        assertThat(css)
+                .contains(".knowledge-graph-summary-block")
+                .contains(".knowledge-confidence-badge.low")
+                .contains(".knowledge-confidence-badge.debug")
+                .contains(".knowledge-graph-node.confidence-low")
+                .contains(".knowledge-graph-node.confidence-debug")
+                .contains("body.knowledge-graph-focus-mode")
+                .contains("min-height: max(720px, calc(100vh - 260px))")
+                .contains(".knowledge-graph-layout.preview-collapsed")
+                .contains(".knowledge-graph-empty-action.hidden")
+                .contains(".knowledge-graph-tabs")
+                .contains("grid-template-columns: minmax(0, 1fr) 310px");
     }
 
     @Test
@@ -270,6 +403,10 @@ class OperatorStaticUiRegressionTest {
                 .contains(".service-clone-button")
                 .contains(".button.danger")
                 .contains(".contract-ref-card")
+                .contains(".knowledge-graph-stage")
+                .contains(".knowledge-graph-node")
+                .contains(".knowledge-graph-edge")
+                .contains(".knowledge-graph-detail-section")
                 .contains("grid-template-columns: minmax(220px, 0.72fr) minmax(390px, 1.12fr) minmax(320px, 0.92fr);")
                 .contains(".config-editor-panel")
                 .contains(".dependency-card")

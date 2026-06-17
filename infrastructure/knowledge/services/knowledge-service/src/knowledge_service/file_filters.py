@@ -4,6 +4,8 @@ import fnmatch
 from pathlib import Path
 from typing import Iterable
 
+EXCLUDED_DIR_NAMES = {".git", ".idea", "target", "build", "dist", "node_modules", ".venv", "var", "logs"}
+
 
 def matches_any(relative_path: str, patterns: Iterable[str]) -> bool:
     normalized = relative_path.replace("\\", "/")
@@ -25,7 +27,8 @@ def should_include_file(relative_path: str, include: Iterable[str], exclude: Ite
 
 def is_excluded_file(relative_path: str, exclude: Iterable[str]) -> bool:
     normalized = relative_path.replace("\\", "/")
-    return matches_any(normalized, exclude)
+    parts = normalized.split("/")
+    return matches_any(normalized, exclude) or any(part in EXCLUDED_DIR_NAMES for part in parts[:-1])
 
 
 def is_included_file(relative_path: str, include: Iterable[str]) -> bool:
