@@ -39,7 +39,6 @@ class EventTicketPayloadApiMapperTest {
 
         //then
         assertThat(actual).isEqualTo(EventPayload.builder()
-                .required(Boolean.TRUE)
                 .reason("required")
                 .scope("GLOBAL")
                 .summary("event summary")

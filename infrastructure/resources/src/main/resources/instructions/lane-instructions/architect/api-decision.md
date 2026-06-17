@@ -2,7 +2,7 @@
 
 Always prepare the API request object according to the provided final-step completion payload contract.
 
-Use `required: true` when this scope needs API work to deliver its assigned scope task.
+Set the output-level `required` flag to `true` when this scope needs API work to deliver its assigned scope task.
 
 API work includes:
 
@@ -26,9 +26,9 @@ If another selected scope must call this scope synchronously through HTTP/API, m
 
 Endpoint ownership is not a condition for `required: true`.
 
-Use `required: false` only when this scope has no API contract impact and no synchronous API dependency work.
+Set the output-level `required` flag to `false` only when this scope has no API contract impact and no synchronous API dependency work.
 
-When `required: false`:
+When the output-level `required` flag is `false`:
 
 - provide a clear reason;
 - provide a concise summary;
@@ -39,11 +39,10 @@ When `required: false`:
 - do not create placeholder operations;
 - do not omit the API request object.
 
-Expected `required: false` shape:
+Expected payload shape when the output-level `required` flag is `false`:
 
 ```json
 {
-  "required": false,
   "reason": "No API contract work is required for this scope.",
   "scope": "GLOBAL",
   "summary": "No API contract changes are needed.",

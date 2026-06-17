@@ -13,7 +13,6 @@ import java.util.Set;
 @NoArgsConstructor
 @AllArgsConstructor
 public class EventPayload implements AgentTicketPayload {
-    private Boolean required;
     private String reason;
     private String scope;
     private String summary;

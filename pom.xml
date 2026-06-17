@@ -35,7 +35,7 @@
         <jacoco.version>0.8.10</jacoco.version>
         <spring.version>3.3.4</spring.version>
         <testcontainers.version>1.20.1</testcontainers.version>
-        <forgeit.version>0.0.39</forgeit.version>
+        <forgeit.version>0.0.40</forgeit.version>
         <forge.security.version>0.0.7</forge.security.version>
     </properties>
 
@@ -72,6 +72,22 @@
             <dependency>
                 <groupId>${project.groupId}</groupId>
                 <artifactId>github-cli</artifactId>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>local-cli</artifactId>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>jarvis-client</artifactId>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>knowledge-client</artifactId>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>knowledge-sqlite</artifactId>
             </dependency>
             <dependency>
                 <groupId>org.mapstruct</groupId>

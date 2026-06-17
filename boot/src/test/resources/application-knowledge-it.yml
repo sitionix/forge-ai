@@ -1,0 +1,31 @@
+forge:
+  ai:
+    infrastructure:
+      knowledge:
+        mode: sqlite
+        sqlite:
+          include-patterns:
+            - "*"
+            - "**/*"
+          excluded-dir-names:
+            - ".git"
+            - "target"
+            - "build"
+            - "dist"
+            - "node_modules"
+            - ".venv"
+            - "var"
+            - "logs"
+          root-marker-paths:
+            - ".git"
+            - "boot/src/main/resources/services.yaml"
+
+forge-it:
+  modules:
+    sqlite:
+      paths:
+        entity:
+          defaults: /db/sqlite/entities/default
+          custom: /db/sqlite/entities/custom
+        ddl:
+          path: /db/sqlite

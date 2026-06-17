@@ -4,6 +4,7 @@ import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ReadyToStartLane;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.ManageTicketOperatorRuns;
@@ -56,7 +57,7 @@ class ReadyToStartLaneJobTest {
     void givenReadyLanes_whenRun_thenExecuteEachAgent() {
         //given
         final ExecuteAgent<AgentTicketPayload> analyzerExecutor = mock(ExecuteAgent.class);
-        final AgentPropertiesProvider.AgentConfigView analyzerConfig = mock(AgentPropertiesProvider.AgentConfigView.class);
+        final AgentConfigView analyzerConfig = mock(AgentConfigView.class);
         when(analyzerConfig.isEnabled()).thenReturn(true);
         Agent.ANALYZER.setExecutor(analyzerExecutor);
         Agent.ANALYZER.setInfo(analyzerConfig);
@@ -88,7 +89,7 @@ class ReadyToStartLaneJobTest {
     void givenMultipleReadyLanes_whenRun_thenDispatchAllWithoutWaitingForFirstExecution() {
         //given
         final ExecuteAgent<AgentTicketPayload> architectExecutor = mock(ExecuteAgent.class);
-        final AgentPropertiesProvider.AgentConfigView architectConfig = mock(AgentPropertiesProvider.AgentConfigView.class);
+        final AgentConfigView architectConfig = mock(AgentConfigView.class);
         when(architectConfig.isEnabled()).thenReturn(true);
         Agent.ARCHITECT.setExecutor(architectExecutor);
         Agent.ARCHITECT.setInfo(architectConfig);

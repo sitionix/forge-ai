@@ -101,7 +101,6 @@ class ApiAgentExecutorTest {
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(laneState));
 
         final ApiPayload payload = ApiPayload.builder()
-                .required(Boolean.TRUE)
                 .summary("summary")
                 .build();
         final AgentTicket<AgentTicketPayload> agentTicket = AgentTicket.<AgentTicketPayload>builder()

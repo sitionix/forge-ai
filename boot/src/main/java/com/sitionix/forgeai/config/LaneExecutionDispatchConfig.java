@@ -2,10 +2,12 @@ package com.sitionix.forgeai.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 @Configuration
+@Profile("!it")
 public class LaneExecutionDispatchConfig {
 
     @Bean

@@ -4,13 +4,25 @@ import com.sitionix.forgeai.domain.exception.ApiLaneEvidenceValidationException;
 import com.sitionix.forgeai.domain.model.github.GithubCheckStatus;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiLaneEvidenceDependency;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiLaneEvidencePayload;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
 import com.sitionix.forgeai.domain.port.GithubEvidencePort;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
+import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
+import com.sitionix.forgeai.domain.props.ContractRefView;
+import com.sitionix.forgeai.domain.props.ServiceConfigView;
+import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import com.sitionix.forgeai.domain.usecase.ValidateApiLaneEvidence;
+import java.nio.file.Path;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.Set;
 import java.util.UUID;
@@ -20,14 +32,23 @@ import org.springframework.stereotype.Component;
 @Component
 public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
     private static final Pattern GITHUB_REPOSITORY_PATTERN = Pattern.compile("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
+    private static final Pattern GITHUB_PULL_REQUEST_URL_PATTERN = Pattern.compile(
+            "^https://github\\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/[0-9]+(?:[/?#].*)?$"
+    );
 
     private final TicketRepository ticketRepository;
     private final GithubEvidencePort githubEvidencePort;
+    private final ServicePropertiesProvider servicePropertiesProvider;
+    private final AgentPropertiesProvider agentPropertiesProvider;
 
     public ValidateApiLaneEvidenceUseCase(final TicketRepository ticketRepository,
-                                          final GithubEvidencePort githubEvidencePort) {
+                                          final GithubEvidencePort githubEvidencePort,
+                                          final ServicePropertiesProvider servicePropertiesProvider,
+                                          final AgentPropertiesProvider agentPropertiesProvider) {
         this.ticketRepository = ticketRepository;
         this.githubEvidencePort = githubEvidencePort;
+        this.servicePropertiesProvider = servicePropertiesProvider;
+        this.agentPropertiesProvider = agentPropertiesProvider;
     }
 
     @Override
@@ -57,21 +78,23 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
         if (requiredScopes.isEmpty()) {
             return;
         }
+        final Set<String> expectedRepositories = this.expectedContractRepositories(requiredScopes);
 
         final String prUrl = evidencePayload == null ? null : evidencePayload.prUrl();
         if (prUrl == null || prUrl.isBlank()) {
             throw new ApiLaneEvidenceValidationException(
                     "api_evidence_pr_missing",
                     "API evidence validation failed: PR URL is missing for required API scopes=" + requiredScopes,
-                    "Create/update app-afesox PR and provide prUrl from that PR."
+                    this.expectedRepositoryHint("Create/update API contract PR", expectedRepositories)
             );
         }
+        this.validatePullRequestRepository(prUrl.trim(), expectedRepositories);
         final GithubCheckStatus prCheckStatus = this.githubEvidencePort.checkPullRequest(prUrl).status();
         if (GithubCheckStatus.NOT_FOUND.equals(prCheckStatus)) {
             throw new ApiLaneEvidenceValidationException(
                     "api_evidence_pr_not_found",
                     "API evidence validation failed: pull request not found by URL=" + prUrl,
-                    "Create PR in app-afesox and provide valid prUrl."
+                    this.expectedRepositoryHint("Create PR and provide valid prUrl", expectedRepositories)
             );
         }
 
@@ -80,7 +103,7 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
             throw new ApiLaneEvidenceValidationException(
                     "api_evidence_repo_missing",
                     "API evidence validation failed: repository is missing for required API scopes=" + requiredScopes,
-                    "Set repo in owner/repo format (for example: sitionix/app-afesox)."
+                    this.expectedRepositoryHint("Set repo in owner/repo format", expectedRepositories)
             );
         }
         final String normalizedRepository = repository.trim();
@@ -88,7 +111,16 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
             throw new ApiLaneEvidenceValidationException(
                     "api_evidence_repo_format_invalid",
                     "API evidence validation failed: repository has invalid format=" + normalizedRepository,
-                    "Set repo in owner/repo format (for example: sitionix/app-afesox)."
+                    this.expectedRepositoryHint("Set repo in owner/repo format", expectedRepositories)
+            );
+        }
+        if (!expectedRepositories.isEmpty() && !this.containsRepository(expectedRepositories, normalizedRepository)) {
+            throw new ApiLaneEvidenceValidationException(
+                    "api_evidence_repo_unexpected",
+                    "API evidence validation failed: repository=" + normalizedRepository
+                            + " is not configured for required API scopes=" + requiredScopes
+                            + ", expectedRepositories=" + expectedRepositories,
+                    this.expectedRepositoryHint("Use the API contract repository configured in services.yaml", expectedRepositories)
             );
         }
         final GithubCheckStatus repositoryCheckStatus = this.githubEvidencePort.checkRepository(normalizedRepository).status();
@@ -150,5 +182,122 @@ public class ValidateApiLaneEvidenceUseCase implements ValidateApiLaneEvidence {
                     "Run /generate and provide existing GitHub Actions runId for each required scope."
             );
         }
+    }
+
+    private void validatePullRequestRepository(final String prUrl, final Set<String> expectedRepositories) {
+        if (expectedRepositories.isEmpty()) {
+            return;
+        }
+        final Matcher matcher = GITHUB_PULL_REQUEST_URL_PATTERN.matcher(prUrl);
+        if (!matcher.matches()) {
+            return;
+        }
+        final String prRepository = matcher.group(1) + "/" + matcher.group(2);
+        if (!this.containsRepository(expectedRepositories, prRepository)) {
+            throw new ApiLaneEvidenceValidationException(
+                    "api_evidence_pr_repo_unexpected",
+                    "API evidence validation failed: PR repository=" + prRepository
+                            + " is not configured for API evidence, expectedRepositories=" + expectedRepositories,
+                    this.expectedRepositoryHint("Use PR from the API contract repository configured in services.yaml", expectedRepositories)
+            );
+        }
+    }
+
+    private Set<String> expectedContractRepositories(final Set<String> requiredScopes) {
+        if (requiredScopes == null || requiredScopes.isEmpty()) {
+            return Set.of();
+        }
+        final Set<String> repositories = new LinkedHashSet<>();
+        this.services().forEach((serviceId, service) -> {
+            if (service == null || !this.scopeMatches(requiredScopes, serviceId, service)) {
+                return;
+            }
+            this.apiContractRef(service)
+                    .flatMap(ref -> this.expectedRepository(service, ref))
+                    .ifPresent(repositories::add);
+        });
+        return repositories;
+    }
+
+    private boolean scopeMatches(final Set<String> requiredScopes,
+                                 final String serviceId,
+                                 final ServiceConfigView service) {
+        return requiredScopes.contains(serviceId) || requiredScopes.contains(service.getPath());
+    }
+
+    private Optional<ContractRefView> apiContractRef(
+            final ServiceConfigView service
+    ) {
+        if (service.getContractRefs() == null) {
+            return Optional.empty();
+        }
+        return this.workspaceContractRef(Agent.API)
+                .flatMap(refKey -> Optional.ofNullable(service.getContractRefs().get(refKey)));
+    }
+
+    private Optional<String> workspaceContractRef(final Agent agent) {
+        if (agent == null || this.agentPropertiesProvider.getAgents() == null) {
+            return Optional.empty();
+        }
+        return this.agentPropertiesProvider.getAgents().stream()
+                .filter(config -> config != null && Objects.equals(config.getId(), agent.getId()))
+                .findFirst()
+                .flatMap(AgentConfigView::getWorkspaceContractRef)
+                .filter(this::hasText);
+    }
+
+    private Optional<String> expectedRepository(final ServiceConfigView service,
+                                                final ContractRefView ref) {
+        if (ref == null || !this.hasText(ref.getSourceRepo())) {
+            return Optional.empty();
+        }
+        final String sourceRepo = ref.getSourceRepo().trim();
+        if (GITHUB_REPOSITORY_PATTERN.matcher(sourceRepo).matches()) {
+            return Optional.of(sourceRepo);
+        }
+        return this.deployOwner(service)
+                .map(owner -> owner + "/" + this.repoName(sourceRepo));
+    }
+
+    private Optional<String> deployOwner(final ServiceConfigView service) {
+        if (service == null || service.getDeploy() == null || !this.hasText(service.getDeploy().getRepo())) {
+            return Optional.empty();
+        }
+        final String repo = service.getDeploy().getRepo().trim();
+        final int separator = repo.indexOf('/');
+        return separator > 0 ? Optional.of(repo.substring(0, separator)) : Optional.empty();
+    }
+
+    private String repoName(final String sourceRepo) {
+        final Path path = Path.of(sourceRepo);
+        final Path fileName = path.getFileName();
+        return fileName == null ? sourceRepo : fileName.toString();
+    }
+
+    private String expectedRepositoryHint(final String action, final Set<String> expectedRepositories) {
+        if (expectedRepositories == null || expectedRepositories.isEmpty()) {
+            return action + ".";
+        }
+        return action + ": " + expectedRepositories + ".";
+    }
+
+    private boolean containsRepository(final Set<String> expectedRepositories, final String actualRepository) {
+        final String normalizedActualRepository = this.normalizeRepository(actualRepository);
+        return expectedRepositories.stream()
+                .map(this::normalizeRepository)
+                .anyMatch(expected -> Objects.equals(expected, normalizedActualRepository));
+    }
+
+    private String normalizeRepository(final String repository) {
+        return repository == null ? "" : repository.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private Map<String, ServiceConfigView> services() {
+        final Map<String, ServiceConfigView> services = this.servicePropertiesProvider.getServices();
+        return services == null ? Collections.emptyMap() : services;
+    }
+
+    private boolean hasText(final String value) {
+        return value != null && !value.isBlank();
     }
 }

@@ -76,7 +76,7 @@ public class CodexAppServerSessionRepository implements CodexSessionRepository {
                 .build());
         try {
             this.initialize(client);
-            final JsonNode threadStartResult = client.request("thread/start", this.threadStartParams(command), STARTUP_TIMEOUT);
+            final JsonNode threadStartResult = this.startOrResumeThread(client, command);
             final String threadId = threadStartResult.path("thread").path("id").asText(null);
             if (threadId == null || threadId.isBlank()) {
                 throw new IllegalStateException("Codex app-server did not return thread id");
@@ -177,10 +177,32 @@ public class CodexAppServerSessionRepository implements CodexSessionRepository {
         final String workspaceRoot = this.workspaceRoot(command);
         final ObjectNode params = this.objectMapper.createObjectNode();
         params.put("cwd", workspaceRoot);
-        params.set("runtimeWorkspaceRoots", this.objectMapper.createArrayNode().add(workspaceRoot));
+        params.set("runtimeWorkspaceRoots", this.runtimeWorkspaceRoots(command, workspaceRoot));
         params.put("approvalPolicy", this.properties.getApprovalPolicy());
         params.put("sandbox", this.properties.getSandbox());
         params.put("serviceName", this.properties.getServiceName());
+        if (this.hasText(this.properties.getModel())) {
+            params.put("model", this.properties.getModel());
+        }
+        if (this.hasText(this.properties.getModelProvider())) {
+            params.put("modelProvider", this.properties.getModelProvider());
+        }
+        return params;
+    }
+
+    private JsonNode startOrResumeThread(final CodexJsonRpcClient client, final CodexSessionStartCommand command) {
+        if (this.hasText(command.resumeThreadId())) {
+            return client.request("thread/resume", this.threadResumeParams(command), STARTUP_TIMEOUT);
+        }
+        return client.request("thread/start", this.threadStartParams(command), STARTUP_TIMEOUT);
+    }
+
+    private JsonNode threadResumeParams(final CodexSessionStartCommand command) {
+        final ObjectNode params = this.objectMapper.createObjectNode();
+        params.put("threadId", command.resumeThreadId());
+        params.put("cwd", this.workspaceRoot(command));
+        params.put("approvalPolicy", this.properties.getApprovalPolicy());
+        params.put("sandbox", this.properties.getSandbox());
         if (this.hasText(this.properties.getModel())) {
             params.put("model", this.properties.getModel());
         }
@@ -220,6 +242,32 @@ public class CodexAppServerSessionRepository implements CodexSessionRepository {
             throw new IllegalStateException("Invalid Codex app-server cwd: path is not a directory: " + path);
         }
         return path.toString();
+    }
+
+    private ArrayNode runtimeWorkspaceRoots(final CodexSessionStartCommand command, final String workspaceRoot) {
+        final ArrayNode roots = this.objectMapper.createArrayNode();
+        final List<String> candidates = command == null || command.runtimeWorkspaceRoots() == null || command.runtimeWorkspaceRoots().isEmpty()
+                ? List.of(workspaceRoot)
+                : command.runtimeWorkspaceRoots();
+        for (final String candidate : candidates) {
+            final String root = this.workspaceRoot(command == null ? null : command.toBuilder().workspaceRoot(candidate).build());
+            if (!this.contains(roots, root)) {
+                roots.add(root);
+            }
+        }
+        if (!this.contains(roots, workspaceRoot)) {
+            roots.insert(0, workspaceRoot);
+        }
+        return roots;
+    }
+
+    private boolean contains(final ArrayNode values, final String expected) {
+        for (final JsonNode value : values) {
+            if (expected.equals(value.asText())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean hasText(final String value) {

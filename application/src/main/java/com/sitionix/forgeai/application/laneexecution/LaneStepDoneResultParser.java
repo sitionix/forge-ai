@@ -64,12 +64,12 @@ public class LaneStepDoneResultParser {
         if (responseText == null || responseText.isBlank()) {
             throw new IllegalArgumentException("Missing assistant response");
         }
-        final String trimmed = responseText.trim();
-        if (trimmed.startsWith("```") || !trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+        final String candidate = this.normalizeJsonCandidate(responseText);
+        if (candidate == null || candidate.isBlank()) {
             throw new IllegalArgumentException("Assistant response must be a single JSON object only");
         }
         try {
-            final JsonParser parser = this.objectMapper.createParser(trimmed);
+            final JsonParser parser = this.objectMapper.createParser(candidate);
             final JsonNode root = this.objectMapper.readTree(parser);
             if (!root.isObject()) {
                 throw new IllegalArgumentException("Assistant response must be a JSON object");
@@ -82,7 +82,30 @@ public class LaneStepDoneResultParser {
         } catch (final IOException e) {
             throw new IllegalArgumentException("Invalid LANE_STEP_DONE JSON payload", e);
         }
-        return trimmed;
+        return candidate;
+    }
+
+    private String normalizeJsonCandidate(final String responseText) {
+        final String candidate = this.stripMarkdownFence(responseText.trim()).trim();
+        if (!candidate.startsWith("{")) {
+            throw new IllegalArgumentException("Assistant response must be a single JSON object only");
+        }
+        return candidate;
+    }
+
+    private String stripMarkdownFence(final String text) {
+        if (!text.startsWith("```")) {
+            return text;
+        }
+        final int firstNewline = text.indexOf('\n');
+        if (firstNewline < 0) {
+            return text;
+        }
+        final int closingFence = text.lastIndexOf("```");
+        if (closingFence <= firstNewline) {
+            return text.substring(firstNewline + 1).trim();
+        }
+        return text.substring(firstNewline + 1, closingFence).trim();
     }
 
     private JsonNode readRoot(final String json) {

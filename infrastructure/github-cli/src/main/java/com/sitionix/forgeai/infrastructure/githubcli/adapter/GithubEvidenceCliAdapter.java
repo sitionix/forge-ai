@@ -5,13 +5,18 @@ import com.sitionix.forgeai.domain.model.github.GithubPullRequestCheckResult;
 import com.sitionix.forgeai.domain.model.github.GithubRepositoryCheckResult;
 import com.sitionix.forgeai.domain.model.github.GithubWorkflowRunCheckResult;
 import com.sitionix.forgeai.domain.port.GithubEvidencePort;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
 public class GithubEvidenceCliAdapter implements GithubEvidencePort {
+
+    private static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(10);
+
+    private final GithubCliCommandRunner commandRunner;
 
     @Override
     public GithubPullRequestCheckResult checkPullRequest(final String pullRequestUrl) {
@@ -21,22 +26,22 @@ public class GithubEvidenceCliAdapter implements GithubEvidencePort {
                     .details("Pull request URL is empty")
                     .build();
         }
-        final CommandResult commandResult = this.run(List.of("gh", "pr", "view", pullRequestUrl, "--json", "id"));
+        final GithubCliCommandResult commandResult = this.commandRunner.run(List.of("gh", "pr", "view", pullRequestUrl, "--json", "id"), COMMAND_TIMEOUT);
         if (commandResult.success()) {
             return GithubPullRequestCheckResult.builder()
                     .status(GithubCheckStatus.VERIFIED)
                     .details("Pull request exists")
                     .build();
         }
-        if (commandResult.notFound()) {
+        if (this.notFound(commandResult)) {
             return GithubPullRequestCheckResult.builder()
                     .status(GithubCheckStatus.NOT_FOUND)
-                    .details(commandResult.error())
+                    .details(commandResult.stderr())
                     .build();
         }
         return GithubPullRequestCheckResult.builder()
                 .status(GithubCheckStatus.UNKNOWN)
-                .details(commandResult.error())
+                .details(commandResult.stderr())
                 .build();
     }
 
@@ -56,7 +61,7 @@ public class GithubEvidenceCliAdapter implements GithubEvidencePort {
                     .details("Repository is empty")
                     .build();
         }
-        final CommandResult commandResult = this.run(List.of(
+        final GithubCliCommandResult commandResult = this.commandRunner.run(List.of(
                 "gh",
                 "run",
                 "view",
@@ -65,7 +70,7 @@ public class GithubEvidenceCliAdapter implements GithubEvidencePort {
                 repository,
                 "--json",
                 "databaseId,status,conclusion,url"
-        ));
+        ), COMMAND_TIMEOUT);
         if (commandResult.success()) {
             return GithubWorkflowRunCheckResult.builder()
                     .runId(runId)
@@ -73,17 +78,17 @@ public class GithubEvidenceCliAdapter implements GithubEvidencePort {
                     .details("Workflow run exists")
                     .build();
         }
-        if (commandResult.notFound()) {
+        if (this.notFound(commandResult)) {
             return GithubWorkflowRunCheckResult.builder()
                     .runId(runId)
                     .status(GithubCheckStatus.NOT_FOUND)
-                    .details(commandResult.error())
+                    .details(commandResult.stderr())
                     .build();
         }
         return GithubWorkflowRunCheckResult.builder()
                 .runId(runId)
                 .status(GithubCheckStatus.UNKNOWN)
-                .details(commandResult.error())
+                .details(commandResult.stderr())
                 .build();
     }
 
@@ -95,48 +100,30 @@ public class GithubEvidenceCliAdapter implements GithubEvidencePort {
                     .details("Repository is empty")
                     .build();
         }
-        final CommandResult commandResult = this.run(List.of("gh", "repo", "view", repository, "--json", "id,nameWithOwner"));
+        final GithubCliCommandResult commandResult = this.commandRunner.run(List.of("gh", "repo", "view", repository, "--json", "id,nameWithOwner"), COMMAND_TIMEOUT);
         if (commandResult.success()) {
             return GithubRepositoryCheckResult.builder()
                     .status(GithubCheckStatus.VERIFIED)
                     .details("Repository exists")
                     .build();
         }
-        if (commandResult.notFound()) {
+        if (this.notFound(commandResult)) {
             return GithubRepositoryCheckResult.builder()
                     .status(GithubCheckStatus.NOT_FOUND)
-                    .details(commandResult.error())
+                    .details(commandResult.stderr())
                     .build();
         }
         return GithubRepositoryCheckResult.builder()
                 .status(GithubCheckStatus.UNKNOWN)
-                .details(commandResult.error())
+                .details(commandResult.stderr())
                 .build();
     }
 
-    private CommandResult run(final List<String> command) {
-        final ProcessBuilder processBuilder = new ProcessBuilder(command);
-        try {
-            final Process process = processBuilder.start();
-            final int code = process.waitFor();
-            final String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-            return new CommandResult(code == 0, stderr);
-        } catch (final IOException | InterruptedException exception) {
-            if (exception instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            return new CommandResult(false, exception.getMessage());
+    private boolean notFound(final GithubCliCommandResult commandResult) {
+        if (commandResult.success()) {
+            return false;
         }
-    }
-
-    private record CommandResult(boolean success, String error) {
-
-        private boolean notFound() {
-            if (this.success) {
-                return false;
-            }
-            final String normalized = this.error == null ? "" : this.error.toLowerCase();
-            return normalized.contains("not found") || normalized.contains("404");
-        }
+        final String normalized = commandResult.stderr() == null ? "" : commandResult.stderr().toLowerCase();
+        return normalized.contains("not found") || normalized.contains("404");
     }
 }

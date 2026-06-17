@@ -5,12 +5,24 @@ import com.sitionix.forgeai.domain.model.github.GithubCheckStatus;
 import com.sitionix.forgeai.domain.model.github.GithubPullRequestCheckResult;
 import com.sitionix.forgeai.domain.model.github.GithubRepositoryCheckResult;
 import com.sitionix.forgeai.domain.model.github.GithubWorkflowRunCheckResult;
+import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiLaneEvidenceDependency;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.ApiLaneEvidencePayload;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
 import com.sitionix.forgeai.domain.port.GithubEvidencePort;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
+import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
+import com.sitionix.forgeai.domain.props.ContractRefView;
+import com.sitionix.forgeai.domain.props.DbConfigView;
+import com.sitionix.forgeai.domain.props.DeployConfigView;
+import com.sitionix.forgeai.domain.props.DeployUnitConfigView;
+import com.sitionix.forgeai.domain.props.ServiceConfigView;
+import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -42,7 +54,9 @@ class ValidateApiLaneEvidenceUseCaseTest {
     void setUp() {
         this.useCase = new ValidateApiLaneEvidenceUseCase(
                 this.ticketRepository,
-                this.githubEvidencePort
+                this.githubEvidencePort,
+                this.servicePropertiesProvider(),
+                this.agentPropertiesProvider()
         );
         lenient().when(this.githubEvidencePort.checkPullRequest(anyString())).thenReturn(
                 GithubPullRequestCheckResult.builder().status(GithubCheckStatus.VERIFIED).details("ok").build()
@@ -148,16 +162,248 @@ class ValidateApiLaneEvidenceUseCaseTest {
         final Lane lane = Lane.builder().id(laneId).build();
         final ApiLaneEvidencePayload evidence = ApiLaneEvidencePayload.builder()
                 .prUrl("https://github.com/sitionix/app-afesox/pull/164")
-                .repo("sitionix/not-existing-repo")
+                .repo("sitionix/app-afesox")
                 .dependencies(List.of(ApiLaneEvidenceDependency.builder().scope("backendforfrontendservice-sox").runId(11L).build()))
                 .build();
 
         when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
-        when(this.githubEvidencePort.checkRepository("sitionix/not-existing-repo"))
+        when(this.githubEvidencePort.checkRepository("sitionix/app-afesox"))
                 .thenReturn(GithubRepositoryCheckResult.builder().status(GithubCheckStatus.NOT_FOUND).details("not found").build());
 
         assertThatThrownBy(() -> this.useCase.validate(laneId, Set.of("backendforfrontendservice-sox"), evidence))
                 .isInstanceOf(ApiLaneEvidenceValidationException.class)
                 .hasMessageContaining("repository not found");
+    }
+
+    @Test
+    void givenRepositoryNotConfiguredForRequiredScope_whenValidate_thenThrow() {
+        final UUID laneId = UUID.randomUUID();
+        final Lane lane = Lane.builder().id(laneId).build();
+        final ApiLaneEvidencePayload evidence = ApiLaneEvidencePayload.builder()
+                .prUrl("https://github.com/Sitionix/app-afesox/pull/164")
+                .repo("Sitionix/other-api-contracts")
+                .dependencies(List.of(ApiLaneEvidenceDependency.builder().scope("backendforfrontendservice-sox").runId(11L).build()))
+                .build();
+
+        when(this.ticketRepository.findByLaneId(laneId)).thenReturn(Optional.of(lane));
+
+        assertThatThrownBy(() -> this.useCase.validate(laneId, Set.of("backendforfrontendservice-sox"), evidence))
+                .isInstanceOf(ApiLaneEvidenceValidationException.class)
+                .hasMessageContaining("is not configured for required API scopes");
+    }
+
+    private ServicePropertiesProvider servicePropertiesProvider() {
+        return () -> Map.of(
+                "atmssox",
+                new TestServiceConfigView(
+                        "automationservice-sox",
+                        new TestDeployConfigView("Sitionix/automationservice-sox"),
+                        Map.of("api", new TestContractRefView("app-afesox"))
+                ),
+                "bffssox",
+                new TestServiceConfigView(
+                        "backendforfrontendservice-sox",
+                        new TestDeployConfigView("Sitionix/backendforfrontendservice-sox"),
+                        Map.of("api", new TestContractRefView("app-afesox"))
+                )
+        );
+    }
+
+    private AgentPropertiesProvider agentPropertiesProvider() {
+        return () -> List.of(new TestAgentConfigView(Agent.API.getId(), "api"));
+    }
+
+    private record TestAgentConfigView(
+            String id,
+            String workspaceContractRef
+    ) implements AgentConfigView {
+
+        @Override
+        public String getId() {
+            return this.id;
+        }
+
+        @Override
+        public ScopeMode getScopeMode() {
+            return ScopeMode.GLOBAL;
+        }
+
+        @Override
+        public Set<ServiceGroup> getGroups() {
+            return Set.of();
+        }
+
+        @Override
+        public List<Agent> getDependsOn() {
+            return List.of();
+        }
+
+        @Override
+        public List<Agent> getProduces() {
+            return List.of();
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+        @Override
+        public Optional<String> getWorkspaceContractRef() {
+            return Optional.ofNullable(this.workspaceContractRef);
+        }
+    }
+
+    private record TestServiceConfigView(
+            String path,
+            DeployConfigView deploy,
+            Map<String, ContractRefView> contractRefs
+    ) implements ServiceConfigView {
+
+        @Override
+        public String getLabel() {
+            return this.path;
+        }
+
+        @Override
+        public String getPath() {
+            return this.path;
+        }
+
+        @Override
+        public String getRepo() {
+            return null;
+        }
+
+        @Override
+        public ServiceGroup getGroup() {
+            return null;
+        }
+
+        @Override
+        public List<String> getTags() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> getTests() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> getDomainKeywords() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> getOwnsBusinessAreas() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> getArchitectureRefs() {
+            return List.of();
+        }
+
+        @Override
+        public Map<String, ContractRefView> getContractRefs() {
+            return this.contractRefs;
+        }
+
+        @Override
+        public DeployConfigView getDeploy() {
+            return this.deploy;
+        }
+
+        @Override
+        public DbConfigView getDb() {
+            return null;
+        }
+    }
+
+    private record TestDeployConfigView(String repo) implements DeployConfigView {
+
+        @Override
+        public String getType() {
+            return null;
+        }
+
+        @Override
+        public String getRepo() {
+            return this.repo;
+        }
+
+        @Override
+        public DeployUnitConfigView getService() {
+            return null;
+        }
+
+        @Override
+        public DeployUnitConfigView getDb() {
+            return null;
+        }
+    }
+
+    private record TestContractRefView(String sourceRepo) implements ContractRefView {
+
+        @Override
+        public String getSourceRepo() {
+            return this.sourceRepo;
+        }
+
+        @Override
+        public String getApiFamily() {
+            return null;
+        }
+
+        @Override
+        public String getEventFamily() {
+            return null;
+        }
+
+        @Override
+        public String getServiceCode() {
+            return null;
+        }
+
+        @Override
+        public String getRoot() {
+            return null;
+        }
+
+        @Override
+        public List<String> getSchemas() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> getOperations() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> getTopics() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> getPayloads() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> getGeneratedArtifacts() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> getConsumerArtifacts() {
+            return List.of();
+        }
+
+        @Override
+        public List<String> getFrontendPackages() {
+            return List.of();
+        }
     }
 }

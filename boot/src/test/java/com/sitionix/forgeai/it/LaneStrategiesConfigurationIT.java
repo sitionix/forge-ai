@@ -139,6 +139,7 @@ class LaneStrategiesConfigurationIT {
                     .extracting(LaneStrategyStep::getOrder)
                     .containsExactlyElementsOf(expectedOrders(expectedStepIds));
             assertThat(strategy.getSteps())
+                    .filteredOn(step -> !step.isOrchestratorStep())
                     .allSatisfy(step -> assertThat(step.getInstructionRefs())
                             .as("instruction refs for agent=%s step=%s", agent.getId(), step.getId())
                             .isNotEmpty());
@@ -171,12 +172,45 @@ class LaneStrategiesConfigurationIT {
         }
     }
 
+    @Test
+    void givenRealLaneStrategiesYaml_whenLoaded_thenPreparationStepsUseGitPreparationValidator() {
+        assertPreparationValidator(Agent.API);
+        assertPreparationValidator(Agent.EVENT);
+        assertPreparationValidator(Agent.IMPLEMENT_BE);
+        assertPreparationValidator(Agent.IMPLEMENT_FE);
+        assertPreparationValidator(Agent.TEST_UNIT);
+        assertPreparationValidator(Agent.TEST_IT);
+        assertPreparationValidator(Agent.TEST_UI);
+    }
+
+    @Test
+    void givenRealLaneStrategiesYaml_whenLoaded_thenApiGenerationIsOrchestratorStep() {
+        final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(Agent.API.getId());
+
+        assertThat(strategy.getSteps())
+                .filteredOn(step -> "generation".equals(step.getId()))
+                .singleElement()
+                .satisfies(step -> {
+                    assertThat(step.isOrchestratorStep()).isTrue();
+                    assertThat(step.getHandler()).isEqualTo("apiArtifactGeneration");
+                    assertThat(step.getInstructionRefs()).isEmpty();
+                });
+    }
+
     private void assertTaskPlaceholder(final Agent agent, final String stepId) {
         final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(agent.getId());
         assertThat(strategy.getSteps())
                 .filteredOn(step -> "TASKS".equals(step.getTaskPlaceholder()))
                 .extracting(LaneStrategyStep::getId)
                 .containsExactly(stepId);
+    }
+
+    private void assertPreparationValidator(final Agent agent) {
+        final LaneStrategy strategy = this.laneStrategyRepository.findByAgentId(agent.getId());
+        assertThat(strategy.getSteps())
+                .filteredOn(step -> "preparation".equals(step.getId()))
+                .singleElement()
+                .satisfies(step -> assertThat(step.getValidator()).isEqualTo("gitPreparation"));
     }
 
     private static List<Integer> expectedOrders(final List<String> expectedStepIds) {

@@ -22,16 +22,16 @@ It complements `forge-ai/infrastructure/resources/src/main/resources/instruction
   Evidence: workspace query use cases read `WorkspaceSiteMetaRepository`; Kafka site-meta consumption lands in `ForgeInbox.receive(...)`; projection writes happen in `SiteMetaProjectionCommandImpl`.
 
 - Site write-to-read synchronization is asynchronous through Kafka site-meta events, not synchronous service coupling.
-  Evidence: `app-afesox/apis/stsssox/event/asyncapi.yml`, site outbox publishers in `siteservice-sox`, and inbox consumer in `workspaceaggregationservice-sox/pipe/pipe-consumer-site-meta/.../SiteMetaConsumer.java`.
+  Evidence: configured event contract refs for the site-meta service, site outbox publishers in the producing service, and inbox consumer code in the consuming aggregation service.
 
 - Notification delivery is event-driven from auth into notification service, then notification service performs downstream HTTP calls.
   Evidence: auth sends `EmailVerifyPayload` through outbox in `RegisterUserImpl` and `ResendEmailVerificationImpl`; `notificationservice-sox` consumes notification events and `EmailVerificationHandler` calls auth and then BFF.
 
-- Backend REST and event contracts start in `app-afesox`.
-  Evidence: `app-afesox/apis/metadata.yml` defines `api-first`, `client`, `event-producer`, and `event-consumer` generation entries used by services.
+- Backend REST and event contracts start in the configured contract source repository from `services.yaml`.
+  Evidence: rendered scope context exposes contract source repo, contract roots, generated artifact coordinates, and generation entries used by services.
 
 - Frontend-local TypeScript contracts are not backend source of truth.
-  Evidence: `sitionix-spa/packages/contracts` is handwritten UI typing; backend Java APIs/clients/events are generated from `app-afesox`.
+  Evidence: frontend-local contract packages are handwritten UI typing; backend Java APIs/clients/events are generated from the configured backend contract source repository.
 
 - Shared `forge-*` modules are platform libraries, not business ownership modules.
   Evidence: repo root contains `forge-common`, `forge-security`, `forge-it`, `forge-end-to-end`; business request flows live in service modules, while forge modules provide shared security, inbox/outbox, and testing infrastructure.
@@ -118,17 +118,17 @@ Consequences for implementation placement:
 ## Backend Contract Generation
 
 Owner:
-- `app-afesox`
+- configured backend contract source repository from `services.yaml`
 
 Non-owner:
 - service-local generated classes
 - frontend-local TypeScript contracts
 
 Consequences for implementation placement:
-- Start REST contract changes in `app-afesox/apis/*/rest`.
-- Start event payload/topic changes in `app-afesox/apis/*/event`.
+- Start REST contract changes from `contractRefs.api.root`, `contractRefs.api.schemas`, and `contractRefs.api.operations`.
+- Start event payload/topic changes from `contractRefs.events.topics` and `contractRefs.events.payloads`.
 - Regenerate and consume produced artifacts instead of hand-creating DTOs, clients, or event wrappers in services.
-- Follow the repository AGENTS rule: if a feature depends on generated artifacts from `app-afesox`, generation is mandatory and blocking.
+- Follow the repository AGENTS rule: if a feature depends on generated artifacts from the configured contract source repository, generation is mandatory and blocking.
 
 ## Frontend-Local UI Typing and UI-Level Adapters
 
@@ -197,7 +197,7 @@ Consequences for implementation placement:
   Repository basis: workspace service owns projection state and query APIs; primary site creation lives in `siteservice-sox`.
 
 - Frontend-local contracts must not be treated as backend contract source of truth.
-  Repository basis: backend contracts are generated from `app-afesox`; frontend package contracts are handwritten adapters/types.
+  Repository basis: backend contracts are generated from the configured contract source repository; frontend package contracts are handwritten adapters/types.
 
 - Existing async site-to-workspace propagation should not be replaced by direct synchronous service calls without a repository-backed reason.
   Repository basis: site-meta outbox/inbox flow is already implemented end to end.
@@ -205,15 +205,15 @@ Consequences for implementation placement:
 - Feature-specific business logic should not be added to `forge-*` modules, `skills`, local infra scripts, or deployment config.
   Repository basis: those modules are cross-cutting platform/test/tooling areas rather than request/event ownership modules.
 
-- Do not handcraft generated DTO/client/event artifacts inside services when the real source of truth is in `app-afesox`.
-  Repository basis: contracts and generation metadata are centralized in `app-afesox`, and AGENTS.md explicitly forbids manual generated-code reconstruction.
+- Do not handcraft generated DTO/client/event artifacts inside services when the real source of truth is in the configured contract source repository.
+  Repository basis: contracts and generation metadata are centralized in the configured contract source repository, and AGENTS.md explicitly forbids manual generated-code reconstruction.
 
 - Do not implement ownership logic locally just because another module exposes an API for reading or delegation.
   Repository basis: BFF calls downstream services and `notificationservice-sox` calls auth/BFF, but those callers do not own the downstream state or behavior. Reading or calling another module is not the same as owning its business logic.
 
 # 6. Decision rules for future tasks
 
-- If a task adds or changes a browser-facing backend endpoint, start at `app-afesox/apis/bffssox/rest`, then trace the BFF controller/use case/client, and only then change downstream services as needed.
+- If a task adds or changes a browser-facing backend endpoint, start at the configured BFF REST contract path from scope context, then trace the BFF controller/use case/client, and only then change downstream services as needed.
 
 - If a task changes browser authentication, refresh, JWKS, or verification-token semantics, inspect `authorisationservice-sox` first; the BFF is only the browser-facing facade for those capabilities.
 
@@ -223,9 +223,9 @@ Consequences for implementation placement:
 
 - If a task needs a new browser-visible view over downstream data, start from the BFF boundary even when the underlying owner is another service.
 
-- If a task changes a REST contract used by Java services, start from `app-afesox`, not from generated code in service modules.
+- If a task changes a REST contract used by Java services, start from the configured contract source repository, not from generated code in service modules.
 
-- If a task changes an event payload, event topic usage, producer, or consumer contract, start from `app-afesox/apis/*/event`, then update the producing service and consuming service against the regenerated artifacts.
+- If a task changes an event payload, event topic usage, producer, or consumer contract, start from the configured event contract paths, then update the producing service and consuming service against the regenerated artifacts.
 
 - If a task only changes frontend rendering, mapping, or UI-local typing and does not change backend behavior, the change may stay in `sitionix-spa` packages/apps.
 
@@ -241,7 +241,7 @@ Consequences for implementation placement:
 
 - If a task looks like “add a shared helper” but the behavior is business-specific to one service flow, keep it inside that owning service instead of promoting it into `forge-*`.
 
-- If a task requires generated artifacts from `app-afesox`, treat generation as part of the task, not as a follow-up.
+- If a task requires generated artifacts from the configured contract source repository, treat generation as part of the task, not as a follow-up.
 
 - If a pattern appears only in a single flow and it conflicts with the core rules above, treat it as an exception, not as a template. Do not generalize it unless the repository evolves the same pattern into other flows.
 
@@ -270,7 +270,7 @@ Consequences for implementation placement:
 - These order rules are mandatory when a task spans multiple layers. Do not reorder them for convenience.
 
 - If a task involves contracts, generated artifacts, backend services, BFF exposure, and frontend usage, the implementation order MUST be:
-  1. `app-afesox` contracts
+  1. configured contract source repository contracts
   2. generated artifacts
   3. owning backend service or services
   4. BFF, if the capability is browser-facing
@@ -307,14 +307,14 @@ Consequences for implementation placement:
 - Do not implement write model, read model, and browser facade work in a single change block unless the repository already contains the complete, contract-aligned behavior and the remaining edits are mechanical wiring.
 
 - Each ownership boundary carries a separate responsibility and must be validated separately in code:
-  - `app-afesox` owns contract definition
+  - configured contract source repository owns contract definition
   - write owners such as `siteservice-sox` and `authorisationservice-sox` own primary state changes
   - read owners such as `workspaceaggregationservice-sox` own projections and query shaping
   - `backendforfrontendservice-sox` owns browser exposure and browser-oriented orchestration
   - `sitionix-spa` owns frontend usage and UI mapping
 
 - For a site capability that becomes browser-visible in workspace, the default decomposition is:
-  1. contract change in `app-afesox`
+  1. contract change in the configured contract source repository
   2. generated artifact update
   3. write-side change in `siteservice-sox` if primary site state changes
   4. event propagation update if site-meta payload or event semantics change
@@ -323,7 +323,7 @@ Consequences for implementation placement:
   7. frontend usage change in `sitionix-spa`
 
 - For an auth-triggered notification flow, the default decomposition is:
-  1. contract/event change in `app-afesox` if payload or endpoint shape changes
+  1. contract/event change in the configured contract source repository if payload or endpoint shape changes
   2. generated artifact update
   3. auth-side event production change in `authorisationservice-sox`
   4. notification-consumer/handler change in `notificationservice-sox`
@@ -344,7 +344,7 @@ These are hard stop conditions. If any condition below is true, stop and reasses
 
 - If a workspace read concern is being implemented in a write owner such as `siteservice-sox`, or a site write concern is being implemented in `workspaceaggregationservice-sox`, this is a violation.
 
-- If a backend contract change is being implemented without starting from `app-afesox`, this is a violation.
+- If a backend contract change is being implemented without starting from the configured contract source repository, this is a violation.
 
 - If a frontend change implies backend endpoint or payload changes but backend contracts and owning services are untouched, this is a violation.
 
@@ -370,7 +370,7 @@ These are hard stop conditions. If any condition below is true, stop and reasses
 
 - If no precedent exists in code, explicitly mark the uncertainty in the task reasoning and avoid inventing architecture silently.
 
-- If contract ownership is unclear, default to checking `app-afesox` first before editing service-local DTOs, clients, or events.
+- If contract ownership is unclear, default to checking the configured contract source repository first before editing service-local DTOs, clients, or events.
 
 - If browser-facing placement is unclear, default to tracing the existing browser path from `sitionix-spa` to BFF to downstream owner rather than opening a direct frontend-to-service path.
 
@@ -389,7 +389,7 @@ These are hard stop conditions. If any condition below is true, stop and reasses
 # 7.3 Source of truth priority
 
 - When several layers participate in one change, source of truth priority is mandatory and must be followed in this order:
-  1. backend REST contracts and event contracts in `app-afesox`
+  1. backend REST contracts and event contracts in the configured contract source repository
   2. owning backend service implementation
   3. async event semantics, producers, and consumers
   4. BFF exposure and browser-facing orchestration
@@ -401,7 +401,7 @@ These are hard stop conditions. If any condition below is true, stop and reasses
 
 - BFF request/response adaptation must not become the source of truth for domain state or state-transition semantics.
 
-- Generated service-local classes must not become the source of truth over the originating contract in `app-afesox`.
+- Generated service-local classes must not become the source of truth over the originating contract in the configured contract source repository.
 
 - If two layers disagree, the higher-priority owner determines the change direction. Do not “fix” the mismatch by redefining the contract in a lower-priority layer.
 

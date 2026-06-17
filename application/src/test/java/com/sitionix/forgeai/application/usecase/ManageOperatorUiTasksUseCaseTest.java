@@ -4,16 +4,23 @@ import com.sitionix.forgeai.application.operator.TicketOperatorEventService;
 import com.sitionix.forgeai.domain.exception.TicketNotFoundException;
 import com.sitionix.forgeai.domain.model.ForgeAiStartCommand;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneExecution;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneExecutionStatus;
+import com.sitionix.forgeai.domain.model.operator.task.OperatorUiCreateTaskCommand;
+import com.sitionix.forgeai.domain.model.operator.task.OperatorUiServiceCatalogResponse;
+import com.sitionix.forgeai.domain.model.operator.task.OperatorUiTaskMutationResponse;
 import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.Ticket;
 import com.sitionix.forgeai.domain.model.ticket.TicketStatus;
+import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
+import com.sitionix.forgeai.domain.model.ticket.lane.Lane;
+import com.sitionix.forgeai.domain.model.ticket.lane.LaneStatus;
 import com.sitionix.forgeai.domain.repository.AgentTicketRepository;
 import com.sitionix.forgeai.domain.repository.LaneExecutionRepository;
 import com.sitionix.forgeai.domain.repository.TicketOperatorRunRepository;
 import com.sitionix.forgeai.domain.repository.TicketRepository;
+import com.sitionix.forgeai.domain.props.ServiceConfigView;
 import com.sitionix.forgeai.domain.props.ServicePropertiesProvider;
 import com.sitionix.forgeai.domain.usecase.ManageOperatorUiTasks;
-import com.sitionix.forgeai.domain.usecase.ManageOperatorUiTasks.OperatorUiCreateTaskCommand;
 import com.sitionix.forgeai.domain.usecase.ManageTicketOperatorRuns;
 import com.sitionix.forgeai.domain.usecase.StartForgeAiTask;
 import java.time.LocalDateTime;
@@ -74,14 +81,14 @@ class ManageOperatorUiTasksUseCaseTest {
 
     @Test
     void givenServicesConfigured_whenServices_thenReturnCatalogFromYamlProvider() {
-        final ServicePropertiesProvider.ServiceConfigView service = mock(ServicePropertiesProvider.ServiceConfigView.class);
+        final ServiceConfigView service = mock(ServiceConfigView.class);
         when(service.getLabel()).thenReturn("Automation Service");
         when(service.getPath()).thenReturn("automationservice-sox");
         when(service.getGroup()).thenReturn(ServiceGroup.BACKEND);
         when(service.getTags()).thenReturn(List.of("api", "db"));
         when(this.servicePropertiesProvider.getServices()).thenReturn(Map.of("atmssox", service));
 
-        final ManageOperatorUiTasks.OperatorUiServiceCatalogResponse actual = this.manageOperatorUiTasks.services();
+        final OperatorUiServiceCatalogResponse actual = this.manageOperatorUiTasks.services();
 
         assertThat(actual.services()).singleElement().satisfies(option -> {
             assertThat(option.id()).isEqualTo("atmssox");
@@ -99,7 +106,7 @@ class ManageOperatorUiTasksUseCaseTest {
         final OperatorUiCreateTaskCommand command = new OperatorUiCreateTaskCommand("SITIONIX-142", "task", List.of("atmssox"), null);
         when(this.startForgeAiTask.createOpen(any(ForgeAiStartCommand.class))).thenReturn(ticket);
 
-        final ManageOperatorUiTasks.OperatorUiTaskMutationResponse actual = this.manageOperatorUiTasks.create(command);
+        final OperatorUiTaskMutationResponse actual = this.manageOperatorUiTasks.create(command);
 
         final ArgumentCaptor<ForgeAiStartCommand> captor = ArgumentCaptor.forClass(ForgeAiStartCommand.class);
         verify(this.startForgeAiTask).createOpen(captor.capture());
@@ -122,7 +129,7 @@ class ManageOperatorUiTasksUseCaseTest {
         final UUID ticketId = UUID.randomUUID();
         when(this.startForgeAiTask.executeOpen(ticketId)).thenReturn(this.ticket(ticketId, TicketStatus.READY_TO_START));
 
-        final ManageOperatorUiTasks.OperatorUiTaskMutationResponse actual = this.manageOperatorUiTasks.execute(ticketId);
+        final OperatorUiTaskMutationResponse actual = this.manageOperatorUiTasks.execute(ticketId);
 
         verify(this.startForgeAiTask).executeOpen(ticketId);
         assertThat(actual.ticketId()).isEqualTo(ticketId);
@@ -134,6 +141,39 @@ class ManageOperatorUiTasksUseCaseTest {
         assertThatThrownBy(() -> this.manageOperatorUiTasks.execute(null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Ticket id is required");
+    }
+
+    @Test
+    void givenFailedLaneExecution_whenRetryLane_thenMoveLaneBackToReadyToStart() {
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.ticketWithLane(ticketId, laneId, LaneStatus.COMPLETED)));
+        when(this.laneExecutionRepository.findByTicketId(ticketId)).thenReturn(List.of(LaneExecution.builder()
+                .id(UUID.randomUUID())
+                .ticketId(ticketId)
+                .laneId(laneId)
+                .agentId("api")
+                .scope("GLOBAL")
+                .status(LaneExecutionStatus.FAILED)
+                .threadId("thr_failed")
+                .currentStepId("generation")
+                .updatedAt(LocalDateTime.now())
+                .build()));
+
+        this.manageOperatorUiTasks.retryLane(ticketId, laneId);
+
+        verify(this.ticketRepository).restartLane(ticketId, laneId);
+    }
+
+    @Test
+    void givenActiveLane_whenRetryLane_thenReject() {
+        final UUID ticketId = UUID.randomUUID();
+        final UUID laneId = UUID.randomUUID();
+        when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.ticketWithLane(ticketId, laneId, LaneStatus.IN_PROGRESS)));
+
+        assertThatThrownBy(() -> this.manageOperatorUiTasks.retryLane(ticketId, laneId))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Cannot retry active lane: laneId=" + laneId);
     }
 
     @Test
@@ -186,6 +226,22 @@ class ManageOperatorUiTasksUseCaseTest {
                 .id(ticketId)
                 .ticketKey("SITIONIX-142")
                 .status(status)
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .build();
+    }
+
+    private Ticket ticketWithLane(final UUID ticketId, final UUID laneId, final LaneStatus laneStatus) {
+        return Ticket.builder()
+                .id(ticketId)
+                .ticketKey("SITIONIX-142")
+                .status(TicketStatus.IN_PROGRESS)
+                .lanes(List.of(Lane.builder()
+                        .id(laneId)
+                        .agent(Agent.API)
+                        .scope("GLOBAL")
+                        .status(laneStatus)
+                        .build()))
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
                 .build();

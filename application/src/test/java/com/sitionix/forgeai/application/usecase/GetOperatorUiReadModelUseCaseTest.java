@@ -8,6 +8,11 @@ import com.sitionix.forgeai.domain.model.laneexecution.LaneStepExecution;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
 import com.sitionix.forgeai.domain.model.operator.TicketOperatorEvent;
+import com.sitionix.forgeai.domain.model.operator.read.OperatorUiLaneDetailResponse;
+import com.sitionix.forgeai.domain.model.operator.read.OperatorUiLaneEvent;
+import com.sitionix.forgeai.domain.model.operator.read.OperatorUiLaneNode;
+import com.sitionix.forgeai.domain.model.operator.read.OperatorUiLaneStep;
+import com.sitionix.forgeai.domain.model.operator.read.OperatorUiTicketGraphResponse;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicket;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketPayload;
 import com.sitionix.forgeai.domain.model.ticket.AgentTicketStatus;
@@ -141,17 +146,17 @@ class GetOperatorUiReadModelUseCaseTest {
         when(this.laneExecutionRepository.findByTicketId(TICKET_ID)).thenReturn(List.of(execution));
         when(this.ticketOperatorRunRepository.findByTicketId(TICKET_ID)).thenReturn(Optional.empty());
 
-        final GetOperatorUiReadModel.OperatorUiTicketGraphResponse actual = this.useCase.graph(TICKET_ID);
+        final OperatorUiTicketGraphResponse actual = this.useCase.graph(TICKET_ID);
 
         assertThat(actual.ticketId()).isEqualTo(TICKET_ID);
         assertThat(actual.lanes()).hasSize(3);
-        assertThat(actual.lanes()).extracting(GetOperatorUiReadModel.OperatorUiLaneNode::laneId)
+        assertThat(actual.lanes()).extracting(OperatorUiLaneNode::laneId)
                 .contains(REVIEWER_LANE_ID)
                 .doesNotContain(NOT_NEEDED_LANE_ID);
         assertThat(actual.laneCounts().completed()).isEqualTo(1);
         assertThat(actual.laneCounts().inProgress()).isEqualTo(1);
         assertThat(actual.laneCounts().notNeeded()).isZero();
-        final GetOperatorUiReadModel.OperatorUiLaneNode architect = actual.lanes().get(1);
+        final OperatorUiLaneNode architect = actual.lanes().get(1);
         assertThat(architect.laneId()).isEqualTo(ARCHITECT_LANE_ID);
         assertThat(architect.dependencies()).singleElement()
                 .satisfies(dependency -> {
@@ -186,7 +191,7 @@ class GetOperatorUiReadModelUseCaseTest {
         when(this.laneExecutionRepository.findByTicketId(TICKET_ID)).thenReturn(List.of());
         when(this.ticketOperatorRunRepository.findByTicketId(TICKET_ID)).thenReturn(Optional.empty());
 
-        final GetOperatorUiReadModel.OperatorUiTicketGraphResponse actual = this.useCase.graph(TICKET_ID);
+        final OperatorUiTicketGraphResponse actual = this.useCase.graph(TICKET_ID);
 
         assertThat(actual.lanes()).singleElement()
                 .satisfies(lane -> {
@@ -271,18 +276,33 @@ class GetOperatorUiReadModelUseCaseTest {
                 .done(true)
                 .evidenceJson("{}")
                 .build()));
-        when(this.ticketOperatorEventService.recentEvents(TICKET_ID)).thenReturn(List.of(TicketOperatorEvent.builder()
-                .ticketId(TICKET_ID)
-                .laneId(ARCHITECT_LANE_ID)
-                .eventType("ORCHESTRATOR_MESSAGE")
-                .message("prompt")
-                .stepId("architecture_direction")
-                .timestamp(Instant.parse("2026-06-05T10:02:00Z"))
-                .build()));
+        when(this.ticketOperatorEventService.recentEvents(TICKET_ID)).thenReturn(List.of(
+                TicketOperatorEvent.builder()
+                        .ticketId(TICKET_ID)
+                        .laneId(ARCHITECT_LANE_ID)
+                        .eventType("ORCHESTRATOR_MESSAGE")
+                        .message("prompt")
+                        .stepId("architecture_direction")
+                        .timestamp(Instant.parse("2026-06-05T10:02:00Z"))
+                        .build(),
+                TicketOperatorEvent.builder()
+                        .ticketId(TICKET_ID)
+                        .laneId(ANALYZER_LANE_ID)
+                        .eventType("AGENT_MESSAGE")
+                        .message("other lane event")
+                        .stepId("scope_slicing")
+                        .timestamp(Instant.parse("2026-06-05T10:01:00Z"))
+                        .build()
+        ));
 
-        final GetOperatorUiReadModel.OperatorUiLaneDetailResponse actual = this.useCase.lane(TICKET_ID, ARCHITECT_LANE_ID);
+        final OperatorUiLaneDetailResponse actual = this.useCase.lane(TICKET_ID, ARCHITECT_LANE_ID);
 
         assertThat(actual.laneId()).isEqualTo(ARCHITECT_LANE_ID);
+        assertThat(actual.dependencies()).singleElement()
+                .satisfies(dependency -> {
+                    assertThat(dependency.laneId()).isEqualTo(ANALYZER_LANE_ID);
+                    assertThat(dependency.status()).isEqualTo("COMPLETED");
+                });
         assertThat(actual.inputTasks()).singleElement()
                 .satisfies(task -> {
                     assertThat(task.sourceLaneId()).isEqualTo(ANALYZER_LANE_ID);
@@ -290,7 +310,7 @@ class GetOperatorUiReadModelUseCaseTest {
                     assertThat(task.payloadType()).isEqualTo("ArchitectPayload");
                     assertThat(task.payloadJson()).contains("automationservice-sox");
                 });
-        assertThat(actual.steps()).extracting(GetOperatorUiReadModel.OperatorUiLaneStep::status)
+        assertThat(actual.steps()).extracting(OperatorUiLaneStep::status)
                 .containsExactly("DONE", "RUNNING");
         assertThat(actual.stderrTail()).containsExactly("stderr line");
         assertThat(actual.events()).singleElement()
@@ -298,5 +318,7 @@ class GetOperatorUiReadModelUseCaseTest {
                     assertThat(event.role()).isEqualTo("ORCHESTRATOR");
                     assertThat(event.message()).isEqualTo("prompt");
                 });
+        assertThat(actual.events()).extracting(OperatorUiLaneEvent::message)
+                .doesNotContain("other lane event");
     }
 }

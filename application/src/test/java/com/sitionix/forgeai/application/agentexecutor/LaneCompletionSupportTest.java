@@ -125,7 +125,6 @@ class LaneCompletionSupportTest {
                         "scope", ScopeMode.GLOBAL_SCOPE,
                         "required", true,
                         "payload", Map.of(
-                                "required", true,
                                 "reason", "BFF API endpoints required",
                                 "scope", "backendforfrontendservice-sox",
                                 "summary", "Add BFF flow endpoints",

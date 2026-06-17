@@ -4,16 +4,25 @@
 
 Use execution input `tasks` as the contract intent source.
 
-Use source-of-truth REST contracts under:
+Preparation is already complete before this step starts.
+Do not run repository setup, clone, remote reconfiguration, `checkout develop`, or branch recreation in this step.
 
-`app-afesox/apis/<api-family>/rest`
+Use the source-of-truth REST contract repository and paths from the rendered scope context:
+
+- `scope.service.contractRefs.api.sourceRepo`
+- `scope.service.contractRefs.api.apiFamily`
+- `scope.service.contractRefs.api.root`
+- `scope.service.contractRefs.api.schemas`
+- `scope.service.contractRefs.api.operations`
+
+For global lanes, use the matching `scope.relatedServices[*].contractRefs.api` entries.
 
 Resolve the concrete API surface from:
 
 - execution task intent;
-- service metadata;
+- rendered service metadata;
 - consumers;
-- `app-afesox/apis/metadata.yml`.
+- contract metadata in the configured contract source repository.
 
 Abstract scope names such as `CROSS_SERVICE` are routing hints, not API family names.
 

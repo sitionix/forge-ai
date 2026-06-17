@@ -2,6 +2,7 @@ package com.sitionix.forgeai.config;
 
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ExecuteAgent;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import jakarta.annotation.PostConstruct;
 
@@ -24,12 +25,12 @@ public class AgentInfoInjector {
             throw new IllegalStateException("No agents configured in agent.yml");
         }
 
-        final Map<String, AgentPropertiesProvider.AgentConfigView> infoById = this.agentPropertiesProvider.getAgents()
+        final Map<String, AgentConfigView> infoById = this.agentPropertiesProvider.getAgents()
                 .stream()
-                .collect(Collectors.toMap(AgentPropertiesProvider.AgentConfigView::getId, Function.identity()));
+                .collect(Collectors.toMap(AgentConfigView::getId, Function.identity()));
 
         for (final Agent agent : Agent.values()) {
-            final AgentPropertiesProvider.AgentConfigView config = infoById.get(agent.getId());
+            final AgentConfigView config = infoById.get(agent.getId());
             final ExecuteAgent executor = this.executorsByBeanName.get(agent.getExecutorBeanName());
             if (config == null) {
                 throw new IllegalStateException("No agent config found for id: " + agent.getId());

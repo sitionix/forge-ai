@@ -4,6 +4,7 @@ import com.sitionix.forgeai.domain.model.service.ServiceGroup;
 import com.sitionix.forgeai.domain.model.ticket.agentticket.AgentTicketPayloadType;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.model.ticket.lane.ScopeMode;
+import com.sitionix.forgeai.domain.props.AgentConfigView;
 import com.sitionix.forgeai.domain.props.AgentPropertiesProvider;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,6 +40,7 @@ public class AgentProperties implements AgentPropertiesProvider {
         private List<String> groups;
         private List<String> dependsOn;
         private List<String> produces;
+        private String workspaceContractRef;
         private Map<String, String> inputPayloads = new LinkedHashMap<>();
         private CompletionConfig completion = new CompletionConfig();
 
@@ -125,6 +127,14 @@ public class AgentProperties implements AgentPropertiesProvider {
                 return Optional.empty();
             }
             return Optional.of(AgentTicketPayloadType.byId(this.completion.getReportPayload()));
+        }
+
+        @Override
+        public Optional<String> getWorkspaceContractRef() {
+            if (this.workspaceContractRef == null || this.workspaceContractRef.isBlank()) {
+                return Optional.empty();
+            }
+            return Optional.of(this.workspaceContractRef);
         }
     }
 

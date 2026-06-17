@@ -33,6 +33,7 @@ services:
       repo: Sitionix/authorisationservice-sox
       service:
         name: authorisationservice-sox
+        healthcheck_url: http://127.0.0.1:9090/authsox/actuator/health
         workflow_name: Service Deploy On Command
         workflow_event: repository_dispatch
       db:
@@ -83,6 +84,7 @@ services:
       repo: Sitionix/automationservice-sox
       service:
         name: automationservice-sox
+        healthcheck_url: http://127.0.0.1:9083/atmssox/actuator/health
         workflow_name: Service Deploy On Command
         workflow_event: repository_dispatch
       db:
@@ -122,6 +124,7 @@ services:
       repo: Sitionix/forge-ai
       service:
         name: forge-ai
+        healthcheck_url: http://127.0.0.1:9099/fgaisox/actuator/health
         workflow_name: Service Deploy On Command
         workflow_event: repository_dispatch
     db:
@@ -166,6 +169,7 @@ services:
       repo: Sitionix/backendforfrontendservice-sox
       service:
         name: backendforfrontendservice-sox
+        healthcheck_url: http://127.0.0.1:8080/bffssox/actuator/health
         workflow_name: Service Deploy On Command
         workflow_event: repository_dispatch
     db:
@@ -211,6 +215,7 @@ services:
       repo: Sitionix/notificationservice-sox
       service:
         name: notificationservice-sox
+        healthcheck_url: http://127.0.0.1:7070/actuator/health
         workflow_name: Service Deploy On Command
         workflow_event: repository_dispatch
     db:
@@ -255,6 +260,7 @@ services:
       repo: Sitionix/siteservice-sox
       service:
         name: siteservice-sox
+        healthcheck_url: http://127.0.0.1:9080/stsssox/actuator/health
         workflow_name: Service Deploy On Command
         workflow_event: repository_dispatch
       db:
@@ -304,6 +310,7 @@ services:
       repo: Sitionix/workspaceaggregationservice-sox
       service:
         name: workspaceaggregationservice-sox
+        healthcheck_url: http://127.0.0.1:9082/wagssox/actuator/health
         workflow_name: Service Deploy On Command
         workflow_event: repository_dispatch
       db:
@@ -352,6 +359,7 @@ services:
       repo: Sitionix/sitionix-spa
       service:
         mode: all
+        healthcheck_url: http://127.0.0.1:3000
         workflow_name: Frontend Deploy On Comment
         workflow_event: issue_comment
     db:
@@ -359,6 +367,12 @@ services:
       type: none
       mode: frontend
     tests: [unit]
+  app-afesox:
+    label: App AFESOX Contracts
+    path: app-afesox
+    repo: Sitionix/app-afesox
+    tags: [api-first, contracts, openapi, events, maven]
+    group: tool
   forge-it:
     label: Forge IT
     path: forge-it

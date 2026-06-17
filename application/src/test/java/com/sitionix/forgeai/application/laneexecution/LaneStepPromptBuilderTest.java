@@ -69,6 +69,8 @@ class LaneStepPromptBuilderTest {
         assertThat(prompt).contains("### lane-instructions/analyzer/scope-slicing.md");
         assertThat(prompt).contains("resolved::lane-instructions/analyzer/scope-slicing.md");
         assertThat(prompt).contains("Task payloads:");
+        assertThat(prompt).contains("Previous steps are already validated and persisted");
+        assertThat(prompt).contains("Return minimal evidence for the active step only");
         assertThat(prompt).doesNotContain("architect-handoff.md");
         assertThat(prompt).doesNotContain("qa-lead-handoff.md");
     }
@@ -85,17 +87,26 @@ class LaneStepPromptBuilderTest {
         );
 
         assertThat(prompt).doesNotContain("Task payloads:");
+        assertThat(prompt).contains("Do not repeat previous step work");
         assertThat(prompt).contains("architect_handoff");
     }
 
     @Test
     void buildCorrectionPrompt_forFinalStep_includesCompletionContract() {
         final LaneStrategyStep completionStep = this.strategy().getSteps().getLast();
-        final String prompt = this.laneStepPromptBuilder.buildCorrectionPrompt(this.lane(), completionStep, "summary must be non-empty", true);
+        final String prompt = this.laneStepPromptBuilder.buildCorrectionPrompt(
+                this.lane(),
+                completionStep,
+                "summary must be non-empty",
+                true,
+                1,
+                2
+        );
 
         assertThat(prompt).contains("CORRECTION_PROMPT");
         assertThat(prompt).contains("Active step id: completion");
         assertThat(prompt).contains("Validation error: summary must be non-empty");
+        assertThat(prompt).contains("Correct only the active step result and evidence");
         assertThat(prompt).contains("completionPayload");
     }
 
@@ -149,6 +160,7 @@ class LaneStepPromptBuilderTest {
         assertThat(prompt).contains("\"payloadScope\" : \"backendforfrontendservice-sox\"");
         assertThat(prompt).contains("\"payload\" : {");
         assertThat(prompt).contains("\"scope\" : \"backendforfrontendservice-sox\"");
+        assertThat(prompt).doesNotContain("\"payload\" : {\n      \"required\"");
     }
 
     private ReadyToStartLane lane() {

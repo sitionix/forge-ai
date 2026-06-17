@@ -2,6 +2,7 @@ package com.sitionix.forgeai.infrastructure.resources.lanestrategy;
 
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategy;
 import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStep;
+import com.sitionix.forgeai.domain.model.laneexecution.LaneStrategyStepType;
 import com.sitionix.forgeai.domain.model.ticket.lane.Agent;
 import com.sitionix.forgeai.domain.repository.LaneStrategyRepository;
 import jakarta.annotation.PostConstruct;
@@ -45,8 +46,11 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
                                 .id(step.getId())
                                 .title(step.getTitle())
                                 .order(i + 1)
+                                .type(this.stepType(agentId, step))
+                                .handler(step.getHandler())
                                 .taskPlaceholder(step.getTaskPlaceholder())
                                 .completionContractPlaceholder(step.getCompletionContractPlaceholder())
+                                .validator(step.getValidator())
                                 .instructionRefs(List.copyOf(step.getInstructionRefs()))
                                 .build();
                     })
@@ -85,6 +89,7 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
             }
             this.validateTaskPlaceholder(agentId, step);
             this.validateCompletionContractPlaceholder(agentId, step);
+            this.validateStepHandler(agentId, step);
             final Set<String> refs = new HashSet<>();
             step.getInstructionRefs().forEach(ref -> {
                 if (!refs.add(ref)) {
@@ -93,6 +98,31 @@ public class ResourceLaneStrategyRepository implements LaneStrategyRepository {
                 this.validateInstructionRef(ref);
             });
         });
+    }
+
+    private LaneStrategyStepType stepType(final String agentId, final LaneStrategiesProperties.StepConfig step) {
+        if (step.getType() == null || step.getType().isBlank()) {
+            return LaneStrategyStepType.AGENT;
+        }
+        try {
+            return LaneStrategyStepType.valueOf(step.getType().trim().toUpperCase());
+        } catch (final IllegalArgumentException ex) {
+            throw new IllegalStateException("Unsupported step type '" + step.getType()
+                    + "' for agentId=" + agentId + ", stepId=" + step.getId(), ex);
+        }
+    }
+
+    private void validateStepHandler(final String agentId, final LaneStrategiesProperties.StepConfig step) {
+        final LaneStrategyStepType type = this.stepType(agentId, step);
+        final boolean hasHandler = step.getHandler() != null && !step.getHandler().isBlank();
+        if (LaneStrategyStepType.ORCHESTRATOR.equals(type) && !hasHandler) {
+            throw new IllegalStateException("Orchestrator step requires handler: agentId="
+                    + agentId + ", stepId=" + step.getId());
+        }
+        if (LaneStrategyStepType.AGENT.equals(type) && hasHandler) {
+            throw new IllegalStateException("Agent step must not define handler: agentId="
+                    + agentId + ", stepId=" + step.getId());
+        }
     }
 
     private void validateTaskPlaceholder(final String agentId, final LaneStrategiesProperties.StepConfig step) {

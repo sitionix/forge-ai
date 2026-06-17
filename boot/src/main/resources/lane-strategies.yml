@@ -9,20 +9,24 @@ forge:
           session-mode: single_session
           steps:
             - id: scope_slicing
+              type: agent
               title: Scope Slicing
               task-placeholder: TASKS
               instruction-refs:
                 - additional-instructions/scope-context-usage.md
                 - lane-instructions/analyzer/scope-slicing.md
             - id: architect_handoff
+              type: agent
               title: Architect Handoff
               instruction-refs:
                 - lane-instructions/analyzer/architect-handoff.md
             - id: qa_lead_handoff
+              type: agent
               title: QA Lead Handoff
               instruction-refs:
                 - lane-instructions/analyzer/qa-lead-handoff.md
             - id: completion
+              type: agent
               title: Completion
               completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
@@ -33,28 +37,34 @@ forge:
           session-mode: single_session
           steps:
             - id: input_normalization
+              type: agent
               title: Input Normalization
               task-placeholder: TASKS
               instruction-refs:
                 - additional-instructions/scope-context-usage.md
                 - lane-instructions/architect/input-normalization.md
             - id: architecture_direction
+              type: agent
               title: Architecture Direction
               instruction-refs:
                 - lane-instructions/architect/architecture-direction.md
             - id: api_decision
+              type: agent
               title: API Decision
               instruction-refs:
                 - lane-instructions/architect/api-decision.md
             - id: event_decision
+              type: agent
               title: Event Decision
               instruction-refs:
                 - lane-instructions/architect/event-decision.md
             - id: implementation_handoff
+              type: agent
               title: Implementation Handoff
               instruction-refs:
                 - lane-instructions/architect/implementation-handoff.md
             - id: completion
+              type: agent
               title: Completion
               completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
@@ -65,28 +75,33 @@ forge:
           session-mode: single_session
           steps:
             - id: preparation
+              type: agent
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: contract_changes
+              type: agent
               title: Contract Changes
               task-placeholder: TASKS
               instruction-refs:
                 - additional-instructions/api-contract-rules.md
             - id: version_update
+              type: agent
               title: Version Update
               instruction-refs:
                 - additional-instructions/version-rules.md
             - id: pr
+              type: agent
               title: Pull Request
               instruction-refs:
                 - additional-instructions/pr-workflow.md
             - id: generation
+              type: orchestrator
+              handler: apiArtifactGeneration
               title: Generation
-              instruction-refs:
-                - additional-instructions/generation-workflow.md
-                - additional-instructions/api-artifact-generation-rules.md
             - id: completion
+              type: agent
               title: Completion
               completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
@@ -97,24 +112,29 @@ forge:
           session-mode: single_session
           steps:
             - id: qa_context
+              type: agent
               title: QA Context
               task-placeholder: TASKS
               instruction-refs:
                 - additional-instructions/scope-context-usage.md
                 - lane-instructions/qa_lead/qa-context.md
             - id: qa_focus
+              type: agent
               title: QA Focus
               instruction-refs:
                 - lane-instructions/qa_lead/qa-focus.md
             - id: test_case_design
+              type: agent
               title: Test Case Design
               instruction-refs:
                 - lane-instructions/qa_lead/test-case-design.md
             - id: unit_test_notes
+              type: agent
               title: Unit Test Notes
               instruction-refs:
                 - lane-instructions/qa_lead/unit-test-notes.md
             - id: completion
+              type: agent
               title: Completion
               completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
@@ -125,32 +145,39 @@ forge:
           session-mode: single_session
           steps:
             - id: preparation
+              type: agent
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: backend_context
+              type: agent
               title: Backend Context
               task-placeholder: TASKS
               instruction-refs:
                 - additional-instructions/scope-context-usage.md
                 - lane-instructions/implement_be/backend-context.md
             - id: production_implementation
+              type: agent
               title: Production Implementation
               instruction-refs:
                 - additional-instructions/implementation-boundary.md
                 - lane-instructions/implement_be/production-implementation.md
                 - additional-instructions/java-style-basics.md
             - id: local_verification
+              type: agent
               title: Local Verification
               instruction-refs:
                 - lane-instructions/implement_be/local-verification.md
             - id: pr
+              type: agent
               title: Pull Request
               instruction-refs:
                 - additional-instructions/pr-workflow.md
                 - additional-instructions/sonar-cloud-base.md
                 - additional-instructions/implementation-sonar-gate.md
             - id: completion
+              type: agent
               title: Completion
               completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
@@ -161,31 +188,38 @@ forge:
           session-mode: single_session
           steps:
             - id: preparation
+              type: agent
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: frontend_context
+              type: agent
               title: Frontend Context
               task-placeholder: TASKS
               instruction-refs:
                 - additional-instructions/scope-context-usage.md
                 - lane-instructions/implement_fe/frontend-context.md
             - id: production_implementation
+              type: agent
               title: Production Implementation
               instruction-refs:
                 - additional-instructions/implementation-boundary.md
                 - lane-instructions/implement_fe/production-implementation.md
             - id: local_verification
+              type: agent
               title: Local Verification
               instruction-refs:
                 - lane-instructions/implement_fe/local-verification.md
             - id: pr
+              type: agent
               title: Pull Request
               instruction-refs:
                 - additional-instructions/pr-workflow.md
                 - additional-instructions/sonar-cloud-base.md
                 - additional-instructions/implementation-sonar-gate.md
             - id: completion
+              type: agent
               title: Completion
               completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
@@ -196,10 +230,13 @@ forge:
           session-mode: single_session
           steps:
             - id: preparation
+              type: agent
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: unit_test_context
+              type: agent
               title: Unit Test Context
               task-placeholder: TASKS
               instruction-refs:
@@ -208,36 +245,44 @@ forge:
                 - additional-instructions/java-style-basics.md
                 - lane-instructions/test_unit/unit-test-context.md
             - id: unit_test_usecase_service
+              type: agent
               title: Unit Test Use Case Service
               instruction-refs:
                 - lane-instructions/test_unit/unit-test-usecase-service.md
             - id: unit_test_core
+              type: agent
               title: Unit Test Core
               instruction-refs:
                 - lane-instructions/test_unit/unit-test-core.md
             - id: unit_test_mapper
+              type: agent
               title: Unit Test Mapper
               instruction-refs:
                 - lane-instructions/test_unit/unit-test-mapper.md
             - id: unit_test_controller
+              type: agent
               title: Unit Test Controller
               instruction-refs:
                 - lane-instructions/test_unit/unit-test-controller.md
             - id: unit_test_generated_artifacts
+              type: agent
               title: Unit Test Generated Artifacts
               instruction-refs:
                 - lane-instructions/test_unit/unit-test-generated-artifacts.md
             - id: local_verification
+              type: agent
               title: Local Verification
               instruction-refs:
                 - additional-instructions/backend-maven-verification.md
             - id: pr
+              type: agent
               title: Pull Request
               instruction-refs:
                 - additional-instructions/pr-workflow.md
                 - additional-instructions/sonar-cloud-base.md
                 - additional-instructions/test-coverage-sonar-gate.md
             - id: completion
+              type: agent
               title: Completion
               completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
@@ -248,10 +293,13 @@ forge:
           session-mode: single_session
           steps:
             - id: preparation
+              type: agent
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: it_test_context
+              type: agent
               title: IT Test Context
               task-placeholder: TASKS
               instruction-refs:
@@ -260,26 +308,32 @@ forge:
                 - additional-instructions/java-style-basics.md
                 - lane-instructions/test_it/it-test-context.md
             - id: forge_it_setup
+              type: agent
               title: Forge IT Setup
               instruction-refs:
                 - lane-instructions/test_it/forge-it-setup.md
             - id: fixtures
+              type: agent
               title: Fixtures
               instruction-refs:
                 - lane-instructions/test_it/fixtures.md
             - id: case_implementation
+              type: agent
               title: Case Implementation
               instruction-refs:
                 - lane-instructions/test_it/case-implementation.md
             - id: local_verification
+              type: agent
               title: Local Verification
               instruction-refs:
                 - additional-instructions/backend-maven-verification.md
             - id: pr
+              type: agent
               title: Pull Request
               instruction-refs:
                 - additional-instructions/pr-workflow.md
             - id: completion
+              type: agent
               title: Completion
               completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
@@ -290,10 +344,13 @@ forge:
           session-mode: single_session
           steps:
             - id: preparation
+              type: agent
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: ui_test_context
+              type: agent
               title: UI Test Context
               task-placeholder: TASKS
               instruction-refs:
@@ -301,20 +358,24 @@ forge:
                 - additional-instructions/test-lane-boundary.md
                 - lane-instructions/test_ui/ui-test-context.md
             - id: ui_test_implementation
+              type: agent
               title: UI Test Implementation
               instruction-refs:
                 - lane-instructions/test_ui/ui-test-implementation.md
             - id: local_verification
+              type: agent
               title: Local Verification
               instruction-refs:
                 - lane-instructions/test_ui/local-verification.md
             - id: pr
+              type: agent
               title: Pull Request
               instruction-refs:
                 - additional-instructions/pr-workflow.md
                 - additional-instructions/sonar-cloud-base.md
                 - additional-instructions/test-coverage-sonar-gate.md
             - id: completion
+              type: agent
               title: Completion
               completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
@@ -325,14 +386,17 @@ forge:
           session-mode: single_session
           steps:
             - id: review_context
+              type: agent
               title: Review Context
               instruction-refs:
                 - lane-instructions/reviewer/review-context.md
             - id: review_execution
+              type: agent
               title: Review Execution
               instruction-refs:
                 - lane-instructions/reviewer/review-execution.md
             - id: completion
+              type: agent
               title: Completion
               completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:
@@ -343,28 +407,35 @@ forge:
           session-mode: single_session
           steps:
             - id: preparation
+              type: agent
               title: Preparation
+              validator: gitPreparation
               instruction-refs:
                 - additional-instructions/preparation-to-work.md
             - id: contract_changes
+              type: agent
               title: Contract Changes
               task-placeholder: TASKS
               instruction-refs:
                 - additional-instructions/event-contract-rules.md
             - id: version_update
+              type: agent
               title: Version Update
               instruction-refs:
                 - additional-instructions/version-rules.md
             - id: pr
+              type: agent
               title: Pull Request
               instruction-refs:
                 - additional-instructions/pr-workflow.md
             - id: generation
+              type: agent
               title: Generation
               instruction-refs:
                 - additional-instructions/generation-workflow.md
                 - additional-instructions/event-artifact-generation-rules.md
             - id: completion
+              type: agent
               title: Completion
               completion-contract-placeholder: COMPLETION_PAYLOAD_CONTRACT
               instruction-refs:

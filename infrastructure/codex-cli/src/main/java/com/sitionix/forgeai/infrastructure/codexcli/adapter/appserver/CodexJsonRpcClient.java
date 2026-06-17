@@ -311,6 +311,7 @@ final class CodexJsonRpcClient implements AutoCloseable {
     }
 
     private void handleServerRequest(final JsonNode message) {
+        final String method = message.path("method").asText();
         this.emit(CodexProgressEvent.builder()
                 .executionId(this.progressContext.executionId())
                 .ticketId(this.progressContext.ticketId())
@@ -321,10 +322,25 @@ final class CodexJsonRpcClient implements AutoCloseable {
                 .threadId(this.threadId)
                 .processPid(this.process.pid())
                 .eventType(CodexProgressEventType.SERVER_REQUEST)
-                .status(message.path("method").asText())
+                .status(method)
                 .text(this.truncate(message.path("params").toString(), this.progressProperties.getCommandOutputMaxCharsPerLine()))
                 .occurredAt(Instant.now())
                 .build());
+        this.rejectServerRequest(message, method);
+    }
+
+    private void rejectServerRequest(final JsonNode message, final String method) {
+        final ObjectNode response = this.objectMapper.createObjectNode();
+        response.set("id", message.path("id"));
+        final ObjectNode error = response.putObject("error");
+        error.put("code", -32000);
+        error.put("message", "Server-initiated tool calls are disabled in supervised headless Forge AI lane execution. Use non-interactive shell commands only.");
+        error.put("data", "Rejected app-server request method=" + method);
+        try {
+            this.sendMessage(response);
+        } catch (final IOException e) {
+            throw this.protocolError(method, message.path("id").asText(""), List.of("serverRequest"), e.getMessage(), e);
+        }
     }
 
     private void handleNotification(final JsonNode message) {
@@ -548,7 +564,6 @@ final class CodexJsonRpcClient implements AutoCloseable {
         final String eventThreadId = params.path("threadId").asText(this.threadId);
         final JsonNode turnNode = params.path("turn");
         final String turnId = turnNode.path("id").asText(null);
-        this.turnEventCollector.registerCompletedTurn(eventThreadId, turnId, turnNode);
         this.emit(CodexProgressEvent.builder()
                 .executionId(this.progressContext.executionId())
                 .ticketId(this.progressContext.ticketId())
@@ -564,6 +579,7 @@ final class CodexJsonRpcClient implements AutoCloseable {
                 .durationMs(turnNode.hasNonNull("durationMs") ? turnNode.get("durationMs").asLong() : null)
                 .occurredAt(Instant.now())
                 .build());
+        this.turnEventCollector.registerCompletedTurn(eventThreadId, turnId, turnNode);
     }
 
     private void failPendingRequests(final String reason) {

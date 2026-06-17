@@ -38,7 +38,6 @@ class ApiTicketPayloadApiMapperTest {
 
         //then
         assertThat(actual).isEqualTo(ApiPayload.builder()
-                .required(Boolean.TRUE)
                 .reason("required")
                 .scope("GLOBAL")
                 .summary("api summary")
