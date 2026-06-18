@@ -235,7 +235,8 @@ class OperatorStaticUiRegressionTest {
         final String js = this.read("operator-ui.js");
 
         assertThat(js)
-                .contains("const knowledgeGraphPollMs = 30000")
+                .contains("graphPollIntervalMs: 30000")
+                .contains("const knowledgeGraphPollMs = Number(runtimeConfig.graphPollIntervalMs) || 30000")
                 .contains("function loadKnowledgeGraph(")
                 .contains("function renderKnowledgeGraphVisual(")
                 .contains("function renderKnowledgeGraphDetails(")
