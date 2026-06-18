@@ -1,0 +1,9 @@
+window.FORGE_OPERATOR_RUNTIME_CONFIG = Object.freeze({
+  apiMode: 'same-origin',
+  operatorUiApiBasePath: '/api/v1/forge-ai/operator/ui',
+  operatorApiBasePath: '/api/v1/forge-ai/operator',
+  infrastructureApiBasePath: '/api/v1/infrastructure',
+  statusPollIntervalMs: 15000,
+  activeJobPollIntervalMs: 1500,
+  graphPollIntervalMs: 30000
+});

@@ -1,0 +1,181 @@
+knowledge:
+  indexing:
+    chunk_size_chars: 3000
+    chunk_overlap_chars: 300
+    max_file_size_bytes: 500000
+
+  include_defaults:
+    - "*"
+    - "**/*"
+
+  exclude_defaults:
+    - ".git/**"
+    - "**/.git/**"
+    - "target/**"
+    - "**/target/**"
+    - "build/**"
+    - "**/build/**"
+    - "dist/**"
+    - "**/dist/**"
+    - "node_modules/**"
+    - "**/node_modules/**"
+    - ".venv/**"
+    - "**/.venv/**"
+    - "var/**"
+    - "**/var/**"
+    - "logs/**"
+    - "**/logs/**"
+    - "**/.env"
+
+  file_classification:
+    rules:
+      - name: workflow-yaml
+        flow_domain: WORKFLOW
+        language: yaml
+        path_patterns:
+          - ".github/workflows/*.yml"
+          - ".github/workflows/*.yaml"
+          - ".github/workflows/**/*.yml"
+          - ".github/workflows/**/*.yaml"
+          - ".github/actions/*.yml"
+          - ".github/actions/*.yaml"
+          - ".github/actions/**/*.yml"
+          - ".github/actions/**/*.yaml"
+
+      - name: test-sources
+        flow_domain: TEST
+        path_patterns:
+          - "src/test/**"
+          - "tests/**"
+          - "**/tests/**"
+          - "**/__tests__/**"
+          - "**/*_test.py"
+          - "**/*test.java"
+          - "**/*.test.ts"
+          - "**/*.test.tsx"
+          - "**/*.spec.ts"
+          - "**/*.spec.tsx"
+        language_by_extension:
+          .java: java
+          .kt: kotlin
+          .py: python
+          .js: javascript
+          .jsx: javascript
+          .ts: typescript
+          .tsx: typescript
+          .go: go
+          .c: c
+          .cc: cpp
+          .cpp: cpp
+          .h: c
+          .hpp: cpp
+
+      - name: source-code
+        flow_domain: CODE
+        extensions:
+          - .java
+          - .kt
+          - .py
+          - .js
+          - .jsx
+          - .ts
+          - .tsx
+          - .go
+          - .c
+          - .cc
+          - .cpp
+          - .h
+          - .hpp
+        language_by_extension:
+          .java: java
+          .kt: kotlin
+          .py: python
+          .js: javascript
+          .jsx: javascript
+          .ts: typescript
+          .tsx: typescript
+          .go: go
+          .c: c
+          .cc: cpp
+          .cpp: cpp
+          .h: c
+          .hpp: cpp
+
+      - name: build-files
+        flow_domain: BUILD
+        filenames:
+          - pom.xml
+          - build.gradle
+          - build.gradle.kts
+          - settings.gradle
+          - settings.gradle.kts
+          - package.json
+          - pnpm-lock.yaml
+          - yarn.lock
+          - package-lock.json
+        language_by_extension:
+          .xml: xml
+          .gradle: groovy
+          .kts: kotlin
+          .json: json
+          .yaml: yaml
+          .lock: text
+
+      - name: application-config-files
+        flow_domain: CONFIG
+        filenames:
+          - application.yml
+          - application.yaml
+          - application.properties
+          - bootstrap.yml
+          - bootstrap.yaml
+          - bootstrap.properties
+        language_by_extension:
+          .yml: yaml
+          .yaml: yaml
+          .properties: properties
+
+      - name: config-formats
+        flow_domain: CONFIG
+        extensions:
+          - .properties
+          - .conf
+          - .ini
+          - .env
+          - .yml
+          - .yaml
+          - .xml
+        language_by_extension:
+          .properties: properties
+          .conf: text
+          .ini: ini
+          .env: env
+          .yml: yaml
+          .yaml: yaml
+          .xml: xml
+
+      - name: readme-docs
+        flow_domain: DOC
+        language: markdown
+        path_patterns:
+          - "readme*"
+          - "**/readme*"
+
+      - name: document-formats
+        flow_domain: DOC
+        extensions:
+          - .md
+          - .adoc
+          - .rst
+          - .txt
+        language_by_extension:
+          .md: markdown
+          .adoc: asciidoc
+          .rst: rst
+          .txt: text
+
+      - name: json-data
+        flow_domain: DATA
+        language: json
+        extensions:
+          - .json

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Forge AI Operator</title>
+  <link rel="stylesheet" href="./operator-ui.css">
+</head>
+<body data-page="tickets">
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Forge AI Operator</p>
+        <h1>Tickets</h1>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshTickets" class="button">Refresh</button>
+      </div>
+    </header>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Recent Work</h2>
+          <p>Open a ticket to inspect lane dependencies, agent status, and active strategy step.</p>
+        </div>
+        <span id="ticketListUpdated" class="muted">loading</span>
+      </div>
+      <div id="ticketList" class="ticket-list"></div>
+      <div id="ticketListError" class="error-box hidden"></div>
+    </section>
+  </main>
+
+  <script src="./runtime-config.js"></script>
+  <script src="./operator-ui.js"></script>
+</body>
+</html>

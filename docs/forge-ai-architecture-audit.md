@@ -163,7 +163,7 @@ Important domain repository/port interfaces:
 Agent/lane graph source:
 
 ```text
-boot/src/main/resources/agent.yml
+config/agent.yml
 ```
 
 Current agents:
@@ -193,7 +193,7 @@ Current agents:
 Lane strategy source:
 
 ```text
-boot/src/main/resources/lane-strategies.yml
+config/lane-strategies.yml
 ```
 
 This file defines per-agent strategy steps, instruction refs, task placeholders, and completion contract placeholders.
@@ -201,7 +201,7 @@ This file defines per-agent strategy steps, instruction refs, task placeholders,
 Service catalog/source scopes:
 
 ```text
-boot/src/main/resources/services.yaml
+config/services.yaml
 ```
 
 This file defines service ids, paths, groups, repo/deploy/db/test metadata, domain keywords, and contract refs.

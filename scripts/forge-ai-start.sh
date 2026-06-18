@@ -25,13 +25,13 @@ log_step() {
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
-APP_CONFIG_FILE="${REPO_ROOT}/forge-ai/boot/src/main/resources/application.yml"
+APP_CONFIG_FILE="${REPO_ROOT}/forge-ai/services/forge-nexus/boot/src/main/resources/application.yml"
 SERVICES_FILE=""
 SKIP_FORGE_AI_REBUILD="${SKIP_FORGE_AI_REBUILD:-0}"
 FORGE_AI_DIR="${REPO_ROOT}/forge-ai"
 FORGE_AI_PID_FILE="${REPO_ROOT}/.forge-ai-local.pid"
 FORGE_AI_LOG_FILE="${REPO_ROOT}/.forge-ai-local.log"
-FORGE_AI_JAR_RELATIVE_PATH="boot/target/boot-0.0.1-SNAPSHOT.jar"
+FORGE_AI_JAR_RELATIVE_PATH="services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar"
 FORGE_AI_STARTED_LOCAL_THIS_RUN="0"
 FORGE_AI_MONGODB_URI="${MONGODB_URI:-mongodb://localhost:27019/forge_ai}"
 
@@ -53,7 +53,7 @@ resolve_services_file() {
 
   case "$services_resource" in
     classpath:*)
-      SERVICES_FILE="${REPO_ROOT}/forge-ai/boot/src/main/resources/${services_resource#classpath:}"
+      SERVICES_FILE="${REPO_ROOT}/forge-ai/services/forge-nexus/boot/src/main/resources/${services_resource#classpath:}"
       ;;
     *)
       die "unsupported services-config-resource format: $services_resource (expected classpath:...)"
@@ -229,7 +229,7 @@ start_local_forge_ai_process() {
     log_step "Building local Forge AI jar..."
     (
       cd "$FORGE_AI_DIR"
-      mvn -pl boot -am -DskipTests package
+      mvn -pl services/forge-nexus/boot -am -DskipTests package
     )
   else
     log_step "Starting without rebuild (using existing jar)..."

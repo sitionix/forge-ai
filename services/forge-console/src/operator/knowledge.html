@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Infrastructure / Knowledge</title>
+  <link rel="stylesheet" href="./operator-ui.css">
+</head>
+<body data-page="knowledge">
+  <main class="shell knowledge-shell">
+    <header class="hero knowledge-hero">
+      <div>
+        <p class="eyebrow">Infrastructure</p>
+        <h1>Knowledge</h1>
+        <p class="muted">Catalog-driven file inventory, AI analysis coverage, and extracted facts.</p>
+      </div>
+      <div class="hero-actions">
+        <button id="refreshKnowledge" class="button">Refresh</button>
+      </div>
+    </header>
+
+    <section class="panel knowledge-panel">
+      <div class="panel-head compact">
+        <div>
+          <h2>Sources / Services</h2>
+          <p>Service inventory, AI analysis coverage, and extracted facts.</p>
+        </div>
+        <span id="knowledgeUpdated" class="muted">loading</span>
+      </div>
+      <div id="knowledgeError" class="error-box hidden"></div>
+      <div id="knowledgeAnalysisError" class="error-box hidden"></div>
+      <div class="table-wrap">
+        <table class="operator-table">
+          <thead>
+            <tr>
+              <th>Service</th>
+              <th>Inventory</th>
+              <th>Analysis</th>
+              <th>Facts</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="knowledgeSourcesBody"></tbody>
+        </table>
+      </div>
+      <div id="knowledgeDiagnostics" class="knowledge-diagnostics">No diagnostics.</div>
+    </section>
+
+  </main>
+  <script src="./runtime-config.js"></script>
+  <script src="./operator-ui.js"></script>
+</body>
+</html>

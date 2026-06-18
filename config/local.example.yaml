@@ -1,0 +1,17 @@
+# Copy to config/local.yaml for untracked local overrides if a future profile imports it.
+# Current source-of-truth files are loaded directly from config/.
+forge:
+  ai:
+    home: /absolute/path/to/forge-ai
+    config-dir: /absolute/path/to/forge-ai/config
+    runtime-dir: /absolute/path/to/forge-ai/var
+    workspace-root: /absolute/path/to/workspace-root
+
+forge-nexus:
+  base-url: http://127.0.0.1:9099/fgaisox
+
+forge-knowledge:
+  base-url: http://127.0.0.1:7081
+
+forge-jarvis:
+  base-url: http://127.0.0.1:7071
