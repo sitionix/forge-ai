@@ -60,7 +60,7 @@ Main classes:
 ## 4. Agent/Lane Graph Source of Truth
 
 Lane definitions are configured in:
-- `boot/src/main/resources/agent.yml`
+- `config/agent.yml`
 
 Each agent defines:
 - `id`
@@ -251,7 +251,7 @@ To add a new agent that participates in the ticket flow out of the box, keep the
 
 Required steps:
 - Add the agent to `domain/src/main/java/com/sitionix/forgeai/domain/model/ticket/lane/Agent.java` with its stable `id` and executor bean name.
-- Add the agent config to `boot/src/main/resources/agent.yml`.
+- Add the agent config to `config/agent.yml`.
 - Set `enabled`, `scope_mode`, and `groups` so lane creation can derive the correct scopes.
 - Set `depends_on` so readiness is computed from YAML, not from code.
 - Set `produces` for downstream lanes this agent may feed.
@@ -264,10 +264,10 @@ Required steps:
 - For a normal supervised Codex lane, extend `SupervisedTaskDrivenAgentExecutor`, implement `ExecuteAgent<YourPayload>`, and call `executeWithSupervisor(lane)` from `executeLane(...)`.
 - Implement `validateFinalCompletionPayload(...)` in the executor. Start with generic `LaneCompletionSupport` validation, then add only agent-specific validation.
 - Implement `completeLane(...)` in the executor. Use `LaneCompletionSupport.completeProducedLaneInputs(...)` for downstream output routing unless the agent intentionally has no produced outputs or writes a completion report.
-- Add the agent instruction file under `infrastructure/resources/src/main/resources/instructions/agents`.
-- Add step instruction files under `infrastructure/resources/src/main/resources/instructions/lane-instructions/<agent_id>`.
-- Register instruction routing in `infrastructure/resources/src/main/resources/instructions.yaml`.
-- Add the agent strategy and ordered steps to `boot/src/main/resources/lane-strategies.yml`.
+- Add the agent instruction file under `services/forge-nexus/infrastructure/resources/src/main/resources/instructions/agents`.
+- Add step instruction files under `services/forge-nexus/infrastructure/resources/src/main/resources/instructions/lane-instructions/<agent_id>`.
+- Register instruction routing in `config/instructions.yaml`.
+- Add the agent strategy and ordered steps to `config/lane-strategies.yml`.
 
 Validation pattern:
 
@@ -400,7 +400,7 @@ Main REST controllers:
 
 ## 14. Configuration Files (YAML) and Roles
 
-### 14.1 `boot/src/main/resources/application.yml`
+### 14.1 `services/forge-nexus/boot/src/main/resources/application.yml`
 Defines:
 - server port/context path (`9099`, `/fgaisox`)
 - Mongo connection
@@ -408,10 +408,10 @@ Defines:
 - scheduler delay (`forge-ai.jobs.ready-to-start.fixed-delay-ms`)
 - default launcher base URL
 
-### 14.2 `boot/src/main/resources/agent.yml`
+### 14.2 `config/agent.yml`
 Defines lane graph and dependencies between agents.
 
-### 14.3 `boot/src/main/resources/services.yaml`
+### 14.3 `config/services.yaml`
 Defines service catalog and metadata:
 - path, group, tags
 - domain ownership hints
@@ -419,7 +419,7 @@ Defines service catalog and metadata:
 - generated artifact names
 - deploy/db metadata
 
-### 14.4 `infrastructure/resources/src/main/resources/instructions.yaml`
+### 14.4 `config/instructions.yaml`
 Defines instruction resolution:
 - main instruction file per agent
 - additional instructions per agent
@@ -488,11 +488,11 @@ Codex transport:
 - `infrastructure/codex-cli/src/main/java/com/sitionix/forgeai/infrastructure/codexcli/adapter/appserver/CodexAppServerSessionRepository.java`
 
 Persistence:
-- `infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/adapter/TicketRepositoryImpl.java`
-- `infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/adapter/LaneRepositoryImpl.java`
-- `infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/adapter/AgentTicketRepositoryImpl.java`
+- `services/forge-nexus/infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/adapter/TicketRepositoryImpl.java`
+- `services/forge-nexus/infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/adapter/LaneRepositoryImpl.java`
+- `services/forge-nexus/infrastructure/mongodb/src/main/java/com/sitionix/forgeai/infrastructure/mongodb/adapter/AgentTicketRepositoryImpl.java`
 
 Config:
-- `boot/src/main/resources/application.yml`
-- `boot/src/main/resources/agent.yml`
-- `boot/src/main/resources/services.yaml`
+- `services/forge-nexus/boot/src/main/resources/application.yml`
+- `config/agent.yml`
+- `config/services.yaml`

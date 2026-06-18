@@ -1,6 +1,6 @@
 # Forge AI Knowledge UX
 
-The Operator UI page is `boot/src/main/resources/static/operator/knowledge.html`.
+The Operator UI page is `services/forge-console/src/operator/knowledge.html`.
 
 The browser calls Forge AI backend endpoints only. It does not call the local Knowledge service port directly.
 

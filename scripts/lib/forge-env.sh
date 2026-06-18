@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+if [[ -z "${FORGE_AI_HOME:-}" ]]; then
+  FORGE_AI_HOME="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+fi
+
+export FORGE_AI_HOME
+export FORGE_CONFIG_DIR="${FORGE_CONFIG_DIR:-${FORGE_AI_HOME}/config}"
+export FORGE_RUNTIME_DIR="${FORGE_RUNTIME_DIR:-${FORGE_AI_HOME}/var}"
+export FORGE_WORKSPACE_ROOT="${FORGE_WORKSPACE_ROOT:-$(cd -- "${FORGE_AI_HOME}/.." && pwd)}"
+export WORKSPACE_ROOT="${WORKSPACE_ROOT:-${FORGE_WORKSPACE_ROOT}}"
+export FORGE_NEXUS_BASE_URL="${FORGE_NEXUS_BASE_URL:-http://127.0.0.1:9099/fgaisox}"
+export FORGE_KNOWLEDGE_BASE_URL="${FORGE_KNOWLEDGE_BASE_URL:-http://127.0.0.1:7081}"
+export FORGE_JARVIS_BASE_URL="${FORGE_JARVIS_BASE_URL:-http://127.0.0.1:7071}"

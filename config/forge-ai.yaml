@@ -1,0 +1,21 @@
+forge:
+  ai:
+    home: ${FORGE_AI_HOME:.}
+    config-dir: ${FORGE_CONFIG_DIR:./config}
+    runtime-dir: ${FORGE_RUNTIME_DIR:./var}
+    workspace-root: ${FORGE_WORKSPACE_ROOT:..}
+    launcher:
+      default-base-url: ${FORGE_NEXUS_BASE_URL:http://127.0.0.1:9099/fgaisox}
+      services-config-resource: ${FORGE_SERVICES_CONFIG_RESOURCE:classpath:services.yaml}
+    infrastructure:
+      jarvis:
+        enabled: true
+        base-url: ${FORGE_JARVIS_BASE_URL:http://127.0.0.1:7071}
+        connect-timeout: 2s
+        read-timeout: 120s
+      knowledge:
+        enabled: true
+        mode: http
+        base-url: ${FORGE_KNOWLEDGE_BASE_URL:http://127.0.0.1:7081}
+        connect-timeout: 2s
+        read-timeout: 120s

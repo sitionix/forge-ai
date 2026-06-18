@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-FORGE_AI_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
-exec "${FORGE_AI_DIR}/infrastructure/knowledge/scripts/status.sh" "$@"
+
+HOST="${KNOWLEDGE_HOST:-127.0.0.1}"
+PORT="${KNOWLEDGE_PORT:-7081}"
+
+if curl -fsS "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
+  echo "Knowledge service: UP at http://${HOST}:${PORT}"
+else
+  echo "Knowledge service: DOWN at http://${HOST}:${PORT}"
+fi

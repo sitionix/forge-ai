@@ -3,7 +3,7 @@
 Forge AI Operator UI is a static Spring Boot UI under:
 
 ```text
-boot/src/main/resources/static/operator
+services/forge-console/src/operator
 ```
 
 Current pages:
@@ -18,7 +18,7 @@ Current pages:
 Shared UI logic is in:
 
 ```text
-boot/src/main/resources/static/operator/operator-ui.js
+services/forge-console/src/operator/operator-ui.js
 ```
 
 Navigation is built by `initSidebar()`.
@@ -46,7 +46,7 @@ Jarvis is intentionally not under Agents, Tickets, Graph, or Lane. It is infrast
 Page:
 
 ```text
-boot/src/main/resources/static/operator/jarvis.html
+services/forge-console/src/operator/jarvis.html
 ```
 
 Body:

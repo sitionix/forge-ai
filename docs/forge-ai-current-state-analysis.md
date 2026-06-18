@@ -94,7 +94,7 @@ Ticket and lane domain classes:
 
 Agent graph source:
 
-- `boot/src/main/resources/agent.yml`
+- `config/agent.yml`
 
 Configured agents include:
 

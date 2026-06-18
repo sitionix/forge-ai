@@ -6,7 +6,7 @@ app_log := root + "/var/logs/forge-ai.log"
 app_url := "http://127.0.0.1:9099/fgaisox"
 knowledge_url := "http://127.0.0.1:7081"
 jarvis_url := "http://127.0.0.1:7071"
-sqlite_path := root + "/infrastructure/knowledge/var/knowledge.sqlite"
+sqlite_path := root + "/var/knowledge/knowledge.sqlite"
 
 start: _mongo-start _sqlite-start _knowledge-start _jarvis-start _app-start
     @echo "Forge AI stack is up:"
@@ -26,7 +26,7 @@ _mongo-stop:
     @docker compose stop forge-ai-mongo >/dev/null || true
 
 _sqlite-start:
-    @mkdir -p "{{root}}/infrastructure/knowledge/var"
+    @mkdir -p "{{root}}/var/knowledge"
     @if [[ -f "{{sqlite_path}}" ]]; then \
         echo "SQLite store is ready: {{sqlite_path}}"; \
     else \
@@ -34,7 +34,7 @@ _sqlite-start:
     fi
 
 _knowledge-start: _sqlite-start
-    @if [[ ! -x "{{root}}/infrastructure/knowledge/services/knowledge-service/.venv/bin/uvicorn" ]]; then \
+    @if [[ ! -x "{{root}}/services/forge-knowledge/.venv/bin/uvicorn" ]]; then \
         scripts/knowledge/bootstrap.sh; \
     fi
     @scripts/knowledge/start.sh
@@ -43,7 +43,7 @@ _knowledge-stop:
     @scripts/knowledge/stop.sh
 
 _jarvis-start:
-    @if [[ ! -x "{{root}}/infrastructure/jarvis/services/jarvis-agent/.venv/bin/uvicorn" ]]; then \
+    @if [[ ! -x "{{root}}/services/forge-jarvis/.venv/bin/uvicorn" ]]; then \
         scripts/jarvis/bootstrap.sh; \
     fi
     @scripts/jarvis/start.sh
@@ -72,14 +72,14 @@ _app-start:
             sleep 1
         fi
     fi
-    mvn -pl boot -am -DskipTests package
+    mvn -pl services/forge-nexus/boot -am -DskipTests package
     : > "{{app_log}}"
     (
         cd "{{root}}"
         setsid -f env \
             WORKSPACE_ROOT="{{root}}/.." \
             MONGODB_URI="mongodb://localhost:27019/forge_ai" \
-            java -jar boot/target/boot-0.0.1-SNAPSHOT.jar \
+            java -jar services/forge-nexus/boot/target/boot-0.0.1-SNAPSHOT.jar \
             --spring.docker.compose.enabled=false \
             >> "{{app_log}}" 2>&1
     )
@@ -121,4 +121,4 @@ _logs:
     @tail -n 120 -f "{{app_log}}"
 
 _knowledge-logs:
-    @tail -n 120 -f "{{root}}/infrastructure/knowledge/var/logs/knowledge-service.stdout.log"
+    @tail -n 120 -f "{{root}}/var/knowledge/logs/knowledge-service.stdout.log"
