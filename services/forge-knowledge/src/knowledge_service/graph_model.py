@@ -229,21 +229,11 @@ class GraphMaterialization:
 
     @property
     def projected_symbol_count(self) -> int:
-        return len([
-            node
-            for node in self.nodes
-            if node.status in {GraphFactStatus.TRUSTED, GraphFactStatus.DERIVED}
-            and node.node_kind != GraphNodeKind.FILE
-        ])
+        return len([node for node in self.nodes if node.status in {GraphFactStatus.TRUSTED, GraphFactStatus.DERIVED} and node.node_kind != GraphNodeKind.FILE])
 
     @property
     def projected_relation_count(self) -> int:
-        return len([
-            edge
-            for edge in self.edges
-            if edge.status in {GraphFactStatus.TRUSTED, GraphFactStatus.DERIVED}
-            and edge.to_node_id is not None
-        ])
+        return len([edge for edge in self.edges if edge.status in {GraphFactStatus.TRUSTED, GraphFactStatus.DERIVED} and edge.to_node_id is not None])
 
     def to_store_payload(self) -> Dict[str, List[Dict[str, Any]]]:
         return {

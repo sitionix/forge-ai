@@ -12,6 +12,10 @@ class KnowledgeUnavailableError(ConnectionError):
     """Raised when Knowledge cannot be reached."""
 
 
+class KnowledgeBadResponseError(ValueError):
+    """Raised when Knowledge returns malformed JSON."""
+
+
 class KnowledgeConfigurationError(ValueError):
     """Raised when Knowledge configuration is unsafe."""
 
@@ -34,7 +38,13 @@ class KnowledgeClient:
                 response.raise_for_status()
         except httpx.HTTPError as exc:
             raise KnowledgeUnavailableError(f"Knowledge is not reachable at {self.base_url}") from exc
-        return response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise KnowledgeBadResponseError("Knowledge returned invalid JSON") from exc
+        if not isinstance(data, dict):
+            raise KnowledgeBadResponseError("Knowledge returned a non-object response")
+        return data
 
     def _validate_base_url(self) -> None:
         parsed = urlparse(self.base_url)
@@ -52,17 +62,20 @@ def used_context_items(bundle: Dict[str, Any]) -> List[ChatContextItem]:
     for item in items:
         if not isinstance(item, dict):
             continue
-        result.append(ChatContextItem(
-            sourceId=str(item.get("sourceId", "")),
-            displayName=str(item.get("displayName", "")),
-            relativePath=str(item.get("relativePath", "")),
-            lineStart=int(item.get("lineStart", 0)),
-            lineEnd=int(item.get("lineEnd", 0)),
-            reason=str(item.get("reason", "")),
-            score=float(item.get("score", 0.0)),
-            content=item.get("content"),
-            metadata=item.get("metadata") if isinstance(item.get("metadata"), dict) else {},
-        ))
+        metadata = item.get("metadata")
+        result.append(
+            ChatContextItem(
+                sourceId=str(item.get("sourceId", "")),
+                displayName=str(item.get("displayName", "")),
+                relativePath=str(item.get("relativePath", "")),
+                lineStart=int(item.get("lineStart", 0)),
+                lineEnd=int(item.get("lineEnd", 0)),
+                reason=str(item.get("reason", "")),
+                score=float(item.get("score", 0.0)),
+                content=item.get("content"),
+                metadata=dict(metadata) if isinstance(metadata, dict) else {},
+            )
+        )
     return result
 
 
@@ -73,8 +86,10 @@ def diagnostics(bundle: Dict[str, Any]) -> List[ChatDiagnostic]:
     result: list[ChatDiagnostic] = []
     for item in raw:
         if isinstance(item, dict):
-            result.append(ChatDiagnostic(
-                code=str(item.get("code", "KNOWLEDGE_DIAGNOSTIC")),
-                message=str(item.get("message", "")),
-            ))
+            result.append(
+                ChatDiagnostic(
+                    code=str(item.get("code", "KNOWLEDGE_DIAGNOSTIC")),
+                    message=str(item.get("message", "")),
+                )
+            )
     return result

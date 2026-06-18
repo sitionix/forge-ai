@@ -54,16 +54,13 @@ class GraphSliceService:
             else:
                 node_rows, edge_rows, groups, uncertainties, truncated, overview_metrics = self._overview(conn, req)
             deduped_node_rows = self._dedupe_rows(node_rows, "id")
-            node_rows = deduped_node_rows[:req.max_nodes]
+            node_rows = deduped_node_rows[: req.max_nodes]
             node_ids = {row["id"] for row in node_rows}
             deduped_edge_rows = self._dedupe_rows(edge_rows, "id")
-            closed_edge_rows = [
-                row for row in deduped_edge_rows
-                if row["from_node_id"] in node_ids and row.get("to_node_id") in node_ids
-            ]
+            closed_edge_rows = [row for row in deduped_edge_rows if row["from_node_id"] in node_ids and row.get("to_node_id") in node_ids]
             skipped_missing_endpoint_count = len(deduped_edge_rows) - len(closed_edge_rows)
             skipped_by_limit_count = max(0, len(closed_edge_rows) - req.max_edges)
-            edge_rows = closed_edge_rows[:req.max_edges]
+            edge_rows = closed_edge_rows[: req.max_edges]
             truncated = truncated or len(deduped_node_rows) > req.max_nodes or skipped_missing_endpoint_count > 0 or skipped_by_limit_count > 0
             node_views = [self.store._fact_node(conn, row, req.include_evidence, False, req.include_claims) for row in node_rows]
             node_by_id = {node["id"]: node for node in node_views}
@@ -193,10 +190,9 @@ class GraphSliceService:
             },
         }
 
-    def _slice_from_root(self,
-                         conn: sqlite3.Connection,
-                         request: GraphSliceRequest,
-                         root: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], bool]:
+    def _slice_from_root(
+        self, conn: sqlite3.Connection, request: GraphSliceRequest, root: Dict[str, Any]
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], bool]:
         node_ids: Set[str] = {root["id"]}
         edge_rows: Dict[str, Dict[str, Any]] = {}
         groups: Dict[str, Dict[str, Any]] = {}
@@ -238,9 +234,9 @@ class GraphSliceService:
         node_rows = self.store._fact_nodes_by_ids(conn, node_ids)
         return node_rows, list(edge_rows.values()), list(groups.values()), list(uncertainties.values()), truncated
 
-    def _overview(self,
-                  conn: sqlite3.Connection,
-                  request: GraphSliceRequest) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], bool, Dict[str, Any]]:
+    def _overview(
+        self, conn: sqlite3.Connection, request: GraphSliceRequest
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], bool, Dict[str, Any]]:
         clauses = [self.store._current_graph_node_clause("n")]
         params: List[Any] = []
         if request.source_id:
@@ -254,7 +250,8 @@ class GraphSliceService:
             clauses.append("n.flow_domain = ?")
             params.append(request.flow_domain)
         candidate_limit = max(2000, request.max_nodes)
-        rows = conn.execute(f"""
+        rows = conn.execute(
+            f"""
             SELECT n.*,
                    COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
                    CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS is_entrypoint,
@@ -286,10 +283,12 @@ class GraphSliceService:
                 FROM analysis_graph_diagnostics
                 GROUP BY analysis_file_id
             ) diagnostic_count ON diagnostic_count.analysis_file_id = n.analysis_file_id
-            WHERE {' AND '.join(clauses)}
+            WHERE {" AND ".join(clauses)}
             ORDER BY is_entrypoint DESC, graph_degree DESC, n.node_kind = 'CALLABLE' DESC, n.confidence DESC
             LIMIT ?
-        """, [*params, candidate_limit]).fetchall()
+        """,
+            [*params, candidate_limit],
+        ).fetchall()
         candidates = [self.store._row_dict(row) for row in rows]
         node_rows = [row for row in candidates if self._node_allowed(row, request, is_root=False)]
         node_by_id = {row["id"]: row for row in node_rows}
@@ -314,23 +313,33 @@ class GraphSliceService:
             hidden_isolated_count = sum(len(component["node_ids"]) for component in isolated_components)
         selected_nodes = [node_by_id[node_id] for node_id in selected_ids if node_id in node_by_id]
         selected_nodes.sort(key=lambda row: self._node_sort_key(row), reverse=True)
-        selected_node_ids = {row["id"] for row in selected_nodes[:request.max_nodes]}
+        selected_node_ids = {row["id"] for row in selected_nodes[: request.max_nodes]}
         selected_edges_all = [
-            row for row in sorted(visible_edges, key=self._edge_sort_key, reverse=True)
+            row
+            for row in sorted(visible_edges, key=self._edge_sort_key, reverse=True)
             if row.get("from_node_id") in selected_node_ids and row.get("to_node_id") in selected_node_ids
         ]
-        selected_edges = selected_edges_all[:request.max_edges]
+        selected_edges = selected_edges_all[: request.max_edges]
         groups: List[Dict[str, Any]] = []
         if hidden_isolated_count > 0:
-            groups.append({
-                "id": "slice-group:ISOLATED_NODES",
-                "groupType": "ISOLATED_NODES",
-                "label": f"Isolated nodes ({hidden_isolated_count})",
-                "count": hidden_isolated_count,
-                "examples": [node_by_id[next(iter(component["node_ids"]))].get("display_name") or node_by_id[next(iter(component["node_ids"]))].get("name") or next(iter(component["node_ids"])) for component in isolated_components[:5]],
-                "reason": "Hidden from source overview because no drawable edges connect these nodes.",
-            })
-        largest_component = max(connected_components, key=lambda item: (len(item["node_ids"]), len(item["edge_ids"])), default={"node_ids": set(), "edge_ids": set()})
+            groups.append(
+                {
+                    "id": "slice-group:ISOLATED_NODES",
+                    "groupType": "ISOLATED_NODES",
+                    "label": f"Isolated nodes ({hidden_isolated_count})",
+                    "count": hidden_isolated_count,
+                    "examples": [
+                        node_by_id[next(iter(component["node_ids"]))].get("display_name")
+                        or node_by_id[next(iter(component["node_ids"]))].get("name")
+                        or next(iter(component["node_ids"]))
+                        for component in isolated_components[:5]
+                    ],
+                    "reason": "Hidden from source overview because no drawable edges connect these nodes.",
+                }
+            )
+        largest_component = max(
+            connected_components, key=lambda item: (len(item["node_ids"]), len(item["edge_ids"])), default={"node_ids": set(), "edge_ids": set()}
+        )
         metrics = {
             "hiddenIsolatedCount": hidden_isolated_count,
             "largestComponentNodeCount": len(largest_component["node_ids"]),
@@ -339,7 +348,7 @@ class GraphSliceService:
             "overviewSelectionReason": "CONNECTED_COMPONENTS_FIRST",
         }
         truncated = len(selected_nodes) > request.max_nodes or len(selected_edges_all) > request.max_edges or hidden_isolated_count > 0
-        return selected_nodes[:request.max_nodes], selected_edges, groups, [], truncated, metrics
+        return selected_nodes[: request.max_nodes], selected_edges, groups, [], truncated, metrics
 
     def _overview_components(self, node_by_id: Dict[str, Dict[str, Any]], edges: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         adjacency: Dict[str, Set[str]] = {node_id: set() for node_id in node_by_id}
@@ -376,23 +385,24 @@ class GraphSliceService:
                 for right in adjacency.get(left, set()):
                     if right in component_nodes:
                         component_edge_ids.update(edge_ids_by_component_key.get(tuple(sorted((left, right))), set()))
-            components.append({
-                "node_ids": component_nodes,
-                "edge_ids": component_edge_ids,
-                "score": self._component_score(component_nodes, component_edge_ids, node_by_id, edge_by_id),
-            })
-        components.sort(key=lambda component: (
-            float(component.get("score") or 0.0),
-            len(component["edge_ids"]),
-            len(component["node_ids"]),
-        ), reverse=True)
+            components.append(
+                {
+                    "node_ids": component_nodes,
+                    "edge_ids": component_edge_ids,
+                    "score": self._component_score(component_nodes, component_edge_ids, node_by_id, edge_by_id),
+                }
+            )
+        components.sort(
+            key=lambda component: (
+                float(component.get("score") or 0.0),
+                len(component["edge_ids"]),
+                len(component["node_ids"]),
+            ),
+            reverse=True,
+        )
         return components
 
-    def _component_score(self,
-                         node_ids: Set[str],
-                         edge_ids: Set[str],
-                         node_by_id: Dict[str, Dict[str, Any]],
-                         edge_by_id: Dict[str, Dict[str, Any]]) -> float:
+    def _component_score(self, node_ids: Set[str], edge_ids: Set[str], node_by_id: Dict[str, Dict[str, Any]], edge_by_id: Dict[str, Dict[str, Any]]) -> float:
         score = 0.0
         for node_id in node_ids:
             score += float(sum(self._node_sort_key(node_by_id[node_id])))
@@ -412,12 +422,9 @@ class GraphSliceService:
             score -= 100.0
         return score
 
-    def _select_component_nodes(self,
-                                component: Dict[str, Any],
-                                node_by_id: Dict[str, Dict[str, Any]],
-                                edges: List[Dict[str, Any]],
-                                selected_ids: Set[str],
-                                max_nodes: int) -> None:
+    def _select_component_nodes(
+        self, component: Dict[str, Any], node_by_id: Dict[str, Dict[str, Any]], edges: List[Dict[str, Any]], selected_ids: Set[str], max_nodes: int
+    ) -> None:
         if len(selected_ids) >= max_nodes:
             return
         component_node_ids: Set[str] = set(component["node_ids"])
@@ -448,11 +455,7 @@ class GraphSliceService:
         confidence = float(row.get("confidence") or 0.0)
         return (entrypoint * 200.0, degree_score, kind_score, diagnostic_score, confidence)
 
-    def _include_hierarchy(self,
-                           conn: sqlite3.Connection,
-                           root: Dict[str, Any],
-                           node_ids: Set[str],
-                           edge_rows: Dict[str, Dict[str, Any]]) -> None:
+    def _include_hierarchy(self, conn: sqlite3.Connection, root: Dict[str, Any], node_ids: Set[str], edge_rows: Dict[str, Dict[str, Any]]) -> None:
         current = root
         while current.get("parent_node_id"):
             parent = self.store._fact_node_by_id(conn, current["parent_node_id"], current.get("source_id"))
@@ -462,13 +465,16 @@ class GraphSliceService:
             for edge in self._edges_between(conn, parent["id"], current["id"]):
                 edge_rows.setdefault(edge["id"], edge)
             current = parent
-        file_row = conn.execute("""
+        file_row = conn.execute(
+            """
             SELECT n.*, 0 AS graph_degree
             FROM analysis_graph_nodes n
             WHERE n.analysis_file_id = ?
               AND n.node_kind = 'FILE'
             LIMIT 1
-        """, (root.get("analysis_file_id"),)).fetchone()
+        """,
+            (root.get("analysis_file_id"),),
+        ).fetchone()
         if file_row:
             file_node = self.store._row_dict(file_row)
             node_ids.add(file_node["id"])
@@ -499,12 +505,15 @@ class GraphSliceService:
             params.extend(sorted(request.edge_types))
         else:
             clauses.append("e.edge_type IN ('CALLS', 'DECLARES', 'CONTAINS')")
-        rows = conn.execute(f"""
+        rows = conn.execute(
+            f"""
             SELECT e.*
             FROM analysis_graph_edges e
-            WHERE {' AND '.join(clauses)}
+            WHERE {" AND ".join(clauses)}
             LIMIT ?
-        """, [*params, request.max_edges * 4]).fetchall()
+        """,
+            [*params, request.max_edges * 4],
+        ).fetchall()
         return [self.store._row_dict(row) for row in rows if self._edge_allowed(self.store._row_dict(row), request)]
 
     def _visible_edges_for_nodes(self, conn: sqlite3.Connection, request: GraphSliceRequest, node_ids: Set[str]) -> List[Dict[str, Any]]:
@@ -512,21 +521,26 @@ class GraphSliceService:
         result = []
         for row in sorted(rows, key=self._edge_sort_key, reverse=True):
             metadata = self._metadata(row)
-            if row.get("edge_type") == "CALLS" and not self._call_visible(str(metadata.get("sliceDefaultVisibility") or "SHOW"), str(metadata.get("callTargetCategory") or ""), request):
+            if row.get("edge_type") == "CALLS" and not self._call_visible(
+                str(metadata.get("sliceDefaultVisibility") or "SHOW"), str(metadata.get("callTargetCategory") or ""), request
+            ):
                 continue
             if self._edge_allowed(row, request):
                 result.append(row)
         return result
 
     def _edges_between(self, conn: sqlite3.Connection, from_id: str, to_id: str) -> List[Dict[str, Any]]:
-        rows = conn.execute(f"""
+        rows = conn.execute(
+            f"""
             SELECT e.*
             FROM analysis_graph_edges e
             WHERE {self.store._current_graph_edge_clause("e")}
               AND e.from_node_id = ?
               AND e.to_node_id = ?
               AND e.edge_type IN ('DECLARES', 'CONTAINS')
-        """, (from_id, to_id)).fetchall()
+        """,
+            (from_id, to_id),
+        ).fetchall()
         return [self.store._row_dict(row) for row in rows]
 
     def _node_allowed(self, row: Dict[str, Any], request: GraphSliceRequest, is_root: bool) -> bool:
@@ -567,12 +581,14 @@ class GraphSliceService:
             return request.include_external == "show"
         return True
 
-    def _record_unresolved(self,
-                           edge: Dict[str, Any],
-                           metadata: Dict[str, Any],
-                           groups: Dict[str, Dict[str, Any]],
-                           uncertainties: Dict[str, Dict[str, Any]],
-                           request: GraphSliceRequest) -> None:
+    def _record_unresolved(
+        self,
+        edge: Dict[str, Any],
+        metadata: Dict[str, Any],
+        groups: Dict[str, Dict[str, Any]],
+        uncertainties: Dict[str, Dict[str, Any]],
+        request: GraphSliceRequest,
+    ) -> None:
         category = str(metadata.get("callTargetCategory") or "")
         if category.startswith("EXTERNAL_"):
             self._record_group(edge, metadata, groups, "External calls")
@@ -584,33 +600,39 @@ class GraphSliceService:
         if visibility == "HIDE_BY_DEFAULT":
             self._record_group(edge, metadata, groups, "Unresolved low-value calls")
             return
-        uncertainties.setdefault(edge["id"], {
-            "id": edge["id"],
-            "edgeId": edge["id"],
-            "kind": "UNRESOLVED_CALL",
-            "from": edge["from_node_id"],
-            "target": self._unresolved_target(edge),
-            "methodName": metadata.get("methodName"),
-            "receiverText": metadata.get("receiverText"),
-            "receiverTypeHint": metadata.get("receiverTypeHint"),
-            "unresolvedReason": metadata.get("unresolvedReason") or "UNKNOWN",
-            "resolutionStatus": edge.get("resolution_status"),
-            "flowUsefulness": metadata.get("flowUsefulness"),
-            "lineStart": self._edge_line(edge),
-            "message": self._uncertainty_message(metadata),
-        })
+        uncertainties.setdefault(
+            edge["id"],
+            {
+                "id": edge["id"],
+                "edgeId": edge["id"],
+                "kind": "UNRESOLVED_CALL",
+                "from": edge["from_node_id"],
+                "target": self._unresolved_target(edge),
+                "methodName": metadata.get("methodName"),
+                "receiverText": metadata.get("receiverText"),
+                "receiverTypeHint": metadata.get("receiverTypeHint"),
+                "unresolvedReason": metadata.get("unresolvedReason") or "UNKNOWN",
+                "resolutionStatus": edge.get("resolution_status"),
+                "flowUsefulness": metadata.get("flowUsefulness"),
+                "lineStart": self._edge_line(edge),
+                "message": self._uncertainty_message(metadata),
+            },
+        )
 
     def _record_group(self, edge: Dict[str, Any], metadata: Dict[str, Any], groups: Dict[str, Dict[str, Any]], default_label: str) -> None:
         category = str(metadata.get("callTargetCategory") or metadata.get("noiseCategory") or "COLLAPSED")
         group_type = category if category != "UNKNOWN" else str(metadata.get("noiseCategory") or "COLLAPSED")
-        group = groups.setdefault(group_type, {
-            "id": f"slice-group:{group_type}",
-            "groupType": group_type,
-            "label": self._group_label(group_type, default_label),
-            "count": 0,
-            "examples": [],
-            "reason": metadata.get("noiseCategory") or metadata.get("unresolvedReason") or default_label,
-        })
+        group = groups.setdefault(
+            group_type,
+            {
+                "id": f"slice-group:{group_type}",
+                "groupType": group_type,
+                "label": self._group_label(group_type, default_label),
+                "count": 0,
+                "examples": [],
+                "reason": metadata.get("noiseCategory") or metadata.get("unresolvedReason") or default_label,
+            },
+        )
         group["count"] += 1
         example = metadata.get("rawCallText") or metadata.get("methodName") or self._unresolved_target(edge)
         if example and len(group["examples"]) < 5:
@@ -622,7 +644,9 @@ class GraphSliceService:
         if source_id:
             clauses.append("e.source_id = ?")
             params.append(source_id)
-        rows = conn.execute(f"SELECT resolution_status, flow_domain, metadata_json FROM analysis_graph_edges e WHERE {' AND '.join(clauses)}", params).fetchall()
+        rows = conn.execute(
+            f"SELECT resolution_status, flow_domain, metadata_json FROM analysis_graph_edges e WHERE {' AND '.join(clauses)}", params
+        ).fetchall()
         result: Dict[str, Dict[str, int]] = {
             "resolutionStatus": {},
             "unresolvedReason": {},

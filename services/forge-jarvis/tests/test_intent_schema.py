@@ -15,9 +15,7 @@ def test_valid_intent_accepted() -> None:
 
 def test_unknown_fields_rejected() -> None:
     with pytest.raises(ValidationError):
-        Intent.parse_obj(
-            {"action": "ollama_status", "target": "health", "arguments": {}, "command": "curl"}
-        )
+        Intent.parse_obj({"action": "ollama_status", "target": "health", "arguments": {}, "command": "curl"})
 
 
 def test_missing_action_rejected() -> None:

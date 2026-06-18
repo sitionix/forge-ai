@@ -3,12 +3,21 @@
   const contextPath = window.location.pathname.includes('/operator/')
     ? window.location.pathname.slice(0, window.location.pathname.indexOf('/operator/'))
     : '';
-  const apiBase = `${contextPath}/api/v1/forge-ai/operator/ui`;
-  const operatorApiBase = `${contextPath}/api/v1/forge-ai/operator`;
-  const infrastructureApiBase = `${contextPath}/api/v1/infrastructure`;
-  const knowledgeStatusActivePollMs = 1500;
-  const knowledgeStatusIdlePollMs = 15000;
-  const knowledgeGraphPollMs = 30000;
+  const runtimeConfig = {
+    operatorUiApiBasePath: '/api/v1/forge-ai/operator/ui',
+    operatorApiBasePath: '/api/v1/forge-ai/operator',
+    infrastructureApiBasePath: '/api/v1/infrastructure',
+    statusPollIntervalMs: 15000,
+    activeJobPollIntervalMs: 1500,
+    graphPollIntervalMs: 30000,
+    ...(window.FORGE_OPERATOR_RUNTIME_CONFIG || {})
+  };
+  const apiBase = `${contextPath}${runtimeConfig.operatorUiApiBasePath}`;
+  const operatorApiBase = `${contextPath}${runtimeConfig.operatorApiBasePath}`;
+  const infrastructureApiBase = `${contextPath}${runtimeConfig.infrastructureApiBasePath}`;
+  const knowledgeStatusActivePollMs = Number(runtimeConfig.activeJobPollIntervalMs) || 1500;
+  const knowledgeStatusIdlePollMs = Number(runtimeConfig.statusPollIntervalMs) || 15000;
+  const knowledgeGraphPollMs = Number(runtimeConfig.graphPollIntervalMs) || 30000;
   const graphLayoutConfig = {
     paddingX: 22,
     paddingY: 28,

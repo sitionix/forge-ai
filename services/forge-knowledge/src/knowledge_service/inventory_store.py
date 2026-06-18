@@ -118,17 +118,33 @@ class InventoryStore:
                 conn.execute(
                     "INSERT INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
-                        source.sourceId, source.displayName, source.group, source.path, 1 if source.rootExists else 0,
-                        json.dumps(source.tags), json.dumps(source.public_dict(include_absolute_root=True)), now,
+                        source.sourceId,
+                        source.displayName,
+                        source.group,
+                        source.path,
+                        1 if source.rootExists else 0,
+                        json.dumps(source.tags),
+                        json.dumps(source.public_dict(include_absolute_root=True)),
+                        now,
                     ),
                 )
             for file in files:
                 conn.execute(
                     "INSERT INTO files(source_id, source_path, absolute_path, relative_path, extension, language, flow_domain, size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
-                        file.sourceId, file.sourcePath, file.absolutePath, file.relativePath, file.extension,
-                        file.language, file.flowDomain, file.sizeBytes, file.contentHash, file.lastModified,
-                        file.lineCount, file.decodePolicy, now,
+                        file.sourceId,
+                        file.sourcePath,
+                        file.absolutePath,
+                        file.relativePath,
+                        file.extension,
+                        file.language,
+                        file.flowDomain,
+                        file.sizeBytes,
+                        file.contentHash,
+                        file.lastModified,
+                        file.lineCount,
+                        file.decodePolicy,
+                        now,
                     ),
                 )
             files_by_source: Dict[str, int] = {}
@@ -164,7 +180,9 @@ class InventoryStore:
     def status(self) -> Dict[str, Any]:
         self.init()
         with self._connect() as conn:
-            build = conn.execute("SELECT completed_at, status, source_count, file_count, skipped_count, skipped_reasons_json FROM inventory_builds ORDER BY id DESC LIMIT 1").fetchone()
+            build = conn.execute(
+                "SELECT completed_at, status, source_count, file_count, skipped_count, skipped_reasons_json FROM inventory_builds ORDER BY id DESC LIMIT 1"
+            ).fetchone()
         if not build:
             return {"status": "EMPTY", "sourceCount": 0, "fileCount": 0, "skippedCount": 0, "skippedBreakdown": {"total": 0, "byReason": {}}}
         skipped_breakdown = normalize_skipped_breakdown(
@@ -207,13 +225,25 @@ class InventoryStore:
                 [*params, limit, offset],
             ).fetchall()
         return {
-            "files": [{
-                "sourceId": row["source_id"], "sourcePath": row["source_path"], "relativePath": row["relative_path"],
-                "extension": row["extension"], "language": row["language"], "flowDomain": row["flow_domain"],
-                "sizeBytes": row["size_bytes"], "contentHash": row["content_hash"],
-                "lastModified": row["last_modified"], "lineCount": row["line_count"], "decodePolicy": row["decode_policy"],
-            } for row in rows],
-            "limit": limit, "offset": offset, "total": total,
+            "files": [
+                {
+                    "sourceId": row["source_id"],
+                    "sourcePath": row["source_path"],
+                    "relativePath": row["relative_path"],
+                    "extension": row["extension"],
+                    "language": row["language"],
+                    "flowDomain": row["flow_domain"],
+                    "sizeBytes": row["size_bytes"],
+                    "contentHash": row["content_hash"],
+                    "lastModified": row["last_modified"],
+                    "lineCount": row["line_count"],
+                    "decodePolicy": row["decode_policy"],
+                }
+                for row in rows
+            ],
+            "limit": limit,
+            "offset": offset,
+            "total": total,
         }
 
     def snapshot_files(self, source_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
@@ -229,16 +259,19 @@ class InventoryStore:
                 f"SELECT id, source_id, relative_path, content_hash, size_bytes, last_modified, line_count, decode_policy FROM files {where}",
                 params,
             ).fetchall()
-        return [{
-            "id": row["id"],
-            "sourceId": row["source_id"],
-            "relativePath": row["relative_path"],
-            "contentHash": row["content_hash"],
-            "sizeBytes": row["size_bytes"],
-            "lastModified": row["last_modified"],
-            "lineCount": row["line_count"],
-            "decodePolicy": row["decode_policy"],
-        } for row in rows]
+        return [
+            {
+                "id": row["id"],
+                "sourceId": row["source_id"],
+                "relativePath": row["relative_path"],
+                "contentHash": row["content_hash"],
+                "sizeBytes": row["size_bytes"],
+                "lastModified": row["last_modified"],
+                "lineCount": row["line_count"],
+                "decodePolicy": row["decode_policy"],
+            }
+            for row in rows
+        ]
 
     def analyzed_file_ids(self, file_ids: List[int]) -> set[int]:
         if not file_ids:

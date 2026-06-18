@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Protocol, Union
 
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
@@ -19,6 +20,28 @@ from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.snippet_extractor import SnippetExtractor
 from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer, StructuralAnalysisEngine
+
+
+class AnalysisProvider(Protocol):
+    name: str
+    version: str
+
+    def analyze(
+        self,
+        payload: Dict[str, Any],
+        line_count: int,
+        repair_prompt: Optional[str] = None,
+    ) -> Union[GraphAnalysisResult, AnalysisResult]: ...
+
+
+class JobExecutor(Protocol):
+    def submit(self, action: Callable[[], None]) -> None: ...
+
+
+class ThreadedJobExecutor:
+    def submit(self, action: Callable[[], None]) -> None:
+        thread = threading.Thread(target=action, daemon=True)
+        thread.start()
 
 
 class AnalysisJobRunner:
@@ -35,10 +58,20 @@ class AnalysisJobRunner:
         "ANALYSIS_AI_TRANSPORT_ERROR",
     }
 
-    def __init__(self, inventory_store: InventoryStore, config: AppConfig):
+    def __init__(
+        self,
+        inventory_store: InventoryStore,
+        config: AppConfig,
+        analysis_provider: Optional[AnalysisProvider] = None,
+        job_executor: Optional[JobExecutor] = None,
+        logger: Optional[logging.Logger] = None,
+    ):
         self.inventory_store = inventory_store
         self.config = config
         self.analysis_store = AnalysisStore(inventory_store.db_path)
+        self.analysis_provider = analysis_provider
+        self.job_executor = job_executor or ThreadedJobExecutor()
+        self.logger = logger or logging.getLogger("knowledge_service.analysis")
         self.snippets = SnippetExtractor()
         self.graph_engine = GraphAnalysisEngine()
         self.legacy_adapter = LegacyAnalysisProjectionAdapter()
@@ -47,7 +80,7 @@ class AnalysisJobRunner:
         self.anchor_validator = AnchorAwareGraphValidator()
         self._lock = threading.Lock()
 
-    def start(self, request: AnalysisBuildRequest, client: Optional[OllamaAnalysisClient] = None) -> Dict[str, Any]:
+    def start(self, request: AnalysisBuildRequest, client: Optional[AnalysisProvider] = None) -> Dict[str, Any]:
         with self._lock:
             active = self.analysis_store.active_job()
             if active:
@@ -72,29 +105,41 @@ class AnalysisJobRunner:
                 "engineVersion": GRAPH_ENGINE_VERSION,
             }
             self.analysis_store.create_job(job)
-            analyzer = client or OllamaAnalysisClient(
-                self.config.analysis_base_url,
-                self.config.analysis_model,
-                self.config.analysis_request_timeout_seconds,
-                self.config.module_dir / "config" / "analysis-prompt.md",
-                self.config.analysis_context_tokens,
+            self._log("job_created", jobId=job_id, sourceId=None, processed=0, failed=0)
+            analyzer = (
+                client
+                or self.analysis_provider
+                or OllamaAnalysisClient(
+                    self.config.analysis_base_url,
+                    self.config.analysis_model,
+                    self.config.analysis_request_timeout_seconds,
+                    self.config.analysis_prompt_path,
+                    self.config.analysis_context_tokens,
+                )
             )
-            thread = threading.Thread(target=self._run, args=(job_id, request, analyzer), daemon=True)
-            thread.start()
+            self.job_executor.submit(lambda: self._run(job_id, request, analyzer))
         return {"jobId": job_id, "status": "QUEUED", "message": "Knowledge analysis job queued"}
 
     def stop(self, job_id: str) -> Dict[str, Any]:
         job = self.analysis_store.request_stop(job_id)
         if job is None:
             raise KnowledgeError("ANALYSIS_JOB_NOT_FOUND", "Analysis job not found")
+        self._log(
+            "stop_requested",
+            jobId=job_id,
+            sourceId=job.get("currentSourceId"),
+            processed=job.get("processedFileCount", 0),
+            failed=job.get("failedFileCount", 0),
+        )
         return {
             "jobId": job["jobId"],
             "status": job["status"],
             "message": "Knowledge analysis stop requested" if job["status"] == "STOP_REQUESTED" else "Knowledge analysis job is not running",
         }
 
-    def _run(self, job_id: str, request: AnalysisBuildRequest, analyzer: OllamaAnalysisClient) -> None:
+    def _run(self, job_id: str, request: AnalysisBuildRequest, analyzer: AnalysisProvider) -> None:
         started_at = datetime.now(timezone.utc).isoformat()
+        started_monotonic = datetime.now(timezone.utc)
         rows, _ = self.inventory_store.search_rows(request.sourceIds, request.groups)
         scoped_source_ids = sorted({row["source_id"] for row in rows}) or request.sourceIds
         self.analysis_store.cleanup_stale_files(scoped_source_ids or None)
@@ -102,23 +147,24 @@ class AnalysisJobRunner:
             unchanged_ids = self.analysis_store.unchanged_file_ids(rows, analyzer.name, analyzer.version)
             rows = [row for row in rows if row["id"] not in unchanged_ids]
         if request.maxFiles is not None:
-            rows = rows[:max(0, request.maxFiles)]
-        flow_domain_by_file_id = {
-            int(row["id"]): self.structural_engine.flow_domain(row["relative_path"])
-            for row in rows
-        }
+            rows = rows[: max(0, request.maxFiles)]
+        flow_domain_by_file_id = {int(row["id"]): self.structural_engine.flow_domain(row["relative_path"]) for row in rows}
         self.analysis_store.create_job_files(job_id, rows, flow_domain_by_file_id, GRAPH_ENGINE_VERSION)
         if self._stop_requested(job_id):
             self._mark_job_stopped(job_id)
             return
-        self.analysis_store.update_job(job_id, {
-            "status": "RUNNING",
-            "startedAt": started_at,
-            "lastProgressAt": started_at,
-            "sourceCount": len({row["source_id"] for row in rows}),
-            "fileCount": len(rows),
-            "sourceIds": scoped_source_ids,
-        })
+        self.analysis_store.update_job(
+            job_id,
+            {
+                "status": "RUNNING",
+                "startedAt": started_at,
+                "lastProgressAt": started_at,
+                "sourceCount": len({row["source_id"] for row in rows}),
+                "fileCount": len(rows),
+                "sourceIds": scoped_source_ids,
+            },
+        )
+        self._log("job_started", jobId=job_id, sourceId=None, processed=0, failed=0)
         processed = failed = symbols_total = relations_total = 0
         diagnostics: List[Dict[str, Any]] = []
         try:
@@ -126,11 +172,15 @@ class AnalysisJobRunner:
                 if self._stop_requested(job_id):
                     self._mark_job_stopped(job_id, diagnostics)
                     return
-                self.analysis_store.update_job(job_id, {
-                    "currentSourceId": row["source_id"],
-                    "currentRelativePath": row["relative_path"],
-                    "lastProgressAt": self._now(),
-                })
+                self.analysis_store.update_job(
+                    job_id,
+                    {
+                        "currentSourceId": row["source_id"],
+                        "currentRelativePath": row["relative_path"],
+                        "lastProgressAt": self._now(),
+                    },
+                )
+                self._log("file_started", jobId=job_id, sourceId=row["source_id"], relativePath=row["relative_path"], processed=processed, failed=failed)
                 flow_domain = flow_domain_by_file_id.get(int(row["id"]), self.structural_engine.flow_domain(row["relative_path"]))
                 self.analysis_store.update_job_file(
                     job_id,
@@ -156,15 +206,31 @@ class AnalysisJobRunner:
                         engine_version=GRAPH_ENGINE_VERSION,
                         completed=True,
                     )
-                    self.analysis_store.update_job(job_id, {
-                        "processedFileCount": processed,
-                        "failedFileCount": failed,
-                        "lastProgressAt": self._now(),
-                    })
+                    self.analysis_store.update_job(
+                        job_id,
+                        {
+                            "processedFileCount": processed,
+                            "failedFileCount": failed,
+                            "lastProgressAt": self._now(),
+                        },
+                    )
+                    self._log(
+                        "file_failed",
+                        jobId=job_id,
+                        sourceId=row["source_id"],
+                        relativePath=row["relative_path"],
+                        processed=processed,
+                        failed=failed,
+                        errorCode="FILE_UNREADABLE",
+                    )
+                    self._log(
+                        "progress_updated", jobId=job_id, sourceId=row["source_id"], relativePath=row["relative_path"], processed=processed, failed=failed
+                    )
                     continue
                 content = "\n".join(lines)
                 try:
-                    structural_result = self.structural_engine.parse(row, lines)
+                    row_data = dict(row)
+                    structural_result = self.structural_engine.parse(row_data, lines)
                     static_graph = self.static_materializer.to_graph(structural_result)
                     enrichment_result: GraphAnalysisResult | None = None
                     retry_diagnostics: List[Dict[str, Any]] = []
@@ -176,17 +242,19 @@ class AnalysisJobRunner:
                         "last_raw_response_preview": None,
                     }
                     if len(content) > self.config.analysis_max_file_chars:
-                        retry_diagnostics.append({
-                            "code": "ANALYSIS_FILE_TOO_LARGE",
-                            "message": "File exceeds AI analysis size limit; static parser facts were stored without LLM enrichment.",
-                            "sourceId": row["source_id"],
-                            "relativePath": row["relative_path"],
-                        })
+                        retry_diagnostics.append(
+                            {
+                                "code": "ANALYSIS_FILE_TOO_LARGE",
+                                "message": "File exceeds AI analysis size limit; static parser facts were stored without LLM enrichment.",
+                                "sourceId": row["source_id"],
+                                "relativePath": row["relative_path"],
+                            }
+                        )
                     else:
                         try:
                             result, retry_diagnostics, attempt_state = self._analyze_with_retry(
                                 analyzer,
-                                self._payload(row, metadata, content, structural_result, static_graph),
+                                self._payload(row_data, metadata, content, structural_result, static_graph),
                                 len(lines),
                             )
                             enrichment_result = self._graph_result(result)
@@ -201,16 +269,20 @@ class AnalysisJobRunner:
                     graph_result = self.anchor_validator.merge(static_graph, enrichment_result, len(lines))
                     graph_diagnostics = self._file_diagnostics_from_graph(graph_result)
                     for diagnostic in retry_diagnostics:
-                        graph_result.diagnostics.append({
-                            "severity": "WARN" if diagnostic.get("code") != "ANALYSIS_FILE_FAILED" else "ERROR",
-                            "stage": diagnostic.get("stage") or "LLM_ENRICHMENT",
-                            **diagnostic,
-                        })
-                    graph = self.graph_engine.materialize(row, job_id, analyzer.name, analyzer.version, graph_result, lines)
+                        graph_result.diagnostics.append(
+                            {
+                                "severity": "WARN" if diagnostic.get("code") != "ANALYSIS_FILE_FAILED" else "ERROR",
+                                "stage": diagnostic.get("stage") or "LLM_ENRICHMENT",
+                                **diagnostic,
+                            }
+                        )
+                    graph = self.graph_engine.materialize(row_data, job_id, analyzer.name, analyzer.version, graph_result, lines)
                     file_diagnostics = [*retry_diagnostics, *graph_diagnostics]
                     self.analysis_store.replace_file_graph_analysis(
                         row["id"],
-                        self._state(row, analyzer, "ANALYZED", len(graph["nodes"]), len(graph["edges"]), file_diagnostics, attempt_state, flow_domain=flow_domain),
+                        self._state(
+                            row, analyzer, "ANALYZED", len(graph["nodes"]), len(graph["edges"]), file_diagnostics, attempt_state, flow_domain=flow_domain
+                        ),
                         graph,
                     )
                     job_file_status = "ANALYZED_WITH_DIAGNOSTICS" if file_diagnostics else "ANALYZED"
@@ -229,6 +301,7 @@ class AnalysisJobRunner:
                     processed += 1
                     symbols_total += len(graph["nodes"])
                     relations_total += len(graph["edges"])
+                    self._log("file_completed", jobId=job_id, sourceId=row["source_id"], relativePath=row["relative_path"], processed=processed, failed=failed)
                 except Exception as exc:
                     if self._stop_requested(job_id):
                         self._mark_job_stopped(job_id, diagnostics)
@@ -250,32 +323,70 @@ class AnalysisJobRunner:
                         engine_version=GRAPH_ENGINE_VERSION,
                         completed=True,
                     )
-                self.analysis_store.update_job(job_id, {
-                    "processedFileCount": processed,
-                    "failedFileCount": failed,
-                    "symbolCount": symbols_total,
-                    "relationCount": relations_total,
-                    "diagnostics": diagnostics[-20:],
-                    "lastProgressAt": self._now(),
-                })
+                    self._log(
+                        "file_failed",
+                        jobId=job_id,
+                        sourceId=row["source_id"],
+                        relativePath=row["relative_path"],
+                        processed=processed,
+                        failed=failed,
+                        errorCode=diag.get("code"),
+                    )
+                self.analysis_store.update_job(
+                    job_id,
+                    {
+                        "processedFileCount": processed,
+                        "failedFileCount": failed,
+                        "symbolCount": symbols_total,
+                        "relationCount": relations_total,
+                        "diagnostics": diagnostics[-20:],
+                        "lastProgressAt": self._now(),
+                    },
+                )
+                self._log("progress_updated", jobId=job_id, sourceId=row["source_id"], relativePath=row["relative_path"], processed=processed, failed=failed)
             if self._stop_requested(job_id):
                 self._mark_job_stopped(job_id, diagnostics)
                 return
-            self.analysis_store.update_job(job_id, {
-                "status": "COMPLETED",
-                "completedAt": datetime.now(timezone.utc).isoformat(),
-                "lastProgressAt": self._now(),
-                "currentSourceId": None,
-                "currentRelativePath": None,
-            })
+            completed_at = datetime.now(timezone.utc)
+            self.analysis_store.update_job(
+                job_id,
+                {
+                    "status": "COMPLETED",
+                    "completedAt": completed_at.isoformat(),
+                    "lastProgressAt": self._now(),
+                    "currentSourceId": None,
+                    "currentRelativePath": None,
+                },
+            )
+            self._log(
+                "job_completed",
+                jobId=job_id,
+                sourceId=None,
+                processed=processed,
+                failed=failed,
+                elapsedMs=int((completed_at - started_monotonic).total_seconds() * 1000),
+            )
         except Exception as exc:
             diagnostics.append({"code": "ANALYSIS_JOB_FAILED", "message": str(exc)})
-            self.analysis_store.update_job(job_id, {
-                "status": "FAILED",
-                "completedAt": datetime.now(timezone.utc).isoformat(),
-                "lastProgressAt": self._now(),
-                "diagnostics": diagnostics[-20:],
-            })
+            completed_at = datetime.now(timezone.utc)
+            self.analysis_store.update_job(
+                job_id,
+                {
+                    "status": "FAILED",
+                    "completedAt": completed_at.isoformat(),
+                    "lastProgressAt": self._now(),
+                    "diagnostics": diagnostics[-20:],
+                },
+            )
+            self._log(
+                "job_failed",
+                jobId=job_id,
+                sourceId=None,
+                processed=processed,
+                failed=failed,
+                elapsedMs=int((completed_at - started_monotonic).total_seconds() * 1000),
+                errorCode="ANALYSIS_JOB_FAILED",
+            )
 
     def _stop_requested(self, job_id: str) -> bool:
         return self.analysis_store.stop_requested(job_id)
@@ -285,25 +396,33 @@ class AnalysisJobRunner:
         self.analysis_store.stop_incomplete_job_files(job_id)
         merged = [*(job or {}).get("diagnostics", []), *(diagnostics or [])]
         if not any(item.get("code") == "ANALYSIS_JOB_STOPPED" for item in merged):
-            merged.append({
-                "code": "ANALYSIS_JOB_STOPPED",
-                "message": "Analysis job stopped before processing the next file.",
-            })
-        self.analysis_store.update_job(job_id, {
-            "status": "STOPPED",
-            "completedAt": datetime.now(timezone.utc).isoformat(),
-            "lastProgressAt": self._now(),
-            "currentSourceId": None,
-            "currentRelativePath": None,
-            "diagnostics": merged[-20:],
-        })
+            merged.append(
+                {
+                    "code": "ANALYSIS_JOB_STOPPED",
+                    "message": "Analysis job stopped before processing the next file.",
+                }
+            )
+        self.analysis_store.update_job(
+            job_id,
+            {
+                "status": "STOPPED",
+                "completedAt": datetime.now(timezone.utc).isoformat(),
+                "lastProgressAt": self._now(),
+                "currentSourceId": None,
+                "currentRelativePath": None,
+                "diagnostics": merged[-20:],
+            },
+        )
+        self._log(
+            "job_completed",
+            jobId=job_id,
+            sourceId=job.get("currentSourceId") if job else None,
+            processed=job.get("processedFileCount", 0) if job else 0,
+            failed=job.get("failedFileCount", 0) if job else 0,
+            errorCode="ANALYSIS_JOB_STOPPED",
+        )
 
-    def _payload(self,
-                 row,
-                 metadata: Dict[str, Any],
-                 content: str,
-                 structural_result,
-                 static_graph: GraphAnalysisResult) -> Dict[str, Any]:
+    def _payload(self, row, metadata: Dict[str, Any], content: str, structural_result, static_graph: GraphAnalysisResult) -> Dict[str, Any]:
         return {
             "sourceId": row["source_id"],
             "serviceLabel": row["display_name"],
@@ -321,7 +440,7 @@ class AnalysisJobRunner:
             "content": content,
         }
 
-    def _analyze_with_retry(self, analyzer: OllamaAnalysisClient, payload: Dict[str, Any], line_count: int):
+    def _analyze_with_retry(self, analyzer: AnalysisProvider, payload: Dict[str, Any], line_count: int):
         attempts = max(1, self.config.analysis_max_attempts_per_file)
         repair_attempts = max(0, self.config.analysis_repair_attempts_per_file)
         diagnostics: List[Dict[str, Any]] = []
@@ -329,26 +448,36 @@ class AnalysisJobRunner:
         last_error: KnowledgeError | None = None
         for attempt in range(1, attempts + 1):
             repair_prompt = None
-            if last_error is not None and last_error.code in {"ANALYSIS_AI_INVALID_JSON", "ANALYSIS_AI_SCHEMA_INVALID", "ANALYSIS_AI_EMPTY_RESPONSE", "ANALYSIS_AI_BAD_RESPONSE"} and repair_used < repair_attempts:
+            if (
+                last_error is not None
+                and last_error.code in {"ANALYSIS_AI_INVALID_JSON", "ANALYSIS_AI_SCHEMA_INVALID", "ANALYSIS_AI_EMPTY_RESPONSE", "ANALYSIS_AI_BAD_RESPONSE"}
+                and repair_used < repair_attempts
+            ):
                 repair_prompt = self.REPAIR_PROMPT
                 repair_used += 1
             try:
                 result = analyzer.analyze(payload, line_count, repair_prompt)
                 if attempt > 1:
-                    diagnostics.append({
-                        "code": "ANALYSIS_AI_RETRY_SUCCEEDED",
-                        "message": f"AI analysis succeeded after {attempt} attempts.",
-                        "sourceId": payload.get("sourceId"),
-                        "relativePath": payload.get("relativePath"),
-                        "attempts": attempt,
-                    })
-                return result, diagnostics, {
-                    "attempt_count": attempt,
-                    "last_attempt_at": self._now(),
-                    "last_error_code": None,
-                    "last_error_message": None,
-                    "last_raw_response_preview": None,
-                }
+                    diagnostics.append(
+                        {
+                            "code": "ANALYSIS_AI_RETRY_SUCCEEDED",
+                            "message": f"AI analysis succeeded after {attempt} attempts.",
+                            "sourceId": payload.get("sourceId"),
+                            "relativePath": payload.get("relativePath"),
+                            "attempts": attempt,
+                        }
+                    )
+                return (
+                    result,
+                    diagnostics,
+                    {
+                        "attempt_count": attempt,
+                        "last_attempt_at": self._now(),
+                        "last_error_code": None,
+                        "last_error_message": None,
+                        "last_raw_response_preview": None,
+                    },
+                )
             except KnowledgeError as exc:
                 exc.details.setdefault("attempt", attempt)
                 exc.details.setdefault("last_attempt_at", self._now())
@@ -360,14 +489,16 @@ class AnalysisJobRunner:
                         exc.details["max_attempts_exceeded"] = True
                     exc.details["diagnostics"] = [*diagnostics, self._attempt_diagnostic(payload, exc, attempt)]
                     raise
-                diagnostics.append({
-                    "code": exc.code,
-                    "message": f"{exc.message}; retrying analysis attempt {attempt + 1} of {attempts}.",
-                    "sourceId": payload.get("sourceId"),
-                    "relativePath": payload.get("relativePath"),
-                    "attempt": attempt,
-                    "rawPreview": exc.details.get("raw_preview"),
-                })
+                diagnostics.append(
+                    {
+                        "code": exc.code,
+                        "message": f"{exc.message}; retrying analysis attempt {attempt + 1} of {attempts}.",
+                        "sourceId": payload.get("sourceId"),
+                        "relativePath": payload.get("relativePath"),
+                        "attempt": attempt,
+                        "rawPreview": exc.details.get("raw_preview"),
+                    }
+                )
         raise KnowledgeError("ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED", "AI analysis exceeded maximum attempts")
 
     def _graph_result(self, result: GraphAnalysisResult | AnalysisResult) -> GraphAnalysisResult:
@@ -413,31 +544,37 @@ class AnalysisJobRunner:
     def _file_diagnostics_from_graph(self, graph_result: GraphAnalysisResult) -> List[Dict[str, Any]]:
         result: List[Dict[str, Any]] = []
         for diagnostic in graph_result.diagnostics or []:
-            result.append({
-                key: value
-                for key, value in diagnostic.items()
-                if key in {"code", "message", "severity", "stage", "sourceId", "relativePath", "attempt", "rawPreview"}
-            })
+            result.append(
+                {
+                    key: value
+                    for key, value in diagnostic.items()
+                    if key in {"code", "message", "severity", "stage", "sourceId", "relativePath", "attempt", "rawPreview"}
+                }
+            )
         return result
 
-    def _mark(self,
-              row,
-              analyzer: OllamaAnalysisClient,
-              status: str,
-              diagnostics: List[Dict[str, Any]],
-              attempt_state: Optional[Dict[str, Any]] = None,
-              flow_domain: Optional[str] = None) -> None:
+    def _mark(
+        self,
+        row,
+        analyzer: AnalysisProvider,
+        status: str,
+        diagnostics: List[Dict[str, Any]],
+        attempt_state: Optional[Dict[str, Any]] = None,
+        flow_domain: Optional[str] = None,
+    ) -> None:
         self.analysis_store.mark_file(row["id"], self._state(row, analyzer, status, 0, 0, diagnostics, attempt_state, flow_domain=flow_domain))
 
-    def _state(self,
-               row,
-               analyzer: OllamaAnalysisClient,
-               status: str,
-               symbol_count: int,
-               relation_count: int,
-               diagnostics: List[Dict[str, Any]],
-               attempt_state: Optional[Dict[str, Any]] = None,
-               flow_domain: Optional[str] = None) -> Dict[str, Any]:
+    def _state(
+        self,
+        row,
+        analyzer: AnalysisProvider,
+        status: str,
+        symbol_count: int,
+        relation_count: int,
+        diagnostics: List[Dict[str, Any]],
+        attempt_state: Optional[Dict[str, Any]] = None,
+        flow_domain: Optional[str] = None,
+    ) -> Dict[str, Any]:
         state = {
             "source_id": row["source_id"],
             "relative_path": row["relative_path"],
@@ -476,11 +613,7 @@ class AnalysisJobRunner:
             diagnostic["stage"] = details["stage"]
         if details.get("severity"):
             diagnostic["severity"] = details["severity"]
-        metadata = {
-            key: details[key]
-            for key in ("exceptionType", "sqliteMessage", "table", "operation")
-            if key in details
-        }
+        metadata = {key: details[key] for key in ("exceptionType", "sqliteMessage", "table", "operation") if key in details}
         if metadata:
             diagnostic["metadata"] = metadata
         if attempt:
@@ -522,3 +655,16 @@ class AnalysisJobRunner:
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def _log(self, event: str, **fields: Any) -> None:
+        payload = {
+            "event": event,
+            "jobId": fields.get("jobId"),
+            "sourceId": fields.get("sourceId"),
+            "relativePath": fields.get("relativePath"),
+            "processed": fields.get("processed", 0),
+            "failed": fields.get("failed", 0),
+            "elapsedMs": fields.get("elapsedMs"),
+            "errorCode": fields.get("errorCode"),
+        }
+        self.logger.info(event, extra={"knowledge": {key: value for key, value in payload.items() if value is not None}})

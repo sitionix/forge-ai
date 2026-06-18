@@ -61,20 +61,22 @@ def scan_source(source: SourceMetadata, indexing: IndexingConfig, classifier: Fi
             skipped.increment(SkippedReason.UNREADABLE)
             continue
         text = content.decode("utf-8", errors="replace")
-        files.append(FileMetadata(
-            sourceId=source.sourceId,
-            sourcePath=source.path,
-            absolutePath=str(path.resolve()),
-            relativePath=relative_path,
-            extension=classification.extension,
-            language=classification.language,
-            flowDomain=classification.flow_domain,
-            sizeBytes=stat.st_size,
-            contentHash=hashlib.sha256(content).hexdigest(),
-            lastModified=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-            lineCount=_line_count(text),
-            decodePolicy=DECODE_POLICY,
-        ))
+        files.append(
+            FileMetadata(
+                sourceId=source.sourceId,
+                sourcePath=source.path,
+                absolutePath=str(path.resolve()),
+                relativePath=relative_path,
+                extension=classification.extension,
+                language=classification.language,
+                flowDomain=classification.flow_domain,
+                sizeBytes=stat.st_size,
+                contentHash=hashlib.sha256(content).hexdigest(),
+                lastModified=datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                lineCount=_line_count(text),
+                decodePolicy=DECODE_POLICY,
+            )
+        )
     return files, skipped
 
 

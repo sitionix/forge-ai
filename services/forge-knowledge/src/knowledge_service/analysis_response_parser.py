@@ -44,7 +44,7 @@ class AiAnalysisResponseParser:
     def _load_json(self, raw: str) -> tuple[Any | None, bool]:
         try:
             return json.loads(raw), True
-        except json.JSONDecodeError as exc:
+        except json.JSONDecodeError:
             return None, False
 
     def _extract_first_json_object(self, raw: str) -> str | None:
@@ -71,7 +71,7 @@ class AiAnalysisResponseParser:
             elif char == "}":
                 depth -= 1
                 if depth == 0:
-                    return raw[start:index + 1]
+                    return raw[start : index + 1]
         return None
 
     def _preview(self, raw: str) -> str:

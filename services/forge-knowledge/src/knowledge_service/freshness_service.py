@@ -36,11 +36,7 @@ class KnowledgeFreshnessService:
 
     def _selected_sources(self, source_ids: List[str], groups: List[str]):
         result = ServiceYamlCatalogProvider(self.config).load()
-        return [
-            source for source in result.sources
-            if (not source_ids or source.sourceId in source_ids)
-            and (not groups or source.group in groups)
-        ]
+        return [source for source in result.sources if (not source_ids or source.sourceId in source_ids) and (not groups or source.group in groups)]
 
     def _current_files(self, sources) -> List[FileMetadata]:
         files: List[FileMetadata] = []
@@ -56,15 +52,8 @@ class KnowledgeFreshnessService:
         current_keys = set(current_by_key)
         new_keys = current_keys - snapshot_keys
         deleted_keys = snapshot_keys - current_keys
-        modified_keys = {
-            key for key in snapshot_keys & current_keys
-            if snapshot_by_key[key]["contentHash"] != current_by_key[key].contentHash
-        }
-        affected_ids = [
-            snapshot_by_key[key]["id"]
-            for key in deleted_keys | modified_keys
-            if snapshot_by_key[key].get("id") is not None
-        ]
+        modified_keys = {key for key in snapshot_keys & current_keys if snapshot_by_key[key]["contentHash"] != current_by_key[key].contentHash}
+        affected_ids = [snapshot_by_key[key]["id"] for key in deleted_keys | modified_keys if snapshot_by_key[key].get("id") is not None]
         affected_scanned = len(self.store.analyzed_file_ids(affected_ids))
         status = "UP_TO_DATE" if not new_keys and not modified_keys and not deleted_keys else "OUTDATED"
         return {

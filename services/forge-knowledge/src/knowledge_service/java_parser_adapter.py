@@ -51,11 +51,13 @@ class JavaParserAdapter:
         imports = self._imports(tree.root_node, content, file)
         diagnostics: List[StructuralParseDiagnostic] = []
         if tree.root_node.has_error:
-            diagnostics.append(StructuralParseDiagnostic(
-                code="STRUCTURAL_PARSE_HAS_ERRORS",
-                message="Java parser reported syntax errors; extracted facts may be partial.",
-                severity="WARN",
-            ))
+            diagnostics.append(
+                StructuralParseDiagnostic(
+                    code="STRUCTURAL_PARSE_HAS_ERRORS",
+                    message="Java parser reported syntax errors; extracted facts may be partial.",
+                    severity="WARN",
+                )
+            )
         types: List[StructuralType] = []
         callables: List[StructuralCallable] = []
         fields: List[StructuralField] = []
@@ -107,28 +109,32 @@ class JavaParserAdapter:
             is_wildcard = imported.endswith(".*") or any(grand.type == "asterisk" for grand in child.children)
             line_start, line_end = self._line_range(child)
             stable_key = self._stable_key(file.source_id, file.relative_path, "IMPORT", imported)
-            imports.append(StructuralImport(
-                imported_name=imported,
-                is_static=is_static,
-                is_wildcard=is_wildcard,
-                line_start=line_start,
-                line_end=line_end,
-                stable_key=stable_key,
-            ))
+            imports.append(
+                StructuralImport(
+                    imported_name=imported,
+                    is_static=is_static,
+                    is_wildcard=is_wildcard,
+                    line_start=line_start,
+                    line_end=line_end,
+                    stable_key=stable_key,
+                )
+            )
         return imports
 
-    def _parse_types(self,
-                     container,
-                     content: bytes,
-                     file: StructuralFileMetadata,
-                     package_name: Optional[str],
-                     parent_type: Optional[StructuralType],
-                     owner_prefix: Optional[str],
-                     types: List[StructuralType],
-                     callables: List[StructuralCallable],
-                     fields: List[StructuralField],
-                     annotations: List[StructuralAnnotation],
-                     callable_bodies: List[Tuple[StructuralCallable, Any]]) -> None:
+    def _parse_types(
+        self,
+        container,
+        content: bytes,
+        file: StructuralFileMetadata,
+        package_name: Optional[str],
+        parent_type: Optional[StructuralType],
+        owner_prefix: Optional[str],
+        types: List[StructuralType],
+        callables: List[StructuralCallable],
+        fields: List[StructuralField],
+        annotations: List[StructuralAnnotation],
+        callable_bodies: List[Tuple[StructuralCallable, Any]],
+    ) -> None:
         for node in container.named_children:
             if node.type not in TYPE_NODE_KINDS:
                 continue
@@ -174,16 +180,18 @@ class JavaParserAdapter:
                 callable_bodies,
             )
 
-    def _parse_type_members(self,
-                            body,
-                            content: bytes,
-                            file: StructuralFileMetadata,
-                            owner: StructuralType,
-                            types: List[StructuralType],
-                            callables: List[StructuralCallable],
-                            fields: List[StructuralField],
-                            annotations: List[StructuralAnnotation],
-                            callable_bodies: List[Tuple[StructuralCallable, Any]]) -> None:
+    def _parse_type_members(
+        self,
+        body,
+        content: bytes,
+        file: StructuralFileMetadata,
+        owner: StructuralType,
+        types: List[StructuralType],
+        callables: List[StructuralCallable],
+        fields: List[StructuralField],
+        annotations: List[StructuralAnnotation],
+        callable_bodies: List[Tuple[StructuralCallable, Any]],
+    ) -> None:
         for node in body.named_children:
             if node.type == "field_declaration":
                 fields.extend(self._field_declaration(node, content, file, owner, annotations))
@@ -196,12 +204,9 @@ class JavaParserAdapter:
                     if callable_body is not None:
                         callable_bodies.append((callable_item, callable_body))
 
-    def _field_declaration(self,
-                           node,
-                           content: bytes,
-                           file: StructuralFileMetadata,
-                           owner: StructuralType,
-                           annotations: List[StructuralAnnotation]) -> List[StructuralField]:
+    def _field_declaration(
+        self, node, content: bytes, file: StructuralFileMetadata, owner: StructuralType, annotations: List[StructuralAnnotation]
+    ) -> List[StructuralField]:
         type_node = node.child_by_field_name("type")
         type_name = self._text(type_node, content) if type_node is not None else None
         visibility = self._visibility(node)
@@ -216,18 +221,20 @@ class JavaParserAdapter:
             local_id = self._stable_key(file.source_id, file.relative_path, "FIELD", owner.qualified_name, name)
             field_annotations = self._annotations(node, content, local_id)
             annotations.extend(field_annotations)
-            result.append(StructuralField(
-                local_id=local_id,
-                name=name,
-                qualified_name=qualified,
-                owner_type_local_id=owner.local_id,
-                type_name=type_name,
-                line_start=line_start,
-                line_end=line_end,
-                annotations=field_annotations,
-                visibility=visibility,
-                stable_key=local_id,
-            ))
+            result.append(
+                StructuralField(
+                    local_id=local_id,
+                    name=name,
+                    qualified_name=qualified,
+                    owner_type_local_id=owner.local_id,
+                    type_name=type_name,
+                    line_start=line_start,
+                    line_end=line_end,
+                    annotations=field_annotations,
+                    visibility=visibility,
+                    stable_key=local_id,
+                )
+            )
         return result
 
     def _callable(self, node, content: bytes, file: StructuralFileMetadata, owner: StructuralType) -> Optional[StructuralCallable]:
@@ -266,14 +273,16 @@ class JavaParserAdapter:
             parameter_names=parameter_names,
         )
 
-    def _callsites(self,
-                   content: bytes,
-                   file: StructuralFileMetadata,
-                   types: List[StructuralType],
-                   callables: List[StructuralCallable],
-                   fields: List[StructuralField],
-                   callable_bodies: List[Tuple[StructuralCallable, Any]],
-                   imports: List[StructuralImport]) -> List[StructuralCallsite]:
+    def _callsites(
+        self,
+        content: bytes,
+        file: StructuralFileMetadata,
+        types: List[StructuralType],
+        callables: List[StructuralCallable],
+        fields: List[StructuralField],
+        callable_bodies: List[Tuple[StructuralCallable, Any]],
+        imports: List[StructuralImport],
+    ) -> List[StructuralCallsite]:
         by_owner: Dict[str, List[StructuralCallable]] = {}
         by_type_name: Dict[str, StructuralType] = {}
         for item in types:
@@ -289,11 +298,7 @@ class JavaParserAdapter:
         imported_simple_names = {self._simple_type(item.imported_name) for item in imports if not item.is_wildcard}
         callsites: List[StructuralCallsite] = []
         for caller, body in callable_bodies:
-            parameter_types = {
-                name: self._simple_type(type_name)
-                for name, type_name in zip(caller.parameter_names, caller.parameters)
-                if name and type_name
-            }
+            parameter_types = {name: self._simple_type(type_name) for name, type_name in zip(caller.parameter_names, caller.parameters) if name and type_name}
             local_variable_types = self._local_variable_types(body, content)
             for node in self._descendants(body):
                 if node.type not in CALLSITE_NODE_TYPES:
@@ -314,17 +319,19 @@ class JavaParserAdapter:
                     callsites.append(callsite)
         return callsites
 
-    def _callsite(self,
-                  node,
-                  content: bytes,
-                  file: StructuralFileMetadata,
-                  caller: StructuralCallable,
-                  by_owner: Dict[str, List[StructuralCallable]],
-                  by_type_name: Dict[str, StructuralType],
-                  field_types: Dict[Tuple[str, str], str],
-                  parameter_types: Dict[str, str],
-                  local_variable_types: Dict[str, str],
-                  imported_simple_names: set[str]) -> Optional[StructuralCallsite]:
+    def _callsite(
+        self,
+        node,
+        content: bytes,
+        file: StructuralFileMetadata,
+        caller: StructuralCallable,
+        by_owner: Dict[str, List[StructuralCallable]],
+        by_type_name: Dict[str, StructuralType],
+        field_types: Dict[Tuple[str, str], str],
+        parameter_types: Dict[str, str],
+        local_variable_types: Dict[str, str],
+        imported_simple_names: set[str],
+    ) -> Optional[StructuralCallsite]:
         line_start, line_end = self._line_range(node)
         receiver_text: Optional[str] = None
         receiver_type_hint: Optional[str] = None
@@ -389,7 +396,9 @@ class JavaParserAdapter:
                     call_kind = "PARAMETER_RECEIVER"
                     receiver_type_hint = parameter_types[receiver_text]
                     target_type_text = receiver_type_hint
-                    target_callable_local_id, resolution_status = self._resolve_type_method(receiver_type_hint, method_name, argument_count, by_owner, by_type_name)
+                    target_callable_local_id, resolution_status = self._resolve_type_method(
+                        receiver_type_hint, method_name, argument_count, by_owner, by_type_name
+                    )
                     resolution_reason = ResolutionReason.PARAMETER_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
                     unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
                     resolver_signals.append("PARAMETER_TYPE")
@@ -397,14 +406,20 @@ class JavaParserAdapter:
                     call_kind = "LOCAL_VARIABLE_RECEIVER"
                     receiver_type_hint = local_variable_types[receiver_text]
                     target_type_text = receiver_type_hint
-                    target_callable_local_id, resolution_status = self._resolve_type_method(receiver_type_hint, method_name, argument_count, by_owner, by_type_name)
-                    resolution_reason = ResolutionReason.LOCAL_VARIABLE_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
+                    target_callable_local_id, resolution_status = self._resolve_type_method(
+                        receiver_type_hint, method_name, argument_count, by_owner, by_type_name
+                    )
+                    resolution_reason = (
+                        ResolutionReason.LOCAL_VARIABLE_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
+                    )
                     unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
                     resolver_signals.append("LOCAL_VARIABLE_TYPE")
                 elif receiver_simple in by_type_name:
                     call_kind = "STATIC_METHOD"
                     target_type_text = receiver_simple
-                    target_callable_local_id, resolution_status = self._resolve_type_method(receiver_simple, method_name, argument_count, by_owner, by_type_name)
+                    target_callable_local_id, resolution_status = self._resolve_type_method(
+                        receiver_simple, method_name, argument_count, by_owner, by_type_name
+                    )
                     resolution_reason = ResolutionReason.QUALIFIED_NAME_MATCH.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
                     unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
                     resolver_signals.append("STATIC_TYPE")
@@ -454,34 +469,29 @@ class JavaParserAdapter:
             owner_type_hint=caller.qualified_name.rsplit(".", 1)[0] if "." in caller.qualified_name else caller.qualified_name,
         )
 
-    def _resolve_same_owner(self,
-                            caller: StructuralCallable,
-                            method_name: str,
-                            argument_count: Optional[int],
-                            by_owner: Dict[str, List[StructuralCallable]]) -> Tuple[Optional[str], str]:
-        candidates = [
-            item for item in by_owner.get(caller.owner_type_local_id or "", [])
-            if item.name == method_name
-        ]
+    def _resolve_same_owner(
+        self, caller: StructuralCallable, method_name: str, argument_count: Optional[int], by_owner: Dict[str, List[StructuralCallable]]
+    ) -> Tuple[Optional[str], str]:
+        candidates = [item for item in by_owner.get(caller.owner_type_local_id or "", []) if item.name == method_name]
         return self._resolve_candidates(candidates, argument_count)
 
-    def _resolve_type_method(self,
-                             type_name: str,
-                             method_name: str,
-                             argument_count: Optional[int],
-                             by_owner: Dict[str, List[StructuralCallable]],
-                             by_type_name: Dict[str, StructuralType]) -> Tuple[Optional[str], str]:
+    def _resolve_type_method(
+        self,
+        type_name: str,
+        method_name: str,
+        argument_count: Optional[int],
+        by_owner: Dict[str, List[StructuralCallable]],
+        by_type_name: Dict[str, StructuralType],
+    ) -> Tuple[Optional[str], str]:
         target_type = by_type_name.get(type_name)
         if target_type is None:
             return None, "UNRESOLVED"
         candidates = [item for item in by_owner.get(target_type.local_id, []) if item.name == method_name]
         return self._resolve_candidates(candidates, argument_count)
 
-    def _resolve_constructor(self,
-                             type_name: str,
-                             argument_count: Optional[int],
-                             by_owner: Dict[str, List[StructuralCallable]],
-                             by_type_name: Dict[str, StructuralType]) -> Tuple[Optional[str], str]:
+    def _resolve_constructor(
+        self, type_name: str, argument_count: Optional[int], by_owner: Dict[str, List[StructuralCallable]], by_type_name: Dict[str, StructuralType]
+    ) -> Tuple[Optional[str], str]:
         target_type = by_type_name.get(type_name)
         if target_type is None:
             return None, "EXTERNAL_TARGET"
@@ -523,13 +533,15 @@ class JavaParserAdapter:
                 continue
             args = child.child_by_field_name("arguments")
             line_start, line_end = self._line_range(child)
-            result.append(StructuralAnnotation(
-                name=self._text(name_node, content),
-                arguments_raw=self._text(args, content) if args is not None else None,
-                line_start=line_start,
-                line_end=line_end,
-                target_local_id=target_local_id,
-            ))
+            result.append(
+                StructuralAnnotation(
+                    name=self._text(name_node, content),
+                    arguments_raw=self._text(args, content) if args is not None else None,
+                    line_start=line_start,
+                    line_end=line_end,
+                    target_local_id=target_local_id,
+                )
+            )
         return result
 
     def _parameter_details(self, node, content: bytes) -> Tuple[List[str], List[str]]:
@@ -613,7 +625,7 @@ class JavaParserAdapter:
     def _text(self, node, content: bytes) -> str:
         if node is None:
             return ""
-        return content[node.start_byte:node.end_byte].decode("utf-8", errors="replace").strip()
+        return content[node.start_byte : node.end_byte].decode("utf-8", errors="replace").strip()
 
     def _simple_type(self, value: str) -> str:
         value = value.strip()

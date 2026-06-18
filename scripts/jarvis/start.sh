@@ -9,15 +9,31 @@ JARVIS_ROOT="${FORGE_AI_HOME}/services/forge-jarvis"
 PYTHON="${JARVIS_ROOT}/.venv/bin/python3"
 PID_FILE="${FORGE_RUNTIME_DIR}/jarvis/jarvis-agent.pid"
 STDOUT_LOG="${FORGE_RUNTIME_DIR}/jarvis/logs/jarvis-agent.stdout.log"
-HOST="${JARVIS_HOST:-127.0.0.1}"
-PORT="${JARVIS_PORT:-7071}"
 export JARVIS_CONFIG_DIR="${JARVIS_CONFIG_DIR:-${FORGE_CONFIG_DIR}/jarvis}"
 
 mkdir -p "${FORGE_RUNTIME_DIR}/jarvis/logs" "${FORGE_RUNTIME_DIR}/jarvis/data/ollama"
 export OLLAMA_HOME="${OLLAMA_HOME:-${FORGE_RUNTIME_DIR}/jarvis/data/ollama}"
 OLLAMA_RUNTIME_HOME="${FORGE_RUNTIME_DIR}/jarvis"
 
-if ! curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+if [[ ! -x "${PYTHON}" ]] || ! PYTHONPATH="${JARVIS_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" "${PYTHON}" -c 'import uvicorn' >/dev/null 2>&1; then
+  echo "Jarvis dependencies are missing. Run scripts/jarvis/bootstrap.sh first."
+  exit 1
+fi
+
+read -r CONFIG_HOST CONFIG_PORT CONFIG_OLLAMA_BASE_URL < <(
+  PYTHONPATH="${JARVIS_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" "${PYTHON}" - <<'PY'
+from jarvis_agent.config import load_forge_settings
+
+settings = load_forge_settings()
+jarvis = settings.services.jarvis
+print(jarvis.host, jarvis.port, jarvis.model_runtime.base_url)
+PY
+)
+HOST="${JARVIS_HOST:-${CONFIG_HOST}}"
+PORT="${JARVIS_PORT:-${CONFIG_PORT}}"
+OLLAMA_TAGS_URL="${CONFIG_OLLAMA_BASE_URL%/}/api/tags"
+
+if ! curl -fsS "${OLLAMA_TAGS_URL}" >/dev/null 2>&1; then
   if command -v ollama >/dev/null 2>&1; then
     echo "Starting Ollama in the background..."
     nohup env HOME="${OLLAMA_RUNTIME_HOME}" OLLAMA_HOME="${OLLAMA_HOME}" ollama serve > "${FORGE_RUNTIME_DIR}/jarvis/logs/ollama.log" 2>&1 &
@@ -28,29 +44,33 @@ if ! curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
 fi
 
 for _ in {1..30}; do
-  if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+  if curl -fsS "${OLLAMA_TAGS_URL}" >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
 
-if ! curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
-  echo "Ollama API is not reachable at http://127.0.0.1:11434"
+if ! curl -fsS "${OLLAMA_TAGS_URL}" >/dev/null 2>&1; then
+  echo "Ollama API is not reachable at ${CONFIG_OLLAMA_BASE_URL}"
   echo "Last Ollama log lines:"
   tail -n 40 "${FORGE_RUNTIME_DIR}/jarvis/logs/ollama.log" || true
   exit 1
 fi
 
-if [[ ! -x "${PYTHON}" ]] || ! PYTHONPATH="${JARVIS_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" "${PYTHON}" -c 'import uvicorn' >/dev/null 2>&1; then
-  echo "Jarvis dependencies are missing. Run scripts/jarvis/bootstrap.sh first."
-  exit 1
-fi
-
 if curl -fsS "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
   echo "Jarvis Agent is already reachable at http://${HOST}:${PORT}/health"
-elif [[ -f "${PID_FILE}" ]] && kill -0 "$(cat "${PID_FILE}")" >/dev/null 2>&1; then
-  echo "Jarvis Agent is already running with PID $(cat "${PID_FILE}")"
 else
+  if [[ -f "${PID_FILE}" ]]; then
+    existing_pid="$(cat "${PID_FILE}")"
+    existing_cmd="$(ps -p "${existing_pid}" -o command= 2>/dev/null || true)"
+    if [[ -n "${existing_cmd}" && "${existing_cmd}" == *"jarvis_agent.main:app"* ]]; then
+      echo "Jarvis PID ${existing_pid} exists but health check failed; stopping unhealthy service."
+      kill "${existing_pid}" >/dev/null 2>&1 || true
+      sleep 1
+    else
+      echo "Ignoring stale Jarvis PID file: ${existing_pid}"
+    fi
+  fi
   echo "Starting Jarvis Agent on ${HOST}:${PORT}..."
   (
     cd "${JARVIS_ROOT}"

@@ -122,3 +122,21 @@ _logs:
 
 _knowledge-logs:
     @tail -n 120 -f "{{root}}/var/knowledge/logs/knowledge-service.stdout.log"
+
+test:
+    @scripts/test.sh
+
+test-python:
+    @scripts/test-python.sh
+
+test-console:
+    @scripts/test-console.sh
+
+test-forge-it:
+    @scripts/test-forge-it.sh
+
+lint:
+    @scripts/lint.sh
+
+typecheck:
+    @scripts/typecheck.sh

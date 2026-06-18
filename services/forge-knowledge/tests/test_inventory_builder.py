@@ -222,18 +222,21 @@ indexing:
     with store._connect() as conn:
         rows = conn.execute("SELECT id, source_id, relative_path, content_hash FROM files ORDER BY source_id").fetchall()
         for row in rows:
-            analysis_store.mark_file(row["id"], {
-                "source_id": row["source_id"],
-                "relative_path": row["relative_path"],
-                "content_hash": row["content_hash"],
-                "analyzer_name": "ai-file-analyzer",
-                "analyzer_version": "1",
-                "status": "ANALYZED",
-                "analyzed_at": "2026-06-14T12:00:00+00:00",
-                "symbol_count": 1,
-                "relation_count": 0,
-                "diagnostics": [],
-            })
+            analysis_store.mark_file(
+                row["id"],
+                {
+                    "source_id": row["source_id"],
+                    "relative_path": row["relative_path"],
+                    "content_hash": row["content_hash"],
+                    "analyzer_name": "ai-file-analyzer",
+                    "analyzer_version": "1",
+                    "status": "ANALYZED",
+                    "analyzed_at": "2026-06-14T12:00:00+00:00",
+                    "symbol_count": 1,
+                    "relation_count": 0,
+                    "diagnostics": [],
+                },
+            )
         conn.execute("DELETE FROM files WHERE source_id = ?", ("first-service",))
 
     analysis_store.cleanup_stale_files(["second-service"])

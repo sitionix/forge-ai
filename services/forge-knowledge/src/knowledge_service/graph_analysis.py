@@ -46,60 +46,62 @@ class LegacyAnalysisProjectionAdapter:
             confidence_values = [role.confidence for role in symbol.roles]
             metadata = dict(symbol.metadata or {})
             metadata.setdefault("sourceKind", symbol.kind)
-            nodes.append(GraphNode(
-                localId=symbol.localId,
-                nodeKind=source_kind_to_node_kind(symbol.kind),
-                name=symbol.name,
-                lineStart=symbol.lineStart,
-                lineEnd=symbol.lineEnd,
-                confidence=max(confidence_values) if confidence_values else 0.0,
-                metadata=metadata,
-            ))
+            nodes.append(
+                GraphNode(
+                    localId=symbol.localId,
+                    nodeKind=source_kind_to_node_kind(symbol.kind),
+                    name=symbol.name,
+                    lineStart=symbol.lineStart,
+                    lineEnd=symbol.lineEnd,
+                    confidence=max(confidence_values) if confidence_values else 0.0,
+                    metadata=metadata,
+                )
+            )
             for index, role in enumerate(symbol.roles, start=1):
-                claims.append(GraphClaim(
-                    localId=f"{symbol.localId}:role:{index}",
-                    nodeLocalId=symbol.localId,
-                    claimKind="ROLE",
-                    summary=role.role,
+                claims.append(
+                    GraphClaim(
+                        localId=f"{symbol.localId}:role:{index}",
+                        nodeLocalId=symbol.localId,
+                        claimKind="ROLE",
+                        summary=role.role,
+                        evidence=[
+                            GraphEvidenceRef(
+                                lineStart=symbol.lineStart,
+                                lineEnd=symbol.lineEnd,
+                                text=evidence,
+                            )
+                            for evidence in role.evidence
+                        ],
+                        confidence=role.confidence,
+                        metadata={"classifierRole": role.role},
+                    )
+                )
+        for relation in result.relations:
+            edges.append(
+                GraphEdge(
+                    localId=f"{relation.fromLocalId}:{relation.relation}:{relation.toLocalId}:{relation.lineStart}",
+                    fromNodeLocalId=relation.fromLocalId,
+                    toNodeLocalId=relation.toLocalId,
+                    edgeType=relation.relation,
+                    confidence=relation.confidence,
                     evidence=[
                         GraphEvidenceRef(
-                            lineStart=symbol.lineStart,
-                            lineEnd=symbol.lineEnd,
+                            lineStart=relation.lineStart,
+                            lineEnd=relation.lineEnd,
                             text=evidence,
                         )
-                        for evidence in role.evidence
+                        for evidence in relation.evidence
                     ],
-                    confidence=role.confidence,
-                    metadata={"classifierRole": role.role},
-                ))
-        for relation in result.relations:
-            edges.append(GraphEdge(
-                localId=f"{relation.fromLocalId}:{relation.relation}:{relation.toLocalId}:{relation.lineStart}",
-                fromNodeLocalId=relation.fromLocalId,
-                toNodeLocalId=relation.toLocalId,
-                edgeType=relation.relation,
-                confidence=relation.confidence,
-                evidence=[
-                    GraphEvidenceRef(
-                        lineStart=relation.lineStart,
-                        lineEnd=relation.lineEnd,
-                        text=evidence,
-                    )
-                    for evidence in relation.evidence
-                ],
-                metadata=relation.metadata,
-            ))
+                    metadata=relation.metadata,
+                )
+            )
         return GraphAnalysisResult(nodes=nodes, edges=edges, claims=claims, diagnostics=result.diagnostics)
 
 
 class GraphAnalysisEngine:
-    def materialize(self,
-                    row: Dict[str, Any],
-                    job_id: str,
-                    analyzer_name: str,
-                    analyzer_version: str,
-                    result: GraphAnalysisResult,
-                    lines: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    def materialize(
+        self, row: Dict[str, Any], job_id: str, analyzer_name: str, analyzer_version: str, result: GraphAnalysisResult, lines: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
         local_to_node_id: Dict[str, str] = {}
         nodes: List[Dict[str, Any]] = []
         edges: List[Dict[str, Any]] = []
@@ -118,28 +120,30 @@ class GraphAnalysisEngine:
             metadata.setdefault("analyzerVersion", analyzer_version)
             fact_origin = self._fact_origin(metadata)
             flow_domain = self._flow_domain(row["relative_path"], node.nodeKind, metadata)
-            nodes.append({
-                "id": node_id,
-                "job_id": job_id,
-                "source_id": row["source_id"],
-                "inventory_file_id": row["id"],
-                "analysis_file_id": row["id"],
-                "stable_key": metadata.get("stableKey") or node_id,
-                "node_kind": node.nodeKind,
-                "language": node.language or metadata.get("language"),
-                "name": node.name,
-                "qualified_name": node.qualifiedName,
-                "display_name": node.displayName,
-                "parent_node_id": None,
-                "parent_local_id": node.parentLocalId or parent_by_local_id.get(node.localId),
-                "line_start": node.lineStart,
-                "line_end": node.lineEnd,
-                "confidence": node.confidence,
-                "status": metadata.get("status") or confidence_status(node.confidence),
-                "metadata": metadata,
-                "fact_origin": fact_origin,
-                "flow_domain": flow_domain,
-            })
+            nodes.append(
+                {
+                    "id": node_id,
+                    "job_id": job_id,
+                    "source_id": row["source_id"],
+                    "inventory_file_id": row["id"],
+                    "analysis_file_id": row["id"],
+                    "stable_key": metadata.get("stableKey") or node_id,
+                    "node_kind": node.nodeKind,
+                    "language": node.language or metadata.get("language"),
+                    "name": node.name,
+                    "qualified_name": node.qualifiedName,
+                    "display_name": node.displayName,
+                    "parent_node_id": None,
+                    "parent_local_id": node.parentLocalId or parent_by_local_id.get(node.localId),
+                    "line_start": node.lineStart,
+                    "line_end": node.lineEnd,
+                    "confidence": node.confidence,
+                    "status": metadata.get("status") or confidence_status(node.confidence),
+                    "metadata": metadata,
+                    "fact_origin": fact_origin,
+                    "flow_domain": flow_domain,
+                }
+            )
 
         for node in nodes:
             parent_local_id = node.pop("parent_local_id", None)
@@ -196,21 +200,23 @@ class GraphAnalysisEngine:
                 metadata["qualityIssue"] = rejection_reason
             if not rejection_reason and metadata.get("qualityIssue") and status in {"DEBUG_ONLY", "LOW_CONFIDENCE"}:
                 rejection_reason = str(metadata.get("qualityIssue"))
-            claims.append({
-                "id": claim_id,
-                "job_id": job_id,
-                "source_id": row["source_id"],
-                "node_id": node_id,
-                "claim_kind": claim.claimKind,
-                "summary": claim.summary,
-                "confidence": claim.confidence,
-                "status": status,
-                "evidence_ids": claim_evidence_ids,
-                "metadata": metadata,
-                "rejection_reason": rejection_reason,
-                "fact_origin": fact_origin,
-                "flow_domain": str(flow_domain or "CODE").upper(),
-            })
+            claims.append(
+                {
+                    "id": claim_id,
+                    "job_id": job_id,
+                    "source_id": row["source_id"],
+                    "node_id": node_id,
+                    "claim_kind": claim.claimKind,
+                    "summary": claim.summary,
+                    "confidence": claim.confidence,
+                    "status": status,
+                    "evidence_ids": claim_evidence_ids,
+                    "metadata": metadata,
+                    "rejection_reason": rejection_reason,
+                    "fact_origin": fact_origin,
+                    "flow_domain": str(flow_domain or "CODE").upper(),
+                }
+            )
 
         for edge_index, edge in enumerate(result.edges, start=1):
             from_node_id = local_to_node_id.get(edge.fromNodeLocalId)
@@ -258,46 +264,54 @@ class GraphAnalysisEngine:
                 )
                 evidence.append(evidence_row)
                 edge_evidence_id = evidence_row["id"]
-            edges.append({
-                "id": edge_id,
-                "job_id": job_id,
-                "source_id": row["source_id"],
-                "inventory_file_id": row["id"],
-                "analysis_file_id": row["id"],
-                "from_node_id": from_node_id,
-                "to_node_id": to_node_id,
-                "edge_type": edge.edgeType,
-                "resolution_status": str(metadata.get("resolutionStatus") or ("RESOLVED" if to_node_id else "UNRESOLVED")).upper(),
-                "confidence": edge.confidence,
-                "evidence_id": edge_evidence_id,
-                "unresolved_target": edge.unresolvedTarget,
-                "metadata": metadata,
-                "status": metadata.get("status") or confidence_status(edge.confidence),
-                "fact_origin": fact_origin,
-                "flow_domain": str(flow_domain).upper(),
-            })
+            edges.append(
+                {
+                    "id": edge_id,
+                    "job_id": job_id,
+                    "source_id": row["source_id"],
+                    "inventory_file_id": row["id"],
+                    "analysis_file_id": row["id"],
+                    "from_node_id": from_node_id,
+                    "to_node_id": to_node_id,
+                    "edge_type": edge.edgeType,
+                    "resolution_status": str(metadata.get("resolutionStatus") or ("RESOLVED" if to_node_id else "UNRESOLVED")).upper(),
+                    "confidence": edge.confidence,
+                    "evidence_id": edge_evidence_id,
+                    "unresolved_target": edge.unresolvedTarget,
+                    "metadata": metadata,
+                    "status": metadata.get("status") or confidence_status(edge.confidence),
+                    "fact_origin": fact_origin,
+                    "flow_domain": str(flow_domain).upper(),
+                }
+            )
 
         for index, diagnostic in enumerate(result.diagnostics or [], start=1):
             diagnostic_metadata = self._diagnostic_metadata(diagnostic)
             diagnostic_fact_origin = str(diagnostic.get("factOrigin") or diagnostic_metadata.get("factOrigin") or "LLM").upper()
-            diagnostic_flow_domain = str(diagnostic.get("flowDomain") or diagnostic_metadata.get("flowDomain") or self._flow_domain(row["relative_path"], None, {})).upper()
-            diagnostics.append({
-                "id": self._stable_id("analysis-graph-diagnostic", row["source_id"], row["relative_path"], str(index), diagnostic.get("code") or "DIAGNOSTIC"),
-                "job_id": job_id,
-                "source_id": row["source_id"],
-                "inventory_file_id": row["id"],
-                "analysis_file_id": row["id"],
-                "severity": diagnostic.get("severity") or "WARN",
-                "stage": diagnostic.get("stage") or "ANALYSIS",
-                "code": diagnostic.get("code") or "DIAGNOSTIC",
-                "message": diagnostic.get("message") or "-",
-                "candidate_id": diagnostic.get("candidateId") or diagnostic.get("candidate_id"),
-                "line_start": diagnostic.get("lineStart") or diagnostic.get("line_start"),
-                "line_end": diagnostic.get("lineEnd") or diagnostic.get("line_end"),
-                "metadata": diagnostic_metadata,
-                "fact_origin": diagnostic_fact_origin,
-                "flow_domain": diagnostic_flow_domain,
-            })
+            diagnostic_flow_domain = str(
+                diagnostic.get("flowDomain") or diagnostic_metadata.get("flowDomain") or self._flow_domain(row["relative_path"], None, {})
+            ).upper()
+            diagnostics.append(
+                {
+                    "id": self._stable_id(
+                        "analysis-graph-diagnostic", row["source_id"], row["relative_path"], str(index), diagnostic.get("code") or "DIAGNOSTIC"
+                    ),
+                    "job_id": job_id,
+                    "source_id": row["source_id"],
+                    "inventory_file_id": row["id"],
+                    "analysis_file_id": row["id"],
+                    "severity": diagnostic.get("severity") or "WARN",
+                    "stage": diagnostic.get("stage") or "ANALYSIS",
+                    "code": diagnostic.get("code") or "DIAGNOSTIC",
+                    "message": diagnostic.get("message") or "-",
+                    "candidate_id": diagnostic.get("candidateId") or diagnostic.get("candidate_id"),
+                    "line_start": diagnostic.get("lineStart") or diagnostic.get("line_start"),
+                    "line_end": diagnostic.get("lineEnd") or diagnostic.get("line_end"),
+                    "metadata": diagnostic_metadata,
+                    "fact_origin": diagnostic_fact_origin,
+                    "flow_domain": diagnostic_flow_domain,
+                }
+            )
 
         return {"nodes": nodes, "edges": edges, "claims": claims, "evidence": evidence, "diagnostics": diagnostics}
 
@@ -308,20 +322,22 @@ class GraphAnalysisEngine:
                 parents.setdefault(edge.toNodeLocalId, edge.fromNodeLocalId)
         return parents
 
-    def _evidence(self,
-                  row: Dict[str, Any],
-                  job_id: str,
-                  lines: List[str],
-                  item: GraphEvidenceRef,
-                  owner_kind: str,
-                  owner_local_id: str,
-                  owner_id: str,
-                  owner_index: int,
-                  fact_origin: str,
-                  flow_domain: str,
-                  index: int,
-                  owner_metadata: Dict[str, Any],
-                  used_ids: Set[str]) -> Dict[str, Any]:
+    def _evidence(
+        self,
+        row: Dict[str, Any],
+        job_id: str,
+        lines: List[str],
+        item: GraphEvidenceRef,
+        owner_kind: str,
+        owner_local_id: str,
+        owner_id: str,
+        owner_index: int,
+        fact_origin: str,
+        flow_domain: str,
+        index: int,
+        owner_metadata: Dict[str, Any],
+        used_ids: Set[str],
+    ) -> Dict[str, Any]:
         excerpt = self._excerpt(lines, item.lineStart, item.lineEnd)
         metadata = dict(item.metadata or {})
         if item.text:
@@ -408,11 +424,7 @@ class GraphAnalysisEngine:
         return str(metadata.get("factOrigin") or "LLM").upper()
 
     def _diagnostic_metadata(self, diagnostic: Dict[str, Any]) -> Dict[str, Any]:
-        metadata = {
-            key: value
-            for key, value in diagnostic.items()
-            if key not in {"severity", "stage", "code", "message", "factOrigin", "flowDomain"}
-        }
+        metadata = {key: value for key, value in diagnostic.items() if key not in {"severity", "stage", "code", "message", "factOrigin", "flowDomain"}}
         nested = metadata.pop("metadata", None)
         if isinstance(nested, dict):
             metadata.update(nested)

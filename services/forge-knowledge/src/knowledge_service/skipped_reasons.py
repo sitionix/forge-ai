@@ -49,11 +49,7 @@ def normalize_skipped_breakdown(value: object, skipped_count: int = 0) -> Dict[s
     by_reason = value.get("byReason")
     if not isinstance(by_reason, dict):
         by_reason = {}
-    normalized = {
-        str(reason): int(count)
-        for reason, count in by_reason.items()
-        if isinstance(count, int) and count > 0
-    }
+    normalized = {str(reason): int(count) for reason, count in by_reason.items() if isinstance(count, int) and count > 0}
     total = value.get("total")
     if not isinstance(total, int):
         total = sum(normalized.values()) if normalized else skipped_count or 0

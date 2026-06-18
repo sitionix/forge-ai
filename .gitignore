@@ -10,6 +10,8 @@
 target/
 **/target/
 .m2/
+services/forge-console/dist/
+services/forge-console/node_modules/
 
 # Python / Jarvis local module
 services/forge-jarvis/.venv/

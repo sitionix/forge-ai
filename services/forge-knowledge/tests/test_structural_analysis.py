@@ -177,31 +177,33 @@ class TicketMapper {}
 def test_anchor_validator_accepts_callable_claim_only_when_evidence_overlaps_method():
     static_graph = StaticGraphMaterializer().to_graph(parse_sample())
     get_node = next(node for node in static_graph.nodes if node.nodeKind == "CALLABLE" and node.name == "get")
-    enrichment = GraphAnalysisResult.parse_obj({
-        "nodes": [],
-        "edges": [],
-        "claims": [
-            {
-                "localId": "claim-good",
-                "nodeLocalId": get_node.localId,
-                "claimKind": "RESPONSIBILITY",
-                "summary": "Loads a ticket and returns its API response.",
-                "evidence": [{"lineStart": 18, "lineEnd": 19, "text": "helper and mapper calls", "metadata": {}}],
-                "confidence": 0.86,
-                "metadata": {},
-            },
-            {
-                "localId": "claim-bad",
-                "nodeLocalId": get_node.localId,
-                "claimKind": "RESPONSIBILITY",
-                "summary": "Defines the controller class.",
-                "evidence": [{"lineStart": 9, "lineEnd": 10, "text": "class annotations", "metadata": {}}],
-                "confidence": 0.9,
-                "metadata": {},
-            },
-        ],
-        "diagnostics": [],
-    })
+    enrichment = GraphAnalysisResult.parse_obj(
+        {
+            "nodes": [],
+            "edges": [],
+            "claims": [
+                {
+                    "localId": "claim-good",
+                    "nodeLocalId": get_node.localId,
+                    "claimKind": "RESPONSIBILITY",
+                    "summary": "Loads a ticket and returns its API response.",
+                    "evidence": [{"lineStart": 18, "lineEnd": 19, "text": "helper and mapper calls", "metadata": {}}],
+                    "confidence": 0.86,
+                    "metadata": {},
+                },
+                {
+                    "localId": "claim-bad",
+                    "nodeLocalId": get_node.localId,
+                    "claimKind": "RESPONSIBILITY",
+                    "summary": "Defines the controller class.",
+                    "evidence": [{"lineStart": 9, "lineEnd": 10, "text": "class annotations", "metadata": {}}],
+                    "confidence": 0.9,
+                    "metadata": {},
+                },
+            ],
+            "diagnostics": [],
+        }
+    )
 
     merged = AnchorAwareGraphValidator().merge(static_graph, enrichment, metadata().line_count)
     claims = {claim.localId: claim for claim in merged.claims}
@@ -214,32 +216,34 @@ def test_anchor_validator_accepts_callable_claim_only_when_evidence_overlaps_met
 
 def test_anchor_validator_rejects_unanchored_llm_structure_and_claim_targets():
     static_graph = StaticGraphMaterializer().to_graph(parse_sample())
-    enrichment = GraphAnalysisResult.parse_obj({
-        "nodes": [
-            {
-                "localId": "invented",
-                "nodeKind": "CALLABLE",
-                "name": "invented",
-                "lineStart": 1,
-                "lineEnd": 1,
-                "confidence": 0.9,
-                "metadata": {},
-            }
-        ],
-        "edges": [],
-        "claims": [
-            {
-                "localId": "claim-missing",
-                "nodeLocalId": "missing-anchor",
-                "claimKind": "RESPONSIBILITY",
-                "summary": "Invented behavior.",
-                "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "package example", "metadata": {}}],
-                "confidence": 0.9,
-                "metadata": {},
-            }
-        ],
-        "diagnostics": [],
-    })
+    enrichment = GraphAnalysisResult.parse_obj(
+        {
+            "nodes": [
+                {
+                    "localId": "invented",
+                    "nodeKind": "CALLABLE",
+                    "name": "invented",
+                    "lineStart": 1,
+                    "lineEnd": 1,
+                    "confidence": 0.9,
+                    "metadata": {},
+                }
+            ],
+            "edges": [],
+            "claims": [
+                {
+                    "localId": "claim-missing",
+                    "nodeLocalId": "missing-anchor",
+                    "claimKind": "RESPONSIBILITY",
+                    "summary": "Invented behavior.",
+                    "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "package example", "metadata": {}}],
+                    "confidence": 0.9,
+                    "metadata": {},
+                }
+            ],
+            "diagnostics": [],
+        }
+    )
 
     merged = AnchorAwareGraphValidator().merge(static_graph, enrichment, metadata().line_count)
 

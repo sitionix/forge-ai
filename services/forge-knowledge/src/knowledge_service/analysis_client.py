@@ -27,15 +27,17 @@ class OllamaAnalysisClient:
 
     def analyze(self, payload: Dict[str, Any], line_count: int, repair_prompt: str | None = None) -> GraphAnalysisResult:
         prompt = self._prompt(payload, repair_prompt)
-        body = json.dumps({
-            "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json",
-            "options": {
-                "num_ctx": self.context_tokens,
-            },
-        }).encode("utf-8")
+        body = json.dumps(
+            {
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+                "options": {
+                    "num_ctx": self.context_tokens,
+                },
+            }
+        ).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/api/generate",
             data=body,
@@ -80,10 +82,12 @@ class OllamaAnalysisClient:
         ]
         if repair_prompt:
             parts.append(repair_prompt)
-        parts.extend([
-            "File metadata and content JSON:",
-            json.dumps(payload, ensure_ascii=False),
-        ])
+        parts.extend(
+            [
+                "File metadata and content JSON:",
+                json.dumps(payload, ensure_ascii=False),
+            ]
+        )
         return "\n".join(parts)
 
     def _require_localhost(self, base_url: str) -> str:

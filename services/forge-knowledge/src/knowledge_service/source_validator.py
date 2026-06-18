@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, List
 
 from knowledge_service.source_catalog import SourceDiagnostic
 

@@ -49,24 +49,28 @@ class StructuralAnalysisEngine:
         if adapter is None:
             return StructuralParseResult(
                 file=metadata,
-                diagnostics=[StructuralParseDiagnostic(
-                    code="STRUCTURAL_PARSER_NOT_AVAILABLE",
-                    message=f"No structural parser adapter is available for language '{language}'.",
-                    severity="WARN",
-                    metadata={"language": language},
-                )],
+                diagnostics=[
+                    StructuralParseDiagnostic(
+                        code="STRUCTURAL_PARSER_NOT_AVAILABLE",
+                        message=f"No structural parser adapter is available for language '{language}'.",
+                        severity="WARN",
+                        metadata={"language": language},
+                    )
+                ],
             )
         try:
             return adapter.parse("\n".join(lines), metadata)
         except Exception as exc:
             return StructuralParseResult(
                 file=metadata,
-                diagnostics=[StructuralParseDiagnostic(
-                    code="STRUCTURAL_PARSER_FAILED",
-                    message=f"Structural parser failed: {type(exc).__name__}: {exc}",
-                    severity="ERROR",
-                    metadata={"language": language},
-                )],
+                diagnostics=[
+                    StructuralParseDiagnostic(
+                        code="STRUCTURAL_PARSER_FAILED",
+                        message=f"Structural parser failed: {type(exc).__name__}: {exc}",
+                        severity="ERROR",
+                        metadata={"language": language},
+                    )
+                ],
             )
 
     def _language(self, row: Dict[str, Any]) -> str:
@@ -114,9 +118,19 @@ class StaticGraphMaterializer:
         "PatchMapping": "PATCH",
     }
     ENTRYPOINT_ANNOTATIONS = {
-        "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping",
-        "RequestMapping", "ExceptionHandler", "KafkaListener", "Scheduled", "MessageMapping",
-        "PostConstruct", "Bean", "Test",
+        "GetMapping",
+        "PostMapping",
+        "PutMapping",
+        "DeleteMapping",
+        "PatchMapping",
+        "RequestMapping",
+        "ExceptionHandler",
+        "KafkaListener",
+        "Scheduled",
+        "MessageMapping",
+        "PostConstruct",
+        "Bean",
+        "Test",
     }
 
     def to_graph(self, result: StructuralParseResult) -> GraphAnalysisResult:
@@ -125,154 +139,194 @@ class StaticGraphMaterializer:
         claims: List[GraphClaim] = []
         diagnostics: List[Dict[str, Any]] = []
         file_local_id = result.file_stable_key
-        nodes.append(GraphNode(
-            localId=file_local_id,
-            nodeKind="FILE",
-            name=result.file.relative_path.rsplit("/", 1)[-1],
-            language=result.file.language,
-            qualifiedName=None,
-            displayName=result.file.relative_path.rsplit("/", 1)[-1],
-            parentLocalId=None,
-            lineStart=1,
-            lineEnd=max(result.file.line_count, 1),
-            confidence=1.0,
-            metadata=self._metadata(result, "FILE", file_local_id, {"packageName": result.package_name}),
-        ))
+        nodes.append(
+            GraphNode(
+                localId=file_local_id,
+                nodeKind="FILE",
+                name=result.file.relative_path.rsplit("/", 1)[-1],
+                language=result.file.language,
+                qualifiedName=None,
+                displayName=result.file.relative_path.rsplit("/", 1)[-1],
+                parentLocalId=None,
+                lineStart=1,
+                lineEnd=max(result.file.line_count, 1),
+                confidence=1.0,
+                metadata=self._metadata(result, "FILE", file_local_id, {"packageName": result.package_name}),
+            )
+        )
         for item in result.imports:
             local_id = item.stable_key
             imported_simple = item.imported_name.rsplit(".", 1)[-1]
-            nodes.append(GraphNode(
-                localId=local_id,
-                nodeKind="EXTERNAL",
-                name=imported_simple,
-                language=result.file.language,
-                qualifiedName=item.imported_name,
-                displayName=imported_simple,
-                parentLocalId=None,
-                lineStart=item.line_start,
-                lineEnd=item.line_end,
-                confidence=1.0,
-                metadata=self._metadata(result, "EXTERNAL", local_id, {
-                    "importedName": item.imported_name,
-                    "isStatic": item.is_static,
-                    "isWildcard": item.is_wildcard,
-                }),
-            ))
-            edges.append(GraphEdge(
-                localId=self._stable_key(result, "IMPORT_EDGE", item.stable_key),
-                fromNodeLocalId=file_local_id,
-                toNodeLocalId=local_id,
-                edgeType="IMPORTS",
-                confidence=1.0,
-                evidence=[self._evidence(item.line_start, item.line_end, f"import {item.imported_name}")],
-                unresolvedTarget=None,
-                metadata=self._metadata(result, "IMPORT", item.stable_key, {"resolutionStatus": "RESOLVED"}),
-            ))
-            edges.append(GraphEdge(
-                localId=self._stable_key(result, "REFERENCES_IMPORT", item.stable_key),
-                fromNodeLocalId=file_local_id,
-                toNodeLocalId=local_id,
-                edgeType="REFERENCES",
-                confidence=1.0,
-                evidence=[self._evidence(item.line_start, item.line_end, f"import {item.imported_name}")],
-                unresolvedTarget=None,
-                metadata=self._metadata(result, "IMPORT_REFERENCE", item.stable_key, {"resolutionStatus": "RESOLVED"}),
-            ))
+            nodes.append(
+                GraphNode(
+                    localId=local_id,
+                    nodeKind="EXTERNAL",
+                    name=imported_simple,
+                    language=result.file.language,
+                    qualifiedName=item.imported_name,
+                    displayName=imported_simple,
+                    parentLocalId=None,
+                    lineStart=item.line_start,
+                    lineEnd=item.line_end,
+                    confidence=1.0,
+                    metadata=self._metadata(
+                        result,
+                        "EXTERNAL",
+                        local_id,
+                        {
+                            "importedName": item.imported_name,
+                            "isStatic": item.is_static,
+                            "isWildcard": item.is_wildcard,
+                        },
+                    ),
+                )
+            )
+            edges.append(
+                GraphEdge(
+                    localId=self._stable_key(result, "IMPORT_EDGE", item.stable_key),
+                    fromNodeLocalId=file_local_id,
+                    toNodeLocalId=local_id,
+                    edgeType="IMPORTS",
+                    confidence=1.0,
+                    evidence=[self._evidence(item.line_start, item.line_end, f"import {item.imported_name}")],
+                    unresolvedTarget=None,
+                    metadata=self._metadata(result, "IMPORT", item.stable_key, {"resolutionStatus": "RESOLVED"}),
+                )
+            )
+            edges.append(
+                GraphEdge(
+                    localId=self._stable_key(result, "REFERENCES_IMPORT", item.stable_key),
+                    fromNodeLocalId=file_local_id,
+                    toNodeLocalId=local_id,
+                    edgeType="REFERENCES",
+                    confidence=1.0,
+                    evidence=[self._evidence(item.line_start, item.line_end, f"import {item.imported_name}")],
+                    unresolvedTarget=None,
+                    metadata=self._metadata(result, "IMPORT_REFERENCE", item.stable_key, {"resolutionStatus": "RESOLVED"}),
+                )
+            )
         for item in result.types:
-            nodes.append(GraphNode(
-                localId=item.local_id,
-                nodeKind="TYPE",
-                name=item.name,
-                language=result.file.language,
-                qualifiedName=item.qualified_name,
-                displayName=item.name,
-                parentLocalId=item.parent_type_local_id or file_local_id,
-                lineStart=item.line_start,
-                lineEnd=item.line_end,
-                confidence=1.0,
-                metadata=self._metadata(result, item.type_kind, item.stable_key, {
-                    "bodyLineStart": item.body_line_start,
-                    "bodyLineEnd": item.body_line_end,
-                    "annotations": [self._annotation_metadata(annotation) for annotation in item.annotations],
-                }),
-            ))
-            edges.append(GraphEdge(
-                localId=self._stable_key(result, "DECLARES", item.local_id),
-                fromNodeLocalId=item.parent_type_local_id or file_local_id,
-                toNodeLocalId=item.local_id,
-                edgeType="DECLARES",
-                confidence=1.0,
-                evidence=[self._evidence(item.line_start, item.line_end, f"{item.type_kind.lower()} {item.name}")],
-                unresolvedTarget=None,
-                metadata=self._metadata(result, "DECLARATION", item.stable_key, {"resolutionStatus": "RESOLVED"}),
-            ))
+            nodes.append(
+                GraphNode(
+                    localId=item.local_id,
+                    nodeKind="TYPE",
+                    name=item.name,
+                    language=result.file.language,
+                    qualifiedName=item.qualified_name,
+                    displayName=item.name,
+                    parentLocalId=item.parent_type_local_id or file_local_id,
+                    lineStart=item.line_start,
+                    lineEnd=item.line_end,
+                    confidence=1.0,
+                    metadata=self._metadata(
+                        result,
+                        item.type_kind,
+                        item.stable_key,
+                        {
+                            "bodyLineStart": item.body_line_start,
+                            "bodyLineEnd": item.body_line_end,
+                            "annotations": [self._annotation_metadata(annotation) for annotation in item.annotations],
+                        },
+                    ),
+                )
+            )
+            edges.append(
+                GraphEdge(
+                    localId=self._stable_key(result, "DECLARES", item.local_id),
+                    fromNodeLocalId=item.parent_type_local_id or file_local_id,
+                    toNodeLocalId=item.local_id,
+                    edgeType="DECLARES",
+                    confidence=1.0,
+                    evidence=[self._evidence(item.line_start, item.line_end, f"{item.type_kind.lower()} {item.name}")],
+                    unresolvedTarget=None,
+                    metadata=self._metadata(result, "DECLARATION", item.stable_key, {"resolutionStatus": "RESOLVED"}),
+                )
+            )
         for item in result.callables:
-            nodes.append(GraphNode(
-                localId=item.local_id,
-                nodeKind="CALLABLE",
-                name=item.name,
-                language=result.file.language,
-                qualifiedName=item.qualified_name,
-                displayName=item.name,
-                parentLocalId=item.owner_type_local_id,
-                lineStart=item.line_start,
-                lineEnd=item.line_end,
-                confidence=1.0,
-                metadata=self._metadata(result, item.callable_kind, item.stable_key, {
-                    "signature": item.signature,
-                    "returnType": item.return_type,
-                    "parameters": item.parameters,
-                    "parameterNames": item.parameter_names,
-                    "visibility": item.visibility,
-                    "static": item.is_static,
-                    "bodyLineStart": item.body_line_start,
-                    "bodyLineEnd": item.body_line_end,
-                    "annotations": [self._annotation_metadata(annotation) for annotation in item.annotations],
-                }),
-            ))
-            edges.append(GraphEdge(
-                localId=self._stable_key(result, "DECLARES", item.local_id),
-                fromNodeLocalId=item.owner_type_local_id or file_local_id,
-                toNodeLocalId=item.local_id,
-                edgeType="DECLARES",
-                confidence=1.0,
-                evidence=[self._evidence(item.line_start, item.line_end, item.signature)],
-                unresolvedTarget=None,
-                metadata=self._metadata(result, "DECLARATION", item.stable_key, {"resolutionStatus": "RESOLVED"}),
-            ))
+            nodes.append(
+                GraphNode(
+                    localId=item.local_id,
+                    nodeKind="CALLABLE",
+                    name=item.name,
+                    language=result.file.language,
+                    qualifiedName=item.qualified_name,
+                    displayName=item.name,
+                    parentLocalId=item.owner_type_local_id,
+                    lineStart=item.line_start,
+                    lineEnd=item.line_end,
+                    confidence=1.0,
+                    metadata=self._metadata(
+                        result,
+                        item.callable_kind,
+                        item.stable_key,
+                        {
+                            "signature": item.signature,
+                            "returnType": item.return_type,
+                            "parameters": item.parameters,
+                            "parameterNames": item.parameter_names,
+                            "visibility": item.visibility,
+                            "static": item.is_static,
+                            "bodyLineStart": item.body_line_start,
+                            "bodyLineEnd": item.body_line_end,
+                            "annotations": [self._annotation_metadata(annotation) for annotation in item.annotations],
+                        },
+                    ),
+                )
+            )
+            edges.append(
+                GraphEdge(
+                    localId=self._stable_key(result, "DECLARES", item.local_id),
+                    fromNodeLocalId=item.owner_type_local_id or file_local_id,
+                    toNodeLocalId=item.local_id,
+                    edgeType="DECLARES",
+                    confidence=1.0,
+                    evidence=[self._evidence(item.line_start, item.line_end, item.signature)],
+                    unresolvedTarget=None,
+                    metadata=self._metadata(result, "DECLARATION", item.stable_key, {"resolutionStatus": "RESOLVED"}),
+                )
+            )
             owner_annotations = self._type_annotations(result, item.owner_type_local_id)
             claims.extend(self._entrypoint_claims(result, item.local_id, item.annotations, owner_annotations))
             main_claim = self._main_entrypoint_claim(result, item.local_id, item, owner_annotations)
             if main_claim:
                 claims.append(main_claim)
         for item in result.fields:
-            nodes.append(GraphNode(
-                localId=item.local_id,
-                nodeKind="FIELD",
-                name=item.name,
-                language=result.file.language,
-                qualifiedName=item.qualified_name,
-                displayName=item.name,
-                parentLocalId=item.owner_type_local_id,
-                lineStart=item.line_start,
-                lineEnd=item.line_end,
-                confidence=1.0,
-                metadata=self._metadata(result, "FIELD", item.stable_key, {
-                    "typeName": item.type_name,
-                    "visibility": item.visibility,
-                    "annotations": [self._annotation_metadata(annotation) for annotation in item.annotations],
-                }),
-            ))
-            edges.append(GraphEdge(
-                localId=self._stable_key(result, "DECLARES", item.local_id),
-                fromNodeLocalId=item.owner_type_local_id,
-                toNodeLocalId=item.local_id,
-                edgeType="DECLARES",
-                confidence=1.0,
-                evidence=[self._evidence(item.line_start, item.line_end, item.name)],
-                unresolvedTarget=None,
-                metadata=self._metadata(result, "DECLARATION", item.stable_key, {"resolutionStatus": "RESOLVED"}),
-            ))
+            nodes.append(
+                GraphNode(
+                    localId=item.local_id,
+                    nodeKind="FIELD",
+                    name=item.name,
+                    language=result.file.language,
+                    qualifiedName=item.qualified_name,
+                    displayName=item.name,
+                    parentLocalId=item.owner_type_local_id,
+                    lineStart=item.line_start,
+                    lineEnd=item.line_end,
+                    confidence=1.0,
+                    metadata=self._metadata(
+                        result,
+                        "FIELD",
+                        item.stable_key,
+                        {
+                            "typeName": item.type_name,
+                            "visibility": item.visibility,
+                            "annotations": [self._annotation_metadata(annotation) for annotation in item.annotations],
+                        },
+                    ),
+                )
+            )
+            edges.append(
+                GraphEdge(
+                    localId=self._stable_key(result, "DECLARES", item.local_id),
+                    fromNodeLocalId=item.owner_type_local_id,
+                    toNodeLocalId=item.local_id,
+                    edgeType="DECLARES",
+                    confidence=1.0,
+                    evidence=[self._evidence(item.line_start, item.line_end, item.name)],
+                    unresolvedTarget=None,
+                    metadata=self._metadata(result, "DECLARATION", item.stable_key, {"resolutionStatus": "RESOLVED"}),
+                )
+            )
             claims.extend(self._field_config_claims(result, item.local_id, item.annotations))
         for callsite in result.callsites:
             unresolved = None
@@ -284,23 +338,28 @@ class StaticGraphMaterializer:
                     "targetTypeText": callsite.target_type_text,
                     "kindHint": "CALLABLE" if callsite.resolution_status != "EXTERNAL_TARGET" else "EXTERNAL",
                 }
-            call_metadata = self._metadata(result, "CALLSITE", callsite.stable_key, {
-                "resolutionStatus": callsite.resolution_status,
-                "receiverText": callsite.receiver_text,
-                "receiverTypeHint": callsite.receiver_type_hint,
-                "methodName": callsite.method_name,
-                "argumentCount": callsite.argument_count,
-                "targetTypeText": callsite.target_type_text,
-                "targetTypeHint": callsite.target_type_text,
-                "callKind": callsite.call_kind,
-                "rawText": callsite.raw_text,
-                "rawCallText": callsite.raw_text,
-                "unresolvedReason": callsite.unresolved_reason,
-                "resolutionReason": callsite.resolution_reason,
-                "resolverSignals": callsite.resolver_signals,
-                "ownerTypeHint": callsite.owner_type_hint,
-                "importHint": callsite.import_hint,
-            })
+            call_metadata = self._metadata(
+                result,
+                "CALLSITE",
+                callsite.stable_key,
+                {
+                    "resolutionStatus": callsite.resolution_status,
+                    "receiverText": callsite.receiver_text,
+                    "receiverTypeHint": callsite.receiver_type_hint,
+                    "methodName": callsite.method_name,
+                    "argumentCount": callsite.argument_count,
+                    "targetTypeText": callsite.target_type_text,
+                    "targetTypeHint": callsite.target_type_text,
+                    "callKind": callsite.call_kind,
+                    "rawText": callsite.raw_text,
+                    "rawCallText": callsite.raw_text,
+                    "unresolvedReason": callsite.unresolved_reason,
+                    "resolutionReason": callsite.resolution_reason,
+                    "resolverSignals": callsite.resolver_signals,
+                    "ownerTypeHint": callsite.owner_type_hint,
+                    "importHint": callsite.import_hint,
+                },
+            )
             call_metadata = classify_call_metadata(
                 call_metadata,
                 result.file.flow_domain,
@@ -308,41 +367,43 @@ class StaticGraphMaterializer:
                 callsite.resolution_status,
                 unresolved,
             )
-            edges.append(GraphEdge(
-                localId=callsite.local_id,
-                fromNodeLocalId=callsite.caller_callable_local_id,
-                toNodeLocalId=callsite.target_callable_local_id,
-                edgeType="CALLS",
-                confidence=1.0 if callsite.resolution_status == "RESOLVED" else 0.72,
-                evidence=[self._evidence(callsite.line_start, callsite.line_end, callsite.raw_text, {"evidenceKind": "CALLSITE"})],
-                unresolvedTarget=unresolved,
-                metadata=call_metadata,
-            ))
+            edges.append(
+                GraphEdge(
+                    localId=callsite.local_id,
+                    fromNodeLocalId=callsite.caller_callable_local_id,
+                    toNodeLocalId=callsite.target_callable_local_id,
+                    edgeType="CALLS",
+                    confidence=1.0 if callsite.resolution_status == "RESOLVED" else 0.72,
+                    evidence=[self._evidence(callsite.line_start, callsite.line_end, callsite.raw_text, {"evidenceKind": "CALLSITE"})],
+                    unresolvedTarget=unresolved,
+                    metadata=call_metadata,
+                )
+            )
             claims.extend(self._call_boundary_claims(result, callsite))
         for diagnostic in result.diagnostics:
-            diagnostics.append({
-                "severity": diagnostic.severity,
-                "stage": diagnostic.stage,
-                "code": diagnostic.code,
-                "message": diagnostic.message,
-                "lineStart": diagnostic.line_start,
-                "lineEnd": diagnostic.line_end,
-                "metadata": {
-                    **(diagnostic.metadata or {}),
+            diagnostics.append(
+                {
+                    "severity": diagnostic.severity,
+                    "stage": diagnostic.stage,
+                    "code": diagnostic.code,
+                    "message": diagnostic.message,
+                    "lineStart": diagnostic.line_start,
+                    "lineEnd": diagnostic.line_end,
+                    "metadata": {
+                        **(diagnostic.metadata or {}),
+                        "factOrigin": "STATIC",
+                        "flowDomain": result.file.flow_domain,
+                        "engineVersion": GRAPH_ENGINE_VERSION,
+                    },
                     "factOrigin": "STATIC",
                     "flowDomain": result.file.flow_domain,
-                    "engineVersion": GRAPH_ENGINE_VERSION,
-                },
-                "factOrigin": "STATIC",
-                "flowDomain": result.file.flow_domain,
-            })
+                }
+            )
         return GraphAnalysisResult(nodes=nodes, edges=edges, claims=claims, diagnostics=diagnostics)
 
-    def _entrypoint_claims(self,
-                           result: StructuralParseResult,
-                           target_local_id: str,
-                           annotations: List[StructuralAnnotation],
-                           owner_annotations: List[StructuralAnnotation]) -> List[GraphClaim]:
+    def _entrypoint_claims(
+        self, result: StructuralParseResult, target_local_id: str, annotations: List[StructuralAnnotation], owner_annotations: List[StructuralAnnotation]
+    ) -> List[GraphClaim]:
         claims: List[GraphClaim] = []
         owner_route = self._route_from_annotations(owner_annotations)
         for annotation in annotations:
@@ -351,43 +412,53 @@ class StaticGraphMaterializer:
                 continue
             route = self._join_routes(owner_route, self._annotation_route(annotation))
             http_method = self.HTTP_METHODS.get(simple)
-            metadata = self._metadata(result, "ENTRYPOINT_HINT", self._stable_key(result, "ENTRYPOINT", target_local_id, simple, str(annotation.line_start)), {
-                "entrypointKind": self._entrypoint_kind(simple),
-                "annotation": simple,
-                "annotationName": simple,
-                "httpMethod": http_method,
-                "route": route,
-                "exceptionType": self._annotation_first_identifier(annotation) if simple == "ExceptionHandler" else None,
-                "topic": self._annotation_route(annotation) if simple == "KafkaListener" else None,
-                "schedule": annotation.arguments_raw if simple == "Scheduled" else None,
-                "sourceAnnotationLine": annotation.line_start,
-            })
-            claims.append(GraphClaim(
-                localId=metadata["stableKey"],
-                nodeLocalId=target_local_id,
-                claimKind="ENTRYPOINT_HINT",
-                summary=self._entrypoint_summary(simple, http_method, route),
-                evidence=[self._evidence(annotation.line_start, annotation.line_end, f"@{simple}")],
-                confidence=1.0,
-                metadata=metadata,
-            ))
+            metadata = self._metadata(
+                result,
+                "ENTRYPOINT_HINT",
+                self._stable_key(result, "ENTRYPOINT", target_local_id, simple, str(annotation.line_start)),
+                {
+                    "entrypointKind": self._entrypoint_kind(simple),
+                    "annotation": simple,
+                    "annotationName": simple,
+                    "httpMethod": http_method,
+                    "route": route,
+                    "exceptionType": self._annotation_first_identifier(annotation) if simple == "ExceptionHandler" else None,
+                    "topic": self._annotation_route(annotation) if simple == "KafkaListener" else None,
+                    "schedule": annotation.arguments_raw if simple == "Scheduled" else None,
+                    "sourceAnnotationLine": annotation.line_start,
+                },
+            )
+            claims.append(
+                GraphClaim(
+                    localId=metadata["stableKey"],
+                    nodeLocalId=target_local_id,
+                    claimKind="ENTRYPOINT_HINT",
+                    summary=self._entrypoint_summary(simple, http_method, route),
+                    evidence=[self._evidence(annotation.line_start, annotation.line_end, f"@{simple}")],
+                    confidence=1.0,
+                    metadata=metadata,
+                )
+            )
         return claims
 
-    def _main_entrypoint_claim(self,
-                               result: StructuralParseResult,
-                               target_local_id: str,
-                               callable_item,
-                               owner_annotations: List[StructuralAnnotation]) -> Optional[GraphClaim]:
+    def _main_entrypoint_claim(
+        self, result: StructuralParseResult, target_local_id: str, callable_item, owner_annotations: List[StructuralAnnotation]
+    ) -> Optional[GraphClaim]:
         owner_annotation_names = {annotation.name.rsplit(".", 1)[-1] for annotation in owner_annotations}
         if callable_item.name != "main" or "String[]" not in ",".join(callable_item.parameters):
             return None
         if "SpringBootApplication" not in owner_annotation_names and callable_item.visibility != "PUBLIC":
             return None
-        metadata = self._metadata(result, "ENTRYPOINT_HINT", self._stable_key(result, "ENTRYPOINT", target_local_id, "MAIN", str(callable_item.line_start)), {
-            "entrypointKind": "BOOTSTRAP",
-            "annotation": "SpringBootApplication" if "SpringBootApplication" in owner_annotation_names else None,
-            "sourceAnnotationLine": callable_item.line_start,
-        })
+        metadata = self._metadata(
+            result,
+            "ENTRYPOINT_HINT",
+            self._stable_key(result, "ENTRYPOINT", target_local_id, "MAIN", str(callable_item.line_start)),
+            {
+                "entrypointKind": "BOOTSTRAP",
+                "annotation": "SpringBootApplication" if "SpringBootApplication" in owner_annotation_names else None,
+                "sourceAnnotationLine": callable_item.line_start,
+            },
+        )
         return GraphClaim(
             localId=metadata["stableKey"],
             nodeLocalId=target_local_id,
@@ -411,7 +482,9 @@ class StaticGraphMaterializer:
         if self._is_data_receiver(receiver_type) and any(token in method_lower for token in ("save", "delete", "update", "insert", "persist", "remove")):
             claim_kind = "DATA_ACCESS_HINT"
             summary = "Writes data through a typed persistence receiver."
-        elif self._is_data_receiver(receiver_type) and any(token in method_lower for token in ("find", "get", "load", "query", "read", "select", "exists", "count")):
+        elif self._is_data_receiver(receiver_type) and any(
+            token in method_lower for token in ("find", "get", "load", "query", "read", "select", "exists", "count")
+        ):
             claim_kind = "DATA_ACCESS_HINT"
             summary = "Reads data through a typed persistence receiver."
         elif "kafkatemplate" in receiver_lower and method == "send":
@@ -427,45 +500,56 @@ class StaticGraphMaterializer:
             confidence = 0.72
         if not claim_kind or not summary:
             return []
-        metadata = self._metadata(result, claim_kind, self._stable_key(result, claim_kind, callsite.caller_callable_local_id, callsite.stable_key), {
-            "callsiteStableKey": callsite.stable_key,
-            "receiverText": callsite.receiver_text,
-            "receiverTypeHint": callsite.receiver_type_hint,
-            "methodName": callsite.method_name,
-            "status": quality,
-        })
-        return [GraphClaim(
-            localId=metadata["stableKey"],
-            nodeLocalId=callsite.caller_callable_local_id,
-            claimKind=claim_kind,
-            summary=summary,
-            evidence=[self._evidence(callsite.line_start, callsite.line_end, callsite.raw_text)],
-            confidence=confidence,
-            metadata=metadata,
-        )]
+        metadata = self._metadata(
+            result,
+            claim_kind,
+            self._stable_key(result, claim_kind, callsite.caller_callable_local_id, callsite.stable_key),
+            {
+                "callsiteStableKey": callsite.stable_key,
+                "receiverText": callsite.receiver_text,
+                "receiverTypeHint": callsite.receiver_type_hint,
+                "methodName": callsite.method_name,
+                "status": quality,
+            },
+        )
+        return [
+            GraphClaim(
+                localId=metadata["stableKey"],
+                nodeLocalId=callsite.caller_callable_local_id,
+                claimKind=claim_kind,
+                summary=summary,
+                evidence=[self._evidence(callsite.line_start, callsite.line_end, callsite.raw_text)],
+                confidence=confidence,
+                metadata=metadata,
+            )
+        ]
 
-    def _field_config_claims(self,
-                             result: StructuralParseResult,
-                             target_local_id: str,
-                             annotations: List[StructuralAnnotation]) -> List[GraphClaim]:
+    def _field_config_claims(self, result: StructuralParseResult, target_local_id: str, annotations: List[StructuralAnnotation]) -> List[GraphClaim]:
         claims: List[GraphClaim] = []
         for annotation in annotations:
             simple = annotation.name.rsplit(".", 1)[-1]
             if simple != "Value":
                 continue
-            metadata = self._metadata(result, "CONFIG_REFERENCE", self._stable_key(result, "CONFIG", target_local_id, str(annotation.line_start)), {
-                "annotationName": simple,
-                "propertyExpression": self._annotation_route(annotation),
-            })
-            claims.append(GraphClaim(
-                localId=metadata["stableKey"],
-                nodeLocalId=target_local_id,
-                claimKind="CONFIG_REFERENCE",
-                summary="References a configuration property value.",
-                evidence=[self._evidence(annotation.line_start, annotation.line_end, "@Value")],
-                confidence=1.0,
-                metadata=metadata,
-            ))
+            metadata = self._metadata(
+                result,
+                "CONFIG_REFERENCE",
+                self._stable_key(result, "CONFIG", target_local_id, str(annotation.line_start)),
+                {
+                    "annotationName": simple,
+                    "propertyExpression": self._annotation_route(annotation),
+                },
+            )
+            claims.append(
+                GraphClaim(
+                    localId=metadata["stableKey"],
+                    nodeLocalId=target_local_id,
+                    claimKind="CONFIG_REFERENCE",
+                    summary="References a configuration property value.",
+                    evidence=[self._evidence(annotation.line_start, annotation.line_end, "@Value")],
+                    confidence=1.0,
+                    metadata=metadata,
+                )
+            )
         return claims
 
     def _type_annotations(self, result: StructuralParseResult, type_local_id: Optional[str]) -> List[StructuralAnnotation]:

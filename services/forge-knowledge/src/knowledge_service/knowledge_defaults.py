@@ -92,10 +92,12 @@ def knowledge_config_dir_candidates(module_dir: Optional[Path] = None) -> Iterat
     if os.environ.get("FORGE_CONFIG_DIR"):
         forge_config = resolve_config_path(os.environ["FORGE_CONFIG_DIR"], module_dir=module, prefer_root=True)
         candidates.extend([forge_config / "knowledge", forge_config / "config" / "knowledge", forge_config])
-    candidates.extend([
-        Path.cwd().resolve() / "config" / "knowledge",
-        forge_ai_home(module) / "config" / "knowledge",
-    ])
+    candidates.extend(
+        [
+            Path.cwd().resolve() / "config" / "knowledge",
+            forge_ai_home(module) / "config" / "knowledge",
+        ]
+    )
 
     seen = set()
     for candidate in candidates:

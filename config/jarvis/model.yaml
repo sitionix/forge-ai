@@ -1,7 +1,0 @@
-default_model: qwen2.5-coder:7b
-ollama_base_url: http://localhost:11434
-request_timeout_seconds: 120
-knowledge:
-  base_url: http://127.0.0.1:7081
-  request_timeout_seconds: 120
-  default_max_context_chars: 12000

@@ -10,16 +10,18 @@ class RetrievalRanker:
         filename = Path(relative_path).name
         haystack_path = relative_path.lower()
         haystack_filename = filename.lower()
-        source_text = " ".join([
-            str(row["source_id"]),
-            str(row["display_name"]),
-            str(metadata.get("path") or ""),
-            str(row["group_name"] or ""),
-            " ".join(metadata.get("tags") or []),
-            " ".join(metadata.get("domainKeywords") or []),
-            " ".join(metadata.get("ownsBusinessAreas") or []),
-            str(metadata.get("contractRefs") or ""),
-        ]).lower()
+        source_text = " ".join(
+            [
+                str(row["source_id"]),
+                str(row["display_name"]),
+                str(metadata.get("path") or ""),
+                str(row["group_name"] or ""),
+                " ".join(metadata.get("tags") or []),
+                " ".join(metadata.get("domainKeywords") or []),
+                " ".join(metadata.get("ownsBusinessAreas") or []),
+                str(metadata.get("contractRefs") or ""),
+            ]
+        ).lower()
         source_path = str(metadata.get("path") or "").lower()
         source_id = str(row["source_id"]).lower()
         flow_domain = str(self._row_value(row, "flow_domain") or "").upper()
@@ -27,9 +29,13 @@ class RetrievalRanker:
         is_test_file = flow_domain == "TEST"
         is_workflow_file = flow_domain == "WORKFLOW"
         has_contract_metadata = bool(metadata.get("contractRefs"))
-        wants_workflow = any(term in query_terms for term in ["workflow", "workflows", "deploy", "deployment", "ci", "cd", "pipeline", "github", "action", "actions"])
+        wants_workflow = any(
+            term in query_terms for term in ["workflow", "workflows", "deploy", "deployment", "ci", "cd", "pipeline", "github", "action", "actions"]
+        )
         wants_tests = any(term in query_terms for term in ["test", "tests", "testing", "unit", "it", "integration", "spec", "coverage"])
-        wants_contract = any(term in query_terms for term in ["api", "apis", "endpoint", "endpoints", "contract", "contracts", "openapi", "schema", "schemas", "path", "paths"])
+        wants_contract = any(
+            term in query_terms for term in ["api", "apis", "endpoint", "endpoints", "contract", "contracts", "openapi", "schema", "schemas", "path", "paths"]
+        )
 
         score = 0.0
         reasons: list[str] = []

@@ -123,7 +123,7 @@
                 <directory>src/main/resources</directory>
             </resource>
             <resource>
-                <directory>${project.basedir}/../../forge-console/src</directory>
+                <directory>${project.basedir}/../../forge-console/dist</directory>
                 <targetPath>static</targetPath>
             </resource>
         </resources>

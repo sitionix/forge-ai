@@ -75,7 +75,7 @@ class ActionRegistry:
             ]
         }
 
-    def available_actions_for_prompt(self):
+    def available_actions_for_prompt(self) -> List[Dict[str, Any]]:
         return self.public_actions()["actions"]
 
     def resolve(self, intent: Intent) -> ActionTarget:

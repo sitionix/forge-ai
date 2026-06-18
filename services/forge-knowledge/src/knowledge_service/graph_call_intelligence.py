@@ -66,22 +66,65 @@ class ResolutionReason(str, Enum):
 
 
 JDK_TYPES = {
-    "Arrays", "BigDecimal", "Boolean", "Collections", "Collectors", "Duration", "Instant",
-    "Integer", "List", "LocalDate", "LocalDateTime", "Long", "Map", "Math", "Objects",
-    "Optional", "Set", "String", "System", "UUID",
+    "Arrays",
+    "BigDecimal",
+    "Boolean",
+    "Collections",
+    "Collectors",
+    "Duration",
+    "Instant",
+    "Integer",
+    "List",
+    "LocalDate",
+    "LocalDateTime",
+    "Long",
+    "Map",
+    "Math",
+    "Objects",
+    "Optional",
+    "Set",
+    "String",
+    "System",
+    "UUID",
 }
 
 JDK_METHODS = {"equals", "getClass", "hashCode", "requireNonNull", "toString", "valueOf"}
 
 FRAMEWORK_TYPES = {
-    "Assertions", "AssertThat", "Flux", "Mono", "Mockito", "ResponseEntity", "RestClient",
-    "StepVerifier", "TestRestTemplate", "WebClient",
+    "Assertions",
+    "AssertThat",
+    "Flux",
+    "Mono",
+    "Mockito",
+    "ResponseEntity",
+    "RestClient",
+    "StepVerifier",
+    "TestRestTemplate",
+    "WebClient",
 }
 
 FRAMEWORK_METHODS = {
-    "assertEquals", "assertFalse", "assertNotNull", "assertThat", "assertThrows", "assertTrue",
-    "badRequest", "body", "bodyToMono", "build", "exchange", "expectNext", "get", "mock",
-    "ok", "post", "retrieve", "status", "uri", "verify", "when",
+    "assertEquals",
+    "assertFalse",
+    "assertNotNull",
+    "assertThat",
+    "assertThrows",
+    "assertTrue",
+    "badRequest",
+    "body",
+    "bodyToMono",
+    "build",
+    "exchange",
+    "expectNext",
+    "get",
+    "mock",
+    "ok",
+    "post",
+    "retrieve",
+    "status",
+    "uri",
+    "verify",
+    "when",
 }
 
 DATA_READ_METHODS = {"count", "exists", "find", "findAll", "findById", "get", "load", "query", "read", "select"}
@@ -89,11 +132,13 @@ DATA_WRITE_METHODS = {"delete", "deleteById", "insert", "merge", "persist", "rem
 EXTERNAL_CLIENT_TYPES = {"Feign", "RestClient", "WebClient"}
 
 
-def classify_call_metadata(metadata: Dict[str, Any],
-                           flow_domain: Optional[str],
-                           relative_path: Optional[str],
-                           resolution_status: Optional[str],
-                           unresolved_target: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def classify_call_metadata(
+    metadata: Dict[str, Any],
+    flow_domain: Optional[str],
+    relative_path: Optional[str],
+    resolution_status: Optional[str],
+    unresolved_target: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     result = dict(metadata or {})
     flow = str(result.get("flowDomain") or flow_domain or "CODE").upper()
     status = str(result.get("resolutionStatus") or resolution_status or "UNKNOWN").upper()
@@ -128,20 +173,22 @@ def classify_call_metadata(metadata: Dict[str, Any],
         target_type,
         raw_text,
     )
-    result.update({
-        "callKind": call_kind,
-        "callImportance": flow_usefulness,
-        "callTargetCategory": target_category,
-        "resolutionReason": resolution_reason,
-        "flowUsefulness": flow_usefulness,
-        "noiseCategory": noise_category,
-        "sliceDefaultVisibility": visibility,
-        "flowScore": scores["flowScore"],
-        "displayScore": scores["displayScore"],
-        "expansionScore": scores["expansionScore"],
-        "reasonCodes": sorted(set([*(result.get("reasonCodes") or []), *reasons])),
-        "rawCallText": raw_text,
-    })
+    result.update(
+        {
+            "callKind": call_kind,
+            "callImportance": flow_usefulness,
+            "callTargetCategory": target_category,
+            "resolutionReason": resolution_reason,
+            "flowUsefulness": flow_usefulness,
+            "noiseCategory": noise_category,
+            "sliceDefaultVisibility": visibility,
+            "flowScore": scores["flowScore"],
+            "displayScore": scores["displayScore"],
+            "expansionScore": scores["expansionScore"],
+            "reasonCodes": sorted(set([*(result.get("reasonCodes") or []), *reasons])),
+            "rawCallText": raw_text,
+        }
+    )
     if unresolved_reason:
         result["unresolvedReason"] = unresolved_reason
     if receiver is not None:
@@ -155,11 +202,7 @@ def classify_call_metadata(metadata: Dict[str, Any],
     return result
 
 
-def _normalized_call_kind(raw_kind: str,
-                          receiver: Optional[str],
-                          receiver_type: Optional[str],
-                          target_type: Optional[str],
-                          raw_text: Optional[str]) -> str:
+def _normalized_call_kind(raw_kind: str, receiver: Optional[str], receiver_type: Optional[str], target_type: Optional[str], raw_text: Optional[str]) -> str:
     if raw_kind == "CONSTRUCTOR_CALL":
         return CallKind.CONSTRUCTOR.value
     if raw_kind == "STATIC_CALL":
@@ -184,13 +227,15 @@ def _normalized_call_kind(raw_kind: str,
     return CallKind.LOCAL_METHOD.value
 
 
-def _target_category(flow: str,
-                     status: str,
-                     receiver_type: Optional[str],
-                     target_type: Optional[str],
-                     method_name: Optional[str],
-                     raw_text: Optional[str],
-                     relative_path: Optional[str]) -> str:
+def _target_category(
+    flow: str,
+    status: str,
+    receiver_type: Optional[str],
+    target_type: Optional[str],
+    method_name: Optional[str],
+    raw_text: Optional[str],
+    relative_path: Optional[str],
+) -> str:
     type_text = " ".join(str(item or "") for item in (receiver_type, target_type, raw_text))
     if flow == "TEST":
         return CallTargetCategory.INTERNAL_TEST.value if status == "RESOLVED" else _external_category(type_text, method_name)
@@ -214,9 +259,21 @@ def _external_category(type_text: str, method_name: Optional[str]) -> str:
     simple_tokens = {token.rsplit(".", 1)[-1].split("<", 1)[0] for token in type_text.replace("(", " ").replace(")", " ").replace(".", " ").split()}
     if method_name in JDK_METHODS or simple_tokens & JDK_TYPES or "java." in type_text or "javax." in type_text:
         return CallTargetCategory.EXTERNAL_JDK.value
-    if method_name in FRAMEWORK_METHODS or simple_tokens & FRAMEWORK_TYPES or any(prefix in type_text for prefix in (
-        "org.springframework", "reactor.", "org.junit", "org.mockito", "jakarta.", "javax.servlet",
-    )):
+    if (
+        method_name in FRAMEWORK_METHODS
+        or simple_tokens & FRAMEWORK_TYPES
+        or any(
+            prefix in type_text
+            for prefix in (
+                "org.springframework",
+                "reactor.",
+                "org.junit",
+                "org.mockito",
+                "jakarta.",
+                "javax.servlet",
+            )
+        )
+    ):
         return CallTargetCategory.EXTERNAL_FRAMEWORK.value
     if any(token in type_text for token in EXTERNAL_CLIENT_TYPES):
         return CallTargetCategory.EXTERNAL_SERVICE.value
@@ -246,12 +303,9 @@ def _resolution_reason(status: str, call_kind: str, receiver_type: Optional[str]
     return ResolutionReason.NOT_RESOLVED.value
 
 
-def _unresolved_reason(status: str,
-                       call_kind: str,
-                       receiver: Optional[str],
-                       receiver_type: Optional[str],
-                       target_type: Optional[str],
-                       metadata: Dict[str, Any]) -> str:
+def _unresolved_reason(
+    status: str, call_kind: str, receiver: Optional[str], receiver_type: Optional[str], target_type: Optional[str], metadata: Dict[str, Any]
+) -> str:
     if status == "MULTIPLE_CANDIDATES":
         if metadata.get("candidateKind") == "TYPE":
             return UnresolvedReason.MULTIPLE_TYPES_MATCH.value
@@ -271,15 +325,17 @@ def _unresolved_reason(status: str,
     return UnresolvedReason.NO_MATCH.value
 
 
-def _score_call(flow: str,
-                status: str,
-                call_kind: str,
-                target_category: str,
-                unresolved_reason: Optional[str],
-                method_name: Optional[str],
-                receiver_type: Optional[str],
-                target_type: Optional[str],
-                raw_text: Optional[str]) -> tuple[str, str, str, Dict[str, float], list[str]]:
+def _score_call(
+    flow: str,
+    status: str,
+    call_kind: str,
+    target_category: str,
+    unresolved_reason: Optional[str],
+    method_name: Optional[str],
+    receiver_type: Optional[str],
+    target_type: Optional[str],
+    raw_text: Optional[str],
+) -> tuple[str, str, str, Dict[str, float], list[str]]:
     score = 0.45
     reasons: list[str] = []
     if flow == "CODE":
@@ -339,11 +395,17 @@ def _score_call(flow: str,
         visibility = "COLLAPSE"
     else:
         visibility = "HIDE_BY_DEFAULT"
-    return usefulness, noise_category, visibility, {
-        "flowScore": round(score, 3),
-        "displayScore": round(max(0.05, min(1.0, score - (0.1 if visibility == "HIDE_BY_DEFAULT" else 0))), 3),
-        "expansionScore": round(max(0.0, min(1.0, score - (0.2 if target_category.startswith("EXTERNAL_") else 0))), 3),
-    }, reasons
+    return (
+        usefulness,
+        noise_category,
+        visibility,
+        {
+            "flowScore": round(score, 3),
+            "displayScore": round(max(0.05, min(1.0, score - (0.1 if visibility == "HIDE_BY_DEFAULT" else 0))), 3),
+            "expansionScore": round(max(0.0, min(1.0, score - (0.2 if target_category.startswith("EXTERNAL_") else 0))), 3),
+        },
+        reasons,
+    )
 
 
 def _blank_to_none(value: Any) -> Optional[str]:

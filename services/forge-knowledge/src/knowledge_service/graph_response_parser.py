@@ -75,7 +75,7 @@ class GraphAnalysisResponseParser:
             elif char == "}":
                 depth -= 1
                 if depth == 0:
-                    return raw[start:index + 1]
+                    return raw[start : index + 1]
         return None
 
     def _preview(self, raw: str) -> str:
@@ -92,15 +92,17 @@ class GraphAnalysisResponseParser:
         for index, item in enumerate(parsed.get("claims") or [], start=1):
             if not isinstance(item, dict):
                 continue
-            claims.append(GraphClaim(
-                localId=str(item.get("localId") or f"claim{index}"),
-                nodeLocalId=str(item.get("targetStableKey") or item.get("nodeLocalId") or ""),
-                claimKind=str(item.get("claimKind") or "UNKNOWN"),
-                summary=str(item.get("summary") or ""),
-                evidence=self._evidence_refs(item.get("evidence") or []),
-                confidence=float(item.get("confidence") if item.get("confidence") is not None else 0.0),
-                metadata=dict(item.get("metadata") or {}),
-            ))
+            claims.append(
+                GraphClaim(
+                    localId=str(item.get("localId") or f"claim{index}"),
+                    nodeLocalId=str(item.get("targetStableKey") or item.get("nodeLocalId") or ""),
+                    claimKind=str(item.get("claimKind") or "UNKNOWN"),
+                    summary=str(item.get("summary") or ""),
+                    evidence=self._evidence_refs(item.get("evidence") or []),
+                    confidence=float(item.get("confidence") if item.get("confidence") is not None else 0.0),
+                    metadata=dict(item.get("metadata") or {}),
+                )
+            )
         edges = []
         for index, item in enumerate(parsed.get("semanticEdges") or [], start=1):
             if not isinstance(item, dict):
@@ -109,16 +111,18 @@ class GraphAnalysisResponseParser:
             metadata.setdefault("factOrigin", "LLM")
             if item.get("resolutionStatus"):
                 metadata.setdefault("resolutionStatus", item.get("resolutionStatus"))
-            edges.append(GraphEdge(
-                localId=str(item.get("localId") or f"semantic{index}"),
-                fromNodeLocalId=str(item.get("fromStableKey") or item.get("fromNodeLocalId") or ""),
-                toNodeLocalId=item.get("toStableKey") or item.get("toNodeLocalId"),
-                edgeType=str(item.get("edgeType") or "UNKNOWN"),
-                confidence=float(item.get("confidence") if item.get("confidence") is not None else 0.0),
-                evidence=self._evidence_refs(item.get("evidence") or []),
-                unresolvedTarget=item.get("unresolvedTarget"),
-                metadata=metadata,
-            ))
+            edges.append(
+                GraphEdge(
+                    localId=str(item.get("localId") or f"semantic{index}"),
+                    fromNodeLocalId=str(item.get("fromStableKey") or item.get("fromNodeLocalId") or ""),
+                    toNodeLocalId=item.get("toStableKey") or item.get("toNodeLocalId"),
+                    edgeType=str(item.get("edgeType") or "UNKNOWN"),
+                    confidence=float(item.get("confidence") if item.get("confidence") is not None else 0.0),
+                    evidence=self._evidence_refs(item.get("evidence") or []),
+                    unresolvedTarget=item.get("unresolvedTarget"),
+                    metadata=metadata,
+                )
+            )
         diagnostics = parsed.get("diagnostics") or []
         return GraphAnalysisResult(nodes=[], edges=edges, claims=claims, diagnostics=diagnostics)
 
@@ -127,10 +131,12 @@ class GraphAnalysisResponseParser:
         for item in values:
             if not isinstance(item, dict):
                 continue
-            refs.append(GraphEvidenceRef(
-                lineStart=int(item.get("lineStart")),
-                lineEnd=int(item.get("lineEnd")),
-                text=item.get("text"),
-                metadata=dict(item.get("metadata") or {}),
-            ))
+            refs.append(
+                GraphEvidenceRef(
+                    lineStart=int(item.get("lineStart")),
+                    lineEnd=int(item.get("lineEnd")),
+                    text=item.get("text"),
+                    metadata=dict(item.get("metadata") or {}),
+                )
+            )
         return refs

@@ -40,7 +40,7 @@ class SnippetExtractor:
         return 1, min(len(lines), 40)
 
     def slice_content(self, lines: List[str], start: int, end: int, max_chars: int) -> tuple[str, int]:
-        content = "\n".join(lines[start - 1:end])
+        content = "\n".join(lines[start - 1 : end])
         if len(content) <= max_chars:
             return content, end
         truncated = content[:max_chars]
@@ -63,6 +63,15 @@ class SnippetExtractor:
 
     def _looks_like_declaration(self, line: str) -> bool:
         stripped = line.strip()
-        return any(token in stripped for token in [
-            " class ", " interface ", " enum ", " record ", " object ", " function ", " const ",
-        ]) or stripped.startswith(("class ", "interface ", "enum ", "record ", "public class ", "public interface "))
+        return any(
+            token in stripped
+            for token in [
+                " class ",
+                " interface ",
+                " enum ",
+                " record ",
+                " object ",
+                " function ",
+                " const ",
+            ]
+        ) or stripped.startswith(("class ", "interface ", "enum ", "record ", "public class ", "public interface "))

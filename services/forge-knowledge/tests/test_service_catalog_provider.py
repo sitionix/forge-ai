@@ -13,7 +13,7 @@ def write_config(tmp_path, catalog_text, selection=""):
     catalog.write_text(catalog_text, encoding="utf-8")
     config = tmp_path / "knowledge-sources.yaml"
     config.write_text(
-        f"catalog:\n  path: \"{catalog}\"\n  workspace_root: \"{workspace}\"\nselection:\n{selection}",
+        f'catalog:\n  path: "{catalog}"\n  workspace_root: "{workspace}"\nselection:\n{selection}',
         encoding="utf-8",
     )
     return load_source_config(config)

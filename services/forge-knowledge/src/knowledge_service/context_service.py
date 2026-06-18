@@ -40,20 +40,22 @@ class ContextService:
                     start, end = self.extractor.content_range(lines, matched_line)
                 else:
                     start, end = self.extractor.first_meaningful_range(lines, row["language"] or "", row["flow_domain"] or "")
-                candidates.append({
-                    "row": row,
-                    "metadata": metadata,
-                    "lines": lines,
-                    "lineStart": start,
-                    "lineEnd": end,
-                    "matchType": "content" if matched_line > 0 else match_type,
-                    "reason": reason,
-                    "score": score + (0.05 if matched_line > 0 else 0),
-                })
+                candidates.append(
+                    {
+                        "row": row,
+                        "metadata": metadata,
+                        "lines": lines,
+                        "lineStart": start,
+                        "lineEnd": end,
+                        "matchType": "content" if matched_line > 0 else match_type,
+                        "reason": reason,
+                        "score": score + (0.05 if matched_line > 0 else 0),
+                    }
+                )
 
         deduped = self._dedupe(candidates)
         deduped.sort(key=lambda item: (-item["score"], item["row"]["source_id"], item["row"]["relative_path"], item["lineStart"]))
-        return self._budget(request, deduped[:request.maxItems])
+        return self._budget(request, deduped[: request.maxItems])
 
     def _query_terms(self, query: str) -> List[str]:
         cleaned = []
@@ -79,9 +81,11 @@ class ContextService:
         for candidate in sorted(candidates, key=lambda item: (item["row"]["source_id"], item["row"]["relative_path"], item["lineStart"], -item["score"])):
             duplicate = None
             for existing in result:
-                if (existing["row"]["source_id"] == candidate["row"]["source_id"]
-                        and existing["row"]["relative_path"] == candidate["row"]["relative_path"]
-                        and self._overlaps(existing, candidate)):
+                if (
+                    existing["row"]["source_id"] == candidate["row"]["source_id"]
+                    and existing["row"]["relative_path"] == candidate["row"]["relative_path"]
+                    and self._overlaps(existing, candidate)
+                ):
                     duplicate = existing
                     break
             if duplicate is None:
@@ -115,23 +119,25 @@ class ContextService:
             used_chars += content_chars
             metadata = candidate["metadata"]
             item_content = content if request.includeContent else None
-            items.append(ContextItem(
-                sourceId=candidate["row"]["source_id"],
-                displayName=candidate["row"]["display_name"],
-                group=candidate["row"]["group_name"],
-                relativePath=candidate["row"]["relative_path"],
-                lineStart=candidate["lineStart"],
-                lineEnd=line_end,
-                content=item_content,
-                matchType=candidate["matchType"],
-                reason=candidate["reason"],
-                score=round(candidate["score"], 4),
-                metadata={
-                    "tags": metadata.get("tags") or [],
-                    "domainKeywords": metadata.get("domainKeywords") or [],
-                    "ownsBusinessAreas": metadata.get("ownsBusinessAreas") or [],
-                },
-            ))
+            items.append(
+                ContextItem(
+                    sourceId=candidate["row"]["source_id"],
+                    displayName=candidate["row"]["display_name"],
+                    group=candidate["row"]["group_name"],
+                    relativePath=candidate["row"]["relative_path"],
+                    lineStart=candidate["lineStart"],
+                    lineEnd=line_end,
+                    content=item_content,
+                    matchType=candidate["matchType"],
+                    reason=candidate["reason"],
+                    score=round(candidate["score"], 4),
+                    metadata={
+                        "tags": metadata.get("tags") or [],
+                        "domainKeywords": metadata.get("domainKeywords") or [],
+                        "ownsBusinessAreas": metadata.get("ownsBusinessAreas") or [],
+                    },
+                )
+            )
             if len(items) >= request.maxItems:
                 truncated = truncated or len(candidates) > len(items)
                 break

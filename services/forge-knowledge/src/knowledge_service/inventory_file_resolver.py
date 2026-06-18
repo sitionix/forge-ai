@@ -57,23 +57,28 @@ class InventoryFileResolver:
         except OSError:
             return self._failure(row, "FILE_UNREADABLE", "Indexed file could not be read safely")
         lines = content.splitlines()
-        return InventoryFileReadResult(InventoryFileContent(
-            row=row,
-            metadata=metadata,
-            lines=lines,
-            content="\n".join(lines),
-            lineCount=len(lines),
-            decodePolicy=decode_policy,
-        ))
+        return InventoryFileReadResult(
+            InventoryFileContent(
+                row=row,
+                metadata=metadata,
+                lines=lines,
+                content="\n".join(lines),
+                lineCount=len(lines),
+                decodePolicy=decode_policy,
+            )
+        )
 
     def read_by_id(self, file_id: int) -> InventoryFileReadResult:
         row = self._row_by_id(file_id)
         if row is None:
-            return InventoryFileReadResult(None, {
-                "code": "FILE_NOT_INDEXED",
-                "message": "Inventory file id was not found",
-                "fileId": file_id,
-            })
+            return InventoryFileReadResult(
+                None,
+                {
+                    "code": "FILE_NOT_INDEXED",
+                    "message": "Inventory file id was not found",
+                    "fileId": file_id,
+                },
+            )
         return self.read(row)
 
     def _row_by_id(self, file_id: int) -> Optional[sqlite3.Row]:
@@ -103,9 +108,12 @@ class InventoryFileResolver:
         return Path(root)
 
     def _failure(self, row: sqlite3.Row, code: str, message: str) -> InventoryFileReadResult:
-        return InventoryFileReadResult(None, {
-            "code": code,
-            "message": message,
-            "sourceId": row["source_id"],
-            "relativePath": row["relative_path"],
-        })
+        return InventoryFileReadResult(
+            None,
+            {
+                "code": code,
+                "message": message,
+                "sourceId": row["source_id"],
+                "relativePath": row["relative_path"],
+            },
+        )

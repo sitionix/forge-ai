@@ -85,9 +85,7 @@ class GraphValidationError:
     def compact_dict(self) -> Dict[str, Any]:
         data = self.to_dict()
         return {
-            key: data[key]
-            for key in ("code", "path", "message", "expected", "actual", "allowedValues", "repairHint")
-            if data.get(key) not in (None, [], "")
+            key: data[key] for key in ("code", "path", "message", "expected", "actual", "allowedValues", "repairHint") if data.get(key) not in (None, [], "")
         }
 
     def _value(self, value: Any) -> Any:
@@ -131,18 +129,20 @@ class GraphRepairPromptBuilder:
             "maxAttempts": max_attempts,
             "rawResponsePreview": raw_response_preview,
         }
-        return "\n".join([
-            "Repair the previous graph analysis response.",
-            "Return JSON only. Do not use markdown or prose outside JSON.",
-            "Preserve valid candidates when possible and fix only the listed validation errors.",
-            "Do not invent new facts. Remove candidates that cannot be fixed using evidence in the provided file.",
-            "Use UNKNOWN if uncertain. Use only the allowed enum values below.",
-            "Every node, edge, and claim must have valid evidence line ranges inside the analyzed file when required.",
-            "Every local reference must point to an existing localId in the repaired response.",
-            "The repaired response must still match schemaVersion knowledge.graph.analysis.v1 and the exact file identity.",
-            "Structured validation feedback JSON:",
-            json.dumps(repair_context, ensure_ascii=False, default=str),
-        ])
+        return "\n".join(
+            [
+                "Repair the previous graph analysis response.",
+                "Return JSON only. Do not use markdown or prose outside JSON.",
+                "Preserve valid candidates when possible and fix only the listed validation errors.",
+                "Do not invent new facts. Remove candidates that cannot be fixed using evidence in the provided file.",
+                "Use UNKNOWN if uncertain. Use only the allowed enum values below.",
+                "Every node, edge, and claim must have valid evidence line ranges inside the analyzed file when required.",
+                "Every local reference must point to an existing localId in the repaired response.",
+                "The repaired response must still match schemaVersion knowledge.graph.analysis.v1 and the exact file identity.",
+                "Structured validation feedback JSON:",
+                json.dumps(repair_context, ensure_ascii=False, default=str),
+            ]
+        )
 
 
 def enum_validation_error(

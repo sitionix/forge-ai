@@ -8,7 +8,6 @@ from knowledge_service.file_scanner import scan_source
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.service_catalog_provider import ServiceYamlCatalogProvider
 from knowledge_service.skipped_reasons import SkippedBreakdown, SkippedReason
-from knowledge_service.source_catalog import SourceMetadata
 from knowledge_service.source_config import SourceConfig
 
 
@@ -21,9 +20,7 @@ class InventoryBuilder:
         started_at = datetime.now(timezone.utc).isoformat()
         result = ServiceYamlCatalogProvider(self.config).load()
         selected_candidates = [
-            source for source in result.sources
-            if (not source_ids or source.sourceId in source_ids)
-            and (not groups or source.group in groups)
+            source for source in result.sources if (not source_ids or source.sourceId in source_ids) and (not groups or source.group in groups)
         ]
         selected = [source for source in selected_candidates if source.rootExists]
         files: list[FileMetadata] = []

@@ -67,42 +67,44 @@ class StubAnalyzer:
 
 
 def valid_result():
-    return AnalysisResult.parse_obj({
-        "fileSummary": "Defines an object handler and helper.",
-        "symbols": [
-            {
-                "localId": "s1",
-                "name": "ObjectHandler",
-                "kind": "CLASS",
-                "roles": [{"role": "HTTP_HANDLER", "confidence": 0.9, "evidence": ["Has a method annotated with an HTTP mapping."]}],
-                "lineStart": 1,
-                "lineEnd": 5,
-                "metadata": {"language": "java"},
-            },
-            {
-                "localId": "s2",
-                "name": "create",
-                "kind": "METHOD",
-                "roles": [{"role": "ENTRYPOINT", "confidence": 0.8, "evidence": ["Method is externally callable in this file."]}],
-                "lineStart": 3,
-                "lineEnd": 4,
-                "metadata": {},
-            },
-        ],
-        "relations": [
-            {
-                "fromLocalId": "s1",
-                "toLocalId": "s2",
-                "relation": "CONTAINS",
-                "confidence": 1.0,
-                "evidence": ["The method is declared inside the class."],
-                "lineStart": 3,
-                "lineEnd": 3,
-                "metadata": {},
-            }
-        ],
-        "diagnostics": [],
-    })
+    return AnalysisResult.parse_obj(
+        {
+            "fileSummary": "Defines an object handler and helper.",
+            "symbols": [
+                {
+                    "localId": "s1",
+                    "name": "ObjectHandler",
+                    "kind": "CLASS",
+                    "roles": [{"role": "HTTP_HANDLER", "confidence": 0.9, "evidence": ["Has a method annotated with an HTTP mapping."]}],
+                    "lineStart": 1,
+                    "lineEnd": 5,
+                    "metadata": {"language": "java"},
+                },
+                {
+                    "localId": "s2",
+                    "name": "create",
+                    "kind": "METHOD",
+                    "roles": [{"role": "ENTRYPOINT", "confidence": 0.8, "evidence": ["Method is externally callable in this file."]}],
+                    "lineStart": 3,
+                    "lineEnd": 4,
+                    "metadata": {},
+                },
+            ],
+            "relations": [
+                {
+                    "fromLocalId": "s1",
+                    "toLocalId": "s2",
+                    "relation": "CONTAINS",
+                    "confidence": 1.0,
+                    "evidence": ["The method is declared inside the class."],
+                    "lineStart": 3,
+                    "lineEnd": 3,
+                    "metadata": {},
+                }
+            ],
+            "diagnostics": [],
+        }
+    )
 
 
 def responsibility_graph_result(method_claim=True, type_claim=True, file_claim=False, method_confidence=0.86, method_summary="Handles object creation."):
@@ -148,171 +150,190 @@ def responsibility_graph_result(method_claim=True, type_claim=True, file_claim=F
     ]
     claims = []
     if file_claim:
-        nodes.insert(0, {
-            "localId": "file1",
-            "nodeKind": "FILE",
-            "name": "ObjectHandler.java",
-            "language": "java",
-            "qualifiedName": None,
-            "displayName": "ObjectHandler.java",
-            "parentLocalId": None,
-            "lineStart": 1,
-            "lineEnd": 5,
-            "confidence": 0.9,
-            "metadata": {"sourceKind": "FILE"},
-        })
-        edges.insert(0, {
-            "localId": "file-declares-type",
-            "fromNodeLocalId": "file1",
-            "toNodeLocalId": "type1",
-            "edgeType": "DECLARES",
-            "confidence": 0.9,
-            "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "class declaration", "metadata": {}}],
-            "unresolvedTarget": None,
-            "metadata": {},
-        })
-        claims.append({
-            "localId": "file-responsibility",
-            "nodeLocalId": "file1",
-            "claimKind": "RESPONSIBILITY",
-            "summary": "Defines an object handler file.",
-            "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "file content", "metadata": {}}],
-            "confidence": 0.82,
-            "metadata": {},
-        })
-    if type_claim:
-        claims.append({
-            "localId": "type-responsibility",
-            "nodeLocalId": "type1",
-            "claimKind": "RESPONSIBILITY",
-            "summary": "Handles object requests.",
-            "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "class body", "metadata": {}}],
-            "confidence": 0.88,
-            "metadata": {},
-        })
-    if method_claim:
-        claims.append({
-            "localId": "method-responsibility",
-            "nodeLocalId": "method1",
-            "claimKind": "RESPONSIBILITY",
-            "summary": method_summary,
-            "evidence": [{"lineStart": 3, "lineEnd": 4, "text": "method body", "metadata": {}}],
-            "confidence": method_confidence,
-            "metadata": {},
-        })
-    return GraphAnalysisResult.parse_obj({
-        "nodes": nodes,
-        "edges": edges,
-        "claims": claims,
-        "diagnostics": [],
-    })
-
-
-def shared_evidence_graph_result():
-    return GraphAnalysisResult.parse_obj({
-        "nodes": [
+        nodes.insert(
+            0,
             {
                 "localId": "file1",
                 "nodeKind": "FILE",
-                "name": "EmailVerificationLinkClientImpl.java",
+                "name": "ObjectHandler.java",
                 "language": "java",
+                "qualifiedName": None,
+                "displayName": "ObjectHandler.java",
+                "parentLocalId": None,
                 "lineStart": 1,
-                "lineEnd": 6,
-                "confidence": 1.0,
-                "metadata": {"sourceKind": "FILE", "factOrigin": "STATIC", "flowDomain": "CODE"},
-            },
-            {
-                "localId": "type1",
-                "nodeKind": "TYPE",
-                "name": "EmailVerificationLinkClientImpl",
-                "language": "java",
-                "qualifiedName": "example.EmailVerificationLinkClientImpl",
-                "parentLocalId": "file1",
-                "lineStart": 1,
-                "lineEnd": 6,
-                "confidence": 1.0,
-                "metadata": {"sourceKind": "CLASS", "factOrigin": "STATIC", "flowDomain": "CODE"},
-            },
-            {
-                "localId": "method1",
-                "nodeKind": "CALLABLE",
-                "name": "createLink",
-                "language": "java",
-                "qualifiedName": "example.EmailVerificationLinkClientImpl.createLink",
-                "parentLocalId": "type1",
-                "lineStart": 3,
                 "lineEnd": 5,
-                "confidence": 1.0,
-                "metadata": {"sourceKind": "METHOD", "factOrigin": "STATIC", "flowDomain": "CODE"},
+                "confidence": 0.9,
+                "metadata": {"sourceKind": "FILE"},
             },
+        )
+        edges.insert(
+            0,
             {
-                "localId": "method2",
-                "nodeKind": "CALLABLE",
-                "name": "helper",
-                "language": "java",
-                "qualifiedName": "example.EmailVerificationLinkClientImpl.helper",
-                "parentLocalId": "type1",
-                "lineStart": 6,
-                "lineEnd": 6,
-                "confidence": 1.0,
-                "metadata": {"sourceKind": "METHOD", "factOrigin": "STATIC", "flowDomain": "CODE"},
-            },
-        ],
-        "edges": [
-            {
-                "localId": "declares-method",
-                "fromNodeLocalId": "type1",
-                "toNodeLocalId": "method1",
+                "localId": "file-declares-type",
+                "fromNodeLocalId": "file1",
+                "toNodeLocalId": "type1",
                 "edgeType": "DECLARES",
-                "confidence": 1.0,
-                "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "String createLink()", "metadata": {}}],
-                "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE"},
+                "confidence": 0.9,
+                "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "class declaration", "metadata": {}}],
+                "unresolvedTarget": None,
+                "metadata": {},
             },
+        )
+        claims.append(
             {
-                "localId": "same-callsite",
-                "fromNodeLocalId": "method1",
-                "toNodeLocalId": "method2",
-                "edgeType": "CALLS",
-                "confidence": 1.0,
-                "evidence": [{"lineStart": 4, "lineEnd": 4, "text": "helper(); helper();", "metadata": {"evidenceKind": "CALLSITE"}}],
-                "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "resolutionStatus": "RESOLVED", "methodName": "helper"},
-            },
+                "localId": "file-responsibility",
+                "nodeLocalId": "file1",
+                "claimKind": "RESPONSIBILITY",
+                "summary": "Defines an object handler file.",
+                "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "file content", "metadata": {}}],
+                "confidence": 0.82,
+                "metadata": {},
+            }
+        )
+    if type_claim:
+        claims.append(
             {
-                "localId": "same-callsite",
-                "fromNodeLocalId": "method1",
-                "toNodeLocalId": "method2",
-                "edgeType": "CALLS",
-                "confidence": 1.0,
-                "evidence": [{"lineStart": 4, "lineEnd": 4, "text": "helper(); helper();", "metadata": {"evidenceKind": "CALLSITE"}}],
-                "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "resolutionStatus": "RESOLVED", "methodName": "helper"},
-            },
-        ],
-        "claims": [
+                "localId": "type-responsibility",
+                "nodeLocalId": "type1",
+                "claimKind": "RESPONSIBILITY",
+                "summary": "Handles object requests.",
+                "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "class body", "metadata": {}}],
+                "confidence": 0.88,
+                "metadata": {},
+            }
+        )
+    if method_claim:
+        claims.append(
             {
-                "localId": "shared-claim",
+                "localId": "method-responsibility",
                 "nodeLocalId": "method1",
                 "claimKind": "RESPONSIBILITY",
-                "summary": "Creates an email verification link.",
-                "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "method body", "metadata": {}}],
-                "confidence": 0.9,
-                "metadata": {"factOrigin": "LLM", "flowDomain": "CODE"},
-            },
-            {
-                "localId": "shared-claim",
-                "nodeLocalId": "method1",
-                "claimKind": "ROLE",
-                "summary": "Client helper method.",
-                "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "method body", "metadata": {}}],
-                "confidence": 0.8,
-                "metadata": {"factOrigin": "LLM", "flowDomain": "CODE"},
-            },
-        ],
-        "diagnostics": [],
-    })
+                "summary": method_summary,
+                "evidence": [{"lineStart": 3, "lineEnd": 4, "text": "method body", "metadata": {}}],
+                "confidence": method_confidence,
+                "metadata": {},
+            }
+        )
+    return GraphAnalysisResult.parse_obj(
+        {
+            "nodes": nodes,
+            "edges": edges,
+            "claims": claims,
+            "diagnostics": [],
+        }
+    )
+
+
+def shared_evidence_graph_result():
+    return GraphAnalysisResult.parse_obj(
+        {
+            "nodes": [
+                {
+                    "localId": "file1",
+                    "nodeKind": "FILE",
+                    "name": "EmailVerificationLinkClientImpl.java",
+                    "language": "java",
+                    "lineStart": 1,
+                    "lineEnd": 6,
+                    "confidence": 1.0,
+                    "metadata": {"sourceKind": "FILE", "factOrigin": "STATIC", "flowDomain": "CODE"},
+                },
+                {
+                    "localId": "type1",
+                    "nodeKind": "TYPE",
+                    "name": "EmailVerificationLinkClientImpl",
+                    "language": "java",
+                    "qualifiedName": "example.EmailVerificationLinkClientImpl",
+                    "parentLocalId": "file1",
+                    "lineStart": 1,
+                    "lineEnd": 6,
+                    "confidence": 1.0,
+                    "metadata": {"sourceKind": "CLASS", "factOrigin": "STATIC", "flowDomain": "CODE"},
+                },
+                {
+                    "localId": "method1",
+                    "nodeKind": "CALLABLE",
+                    "name": "createLink",
+                    "language": "java",
+                    "qualifiedName": "example.EmailVerificationLinkClientImpl.createLink",
+                    "parentLocalId": "type1",
+                    "lineStart": 3,
+                    "lineEnd": 5,
+                    "confidence": 1.0,
+                    "metadata": {"sourceKind": "METHOD", "factOrigin": "STATIC", "flowDomain": "CODE"},
+                },
+                {
+                    "localId": "method2",
+                    "nodeKind": "CALLABLE",
+                    "name": "helper",
+                    "language": "java",
+                    "qualifiedName": "example.EmailVerificationLinkClientImpl.helper",
+                    "parentLocalId": "type1",
+                    "lineStart": 6,
+                    "lineEnd": 6,
+                    "confidence": 1.0,
+                    "metadata": {"sourceKind": "METHOD", "factOrigin": "STATIC", "flowDomain": "CODE"},
+                },
+            ],
+            "edges": [
+                {
+                    "localId": "declares-method",
+                    "fromNodeLocalId": "type1",
+                    "toNodeLocalId": "method1",
+                    "edgeType": "DECLARES",
+                    "confidence": 1.0,
+                    "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "String createLink()", "metadata": {}}],
+                    "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE"},
+                },
+                {
+                    "localId": "same-callsite",
+                    "fromNodeLocalId": "method1",
+                    "toNodeLocalId": "method2",
+                    "edgeType": "CALLS",
+                    "confidence": 1.0,
+                    "evidence": [{"lineStart": 4, "lineEnd": 4, "text": "helper(); helper();", "metadata": {"evidenceKind": "CALLSITE"}}],
+                    "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "resolutionStatus": "RESOLVED", "methodName": "helper"},
+                },
+                {
+                    "localId": "same-callsite",
+                    "fromNodeLocalId": "method1",
+                    "toNodeLocalId": "method2",
+                    "edgeType": "CALLS",
+                    "confidence": 1.0,
+                    "evidence": [{"lineStart": 4, "lineEnd": 4, "text": "helper(); helper();", "metadata": {"evidenceKind": "CALLSITE"}}],
+                    "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "resolutionStatus": "RESOLVED", "methodName": "helper"},
+                },
+            ],
+            "claims": [
+                {
+                    "localId": "shared-claim",
+                    "nodeLocalId": "method1",
+                    "claimKind": "RESPONSIBILITY",
+                    "summary": "Creates an email verification link.",
+                    "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "method body", "metadata": {}}],
+                    "confidence": 0.9,
+                    "metadata": {"factOrigin": "LLM", "flowDomain": "CODE"},
+                },
+                {
+                    "localId": "shared-claim",
+                    "nodeLocalId": "method1",
+                    "claimKind": "ROLE",
+                    "summary": "Client helper method.",
+                    "evidence": [{"lineStart": 3, "lineEnd": 5, "text": "method body", "metadata": {}}],
+                    "confidence": 0.8,
+                    "metadata": {"factOrigin": "LLM", "flowDomain": "CODE"},
+                },
+            ],
+            "diagnostics": [],
+        }
+    )
 
 
 def materialize_graph_for_test(result, content=None, file_id=1, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java"):
-    content = content or "class EmailVerificationLinkClientImpl {\n  WebClient client;\n  String createLink() {\n    helper(); helper();\n  }\n  void helper() {}\n}\n"
+    content = (
+        content
+        or "class EmailVerificationLinkClientImpl {\n  WebClient client;\n  String createLink() {\n    helper(); helper();\n  }\n  void helper() {}\n}\n"
+    )
     row = {
         "id": file_id,
         "source_id": "edge-gateway",
@@ -356,7 +377,7 @@ def build_inventory(tmp_path, content=None, include_large=False, extra_files=Non
         path.write_text(file_content, encoding="utf-8")
     catalog = tmp_path / "services.yaml"
     catalog.write_text(
-        f"""services:
+        """services:
   edge-gateway:
     label: Edge Gateway
     path: edge-gateway
@@ -438,43 +459,41 @@ def test_analysis_store_migrates_old_integer_graph_diagnostics_schema(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics").fetchone()[0] == 1
-        assert conn.execute(
-            "SELECT 1 FROM analysis_schema_migrations WHERE version = 4"
-        ).fetchone()
+        assert conn.execute("SELECT 1 FROM analysis_schema_migrations WHERE version = 4").fetchone()
 
     AnalysisStore(db_path).init()
 
     with sqlite3.connect(db_path) as conn:
-        assert conn.execute(
-            "SELECT COUNT(*) FROM analysis_graph_diagnostics WHERE id = 'diagnostic:text-id'"
-        ).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics WHERE id = 'diagnostic:text-id'").fetchone()[0] == 1
 
 
 def test_graph_persistence_failure_is_reported_as_graph_store_error(tmp_path):
     store = AnalysisStore(tmp_path / "knowledge.sqlite")
     store.init()
     bad_graph = {
-        "nodes": [{
-            "id": "node-1",
-            "job_id": "job-1",
-            "source_id": "edge-gateway",
-            "inventory_file_id": 1,
-            "analysis_file_id": 1,
-            "stable_key": "edge-gateway|bad.yml|FILE",
-            "node_kind": "FILE",
-            "language": "yaml",
-            "name": None,
-            "qualified_name": None,
-            "display_name": None,
-            "parent_node_id": None,
-            "line_start": 1,
-            "line_end": 1,
-            "confidence": 1.0,
-            "status": "TRUSTED",
-            "metadata": {},
-            "fact_origin": "STATIC",
-            "flow_domain": "WORKFLOW",
-        }],
+        "nodes": [
+            {
+                "id": "node-1",
+                "job_id": "job-1",
+                "source_id": "edge-gateway",
+                "inventory_file_id": 1,
+                "analysis_file_id": 1,
+                "stable_key": "edge-gateway|bad.yml|FILE",
+                "node_kind": "FILE",
+                "language": "yaml",
+                "name": None,
+                "qualified_name": None,
+                "display_name": None,
+                "parent_node_id": None,
+                "line_start": 1,
+                "line_end": 1,
+                "confidence": 1.0,
+                "status": "TRUSTED",
+                "metadata": {},
+                "fact_origin": "STATIC",
+                "flow_domain": "WORKFLOW",
+            }
+        ],
         "edges": [],
         "claims": [],
         "evidence": [],
@@ -482,20 +501,24 @@ def test_graph_persistence_failure_is_reported_as_graph_store_error(tmp_path):
     }
 
     with pytest.raises(KnowledgeError) as raised:
-        store.replace_file_graph_analysis(1, {
-            "source_id": "edge-gateway",
-            "relative_path": "bad.yml",
-            "content_hash": "hash",
-            "analyzer_name": "ai-file-analyzer",
-            "analyzer_version": "1",
-            "engine_version": GRAPH_ENGINE_VERSION,
-            "flow_domain": "WORKFLOW",
-            "status": "ANALYZED",
-            "analyzed_at": "now",
-            "symbol_count": 1,
-            "relation_count": 0,
-            "diagnostics": [],
-        }, bad_graph)
+        store.replace_file_graph_analysis(
+            1,
+            {
+                "source_id": "edge-gateway",
+                "relative_path": "bad.yml",
+                "content_hash": "hash",
+                "analyzer_name": "ai-file-analyzer",
+                "analyzer_version": "1",
+                "engine_version": GRAPH_ENGINE_VERSION,
+                "flow_domain": "WORKFLOW",
+                "status": "ANALYZED",
+                "analyzed_at": "now",
+                "symbol_count": 1,
+                "relation_count": 0,
+                "diagnostics": [],
+            },
+            bad_graph,
+        )
 
     assert raised.value.code == "ANALYSIS_GRAPH_STORE_FAILED"
     assert raised.value.details["stage"] == "GRAPH_STORE"
@@ -671,7 +694,7 @@ def create_source_config(tmp_path, content=None):
     )
     catalog = tmp_path / "services.yaml"
     catalog.write_text(
-        f"""services:
+        """services:
   edge-gateway:
     label: Edge Gateway
     path: edge-gateway
@@ -899,24 +922,26 @@ def test_failed_file_with_unchanged_hash_is_picked_for_retry(tmp_path):
 
 def test_unchanged_file_lookup_batches_large_inventory(tmp_path):
     extra_files = {
-        f"src/main/java/example/Generated{i:03d}Handler.java": "public class GeneratedHandler {\n  public void create() {\n  }\n\n}\n"
-        for i in range(405)
+        f"src/main/java/example/Generated{i:03d}Handler.java": "public class GeneratedHandler {\n  public void create() {\n  }\n\n}\n" for i in range(405)
     }
     store, _, _ = build_inventory(tmp_path, extra_files=extra_files)
     rows, _ = store.search_rows([], [])
     analysis_store = AnalysisStore(store.db_path)
     for row in rows:
-        analysis_store.mark_file(row["id"], {
-            "source_id": row["source_id"],
-            "relative_path": row["relative_path"],
-            "content_hash": row["content_hash"],
-            "analyzer_name": StubAnalyzer.name,
-            "analyzer_version": StubAnalyzer.version,
-            "status": "ANALYZED",
-            "symbol_count": 0,
-            "relation_count": 0,
-            "diagnostics": [],
-        })
+        analysis_store.mark_file(
+            row["id"],
+            {
+                "source_id": row["source_id"],
+                "relative_path": row["relative_path"],
+                "content_hash": row["content_hash"],
+                "analyzer_name": StubAnalyzer.name,
+                "analyzer_version": StubAnalyzer.version,
+                "status": "ANALYZED",
+                "symbol_count": 0,
+                "relation_count": 0,
+                "diagnostics": [],
+            },
+        )
 
     unchanged_ids = analysis_store.unchanged_file_ids(rows, StubAnalyzer.name, StubAnalyzer.version)
 
@@ -924,9 +949,12 @@ def test_unchanged_file_lookup_batches_large_inventory(tmp_path):
 
 
 def test_analysis_max_files_uses_stable_inventory_order(tmp_path):
-    store, _, _ = build_inventory(tmp_path, extra_files={
-        "src/main/java/example/AaaHandler.java": "public class AaaHandler {\n  public void create() {\n  }\n\n}\n",
-    })
+    store, _, _ = build_inventory(
+        tmp_path,
+        extra_files={
+            "src/main/java/example/AaaHandler.java": "public class AaaHandler {\n  public void create() {\n  }\n\n}\n",
+        },
+    )
     runner = AnalysisJobRunner(store, app_config(tmp_path))
     wait_job(store, runner.start(AnalysisBuildRequest(maxFiles=1, force=True), StubAnalyzer())["jobId"])
     files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
@@ -936,9 +964,12 @@ def test_analysis_max_files_uses_stable_inventory_order(tmp_path):
 
 
 def test_analysis_max_files_applies_after_current_files_are_filtered(tmp_path):
-    store, _, _ = build_inventory(tmp_path, extra_files={
-        "src/main/java/example/AaaHandler.java": "public class AaaHandler {\n  public void create() {\n  }\n\n}\n",
-    })
+    store, _, _ = build_inventory(
+        tmp_path,
+        extra_files={
+            "src/main/java/example/AaaHandler.java": "public class AaaHandler {\n  public void create() {\n  }\n\n}\n",
+        },
+    )
     runner = AnalysisJobRunner(store, app_config(tmp_path))
     analyzer = StubAnalyzer()
 
@@ -965,12 +996,32 @@ def test_changed_file_reanalyzed_and_previous_analysis_removed(tmp_path):
     first_symbols = AnalysisStore(store.db_path).symbols(None, None, None, None, None, 100, 0)
     (service / "src/main/java/example/ObjectHandler.java").write_text("public class ObjectHandler {\n  public void updated() {}\n}\n", encoding="utf-8")
     InventoryBuilder(load_source_config(config), store).build([], [])
-    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(AnalysisResult.parse_obj({
-        "fileSummary": "Updated.",
-        "symbols": [{"localId": "s3", "name": "updated", "kind": "METHOD", "roles": [{"role": "UTILITY", "confidence": 0.5, "evidence": ["Method exists."]}], "lineStart": 2, "lineEnd": 2, "metadata": {}}],
-        "relations": [],
-        "diagnostics": [],
-    })))["jobId"])
+    wait_job(
+        store,
+        runner.start(
+            AnalysisBuildRequest(),
+            StubAnalyzer(
+                AnalysisResult.parse_obj(
+                    {
+                        "fileSummary": "Updated.",
+                        "symbols": [
+                            {
+                                "localId": "s3",
+                                "name": "updated",
+                                "kind": "METHOD",
+                                "roles": [{"role": "UTILITY", "confidence": 0.5, "evidence": ["Method exists."]}],
+                                "lineStart": 2,
+                                "lineEnd": 2,
+                                "metadata": {},
+                            }
+                        ],
+                        "relations": [],
+                        "diagnostics": [],
+                    }
+                )
+            ),
+        )["jobId"],
+    )
     second_symbols = AnalysisStore(store.db_path).symbols(None, None, None, None, None, 100, 0)
 
     assert first_symbols["total"] == 3
@@ -1092,15 +1143,17 @@ def test_inventory_refresh_makes_new_files_available_for_next_analysis(tmp_path)
 
 def test_inventory_refresh_blocked_while_analysis_running(tmp_path):
     store, _, _ = build_inventory(tmp_path)
-    AnalysisStore(store.db_path).create_job({
-        "jobId": "job-running",
-        "status": "RUNNING",
-        "startedAt": "now",
-        "sourceCount": 1,
-        "fileCount": 1,
-        "processedFileCount": 0,
-        "failedFileCount": 0,
-    })
+    AnalysisStore(store.db_path).create_job(
+        {
+            "jobId": "job-running",
+            "status": "RUNNING",
+            "startedAt": "now",
+            "sourceCount": 1,
+            "fileCount": 1,
+            "processedFileCount": 0,
+            "failedFileCount": 0,
+        }
+    )
 
     with pytest.raises(KnowledgeError) as exc:
         InventoryRefreshService(app_config(tmp_path), store).build([], [])
@@ -1110,15 +1163,17 @@ def test_inventory_refresh_blocked_while_analysis_running(tmp_path):
 
 def test_background_inventory_scheduler_skips_while_analysis_running(tmp_path):
     store, _, _ = build_inventory(tmp_path)
-    AnalysisStore(store.db_path).create_job({
-        "jobId": "job-running",
-        "status": "RUNNING",
-        "startedAt": "now",
-        "sourceCount": 1,
-        "fileCount": 1,
-        "processedFileCount": 0,
-        "failedFileCount": 0,
-    })
+    AnalysisStore(store.db_path).create_job(
+        {
+            "jobId": "job-running",
+            "status": "RUNNING",
+            "startedAt": "now",
+            "sourceCount": 1,
+            "fileCount": 1,
+            "processedFileCount": 0,
+            "failedFileCount": 0,
+        }
+    )
     refresh = InventoryRefreshService(app_config(tmp_path), store)
     scheduler = BackgroundInventoryScheduler(refresh, app_config(tmp_path))
 
@@ -1131,17 +1186,19 @@ def test_background_inventory_scheduler_skips_while_analysis_running(tmp_path):
 
 def test_background_inventory_refresh_skips_only_running_source(tmp_path):
     store, _, first, second = build_two_service_inventory(tmp_path)
-    AnalysisStore(store.db_path).create_job({
-        "jobId": "job-running",
-        "status": "RUNNING",
-        "startedAt": "now",
-        "sourceCount": 1,
-        "fileCount": 1,
-        "processedFileCount": 0,
-        "failedFileCount": 0,
-        "currentSourceId": "first-service",
-        "sourceIds": ["first-service"],
-    })
+    AnalysisStore(store.db_path).create_job(
+        {
+            "jobId": "job-running",
+            "status": "RUNNING",
+            "startedAt": "now",
+            "sourceCount": 1,
+            "fileCount": 1,
+            "processedFileCount": 0,
+            "failedFileCount": 0,
+            "currentSourceId": "first-service",
+            "sourceIds": ["first-service"],
+        }
+    )
     (first / "src" / "First.java").unlink()
     (second / "src" / "Second.java").unlink()
     (second / "src" / "SecondNew.java").write_text("class SecondNew {}\n", encoding="utf-8")
@@ -1252,10 +1309,7 @@ def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path
     old_final = wait_job(store, old_job_id)
     files = analysis_store.files(None, "ANALYZED", None, 10, 0)
     with sqlite3.connect(store.db_path) as conn:
-        old_job_file_statuses = {
-            row[0]
-            for row in conn.execute("SELECT status FROM analysis_job_files WHERE job_id = ?", (old_job_id,)).fetchall()
-        }
+        old_job_file_statuses = {row[0] for row in conn.execute("SELECT status FROM analysis_job_files WHERE job_id = ?", (old_job_id,)).fetchall()}
 
     assert new_final["status"] == "COMPLETED"
     assert old_final["status"] == "STOPPED"
@@ -1300,17 +1354,19 @@ def test_service_status_uses_active_job_counts_while_running(tmp_path):
     runner = AnalysisJobRunner(store, app_config(tmp_path))
     wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(fail=True))["jobId"])
     analysis_store = AnalysisStore(store.db_path)
-    analysis_store.create_job({
-        "jobId": "job-running",
-        "status": "RUNNING",
-        "startedAt": "now",
-        "sourceCount": 1,
-        "fileCount": 1,
-        "processedFileCount": 0,
-        "failedFileCount": 0,
-        "currentSourceId": "edge-gateway",
-        "currentRelativePath": "src/main/java/example/ObjectHandler.java",
-    })
+    analysis_store.create_job(
+        {
+            "jobId": "job-running",
+            "status": "RUNNING",
+            "startedAt": "now",
+            "sourceCount": 1,
+            "fileCount": 1,
+            "processedFileCount": 0,
+            "failedFileCount": 0,
+            "currentSourceId": "edge-gateway",
+            "currentRelativePath": "src/main/java/example/ObjectHandler.java",
+        }
+    )
 
     service = analysis_store.service_status(None, StubAnalyzer.name, StubAnalyzer.version, store.status())["services"][0]
 
@@ -1338,10 +1394,12 @@ def test_bad_ai_json_is_retried_before_file_fails(tmp_path):
 
 def test_max_attempts_exceeded_marks_file_failed_with_preview(tmp_path):
     store, _, _ = build_inventory(tmp_path)
-    analyzer = StubAnalyzer(outcomes=[
-        KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad", attempt=1),
-        KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad again", attempt=2),
-    ])
+    analyzer = StubAnalyzer(
+        outcomes=[
+            KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad", attempt=1),
+            KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad again", attempt=2),
+        ]
+    )
     runner = AnalysisJobRunner(store, app_config_with_retries(tmp_path, 2))
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
     files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
@@ -1354,13 +1412,18 @@ def test_max_attempts_exceeded_marks_file_failed_with_preview(tmp_path):
 
 
 def test_timeout_marks_file_failed_and_continues(tmp_path):
-    store, _, _ = build_inventory(tmp_path, extra_files={
-        "src/main/java/example/SecondHandler.java": "public class SecondHandler {}\n",
-    })
-    analyzer = StubAnalyzer(outcomes=[
-        KnowledgeError("ANALYSIS_AI_TIMEOUT", "AI analyzer request timed out", attempt=1),
-        valid_result(),
-    ])
+    store, _, _ = build_inventory(
+        tmp_path,
+        extra_files={
+            "src/main/java/example/SecondHandler.java": "public class SecondHandler {}\n",
+        },
+    )
+    analyzer = StubAnalyzer(
+        outcomes=[
+            KnowledgeError("ANALYSIS_AI_TIMEOUT", "AI analyzer request timed out", attempt=1),
+            valid_result(),
+        ]
+    )
     runner = AnalysisJobRunner(store, app_config_with_retries(tmp_path, 3))
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
     files = AnalysisStore(store.db_path).files(None, None, None, 10, 0)
@@ -1376,13 +1439,18 @@ def test_timeout_marks_file_failed_and_continues(tmp_path):
 
 
 def test_transport_error_marks_file_failed_and_continues_after_attempts(tmp_path):
-    store, _, _ = build_inventory(tmp_path, extra_files={
-        "src/main/java/example/SecondHandler.java": "public class SecondHandler {}\n",
-    })
-    analyzer = StubAnalyzer(outcomes=[
-        KnowledgeError("ANALYSIS_AI_TRANSPORT_ERROR", "AI analyzer transport error", attempt=1),
-        valid_result(),
-    ])
+    store, _, _ = build_inventory(
+        tmp_path,
+        extra_files={
+            "src/main/java/example/SecondHandler.java": "public class SecondHandler {}\n",
+        },
+    )
+    analyzer = StubAnalyzer(
+        outcomes=[
+            KnowledgeError("ANALYSIS_AI_TRANSPORT_ERROR", "AI analyzer transport error", attempt=1),
+            valid_result(),
+        ]
+    )
     runner = AnalysisJobRunner(store, app_config_with_retries(tmp_path, 1))
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
 
@@ -1401,13 +1469,15 @@ def test_last_progress_at_updates(tmp_path):
 def test_interrupted_running_jobs_are_marked_failed_on_startup_cleanup(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     analysis_store = AnalysisStore(store.db_path)
-    analysis_store.create_job({
-        "jobId": "job-running",
-        "status": "RUNNING",
-        "startedAt": "now",
-        "sourceCount": 1,
-        "fileCount": 1,
-    })
+    analysis_store.create_job(
+        {
+            "jobId": "job-running",
+            "status": "RUNNING",
+            "startedAt": "now",
+            "sourceCount": 1,
+            "fileCount": 1,
+        }
+    )
 
     analysis_store.mark_interrupted_jobs()
     job = analysis_store.job("job-running")
@@ -1521,16 +1591,16 @@ def test_runtime_analysis_persists_unsupported_yaml_file_node_and_structural_dia
     assert analysis_file["last_error_code"] is None
     assert job_file["status"] == "ANALYZED_WITH_DIAGNOSTICS"
     assert job_file["flow_domain"] == "WORKFLOW"
-    graph = AnalysisStore(store.db_path).graph(
-        "edge-gateway", None, None, None, None, None, None, None, 2, 150, False, True
-    )
+    graph = AnalysisStore(store.db_path).graph("edge-gateway", None, None, None, None, None, None, None, 2, 150, False, True)
     assert graph["nodes"][0]["nodeKind"] == "FILE"
     assert graph["diagnostics"][0]["code"] == "STRUCTURAL_PARSER_NOT_AVAILABLE"
 
 
 def test_runtime_resolves_field_receiver_calls_when_target_type_is_unique(tmp_path):
-    store, _, _ = build_inventory(tmp_path, extra_files={
-        "src/main/java/example/Controller.java": """package example;
+    store, _, _ = build_inventory(
+        tmp_path,
+        extra_files={
+            "src/main/java/example/Controller.java": """package example;
 class Controller {
   private final TicketMapper mapper;
   TicketDto handle(Ticket ticket) {
@@ -1538,14 +1608,15 @@ class Controller {
   }
 }
 """,
-        "src/main/java/example/TicketMapper.java": """package example;
+            "src/main/java/example/TicketMapper.java": """package example;
 class TicketMapper {
   TicketDto toApi(Ticket ticket) {
     return new TicketDto();
   }
 }
 """,
-    })
+        },
+    )
     runner = AnalysisJobRunner(store, app_config(tmp_path))
     wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
 
@@ -1568,7 +1639,9 @@ class TicketMapper {
 
 
 def test_graph_slice_service_returns_compact_callable_slice_with_groups_and_uncertainties(tmp_path):
-    store, _, _ = build_inventory(tmp_path, content="""package example;
+    store, _, _ = build_inventory(
+        tmp_path,
+        content="""package example;
 class Controller {
   private final TicketMapper mapper;
   void handle(String id, MissingClient missingClient) {
@@ -1582,25 +1655,29 @@ class TicketMapper {
 }
 class TicketDto {}
 class Ticket {}
-""")
+""",
+    )
     runner = AnalysisJobRunner(store, app_config(tmp_path))
     wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
     method = next(
-        item for item in AnalysisStore(store.db_path).symbols("edge-gateway", None, None, None, "handle", 20, 0)["symbols"]
+        item
+        for item in AnalysisStore(store.db_path).symbols("edge-gateway", None, None, None, "handle", 20, 0)["symbols"]
         if item["nodeKind"] == "CALLABLE" and item["name"] == "handle"
     )
 
-    result = GraphSliceService(AnalysisStore(store.db_path)).slice(GraphSliceRequest(
-        source_id="edge-gateway",
-        root_graph_node_id=method["symbolId"],
-        flow_domain="CODE",
-        direction="OUTBOUND",
-        depth=2,
-        max_nodes=40,
-        max_edges=60,
-        include_external="collapsed",
-        include_unresolved=True,
-    ))
+    result = GraphSliceService(AnalysisStore(store.db_path)).slice(
+        GraphSliceRequest(
+            source_id="edge-gateway",
+            root_graph_node_id=method["symbolId"],
+            flow_domain="CODE",
+            direction="OUTBOUND",
+            depth=2,
+            max_nodes=40,
+            max_edges=60,
+            include_external="collapsed",
+            include_unresolved=True,
+        )
+    )
 
     assert result["root"]["label"] == "handle"
     assert any(node["label"] == "toApi" for node in result["nodes"])
@@ -1615,7 +1692,8 @@ def test_graph_slice_endpoint_returns_slice_response(tmp_path, monkeypatch):
     store = configure_api(tmp_path, monkeypatch)
     wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer(GraphAnalysisResult()))["jobId"])
     method = next(
-        item for item in AnalysisStore(store.db_path).symbols("edge-gateway", None, None, None, "create", 20, 0)["symbols"]
+        item
+        for item in AnalysisStore(store.db_path).symbols("edge-gateway", None, None, None, "create", 20, 0)["symbols"]
         if item["nodeKind"] == "CALLABLE" and item["name"] == "create"
     )
 
@@ -1749,7 +1827,9 @@ def test_callable_without_direct_claim_uses_parent_fallback_with_provenance(tmp_
     wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(method_claim=False, type_claim=True)))["jobId"])
     method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
 
-    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, False, False)["selected"]["node"]
+    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, False, False)["selected"][
+        "node"
+    ]
 
     assert selected["claimSummary"] == "Handles object requests."
     assert selected["summarySource"] == "PARENT_FALLBACK"
@@ -1759,10 +1839,14 @@ def test_callable_without_direct_claim_uses_parent_fallback_with_provenance(tmp_
 def test_callable_without_type_claim_uses_file_fallback_with_provenance(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = AnalysisJobRunner(store, app_config(tmp_path))
-    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(method_claim=False, type_claim=False, file_claim=True)))["jobId"])
+    wait_job(
+        store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(method_claim=False, type_claim=False, file_claim=True)))["jobId"]
+    )
     method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
 
-    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, False, False)["selected"]["node"]
+    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, False, False)["selected"][
+        "node"
+    ]
 
     assert selected["claimSummary"] == "Defines an object handler file."
     assert selected["summarySource"] == "FILE_FALLBACK"
@@ -1772,7 +1856,10 @@ def test_callable_without_type_claim_uses_file_fallback_with_provenance(tmp_path
 def test_low_confidence_callable_claim_is_debug_only_and_not_trusted(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = AnalysisJobRunner(store, app_config(tmp_path))
-    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(method_claim=True, type_claim=False, method_confidence=0.2)))["jobId"])
+    wait_job(
+        store,
+        runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(method_claim=True, type_claim=False, method_confidence=0.2)))["jobId"],
+    )
     method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
 
     graph = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, True, False)
@@ -1789,14 +1876,24 @@ def test_low_confidence_callable_claim_is_debug_only_and_not_trusted(tmp_path):
 def test_generic_file_level_callable_summary_is_not_used_as_direct_summary(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = AnalysisJobRunner(store, app_config(tmp_path))
-    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(responsibility_graph_result(
-        method_claim=True,
-        type_claim=False,
-        method_summary="This Java file contains an object handler.",
-    )))["jobId"])
+    wait_job(
+        store,
+        runner.start(
+            AnalysisBuildRequest(),
+            StubAnalyzer(
+                responsibility_graph_result(
+                    method_claim=True,
+                    type_claim=False,
+                    method_summary="This Java file contains an object handler.",
+                )
+            ),
+        )["jobId"],
+    )
     method = AnalysisStore(store.db_path).symbols(None, None, None, None, "create", 10, 0)["symbols"][0]
 
-    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, True, False)["selected"]["node"]
+    selected = AnalysisStore(store.db_path).graph("edge-gateway", method["symbolId"], None, None, None, None, None, None, 0, 25, True, False)["selected"][
+        "node"
+    ]
     responsibility = next(claim for claim in selected["claims"] if claim["claimKind"] == "RESPONSIBILITY")
 
     assert selected["summarySource"] == "NONE"
@@ -1842,11 +1939,13 @@ def configure_api(tmp_path, monkeypatch):
 
 def post_json(path, payload):
     import asyncio
+
     return asyncio.run(asgi_json("POST", path, payload))
 
 
 def get_json(path):
     import asyncio
+
     return asyncio.run(asgi_json("GET", path, None))
 
 
@@ -1868,7 +1967,8 @@ def insert_isolated_graph_nodes(db_path, count=5):
         """).fetchone()
         assert base is not None
         for index in range(count):
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO analysis_graph_nodes(
                     id, job_id, source_id, inventory_file_id, analysis_file_id, stable_key,
                     node_kind, language, name, qualified_name, display_name, parent_node_id,
@@ -1876,27 +1976,29 @@ def insert_isolated_graph_nodes(db_path, count=5):
                     fact_origin, flow_domain
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                f"test-isolated-node-{index}",
-                base["job_id"],
-                base["source_id"],
-                base["inventory_file_id"],
-                base["analysis_file_id"],
-                f"edge-gateway|isolated|{index}",
-                "CALLABLE",
-                base["language"],
-                f"isolated{index}",
-                f"example.Isolated{index}.isolated",
-                f"isolated{index}",
-                1,
-                1,
-                1.0,
-                "TRUSTED",
-                json.dumps({"testFixture": True}),
-                "now",
-                "STATIC",
-                base["flow_domain"] or "CODE",
-            ))
+            """,
+                (
+                    f"test-isolated-node-{index}",
+                    base["job_id"],
+                    base["source_id"],
+                    base["inventory_file_id"],
+                    base["analysis_file_id"],
+                    f"edge-gateway|isolated|{index}",
+                    "CALLABLE",
+                    base["language"],
+                    f"isolated{index}",
+                    f"example.Isolated{index}.isolated",
+                    f"isolated{index}",
+                    1,
+                    1,
+                    1.0,
+                    "TRUSTED",
+                    json.dumps({"testFixture": True}),
+                    "now",
+                    "STATIC",
+                    base["flow_domain"] or "CODE",
+                ),
+            )
 
 
 def insert_unresolved_graph_edge(db_path):
@@ -1910,34 +2012,39 @@ def insert_unresolved_graph_edge(db_path):
             LIMIT 1
         """).fetchone()
         assert from_node is not None
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO analysis_graph_edges(
                 id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id,
                 to_node_id, edge_type, resolution_status, confidence, evidence_id,
                 unresolved_target_json, metadata_json, status, created_at, fact_origin, flow_domain
             )
             VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
-        """, (
-            "test-unresolved-edge-without-endpoint",
-            from_node["job_id"],
-            from_node["source_id"],
-            from_node["inventory_file_id"],
-            from_node["analysis_file_id"],
-            from_node["id"],
-            "CALLS",
-            "UNRESOLVED",
-            1.0,
-            json.dumps({"name": "MissingTarget", "methodName": "missing"}),
-            json.dumps({
-                "methodName": "missing",
-                "unresolvedReason": "TARGET_NOT_ANALYZED",
-                "sliceDefaultVisibility": "SHOW_AS_UNCERTAINTY",
-            }),
-            "TRUSTED",
-            "now",
-            "STATIC",
-            from_node["flow_domain"] or "CODE",
-        ))
+        """,
+            (
+                "test-unresolved-edge-without-endpoint",
+                from_node["job_id"],
+                from_node["source_id"],
+                from_node["inventory_file_id"],
+                from_node["analysis_file_id"],
+                from_node["id"],
+                "CALLS",
+                "UNRESOLVED",
+                1.0,
+                json.dumps({"name": "MissingTarget", "methodName": "missing"}),
+                json.dumps(
+                    {
+                        "methodName": "missing",
+                        "unresolvedReason": "TARGET_NOT_ANALYZED",
+                        "sliceDefaultVisibility": "SHOW_AS_UNCERTAINTY",
+                    }
+                ),
+                "TRUSTED",
+                "now",
+                "STATIC",
+                from_node["flow_domain"] or "CODE",
+            ),
+        )
 
 
 async def asgi_json(method, path, payload):
@@ -2004,13 +2111,15 @@ def test_analysis_api_refreshes_inventory_before_queueing_job(tmp_path, monkeypa
 
 def test_analysis_api_job_status_endpoint(tmp_path, monkeypatch):
     store = configure_api(tmp_path, monkeypatch)
-    AnalysisStore(store.db_path).create_job({
-        "jobId": "job-2",
-        "status": "RUNNING",
-        "startedAt": "now",
-        "sourceCount": 1,
-        "fileCount": 1,
-    })
+    AnalysisStore(store.db_path).create_job(
+        {
+            "jobId": "job-2",
+            "status": "RUNNING",
+            "startedAt": "now",
+            "sourceCount": 1,
+            "fileCount": 1,
+        }
+    )
 
     result = get_json("/api/v1/knowledge/analysis/jobs/job-2")
 
@@ -2111,9 +2220,12 @@ def test_analysis_graph_api_returns_slice_around_selected_node_and_depth_limit(t
 
 
 def test_analysis_graph_api_applies_flow_domain_code(tmp_path, monkeypatch):
-    store, _, _ = build_inventory(tmp_path, extra_files={
-        "src/test/java/example/ObjectHandlerTest.java": "class ObjectHandlerTest {}\n",
-    })
+    store, _, _ = build_inventory(
+        tmp_path,
+        extra_files={
+            "src/test/java/example/ObjectHandlerTest.java": "class ObjectHandlerTest {}\n",
+        },
+    )
     cfg = app_config(tmp_path)
     monkeypatch.setattr(main, "app_config", cfg)
     monkeypatch.setattr(main, "store", store)
@@ -2162,22 +2274,24 @@ def test_analysis_graph_api_handles_no_analysis_yet(tmp_path, monkeypatch):
 def test_analysis_graph_api_shows_running_job_partial_graph(tmp_path, monkeypatch):
     store = configure_api(tmp_path, monkeypatch)
     wait_job(store, AnalysisJobRunner(store, app_config(tmp_path)).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
-    AnalysisStore(store.db_path).create_job({
-        "jobId": "job-running",
-        "status": "RUNNING",
-        "startedAt": "now",
-        "sourceCount": 1,
-        "fileCount": 1,
-        "processedFileCount": 0,
-        "failedFileCount": 0,
-        "currentSourceId": "edge-gateway",
-        "currentRelativePath": "src/main/java/example/ObjectHandler.java",
-        "sourceIds": ["edge-gateway"],
-        "lastProgressAt": "now",
-        "symbolCount": 0,
-        "relationCount": 0,
-        "diagnostics": [],
-    })
+    AnalysisStore(store.db_path).create_job(
+        {
+            "jobId": "job-running",
+            "status": "RUNNING",
+            "startedAt": "now",
+            "sourceCount": 1,
+            "fileCount": 1,
+            "processedFileCount": 0,
+            "failedFileCount": 0,
+            "currentSourceId": "edge-gateway",
+            "currentRelativePath": "src/main/java/example/ObjectHandler.java",
+            "sourceIds": ["edge-gateway"],
+            "lastProgressAt": "now",
+            "symbolCount": 0,
+            "relationCount": 0,
+            "diagnostics": [],
+        }
+    )
 
     result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway")
 
@@ -2242,17 +2356,22 @@ def test_status_api_separates_coverage_and_freshness_without_running_ai(tmp_path
 
 
 def test_analysis_api_exposes_failed_file_diagnostics_and_progress(tmp_path, monkeypatch):
-    store, _, _ = build_inventory(tmp_path, extra_files={
-        "src/main/java/example/SecondHandler.java": "public class SecondHandler {}\n",
-    })
+    store, _, _ = build_inventory(
+        tmp_path,
+        extra_files={
+            "src/main/java/example/SecondHandler.java": "public class SecondHandler {}\n",
+        },
+    )
     cfg = app_config_with_retries(tmp_path, 1)
     monkeypatch.setattr(main, "app_config", cfg)
     monkeypatch.setattr(main, "store", store)
     monkeypatch.setattr(main, "analysis_runner", FakeRunner())
-    analyzer = StubAnalyzer(outcomes=[
-        KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad", attempt=1),
-        valid_result(),
-    ])
+    analyzer = StubAnalyzer(
+        outcomes=[
+            KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad", attempt=1),
+            valid_result(),
+        ]
+    )
     wait_job(store, AnalysisJobRunner(store, cfg).start(AnalysisBuildRequest(), analyzer)["jobId"])
 
     status = get_json("/api/v1/knowledge/analysis/status")
@@ -2309,9 +2428,11 @@ def test_services_status_reports_failed_files_separately_and_groups_diagnostics(
     cfg = app_config_with_retries(tmp_path, 1)
     monkeypatch.setattr(main, "app_config", cfg)
     monkeypatch.setattr(main, "store", store)
-    analyzer = StubAnalyzer(outcomes=[
-        KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad", attempt=1),
-    ])
+    analyzer = StubAnalyzer(
+        outcomes=[
+            KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad", attempt=1),
+        ]
+    )
     wait_job(store, AnalysisJobRunner(store, cfg).start(AnalysisBuildRequest(), analyzer)["jobId"])
 
     result = get_json("/api/v1/knowledge/services/status")
@@ -2349,8 +2470,5 @@ def test_analysis_store_drops_legacy_fact_tables(tmp_path):
     store.init()
 
     with store._connect() as conn:
-        tables = {
-            row["name"]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-        }
+        tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
     assert not {"symbol_tokens", "edges", "symbols", "file_extraction_state", "fact_builds"} & tables

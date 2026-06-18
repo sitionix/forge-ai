@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Any, Dict, List
 
 import yaml
@@ -43,21 +42,23 @@ class ServiceYamlCatalogProvider(SourceCatalogProvider):
                 continue
             service_path = str(entry["path"]).strip()
             absolute_root = (self.config.catalog.workspace_root / service_path).resolve()
-            sources.append(SourceMetadata(
-                sourceId=service_id,
-                displayName=str(entry["label"]).strip(),
-                group=_optional_text(entry.get("group")),
-                path=service_path,
-                absoluteRoot=absolute_root,
-                rootExists=absolute_root.exists() and absolute_root.is_dir(),
-                tags=_string_list(entry.get("tags")),
-                domainKeywords=_string_list(entry.get("domain_keywords")),
-                ownsBusinessAreas=_string_list(entry.get("owns_business_areas")),
-                tests=_string_list(entry.get("tests")),
-                contractRefs=entry.get("contract_refs") if isinstance(entry.get("contract_refs"), dict) else {},
-                db=entry.get("db"),
-                deploy=entry.get("deploy"),
-            ))
+            sources.append(
+                SourceMetadata(
+                    sourceId=service_id,
+                    displayName=str(entry["label"]).strip(),
+                    group=_optional_text(entry.get("group")),
+                    path=service_path,
+                    absoluteRoot=absolute_root,
+                    rootExists=absolute_root.exists() and absolute_root.is_dir(),
+                    tags=_string_list(entry.get("tags")),
+                    domainKeywords=_string_list(entry.get("domain_keywords")),
+                    ownsBusinessAreas=_string_list(entry.get("owns_business_areas")),
+                    tests=_string_list(entry.get("tests")),
+                    contractRefs=entry.get("contract_refs") if isinstance(entry.get("contract_refs"), dict) else {},
+                    db=entry.get("db"),
+                    deploy=entry.get("deploy"),
+                )
+            )
         return SourceCatalogResult(sources=sources, diagnostics=diagnostics)
 
     def _selected(self, service_id: str, entry: Dict[str, Any]) -> bool:

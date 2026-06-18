@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from knowledge_service.errors import KnowledgeError
@@ -16,7 +14,7 @@ def test_valid_local_config_loads_catalog(tmp_path):
     catalog = tmp_path / "services.yaml"
     catalog.write_text("services: {}\n", encoding="utf-8")
     config = tmp_path / "knowledge-sources.yaml"
-    config.write_text(f"catalog:\n  path: \"{catalog}\"\n  workspace_root: \"{workspace}\"\n", encoding="utf-8")
+    config.write_text(f'catalog:\n  path: "{catalog}"\n  workspace_root: "{workspace}"\n', encoding="utf-8")
 
     loaded = load_source_config(config)
 
@@ -34,7 +32,7 @@ def test_config_relative_paths_are_supported(tmp_path):
     catalog = tmp_path / "config" / "services.yaml"
     catalog.write_text("services: {}\n", encoding="utf-8")
     config = config_dir / "knowledge-sources.yaml"
-    config.write_text("catalog:\n  path: \"../services.yaml\"\n  workspace_root: \"../workspace\"\n", encoding="utf-8")
+    config.write_text('catalog:\n  path: "../services.yaml"\n  workspace_root: "../workspace"\n', encoding="utf-8")
 
     loaded = load_source_config(config)
 
@@ -49,7 +47,7 @@ def test_env_paths_are_supported(tmp_path, monkeypatch):
     catalog.write_text("services: {}\n", encoding="utf-8")
     config = tmp_path / "knowledge-sources.yaml"
     config.write_text(
-        "catalog:\n  path: \"${KNOWLEDGE_TEST_CATALOG}\"\n  workspace_root: \"${KNOWLEDGE_TEST_WORKSPACE}\"\n",
+        'catalog:\n  path: "${KNOWLEDGE_TEST_CATALOG}"\n  workspace_root: "${KNOWLEDGE_TEST_WORKSPACE}"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("KNOWLEDGE_TEST_CATALOG", str(catalog))
@@ -71,7 +69,7 @@ def test_root_relative_paths_are_supported(tmp_path, monkeypatch):
     config_dir = tmp_path / "outside-config"
     config_dir.mkdir()
     config = config_dir / "knowledge-sources.yaml"
-    config.write_text(f"catalog:\n  path: \"services.yaml\"\n  workspace_root: \"{workspace}\"\n", encoding="utf-8")
+    config.write_text(f'catalog:\n  path: "services.yaml"\n  workspace_root: "{workspace}"\n', encoding="utf-8")
     monkeypatch.setenv("FORGE_AI_HOME", str(forge_home))
 
     loaded = load_source_config(config)
@@ -83,7 +81,7 @@ def test_invalid_catalog_path_rejected(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     config = tmp_path / "knowledge-sources.yaml"
-    config.write_text(f"catalog:\n  path: \"{tmp_path / 'missing.yaml'}\"\n  workspace_root: \"{workspace}\"\n", encoding="utf-8")
+    config.write_text(f'catalog:\n  path: "{tmp_path / "missing.yaml"}"\n  workspace_root: "{workspace}"\n', encoding="utf-8")
 
     with pytest.raises(KnowledgeError) as exc:
         load_source_config(config)
@@ -95,7 +93,7 @@ def test_invalid_workspace_root_rejected(tmp_path):
     catalog = tmp_path / "services.yaml"
     catalog.write_text("services: {}\n", encoding="utf-8")
     config = tmp_path / "knowledge-sources.yaml"
-    config.write_text(f"catalog:\n  path: \"{catalog}\"\n  workspace_root: \"{tmp_path / 'missing'}\"\n", encoding="utf-8")
+    config.write_text(f'catalog:\n  path: "{catalog}"\n  workspace_root: "{tmp_path / "missing"}"\n', encoding="utf-8")
 
     with pytest.raises(KnowledgeError) as exc:
         load_source_config(config)

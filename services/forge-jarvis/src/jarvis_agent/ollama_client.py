@@ -10,6 +10,10 @@ class OllamaUnavailableError(ConnectionError):
     """Raised when Ollama cannot be reached."""
 
 
+class OllamaBadResponseError(ValueError):
+    """Raised when Ollama returns malformed JSON."""
+
+
 class OllamaClient:
     def __init__(self, base_url: str, model: str, timeout_seconds: int) -> None:
         self.base_url = base_url.rstrip("/")
@@ -26,11 +30,7 @@ class OllamaClient:
 
     async def classify_intent(self, system_prompt: str, user_text: str, actions: List[Dict[str, Any]]) -> str:
         await self.health()
-        prompt = (
-            f"{system_prompt}\n\n"
-            f"Available actions and targets:\n{json.dumps(actions, ensure_ascii=False)}\n\n"
-            f"User command:\n{user_text}\n"
-        )
+        prompt = f"{system_prompt}\n\nAvailable actions and targets:\n{json.dumps(actions, ensure_ascii=False)}\n\nUser command:\n{user_text}\n"
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -45,7 +45,7 @@ class OllamaClient:
         except httpx.HTTPError as exc:
             raise OllamaUnavailableError(f"Ollama is not reachable at {self.base_url}") from exc
 
-        data = response.json()
+        data = self._json_object(response)
         return str(data.get("response", ""))
 
     async def generate_text(self, prompt: str) -> str:
@@ -63,5 +63,14 @@ class OllamaClient:
         except httpx.HTTPError as exc:
             raise OllamaUnavailableError(f"Ollama is not reachable at {self.base_url}") from exc
 
-        data = response.json()
+        data = self._json_object(response)
         return str(data.get("response", "")).strip()
+
+    def _json_object(self, response: httpx.Response) -> Dict[str, Any]:
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise OllamaBadResponseError("Ollama returned invalid JSON") from exc
+        if not isinstance(data, dict):
+            raise OllamaBadResponseError("Ollama returned a non-object response")
+        return data

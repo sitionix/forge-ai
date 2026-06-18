@@ -17,13 +17,15 @@ def build_context_store(tmp_path):
     svc.mkdir(parents=True)
     other.mkdir(parents=True)
     (svc / "JarvisGateway.java").write_text(
-        "\n".join([
-            "package demo;",
-            "",
-            "public interface JarvisGateway {",
-            "  String askJarvis(String text);",
-            "}",
-        ]),
+        "\n".join(
+            [
+                "package demo;",
+                "",
+                "public interface JarvisGateway {",
+                "  String askJarvis(String text);",
+                "}",
+            ]
+        ),
         encoding="utf-8",
     )
     (svc / "README.md").write_text("# Jarvis\n\nJarvis infrastructure overview\n" + "\n".join(f"line {i}" for i in range(40)), encoding="utf-8")
