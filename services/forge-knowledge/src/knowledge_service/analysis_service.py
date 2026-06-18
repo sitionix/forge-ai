@@ -144,7 +144,7 @@ class AnalysisJobRunner:
         scoped_source_ids = sorted({row["source_id"] for row in rows}) or request.sourceIds
         self.analysis_store.cleanup_stale_files(scoped_source_ids or None)
         if not request.force:
-            unchanged_ids = self.analysis_store.unchanged_file_ids(rows, analyzer.name, analyzer.version)
+            unchanged_ids = self.analysis_store.unchanged_file_ids(rows, analyzer.name, analyzer.version, GRAPH_ENGINE_VERSION)
             rows = [row for row in rows if row["id"] not in unchanged_ids]
         if request.maxFiles is not None:
             rows = rows[: max(0, request.maxFiles)]
@@ -172,6 +172,40 @@ class AnalysisJobRunner:
                 if self._stop_requested(job_id):
                     self._mark_job_stopped(job_id, diagnostics)
                     return
+                if not request.force and self.analysis_store.unchanged(
+                    int(row["id"]),
+                    row["content_hash"],
+                    analyzer.name,
+                    analyzer.version,
+                    GRAPH_ENGINE_VERSION,
+                ):
+                    processed += 1
+                    self.analysis_store.update_job_file(
+                        job_id,
+                        int(row["id"]),
+                        "SKIPPED_UNCHANGED",
+                        analysis_file_id=int(row["id"]),
+                        flow_domain=flow_domain_by_file_id.get(int(row["id"]), self.structural_engine.flow_domain(row["relative_path"])),
+                        engine_version=GRAPH_ENGINE_VERSION,
+                        completed=True,
+                    )
+                    self.analysis_store.update_job(
+                        job_id,
+                        {
+                            "processedFileCount": processed,
+                            "failedFileCount": failed,
+                            "lastProgressAt": self._now(),
+                        },
+                    )
+                    self._log(
+                        "file_skipped_unchanged",
+                        jobId=job_id,
+                        sourceId=row["source_id"],
+                        relativePath=row["relative_path"],
+                        processed=processed,
+                        failed=failed,
+                    )
+                    continue
                 self.analysis_store.update_job(
                     job_id,
                     {

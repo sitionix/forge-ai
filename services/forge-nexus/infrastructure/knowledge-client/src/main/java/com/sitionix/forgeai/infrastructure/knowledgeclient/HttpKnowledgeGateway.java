@@ -21,6 +21,8 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesV
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGateway;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGraphSnapshotRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGraphSnapshotResponse;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
@@ -39,6 +41,7 @@ import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -151,6 +154,21 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
         return this.convert(this.send("GET", "/api/v1/knowledge/analysis/graph/slice" + query(request), null), KnowledgeAnalysisGraphView.class);
     }
 
+    @Override
+    public KnowledgeGraphSnapshotResponse analysisGraphManifest(final KnowledgeGraphSnapshotRequest request) {
+        return this.sendSnapshot("/api/v1/knowledge/analysis/graph/manifest" + query(request), request == null ? null : request.ifNoneMatch());
+    }
+
+    @Override
+    public KnowledgeGraphSnapshotResponse analysisGraphNodes(final KnowledgeGraphSnapshotRequest request) {
+        return this.sendSnapshot("/api/v1/knowledge/analysis/graph/nodes" + query(request), null);
+    }
+
+    @Override
+    public KnowledgeGraphSnapshotResponse analysisGraphEdges(final KnowledgeGraphSnapshotRequest request) {
+        return this.sendSnapshot("/api/v1/knowledge/analysis/graph/edges" + query(request), null);
+    }
+
     private String send(final String method, final String path, final Object body) {
         this.properties.validateBaseUrl();
         final HttpRequest.Builder builder = HttpRequest.newBuilder(this.properties.getBaseUrl().resolve(path))
@@ -190,6 +208,43 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
         throw new KnowledgeGatewayException(code, responseCode, message);
     }
 
+    private KnowledgeGraphSnapshotResponse sendSnapshot(final String path, final String ifNoneMatch) {
+        this.properties.validateBaseUrl();
+        final HttpRequest.Builder builder = HttpRequest.newBuilder(this.properties.getBaseUrl().resolve(path))
+                .version(HttpClient.Version.HTTP_1_1)
+                .timeout(this.properties.getReadTimeout())
+                .header("Accept", "application/json")
+                .GET();
+        if (ifNoneMatch != null && !ifNoneMatch.isBlank()) {
+            builder.header("If-None-Match", ifNoneMatch);
+        }
+        try {
+            final HttpResponse<String> response = this.httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            return new KnowledgeGraphSnapshotResponse(
+                    response.statusCode(),
+                    this.convertMap(response.body()),
+                    this.graphHeaders(response)
+            );
+        } catch (final HttpTimeoutException e) {
+            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_TIMEOUT, "Knowledge request timed out", e);
+        } catch (final ConnectException e) {
+            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_UNAVAILABLE, "Knowledge is unavailable", e);
+        } catch (final IOException e) {
+            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_UNAVAILABLE, "Knowledge is unavailable", e);
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_UNAVAILABLE, "Knowledge request was interrupted", e);
+        }
+    }
+
+    private Map<String, List<String>> graphHeaders(final HttpResponse<String> response) {
+        final Map<String, List<String>> result = new LinkedHashMap<>();
+        for (final String header : List.of("ETag", "X-Graph-Revision", "Cache-Control", "Server-Timing")) {
+            response.headers().firstValue(header).ifPresent(value -> result.put(header, List.of(value)));
+        }
+        return result;
+    }
+
     private KnowledgeBackendErrorResponse parseError(final String body) {
         try {
             return this.objectMapper.readValue(body == null || body.isBlank() ? "{}" : body, KnowledgeBackendErrorResponse.class);
@@ -201,6 +256,19 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
     private <T> T convert(final String body, final Class<T> type) {
         try {
             return this.objectMapper.readValue(body == null || body.isBlank() ? "{}" : body, type);
+        } catch (final JsonProcessingException e) {
+            throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "Knowledge response is invalid", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> convertMap(final String body) {
+        if (body == null || body.isBlank() || "null".equals(body.trim())) {
+            return Map.of();
+        }
+        try {
+            final Object value = this.objectMapper.readValue(body, Object.class);
+            return value instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
         } catch (final JsonProcessingException e) {
             throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "Knowledge response is invalid", e);
         }
@@ -416,6 +484,25 @@ public class HttpKnowledgeGateway implements KnowledgeGateway {
         append(query, "includeEvidence", request.includeEvidence());
         append(query, "includeClaims", request.includeClaims());
         append(query, "includeIsolated", request.includeIsolated());
+        return query.toString();
+    }
+
+    private String query(final KnowledgeGraphSnapshotRequest request) {
+        if (request == null) {
+            return "";
+        }
+        final StringBuilder query = new StringBuilder();
+        append(query, "sourceId", request.sourceId());
+        append(query, "flowDomain", request.flowDomain());
+        append(query, "factOrigin", request.factOrigin());
+        append(query, "nodeKind", request.nodeKind());
+        append(query, "edgeType", request.edgeType());
+        append(query, "includeExternal", request.includeExternal());
+        append(query, "includeUnresolved", request.includeUnresolved());
+        append(query, "includeIsolated", request.includeIsolated());
+        append(query, "graphRevision", request.graphRevision());
+        append(query, "cursor", request.cursor());
+        append(query, "pageSize", request.pageSize());
         return query.toString();
     }
 

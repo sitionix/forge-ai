@@ -17,6 +17,8 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalys
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGateway;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGraphSnapshotRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGraphSnapshotResponse;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
@@ -114,5 +116,20 @@ public class ManageKnowledgeInfrastructureUseCase implements ManageKnowledgeInfr
     @Override
     public KnowledgeAnalysisGraphView analysisGraphSlice(final KnowledgeAnalysisGraphSliceRequest request) {
         return this.knowledgeGateway.analysisGraphSlice(request);
+    }
+
+    @Override
+    public KnowledgeGraphSnapshotResponse analysisGraphManifest(final KnowledgeGraphSnapshotRequest request) {
+        return this.knowledgeGateway.analysisGraphManifest(request);
+    }
+
+    @Override
+    public KnowledgeGraphSnapshotResponse analysisGraphNodes(final KnowledgeGraphSnapshotRequest request) {
+        return this.knowledgeGateway.analysisGraphNodes(request);
+    }
+
+    @Override
+    public KnowledgeGraphSnapshotResponse analysisGraphEdges(final KnowledgeGraphSnapshotRequest request) {
+        return this.knowledgeGateway.analysisGraphEdges(request);
     }
 }

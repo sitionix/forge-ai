@@ -158,3 +158,29 @@ def test_chat_failure_matrix_and_diagnostics(tmp_path):
         response = client.post("/api/v1/jarvis/chat", json={"message": "explain"})
         assert response.status_code == 502
         assert response.json()["code"] == "OLLAMA_BAD_RESPONSE"
+
+
+def test_chat_surfaces_knowledge_analysis_diagnostics_when_context_is_not_ready(tmp_path):
+    knowledge = FakeKnowledgeClient(
+        bundle=knowledge_bundle(
+            context=[],
+            diagnostics=[
+                {
+                    "code": "ANALYSIS_NOT_READY",
+                    "message": "Knowledge analysis has not produced current context yet.",
+                    "sourceId": "forge-ai",
+                }
+            ],
+        )
+    )
+    app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/jarvis/chat", json={"message": "explain analyzed files"})
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["usedContext"] == []
+    assert "No relevant local Knowledge context was found" in body["answer"]
+    assert {item["code"] for item in body["diagnostics"]} == {"ANALYSIS_NOT_READY", "CONTEXT_EMPTY"}
+    assert knowledge.calls == [("explain analyzed files", 12000)]

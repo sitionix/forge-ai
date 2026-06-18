@@ -18,6 +18,7 @@
         <a class="button ghost" href="./knowledge.html">Sources</a>
         <button id="analyzeKnowledgeGraph" class="button" type="button">Analyze</button>
         <button id="refreshKnowledgeGraph" class="button" type="button">Refresh</button>
+        <button id="forceRefreshKnowledgeGraph" class="button ghost" type="button">Force Refresh</button>
         <button id="fitKnowledgeGraphTop" class="button ghost" type="button">Fit</button>
         <button id="focusKnowledgeGraph" class="button ghost" type="button">Focus</button>
         <label class="knowledge-graph-toggle">
@@ -123,7 +124,7 @@
               <option value="80" selected>80</option>
               <option value="120">120</option>
               <option value="200">200</option>
-              <option value="0">Max</option>
+              <option value="0">All nodes</option>
             </select>
           </label>
           <label>
@@ -149,7 +150,7 @@
       <div id="knowledgeGraphLayout" class="knowledge-graph-layout preview-collapsed">
         <div class="knowledge-graph-stage" id="knowledgeGraphStage">
           <svg id="knowledgeGraphSvg" role="img" aria-label="Knowledge graph visualization"></svg>
-          <div id="knowledgeGraphLoading" class="knowledge-graph-loading">Loading graph...</div>
+          <div id="knowledgeGraphLoading" class="knowledge-graph-loading">Loading graph snapshot...</div>
           <div id="knowledgeGraphEmptyAction" class="knowledge-graph-empty-action hidden">
             <strong>No graph facts yet.</strong>
             <span>Use Analyze in the toolbar to build the graph.</span>

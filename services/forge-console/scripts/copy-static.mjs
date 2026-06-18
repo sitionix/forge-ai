@@ -12,7 +12,20 @@ const defaults = {
   infrastructureApiBasePath: '/api/v1/infrastructure',
   statusPollIntervalMs: 15000,
   activeJobPollIntervalMs: 1500,
-  graphPollIntervalMs: 30000
+  graphPollIntervalMs: 30000,
+  graphCacheEnabled: true,
+  graphCacheMaxRevisions: 3,
+  graphCacheMaxAgeSeconds: 86400,
+  graphFetchConcurrency: 2,
+  graphNodePageSize: 500,
+  graphEdgePageSize: 1000,
+  graphFitPaddingPx: 40,
+  graphFitZoomAllowance: 0.85,
+  graphZoomSensitivity: 1,
+  graphNodeLabelZoomThreshold: 0.7,
+  graphEdgeLabelZoomThreshold: 1.4,
+  graphLayoutWorkerEnabled: true,
+  graphTablePageSize: 120
 };
 
 await mkdir(resolve(dist, 'operator'), { recursive: true });
@@ -44,7 +57,20 @@ async function loadRuntimeConfigFromRoot() {
       'activeJobPollIntervalMs',
       defaults.activeJobPollIntervalMs
     ),
-    graphPollIntervalMs: positiveInteger(consoleConfig, 'graph-poll-interval-ms', 'graphPollIntervalMs', defaults.graphPollIntervalMs)
+    graphPollIntervalMs: positiveInteger(consoleConfig, 'graph-poll-interval-ms', 'graphPollIntervalMs', defaults.graphPollIntervalMs),
+    graphCacheEnabled: booleanValue(consoleConfig, 'graph-cache-enabled', 'graphCacheEnabled', defaults.graphCacheEnabled),
+    graphCacheMaxRevisions: positiveInteger(consoleConfig, 'graph-cache-max-revisions', 'graphCacheMaxRevisions', defaults.graphCacheMaxRevisions),
+    graphCacheMaxAgeSeconds: positiveInteger(consoleConfig, 'graph-cache-max-age-seconds', 'graphCacheMaxAgeSeconds', defaults.graphCacheMaxAgeSeconds),
+    graphFetchConcurrency: positiveInteger(consoleConfig, 'graph-fetch-concurrency', 'graphFetchConcurrency', defaults.graphFetchConcurrency),
+    graphNodePageSize: positiveInteger(consoleConfig, 'graph-node-page-size', 'graphNodePageSize', defaults.graphNodePageSize),
+    graphEdgePageSize: positiveInteger(consoleConfig, 'graph-edge-page-size', 'graphEdgePageSize', defaults.graphEdgePageSize),
+    graphFitPaddingPx: positiveInteger(consoleConfig, 'graph-fit-padding-px', 'graphFitPaddingPx', defaults.graphFitPaddingPx),
+    graphFitZoomAllowance: positiveNumber(consoleConfig, 'graph-fit-zoom-allowance', 'graphFitZoomAllowance', defaults.graphFitZoomAllowance),
+    graphZoomSensitivity: positiveNumber(consoleConfig, 'graph-zoom-sensitivity', 'graphZoomSensitivity', defaults.graphZoomSensitivity),
+    graphNodeLabelZoomThreshold: positiveNumber(consoleConfig, 'graph-node-label-zoom-threshold', 'graphNodeLabelZoomThreshold', defaults.graphNodeLabelZoomThreshold),
+    graphEdgeLabelZoomThreshold: positiveNumber(consoleConfig, 'graph-edge-label-zoom-threshold', 'graphEdgeLabelZoomThreshold', defaults.graphEdgeLabelZoomThreshold),
+    graphLayoutWorkerEnabled: booleanValue(consoleConfig, 'graph-layout-worker-enabled', 'graphLayoutWorkerEnabled', defaults.graphLayoutWorkerEnabled),
+    graphTablePageSize: positiveInteger(consoleConfig, 'graph-table-page-size', 'graphTablePageSize', defaults.graphTablePageSize)
   };
 }
 
@@ -56,4 +82,14 @@ function stringValue(source, kebabName, camelName) {
 function positiveInteger(source, kebabName, camelName, fallback) {
   const value = Number(source[kebabName] ?? source[camelName]);
   return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function positiveNumber(source, kebabName, camelName, fallback) {
+  const value = Number(source[kebabName] ?? source[camelName]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function booleanValue(source, kebabName, camelName, fallback) {
+  const value = source[kebabName] ?? source[camelName];
+  return typeof value === 'boolean' ? value : fallback;
 }

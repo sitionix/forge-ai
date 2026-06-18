@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from knowledge_service.analysis_schema import AnalysisBuildRequest
 from knowledge_service.analysis_service import AnalysisJobRunner
@@ -22,6 +22,7 @@ from knowledge_service.inventory_schema import InventoryBuildRequest
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.service_catalog_provider import ServiceYamlCatalogProvider
 from knowledge_service.source_config import load_source_config
+from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION
 
 app_config: Optional[AppConfig] = None
 store: Optional[InventoryStore] = None
@@ -60,7 +61,12 @@ def create_app(
             status = 200
         elif exc.code.endswith("_NOT_FOUND") or exc.code == "SERVICE_CATALOG_NOT_FOUND":
             status = 404
-        elif exc.code in {"ANALYSIS_JOB_ALREADY_RUNNING", "INVENTORY_BUILD_ALREADY_RUNNING", "INVENTORY_BUILD_BLOCKED_BY_ANALYSIS"}:
+        elif exc.code in {
+            "ANALYSIS_JOB_ALREADY_RUNNING",
+            "INVENTORY_BUILD_ALREADY_RUNNING",
+            "INVENTORY_BUILD_BLOCKED_BY_ANALYSIS",
+            "GRAPH_SNAPSHOT_STALE",
+        }:
             status = 409
         return JSONResponse(status_code=status, content={"code": exc.code, "message": exc.message})
 
@@ -203,6 +209,7 @@ def create_app(
             catalog_result.sources if catalog_result is not None else None,
             analyzer_name,
             analyzer_version,
+            GRAPH_ENGINE_VERSION,
             deps.inventory_store.status(),
         )
 
@@ -244,6 +251,110 @@ def create_app(
     ) -> Dict[str, Any]:
         _, deps = _state(request)
         return deps.analysis_store.relations(sourceId, relation, fromSymbolId, toSymbolId, limit, offset)
+
+    @app.get("/api/v1/knowledge/analysis/graph/manifest")
+    async def analysis_graph_manifest(
+        request: Request,
+        sourceId: Optional[str] = None,
+        flowDomain: Optional[str] = None,
+        factOrigin: Optional[str] = None,
+        nodeKind: Optional[str] = None,
+        edgeType: Optional[str] = None,
+        includeExternal: str = "show",
+        includeUnresolved: bool = True,
+        includeIsolated: bool = True,
+    ) -> JSONResponse:
+        _, deps = _state(request)
+        manifest = deps.analysis_store.graph_snapshot_manifest(
+            sourceId,
+            flowDomain,
+            fact_origin=factOrigin,
+            node_kind=nodeKind,
+            edge_type=edgeType,
+            include_external=includeExternal,
+            include_unresolved=includeUnresolved,
+            include_isolated=includeIsolated,
+        )
+        etag = manifest["etag"]
+        headers = {
+            "ETag": etag,
+            "X-Graph-Revision": manifest["graphRevision"],
+            "Cache-Control": "private, no-cache",
+            "Server-Timing": "db;dur=0, projection;dur=0, serialization;dur=0",
+        }
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers=headers)
+        return JSONResponse(content=manifest, headers=headers)
+
+    @app.get("/api/v1/knowledge/analysis/graph/nodes")
+    async def analysis_graph_nodes(
+        request: Request,
+        graphRevision: str,
+        cursor: Optional[str] = None,
+        pageSize: int = Query(500, ge=1, le=5000),
+        sourceId: Optional[str] = None,
+        flowDomain: Optional[str] = None,
+        factOrigin: Optional[str] = None,
+        nodeKind: Optional[str] = None,
+        includeExternal: str = "show",
+        includeUnresolved: bool = True,
+        includeIsolated: bool = True,
+    ) -> JSONResponse:
+        _, deps = _state(request)
+        page = deps.analysis_store.graph_snapshot_nodes(
+            graphRevision,
+            cursor,
+            pageSize,
+            sourceId,
+            flowDomain,
+            fact_origin=factOrigin,
+            node_kind=nodeKind,
+            include_external=includeExternal,
+            include_unresolved=includeUnresolved,
+            include_isolated=includeIsolated,
+        )
+        return JSONResponse(
+            content=page,
+            headers={
+                "X-Graph-Revision": graphRevision,
+                "Cache-Control": "private, no-cache",
+                "Server-Timing": "db;dur=0, projection;dur=0, serialization;dur=0",
+            },
+        )
+
+    @app.get("/api/v1/knowledge/analysis/graph/edges")
+    async def analysis_graph_edges(
+        request: Request,
+        graphRevision: str,
+        cursor: Optional[str] = None,
+        pageSize: int = Query(1000, ge=1, le=5000),
+        sourceId: Optional[str] = None,
+        flowDomain: Optional[str] = None,
+        factOrigin: Optional[str] = None,
+        edgeType: Optional[str] = None,
+        includeExternal: str = "show",
+        includeUnresolved: bool = True,
+    ) -> JSONResponse:
+        _, deps = _state(request)
+        page = deps.analysis_store.graph_snapshot_edges(
+            graphRevision,
+            cursor,
+            pageSize,
+            sourceId,
+            flowDomain,
+            fact_origin=factOrigin,
+            edge_type=edgeType,
+            include_external=includeExternal,
+            include_unresolved=includeUnresolved,
+        )
+        return JSONResponse(
+            content=page,
+            headers={
+                "X-Graph-Revision": graphRevision,
+                "Cache-Control": "private, no-cache",
+                "Server-Timing": "db;dur=0, projection;dur=0, serialization;dur=0",
+            },
+        )
 
     @app.get("/api/v1/knowledge/analysis/graph")
     async def analysis_graph(

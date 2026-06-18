@@ -21,6 +21,8 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesV
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGateway;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGraphSnapshotRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGraphSnapshotResponse;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
@@ -198,6 +200,21 @@ public class SqliteKnowledgeGateway implements KnowledgeGateway {
 
     @Override
     public KnowledgeAnalysisGraphView analysisGraphSlice(final KnowledgeAnalysisGraphSliceRequest request) {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
+    }
+
+    @Override
+    public KnowledgeGraphSnapshotResponse analysisGraphManifest(final KnowledgeGraphSnapshotRequest request) {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
+    }
+
+    @Override
+    public KnowledgeGraphSnapshotResponse analysisGraphNodes(final KnowledgeGraphSnapshotRequest request) {
+        throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
+    }
+
+    @Override
+    public KnowledgeGraphSnapshotResponse analysisGraphEdges(final KnowledgeGraphSnapshotRequest request) {
         throw new KnowledgeGatewayException(KnowledgeGatewayErrorCode.KNOWLEDGE_BAD_RESPONSE, "AI structural analysis requires the Knowledge service HTTP adapter");
     }
 

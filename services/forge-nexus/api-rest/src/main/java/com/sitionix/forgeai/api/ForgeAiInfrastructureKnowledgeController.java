@@ -18,6 +18,8 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesR
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGraphSnapshotRequest;
+import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGraphSnapshotResponse;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
@@ -26,6 +28,9 @@ import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSource
 import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
 import com.sitionix.forgeai.application.infrastructure.knowledge.ManageKnowledgeInfrastructure;
 import lombok.RequiredArgsConstructor;
+import java.util.List;
+import java.util.Map;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -33,6 +38,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -130,6 +136,52 @@ public class ForgeAiInfrastructureKnowledgeController {
         return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisRelations(new KnowledgeAnalysisRelationsRequest(sourceId, relation, fromSymbolId, toSymbolId, flowDomain, factOrigin, limit, offset)));
     }
 
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/manifest")
+    public ResponseEntity<Map<String, Object>> analysisGraphManifest(@RequestHeader(name = "If-None-Match", required = false) final String ifNoneMatch,
+                                                                     @RequestParam(required = false) final String sourceId,
+                                                                     @RequestParam(required = false) final String flowDomain,
+                                                                     @RequestParam(required = false) final String factOrigin,
+                                                                     @RequestParam(required = false) final String nodeKind,
+                                                                     @RequestParam(required = false) final String edgeType,
+                                                                     @RequestParam(required = false) final String includeExternal,
+                                                                     @RequestParam(required = false) final Boolean includeUnresolved,
+                                                                     @RequestParam(required = false) final Boolean includeIsolated) {
+        return this.graphSnapshotResponse(this.manageKnowledgeInfrastructure.analysisGraphManifest(new KnowledgeGraphSnapshotRequest(
+                sourceId, flowDomain, factOrigin, nodeKind, edgeType, includeExternal, includeUnresolved, includeIsolated, null, null, null, ifNoneMatch
+        )));
+    }
+
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/nodes")
+    public ResponseEntity<Map<String, Object>> analysisGraphNodes(@RequestParam final String graphRevision,
+                                                                 @RequestParam(required = false) final String cursor,
+                                                                 @RequestParam(required = false) final Integer pageSize,
+                                                                 @RequestParam(required = false) final String sourceId,
+                                                                 @RequestParam(required = false) final String flowDomain,
+                                                                 @RequestParam(required = false) final String factOrigin,
+                                                                 @RequestParam(required = false) final String nodeKind,
+                                                                 @RequestParam(required = false) final String includeExternal,
+                                                                 @RequestParam(required = false) final Boolean includeUnresolved,
+                                                                 @RequestParam(required = false) final Boolean includeIsolated) {
+        return this.graphSnapshotResponse(this.manageKnowledgeInfrastructure.analysisGraphNodes(new KnowledgeGraphSnapshotRequest(
+                sourceId, flowDomain, factOrigin, nodeKind, null, includeExternal, includeUnresolved, includeIsolated, graphRevision, cursor, pageSize, null
+        )));
+    }
+
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/edges")
+    public ResponseEntity<Map<String, Object>> analysisGraphEdges(@RequestParam final String graphRevision,
+                                                                 @RequestParam(required = false) final String cursor,
+                                                                 @RequestParam(required = false) final Integer pageSize,
+                                                                 @RequestParam(required = false) final String sourceId,
+                                                                 @RequestParam(required = false) final String flowDomain,
+                                                                 @RequestParam(required = false) final String factOrigin,
+                                                                 @RequestParam(required = false) final String edgeType,
+                                                                 @RequestParam(required = false) final String includeExternal,
+                                                                 @RequestParam(required = false) final Boolean includeUnresolved) {
+        return this.graphSnapshotResponse(this.manageKnowledgeInfrastructure.analysisGraphEdges(new KnowledgeGraphSnapshotRequest(
+                sourceId, flowDomain, factOrigin, null, edgeType, includeExternal, includeUnresolved, null, graphRevision, cursor, pageSize, null
+        )));
+    }
+
     @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph")
     public ResponseEntity<KnowledgeAnalysisGraphView> analysisGraph(@RequestParam(required = false) final String sourceId,
                                                                     @RequestParam(required = false) final String graphNodeId,
@@ -216,6 +268,14 @@ public class ForgeAiInfrastructureKnowledgeController {
             case KNOWLEDGE_CONFLICT -> HttpStatus.CONFLICT;
             case KNOWLEDGE_BAD_RESPONSE -> HttpStatus.BAD_GATEWAY;
         };
+    }
+
+    private ResponseEntity<Map<String, Object>> graphSnapshotResponse(final KnowledgeGraphSnapshotResponse response) {
+        final HttpHeaders headers = new HttpHeaders();
+        for (final Map.Entry<String, List<String>> entry : response.headers().entrySet()) {
+            headers.put(entry.getKey(), entry.getValue());
+        }
+        return new ResponseEntity<>(response.body(), headers, HttpStatus.valueOf(response.statusCode()));
     }
 
     public record KnowledgeErrorResponse(String code, String message) {
