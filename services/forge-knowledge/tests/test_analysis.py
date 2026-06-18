@@ -903,7 +903,7 @@ def test_unchanged_file_not_picked_by_new_job(tmp_path):
     assert analyzer.calls == 1
 
 
-def test_failed_file_with_unchanged_hash_is_picked_for_retry(tmp_path):
+def test_static_fallback_analysis_with_unchanged_hash_is_not_retried_without_force(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = AnalysisJobRunner(store, app_config(tmp_path))
     first = wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(fail=True))["jobId"])
@@ -913,10 +913,10 @@ def test_failed_file_with_unchanged_hash_is_picked_for_retry(tmp_path):
     analyzed = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
 
     assert first["failedFileCount"] == 0
-    assert second["fileCount"] == 1
-    assert second["processedFileCount"] == 1
+    assert second["fileCount"] == 0
+    assert second["processedFileCount"] == 0
     assert second["failedFileCount"] == 0
-    assert retry_analyzer.calls == 1
+    assert retry_analyzer.calls == 0
     assert analyzed["total"] == 1
 
 
@@ -936,6 +936,7 @@ def test_unchanged_file_lookup_batches_large_inventory(tmp_path):
                 "content_hash": row["content_hash"],
                 "analyzer_name": StubAnalyzer.name,
                 "analyzer_version": StubAnalyzer.version,
+                "engine_version": GRAPH_ENGINE_VERSION,
                 "status": "ANALYZED",
                 "symbol_count": 0,
                 "relation_count": 0,
@@ -943,9 +944,9 @@ def test_unchanged_file_lookup_batches_large_inventory(tmp_path):
             },
         )
 
-    unchanged_ids = analysis_store.unchanged_file_ids(rows, StubAnalyzer.name, StubAnalyzer.version)
+    unchanged_ids = analysis_store.unchanged_file_ids(rows, StubAnalyzer.name, StubAnalyzer.version, GRAPH_ENGINE_VERSION)
 
-    assert unchanged_ids == set()
+    assert unchanged_ids == {row["id"] for row in rows}
 
 
 def test_analysis_max_files_uses_stable_inventory_order(tmp_path):
@@ -987,6 +988,28 @@ def test_analysis_max_files_applies_after_current_files_are_filtered(tmp_path):
         "src/main/java/example/AaaHandler.java",
         "src/main/java/example/ObjectHandler.java",
     ]
+
+
+def test_per_file_guard_skips_current_file_if_candidate_filter_misses_it(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    runner = AnalysisJobRunner(store, app_config(tmp_path))
+    first_analyzer = StubAnalyzer()
+    wait_job(store, runner.start(AnalysisBuildRequest(), first_analyzer)["jobId"])
+    second_analyzer = StubAnalyzer()
+    runner.analysis_store.unchanged_file_ids = lambda rows, analyzer_name, analyzer_version, engine_version=None: set()
+
+    second = wait_job(store, runner.start(AnalysisBuildRequest(), second_analyzer)["jobId"])
+
+    assert second["fileCount"] == 1
+    assert second["processedFileCount"] == 1
+    assert first_analyzer.calls == 1
+    assert second_analyzer.calls == 0
+    with sqlite3.connect(store.db_path) as conn:
+        status = conn.execute(
+            "SELECT status FROM analysis_job_files WHERE job_id = ?",
+            (second["jobId"],),
+        ).fetchone()[0]
+    assert status == "SKIPPED_UNCHANGED"
 
 
 def test_changed_file_reanalyzed_and_previous_analysis_removed(tmp_path):
@@ -1340,7 +1363,7 @@ def test_failed_ai_file_does_not_crash_whole_service(tmp_path):
     assert final["status"] == "COMPLETED"
     assert final["processedFileCount"] == 1
     assert final["failedFileCount"] == 0
-    service = AnalysisStore(store.db_path).service_status(None, StubAnalyzer.name, StubAnalyzer.version, store.status())["services"][0]
+    service = AnalysisStore(store.db_path).service_status(None, StubAnalyzer.name, StubAnalyzer.version, GRAPH_ENGINE_VERSION, store.status())["services"][0]
     assert service["analysis"]["processedFileCount"] == 1
     assert service["analysis"]["analyzedFileCount"] == 1
     assert service["analysis"]["failedFileCount"] == 0
@@ -1349,7 +1372,7 @@ def test_failed_ai_file_does_not_crash_whole_service(tmp_path):
     assert service["diagnostics"][0]["count"] == 1
 
 
-def test_service_status_uses_active_job_counts_while_running(tmp_path):
+def test_service_status_adds_active_job_counts_to_existing_coverage_while_running(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = AnalysisJobRunner(store, app_config(tmp_path))
     wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(fail=True))["jobId"])
@@ -1368,10 +1391,10 @@ def test_service_status_uses_active_job_counts_while_running(tmp_path):
         }
     )
 
-    service = analysis_store.service_status(None, StubAnalyzer.name, StubAnalyzer.version, store.status())["services"][0]
+    service = analysis_store.service_status(None, StubAnalyzer.name, StubAnalyzer.version, GRAPH_ENGINE_VERSION, store.status())["services"][0]
 
     assert service["analysis"]["status"] == "RUNNING"
-    assert service["analysis"]["processedFileCount"] == 0
+    assert service["analysis"]["processedFileCount"] == 1
     assert service["analysis"]["failedFileCount"] == 0
     assert service["analysis"]["pendingFileCount"] == 0
     assert service["analysis"]["currentRelativePath"] == "src/main/java/example/ObjectHandler.java"
@@ -2296,6 +2319,8 @@ def test_analysis_graph_api_shows_running_job_partial_graph(tmp_path, monkeypatc
     result = get_json("/api/v1/knowledge/analysis/graph?sourceId=edge-gateway")
 
     assert result["json"]["status"]["analysisStatus"] == "RUNNING"
+    assert result["json"]["status"]["processedFileCount"] == 1
+    assert result["json"]["status"]["progressPercent"] == 100.0
     assert result["json"]["status"]["currentFile"] == "src/main/java/example/ObjectHandler.java"
     assert result["json"]["nodes"]
 

@@ -2564,6 +2564,7 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
   position: relative;
   min-height: max(720px, calc(100vh - 260px));
   overflow: hidden;
+  overscroll-behavior: contain;
   background:
     linear-gradient(rgba(255, 248, 222, 0.035) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 248, 222, 0.035) 1px, transparent 1px),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import sqlite3
 import threading
 from pathlib import Path
@@ -239,9 +240,13 @@ class AnalysisStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_relations_relation ON analysis_relations(source_id, relation)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_source_kind ON analysis_graph_nodes(source_id, node_kind)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_file ON analysis_graph_nodes(analysis_file_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_snapshot_page ON analysis_graph_nodes(source_id, flow_domain, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_source_flow_created ON analysis_graph_nodes(source_id, flow_domain, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_claims_node_kind ON analysis_graph_claims(node_id, claim_kind)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_type ON analysis_graph_edges(source_id, edge_type)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_nodes ON analysis_graph_edges(from_node_id, to_node_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_snapshot_page ON analysis_graph_edges(source_id, flow_domain, id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_flow_created ON analysis_graph_edges(source_id, flow_domain, created_at)")
             self._drop_legacy_fact_tables(conn)
             self._run_schema_migrations(conn)
             self._reconcile_graph_diagnostics_schema(conn)
@@ -489,7 +494,12 @@ class AnalysisStore:
         }
 
     def service_status(
-        self, catalog_sources: Optional[List[SourceMetadata]], analyzer_name: str, analyzer_version: str, inventory_status: Dict[str, Any]
+        self,
+        catalog_sources: Optional[List[SourceMetadata]],
+        analyzer_name: str,
+        analyzer_version: str,
+        engine_version: Optional[str],
+        inventory_status: Dict[str, Any],
     ) -> Dict[str, Any]:
         self.init()
         active = self.active_job()
@@ -513,6 +523,7 @@ class AnalysisStore:
                           AND af.content_hash = f.content_hash
                           AND af.analyzer_name = ?
                           AND af.analyzer_version = ?
+                          AND COALESCE(af.engine_version, '') = COALESCE(?, '')
                           AND af.status = 'ANALYZED'
                     ) THEN 1 ELSE 0 END) AS analyzed_count,
                     SUM(CASE WHEN EXISTS (
@@ -522,6 +533,7 @@ class AnalysisStore:
                           AND af.content_hash = f.content_hash
                           AND af.analyzer_name = ?
                           AND af.analyzer_version = ?
+                          AND COALESCE(af.engine_version, '') = COALESCE(?, '')
                           AND af.status = 'FAILED'
                     ) THEN 1 ELSE 0 END) AS failed_count,
                     SUM(CASE WHEN EXISTS (
@@ -531,6 +543,7 @@ class AnalysisStore:
                           AND af.content_hash = f.content_hash
                           AND af.analyzer_name = ?
                           AND af.analyzer_version = ?
+                          AND COALESCE(af.engine_version, '') = COALESCE(?, '')
                           AND af.status = 'SKIPPED_TOO_LARGE_FOR_AI_ANALYSIS'
                     ) THEN 1 ELSE 0 END) AS skipped_too_large_count,
                     SUM(CASE WHEN EXISTS (
@@ -541,6 +554,7 @@ class AnalysisStore:
                               af.content_hash != f.content_hash
                               OR af.analyzer_name != ?
                               OR af.analyzer_version != ?
+                              OR COALESCE(af.engine_version, '') != COALESCE(?, '')
                           )
                     ) THEN 1 ELSE 0 END) AS stale_count
                 FROM sources s
@@ -550,12 +564,16 @@ class AnalysisStore:
                 (
                     analyzer_name,
                     analyzer_version,
+                    engine_version,
                     analyzer_name,
                     analyzer_version,
+                    engine_version,
                     analyzer_name,
                     analyzer_version,
+                    engine_version,
                     analyzer_name,
                     analyzer_version,
+                    engine_version,
                 ),
             ).fetchall()
             symbol_rows = conn.execute("SELECT source_id, COUNT(*) AS count FROM analysis_graph_nodes GROUP BY source_id").fetchall()
@@ -583,9 +601,11 @@ class AnalysisStore:
             skipped_count = source_inventory.get("skippedCount")
             skipped_breakdown = source_inventory.get("skippedBreakdown")
             is_running = active is not None and active_source == source_id
-            processed = active.get("processedFileCount") if is_running else analyzed + failed + skipped_too_large
-            pending = max(inventory_count - analyzed - failed - skipped_too_large, 0)
-            percent = round((analyzed / inventory_count) * 100, 1) if inventory_count else 0.0
+            completed_outcomes = analyzed + failed + skipped_too_large
+            active_processed = int(active.get("processedFileCount") or 0) if is_running else 0
+            processed = min(inventory_count, completed_outcomes + active_processed) if is_running else completed_outcomes
+            pending = max(inventory_count - processed, 0) if is_running else max(inventory_count - completed_outcomes, 0)
+            percent = round((processed / inventory_count) * 100, 1) if inventory_count else 0.0
             services.append(
                 {
                     "sourceId": source_id,
@@ -718,21 +738,26 @@ class AnalysisStore:
             if relative_path and len(item["examples"]) < 10:
                 item["examples"].append(relative_path)
 
-    def unchanged(self, file_id: int, content_hash: str, analyzer_name: str, analyzer_version: str) -> bool:
+    def unchanged(self, file_id: int, content_hash: str, analyzer_name: str, analyzer_version: str, engine_version: Optional[str] = None) -> bool:
         self.init()
+        engine_clause = "AND COALESCE(engine_version, '') = COALESCE(?, '')" if engine_version is not None else ""
+        params: list[Any] = [file_id, content_hash, analyzer_name, analyzer_version]
+        if engine_version is not None:
+            params.append(engine_version)
         with self._connect() as conn:
             row = conn.execute(
-                """
+                f"""
                 SELECT file_id FROM analysis_files
                 WHERE file_id = ? AND content_hash = ? AND analyzer_name = ? AND analyzer_version = ? AND status = 'ANALYZED'
-                  AND last_error_code IS NULL
-                  AND EXISTS (SELECT 1 FROM analysis_graph_nodes gn WHERE gn.analysis_file_id = analysis_files.file_id)
+                  {engine_clause}
             """,
-                (file_id, content_hash, analyzer_name, analyzer_version),
+                params,
             ).fetchone()
         return row is not None
 
-    def unchanged_file_ids(self, rows: List[sqlite3.Row], analyzer_name: str, analyzer_version: str) -> set[int]:
+    def unchanged_file_ids(
+        self, rows: List[sqlite3.Row], analyzer_name: str, analyzer_version: str, engine_version: Optional[str] = None
+    ) -> set[int]:
         if not rows:
             return set()
         self.init()
@@ -742,6 +767,10 @@ class AnalysisStore:
                 batch = rows[offset : offset + 400]
                 clauses: list[str] = []
                 params: list[Any] = [analyzer_name, analyzer_version]
+                engine_clause = ""
+                if engine_version is not None:
+                    engine_clause = "AND COALESCE(engine_version, '') = COALESCE(?, '')"
+                    params.append(engine_version)
                 for row in batch:
                     clauses.append("(file_id = ? AND content_hash = ?)")
                     params.extend([row["id"], row["content_hash"]])
@@ -750,9 +779,8 @@ class AnalysisStore:
                     SELECT file_id FROM analysis_files
                     WHERE analyzer_name = ?
                       AND analyzer_version = ?
+                      {engine_clause}
                       AND status = 'ANALYZED'
-                      AND last_error_code IS NULL
-                      AND EXISTS (SELECT 1 FROM analysis_graph_nodes gn WHERE gn.analysis_file_id = analysis_files.file_id)
                       AND ({" OR ".join(clauses)})
                 """,
                     params,
@@ -1108,6 +1136,195 @@ class AnalysisStore:
             ).fetchall()
             projected = [self._graph_relation_projection(conn, self._row_dict(row)) for row in rows]
         return {"relations": projected, "total": total, "limit": limit, "offset": offset}
+
+    def graph_snapshot_manifest(
+        self,
+        source_id: Optional[str],
+        flow_domain: Optional[str],
+        fact_origin: Optional[str] = None,
+        node_kind: Optional[str] = None,
+        edge_type: Optional[str] = None,
+        include_external: str = "show",
+        include_unresolved: bool = True,
+        include_isolated: bool = True,
+        default_node_page_size: int = 500,
+        default_edge_page_size: int = 1000,
+    ) -> Dict[str, Any]:
+        self.init()
+        with self._connect() as conn:
+            node_where, node_params = self._graph_snapshot_node_where(source_id, flow_domain, fact_origin, node_kind, include_external, include_isolated)
+            edge_where, edge_params = self._graph_snapshot_edge_where(source_id, flow_domain, fact_origin, edge_type, include_unresolved)
+            node_count = int(conn.execute(f"SELECT COUNT(*) AS count FROM analysis_graph_nodes n WHERE {node_where}", node_params).fetchone()["count"] or 0)
+            edge_count = int(conn.execute(f"SELECT COUNT(*) AS count FROM analysis_graph_edges e WHERE {edge_where}", edge_params).fetchone()["count"] or 0)
+            node_max = conn.execute(f"SELECT MAX(created_at) AS value FROM analysis_graph_nodes n WHERE {node_where}", node_params).fetchone()["value"]
+            edge_max = conn.execute(f"SELECT MAX(created_at) AS value FROM analysis_graph_edges e WHERE {edge_where}", edge_params).fetchone()["value"]
+            node_types = {
+                row["node_kind"] or "UNKNOWN": int(row["count"] or 0)
+                for row in conn.execute(
+                    f"SELECT n.node_kind, COUNT(*) AS count FROM analysis_graph_nodes n WHERE {node_where} GROUP BY n.node_kind",
+                    node_params,
+                ).fetchall()
+            }
+            edge_types = {
+                row["edge_type"] or "UNKNOWN": int(row["count"] or 0)
+                for row in conn.execute(
+                    f"SELECT e.edge_type, COUNT(*) AS count FROM analysis_graph_edges e WHERE {edge_where} GROUP BY e.edge_type",
+                    edge_params,
+                ).fetchall()
+            }
+            revision = self._graph_snapshot_revision(
+                source_id,
+                flow_domain,
+                fact_origin,
+                node_kind,
+                edge_type,
+                include_external,
+                include_unresolved,
+                include_isolated,
+                node_count,
+                edge_count,
+                node_max,
+                edge_max,
+            )
+            return {
+                "graphRevision": revision,
+                "sourceId": source_id,
+                "sourceName": self._graph_source_name(conn, source_id),
+                "flowDomain": flow_domain,
+                "filters": {
+                    "factOrigin": fact_origin,
+                    "nodeKind": node_kind,
+                    "edgeType": edge_type,
+                    "includeExternal": include_external,
+                    "includeUnresolved": include_unresolved,
+                    "includeIsolated": include_isolated,
+                },
+                "totalNodeCount": node_count,
+                "totalEdgeCount": edge_count,
+                "connectedComponentCount": None,
+                "largestComponentNodeCount": None,
+                "largestComponentEdgeCount": None,
+                "nodeTypeCounts": node_types,
+                "edgeTypeCounts": edge_types,
+                "defaultNodePageSize": default_node_page_size,
+                "defaultEdgePageSize": default_edge_page_size,
+                "etag": self._graph_snapshot_etag(revision),
+                "generatedAt": datetime.now(timezone.utc).isoformat(),
+                "status": self._graph_status(conn, source_id),
+            }
+
+    def graph_snapshot_nodes(
+        self,
+        graph_revision: str,
+        cursor: Optional[str],
+        page_size: int,
+        source_id: Optional[str],
+        flow_domain: Optional[str],
+        fact_origin: Optional[str] = None,
+        node_kind: Optional[str] = None,
+        include_external: str = "show",
+        include_unresolved: bool = True,
+        include_isolated: bool = True,
+    ) -> Dict[str, Any]:
+        manifest = self.graph_snapshot_manifest(
+            source_id,
+            flow_domain,
+            fact_origin=fact_origin,
+            node_kind=node_kind,
+            include_external=include_external,
+            include_unresolved=include_unresolved,
+            include_isolated=include_isolated,
+        )
+        self._assert_graph_snapshot_revision(graph_revision, manifest["graphRevision"])
+        cursor_value = self._decode_graph_snapshot_cursor(cursor, graph_revision, "nodes")
+        safe_page_size = max(1, min(int(page_size or manifest["defaultNodePageSize"]), 5000))
+        with self._connect() as conn:
+            where, params = self._graph_snapshot_node_where(source_id, flow_domain, fact_origin, node_kind, include_external, include_isolated)
+            if cursor_value:
+                where = f"{where} AND n.id > ?"
+                params = [*params, cursor_value]
+            rows = conn.execute(
+                f"""
+                SELECT n.*, af.relative_path,
+                       COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
+                       CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint
+                FROM analysis_graph_nodes n
+                LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
+                LEFT JOIN (
+                    SELECT from_node_id AS node_id, COUNT(*) AS count
+                    FROM analysis_graph_edges
+                    GROUP BY from_node_id
+                ) out_degree ON out_degree.node_id = n.id
+                LEFT JOIN (
+                    SELECT to_node_id AS node_id, COUNT(*) AS count
+                    FROM analysis_graph_edges
+                    GROUP BY to_node_id
+                ) in_degree ON in_degree.node_id = n.id
+                LEFT JOIN analysis_graph_claims entry
+                  ON entry.node_id = n.id
+                 AND entry.claim_kind = 'ENTRYPOINT_HINT'
+                 AND entry.status IN ('TRUSTED', 'DERIVED')
+                WHERE {where}
+                ORDER BY n.id
+                LIMIT ?
+                """,
+                [*params, safe_page_size + 1],
+            ).fetchall()
+        items = [self._graph_snapshot_node_projection(self._row_dict(row)) for row in rows[:safe_page_size]]
+        complete = len(rows) <= safe_page_size
+        next_cursor = None if complete or not items else self._encode_graph_snapshot_cursor(graph_revision, "nodes", items[-1]["id"])
+        return {"graphRevision": graph_revision, "items": items, "nextCursor": next_cursor, "complete": complete, "returnedCount": len(items)}
+
+    def graph_snapshot_edges(
+        self,
+        graph_revision: str,
+        cursor: Optional[str],
+        page_size: int,
+        source_id: Optional[str],
+        flow_domain: Optional[str],
+        fact_origin: Optional[str] = None,
+        edge_type: Optional[str] = None,
+        include_external: str = "show",
+        include_unresolved: bool = True,
+    ) -> Dict[str, Any]:
+        manifest = self.graph_snapshot_manifest(
+            source_id,
+            flow_domain,
+            fact_origin=fact_origin,
+            edge_type=edge_type,
+            include_external=include_external,
+            include_unresolved=include_unresolved,
+        )
+        self._assert_graph_snapshot_revision(graph_revision, manifest["graphRevision"])
+        cursor_value = self._decode_graph_snapshot_cursor(cursor, graph_revision, "edges")
+        safe_page_size = max(1, min(int(page_size or manifest["defaultEdgePageSize"]), 5000))
+        with self._connect() as conn:
+            where, params = self._graph_snapshot_edge_where(source_id, flow_domain, fact_origin, edge_type, include_unresolved)
+            if cursor_value:
+                where = f"{where} AND e.id > ?"
+                params = [*params, cursor_value]
+            rows = conn.execute(
+                f"""
+                SELECT e.*,
+                       fn.display_name AS from_display_name,
+                       fn.qualified_name AS from_qualified_name,
+                       fn.name AS from_name,
+                       tn.display_name AS to_display_name,
+                       tn.qualified_name AS to_qualified_name,
+                       tn.name AS to_name
+                FROM analysis_graph_edges e
+                LEFT JOIN analysis_graph_nodes fn ON fn.id = e.from_node_id
+                LEFT JOIN analysis_graph_nodes tn ON tn.id = e.to_node_id
+                WHERE {where}
+                ORDER BY e.id
+                LIMIT ?
+                """,
+                [*params, safe_page_size + 1],
+            ).fetchall()
+        items = [self._graph_snapshot_edge_projection(self._row_dict(row)) for row in rows[:safe_page_size]]
+        complete = len(rows) <= safe_page_size
+        next_cursor = None if complete or not items else self._encode_graph_snapshot_cursor(graph_revision, "edges", items[-1]["id"])
+        return {"graphRevision": graph_revision, "items": items, "nextCursor": next_cursor, "complete": complete, "returnedCount": len(items)}
 
     def graph(
         self,
@@ -1489,6 +1706,211 @@ class AnalysisStore:
             WHERE fn.id = {alias}.from_node_id
               AND ({alias}.to_node_id IS NULL OR tf.id IS NOT NULL)
         )"""
+
+    def _graph_snapshot_node_where(
+        self,
+        source_id: Optional[str],
+        flow_domain: Optional[str],
+        fact_origin: Optional[str],
+        node_kind: Optional[str],
+        include_external: str,
+        include_isolated: bool,
+    ) -> tuple[str, List[Any]]:
+        clauses = [self._current_graph_node_clause("n")]
+        params: List[Any] = []
+        if source_id:
+            clauses.append("n.source_id = ?")
+            params.append(source_id)
+        if flow_domain:
+            clauses.append("n.flow_domain = ?")
+            params.append(flow_domain.upper())
+        if fact_origin:
+            clauses.append("n.fact_origin = ?")
+            params.append(fact_origin.upper())
+        if node_kind:
+            clauses.append("n.node_kind = ?")
+            params.append(node_kind.upper())
+        if str(include_external or "show").lower() == "hide":
+            clauses.append("n.node_kind != 'EXTERNAL'")
+        if not include_isolated:
+            clauses.append(
+                """EXISTS (
+                    SELECT 1
+                    FROM analysis_graph_edges ge
+                    WHERE ge.from_node_id = n.id OR ge.to_node_id = n.id
+                )"""
+            )
+        return " AND ".join(clauses), params
+
+    def _graph_snapshot_edge_where(
+        self,
+        source_id: Optional[str],
+        flow_domain: Optional[str],
+        fact_origin: Optional[str],
+        edge_type: Optional[str],
+        include_unresolved: bool,
+    ) -> tuple[str, List[Any]]:
+        clauses = [self._current_graph_edge_clause("e")]
+        params: List[Any] = []
+        if source_id:
+            clauses.append("e.source_id = ?")
+            params.append(source_id)
+        if flow_domain:
+            clauses.append("e.flow_domain = ?")
+            params.append(flow_domain.upper())
+        if fact_origin:
+            clauses.append("e.fact_origin = ?")
+            params.append(fact_origin.upper())
+        if edge_type:
+            clauses.append("e.edge_type = ?")
+            params.append(edge_type.upper())
+        if not include_unresolved:
+            clauses.append("e.to_node_id IS NOT NULL")
+            clauses.append("e.resolution_status NOT IN ('UNRESOLVED', 'DYNAMIC_TARGET', 'EXTERNAL_TARGET')")
+        return " AND ".join(clauses), params
+
+    def _graph_snapshot_revision(
+        self,
+        source_id: Optional[str],
+        flow_domain: Optional[str],
+        fact_origin: Optional[str],
+        node_kind: Optional[str],
+        edge_type: Optional[str],
+        include_external: str,
+        include_unresolved: bool,
+        include_isolated: bool,
+        node_count: int,
+        edge_count: int,
+        node_max_created_at: Optional[str],
+        edge_max_created_at: Optional[str],
+    ) -> str:
+        parts = [
+            source_id or "all",
+            flow_domain or "all",
+            fact_origin or "all",
+            node_kind or "all",
+            edge_type or "all",
+            str(include_external or "show"),
+            "unresolved" if include_unresolved else "resolved-only",
+            "isolated" if include_isolated else "connected-only",
+            str(node_count),
+            str(edge_count),
+            node_max_created_at or "-",
+            edge_max_created_at or "-",
+        ]
+        token = base64.urlsafe_b64encode("|".join(parts).encode("utf-8")).decode("ascii").rstrip("=")
+        return f"{source_id or 'all'}:{flow_domain or 'ALL'}:graph-v1:{token}"
+
+    def _graph_snapshot_etag(self, graph_revision: str) -> str:
+        return f'"{base64.urlsafe_b64encode(graph_revision.encode("utf-8")).decode("ascii").rstrip("=")}"'
+
+    def _assert_graph_snapshot_revision(self, requested: str, current: str) -> None:
+        if not requested:
+            raise KnowledgeError("GRAPH_SNAPSHOT_REVISION_REQUIRED", "graphRevision is required.")
+        if requested != current:
+            raise KnowledgeError("GRAPH_SNAPSHOT_STALE", "Graph snapshot revision is stale.", requested=requested, current=current)
+
+    def _encode_graph_snapshot_cursor(self, graph_revision: str, page_kind: str, last_id: str) -> str:
+        payload = {"graphRevision": graph_revision, "kind": page_kind, "lastId": last_id}
+        return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("ascii").rstrip("=")
+
+    def _decode_graph_snapshot_cursor(self, cursor: Optional[str], graph_revision: str, page_kind: str) -> Optional[str]:
+        if not cursor:
+            return None
+        try:
+            padded = cursor + ("=" * (-len(cursor) % 4))
+            payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            raise KnowledgeError("GRAPH_CURSOR_INVALID", "Graph snapshot cursor is invalid.")
+        if payload.get("graphRevision") != graph_revision or payload.get("kind") != page_kind or not payload.get("lastId"):
+            raise KnowledgeError("GRAPH_CURSOR_INVALID", "Graph snapshot cursor does not match this snapshot request.")
+        return str(payload["lastId"])
+
+    def _graph_snapshot_node_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        metadata = self._json_dict(row.get("metadata_json"))
+        return {
+            "id": row["id"],
+            "graphNodeId": row["id"],
+            "stableKey": row.get("stable_key") or row["id"],
+            "kind": row.get("node_kind"),
+            "nodeKind": row.get("node_kind"),
+            "name": row.get("name"),
+            "label": row.get("display_name") or row.get("qualified_name") or row.get("name") or row["id"],
+            "qualifiedName": row.get("qualified_name"),
+            "relativePath": row.get("relative_path"),
+            "sourceId": row.get("source_id"),
+            "flowDomain": row.get("flow_domain"),
+            "factOrigin": row.get("fact_origin"),
+            "lineStart": row.get("line_start"),
+            "lineEnd": row.get("line_end"),
+            "status": row.get("status"),
+            "confidence": row.get("confidence"),
+            "degree": int(row.get("graph_degree") or 0),
+            "entrypoint": bool(row.get("entrypoint")),
+            "external": row.get("node_kind") == "EXTERNAL",
+            "summaryAvailable": bool(metadata.get("responsibility") or metadata.get("claimSummary")),
+            "importance": metadata.get("displayScore") or metadata.get("flowScore") or row.get("confidence"),
+            "metadata": {
+                key: value
+                for key, value in metadata.items()
+                if key
+                in {
+                    "callTargetCategory",
+                    "sliceDefaultVisibility",
+                    "sourceKind",
+                    "displayScore",
+                    "flowScore",
+                    "unresolvedReason",
+                }
+            },
+        }
+
+    def _graph_snapshot_edge_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        metadata = self._json_dict(row.get("metadata_json"))
+        unresolved_target = None
+        if row.get("unresolved_target_json"):
+            try:
+                unresolved_target = json.loads(row.get("unresolved_target_json"))
+            except (TypeError, json.JSONDecodeError):
+                unresolved_target = row.get("unresolved_target_json")
+        return {
+            "id": row["id"],
+            "graphEdgeId": row["id"],
+            "stableKey": metadata.get("stableKey") or row["id"],
+            "fromNodeId": row.get("from_node_id"),
+            "toNodeId": row.get("to_node_id"),
+            "from": row.get("from_node_id"),
+            "to": row.get("to_node_id"),
+            "fromLabel": row.get("from_display_name") or row.get("from_qualified_name") or row.get("from_name") or row.get("from_node_id"),
+            "toLabel": row.get("to_display_name") or row.get("to_qualified_name") or row.get("to_name") or row.get("to_node_id"),
+            "relation": row.get("edge_type"),
+            "edgeType": row.get("edge_type"),
+            "classification": metadata.get("callTargetCategory") or metadata.get("sliceDefaultVisibility"),
+            "resolutionStatus": row.get("resolution_status"),
+            "resolved": bool(row.get("to_node_id")) and row.get("resolution_status") not in {"UNRESOLVED", "DYNAMIC_TARGET"},
+            "external": row.get("resolution_status") == "EXTERNAL_TARGET",
+            "confidence": row.get("confidence"),
+            "flowDomain": row.get("flow_domain"),
+            "factOrigin": row.get("fact_origin"),
+            "status": row.get("status"),
+            "unresolvedTarget": unresolved_target,
+            "metadata": {
+                key: value
+                for key, value in metadata.items()
+                if key
+                in {
+                    "callKind",
+                    "callTargetCategory",
+                    "displayScore",
+                    "flowScore",
+                    "methodName",
+                    "receiverText",
+                    "receiverTypeHint",
+                    "sliceDefaultVisibility",
+                    "unresolvedReason",
+                }
+            },
+        }
 
     def _fact_node_matches(self, row: Dict[str, Any], flow_domain: Optional[str], fact_origin: Optional[str], node_kind: Optional[str]) -> bool:
         if flow_domain and str(row.get("flow_domain") or "").upper() != flow_domain.upper():
@@ -2273,15 +2695,18 @@ class AnalysisStore:
         analyzed = int(file_counts["analyzed"] or 0)
         failed = int(file_counts["failed"] or 0)
         skipped = int(file_counts["skipped"] or 0)
-        processed = analyzed + failed + skipped
+        completed_outcomes = analyzed + failed + skipped
+        processed = completed_outcomes
         running_for_source = active is not None and (
             not source_id or active.get("currentSourceId") == source_id or source_id in (active.get("sourceIds") or [])
         )
+        total_files = int(inventory_count or (active or {}).get("fileCount") or (latest or {}).get("fileCount") or 0)
         if running_for_source:
             analysis_status = "RUNNING"
             job_id = active.get("jobId")
             current_file = active.get("currentRelativePath") if not source_id or active.get("currentSourceId") == source_id else None
             last_updated = active.get("lastProgressAt") or active.get("startedAt")
+            processed = min(total_files, completed_outcomes + int(active.get("processedFileCount") or 0))
         elif inventory_count == 0 and node_count == 0 and edge_count == 0:
             analysis_status = "EMPTY"
             job_id = latest.get("jobId") if latest else None
@@ -2302,7 +2727,6 @@ class AnalysisStore:
             job_id = latest.get("jobId") if latest else None
             current_file = None
             last_updated = file_counts["last_analyzed_at"] or (latest or {}).get("completedAt")
-        total_files = int(inventory_count or (active or {}).get("fileCount") or (latest or {}).get("fileCount") or 0)
         progress = round((processed / total_files) * 100, 1) if total_files else 0.0
         diagnostics_count = conn.execute(
             f"""

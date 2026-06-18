@@ -18,6 +18,21 @@
   const knowledgeStatusActivePollMs = Number(runtimeConfig.activeJobPollIntervalMs) || 1500;
   const knowledgeStatusIdlePollMs = Number(runtimeConfig.statusPollIntervalMs) || 15000;
   const knowledgeGraphPollMs = Number(runtimeConfig.graphPollIntervalMs) || 30000;
+  const knowledgeGraphPerformanceConfig = {
+    cacheEnabled: runtimeConfig.graphCacheEnabled !== false,
+    cacheMaxRevisions: Number(runtimeConfig.graphCacheMaxRevisions) || 3,
+    cacheMaxAgeSeconds: Number(runtimeConfig.graphCacheMaxAgeSeconds) || 86400,
+    fetchConcurrency: Number(runtimeConfig.graphFetchConcurrency) || 2,
+    nodePageSize: Number(runtimeConfig.graphNodePageSize) || 500,
+    edgePageSize: Number(runtimeConfig.graphEdgePageSize) || 1000,
+    fitPaddingPx: Number(runtimeConfig.graphFitPaddingPx) || 40,
+    fitZoomAllowance: Number(runtimeConfig.graphFitZoomAllowance) || 0.85,
+    zoomSensitivity: Number(runtimeConfig.graphZoomSensitivity) || 1,
+    layoutWorkerEnabled: runtimeConfig.graphLayoutWorkerEnabled !== false,
+    layoutVersion: runtimeConfig.graphLayoutVersion || 'main-svg-force-v1',
+    projectionVersion: runtimeConfig.graphProjectionVersion || 'visual-v1',
+    tablePageSize: Number(runtimeConfig.graphTablePageSize) || 120
+  };
   const graphLayoutConfig = {
     paddingX: 22,
     paddingY: 28,
@@ -51,8 +66,65 @@
     hiddenIsolatedCount: 0,
     selectedDetail: null,
     selectedDetailLoading: false,
-    selectedDetailError: null
+    selectedDetailError: null,
+    loadController: null,
+    loadToken: 0,
+    loadingState: 'IDLE',
+    loadingProgress: null,
+    manifest: null,
+    graphStore: null,
+    wheelFrame: 0,
+    pendingWheel: null,
+    transformFrame: 0,
+    pendingTransformReason: 'pan',
+    graphFrame: 0,
+    fitZoom: 1,
+    minimumZoom: 0.18,
+    graphBounds: null,
+    layoutToken: 0,
+    renderModelVersion: 0
   };
+  const knowledgeGraphMetricDefaults = {
+    layoutRunCount: 0,
+    dataFetchCount: 0,
+    graphModelBuildCount: 0,
+    renderFrameCount: 0,
+    transformOnlyFrameCount: 0,
+    panEventCount: 0,
+    wheelEventCount: 0,
+    fullGraphRebuildCount: 0,
+    fullRendererRebuildCount: 0,
+    tabRenderCount: 0,
+    hoverHitTestCount: 0,
+    dataReloadCount: 0,
+    labelMeasureCount: 0,
+    labelRenderCount: 0,
+    lastPanFrameMs: 0,
+    lastZoomFrameMs: 0,
+    longTaskCount: 0
+  };
+  const knowledgeGraphMetrics = window.__forgeGraphMetrics || {};
+  Object.entries(knowledgeGraphMetricDefaults).forEach(([key, value]) => {
+    if (!Number.isFinite(knowledgeGraphMetrics[key])) {
+      knowledgeGraphMetrics[key] = value;
+    }
+  });
+  window.__forgeGraphMetrics = knowledgeGraphMetrics;
+  window.__forgeGraphMetricsReset = () => {
+    Object.keys(knowledgeGraphMetricDefaults).forEach((key) => {
+      knowledgeGraphMetrics[key] = 0;
+    });
+  };
+  if (typeof PerformanceObserver !== 'undefined' && !window.__forgeGraphLongTaskObserver) {
+    try {
+      window.__forgeGraphLongTaskObserver = new PerformanceObserver((list) => {
+        knowledgeGraphMetrics.longTaskCount += list.getEntries().length;
+      });
+      window.__forgeGraphLongTaskObserver.observe({ entryTypes: ['longtask'] });
+    } catch {
+      window.__forgeGraphLongTaskObserver = null;
+    }
+  }
 
   const statusClass = (value) => String(value || 'unknown').toLowerCase().replaceAll('_', '-');
   const fmtDate = (value) => value ? new Date(value).toLocaleString() : '-';
@@ -264,8 +336,8 @@
     }
   }
 
-  async function getInfrastructureJson(path) {
-    return fetchInfrastructureJson('GET', path);
+  async function getInfrastructureJson(path, options = {}) {
+    return fetchInfrastructureJson('GET', path, undefined, options);
   }
 
   async function postOperatorJson(path, body) {
@@ -281,15 +353,16 @@
     return text ? JSON.parse(text) : {};
   }
 
-  async function postInfrastructureJson(path, body) {
-    return fetchInfrastructureJson('POST', path, body);
+  async function postInfrastructureJson(path, body, options = {}) {
+    return fetchInfrastructureJson('POST', path, body, options);
   }
 
-  async function fetchInfrastructureJson(method, path, body) {
+  async function fetchInfrastructureJson(method, path, body, requestOptions = {}) {
     const options = {
       method,
       cache: 'no-store',
-      headers: { Accept: 'application/json' }
+      headers: { Accept: 'application/json', ...(requestOptions.headers || {}) },
+      signal: requestOptions.signal
     };
     if (body !== undefined) {
       options.headers['Content-Type'] = 'application/json';
@@ -298,6 +371,9 @@
     const response = await fetch(`${infrastructureApiBase}${path}`, options);
     const text = await response.text();
     const payload = text ? JSON.parse(text) : {};
+    if (requestOptions.includeResponse) {
+      return { status: response.status, headers: response.headers, body: payload, ok: response.ok };
+    }
     if (!response.ok) {
       throw new Error(payload.message || payload.code || `${response.status} ${response.statusText}`);
     }
@@ -2577,7 +2653,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       if (options.afterStart) {
         await options.afterStart(response);
       } else {
-        await refreshKnowledgeSourcesOnly();
+        await refreshKnowledgeSourcesUntilAnalysisVisible(sourceId, response.jobId || '');
       }
     } catch (error) {
       setError(errorTargetId, error);
@@ -2662,6 +2738,33 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       updated.textContent = `updated ${new Date().toLocaleTimeString()}`;
     }
     return serviceStatus;
+  }
+
+  async function refreshKnowledgeSourcesUntilAnalysisVisible(sourceId, jobId) {
+    let latest = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) {
+        await sleep(150 * attempt);
+      }
+      latest = await refreshKnowledgeSourcesOnly();
+      const activeJob = latest?.activeJob || null;
+      if (knowledgeAnalysisStartVisible(activeJob, sourceId, jobId) || !isActiveAnalysisJob(activeJob)) {
+        return latest;
+      }
+    }
+    return latest;
+  }
+
+  function knowledgeAnalysisStartVisible(activeJob, sourceId, jobId) {
+    if (!activeJob || (jobId && activeJob.jobId !== jobId)) {
+      return false;
+    }
+    const sourceIds = Array.isArray(activeJob.sourceIds) ? activeJob.sourceIds : [];
+    return !sourceId || activeJob.currentSourceId === sourceId || sourceIds.includes(sourceId);
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
 
   function shortSymbol(value) {
@@ -2781,6 +2884,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     knowledgeGraphState.detailsTab = 'overview';
     document.getElementById('analyzeKnowledgeGraph')?.addEventListener('click', (event) => startKnowledgeGraphAnalysis(event.currentTarget));
     document.getElementById('refreshKnowledgeGraph')?.addEventListener('click', () => loadKnowledgeGraph(true));
+    document.getElementById('forceRefreshKnowledgeGraph')?.addEventListener('click', () => loadKnowledgeGraph(true, { forceRefresh: true }));
     document.getElementById('fitKnowledgeGraph')?.addEventListener('click', fitKnowledgeGraph);
     document.getElementById('fitKnowledgeGraphTop')?.addEventListener('click', fitKnowledgeGraph);
     document.getElementById('focusKnowledgeGraph')?.addEventListener('click', toggleKnowledgeGraphFocus);
@@ -2934,7 +3038,9 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       query.set('includeWorkflow', ['WORKFLOW', 'CONFIG', 'BUILD', ''].includes(controls.flowDomain) ? 'true' : 'false');
       query.set('includeIsolated', controls.isolated === 'show' ? 'true' : 'false');
     } else {
-      query.set('limit', unlimitedMax ? '0' : (params.get('limit') || controls.maxNodes || '150'));
+      query.set('includeExternal', controls.includeExternal);
+      query.set('includeUnresolved', controls.unresolved !== 'hide' ? 'true' : 'false');
+      query.set('includeIsolated', controls.isolated === 'show' ? 'true' : 'false');
     }
     query.set('includeEvidence', 'false');
     query.set('includeClaims', 'false');
@@ -2978,25 +3084,34 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       knowledgeGraphState.pendingRefresh = true;
       return;
     }
+    knowledgeGraphMetrics.dataReloadCount += 1;
+    knowledgeGraphMetrics.dataFetchCount += 1;
+    knowledgeGraphState.loadController?.abort();
+    const controller = new AbortController();
+    const loadToken = knowledgeGraphState.loadToken + 1;
+    knowledgeGraphState.loadToken = loadToken;
+    knowledgeGraphState.loadController = controller;
     const { query, mode } = knowledgeGraphQueryParams();
     const loading = document.getElementById('knowledgeGraphLoading');
     if (loading) {
       loading.classList.remove('hidden');
-      loading.textContent = manual ? 'Refreshing graph...' : 'Loading graph...';
+      loading.textContent = manual ? 'Refreshing graph snapshot...' : 'Loading graph snapshot...';
     }
     try {
       const sourceId = query.get('sourceId') || '';
-      const endpoint = mode === 'slice'
-        ? `/knowledge/analysis/graph/slice?${query.toString()}`
-        : `/knowledge/analysis/graph?${query.toString()}`;
       const [data, sourceStatus] = await Promise.all([
-        getInfrastructureJson(endpoint),
-        sourceId ? getInfrastructureJson(knowledgeServicesStatusPath(sourceId)) : Promise.resolve(null)
+        mode === 'slice'
+          ? getInfrastructureJson(`/knowledge/analysis/graph/slice?${query.toString()}`, { signal: controller.signal })
+          : loadKnowledgeGraphSnapshot(query, { signal: controller.signal, forceRefresh: Boolean(options.forceRefresh), loadToken }),
+        sourceId ? getInfrastructureJson(knowledgeServicesStatusPath(sourceId), { signal: controller.signal }) : Promise.resolve(null)
       ]);
+      if (loadToken !== knowledgeGraphState.loadToken) {
+        return;
+      }
       data.sourceStatus = (sourceStatus?.services || []).find((item) => item.sourceId === sourceId) || null;
       data.failureFiles = data.sourceStatus?.details?.failures?.files || [];
       data.viewMode = mode;
-      const nextRootKey = `${mode}:${data.root?.id || query.get('rootGraphNodeId') || query.get('graphNodeId') || query.get('graphEdgeId') || sourceId || 'overview'}`;
+      const nextRootKey = `${mode}:${data.graphRevision || data.root?.id || query.get('rootGraphNodeId') || query.get('graphNodeId') || query.get('graphEdgeId') || sourceId || 'overview'}`;
       const preserveLayout = knowledgeGraphState.rootKey === nextRootKey && knowledgeGraphState.nodes.length > 0;
       knowledgeGraphState.rootKey = nextRootKey;
       knowledgeGraphState.data = data;
@@ -3019,6 +3134,9 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         loading.classList.add('hidden');
       }
     } catch (error) {
+      if (error?.name === 'AbortError') {
+        return;
+      }
       if (mode === 'slice' && query.get('rootGraphNodeId') && options.allowMissingRootFallback !== false && knowledgeGraphMissingRootError(error)) {
         updateKnowledgeGraphUrlFromControls({ graphNodeId: null, graphEdgeId: null });
         return loadKnowledgeGraph(true, { allowMissingRootFallback: false });
@@ -3027,7 +3145,363 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       if (loading) {
         loading.classList.add('hidden');
       }
+    } finally {
+      if (loadToken === knowledgeGraphState.loadToken) {
+        knowledgeGraphState.loadController = null;
+      }
     }
+  }
+
+  async function loadKnowledgeGraphSnapshot(query, options = {}) {
+    setKnowledgeGraphLoadingProgress({
+      label: 'Loading graph snapshot...',
+      nodesLoaded: 0,
+      nodesTotal: 0,
+      edgesLoaded: 0,
+      edgesTotal: 0,
+      layout: 'pending'
+    });
+    const filterKey = knowledgeGraphSnapshotFilterKey(query);
+    if (knowledgeGraphPerformanceConfig.cacheEnabled && !options.forceRefresh) {
+      const cached = await readKnowledgeGraphLatestCache(filterKey);
+      if (cached?.data && options.loadToken === knowledgeGraphState.loadToken) {
+        knowledgeGraphState.graphStore = createKnowledgeGraphStore(cached.data.nodes || [], cached.data.edges || []);
+        knowledgeGraphState.manifest = cached.manifest || null;
+        knowledgeGraphState.data = cached.data;
+        applyKnowledgeGraphPositions(cached.positions || {});
+        renderKnowledgeGraphPage(cached.data, { preserveLayout: true });
+      }
+    }
+
+    const manifestQuery = new URLSearchParams(query);
+    manifestQuery.delete('depth');
+    const cachedForHeaders = !options.forceRefresh ? await readKnowledgeGraphLatestCache(filterKey) : null;
+    const manifestResponse = await getInfrastructureJson(`/knowledge/analysis/graph/manifest?${manifestQuery.toString()}`, {
+      signal: options.signal,
+      includeResponse: true,
+      headers: cachedForHeaders?.manifest?.etag ? { 'If-None-Match': cachedForHeaders.manifest.etag } : {}
+    });
+    if (manifestResponse.status === 304 && cachedForHeaders?.data) {
+      return cachedForHeaders.data;
+    }
+    if (!manifestResponse.ok) {
+      throw new Error(manifestResponse.body?.message || manifestResponse.body?.code || `Graph manifest failed: ${manifestResponse.status}`);
+    }
+    const manifest = manifestResponse.body || {};
+    const graphRevision = manifest.graphRevision;
+    if (!graphRevision) {
+      throw new Error('Graph manifest did not include graphRevision');
+    }
+    manifest.etag = manifestResponse.headers.get('ETag') || manifest.etag;
+    knowledgeGraphState.manifest = manifest;
+    const store = createKnowledgeGraphStore([], []);
+    setKnowledgeGraphLoadingProgress({
+      label: 'Loading graph snapshot...',
+      nodesLoaded: 0,
+      nodesTotal: manifest.totalNodeCount || 0,
+      edgesLoaded: 0,
+      edgesTotal: manifest.totalEdgeCount || 0,
+      layout: 'pending'
+    });
+    await loadKnowledgeGraphSnapshotPages('nodes', query, graphRevision, manifest.totalNodeCount || 0, store, options);
+    await loadKnowledgeGraphSnapshotPages('edges', query, graphRevision, manifest.totalEdgeCount || 0, store, options);
+    const data = knowledgeGraphDataFromStore(store, manifest);
+    knowledgeGraphState.graphStore = store;
+    setKnowledgeGraphLoadingProgress({
+      label: 'Loading graph snapshot...',
+      nodesLoaded: store.nodesById.size,
+      nodesTotal: manifest.totalNodeCount || 0,
+      edgesLoaded: store.edgesById.size,
+      edgesTotal: manifest.totalEdgeCount || 0,
+      layout: 'running'
+    });
+    await layoutKnowledgeGraphData(data, options);
+    setKnowledgeGraphLoadingProgress({
+      label: 'Loading graph snapshot...',
+      nodesLoaded: store.nodesById.size,
+      nodesTotal: manifest.totalNodeCount || 0,
+      edgesLoaded: store.edgesById.size,
+      edgesTotal: manifest.totalEdgeCount || 0,
+      layout: 'complete'
+    });
+    if (knowledgeGraphPerformanceConfig.cacheEnabled) {
+      await writeKnowledgeGraphCache({
+        key: knowledgeGraphSnapshotCacheKey(filterKey, graphRevision),
+        filterKey,
+        graphRevision,
+        manifest,
+        data,
+        positions: Object.fromEntries((data.nodes || [])
+          .filter((node) => Number.isFinite(node.x) && Number.isFinite(node.y))
+          .map((node) => [node.id, { x: node.x, y: node.y }])),
+        updatedAt: Date.now()
+      });
+    }
+    return data;
+  }
+
+  async function loadKnowledgeGraphSnapshotPages(kind, baseQuery, graphRevision, total, store, options) {
+    let cursor = null;
+    let loaded = 0;
+    do {
+      const pageQuery = new URLSearchParams(baseQuery);
+      pageQuery.delete('depth');
+      pageQuery.set('graphRevision', graphRevision);
+      pageQuery.set('pageSize', kind === 'nodes' ? knowledgeGraphPerformanceConfig.nodePageSize : knowledgeGraphPerformanceConfig.edgePageSize);
+      if (cursor) {
+        pageQuery.set('cursor', cursor);
+      }
+      const page = await getInfrastructureJson(`/knowledge/analysis/graph/${kind}?${pageQuery.toString()}`, { signal: options.signal });
+      if (page.graphRevision !== graphRevision) {
+        throw new Error('GRAPH_SNAPSHOT_STALE');
+      }
+      if (kind === 'nodes') {
+        appendKnowledgeGraphNodes(store, page.items || []);
+      } else {
+        appendKnowledgeGraphEdges(store, page.items || []);
+      }
+      loaded += Number(page.returnedCount ?? (page.items || []).length);
+      cursor = page.nextCursor || null;
+      setKnowledgeGraphLoadingProgress({
+        label: 'Loading graph snapshot...',
+        nodesLoaded: store.nodesById.size,
+        nodesTotal: kind === 'nodes' ? total : knowledgeGraphState.loadingProgress?.nodesTotal,
+        edgesLoaded: store.edgesById.size,
+        edgesTotal: kind === 'edges' ? total : knowledgeGraphState.loadingProgress?.edgesTotal,
+        layout: 'pending'
+      });
+      await nextAnimationFrame();
+      if (page.complete) {
+        break;
+      }
+    } while (cursor);
+    if (loaded < total) {
+      throw new Error(`Graph ${kind} snapshot ended early: ${loaded} / ${total}`);
+    }
+  }
+
+  function createKnowledgeGraphStore(nodes, edges) {
+    const store = {
+      nodesById: new Map(),
+      edgesById: new Map(),
+      outgoingEdgeIdsByNode: new Map(),
+      incomingEdgeIdsByNode: new Map(),
+      pendingEdgesByMissingEndpoint: new Map()
+    };
+    appendKnowledgeGraphNodes(store, nodes);
+    appendKnowledgeGraphEdges(store, edges);
+    return store;
+  }
+
+  function appendKnowledgeGraphNodes(store, nodes) {
+    (nodes || []).forEach((node) => {
+      if (!node?.id || store.nodesById.has(node.id)) {
+        return;
+      }
+      store.nodesById.set(node.id, node);
+    });
+  }
+
+  function appendKnowledgeGraphEdges(store, edges) {
+    (edges || []).forEach((edge) => {
+      const id = edge?.id;
+      const from = edge?.fromNodeId || edge?.from;
+      const to = edge?.toNodeId || edge?.to;
+      if (!id || store.edgesById.has(id)) {
+        return;
+      }
+      const normalized = { ...edge, from, to };
+      store.edgesById.set(id, normalized);
+      if (from) {
+        if (!store.outgoingEdgeIdsByNode.has(from)) {
+          store.outgoingEdgeIdsByNode.set(from, []);
+        }
+        store.outgoingEdgeIdsByNode.get(from).push(id);
+      }
+      if (to) {
+        if (!store.incomingEdgeIdsByNode.has(to)) {
+          store.incomingEdgeIdsByNode.set(to, []);
+        }
+        store.incomingEdgeIdsByNode.get(to).push(id);
+      }
+      if (!from || !to || !store.nodesById.has(from) || !store.nodesById.has(to)) {
+        const missing = !from || !store.nodesById.has(from) ? from : to;
+        if (missing) {
+          if (!store.pendingEdgesByMissingEndpoint.has(missing)) {
+            store.pendingEdgesByMissingEndpoint.set(missing, []);
+          }
+          store.pendingEdgesByMissingEndpoint.get(missing).push(normalized);
+        }
+      }
+    });
+  }
+
+  function knowledgeGraphDataFromStore(store, manifest) {
+    knowledgeGraphMetrics.graphModelBuildCount += 1;
+    const nodes = [...store.nodesById.values()];
+    const edges = [...store.edgesById.values()].filter((edge) => edge.from && edge.to && store.nodesById.has(edge.from) && store.nodesById.has(edge.to));
+    return {
+      sourceId: manifest.sourceId,
+      sourceName: manifest.sourceName,
+      graphRevision: manifest.graphRevision,
+      status: manifest.status || {},
+      filters: manifest.filters || {},
+      nodes,
+      edges,
+      claims: [],
+      evidence: [],
+      selected: {},
+      diagnostics: [],
+      metrics: {
+        sliceNodeCount: nodes.length,
+        sliceEdgeCount: edges.length,
+        totalNodesAvailable: manifest.totalNodeCount || nodes.length,
+        unresolvedCount: [...store.edgesById.values()].filter((edge) => !edge.to).length
+      },
+      meta: {
+        truncated: false,
+        totalNodeCount: manifest.totalNodeCount || nodes.length,
+        totalEdgeCount: manifest.totalEdgeCount || store.edgesById.size,
+        returnedNodeCount: nodes.length,
+        returnedEdgeCount: store.edgesById.size,
+        skippedMissingEndpointCount: Math.max(0, store.edgesById.size - edges.length),
+        skippedByLimitCount: 0
+      }
+    };
+  }
+
+  function setKnowledgeGraphLoadingProgress(progress) {
+    knowledgeGraphState.loadingProgress = {
+      ...(knowledgeGraphState.loadingProgress || {}),
+      ...progress
+    };
+    const loading = document.getElementById('knowledgeGraphLoading');
+    if (loading && !loading.classList.contains('hidden')) {
+      const current = knowledgeGraphState.loadingProgress;
+      loading.innerHTML = `
+        <strong>${escapeHtml(current.label || 'Loading graph snapshot...')}</strong>
+        <span>Nodes: ${escapeHtml(current.nodesLoaded ?? 0)} / ${escapeHtml(current.nodesTotal ?? 0)}</span>
+        <span>Edges: ${escapeHtml(current.edgesLoaded ?? 0)} / ${escapeHtml(current.edgesTotal ?? 0)}</span>
+        <span>Layout: ${escapeHtml(current.layout || 'pending')}</span>
+      `;
+    }
+  }
+
+  function nextAnimationFrame() {
+    return new Promise((resolve) => requestAnimationFrame(resolve));
+  }
+
+  function knowledgeGraphSnapshotFilterKey(query) {
+    const copy = new URLSearchParams(query);
+    ['graphRevision', 'cursor', 'pageSize', 'depth'].forEach((key) => copy.delete(key));
+    copy.set('projectionVersion', knowledgeGraphPerformanceConfig.projectionVersion);
+    copy.set('layoutVersion', knowledgeGraphPerformanceConfig.layoutVersion);
+    return [...copy.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => `${key}=${value}`).join('&');
+  }
+
+  function knowledgeGraphSnapshotCacheKey(filterKey, graphRevision) {
+    return `${filterKey}::${graphRevision}`;
+  }
+
+  function openKnowledgeGraphCache() {
+    if (!('indexedDB' in window)) {
+      return Promise.resolve(null);
+    }
+    return new Promise((resolve) => {
+      const request = indexedDB.open('forge-ai-knowledge-graph-cache', 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('snapshots')) {
+          db.createObjectStore('snapshots', { keyPath: 'key' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+    });
+  }
+
+  async function readKnowledgeGraphLatestCache(filterKey) {
+    const db = await openKnowledgeGraphCache();
+    if (!db) {
+      return null;
+    }
+    return new Promise((resolve) => {
+      const tx = db.transaction('snapshots', 'readonly');
+      const request = tx.objectStore('snapshots').getAll();
+      request.onsuccess = () => {
+        const maxAgeMs = knowledgeGraphPerformanceConfig.cacheMaxAgeSeconds * 1000;
+        const matches = (request.result || [])
+          .filter((item) => item.filterKey === filterKey && item.data && item.manifest && Date.now() - Number(item.updatedAt || 0) <= maxAgeMs)
+          .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0));
+        resolve(matches[0] || null);
+      };
+      request.onerror = () => resolve(null);
+    });
+  }
+
+  async function writeKnowledgeGraphCache(entry) {
+    const db = await openKnowledgeGraphCache();
+    if (!db) {
+      return;
+    }
+    await new Promise((resolve) => {
+      const tx = db.transaction('snapshots', 'readwrite');
+      tx.objectStore('snapshots').put(entry);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+    await evictKnowledgeGraphCache(db);
+  }
+
+  async function evictKnowledgeGraphCache(db) {
+    return new Promise((resolve) => {
+      const tx = db.transaction('snapshots', 'readwrite');
+      const store = tx.objectStore('snapshots');
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const entries = request.result || [];
+        const grouped = entries.reduce((groups, entry) => {
+          const key = entry.filterKey || 'unknown';
+          if (!groups.has(key)) {
+            groups.set(key, []);
+          }
+          groups.get(key).push(entry);
+          return groups;
+        }, new Map());
+        grouped.forEach((items) => {
+          items
+            .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0))
+            .slice(knowledgeGraphPerformanceConfig.cacheMaxRevisions)
+            .forEach((entry) => store.delete(entry.key));
+        });
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  }
+
+  async function layoutKnowledgeGraphData() {
+    return undefined;
+  }
+
+  function applyKnowledgeGraphPositions(positions) {
+    if (!knowledgeGraphState.data?.nodes) {
+      return;
+    }
+    applyKnowledgeGraphPositionsToData(knowledgeGraphState.data, positions);
+  }
+
+  function applyKnowledgeGraphPositionsToData(data, positions) {
+    if (!data?.nodes) {
+      return;
+    }
+    data.nodes.forEach((node) => {
+      const position = positions[node.id];
+      if (position) {
+        node.x = Number(position.x) || 0;
+        node.y = Number(position.y) || 0;
+      }
+    });
   }
 
   function knowledgeGraphMissingRootError(error) {
@@ -3081,6 +3555,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       return;
     }
     const status = data.status || {};
+    const graphProgress = knowledgeGraphState.loadingProgress || {};
     const percent = Math.max(0, Math.min(100, Number(status.progressPercent || 0)));
     target.innerHTML = `
       <div class="knowledge-graph-progress">
@@ -3094,6 +3569,9 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         </div>
         ${renderKnowledgeGraphMetric('Failed Files', status.failedFileCount ?? 0)}
         ${renderKnowledgeGraphMetric('Trusted Facts', status.trustedFactsCount ?? 0)}
+        ${renderKnowledgeGraphMetric('Nodes', `${graphProgress.nodesLoaded ?? data.meta?.returnedNodeCount ?? 0} / ${graphProgress.nodesTotal ?? data.meta?.totalNodeCount ?? 0}`)}
+        ${renderKnowledgeGraphMetric('Edges', `${graphProgress.edgesLoaded ?? data.meta?.returnedEdgeCount ?? 0} / ${graphProgress.edgesTotal ?? data.meta?.totalEdgeCount ?? 0}`)}
+        ${renderKnowledgeGraphMetric('Layout', graphProgress.layout || 'complete')}
         ${renderKnowledgeGraphMetric('Collapsed', data.metrics?.collapsedGroupCount ?? 0)}
         ${renderKnowledgeGraphMetric('Unresolved', data.metrics?.unresolvedCount ?? 0)}
         ${renderKnowledgeGraphMetric('Returned', `${data.meta?.returnedNodeCount ?? data.metrics?.sliceNodeCount ?? 0} / ${data.meta?.returnedEdgeCount ?? data.metrics?.sliceEdgeCount ?? 0}`)}
@@ -3235,6 +3713,8 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   }
 
   function renderKnowledgeGraphVisual(data, options = {}) {
+    knowledgeGraphMetrics.fullGraphRebuildCount += 1;
+    knowledgeGraphMetrics.fullRendererRebuildCount += 1;
     const svg = document.getElementById('knowledgeGraphSvg');
     const stage = document.getElementById('knowledgeGraphStage');
     if (!svg || !stage) {
@@ -3268,8 +3748,8 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     const previous = options.preservePositions ? new Map(knowledgeGraphState.nodes.map((node) => [node.id, node])) : new Map();
     const nodes = visibleNodes.map((node, index) => ({
       ...node,
-      x: previous.get(node.id)?.x ?? width / 2 + Math.cos(index * 2.399) * (58 + Math.sqrt(index + 1) * 18),
-      y: previous.get(node.id)?.y ?? height / 2 + Math.sin(index * 2.399) * (52 + Math.sqrt(index + 1) * 15),
+      x: previous.get(node.id)?.x ?? (Number.isFinite(node.x) ? node.x : width / 2 + Math.cos(index * 2.399) * (58 + Math.sqrt(index + 1) * 18)),
+      y: previous.get(node.id)?.y ?? (Number.isFinite(node.y) ? node.y : height / 2 + Math.sin(index * 2.399) * (52 + Math.sqrt(index + 1) * 15)),
       vx: 0,
       vy: 0,
       r: knowledgeGraphNodeRadius(node)
@@ -3339,17 +3819,22 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       node.element = group;
       nodeLayer.appendChild(group);
     });
+    knowledgeGraphMetrics.labelRenderCount += nodes.length;
     svg.onpointerdown = startKnowledgeGraphPan;
     svg.onpointermove = moveKnowledgeGraphPointer;
     svg.onpointerup = stopKnowledgeGraphPointer;
     svg.onpointerleave = stopKnowledgeGraphPointer;
-    svg.onwheel = zoomKnowledgeGraph;
+    if (!svg.__forgeKnowledgeGraphWheelBound) {
+      svg.addEventListener('wheel', zoomKnowledgeGraph, { passive: false });
+      svg.__forgeKnowledgeGraphWheelBound = true;
+    }
     svg.onclick = () => {
       knowledgeGraphState.selectedNodeId = null;
       knowledgeGraphState.selectedEdgeId = null;
       updateKnowledgeGraphUrlFromControls({ graphNodeId: null, graphEdgeId: null });
       renderKnowledgeGraphSelectionState();
     };
+    recomputeKnowledgeGraphFitZoom();
     if (!options.preservePositions) {
       fitKnowledgeGraph();
     } else {
@@ -3360,6 +3845,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   }
 
   function runKnowledgeGraphLayout(nodes, edges, width, height) {
+    knowledgeGraphMetrics.layoutRunCount += 1;
     const density = knowledgeGraphState.density || 'compact';
     const densityScale = density === 'spacious' ? 1.08 : density === 'normal' ? 0.86 : 0.54;
     const repulsion = density === 'spacious' ? 720 : density === 'normal' ? 480 : 260;
@@ -3417,6 +3903,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   }
 
   function renderKnowledgeGraphFrame() {
+    knowledgeGraphMetrics.renderFrameCount += 1;
     knowledgeGraphState.edges.forEach((edge) => {
       edge.element?.setAttribute('x1', edge.fromNode.x);
       edge.element?.setAttribute('y1', edge.fromNode.y);
@@ -3425,6 +3912,16 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     });
     knowledgeGraphState.nodes.forEach((node) => {
       node.element?.setAttribute('transform', `translate(${node.x}, ${node.y})`);
+    });
+  }
+
+  function scheduleKnowledgeGraphFrame() {
+    if (knowledgeGraphState.graphFrame) {
+      return;
+    }
+    knowledgeGraphState.graphFrame = requestAnimationFrame(() => {
+      knowledgeGraphState.graphFrame = 0;
+      renderKnowledgeGraphFrame();
     });
   }
 
@@ -3710,6 +4207,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   }
 
   function renderKnowledgeGraphDetails(data) {
+    knowledgeGraphMetrics.tabRenderCount += 1;
     const target = document.getElementById('knowledgeGraphDetails');
     if (!target || !data) {
       return;
@@ -3915,14 +4413,16 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   }
 
   function renderKnowledgeGraphNodesTable(nodes) {
+    const visibleNodes = (nodes || []).slice(0, knowledgeGraphPerformanceConfig.tablePageSize);
     return `
       <section class="knowledge-graph-detail-section">
         <h3>Nodes</h3>
+        ${nodes.length > visibleNodes.length ? `<p class="muted">Showing ${escapeHtml(visibleNodes.length)} of ${escapeHtml(nodes.length)} loaded nodes. Use search or graph selection to narrow details.</p>` : ''}
         <div class="table-wrap compact">
           <table class="operator-table">
             <thead><tr><th>Name</th><th>Kind</th><th>Domain</th><th>Origin</th><th>Confidence</th><th>File</th><th>Lines</th><th>Graph</th></tr></thead>
             <tbody>
-              ${nodes.length ? nodes.map((node) => `
+              ${visibleNodes.length ? visibleNodes.map((node) => `
                 <tr>
                   <td>${escapeHtml(node.label || '-')}</td>
                   <td>${escapeHtml(node.nodeKind || '-')}</td>
@@ -3942,14 +4442,16 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   }
 
   function renderKnowledgeGraphEdgesTable(edges) {
+    const visibleEdges = (edges || []).slice(0, knowledgeGraphPerformanceConfig.tablePageSize);
     return `
       <section class="knowledge-graph-detail-section">
         <h3>Relations</h3>
+        ${edges.length > visibleEdges.length ? `<p class="muted">Showing ${escapeHtml(visibleEdges.length)} of ${escapeHtml(edges.length)} loaded relations. Select a graph item to inspect details.</p>` : ''}
         <div class="table-wrap compact">
           <table class="operator-table">
             <thead><tr><th>From</th><th>Edge</th><th>To / Target</th><th>Resolution</th><th>Domain</th><th>Score</th><th>Evidence</th><th>Graph</th></tr></thead>
             <tbody>
-              ${edges.length ? edges.map((edge) => `
+              ${visibleEdges.length ? visibleEdges.map((edge) => `
                 <tr>
                   <td>${escapeHtml(edge.fromLabel || shortSymbol(edge.from))}</td>
                   <td>${escapeHtml(edge.edgeType || '-')}</td>
@@ -4064,14 +4566,15 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       }
       drag.node.x = drag.original.x + dx;
       drag.node.y = drag.original.y + dy;
-      renderKnowledgeGraphFrame();
+      scheduleKnowledgeGraphFrame();
       return;
     }
     if (knowledgeGraphState.panning) {
+      knowledgeGraphMetrics.panEventCount += 1;
       const pan = knowledgeGraphState.panning;
       knowledgeGraphState.transform.x = pan.original.x + event.clientX - pan.x;
       knowledgeGraphState.transform.y = pan.original.y + event.clientY - pan.y;
-      applyKnowledgeGraphTransform();
+      scheduleKnowledgeGraphTransform('pan');
     }
   }
 
@@ -4092,31 +4595,39 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
 
   function zoomKnowledgeGraph(event) {
     event.preventDefault();
-    if (!event.ctrlKey && !event.metaKey) {
-      panKnowledgeGraphWithWheel(event);
+    knowledgeGraphMetrics.wheelEventCount += 1;
+    knowledgeGraphState.pendingWheel = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      deltaY: event.deltaY,
+      deltaMode: event.deltaMode
+    };
+    if (knowledgeGraphState.wheelFrame) {
       return;
     }
+    knowledgeGraphState.wheelFrame = requestAnimationFrame(() => {
+      const wheel = knowledgeGraphState.pendingWheel;
+      knowledgeGraphState.pendingWheel = null;
+      knowledgeGraphState.wheelFrame = 0;
+      applyKnowledgeGraphWheelZoom(wheel);
+    });
+  }
+
+  function applyKnowledgeGraphWheelZoom(event) {
     const svg = document.getElementById('knowledgeGraphSvg');
-    if (!svg) {
+    if (!svg || !event) {
       return;
     }
     const rect = svg.getBoundingClientRect();
     const before = graphPointFromEvent(event);
-    const factor = event.deltaY < 0 ? 1.12 : 0.89;
-    const nextK = Math.max(0.18, Math.min(3.2, knowledgeGraphState.transform.k * factor));
+    const unit = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? 160 : 1;
+    const delta = event.deltaY * unit;
+    const factor = Math.exp(-delta * 0.0012 * knowledgeGraphPerformanceConfig.zoomSensitivity);
+    const nextK = Math.max(knowledgeGraphState.minimumZoom ?? 0.18, Math.min(3.2, knowledgeGraphState.transform.k * factor));
     knowledgeGraphState.transform.k = nextK;
     knowledgeGraphState.transform.x = event.clientX - rect.left - before.x * nextK;
     knowledgeGraphState.transform.y = event.clientY - rect.top - before.y * nextK;
-    applyKnowledgeGraphTransform();
-  }
-
-  function panKnowledgeGraphWithWheel(event) {
-    const unit = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? 160 : 1;
-    const horizontal = (event.deltaX || (event.shiftKey ? event.deltaY : 0)) * unit;
-    const vertical = (event.shiftKey ? 0 : event.deltaY) * unit;
-    knowledgeGraphState.transform.x -= horizontal;
-    knowledgeGraphState.transform.y -= vertical;
-    applyKnowledgeGraphTransform();
+    scheduleKnowledgeGraphTransform('zoom');
   }
 
   function fitKnowledgeGraph() {
@@ -4124,22 +4635,20 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     if (!svg || !knowledgeGraphState.nodes.length) {
       return;
     }
+    recomputeKnowledgeGraphFitZoom();
     const rect = svg.getBoundingClientRect();
-    const xs = knowledgeGraphState.nodes.map((node) => node.x);
-    const ys = knowledgeGraphState.nodes.map((node) => node.y);
-    const minX = Math.min(...xs) - 90;
-    const maxX = Math.max(...xs) + 90;
-    const minY = Math.min(...ys) - 90;
-    const maxY = Math.max(...ys) + 90;
-    const graphWidth = Math.max(maxX - minX, 1);
-    const graphHeight = Math.max(maxY - minY, 1);
-    const k = Math.max(0.2, Math.min(1.8, Math.min(rect.width / graphWidth, rect.height / graphHeight)));
+    const bounds = computeKnowledgeGraphBounds();
+    const graphWidth = Math.max(bounds.maxX - bounds.minX, 1);
+    const graphHeight = Math.max(bounds.maxY - bounds.minY, 1);
+    const k = Math.min(rect.width / graphWidth, rect.height / graphHeight);
     knowledgeGraphState.transform = {
       k,
-      x: (rect.width - graphWidth * k) / 2 - minX * k,
-      y: (rect.height - graphHeight * k) / 2 - minY * k
+      x: (rect.width - graphWidth * k) / 2 - bounds.minX * k,
+      y: (rect.height - graphHeight * k) / 2 - bounds.minY * k
     };
-    applyKnowledgeGraphTransform();
+    knowledgeGraphState.fitZoom = k;
+    knowledgeGraphState.minimumZoom = Math.min(0.18, k * knowledgeGraphPerformanceConfig.fitZoomAllowance);
+    scheduleKnowledgeGraphTransform('fit');
   }
 
   function centerKnowledgeGraphNode(nodeId) {
@@ -4151,14 +4660,42 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     const rect = svg.getBoundingClientRect();
     knowledgeGraphState.transform.x = rect.width / 2 - node.x * knowledgeGraphState.transform.k;
     knowledgeGraphState.transform.y = rect.height / 2 - node.y * knowledgeGraphState.transform.k;
-    applyKnowledgeGraphTransform();
+    scheduleKnowledgeGraphTransform('focus');
   }
 
   function applyKnowledgeGraphTransform() {
-    const viewport = document.querySelector('#knowledgeGraphSvg .knowledge-graph-viewport');
-    if (viewport) {
+    scheduleKnowledgeGraphTransform('pan');
+  }
+
+  function scheduleKnowledgeGraphTransform(reason = 'pan') {
+    knowledgeGraphState.pendingTransformReason = reason;
+    if (knowledgeGraphState.transformFrame) {
+      return;
+    }
+    const scheduledAt = performance.now();
+    knowledgeGraphState.transformFrame = requestAnimationFrame(() => {
+      knowledgeGraphState.transformFrame = 0;
+      applyKnowledgeGraphTransformNow(knowledgeGraphState.pendingTransformReason || reason, scheduledAt);
+    });
+  }
+
+  function applyKnowledgeGraphTransformNow(reason, scheduledAt) {
+    const startedAt = performance.now();
+    const svg = document.getElementById('knowledgeGraphSvg');
+    if (svg) {
       const transform = knowledgeGraphState.transform;
-      viewport.setAttribute('transform', `translate(${transform.x}, ${transform.y}) scale(${transform.k})`);
+      const rect = svg.getBoundingClientRect();
+      const width = Math.max(rect.width || 0, 1);
+      const height = Math.max(rect.height || 0, 1);
+      const scale = Math.max(transform.k || 1, 0.0001);
+      svg.setAttribute('viewBox', `${-transform.x / scale} ${-transform.y / scale} ${width / scale} ${height / scale}`);
+    }
+    const duration = performance.now() - startedAt;
+    knowledgeGraphMetrics.transformOnlyFrameCount += 1;
+    if (reason === 'zoom') {
+      knowledgeGraphMetrics.lastZoomFrameMs = duration;
+    } else {
+      knowledgeGraphMetrics.lastPanFrameMs = performance.now() - scheduledAt;
     }
   }
 
@@ -4170,6 +4707,36 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       x: (event.clientX - rect.left - transform.x) / transform.k,
       y: (event.clientY - rect.top - transform.y) / transform.k
     };
+  }
+
+  function computeKnowledgeGraphBounds() {
+    if (!knowledgeGraphState.nodes.length) {
+      return { minX: 0, maxX: 1, minY: 0, maxY: 1 };
+    }
+    const padding = knowledgeGraphPerformanceConfig.fitPaddingPx;
+    return knowledgeGraphState.nodes.reduce((bounds, node) => ({
+      minX: Math.min(bounds.minX, node.x - node.r - padding),
+      maxX: Math.max(bounds.maxX, node.x + node.r + padding),
+      minY: Math.min(bounds.minY, node.y - node.r - padding),
+      maxY: Math.max(bounds.maxY, node.y + node.r + padding)
+    }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+  }
+
+  function recomputeKnowledgeGraphFitZoom() {
+    const svg = document.getElementById('knowledgeGraphSvg');
+    if (!svg || !knowledgeGraphState.nodes.length) {
+      knowledgeGraphState.fitZoom = 1;
+      knowledgeGraphState.minimumZoom = 0.18;
+      return;
+    }
+    const rect = svg.getBoundingClientRect();
+    const bounds = computeKnowledgeGraphBounds();
+    const graphWidth = Math.max(bounds.maxX - bounds.minX, 1);
+    const graphHeight = Math.max(bounds.maxY - bounds.minY, 1);
+    const fitZoom = Math.min(rect.width / graphWidth, rect.height / graphHeight);
+    knowledgeGraphState.graphBounds = bounds;
+    knowledgeGraphState.fitZoom = Number.isFinite(fitZoom) && fitZoom > 0 ? fitZoom : 1;
+    knowledgeGraphState.minimumZoom = Math.min(0.18, knowledgeGraphState.fitZoom * knowledgeGraphPerformanceConfig.fitZoomAllowance);
   }
 
   function renderKnowledgeGraphMarkers() {

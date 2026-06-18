@@ -132,6 +132,18 @@ test-python:
 test-console:
     @scripts/test-console.sh
 
+test-graph:
+    @scripts/test-graph.sh
+
+test-graph-backend:
+    @scripts/test-graph-backend.sh
+
+test-graph-console:
+    @scripts/test-graph-console.sh
+
+benchmark-graph:
+    @scripts/benchmark-graph.sh
+
 test-forge-it:
     @scripts/test-forge-it.sh
 

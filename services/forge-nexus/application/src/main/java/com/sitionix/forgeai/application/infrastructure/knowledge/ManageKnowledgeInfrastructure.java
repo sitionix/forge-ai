@@ -35,4 +35,10 @@ public interface ManageKnowledgeInfrastructure {
     KnowledgeAnalysisGraphView analysisGraph(KnowledgeAnalysisGraphRequest request);
 
     KnowledgeAnalysisGraphView analysisGraphSlice(KnowledgeAnalysisGraphSliceRequest request);
+
+    KnowledgeGraphSnapshotResponse analysisGraphManifest(KnowledgeGraphSnapshotRequest request);
+
+    KnowledgeGraphSnapshotResponse analysisGraphNodes(KnowledgeGraphSnapshotRequest request);
+
+    KnowledgeGraphSnapshotResponse analysisGraphEdges(KnowledgeGraphSnapshotRequest request);
 }
