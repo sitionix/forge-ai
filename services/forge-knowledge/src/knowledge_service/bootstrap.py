@@ -12,6 +12,8 @@ from knowledge_service.config import AppConfig, ForgeSettings
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
+from knowledge_service.storage_operations import StorageOperations
+from knowledge_service.storage_operations import RetentionPolicy
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,7 @@ class KnowledgeDependencies:
     analysis_supervisor: AnalysisSupervisor
     inventory_refresh: InventoryRefreshService
     inventory_scheduler: AsyncInventoryScheduler
+    storage_operations: StorageOperations
 
 
 def build_dependencies(
@@ -35,6 +38,19 @@ def build_dependencies(
     analysis_store = AnalysisStore(config.store_path)
     inventory_store.init()
     analysis_store.init()
+    storage_operations = StorageOperations(
+        config.store_path,
+        RetentionPolicy(
+            inventory_build_days=config.retention_inventory_build_days,
+            analysis_job_days=config.retention_analysis_job_days,
+            analysis_diagnostic_days=config.retention_analysis_diagnostic_days,
+            graph_snapshot_days=config.retention_graph_snapshot_days,
+            graph_tombstone_days=config.retention_graph_tombstone_days,
+            keep_completed_jobs=config.retention_keep_completed_jobs,
+            keep_snapshots_per_source=config.retention_keep_snapshots_per_source,
+        ),
+    )
+    storage_operations.startup_maintenance()
     analysis_store.mark_interrupted_jobs()
     inventory_refresh = InventoryRefreshService(config, inventory_store)
     inventory_scheduler = AsyncInventoryScheduler(inventory_refresh, config)
@@ -54,6 +70,7 @@ def build_dependencies(
         analysis_supervisor=supervisor,
         inventory_refresh=inventory_refresh,
         inventory_scheduler=inventory_scheduler,
+        storage_operations=storage_operations,
     )
 
 

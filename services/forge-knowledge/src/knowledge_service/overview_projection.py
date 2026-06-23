@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from knowledge_service.observability import observed_connect
+
 
 def ensure_overview_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
@@ -79,7 +81,7 @@ def rebuild_overview(conn: sqlite3.Connection) -> None:
 
 
 def read_overview(db_path: Path) -> Dict[str, Any]:
-    with sqlite3.connect(db_path) as conn:
+    with observed_connect(db_path, timeout=0.5) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout = 500")
         rows = conn.execute(

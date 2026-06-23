@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 import httpx
 
 from jarvis_agent.chat_schema import ChatContextItem, ChatDiagnostic
+from jarvis_agent.observability import CORRELATION_HEADER, current_correlation_id
 
 
 class KnowledgeUnavailableError(ConnectionError):
@@ -34,7 +35,11 @@ class KnowledgeClient:
             "includeContent": True,
         }
         try:
-            response = await self._client.post(f"{self.base_url}/api/v1/knowledge/context", json=payload)
+            headers = {}
+            correlation_id = current_correlation_id()
+            if correlation_id:
+                headers[CORRELATION_HEADER] = correlation_id
+            response = await self._client.post(f"{self.base_url}/api/v1/knowledge/context", json=payload, headers=headers)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise KnowledgeUnavailableError(f"Knowledge is not reachable at {self.base_url}") from exc

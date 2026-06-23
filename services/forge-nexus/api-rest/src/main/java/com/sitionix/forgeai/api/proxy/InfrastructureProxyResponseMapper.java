@@ -23,10 +23,18 @@ public class InfrastructureProxyResponseMapper {
                                  final String correlationId,
                                  final Integer upstreamStatus,
                                  final String route,
-                                 final HttpStatus status) {
+                                 final HttpStatus status,
+                                 final Long proxyDurationMs,
+                                 final String errorSource) {
         final HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("X-Correlation-Id", correlationId);
+        if (proxyDurationMs != null) {
+            headers.set("X-Proxy-Duration-Ms", Long.toString(proxyDurationMs));
+        }
+        if (errorSource != null && !errorSource.isBlank()) {
+            headers.set("X-Proxy-Error-Source", errorSource);
+        }
         final InfrastructureProxyErrorResponse body = new InfrastructureProxyErrorResponse(
                 code.name(),
                 message,

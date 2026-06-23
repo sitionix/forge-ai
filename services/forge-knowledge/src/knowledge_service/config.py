@@ -29,6 +29,13 @@ class LoggingSettings(BaseModel):
 
 class KnowledgeStorageSettings(BaseModel):
     sqlite_path: Path
+    retention_inventory_build_days: int = Field(default=30, ge=1)
+    retention_analysis_job_days: int = Field(default=30, ge=1)
+    retention_analysis_diagnostic_days: int = Field(default=30, ge=1)
+    retention_graph_snapshot_days: int = Field(default=30, ge=1)
+    retention_graph_tombstone_days: int = Field(default=7, ge=1)
+    retention_keep_completed_jobs: int = Field(default=50, ge=1)
+    retention_keep_snapshots_per_source: int = Field(default=5, ge=1)
 
 
 class InventorySettings(BaseModel):
@@ -122,6 +129,13 @@ class AppConfig(BaseModel):
     analysis_shutdown_grace_seconds: float = 5.0
     analysis_max_attempts_per_file: int = 3
     analysis_repair_attempts_per_file: int = 1
+    retention_inventory_build_days: int = 30
+    retention_analysis_job_days: int = 30
+    retention_analysis_diagnostic_days: int = 30
+    retention_graph_snapshot_days: int = 30
+    retention_graph_tombstone_days: int = 7
+    retention_keep_completed_jobs: int = 50
+    retention_keep_snapshots_per_source: int = 5
     logging: LoggingSettings = Field(default_factory=lambda: LoggingSettings(directory=forge_ai_home() / "var" / "logs"))
     runtime_dir: Path = Field(default_factory=lambda: forge_ai_home() / "var")
     workspace_root: Optional[Path] = None
@@ -176,6 +190,13 @@ class AppConfig(BaseModel):
             analysis_shutdown_grace_seconds=analysis.shutdown_grace_seconds,
             analysis_max_attempts_per_file=analysis.max_attempts_per_file,
             analysis_repair_attempts_per_file=analysis.repair_attempts_per_file,
+            retention_inventory_build_days=knowledge.storage.retention_inventory_build_days,
+            retention_analysis_job_days=knowledge.storage.retention_analysis_job_days,
+            retention_analysis_diagnostic_days=knowledge.storage.retention_analysis_diagnostic_days,
+            retention_graph_snapshot_days=knowledge.storage.retention_graph_snapshot_days,
+            retention_graph_tombstone_days=knowledge.storage.retention_graph_tombstone_days,
+            retention_keep_completed_jobs=knowledge.storage.retention_keep_completed_jobs,
+            retention_keep_snapshots_per_source=knowledge.storage.retention_keep_snapshots_per_source,
             logging=settings.logging,
             runtime_dir=settings.runtime_dir,
             workspace_root=settings.workspace_root,

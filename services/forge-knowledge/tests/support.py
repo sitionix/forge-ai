@@ -54,8 +54,8 @@ class AsgiTestClient:
     def get(self, path: str, headers: Optional[Dict[str, str]] = None) -> AsgiResponse:
         return self._run(self._request("GET", path, None, headers or {}))
 
-    def post(self, path: str, json: Optional[Dict[str, Any]] = None) -> AsgiResponse:
-        return self._run(self._request("POST", path, json or {}, {}))
+    def post(self, path: str, json: Optional[Dict[str, Any]] = None, headers: Optional[Dict[str, str]] = None) -> AsgiResponse:
+        return self._run(self._request("POST", path, json or {}, headers or {}))
 
     def _run(self, awaitable):
         if self._loop is not None:

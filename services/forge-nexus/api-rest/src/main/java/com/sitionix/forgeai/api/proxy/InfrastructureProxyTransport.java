@@ -57,6 +57,7 @@ public class InfrastructureProxyTransport {
                                                              final byte[] requestBody,
                                                              final org.springframework.http.HttpHeaders incomingHeaders,
                                                              final HttpServletRequest servletRequest) {
+        final long startedNanos = System.nanoTime();
         final String correlationId = this.correlationId(incomingHeaders);
         final InfrastructureProxyRoute route;
         try {
@@ -68,7 +69,9 @@ public class InfrastructureProxyTransport {
                     correlationId,
                     null,
                     exception.route(),
-                    HttpStatus.NOT_FOUND
+                    HttpStatus.NOT_FOUND,
+                    this.elapsedMs(startedNanos),
+                    "nexus"
             ));
         }
 
@@ -80,7 +83,9 @@ public class InfrastructureProxyTransport {
                     correlationId,
                     null,
                     route.key(),
-                    HttpStatus.SERVICE_UNAVAILABLE
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    this.elapsedMs(startedNanos),
+                    "nexus"
             ));
         }
         if (!route.requestBodyAllowed() && requestBody != null && requestBody.length > 0) {
@@ -90,7 +95,9 @@ public class InfrastructureProxyTransport {
                     correlationId,
                     null,
                     route.key(),
-                    HttpStatus.METHOD_NOT_ALLOWED
+                    HttpStatus.METHOD_NOT_ALLOWED,
+                    this.elapsedMs(startedNanos),
+                    "nexus"
             ));
         }
         if (requestBody != null && requestBody.length > this.properties.getProxy().getMaxRequestBodyBytes()) {
@@ -100,7 +107,9 @@ public class InfrastructureProxyTransport {
                     correlationId,
                     null,
                     route.key(),
-                    HttpStatus.PAYLOAD_TOO_LARGE
+                    HttpStatus.PAYLOAD_TOO_LARGE,
+                    this.elapsedMs(startedNanos),
+                    "nexus"
             ));
         }
 
@@ -114,13 +123,13 @@ public class InfrastructureProxyTransport {
         });
         upstream.whenComplete((response, throwable) -> {
             if (throwable != null) {
-                result.complete(this.mapException(throwable, route, correlationId));
+                result.complete(this.mapException(throwable, route, correlationId, startedNanos));
                 return;
             }
             try {
-                result.complete(this.mapResponse(response, route, correlationId));
+                result.complete(this.mapResponse(response, route, correlationId, startedNanos));
             } catch (final RuntimeException exception) {
-                result.complete(this.mapException(exception, route, correlationId));
+                result.complete(this.mapException(exception, route, correlationId, startedNanos));
             }
         });
         return result;
@@ -165,7 +174,8 @@ public class InfrastructureProxyTransport {
 
     private ResponseEntity<byte[]> mapResponse(final HttpResponse<InputStream> response,
                                                final InfrastructureProxyRoute route,
-                                               final String correlationId) {
+                                               final String correlationId,
+                                               final long startedNanos) {
         final byte[] body = this.readLimited(response.body());
         if (route.jsonExpected() && !this.isJsonResponse(response.headers(), body)) {
             return this.responseMapper.error(
@@ -174,7 +184,9 @@ public class InfrastructureProxyTransport {
                     correlationId,
                     response.statusCode(),
                     route.key(),
-                    HttpStatus.BAD_GATEWAY
+                    HttpStatus.BAD_GATEWAY,
+                    this.elapsedMs(startedNanos),
+                    "upstream"
             );
         }
         if (response.statusCode() >= 500) {
@@ -184,7 +196,9 @@ public class InfrastructureProxyTransport {
                     correlationId,
                     response.statusCode(),
                     route.key(),
-                    HttpStatus.BAD_GATEWAY
+                    HttpStatus.BAD_GATEWAY,
+                    this.elapsedMs(startedNanos),
+                    "upstream"
             );
         }
         return new ResponseEntity<>(body, this.safeResponseHeaders(response.headers(), correlationId), HttpStatus.valueOf(response.statusCode()));
@@ -192,7 +206,8 @@ public class InfrastructureProxyTransport {
 
     private ResponseEntity<byte[]> mapException(final Throwable throwable,
                                                 final InfrastructureProxyRoute route,
-                                                final String correlationId) {
+                                                final String correlationId,
+                                                final long startedNanos) {
         final Throwable cause = this.unwrap(throwable);
         if (cause instanceof InfrastructureProxyBodyTooLargeException) {
             return this.responseMapper.error(
@@ -201,7 +216,9 @@ public class InfrastructureProxyTransport {
                     correlationId,
                     null,
                     route.key(),
-                    HttpStatus.BAD_GATEWAY
+                    HttpStatus.BAD_GATEWAY,
+                    this.elapsedMs(startedNanos),
+                    "nexus"
             );
         }
         if (cause instanceof HttpTimeoutException || cause instanceof java.util.concurrent.TimeoutException) {
@@ -211,7 +228,9 @@ public class InfrastructureProxyTransport {
                     correlationId,
                     HttpStatus.GATEWAY_TIMEOUT.value(),
                     route.key(),
-                    HttpStatus.GATEWAY_TIMEOUT
+                    HttpStatus.GATEWAY_TIMEOUT,
+                    this.elapsedMs(startedNanos),
+                    "upstream"
             );
         }
         if (cause instanceof ConnectException || cause instanceof IOException || cause instanceof SSLException) {
@@ -221,7 +240,9 @@ public class InfrastructureProxyTransport {
                     correlationId,
                     null,
                     route.key(),
-                    HttpStatus.SERVICE_UNAVAILABLE
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    this.elapsedMs(startedNanos),
+                    "upstream"
             );
         }
         return this.responseMapper.error(
@@ -230,8 +251,14 @@ public class InfrastructureProxyTransport {
                 correlationId,
                 null,
                 route.key(),
-                HttpStatus.BAD_GATEWAY
+                HttpStatus.BAD_GATEWAY,
+                this.elapsedMs(startedNanos),
+                "nexus"
         );
+    }
+
+    private long elapsedMs(final long startedNanos) {
+        return Math.max(0L, Duration.ofNanos(System.nanoTime() - startedNanos).toMillis());
     }
 
     private byte[] readLimited(final InputStream inputStream) {

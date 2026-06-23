@@ -17,6 +17,13 @@ from jarvis_agent.config import AppConfig, ForgeSettings, load_forge_settings
 from jarvis_agent.intent_parser import IntentParseError, parse_intent
 from jarvis_agent.intent_schema import CommandRequest, CommandResponse
 from jarvis_agent.knowledge_client import KnowledgeBadResponseError, KnowledgeUnavailableError, diagnostics, used_context_items
+from jarvis_agent.observability import (
+    CORRELATION_HEADER,
+    ObservabilityMiddleware,
+    current_route_metrics,
+    sanitize_correlation_id,
+    track_dependency,
+)
 from jarvis_agent.ollama_client import OllamaBadResponseError, OllamaUnavailableError
 from jarvis_agent.security import SecurityError
 
@@ -54,9 +61,11 @@ def create_app(
         app.state.app_config = AppConfig.from_forge_settings(settings)
         app.state.jarvis_dependencies = dependencies
 
+    app.add_middleware(ObservabilityMiddleware)
+
     @app.exception_handler(ValueError)
-    async def value_error_handler(_: Request, exc: ValueError) -> JSONResponse:
-        return JSONResponse(status_code=400, content={"code": "BAD_REQUEST", "message": str(exc)})
+    async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+        return error_response(400, "BAD_REQUEST", str(exc), request)
 
     @app.get("/health")
     async def health() -> Dict[str, str]:
@@ -88,38 +97,44 @@ def create_app(
         config, deps = _state(request)
         text = body.text.strip()
         if not text:
-            return error_response(400, "INVALID_COMMAND", "Command text must not be empty")
+            return error_response(400, "INVALID_COMMAND", "Command text must not be empty", request)
 
         logging.getLogger("jarvis_agent").info("command received")
         try:
-            raw_intent = await deps.model_client.classify_intent(
-                system_prompt=config.system_prompt,
-                user_text=text,
-                actions=deps.action_registry.available_actions_for_prompt(),
+            raw_intent = await track_dependency(
+                "ollama",
+                lambda: deps.model_client.classify_intent(
+                    system_prompt=config.system_prompt,
+                    user_text=text,
+                    actions=deps.action_registry.available_actions_for_prompt(),
+                ),
             )
         except OllamaUnavailableError:
             logging.getLogger("jarvis_agent").warning("ollama unavailable")
-            return error_response(503, "OLLAMA_UNAVAILABLE", "Ollama is not reachable")
+            return error_response(503, "OLLAMA_UNAVAILABLE", "Ollama is not reachable", request)
         except OllamaBadResponseError:
             logging.getLogger("jarvis_agent").warning("invalid model response")
-            return error_response(422, "INVALID_MODEL_RESPONSE", "Model did not return valid intent JSON")
+            return error_response(422, "INVALID_MODEL_RESPONSE", "Model did not return valid intent JSON", request)
 
         try:
             intent = parse_intent(raw_intent)
             logging.getLogger("jarvis_agent").info("parsed intent: %s", intent.dict())
         except IntentParseError:
             logging.getLogger("jarvis_agent").warning("invalid model response")
-            return error_response(422, "INVALID_MODEL_RESPONSE", "Model did not return valid intent JSON")
+            return error_response(422, "INVALID_MODEL_RESPONSE", "Model did not return valid intent JSON", request)
 
         try:
             executor = getattr(deps.action_executor, "execute_async", deps.action_executor.execute)
-            maybe_execution = executor(intent, text)
-            execution = await maybe_execution if inspect.isawaitable(maybe_execution) else maybe_execution
+            async def execute_action():
+                maybe_execution = executor(intent, text)
+                return await maybe_execution if inspect.isawaitable(maybe_execution) else maybe_execution
+
+            execution = await track_dependency("action", execute_action)
         except (ActionNotAllowedError, SecurityError):
             logging.getLogger("jarvis_agent").warning("unsupported or rejected action: %s", intent.dict())
-            return error_response(403, "UNSUPPORTED_ACTION", "The requested action is not allowlisted")
+            return error_response(403, "UNSUPPORTED_ACTION", "The requested action is not allowlisted", request)
         except ActionExecutionError:
-            return error_response(500, "ACTION_EXECUTION_FAILED", "Failed to execute allowlisted action")
+            return error_response(500, "ACTION_EXECUTION_FAILED", "Failed to execute allowlisted action", request)
 
         return CommandResponse(input=text, intent=intent, execution=execution)
 
@@ -128,18 +143,18 @@ def create_app(
         config, deps = _state(request)
         message = body.message.strip()
         if not message:
-            return error_response(400, "INVALID_CHAT_MESSAGE", "Chat message must not be empty")
+            return error_response(400, "INVALID_CHAT_MESSAGE", "Chat message must not be empty", request)
 
         max_context_chars = body.maxContextChars or config.knowledge.default_max_context_chars
         logging.getLogger("jarvis_agent").info("chat received")
         try:
-            context_bundle = await deps.knowledge_client.context(message, max_context_chars)
+            context_bundle = await track_dependency("knowledge", lambda: deps.knowledge_client.context(message, max_context_chars))
         except KnowledgeUnavailableError:
             logging.getLogger("jarvis_agent").warning("knowledge unavailable")
-            return error_response(503, "KNOWLEDGE_UNAVAILABLE", "Knowledge is not reachable")
+            return error_response(503, "KNOWLEDGE_UNAVAILABLE", "Knowledge is not reachable", request)
         except KnowledgeBadResponseError:
             logging.getLogger("jarvis_agent").warning("knowledge returned malformed response")
-            return error_response(502, "KNOWLEDGE_BAD_RESPONSE", "Knowledge returned a malformed context response")
+            return error_response(502, "KNOWLEDGE_BAD_RESPONSE", "Knowledge returned a malformed context response", request)
 
         context_items = used_context_items(context_bundle)
         chat_diagnostics = diagnostics(context_bundle)
@@ -158,13 +173,13 @@ def create_app(
 
         prompt = build_chat_prompt(config.chat_prompt, message, context_items)
         try:
-            answer = await deps.model_client.generate_text(prompt)
+            answer = await track_dependency("ollama", lambda: deps.model_client.generate_text(prompt))
         except OllamaUnavailableError:
             logging.getLogger("jarvis_agent").warning("ollama unavailable")
-            return error_response(503, "OLLAMA_UNAVAILABLE", "Ollama is not reachable")
+            return error_response(503, "OLLAMA_UNAVAILABLE", "Ollama is not reachable", request)
         except OllamaBadResponseError:
             logging.getLogger("jarvis_agent").warning("ollama returned malformed response")
-            return error_response(502, "OLLAMA_BAD_RESPONSE", "Ollama returned a malformed response")
+            return error_response(502, "OLLAMA_BAD_RESPONSE", "Ollama returned a malformed response", request)
         if not answer:
             answer = "Ollama returned an empty answer."
             chat_diagnostics.append(ChatDiagnostic(code="OLLAMA_EMPTY_RESPONSE", message=answer))
@@ -178,8 +193,15 @@ def _state(request: Request) -> tuple[AppConfig, JarvisDependencies]:
     return request.app.state.app_config, request.app.state.jarvis_dependencies
 
 
-def error_response(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"code": code, "message": message})
+def error_response(status_code: int, code: str, message: str, request: Optional[Request] = None) -> JSONResponse:
+    metrics = current_route_metrics()
+    correlation_id = metrics.correlation_id if metrics else sanitize_correlation_id(request.headers.get(CORRELATION_HEADER) if request else None)
+    route = metrics.route_key if metrics else None
+    payload: Dict[str, Any] = {"code": code, "message": message, "correlationId": correlation_id}
+    if route:
+        payload["route"] = route
+    return JSONResponse(status_code=status_code, content=payload)
+
 
 
 app = create_app()

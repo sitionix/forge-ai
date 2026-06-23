@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from knowledge_service.file_metadata import FileMetadata
 from knowledge_service.graph_schema import GRAPH_ANALYSIS_ENGINE_VERSION
+from knowledge_service.observability import observed_connect
 from knowledge_service.overview_projection import ensure_overview_schema, rebuild_overview, refresh_overview_for_sources
 from knowledge_service.skipped_reasons import SkippedBreakdown, normalize_skipped_breakdown
 from knowledge_service.source_catalog import SourceMetadata
@@ -592,7 +593,7 @@ class InventoryStore:
 
     def _connect(self, busy_timeout_ms: int = SQLITE_WRITE_BUSY_TIMEOUT_MS) -> sqlite3.Connection:
         timeout_seconds = max(busy_timeout_ms, 1) / 1000.0
-        conn = sqlite3.connect(self.db_path, timeout=timeout_seconds)
+        conn = observed_connect(self.db_path, timeout=timeout_seconds)
         conn.execute(f"PRAGMA busy_timeout = {max(int(busy_timeout_ms), 1)}")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row

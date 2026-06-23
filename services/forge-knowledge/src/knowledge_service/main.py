@@ -20,9 +20,16 @@ from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_schema import InventoryBuildRequest
 from knowledge_service.inventory_store import InventoryStore
+from knowledge_service.observability import (
+    CORRELATION_HEADER,
+    ObservabilityMiddleware,
+    current_route_metrics,
+    sanitize_correlation_id,
+)
 from knowledge_service.overview_projection import read_overview
 from knowledge_service.service_catalog_provider import ServiceYamlCatalogProvider
 from knowledge_service.source_config import load_source_config
+from knowledge_service.storage_operations import StorageOperations
 
 app_config: Optional[AppConfig] = None
 store: Optional[InventoryStore] = None
@@ -56,8 +63,10 @@ def create_app(
         app.state.app_config = AppConfig.from_forge_settings(settings)
         app.state.knowledge_dependencies = dependencies
 
+    app.add_middleware(ObservabilityMiddleware)
+
     @app.exception_handler(KnowledgeError)
-    async def knowledge_error_handler(_: Request, exc: KnowledgeError) -> JSONResponse:
+    async def knowledge_error_handler(request: Request, exc: KnowledgeError) -> JSONResponse:
         status = 400
         if exc.code == "KNOWLEDGE_CONFIG_MISSING":
             status = 200
@@ -82,24 +91,20 @@ def create_app(
             "GRAPH_ITEM_SCOPE_MISMATCH",
         }:
             status = 409
-        return JSONResponse(status_code=status, content={"code": exc.code, "message": exc.message})
+        return JSONResponse(status_code=status, content=_safe_error(request, exc.code, exc.message))
 
     @app.exception_handler(sqlite3.OperationalError)
-    async def sqlite_operational_error_handler(_: Request, exc: sqlite3.OperationalError) -> JSONResponse:
+    async def sqlite_operational_error_handler(request: Request, exc: sqlite3.OperationalError) -> JSONResponse:
         message = str(exc)
         lower_message = message.lower()
         if "database is locked" in lower_message or "database is busy" in lower_message or "locked" in lower_message:
             return JSONResponse(
                 status_code=503,
-                content={
-                    "code": "KNOWLEDGE_DB_BUSY",
-                    "message": "Knowledge database is busy; retrying.",
-                    "sqliteMessage": message,
-                },
+                content=_safe_error(request, "KNOWLEDGE_DB_BUSY", "Knowledge database is busy; retry the request."),
             )
         return JSONResponse(
             status_code=500,
-            content={"code": "KNOWLEDGE_DB_ERROR", "message": "Knowledge database query failed."},
+            content=_safe_error(request, "KNOWLEDGE_DB_ERROR", "Knowledge database query failed."),
         )
 
     @app.get("/health")
@@ -296,7 +301,6 @@ def create_app(
             "ETag": etag,
             "X-Graph-Revision": manifest["graphRevision"],
             "Cache-Control": "private, no-cache",
-            "Server-Timing": "db;dur=0, projection;dur=0, serialization;dur=0",
         }
         if request.headers.get("if-none-match") == etag:
             return Response(status_code=304, headers=headers)
@@ -334,7 +338,6 @@ def create_app(
             headers={
                 "X-Graph-Revision": graphRevision,
                 "Cache-Control": "private, no-cache",
-                "Server-Timing": "db;dur=0, projection;dur=0, serialization;dur=0",
             },
         )
 
@@ -368,7 +371,6 @@ def create_app(
             headers={
                 "X-Graph-Revision": graphRevision,
                 "Cache-Control": "private, no-cache",
-                "Server-Timing": "db;dur=0, projection;dur=0, serialization;dur=0",
             },
         )
 
@@ -387,7 +389,6 @@ def create_app(
             headers={
                 "X-Graph-Revision": graphRevision,
                 "Cache-Control": "private, no-cache",
-                "Server-Timing": "db;dur=0, projection;dur=0, serialization;dur=0",
             },
         )
 
@@ -406,7 +407,6 @@ def create_app(
             headers={
                 "X-Graph-Revision": graphRevision,
                 "Cache-Control": "private, no-cache",
-                "Server-Timing": "db;dur=0, projection;dur=0, serialization;dur=0",
             },
         )
 
@@ -430,6 +430,7 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
             analysis_supervisor=supervisor,
             inventory_refresh=refresh,
             inventory_scheduler=scheduler,
+            storage_operations=StorageOperations(store.db_path),
         )
     raise RuntimeError("Knowledge app dependencies are not initialized")
 
@@ -443,6 +444,16 @@ def _unknown_freshness() -> Dict[str, Any]:
         "deletedFiles": 0,
         "affectedScannedFiles": 0,
     }
+
+
+def _safe_error(request: Request, code: str, message: str) -> Dict[str, Any]:
+    metrics = current_route_metrics()
+    correlation_id = metrics.correlation_id if metrics else sanitize_correlation_id(request.headers.get(CORRELATION_HEADER))
+    route = metrics.route_key if metrics else None
+    payload: Dict[str, Any] = {"code": code, "message": message, "correlationId": correlation_id}
+    if route:
+        payload["route"] = route
+    return payload
 
 
 app = create_app()

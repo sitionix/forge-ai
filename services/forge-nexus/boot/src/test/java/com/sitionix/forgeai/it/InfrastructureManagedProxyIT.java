@@ -479,6 +479,71 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
     }
 
     @Test
+    void itProxy05bCorrelationIdPropagatesThroughKnowledgeAndJarvisProxyBoundary() {
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeOverview())
+                .plainUrl()
+                .header("X-Correlation-Id", "corr-task04b-knowledge-overview")
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyKnowledgeOverview.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphManifest())
+                .plainUrl()
+                .header("X-Correlation-Id", "corr-task04b-graph-manifest")
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphManifest.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisChatServerError())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamServerErrorCase())
+                .header("X-Correlation-Id", "corr-jarvis-chat-error")
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.INTERNAL_SERVER_ERROR.value())
+                        .responseBody("responseProxyUpstreamServerError.json"))
+                .create();
+
+        //when then
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeOverview())
+                .header("X-Correlation-Id", "corr-task04b-knowledge-overview")
+                .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", "corr-task04b-knowledge-overview"))
+                .assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphManifest())
+                .header("X-Correlation-Id", "corr-task04b-graph-manifest")
+                .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", "corr-task04b-graph-manifest"))
+                .assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisChatUpstreamServerError())
+                .withQueryParameters(InfrastructureProxyQuery.serverErrorCase())
+                .header("X-Correlation-Id", "corr-jarvis-chat-error")
+                .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", "corr-jarvis-chat-error"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.correlationId").value("corr-jarvis-chat-error"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message", not(containsString("SYSTEM PROMPT"))))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message", not(containsString("source content"))))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message", not(containsString("127.0.0.1"))))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message", not(containsString("/home/user"))))
+                .assertDefault();
+
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeOverview())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamTraceOne())
+                .header("X-Correlation-Id", Parameter.matches("[A-Za-z0-9._:-]{1,128}"))
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyKnowledgeOverview.json"))
+                .create();
+
+        //when then
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeOverview())
+                .withQueryParameters(InfrastructureProxyQuery.traceOne())
+                .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", matchesPattern("[A-Za-z0-9._:-]{1,128}")))
+                .assertDefault();
+    }
+
+    @Test
     void itProxy06NonBlockingSaturationKeepsHealthAndFastRoutesResponsive() throws Exception {
         //given
         this.testManager.wiremock()
