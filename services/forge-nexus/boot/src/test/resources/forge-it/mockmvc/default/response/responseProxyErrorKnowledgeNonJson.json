@@ -1,0 +1,1 @@
+{"code":"UPSTREAM_INVALID_RESPONSE","message":"Knowledge service returned a non-JSON response.","correlationId":"corr-non-json","upstreamStatus":200,"route":"knowledge.status"}

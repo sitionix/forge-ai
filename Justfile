@@ -8,7 +8,7 @@ knowledge_url := "http://127.0.0.1:7081"
 jarvis_url := "http://127.0.0.1:7071"
 sqlite_path := root + "/var/knowledge/knowledge.sqlite"
 
-start: _mongo-start _sqlite-start _knowledge-start _jarvis-start _app-start
+start: _app-stop _jarvis-stop _knowledge-stop _mongo-start _sqlite-start _console-build _knowledge-start _jarvis-start _app-start _console-live-check
     @echo "Forge AI stack is up:"
     @echo "  app:       {{app_url}}"
     @echo "  knowledge: {{knowledge_url}}"
@@ -18,6 +18,9 @@ start: _mongo-start _sqlite-start _knowledge-start _jarvis-start _app-start
 
 stop: _app-stop _jarvis-stop _knowledge-stop _mongo-stop
     @echo "Forge AI stack stopped."
+
+status:
+    @scripts/status.sh
 
 _mongo-start:
     @docker compose up -d forge-ai-mongo
@@ -51,25 +54,42 @@ _jarvis-start:
 _jarvis-stop:
     @scripts/jarvis/stop.sh
 
+_console-build:
+    @echo "Building Forge Console static assets..."
+    @npm --prefix "{{root}}/services/forge-console" run build
+
 _app-start:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p "{{root}}/var/logs"
-    if curl -fsS "{{app_url}}/actuator/health" >/dev/null 2>&1; then
-        echo "Forge AI app is already UP at {{app_url}}; restarting with a fresh build"
-    fi
     if [[ -f "{{app_pid}}" ]] && kill -0 "$(cat "{{app_pid}}")" >/dev/null 2>&1; then
         echo "Stopping Forge AI app pid $(cat "{{app_pid}}")"
         kill "$(cat "{{app_pid}}")" >/dev/null 2>&1 || true
         rm -f "{{app_pid}}"
         sleep 1
-    elif command -v lsof >/dev/null 2>&1; then
+    fi
+    if command -v lsof >/dev/null 2>&1; then
         app_port_pid="$(lsof -t -iTCP:9099 -sTCP:LISTEN 2>/dev/null || true)"
         if [[ -n "${app_port_pid}" ]]; then
             echo "Stopping Forge AI app listener pid ${app_port_pid}"
-            kill "${app_port_pid}" >/dev/null 2>&1 || true
+            for pid in ${app_port_pid}; do
+                kill "${pid}" >/dev/null 2>&1 || true
+            done
             rm -f "{{app_pid}}"
             sleep 1
+        fi
+    fi
+    if command -v lsof >/dev/null 2>&1; then
+        for i in {1..20}; do
+            if ! lsof -t -iTCP:9099 -sTCP:LISTEN >/dev/null 2>&1; then
+                break
+            fi
+            sleep 0.5
+        done
+        if lsof -t -iTCP:9099 -sTCP:LISTEN >/dev/null 2>&1; then
+            echo "Forge AI app port 9099 is still occupied after stop."
+            lsof -iTCP:9099 -sTCP:LISTEN || true
+            exit 1
         fi
     fi
     mvn -pl services/forge-nexus/boot -am -DskipTests package
@@ -108,14 +128,44 @@ _app-start:
     tail -n 80 "{{app_log}}" || true
     exit 1
 
-_app-stop:
-    @if [[ -f "{{app_pid}}" ]] && kill -0 "$(cat "{{app_pid}}")" >/dev/null 2>&1; then \
-        kill "$(cat "{{app_pid}}")"; \
-        echo "Stopped Forge AI app pid $(cat "{{app_pid}}")"; \
-    else \
-        echo "Forge AI app PID file missing or process is not running."; \
+_console-live-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    live_file="$(mktemp)"
+    curl --retry 10 --retry-delay 1 --retry-connrefused -fsS "{{app_url}}/operator/operator-ui.js" > "${live_file}"
+    built_file="{{root}}/services/forge-console/dist/operator/operator-ui.js"
+    if ! cmp -s "${built_file}" "${live_file}"; then
+        echo "Live operator-ui.js does not match built Console asset."
+        echo "Built: ${built_file} $(wc -c < "${built_file}") bytes $(sha256sum "${built_file}" | awk '{print $1}')"
+        echo "Live:  ${live_file} $(wc -c < "${live_file}") bytes $(sha256sum "${live_file}" | awk '{print $1}')"
+        exit 1
     fi
-    @rm -f "{{app_pid}}"
+    echo "Console live operator-ui.js matches built asset ($(wc -c < "${built_file}") bytes, $(sha256sum "${built_file}" | awk '{print $1}'))."
+
+_app-stop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    stopped=0
+    if [[ -f "{{app_pid}}" ]] && kill -0 "$(cat "{{app_pid}}")" >/dev/null 2>&1; then
+        pid="$(cat "{{app_pid}}")"
+        kill "${pid}" >/dev/null 2>&1 || true
+        echo "Stopped Forge AI app pid ${pid}"
+        stopped=1
+    fi
+    rm -f "{{app_pid}}"
+    if command -v lsof >/dev/null 2>&1; then
+        pids="$(lsof -t -iTCP:9099 -sTCP:LISTEN 2>/dev/null || true)"
+        if [[ -n "${pids}" ]]; then
+            echo "Stopping Forge AI app listener pid(s) ${pids}"
+            for pid in ${pids}; do
+                kill "${pid}" >/dev/null 2>&1 || true
+            done
+            stopped=1
+        fi
+    fi
+    if [[ "${stopped}" == "0" ]]; then
+        echo "Forge AI app is not running."
+    fi
 
 _logs:
     @tail -n 120 -f "{{app_log}}"
@@ -125,6 +175,9 @@ _knowledge-logs:
 
 test:
     @scripts/test.sh
+
+test-all:
+    @scripts/test-all.sh
 
 test-python:
     @scripts/test-python.sh
@@ -140,9 +193,6 @@ test-graph-backend:
 
 test-graph-console:
     @scripts/test-graph-console.sh
-
-benchmark-graph:
-    @scripts/benchmark-graph.sh
 
 test-forge-it:
     @scripts/test-forge-it.sh

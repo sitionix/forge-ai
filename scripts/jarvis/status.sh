@@ -27,15 +27,28 @@ fi
 HOST="${JARVIS_HOST:-${CONFIG_HOST}}"
 PORT="${JARVIS_PORT:-${CONFIG_PORT}}"
 OLLAMA_TAGS_URL="${CONFIG_OLLAMA_BASE_URL%/}/api/tags"
+PID_FILE="${FORGE_RUNTIME_DIR}/jarvis/jarvis-agent.pid"
+PID="-"
+if [[ -f "${PID_FILE}" ]]; then
+  PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
+  if [[ -z "${PID}" ]] || ! kill -0 "${PID}" >/dev/null 2>&1; then
+    PID="-"
+  fi
+fi
+LISTENER="-"
+if command -v lsof >/dev/null 2>&1; then
+  LISTENER="$(lsof -t -iTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)"
+  LISTENER="${LISTENER:-"-"}"
+fi
 
-if curl -fsS "${OLLAMA_TAGS_URL}" >/dev/null 2>&1; then
+if curl --max-time 10 -fsS "${OLLAMA_TAGS_URL}" >/dev/null 2>&1; then
   echo "Ollama API: UP"
 else
   echo "Ollama API: DOWN"
 fi
 
-if curl -fsS "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
-  echo "Jarvis Agent: UP"
+if curl --max-time 10 -fsS "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
+  echo "Jarvis Agent: UP at http://${HOST}:${PORT} pid=${PID} listener=${LISTENER}"
 else
-  echo "Jarvis Agent: DOWN"
+  echo "Jarvis Agent: DOWN at http://${HOST}:${PORT} pid=${PID} listener=${LISTENER}"
 fi

@@ -77,12 +77,13 @@ def test_status_actions_command_and_chat_success_paths(tmp_path):
         command = client.post("/api/v1/jarvis/command", json={"text": "check ollama"}).json()
         chat = client.post("/api/v1/jarvis/chat", json={"message": "explain JarvisGateway"}).json()
 
-    assert status["ollama"]["status"] == "UP"
+    assert status["ollama"]["status"] == "UNKNOWN"
     assert actions["actions"] and "command" not in str(actions)
     assert command["execution"]["executed"] is True
     assert executor.invocations == [("ollama_status", "health", "check ollama")]
     assert knowledge.calls == [("explain JarvisGateway", 12000)]
     assert model.prompts and "public interface JarvisGateway" in model.prompts[0]
+    assert model.health_calls == 0
     assert chat["diagnostics"] == []
 
 
@@ -94,7 +95,8 @@ def test_status_when_model_provider_is_down(tmp_path):
         status = client.get("/api/v1/jarvis/status").json()
 
     assert status["status"] == "UP"
-    assert status["ollama"]["status"] == "DOWN"
+    assert status["ollama"]["status"] == "UNKNOWN"
+    assert model.health_calls == 0
 
 
 def test_command_validation_and_failure_matrix(tmp_path):

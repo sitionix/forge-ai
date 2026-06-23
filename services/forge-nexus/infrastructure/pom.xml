@@ -19,8 +19,5 @@
         <module>resources</module>
         <module>github-cli</module>
         <module>local-cli</module>
-        <module>jarvis-client</module>
-        <module>knowledge-client</module>
-        <module>knowledge-sqlite</module>
     </modules>
 </project>

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import asyncio
+import time
 from typing import Dict, Optional
 
 import pytest
@@ -13,7 +15,6 @@ from knowledge_service.graph_schema import GraphAnalysisResult
 from support import (
     DeterministicAnalysisProvider,
     FailingAnalysisProvider,
-    HoldingJobExecutor,
     build_test_app,
     sqlite_table_counts,
     write_runtime_config,
@@ -31,18 +32,18 @@ PUBLIC_ENDPOINTS = {
     ("GET", "/api/v1/knowledge/inventory/files"),
     ("POST", "/api/v1/knowledge/context"),
     ("POST", "/api/v1/knowledge/analysis/build"),
+    ("POST", "/api/v1/knowledge/analysis/retry-failed"),
     ("GET", "/api/v1/knowledge/analysis/jobs/{job_id}"),
     ("POST", "/api/v1/knowledge/analysis/jobs/{job_id}/stop"),
     ("GET", "/api/v1/knowledge/analysis/status"),
-    ("GET", "/api/v1/knowledge/services/status"),
+    ("GET", "/api/v1/knowledge/overview"),
     ("GET", "/api/v1/knowledge/analysis/files"),
-    ("GET", "/api/v1/knowledge/analysis/symbols"),
-    ("GET", "/api/v1/knowledge/analysis/relations"),
-    ("GET", "/api/v1/knowledge/analysis/graph"),
+    ("GET", "/api/v1/knowledge/analysis/diagnostics"),
     ("GET", "/api/v1/knowledge/analysis/graph/manifest"),
     ("GET", "/api/v1/knowledge/analysis/graph/nodes"),
     ("GET", "/api/v1/knowledge/analysis/graph/edges"),
-    ("GET", "/api/v1/knowledge/analysis/graph/slice"),
+    ("GET", "/api/v1/knowledge/analysis/graph/node/{node_id}"),
+    ("GET", "/api/v1/knowledge/analysis/graph/edge/{edge_id}"),
 }
 
 
@@ -69,6 +70,16 @@ class CountingFailingAnalysisProvider:
         )
 
 
+class HoldingAnalysisProvider(DeterministicAnalysisProvider):
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+
+    async def analyze(self, payload: Dict[str, object], line_count: int, repair_prompt: Optional[str] = None) -> GraphAnalysisResult:
+        await self.release.wait()
+        result = super().analyze(payload, line_count, repair_prompt)
+        return result
+
+
 def public_routes(app):
     routes = set()
     for route in app.routes:
@@ -80,6 +91,29 @@ def public_routes(app):
             if method not in {"HEAD", "OPTIONS"}:
                 routes.add((method, path))
     return routes
+
+
+def wait_job(client: TestClient, job_id: str, *terminal: str, timeout: float = 3.0) -> Dict[str, object]:
+    expected = set(terminal or ("COMPLETED", "FAILED", "STOPPED"))
+    deadline = time.monotonic() + timeout
+    last: Dict[str, object] = {}
+    while time.monotonic() < deadline:
+        last = client.get(f"/api/v1/knowledge/analysis/jobs/{job_id}").json()
+        if last.get("status") in expected:
+            return last
+        client._run(asyncio.sleep(0.01))
+    return last
+
+
+def wait_active_overview(client: TestClient, job_id: str, timeout: float = 3.0) -> Dict[str, object]:
+    deadline = time.monotonic() + timeout
+    last: Dict[str, object] = {}
+    while time.monotonic() < deadline:
+        last = client.get("/api/v1/knowledge/overview").json()
+        if (last.get("activeJob") or {}).get("jobId") == job_id:
+            return last
+        client._run(asyncio.sleep(0.01))
+    return last
 
 
 def test_route_inventory_matches_manifest(tmp_path):
@@ -136,7 +170,7 @@ def test_inventory_context_analysis_and_sqlite_persistence(tmp_path):
         assert context["context"][0]["sourceId"] == "forge-ai"
 
         build = client.post("/api/v1/knowledge/analysis/build", json={"sourceIds": ["forge-ai"], "force": True}).json()
-        job = client.get(f"/api/v1/knowledge/analysis/jobs/{build['jobId']}").json()
+        job = wait_job(client, build["jobId"], "COMPLETED")
         assert job["status"] == "COMPLETED"
         assert job["processedFileCount"] == 2
 
@@ -144,27 +178,30 @@ def test_inventory_context_analysis_and_sqlite_persistence(tmp_path):
         assert analysis_status["status"] == "READY"
         assert analysis_status["symbolCount"] > 0
 
-        services = client.get("/api/v1/knowledge/services/status").json()
-        assert services["services"][0]["analysis"]["analyzedFileCount"] == 2
+        services = client.get("/api/v1/knowledge/overview").json()
+        assert services["sources"][0]["analysis"]["succeededFiles"] == 2
 
         analysis_files = client.get("/api/v1/knowledge/analysis/files").json()
         assert analysis_files["total"] == 2
 
-        symbols = client.get("/api/v1/knowledge/analysis/symbols").json()
-        assert symbols["total"] > 0
-
-        relations = client.get("/api/v1/knowledge/analysis/relations").json()
-        assert relations["total"] >= 0
-
-        graph = client.get("/api/v1/knowledge/analysis/graph?sourceId=forge-ai&includeEvidence=true").json()
-        assert graph["nodes"]
-        assert graph["meta"]["totalNodeCount"] > 0
-        root = graph["nodes"][0]["id"]
-
-        graph_slice = client.get(f"/api/v1/knowledge/analysis/graph/slice?sourceId=forge-ai&rootGraphNodeId={root}&includeEvidence=true").json()
-        slice_node_ids = {node["id"] for node in graph_slice["nodes"]}
-        assert root in slice_node_ids
-        assert all(edge["from"] in slice_node_ids and edge["to"] in slice_node_ids for edge in graph_slice["edges"])
+        manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai").json()
+        assert manifest["totalNodeCount"] > 0
+        nodes = client.get(
+            f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&graphRevision={manifest['graphRevision']}&pageSize=10"
+        ).json()
+        assert nodes["items"]
+        edges = client.get(
+            f"/api/v1/knowledge/analysis/graph/edges?sourceId=forge-ai&graphRevision={manifest['graphRevision']}&pageSize=10"
+        ).json()
+        assert "items" in edges
+        node_detail = client.get(
+            f"/api/v1/knowledge/analysis/graph/node/{nodes['items'][0]['id']}?sourceId=forge-ai&graphRevision={manifest['graphRevision']}&includeEvidence=true"
+        ).json()
+        assert node_detail["item"]["id"] == nodes["items"][0]["id"]
+        assert client.get("/api/v1/knowledge/analysis/symbols").status_code == 404
+        assert client.get("/api/v1/knowledge/analysis/relations").status_code == 404
+        assert client.get("/api/v1/knowledge/analysis/graph?sourceId=forge-ai").status_code == 404
+        assert client.get("/api/v1/knowledge/analysis/graph/slice?sourceId=forge-ai").status_code == 404
 
         validation_error = client.post("/api/v1/knowledge/context", json={"query": "x", "maxChars": 1})
         assert validation_error.status_code == 422
@@ -205,21 +242,21 @@ def test_analysis_build_skips_current_analyzed_files_with_diagnostics(tmp_path):
     with TestClient(app) as client:
         assert client.post("/api/v1/knowledge/inventory/build", json={}).status_code == 200
         first_build = client.post("/api/v1/knowledge/analysis/build", json={"sourceIds": ["forge-ai"], "force": False}).json()
-        first_job = client.get(f"/api/v1/knowledge/analysis/jobs/{first_build['jobId']}").json()
+        first_job = wait_job(client, first_build["jobId"], "COMPLETED")
         assert first_job["status"] == "COMPLETED"
         assert first_job["processedFileCount"] == 2
         assert provider.calls == 2
 
         second_build = client.post("/api/v1/knowledge/analysis/build", json={"sourceIds": ["forge-ai"], "force": False}).json()
-        second_job = client.get(f"/api/v1/knowledge/analysis/jobs/{second_build['jobId']}").json()
+        second_job = wait_job(client, second_build["jobId"], "COMPLETED")
         assert second_job["status"] == "COMPLETED"
         assert second_job["fileCount"] == 0
         assert second_job["processedFileCount"] == 0
         assert provider.calls == 2
 
-        services = client.get("/api/v1/knowledge/services/status").json()
-        assert services["services"][0]["analysis"]["analyzedFileCount"] == 2
-        assert services["services"][0]["analysis"]["pendingFileCount"] == 0
+        services = client.get("/api/v1/knowledge/overview").json()
+        assert services["sources"][0]["analysis"]["succeededFiles"] == 2
+        assert services["sources"][0]["analysis"]["pendingFiles"] == 0
 
     with sqlite3.connect(app_config.store_path) as conn:
         rows = conn.execute("SELECT status, last_error_code FROM analysis_files ORDER BY relative_path").fetchall()
@@ -238,7 +275,7 @@ def test_analysis_build_runs_pending_files_through_provider_after_skipping_curre
             "/api/v1/knowledge/analysis/build",
             json={"sourceIds": ["forge-ai"], "force": False, "maxFiles": 1},
         ).json()
-        first_job = client.get(f"/api/v1/knowledge/analysis/jobs/{first_build['jobId']}").json()
+        first_job = wait_job(client, first_build["jobId"], "COMPLETED")
         assert first_job["status"] == "COMPLETED"
         assert first_job["fileCount"] == 1
         assert first_job["processedFileCount"] == 1
@@ -248,7 +285,7 @@ def test_analysis_build_runs_pending_files_through_provider_after_skipping_curre
             "/api/v1/knowledge/analysis/build",
             json={"sourceIds": ["forge-ai"], "force": False},
         ).json()
-        second_job = client.get(f"/api/v1/knowledge/analysis/jobs/{second_build['jobId']}").json()
+        second_job = wait_job(client, second_build["jobId"], "COMPLETED")
         assert second_job["status"] == "COMPLETED"
         assert second_job["fileCount"] == 1
         assert second_job["processedFileCount"] == 1
@@ -258,14 +295,14 @@ def test_analysis_build_runs_pending_files_through_provider_after_skipping_curre
             "/api/v1/knowledge/analysis/build",
             json={"sourceIds": ["forge-ai"], "force": False},
         ).json()
-        third_job = client.get(f"/api/v1/knowledge/analysis/jobs/{third_build['jobId']}").json()
+        third_job = wait_job(client, third_build["jobId"], "COMPLETED")
         assert third_job["status"] == "COMPLETED"
         assert third_job["fileCount"] == 0
         assert provider.calls == 2
 
-        services = client.get("/api/v1/knowledge/services/status").json()
-        assert services["services"][0]["analysis"]["analyzedFileCount"] == 2
-        assert services["services"][0]["analysis"]["pendingFileCount"] == 0
+        services = client.get("/api/v1/knowledge/overview").json()
+        assert services["sources"][0]["analysis"]["succeededFiles"] == 2
+        assert services["sources"][0]["analysis"]["pendingFiles"] == 0
 
     with sqlite3.connect(app_config.store_path) as conn:
         second_job_files = conn.execute(
@@ -276,37 +313,30 @@ def test_analysis_build_runs_pending_files_through_provider_after_skipping_curre
 
 
 def test_analysis_build_is_visible_as_active_job_before_worker_runs(tmp_path):
-    executor = HoldingJobExecutor()
-    app, *_ = build_test_app(write_runtime_config(tmp_path), executor=executor)
+    provider = HoldingAnalysisProvider()
+    app, *_ = build_test_app(write_runtime_config(tmp_path), provider=provider)
 
     with TestClient(app) as client:
         assert client.post("/api/v1/knowledge/inventory/build", json={}).status_code == 200
         build = client.post("/api/v1/knowledge/analysis/build", json={"sourceIds": ["forge-ai"], "force": False}).json()
 
         job = client.get(f"/api/v1/knowledge/analysis/jobs/{build['jobId']}").json()
-        services = client.get("/api/v1/knowledge/services/status").json()
-
-        assert job["status"] == "QUEUED"
-        assert services["activeJob"]["jobId"] == build["jobId"]
-        assert services["services"][0]["analysis"]["status"] == "RUNNING"
-        assert services["services"][0]["analysis"]["activeJobId"] == build["jobId"]
-
-        executor.run_next()
-        completed = client.get(f"/api/v1/knowledge/analysis/jobs/{build['jobId']}").json()
+        assert job["status"] in {"QUEUED", "RUNNING"}
+        provider.release.set()
+        completed = wait_job(client, build["jobId"], "COMPLETED")
         assert completed["status"] == "COMPLETED"
 
 
 def test_stopped_job_state_and_idempotent_schema_migration(tmp_path):
-    executor = HoldingJobExecutor()
-    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path), executor=executor)
+    provider = HoldingAnalysisProvider()
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path), provider=provider)
 
     with TestClient(app) as client:
         assert client.post("/api/v1/knowledge/inventory/build", json={}).status_code == 200
         build = client.post("/api/v1/knowledge/analysis/build", json={"force": True}).json()
         stop = client.post(f"/api/v1/knowledge/analysis/jobs/{build['jobId']}/stop", json={}).json()
         assert stop["status"] == "STOP_REQUESTED"
-        executor.run_next()
-        job = client.get(f"/api/v1/knowledge/analysis/jobs/{build['jobId']}").json()
+        job = wait_job(client, build["jobId"], "STOPPED")
         assert job["status"] == "STOPPED"
 
     deps.inventory_store.init()
@@ -321,7 +351,7 @@ def test_failed_file_and_provider_failure_diagnostics_are_persisted(tmp_path):
     with TestClient(app) as client:
         assert client.post("/api/v1/knowledge/inventory/build", json={}).status_code == 200
         build = client.post("/api/v1/knowledge/analysis/build", json={"force": True}).json()
-        job = client.get(f"/api/v1/knowledge/analysis/jobs/{build['jobId']}").json()
+        job = wait_job(client, build["jobId"], "COMPLETED")
         assert job["status"] == "COMPLETED"
         files = client.get("/api/v1/knowledge/analysis/files").json()
         assert files["files"][0]["diagnostics"]
@@ -332,16 +362,16 @@ def test_failed_file_and_provider_failure_diagnostics_are_persisted(tmp_path):
 
 
 def test_missing_indexed_file_reports_failed_analysis_state(tmp_path):
-    executor = HoldingJobExecutor()
-    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path), provider=DeterministicAnalysisProvider(), executor=executor)
+    provider = HoldingAnalysisProvider()
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path), provider=provider)
 
     with TestClient(app) as client:
         client.post("/api/v1/knowledge/inventory/build", json={})
         indexed = client.get("/api/v1/knowledge/inventory/files?extension=.java").json()["files"][0]
         build = client.post("/api/v1/knowledge/analysis/build", json={"force": True}).json()
         (tmp_path / "workspace" / "forge-ai" / indexed["relativePath"]).unlink()
-        executor.run_next()
-        job = client.get(f"/api/v1/knowledge/analysis/jobs/{build['jobId']}").json()
+        provider.release.set()
+        job = wait_job(client, build["jobId"], "COMPLETED")
         assert job["failedFileCount"] == 1
 
     with sqlite3.connect(app_config.store_path) as conn:

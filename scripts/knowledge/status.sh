@@ -24,9 +24,22 @@ else
 fi
 HOST="${KNOWLEDGE_HOST:-${CONFIG_HOST}}"
 PORT="${KNOWLEDGE_PORT:-${CONFIG_PORT}}"
+PID_FILE="${FORGE_RUNTIME_DIR}/knowledge/knowledge-service.pid"
+PID="-"
+if [[ -f "${PID_FILE}" ]]; then
+  PID="$(cat "${PID_FILE}" 2>/dev/null || true)"
+  if [[ -z "${PID}" ]] || ! kill -0 "${PID}" >/dev/null 2>&1; then
+    PID="-"
+  fi
+fi
+LISTENER="-"
+if command -v lsof >/dev/null 2>&1; then
+  LISTENER="$(lsof -t -iTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true)"
+  LISTENER="${LISTENER:-"-"}"
+fi
 
-if curl -fsS "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
-  echo "Knowledge service: UP at http://${HOST}:${PORT}"
+if curl --max-time 10 -fsS "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
+  echo "Knowledge service: UP at http://${HOST}:${PORT} pid=${PID} listener=${LISTENER}"
 else
-  echo "Knowledge service: DOWN at http://${HOST}:${PORT}"
+  echo "Knowledge service: DOWN at http://${HOST}:${PORT} pid=${PID} listener=${LISTENER}"
 fi

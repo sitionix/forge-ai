@@ -4,7 +4,7 @@
 
 This migration removes redundant service nesting introduced during the physical platform split. `forge-knowledge` and `forge-jarvis` are now the Python project roots themselves, not parent folders around another service project.
 
-No Knowledge analysis, graph, GraphSlice, Jarvis chat, Jarvis command execution, REST endpoint, or UI behavior was rewritten.
+No Knowledge analysis, graph API, Jarvis chat, Jarvis command execution, REST endpoint, or UI behavior was rewritten.
 
 ## Before
 

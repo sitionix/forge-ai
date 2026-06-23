@@ -9,7 +9,7 @@ Date: 2026-06-18
 - Layout before stabilization: custom synchronous force/collision loop, 190 ticks, O(n^2) node pair work, executed on the browser main thread during `renderKnowledgeGraphVisual`.
 - Full graph endpoint before stabilization: `GET /api/v1/knowledge/analysis/graph`, proxied by Nexus as `GET /api/v1/infrastructure/knowledge/analysis/graph`.
 - Full graph request parameters before stabilization: source/filter parameters plus `limit`; Console sent `limit` from the Max control.
-- Legacy full graph cap: non-unlimited full graph requests clamp to 500 nodes and 1,000 edges in `AnalysisStore.graph`. This remains for compatibility.
+- Legacy full graph cap: non-unlimited full graph requests clamped to 500 nodes and 1,000 edges in `AnalysisStore.graph`. That compatibility surface has since been removed from the active API.
 - Initial payload before stabilization: nodes and edges could include summary/evidence/diagnostic-related fields depending on request flags. Console already sent `includeEvidence=false` and `includeClaims=false` for graph visual loading.
 - Render count during one legacy load: one full SVG rebuild after the fetch, plus detail tab HTML rebuild.
 - Layout executions during one legacy load: one synchronous layout per full graph render; resize with preserved positions no longer intentionally reruns layout.
@@ -24,9 +24,7 @@ The local Python test virtualenv is stale and system Python lacks FastAPI, so br
   - `GET /api/v1/knowledge/analysis/graph/manifest`
   - `GET /api/v1/knowledge/analysis/graph/nodes`
   - `GET /api/v1/knowledge/analysis/graph/edges`
-- Preserved existing endpoints:
-  - `GET /api/v1/knowledge/analysis/graph`
-  - `GET /api/v1/knowledge/analysis/graph/slice`
+- Removed the previous full-graph and graph-slice endpoints from the active API.
 - Snapshot pages use cursor/keyset pagination ordered by graph fact id. No OFFSET pagination is used for snapshot pages.
 - Snapshot revision is derived from source/filter identity, node/edge counts, and max graph fact timestamps. It avoids hashing the full graph.
 - Cursor tokens include graph revision and page kind. Invalid cursors return `GRAPH_CURSOR_INVALID`; changed revisions return `GRAPH_SNAPSHOT_STALE`.
@@ -66,9 +64,9 @@ Snapshot page queries select only minimal visual node/edge projection fields and
 
 ## Compatibility
 
-- Legacy full graph endpoint remains available and behavior-compatible.
-- GraphSlice endpoint remains available and behavior-compatible.
-- Nexus existing graph endpoints are unchanged.
+- Current compatibility is limited to the final graph snapshot manifest, bounded page, and detail endpoints.
+- Legacy full graph and slice contracts are removed from the active graph API.
+- Nexus forwards only the final snapshot graph endpoints.
 
 ## Verification
 
@@ -77,7 +75,7 @@ Passed:
 - `python3 -m py_compile services/forge-knowledge/src/knowledge_service/analysis_store.py services/forge-knowledge/src/knowledge_service/main.py`
 - `node --check services/forge-console/src/operator/operator-ui.js`
 - `node --check services/forge-console/scripts/copy-static.mjs`
-- `mvn -pl services/forge-nexus/application,services/forge-nexus/infrastructure/knowledge-client,services/forge-nexus/infrastructure/knowledge-sqlite,services/forge-nexus/api-rest -am -DskipTests compile`
+- `mvn -pl services/forge-nexus/application,services/forge-nexus/infrastructure/knowledge-client,services/forge-nexus/api-rest -am -DskipTests compile`
 - `cd services/forge-console && npm run typecheck`
 - `cd services/forge-console && npm test -- --run`
 - `cd services/forge-console && npm run build`

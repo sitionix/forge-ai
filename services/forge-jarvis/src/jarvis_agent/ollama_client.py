@@ -19,17 +19,16 @@ class OllamaClient:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 
     async def health(self) -> None:
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                response = await client.get(f"{self.base_url}/api/tags")
-                response.raise_for_status()
+            response = await self._client.get(f"{self.base_url}/api/tags", timeout=5)
+            response.raise_for_status()
         except httpx.HTTPError as exc:
             raise OllamaUnavailableError(f"Ollama is not reachable at {self.base_url}") from exc
 
     async def classify_intent(self, system_prompt: str, user_text: str, actions: List[Dict[str, Any]]) -> str:
-        await self.health()
         prompt = f"{system_prompt}\n\nAvailable actions and targets:\n{json.dumps(actions, ensure_ascii=False)}\n\nUser command:\n{user_text}\n"
         payload = {
             "model": self.model,
@@ -39,9 +38,8 @@ class OllamaClient:
             "options": {"temperature": 0},
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(f"{self.base_url}/api/generate", json=payload)
-                response.raise_for_status()
+            response = await self._client.post(f"{self.base_url}/api/generate", json=payload)
+            response.raise_for_status()
         except httpx.HTTPError as exc:
             raise OllamaUnavailableError(f"Ollama is not reachable at {self.base_url}") from exc
 
@@ -49,7 +47,6 @@ class OllamaClient:
         return str(data.get("response", ""))
 
     async def generate_text(self, prompt: str) -> str:
-        await self.health()
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -57,9 +54,8 @@ class OllamaClient:
             "options": {"temperature": 0},
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(f"{self.base_url}/api/generate", json=payload)
-                response.raise_for_status()
+            response = await self._client.post(f"{self.base_url}/api/generate", json=payload)
+            response.raise_for_status()
         except httpx.HTTPError as exc:
             raise OllamaUnavailableError(f"Ollama is not reachable at {self.base_url}") from exc
 
@@ -74,3 +70,6 @@ class OllamaClient:
         if not isinstance(data, dict):
             raise OllamaBadResponseError("Ollama returned a non-object response")
         return data
+
+    async def aclose(self) -> None:
+        await self._client.aclose()

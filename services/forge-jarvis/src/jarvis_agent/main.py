@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import inspect
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
@@ -36,8 +37,16 @@ def create_app(
         logger = logging.getLogger("jarvis_agent")
         logger.info("service start")
         logger.info("selected model: %s", config.model.default_model)
-        logger.info("ollama base url: %s", config.model.ollama_base_url)
-        yield
+        try:
+            yield
+        finally:
+            for candidate in (deps.knowledge_client, deps.model_client):
+                close = getattr(candidate, "aclose", None)
+                if close is not None:
+                    await close()
+            close_executor = getattr(deps.action_executor, "aclose", None)
+            if close_executor is not None:
+                await close_executor()
 
     app = FastAPI(title="Jarvis Agent", version="0.1.0", lifespan=lifespan)
     if settings is not None and dependencies is not None:
@@ -61,22 +70,13 @@ def create_app(
     @app.get("/api/v1/jarvis/status")
     async def status(request: Request) -> Dict[str, object]:
         config, deps = _state(request)
-        ollama_status = "UP"
-        try:
-            await deps.model_client.health()
-        except (OllamaUnavailableError, OllamaBadResponseError):
-            ollama_status = "DOWN"
-
         return {
             "status": "UP",
-            "host": config.host,
-            "port": config.port,
             "model": {
                 "defaultModel": config.model.default_model,
             },
             "ollama": {
-                "baseUrl": config.model.ollama_base_url,
-                "status": ollama_status,
+                "status": "UNKNOWN",
             },
             "actions": {
                 "count": len(deps.action_registry.available_actions_for_prompt()),
@@ -99,7 +99,7 @@ def create_app(
             )
         except OllamaUnavailableError:
             logging.getLogger("jarvis_agent").warning("ollama unavailable")
-            return error_response(503, "OLLAMA_UNAVAILABLE", f"Ollama is not reachable at {config.model.ollama_base_url}")
+            return error_response(503, "OLLAMA_UNAVAILABLE", "Ollama is not reachable")
         except OllamaBadResponseError:
             logging.getLogger("jarvis_agent").warning("invalid model response")
             return error_response(422, "INVALID_MODEL_RESPONSE", "Model did not return valid intent JSON")
@@ -112,7 +112,9 @@ def create_app(
             return error_response(422, "INVALID_MODEL_RESPONSE", "Model did not return valid intent JSON")
 
         try:
-            execution = deps.action_executor.execute(intent, text)
+            executor = getattr(deps.action_executor, "execute_async", deps.action_executor.execute)
+            maybe_execution = executor(intent, text)
+            execution = await maybe_execution if inspect.isawaitable(maybe_execution) else maybe_execution
         except (ActionNotAllowedError, SecurityError):
             logging.getLogger("jarvis_agent").warning("unsupported or rejected action: %s", intent.dict())
             return error_response(403, "UNSUPPORTED_ACTION", "The requested action is not allowlisted")
@@ -134,7 +136,7 @@ def create_app(
             context_bundle = await deps.knowledge_client.context(message, max_context_chars)
         except KnowledgeUnavailableError:
             logging.getLogger("jarvis_agent").warning("knowledge unavailable")
-            return error_response(503, "KNOWLEDGE_UNAVAILABLE", f"Knowledge is not reachable at {config.knowledge.base_url}")
+            return error_response(503, "KNOWLEDGE_UNAVAILABLE", "Knowledge is not reachable")
         except KnowledgeBadResponseError:
             logging.getLogger("jarvis_agent").warning("knowledge returned malformed response")
             return error_response(502, "KNOWLEDGE_BAD_RESPONSE", "Knowledge returned a malformed context response")
@@ -159,7 +161,7 @@ def create_app(
             answer = await deps.model_client.generate_text(prompt)
         except OllamaUnavailableError:
             logging.getLogger("jarvis_agent").warning("ollama unavailable")
-            return error_response(503, "OLLAMA_UNAVAILABLE", f"Ollama is not reachable at {config.model.ollama_base_url}")
+            return error_response(503, "OLLAMA_UNAVAILABLE", "Ollama is not reachable")
         except OllamaBadResponseError:
             logging.getLogger("jarvis_agent").warning("ollama returned malformed response")
             return error_response(502, "OLLAMA_BAD_RESPONSE", "Ollama returned a malformed response")
@@ -167,7 +169,7 @@ def create_app(
             answer = "Ollama returned an empty answer."
             chat_diagnostics.append(ChatDiagnostic(code="OLLAMA_EMPTY_RESPONSE", message=answer))
 
-        return ChatResponse(answer=answer, usedContext=context_items, diagnostics=chat_diagnostics)
+        return ChatResponse(answer=answer, usedContext=[item.copy(update={"content": None}) for item in context_items], diagnostics=chat_diagnostics)
 
     return app
 

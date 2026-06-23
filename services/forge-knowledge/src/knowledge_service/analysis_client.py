@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-import socket
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Any, Dict
+
+import httpx
 
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
@@ -24,45 +23,38 @@ class OllamaAnalysisClient:
         self.context_tokens = max(1024, context_tokens)
         self.prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
         self.parser = GraphAnalysisResponseParser()
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 
-    def analyze(self, payload: Dict[str, Any], line_count: int, repair_prompt: str | None = None) -> GraphAnalysisResult:
+    async def analyze(self, payload: Dict[str, Any], line_count: int, repair_prompt: str | None = None) -> GraphAnalysisResult:
         prompt = self._prompt(payload, repair_prompt)
-        body = json.dumps(
-            {
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-                "options": {
-                    "num_ctx": self.context_tokens,
-                },
-            }
-        ).encode("utf-8")
-        request = urllib.request.Request(
-            f"{self.base_url}/api/generate",
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
         response_body = ""
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                response_body = response.read().decode("utf-8", errors="replace")
-                raw = json.loads(response_body)
-        except (TimeoutError, socket.timeout) as exc:
+            response = await self._client.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "format": "json",
+                    "options": {
+                        "num_ctx": self.context_tokens,
+                    },
+                },
+            )
+            response_body = response.text
+            response.raise_for_status()
+            raw = response.json()
+        except httpx.TimeoutException as exc:
             raise KnowledgeError("ANALYSIS_AI_TIMEOUT", "AI analyzer request timed out") from exc
-        except urllib.error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="replace")
+        except httpx.HTTPStatusError as exc:
             raise KnowledgeError(
                 "ANALYSIS_AI_TRANSPORT_ERROR",
-                f"AI analyzer HTTP error {exc.code}",
-                raw_preview=error_body,
+                f"AI analyzer HTTP error {exc.response.status_code}",
+                raw_preview=exc.response.text,
             ) from exc
-        except urllib.error.URLError as exc:
-            if isinstance(getattr(exc, "reason", None), (TimeoutError, socket.timeout)):
-                raise KnowledgeError("ANALYSIS_AI_TIMEOUT", "AI analyzer request timed out") from exc
+        except httpx.HTTPError as exc:
             raise KnowledgeError("ANALYSIS_AI_TRANSPORT_ERROR", "AI analyzer transport error") from exc
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, ValueError) as exc:
             raise KnowledgeError(
                 "ANALYSIS_AI_TRANSPORT_ERROR",
                 "AI analyzer returned invalid Ollama envelope JSON",
@@ -75,6 +67,9 @@ class OllamaAnalysisClient:
         if isinstance(parsed, GraphAnalysisResult):
             return parsed
         raise KnowledgeError(parsed.code, parsed.message, raw_preview=parsed.raw_preview)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
     def _prompt(self, payload: Dict[str, Any], repair_prompt: str | None = None) -> str:
         parts = [

@@ -96,8 +96,10 @@ class FakeModelClient:
         self.classify_error = classify_error
         self.generate_error = generate_error
         self.prompts: List[str] = []
+        self.health_calls = 0
 
     async def health(self) -> None:
+        self.health_calls += 1
         if self.health_error:
             raise self.health_error
 

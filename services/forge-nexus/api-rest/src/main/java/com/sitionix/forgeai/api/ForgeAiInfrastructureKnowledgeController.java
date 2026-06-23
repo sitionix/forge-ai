@@ -1,283 +1,146 @@
 package com.sitionix.forgeai.api;
 
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisBuildView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisFilesView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphSliceRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisGraphView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisJobView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisRelationsView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStatusView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisStopView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeAnalysisSymbolsView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeFilesView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayErrorCode;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGatewayException;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGraphSnapshotRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeGraphSnapshotResponse;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildRequest;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryBuildResultView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeInventoryStatusView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeServicesStatusView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeSourcesView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.KnowledgeStatusView;
-import com.sitionix.forgeai.application.infrastructure.knowledge.ManageKnowledgeInfrastructure;
-import lombok.RequiredArgsConstructor;
-import java.util.List;
+import com.sitionix.forgeai.api.proxy.InfrastructureProxyTransport;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequiredArgsConstructor
 public class ForgeAiInfrastructureKnowledgeController {
 
-    private final ManageKnowledgeInfrastructure manageKnowledgeInfrastructure;
+    private final InfrastructureProxyTransport proxyTransport;
 
     @GetMapping("/api/v1/infrastructure/knowledge/status")
-    public ResponseEntity<KnowledgeStatusView> status() {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.status());
+    public CompletableFuture<ResponseEntity<byte[]>> status(@RequestHeader final HttpHeaders headers,
+                                                            final HttpServletRequest request) {
+        return this.proxy("knowledge.status", Map.of(), null, headers, request);
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/sources")
-    public ResponseEntity<KnowledgeSourcesView> sources() {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.sources());
+    public CompletableFuture<ResponseEntity<byte[]>> sources(@RequestHeader final HttpHeaders headers,
+                                                             final HttpServletRequest request) {
+        return this.proxy("knowledge.sources", Map.of(), null, headers, request);
     }
 
-    @GetMapping("/api/v1/infrastructure/knowledge/services/status")
-    public ResponseEntity<KnowledgeServicesStatusView> servicesStatus(@RequestParam(required = false) final String detailsSourceId) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.servicesStatus(detailsSourceId));
+    @GetMapping("/api/v1/infrastructure/knowledge/overview")
+    public CompletableFuture<ResponseEntity<byte[]>> overview(@RequestHeader final HttpHeaders headers,
+                                                              final HttpServletRequest request) {
+        return this.proxy("knowledge.overview", Map.of(), null, headers, request);
     }
 
     @PostMapping("/api/v1/infrastructure/knowledge/inventory/build")
-    public ResponseEntity<KnowledgeInventoryBuildResultView> buildInventory(@RequestBody(required = false) final KnowledgeInventoryBuildRequest request) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.buildInventory(request));
+    public CompletableFuture<ResponseEntity<byte[]>> buildInventory(@RequestBody(required = false) final byte[] body,
+                                                                    @RequestHeader final HttpHeaders headers,
+                                                                    final HttpServletRequest request) {
+        return this.proxy("knowledge.inventory.build", Map.of(), body, headers, request);
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/inventory/status")
-    public ResponseEntity<KnowledgeInventoryStatusView> inventoryStatus() {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.inventoryStatus());
+    public CompletableFuture<ResponseEntity<byte[]>> inventoryStatus(@RequestHeader final HttpHeaders headers,
+                                                                     final HttpServletRequest request) {
+        return this.proxy("knowledge.inventory.status", Map.of(), null, headers, request);
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/inventory/files")
-    public ResponseEntity<KnowledgeFilesView> files(@RequestParam(required = false) final String sourceId,
-                                                    @RequestParam(required = false) final String pathContains,
-                                                    @RequestParam(required = false) final String extension,
-                                                    @RequestParam(required = false) final Integer limit,
-                                                    @RequestParam(required = false) final Integer offset) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.files(new KnowledgeFilesRequest(sourceId, pathContains, extension, limit, offset)));
+    public CompletableFuture<ResponseEntity<byte[]>> files(@RequestHeader final HttpHeaders headers,
+                                                           final HttpServletRequest request) {
+        return this.proxy("knowledge.inventory.files", Map.of(), null, headers, request);
     }
 
     @PostMapping("/api/v1/infrastructure/knowledge/analysis/build")
-    public ResponseEntity<KnowledgeAnalysisBuildView> buildAnalysis(@RequestBody(required = false) final KnowledgeAnalysisBuildRequest request) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.buildAnalysis(request));
+    public CompletableFuture<ResponseEntity<byte[]>> buildAnalysis(@RequestBody(required = false) final byte[] body,
+                                                                   @RequestHeader final HttpHeaders headers,
+                                                                   final HttpServletRequest request) {
+        return this.proxy("knowledge.analysis.build", Map.of(), body, headers, request);
+    }
+
+    @PostMapping("/api/v1/infrastructure/knowledge/analysis/retry-failed")
+    public CompletableFuture<ResponseEntity<byte[]>> retryFailedAnalysis(@RequestBody(required = false) final byte[] body,
+                                                                         @RequestHeader final HttpHeaders headers,
+                                                                         final HttpServletRequest request) {
+        return this.proxy("knowledge.analysis.retry-failed", Map.of(), body, headers, request);
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/analysis/jobs/{jobId}")
-    public ResponseEntity<KnowledgeAnalysisJobView> analysisJob(@PathVariable final String jobId) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisJob(jobId));
+    public CompletableFuture<ResponseEntity<byte[]>> analysisJob(@PathVariable final String jobId,
+                                                                 @RequestHeader final HttpHeaders headers,
+                                                                 final HttpServletRequest request) {
+        return this.proxy("knowledge.analysis.job", Map.of("jobId", jobId), null, headers, request);
     }
 
     @PostMapping("/api/v1/infrastructure/knowledge/analysis/jobs/{jobId}/stop")
-    public ResponseEntity<KnowledgeAnalysisStopView> stopAnalysis(@PathVariable final String jobId) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.stopAnalysis(jobId));
+    public CompletableFuture<ResponseEntity<byte[]>> stopAnalysis(@PathVariable final String jobId,
+                                                                  @RequestBody(required = false) final byte[] body,
+                                                                  @RequestHeader final HttpHeaders headers,
+                                                                  final HttpServletRequest request) {
+        return this.proxy("knowledge.analysis.job.stop", Map.of("jobId", jobId), body, headers, request);
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/analysis/status")
-    public ResponseEntity<KnowledgeAnalysisStatusView> analysisStatus() {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisStatus());
+    public CompletableFuture<ResponseEntity<byte[]>> analysisStatus(@RequestHeader final HttpHeaders headers,
+                                                                    final HttpServletRequest request) {
+        return this.proxy("knowledge.analysis.status", Map.of(), null, headers, request);
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/analysis/files")
-    public ResponseEntity<KnowledgeAnalysisFilesView> analysisFiles(@RequestParam(required = false) final String sourceId,
-                                                                    @RequestParam(required = false) final String status,
-                                                                    @RequestParam(required = false) final String pathContains,
-                                                                    @RequestParam(required = false) final Integer limit,
-                                                                    @RequestParam(required = false) final Integer offset) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisFiles(new KnowledgeAnalysisFilesRequest(sourceId, status, pathContains, limit, offset)));
+    public CompletableFuture<ResponseEntity<byte[]>> analysisFiles(@RequestHeader final HttpHeaders headers,
+                                                                   final HttpServletRequest request) {
+        return this.proxy("knowledge.analysis.files", Map.of(), null, headers, request);
     }
 
-    @GetMapping("/api/v1/infrastructure/knowledge/analysis/symbols")
-    public ResponseEntity<KnowledgeAnalysisSymbolsView> analysisSymbols(@RequestParam(required = false) final String sourceId,
-                                                                        @RequestParam(required = false) final String role,
-                                                                        @RequestParam(required = false) final String kind,
-                                                                        @RequestParam(required = false) final String pathContains,
-                                                                        @RequestParam(required = false) final String nameContains,
-                                                                        @RequestParam(required = false) final String flowDomain,
-                                                                        @RequestParam(required = false) final String factOrigin,
-                                                                        @RequestParam(required = false) final Integer limit,
-                                                                        @RequestParam(required = false) final Integer offset) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisSymbols(new KnowledgeAnalysisSymbolsRequest(sourceId, role, kind, pathContains, nameContains, flowDomain, factOrigin, limit, offset)));
-    }
-
-    @GetMapping("/api/v1/infrastructure/knowledge/analysis/relations")
-    public ResponseEntity<KnowledgeAnalysisRelationsView> analysisRelations(@RequestParam(required = false) final String sourceId,
-                                                                            @RequestParam(required = false) final String relation,
-                                                                            @RequestParam(required = false) final String fromSymbolId,
-                                                                            @RequestParam(required = false) final String toSymbolId,
-                                                                            @RequestParam(required = false) final String flowDomain,
-                                                                            @RequestParam(required = false) final String factOrigin,
-                                                                            @RequestParam(required = false) final Integer limit,
-                                                                            @RequestParam(required = false) final Integer offset) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisRelations(new KnowledgeAnalysisRelationsRequest(sourceId, relation, fromSymbolId, toSymbolId, flowDomain, factOrigin, limit, offset)));
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/diagnostics")
+    public CompletableFuture<ResponseEntity<byte[]>> analysisDiagnostics(@RequestHeader final HttpHeaders headers,
+                                                                        final HttpServletRequest request) {
+        return this.proxy("knowledge.analysis.diagnostics", Map.of(), null, headers, request);
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/manifest")
-    public ResponseEntity<Map<String, Object>> analysisGraphManifest(@RequestHeader(name = "If-None-Match", required = false) final String ifNoneMatch,
-                                                                     @RequestParam(required = false) final String sourceId,
-                                                                     @RequestParam(required = false) final String flowDomain,
-                                                                     @RequestParam(required = false) final String factOrigin,
-                                                                     @RequestParam(required = false) final String nodeKind,
-                                                                     @RequestParam(required = false) final String edgeType,
-                                                                     @RequestParam(required = false) final String includeExternal,
-                                                                     @RequestParam(required = false) final Boolean includeUnresolved,
-                                                                     @RequestParam(required = false) final Boolean includeIsolated) {
-        return this.graphSnapshotResponse(this.manageKnowledgeInfrastructure.analysisGraphManifest(new KnowledgeGraphSnapshotRequest(
-                sourceId, flowDomain, factOrigin, nodeKind, edgeType, includeExternal, includeUnresolved, includeIsolated, null, null, null, ifNoneMatch
-        )));
+    public CompletableFuture<ResponseEntity<byte[]>> analysisGraphManifest(@RequestHeader final HttpHeaders headers,
+                                                                          final HttpServletRequest request) {
+        return this.proxy("knowledge.graph.manifest", Map.of(), null, headers, request);
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/nodes")
-    public ResponseEntity<Map<String, Object>> analysisGraphNodes(@RequestParam final String graphRevision,
-                                                                 @RequestParam(required = false) final String cursor,
-                                                                 @RequestParam(required = false) final Integer pageSize,
-                                                                 @RequestParam(required = false) final String sourceId,
-                                                                 @RequestParam(required = false) final String flowDomain,
-                                                                 @RequestParam(required = false) final String factOrigin,
-                                                                 @RequestParam(required = false) final String nodeKind,
-                                                                 @RequestParam(required = false) final String includeExternal,
-                                                                 @RequestParam(required = false) final Boolean includeUnresolved,
-                                                                 @RequestParam(required = false) final Boolean includeIsolated) {
-        return this.graphSnapshotResponse(this.manageKnowledgeInfrastructure.analysisGraphNodes(new KnowledgeGraphSnapshotRequest(
-                sourceId, flowDomain, factOrigin, nodeKind, null, includeExternal, includeUnresolved, includeIsolated, graphRevision, cursor, pageSize, null
-        )));
+    public CompletableFuture<ResponseEntity<byte[]>> analysisGraphNodes(@RequestHeader final HttpHeaders headers,
+                                                                       final HttpServletRequest request) {
+        return this.proxy("knowledge.graph.nodes", Map.of(), null, headers, request);
     }
 
     @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/edges")
-    public ResponseEntity<Map<String, Object>> analysisGraphEdges(@RequestParam final String graphRevision,
-                                                                 @RequestParam(required = false) final String cursor,
-                                                                 @RequestParam(required = false) final Integer pageSize,
-                                                                 @RequestParam(required = false) final String sourceId,
-                                                                 @RequestParam(required = false) final String flowDomain,
-                                                                 @RequestParam(required = false) final String factOrigin,
-                                                                 @RequestParam(required = false) final String edgeType,
-                                                                 @RequestParam(required = false) final String includeExternal,
-                                                                 @RequestParam(required = false) final Boolean includeUnresolved) {
-        return this.graphSnapshotResponse(this.manageKnowledgeInfrastructure.analysisGraphEdges(new KnowledgeGraphSnapshotRequest(
-                sourceId, flowDomain, factOrigin, null, edgeType, includeExternal, includeUnresolved, null, graphRevision, cursor, pageSize, null
-        )));
+    public CompletableFuture<ResponseEntity<byte[]>> analysisGraphEdges(@RequestHeader final HttpHeaders headers,
+                                                                       final HttpServletRequest request) {
+        return this.proxy("knowledge.graph.edges", Map.of(), null, headers, request);
     }
 
-    @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph")
-    public ResponseEntity<KnowledgeAnalysisGraphView> analysisGraph(@RequestParam(required = false) final String sourceId,
-                                                                    @RequestParam(required = false) final String graphNodeId,
-                                                                    @RequestParam(required = false) final String graphEdgeId,
-                                                                    @RequestParam(required = false) final String inventoryFileId,
-                                                                    @RequestParam(required = false) final String flowDomain,
-                                                                    @RequestParam(required = false) final String factOrigin,
-                                                                    @RequestParam(required = false) final String nodeKind,
-                                                                    @RequestParam(required = false) final String edgeType,
-                                                                    @RequestParam(required = false) final Integer depth,
-                                                                    @RequestParam(required = false) final Integer limit,
-                                                                    @RequestParam(required = false) final Boolean includeEvidence,
-                                                                    @RequestParam(required = false) final Boolean includeClaims,
-                                                                    @RequestParam(required = false) final Boolean includeDiagnostics) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisGraph(new KnowledgeAnalysisGraphRequest(
-                sourceId,
-                graphNodeId,
-                graphEdgeId,
-                inventoryFileId,
-                flowDomain,
-                factOrigin,
-                nodeKind,
-                edgeType,
-                depth,
-                limit,
-                includeEvidence,
-                includeClaims,
-                includeDiagnostics
-        )));
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/node/{nodeId}")
+    public CompletableFuture<ResponseEntity<byte[]>> analysisGraphNode(@PathVariable final String nodeId,
+                                                                      @RequestHeader final HttpHeaders headers,
+                                                                      final HttpServletRequest request) {
+        return this.proxy("knowledge.graph.node", Map.of("nodeId", nodeId), null, headers, request);
     }
 
-    @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/slice")
-    public ResponseEntity<KnowledgeAnalysisGraphView> analysisGraphSlice(@RequestParam(required = false) final String sourceId,
-                                                                         @RequestParam(required = false) final String rootGraphNodeId,
-                                                                         @RequestParam(required = false) final String stableKey,
-                                                                         @RequestParam(required = false) final String flowDomain,
-                                                                         @RequestParam(required = false) final String direction,
-                                                                         @RequestParam(required = false) final Integer depth,
-                                                                         @RequestParam(required = false) final Integer maxNodes,
-                                                                         @RequestParam(required = false) final Integer maxEdges,
-                                                                         @RequestParam(required = false) final String includeExternal,
-                                                                         @RequestParam(required = false) final Boolean includeUnresolved,
-                                                                         @RequestParam(required = false) final Boolean includeTests,
-                                                                         @RequestParam(required = false) final Boolean includeWorkflow,
-                                                                         @RequestParam(required = false) final String edgeTypes,
-                                                                         @RequestParam(required = false) final String nodeKinds,
-                                                                         @RequestParam(required = false) final Boolean includeEvidence,
-                                                                         @RequestParam(required = false) final Boolean includeClaims,
-                                                                         @RequestParam(required = false) final Boolean includeIsolated) {
-        return ResponseEntity.ok(this.manageKnowledgeInfrastructure.analysisGraphSlice(new KnowledgeAnalysisGraphSliceRequest(
-                sourceId,
-                rootGraphNodeId,
-                stableKey,
-                flowDomain,
-                direction,
-                depth,
-                maxNodes,
-                maxEdges,
-                includeExternal,
-                includeUnresolved,
-                includeTests,
-                includeWorkflow,
-                edgeTypes,
-                nodeKinds,
-                includeEvidence,
-                includeClaims,
-                includeIsolated
-        )));
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/edge/{edgeId}")
+    public CompletableFuture<ResponseEntity<byte[]>> analysisGraphEdge(@PathVariable final String edgeId,
+                                                                      @RequestHeader final HttpHeaders headers,
+                                                                      final HttpServletRequest request) {
+        return this.proxy("knowledge.graph.edge", Map.of("edgeId", edgeId), null, headers, request);
     }
 
-    @ExceptionHandler(KnowledgeGatewayException.class)
-    public ResponseEntity<KnowledgeErrorResponse> handleKnowledgeGatewayException(final KnowledgeGatewayException exception) {
-        return ResponseEntity
-                .status(this.httpStatus(exception.getCode()))
-                .body(new KnowledgeErrorResponse(exception.getResponseCode(), exception.getMessage()));
-    }
-
-    private HttpStatus httpStatus(final KnowledgeGatewayErrorCode code) {
-        return switch (code) {
-            case KNOWLEDGE_TIMEOUT -> HttpStatus.GATEWAY_TIMEOUT;
-            case KNOWLEDGE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
-            case KNOWLEDGE_REQUEST_FAILED -> HttpStatus.BAD_REQUEST;
-            case KNOWLEDGE_NOT_FOUND -> HttpStatus.NOT_FOUND;
-            case KNOWLEDGE_CONFLICT -> HttpStatus.CONFLICT;
-            case KNOWLEDGE_BAD_RESPONSE -> HttpStatus.BAD_GATEWAY;
-        };
-    }
-
-    private ResponseEntity<Map<String, Object>> graphSnapshotResponse(final KnowledgeGraphSnapshotResponse response) {
-        final HttpHeaders headers = new HttpHeaders();
-        for (final Map.Entry<String, List<String>> entry : response.headers().entrySet()) {
-            headers.put(entry.getKey(), entry.getValue());
-        }
-        return new ResponseEntity<>(response.body(), headers, HttpStatus.valueOf(response.statusCode()));
-    }
-
-    public record KnowledgeErrorResponse(String code, String message) {
+    private CompletableFuture<ResponseEntity<byte[]>> proxy(final String route,
+                                                            final Map<String, String> pathVariables,
+                                                            final byte[] body,
+                                                            final HttpHeaders headers,
+                                                            final HttpServletRequest request) {
+        return this.proxyTransport.forward(route, pathVariables, body, headers, request);
     }
 }

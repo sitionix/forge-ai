@@ -10,7 +10,6 @@ Physical Maven modules:
 - `services/forge-nexus/domain`
 - `services/forge-nexus/infrastructure/jarvis-client`
 - `services/forge-nexus/infrastructure/knowledge-client`
-- `services/forge-nexus/infrastructure/knowledge-sqlite`
 - supporting Java infrastructure modules under `services/forge-nexus/infrastructure/*`
 
 `services/forge-nexus/pom.xml` is the Java Nexus Maven aggregator. The repository root `pom.xml` is only the lightweight platform aggregator and points at `services/forge-nexus`.

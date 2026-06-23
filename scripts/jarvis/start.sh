@@ -59,40 +59,62 @@ fi
 
 if curl -fsS "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
   echo "Jarvis Agent is already reachable at http://${HOST}:${PORT}/health"
-else
-  if [[ -f "${PID_FILE}" ]]; then
-    existing_pid="$(cat "${PID_FILE}")"
-    existing_cmd="$(ps -p "${existing_pid}" -o command= 2>/dev/null || true)"
-    if [[ -n "${existing_cmd}" && "${existing_cmd}" == *"jarvis_agent.main:app"* ]]; then
-      echo "Jarvis PID ${existing_pid} exists but health check failed; stopping unhealthy service."
-      kill "${existing_pid}" >/dev/null 2>&1 || true
-      sleep 1
-    else
-      echo "Ignoring stale Jarvis PID file: ${existing_pid}"
-    fi
-  fi
-  echo "Starting Jarvis Agent on ${HOST}:${PORT}..."
-  (
-    cd "${JARVIS_ROOT}"
-    setsid nohup env \
-      JARVIS_REPO_ROOT="${JARVIS_ROOT}" \
-      FORGE_AI_HOME="${FORGE_AI_HOME}" \
-      FORGE_CONFIG_DIR="${FORGE_CONFIG_DIR}" \
-      FORGE_RUNTIME_DIR="${FORGE_RUNTIME_DIR}" \
-      FORGE_WORKSPACE_ROOT="${FORGE_WORKSPACE_ROOT}" \
-      JARVIS_CONFIG_DIR="${JARVIS_CONFIG_DIR}" \
-      JARVIS_LOG_FILE="${FORGE_RUNTIME_DIR}/jarvis/logs/jarvis-agent.log" \
-      JARVIS_HOST="${HOST}" \
-      JARVIS_PORT="${PORT}" \
-      PYTHONPATH="${JARVIS_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-      "${PYTHON}" -m uvicorn jarvis_agent.main:app \
-      --app-dir "${JARVIS_ROOT}/src" \
-      --host "${HOST}" \
-      --port "${PORT}" \
-      > "${STDOUT_LOG}" 2>&1 &
-    echo $! > "${PID_FILE}"
-  )
+  exit 0
 fi
 
-echo
-echo "Jarvis health: http://${HOST}:${PORT}/health"
+if [[ -f "${PID_FILE}" ]]; then
+  existing_pid="$(cat "${PID_FILE}")"
+  existing_cmd="$(ps -p "${existing_pid}" -o command= 2>/dev/null || true)"
+  if [[ -n "${existing_cmd}" && "${existing_cmd}" == *"jarvis_agent.main:app"* ]]; then
+    echo "Jarvis PID ${existing_pid} exists but health check failed; stopping unhealthy service."
+    kill "${existing_pid}" >/dev/null 2>&1 || true
+    sleep 1
+  else
+    echo "Ignoring stale Jarvis PID file: ${existing_pid}"
+  fi
+  rm -f "${PID_FILE}"
+fi
+
+if command -v lsof >/dev/null 2>&1; then
+  port_pids="$(lsof -t -iTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -n "${port_pids}" ]]; then
+    echo "Jarvis port ${PORT} is occupied by pid(s): ${port_pids}"
+    exit 1
+  fi
+fi
+
+echo "Starting Jarvis Agent on ${HOST}:${PORT}..."
+(
+  cd "${JARVIS_ROOT}"
+  setsid nohup env \
+    JARVIS_REPO_ROOT="${JARVIS_ROOT}" \
+    FORGE_AI_HOME="${FORGE_AI_HOME}" \
+    FORGE_CONFIG_DIR="${FORGE_CONFIG_DIR}" \
+    FORGE_RUNTIME_DIR="${FORGE_RUNTIME_DIR}" \
+    FORGE_WORKSPACE_ROOT="${FORGE_WORKSPACE_ROOT}" \
+    JARVIS_CONFIG_DIR="${JARVIS_CONFIG_DIR}" \
+    JARVIS_LOG_FILE="${FORGE_RUNTIME_DIR}/jarvis/logs/jarvis-agent.log" \
+    JARVIS_HOST="${HOST}" \
+    JARVIS_PORT="${PORT}" \
+    PYTHONPATH="${JARVIS_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+    "${PYTHON}" -m uvicorn jarvis_agent.main:app \
+    --app-dir "${JARVIS_ROOT}/src" \
+    --host "${HOST}" \
+    --port "${PORT}" \
+    > "${STDOUT_LOG}" 2>&1 &
+  echo $! > "${PID_FILE}"
+)
+
+for _ in {1..30}; do
+  if curl -fsS "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
+    echo
+    echo "Jarvis health: http://${HOST}:${PORT}/health"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "Jarvis Agent did not become healthy at http://${HOST}:${PORT}/health"
+echo "Last Jarvis log lines:"
+tail -n 80 "${STDOUT_LOG}" || true
+exit 1

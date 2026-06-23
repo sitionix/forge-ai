@@ -38,7 +38,8 @@ def is_included_file(relative_path: str, include: Iterable[str]) -> bool:
 
 def is_binary_file(path: Path, sample_size: int = 8192) -> bool:
     try:
-        sample = path.read_bytes()[:sample_size]
+        with path.open("rb") as handle:
+            sample = handle.read(sample_size)
     except OSError:
         return True
     return b"\0" in sample

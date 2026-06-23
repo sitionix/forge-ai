@@ -24,6 +24,7 @@ class KnowledgeClient:
     def __init__(self, base_url: str, timeout_seconds: int) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
         self._validate_base_url()
 
     async def context(self, query: str, max_context_chars: int) -> Dict[str, Any]:
@@ -33,9 +34,8 @@ class KnowledgeClient:
             "includeContent": True,
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(f"{self.base_url}/api/v1/knowledge/context", json=payload)
-                response.raise_for_status()
+            response = await self._client.post(f"{self.base_url}/api/v1/knowledge/context", json=payload)
+            response.raise_for_status()
         except httpx.HTTPError as exc:
             raise KnowledgeUnavailableError(f"Knowledge is not reachable at {self.base_url}") from exc
         try:
@@ -45,6 +45,9 @@ class KnowledgeClient:
         if not isinstance(data, dict):
             raise KnowledgeBadResponseError("Knowledge returned a non-object response")
         return data
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
     def _validate_base_url(self) -> None:
         parsed = urlparse(self.base_url)

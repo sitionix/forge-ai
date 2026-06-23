@@ -1,0 +1,1 @@
+{"code":"UPSTREAM_ERROR","message":"Knowledge service returned an upstream error.","correlationId":"corr-upstream-500","upstreamStatus":500,"route":"knowledge.status"}

@@ -5,12 +5,12 @@ import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI
 
 from knowledge_service.analysis_schema import AnalysisResult
-from knowledge_service.analysis_service import AnalysisProvider, JobExecutor
+from knowledge_service.analysis_service import AnalysisProvider
 from knowledge_service.bootstrap import KnowledgeDependencies, build_dependencies
 from knowledge_service.config import AppConfig, ForgeSettings, load_forge_settings
 from knowledge_service.errors import KnowledgeError
@@ -33,18 +33,34 @@ class AsgiTestClient:
 
     def __init__(self, app: FastAPI) -> None:
         self.app = app
+        self._lifespan = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def __enter__(self) -> "AsgiTestClient":
+        self._loop = asyncio.new_event_loop()
+        self._lifespan = self.app.router.lifespan_context(self.app)
+        self._loop.run_until_complete(self._lifespan.__aenter__())
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        if self._lifespan is not None and self._loop is not None:
+            self._loop.run_until_complete(self._lifespan.__aexit__(exc_type, exc, tb))
+            self._lifespan = None
+        if self._loop is not None:
+            self._loop.close()
+            self._loop = None
         return None
 
     def get(self, path: str, headers: Optional[Dict[str, str]] = None) -> AsgiResponse:
-        return asyncio.run(self._request("GET", path, None, headers or {}))
+        return self._run(self._request("GET", path, None, headers or {}))
 
     def post(self, path: str, json: Optional[Dict[str, Any]] = None) -> AsgiResponse:
-        return asyncio.run(self._request("POST", path, json or {}, {}))
+        return self._run(self._request("POST", path, json or {}, {}))
+
+    def _run(self, awaitable):
+        if self._loop is not None:
+            return self._loop.run_until_complete(awaitable)
+        return asyncio.run(awaitable)
 
     async def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]], headers: Dict[str, str]) -> AsgiResponse:
         raw_path, _, query = path.partition("?")
@@ -85,22 +101,6 @@ class AsgiTestClient:
         response_headers = {key.decode("utf-8").lower(): value.decode("utf-8") for key, value in start.get("headers", [])}
         response_body = b"".join(message.get("body", b"") for message in messages if message["type"] == "http.response.body")
         return AsgiResponse(status, response_body, response_headers)
-
-
-class InlineJobExecutor:
-    def submit(self, action: Callable[[], None]) -> None:
-        action()
-
-
-class HoldingJobExecutor:
-    def __init__(self) -> None:
-        self.actions: List[Callable[[], None]] = []
-
-    def submit(self, action: Callable[[], None]) -> None:
-        self.actions.append(action)
-
-    def run_next(self) -> None:
-        self.actions.pop(0)()
 
 
 class DeterministicAnalysisProvider:
@@ -259,7 +259,6 @@ def build_test_app(
     config_file: Path,
     *,
     provider: Optional[AnalysisProvider] = None,
-    executor: Optional[JobExecutor] = None,
 ) -> tuple[FastAPI, ForgeSettings, AppConfig, KnowledgeDependencies]:
     env = {
         "FORGE_CONFIG_FILE": str(config_file),
@@ -273,7 +272,6 @@ def build_test_app(
     deps = build_dependencies(
         app_config,
         analysis_provider=provider or DeterministicAnalysisProvider(),
-        job_executor=executor or InlineJobExecutor(),
     )
     return create_app(settings=settings, dependencies=deps), settings, app_config, deps
 

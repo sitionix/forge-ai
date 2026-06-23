@@ -86,10 +86,6 @@
                 <artifactId>knowledge-client</artifactId>
             </dependency>
             <dependency>
-                <groupId>${project.groupId}</groupId>
-                <artifactId>knowledge-sqlite</artifactId>
-            </dependency>
-            <dependency>
                 <groupId>org.mapstruct</groupId>
                 <artifactId>mapstruct</artifactId>
                 <version>${mapstruct.version}</version>
@@ -126,6 +122,7 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.0.0-M7</version>
                     <configuration>
+                        <argLine>${argLine} -Djdk.attach.allowAttachSelf=true</argLine>
                         <includes>
                             <include>**/*Test.java</include>
                         </includes>

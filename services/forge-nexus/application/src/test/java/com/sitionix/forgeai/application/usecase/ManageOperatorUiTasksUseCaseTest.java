@@ -196,7 +196,15 @@ class ManageOperatorUiTasksUseCaseTest {
     void givenTicketWithActiveExecutions_whenDelete_thenInterruptBeforeRemovingTicketData() {
         final UUID ticketId = UUID.randomUUID();
         when(this.ticketRepository.findById(ticketId)).thenReturn(Optional.of(this.ticket(ticketId, TicketStatus.READY_TO_START)));
-        when(this.laneExecutionRepository.findActiveExecutionsByTicketId(ticketId)).thenReturn(List.of(mock(LaneExecution.class)));
+        when(this.laneExecutionRepository.findActiveExecutionsByTicketId(ticketId)).thenReturn(List.of(LaneExecution.builder()
+                .id(UUID.randomUUID())
+                .ticketId(ticketId)
+                .laneId(UUID.randomUUID())
+                .agentId("api")
+                .scope("GLOBAL")
+                .status(LaneExecutionStatus.STEP_RUNNING)
+                .updatedAt(LocalDateTime.now())
+                .build()));
 
         this.manageOperatorUiTasks.delete(ticketId);
 

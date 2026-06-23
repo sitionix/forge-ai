@@ -42,7 +42,7 @@ scripts/status.sh
 curl -fsS http://127.0.0.1:9099/fgaisox/actuator/health
 curl -fsS http://127.0.0.1:9099/fgaisox/api/v1/infrastructure/jarvis/status
 curl -fsS http://127.0.0.1:9099/fgaisox/api/v1/infrastructure/knowledge/status
-curl -fsS http://127.0.0.1:9099/fgaisox/api/v1/infrastructure/knowledge/services/status
+curl -fsS http://127.0.0.1:9099/fgaisox/api/v1/infrastructure/knowledge/overview
 ```
 
 Do not run inventory or analysis build endpoints as a health check; they can be expensive.

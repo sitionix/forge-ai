@@ -15,8 +15,9 @@
   const apiBase = `${contextPath}${runtimeConfig.operatorUiApiBasePath}`;
   const operatorApiBase = `${contextPath}${runtimeConfig.operatorApiBasePath}`;
   const infrastructureApiBase = `${contextPath}${runtimeConfig.infrastructureApiBasePath}`;
-  const knowledgeStatusActivePollMs = Number(runtimeConfig.activeJobPollIntervalMs) || 1500;
-  const knowledgeStatusIdlePollMs = Number(runtimeConfig.statusPollIntervalMs) || 15000;
+  const KNOWLEDGE_SERVICES_STATUS_POLL_MS = 2000;
+  const knowledgeStatusRequestTimeoutMs = Number(runtimeConfig.statusRequestTimeoutMs) || 8000;
+  const KNOWLEDGE_DEBUG_POLLING = false;
   const knowledgeGraphPollMs = Number(runtimeConfig.graphPollIntervalMs) || 30000;
   const knowledgeGraphPerformanceConfig = {
     cacheEnabled: runtimeConfig.graphCacheEnabled !== false,
@@ -43,8 +44,27 @@
     cardMinHeight: 84
   };
   const layoutStoragePrefix = 'forge-ai.operator.layout.';
-  let knowledgeStatusPollTimer = null;
-  let knowledgeStatusPollDelayMs = null;
+  const knowledgeOverviewPolling = {
+    timerId: null,
+    currentPromise: null,
+    currentEndpoint: null,
+    startedAt: null,
+    sequence: 0,
+    abortController: null,
+    requestSeq: 0,
+    completedSeq: 0,
+    lastSuccessAt: null,
+    errorCount: 0,
+    lastEndpoint: null,
+    stopped: true,
+    activeCount: 0,
+    requestCount: 0,
+    maxConcurrent: 0,
+    latestAppliedSeq: 0,
+    lastGoodStatus: null,
+    lastGoodStatusAt: null,
+    lastRejectedReason: null
+  };
   let knowledgeGraphPollTimer = null;
   const knowledgeGraphState = {
     data: null,
@@ -67,6 +87,8 @@
     selectedDetail: null,
     selectedDetailLoading: false,
     selectedDetailError: null,
+    retrySubmitting: false,
+    retryJobId: null,
     loadController: null,
     loadToken: 0,
     loadingState: 'IDLE',
@@ -358,6 +380,7 @@
   }
 
   async function fetchInfrastructureJson(method, path, body, requestOptions = {}) {
+    const startedAt = Date.now();
     const options = {
       method,
       cache: 'no-store',
@@ -368,16 +391,45 @@
       options.headers['Content-Type'] = 'application/json';
       options.body = JSON.stringify(body);
     }
-    const response = await fetch(`${infrastructureApiBase}${path}`, options);
+    let response;
+    try {
+      response = await fetch(`${infrastructureApiBase}${path}`, options);
+    } catch (error) {
+      enrichInfrastructureError(error, path, null, startedAt);
+      throw error;
+    }
     const text = await response.text();
-    const payload = text ? JSON.parse(text) : {};
+    let payload = {};
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch (error) {
+      const parseError = new Error('Knowledge response was not valid JSON');
+      parseError.code = 'KNOWLEDGE_BAD_RESPONSE';
+      parseError.endpoint = path;
+      parseError.status = response.status;
+      parseError.durationMs = Date.now() - startedAt;
+      parseError.bodyPreview = text ? text.slice(0, 300) : '';
+      throw parseError;
+    }
     if (requestOptions.includeResponse) {
       return { status: response.status, headers: response.headers, body: payload, ok: response.ok };
     }
     if (!response.ok) {
-      throw new Error(payload.message || payload.code || `${response.status} ${response.statusText}`);
+      const error = new Error(payload.message || payload.code || `${response.status} ${response.statusText}`);
+      enrichInfrastructureError(error, path, response, startedAt, payload);
+      throw error;
     }
     return payload;
+  }
+
+  function enrichInfrastructureError(error, path, response, startedAt, payload = {}) {
+    error.endpoint = payload.endpoint || path;
+    error.code = payload.code || error.code || (error.name === 'AbortError' ? 'REQUEST_ABORTED' : 'REQUEST_FAILED');
+    error.status = response?.status || payload.status || null;
+    error.upstreamStatus = payload.upstreamStatus || null;
+    error.durationMs = payload.durationMs || Date.now() - startedAt;
+    error.bodyPreview = payload.bodyPreview || error.bodyPreview || null;
+    return error;
   }
 
   function pill(label, value) {
@@ -2210,26 +2262,61 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   }
 
   async function loadKnowledge() {
-    const updated = document.getElementById('knowledgeUpdated');
-    try {
-      const serviceStatus = await getInfrastructureJson(knowledgeServicesStatusPath());
-      setError('knowledgeError', null);
-      renderKnowledgeSources(serviceStatus);
-      scheduleKnowledgeStatusPoll(serviceStatus?.activeJob);
-      if (updated) {
-        updated.textContent = `updated ${new Date().toLocaleTimeString()}`;
-      }
-    } catch (error) {
-      setError('knowledgeError', error);
-      if (updated) {
-        updated.textContent = 'failed';
-      }
+    renderKnowledgeLoadingState();
+    if (knowledgeOverviewPolling.stopped) {
+      startKnowledgeOverviewPolling();
+      return knowledgeOverviewPolling.currentPromise;
     }
+    return executeKnowledgeOverviewPoll({ manual: true, caller: 'knowledge-manual' });
   }
 
-  function knowledgeServicesStatusPath(detailsSourceId = null) {
-    const query = detailsSourceId ? `?detailsSourceId=${encodeURIComponent(detailsSourceId)}` : '';
-    return `/knowledge/services/status${query}`;
+  function knowledgeOverviewPath() {
+    return '/knowledge/overview';
+  }
+
+  function normalizeKnowledgeOverviewPayload(payload) {
+    if (Array.isArray(payload?.services)) {
+      return payload;
+    }
+    const sources = Array.isArray(payload?.sources) ? payload.sources : [];
+    const services = sources.map((source) => {
+      const inventory = source.inventory || {};
+      const analysis = source.analysis || {};
+      return {
+        sourceId: source.sourceId,
+        label: source.displayName || source.label || source.sourceId,
+        group: source.group || null,
+        rootExists: source.rootExists,
+        tags: source.tags || [],
+        inventory: {
+          status: inventory.status,
+          eligibleFileCount: inventory.fileCount ?? inventory.eligibleFileCount ?? 0,
+          skippedCount: inventory.skippedCount ?? 0
+        },
+        analysis: {
+          status: analysis.status,
+          inventoryFileCount: analysis.totalFiles ?? analysis.inventoryFileCount ?? 0,
+          analyzedFileCount: analysis.succeededFiles ?? analysis.analyzedFileCount ?? 0,
+          processedFileCount: analysis.processedFiles ?? analysis.processedFileCount ?? 0,
+          failedFileCount: analysis.failedFiles ?? analysis.failedFileCount ?? 0,
+          skippedTooLargeFileCount: analysis.skippedFiles ?? analysis.skippedTooLargeFileCount ?? 0,
+          pendingFileCount: analysis.pendingFiles ?? analysis.pendingFileCount ?? 0,
+          percent: analysis.percent ?? 0,
+          activeJobId: analysis.activeJobId,
+          activeJobMode: analysis.activeJobMode,
+          activeJobSelectedFileCount: analysis.activeJobSelectedFileCount,
+          activeJobProcessedFileCount: analysis.activeJobProcessedFileCount,
+          activeJobFailedFileCount: analysis.activeJobFailedFileCount,
+          activeJobCurrentRelativePath: analysis.activeJobCurrentRelativePath
+        }
+      };
+    });
+    return {
+      version: payload?.version ?? 0,
+      updatedAt: payload?.updatedAt ?? null,
+      services,
+      activeJob: payload?.activeJob || null
+    };
   }
 
   function renderKnowledgeSources(data) {
@@ -2254,13 +2341,16 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       }
     }
     if (diagnostics) {
-      const items = services.flatMap((service) =>
-        (service.diagnostics || []).map((item) => ({ ...item, sourceId: service.sourceId }))
-      );
-      diagnostics.innerHTML = items.length === 0
-        ? 'No diagnostics.'
-        : renderKnowledgeDiagnosticGroups(items);
+      diagnostics.innerHTML = '';
     }
+  }
+
+  function renderKnowledgeLoadingState() {
+    const body = document.getElementById('knowledgeSourcesBody');
+    if (!body || knowledgeOverviewPolling.lastGoodStatus) {
+      return;
+    }
+    body.innerHTML = '<tr><td colspan="5">Loading services...</td></tr>';
   }
 
   function renderKnowledgeSourceRow(source) {
@@ -2294,7 +2384,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       <td>
         <div class="knowledge-source-label">
           <strong>${escapeHtml(source.sourceId || '-')}</strong>
-          <span>${escapeHtml(source.label || source.displayName || '-')}</span>
+          <span>${escapeHtml(source.label || '-')}</span>
           <small>${escapeHtml(source.group || '-')} · <span class="${rootClass}">${escapeHtml(rootLabel)}</span></small>
           ${tagHtml}
         </div>
@@ -2327,22 +2417,20 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     const analysis = source.analysis || source;
     const inventory = source.inventory || {};
     const facts = source.facts || {};
-    const diagnostics = source.diagnostics || [];
     return `
       <section class="knowledge-service-detail-card knowledge-graph-source-context">
         <div class="detail-card-head">
           <div class="knowledge-card-title">
             <strong>Source Details: ${escapeHtml(source.sourceId || '-')}</strong>
-            <p>${escapeHtml(source.displayName || '-')} · ${escapeHtml(source.group || '-')}</p>
+            <p>${escapeHtml(source.label || '-')} · ${escapeHtml(source.group || '-')}</p>
           </div>
         </div>
         <div class="knowledge-detail-grid">
           <div class="knowledge-detail-block">
             <h3>Service</h3>
             ${renderKnowledgeKv('sourceId', source.sourceId)}
-            ${renderKnowledgeKv('label', source.displayName)}
+            ${renderKnowledgeKv('label', source.label)}
             ${renderKnowledgeKv('group', source.group)}
-            ${renderKnowledgeKv('path', source.path)}
             ${renderKnowledgeKv('root', source.rootExists ? 'OK' : 'missing')}
             ${renderKnowledgeKv('tags', (source.tags || []).join(', ') || '-')}
           </div>
@@ -2350,22 +2438,14 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
             <h3>Inventory</h3>
             ${renderKnowledgeKv('eligible files', inventory.eligibleFileCount ?? 0)}
             ${renderKnowledgeKv('skipped', inventory.skippedCount ?? '-')}
-            ${renderKnowledgeKv('status', inventory.status)}
-            ${inventory.lastInventoryAt ? renderKnowledgeKv('last refreshed', fmtDate(inventory.lastInventoryAt)) : ''}
-            ${renderKnowledgeSkippedBreakdown(inventory.skippedBreakdown)}
           </div>
           <div class="knowledge-detail-block">
             <h3>AI Analysis</h3>
             ${renderKnowledgeKv('status', analysis.status)}
             ${renderKnowledgeAnalysisDetailMetrics(analysis)}
-            ${renderKnowledgeKv('skipped too large', analysis.skippedTooLargeFileCount ?? 0)}
             ${renderKnowledgeKv('failed', analysis.failedFileCount ?? 0)}
-            ${renderKnowledgeKv('stale', analysis.staleFileCount ?? 0)}
             ${renderKnowledgeKv('pending', analysis.pendingFileCount ?? 0)}
             ${analysis.activeJobId ? renderKnowledgeKv('active job', analysis.activeJobId) : ''}
-            ${analysis.currentRelativePath ? renderKnowledgeKv('current file', analysis.currentRelativePath) : ''}
-            ${analysis.lastProgressAt ? renderKnowledgeKv('last progress', fmtDate(analysis.lastProgressAt)) : ''}
-            ${renderKnowledgeProgressWarning(analysis)}
           </div>
           <div class="knowledge-detail-block">
             <h3>Facts</h3>
@@ -2374,10 +2454,6 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
           </div>
         </div>
         <div class="knowledge-detail-grid">
-          <div class="knowledge-detail-block">
-            <h3>Diagnostics</h3>
-            ${renderKnowledgeDiagnosticGroups(diagnostics)}
-          </div>
           <div class="knowledge-detail-block">
             <h3>Recent Failures</h3>
             ${renderKnowledgeFailureList(failures)}
@@ -2410,23 +2486,6 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     return value;
   }
 
-  function renderKnowledgeDiagnosticGroups(diagnostics) {
-    if (!diagnostics.length) {
-      return '<p class="muted">No diagnostics.</p>';
-    }
-    return `
-      <div class="knowledge-diagnostic-list">
-        ${diagnostics.slice(0, 10).map((item) => `
-          <article class="knowledge-diagnostic-item">
-            <strong>${escapeHtml(item.code || 'DIAGNOSTIC')} × ${escapeHtml(item.count ?? 1)}</strong>
-            <p>${escapeHtml(item.message || '-')}</p>
-            ${(item.examples || []).length ? `<small>${escapeHtml(item.examples.slice(0, 3).join(' · '))}</small>` : ''}
-          </article>
-        `).join('')}
-      </div>
-    `;
-  }
-
   function renderKnowledgeFailureList(failures) {
     if (!failures.length) {
       return '<p class="muted">No recent failed files.</p>';
@@ -2453,57 +2512,6 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     `;
   }
 
-  function renderKnowledgeAnalysisSymbolsPreview(symbols) {
-    if (!symbols.length) {
-      return '<p class="muted">No symbols for this source.</p>';
-    }
-    return `
-      <div class="table-wrap compact">
-        <table class="operator-table">
-          <thead><tr><th>kind</th><th>role</th><th>name</th><th>path</th><th>graph</th></tr></thead>
-          <tbody>
-            ${symbols.slice(0, 20).map((symbol) => {
-              const role = (symbol.roles || [])[0] || {};
-              return `
-                <tr>
-                  <td>${escapeHtml(symbol.kind || '-')}</td>
-                  <td>${escapeHtml(role.role || '-')}</td>
-                  <td>${escapeHtml(symbol.name || '-')}</td>
-                  <td class="knowledge-path-cell">${escapeHtml(symbol.relativePath || '-')}</td>
-                  <td><a class="knowledge-graph-row-action" href="${escapeHtml(knowledgeGraphUrl({ sourceId: symbol.sourceId || '', graphNodeId: symbol.symbolId || '', depth: 2 }))}">Graph</a></td>
-                </tr>
-              `;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
-  }
-
-  function renderKnowledgeAnalysisRelationsPreview(relations) {
-    if (!relations.length) {
-      return '<p class="muted">No relations for this source.</p>';
-    }
-    return `
-      <div class="table-wrap compact">
-        <table class="operator-table">
-          <thead><tr><th>relation</th><th>confidence</th><th>from</th><th>to</th><th>graph</th></tr></thead>
-          <tbody>
-            ${relations.slice(0, 20).map((relation) => `
-              <tr>
-                <td>${escapeHtml(relation.relation || '-')}</td>
-                <td>${escapeHtml(formatScore(relation.confidence))}</td>
-                <td class="knowledge-path-cell">${escapeHtml(shortSymbol(relation.fromSymbolId))}</td>
-                <td class="knowledge-path-cell">${escapeHtml(shortSymbol(relation.toSymbolId))}</td>
-                <td><a class="knowledge-graph-row-action" href="${escapeHtml(knowledgeGraphUrl({ sourceId: relation.sourceId || '', graphEdgeId: relation.relationId || '', depth: 1 }))}">Graph</a></td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
-  }
-
   function renderKnowledgeInventoryMini(inventory) {
     const eligible = inventory?.eligibleFileCount ?? 0;
     const skipped = inventory?.skippedCount;
@@ -2516,23 +2524,13 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   }
 
   function renderKnowledgeFactsCell(facts) {
+    if (!facts || (facts.symbolCount === undefined && facts.relationCount === undefined)) {
+      return '<div class="knowledge-facts-cell"><strong>Graph</strong><small>open details</small></div>';
+    }
     return `
       <div class="knowledge-facts-cell">
         <strong>symbols ${escapeHtml(facts?.symbolCount ?? 0)}</strong>
         <small>relations ${escapeHtml(facts?.relationCount ?? 0)}</small>
-      </div>
-    `;
-  }
-
-  function renderKnowledgeSkippedBreakdown(skippedBreakdown) {
-    const byReason = skippedBreakdown?.byReason || {};
-    const items = Object.entries(byReason).filter(([, count]) => Number(count) > 0);
-    if (!items.length) {
-      return '';
-    }
-    return `
-      <div class="knowledge-breakdown">
-        ${items.map(([reason, count]) => `<span>${escapeHtml(reason)} ${escapeHtml(count)}</span>`).join('')}
       </div>
     `;
   }
@@ -2554,12 +2552,12 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     const explicitProcessed = optionalNonNegativeNumber(analysis?.processedFileCount);
     const explicitPending = optionalNonNegativeNumber(analysis?.pendingFileCount);
     const completedOutcomes = analyzed + failed + skipped;
-    const pendingDerivedProcessed = explicitPending !== null && total > 0 ? Math.max(total - explicitPending, 0) : 0;
-    const processedRaw = Math.max(explicitProcessed ?? 0, completedOutcomes, pendingDerivedProcessed);
+    const processedRaw = explicitProcessed ?? completedOutcomes;
     const processed = total > 0 ? Math.min(processedRaw, total) : processedRaw;
     const derivedPending = Math.max(total - processed, 0);
     const pending = explicitPending !== null ? Math.min(explicitPending, derivedPending) : derivedPending;
-    const percent = total > 0 ? Math.round((processed / total) * 1000) / 10 : 0;
+    const explicitPercent = Number(analysis?.percent);
+    const percent = Number.isFinite(explicitPercent) ? explicitPercent : (total > 0 ? Math.round((processed / total) * 1000) / 10 : 0);
     return {total, analyzed, failed, skipped, processed, pending, percent};
   }
 
@@ -2603,33 +2601,9 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         <small>
           pending ${escapeHtml(metrics.pending)}
           failed ${escapeHtml(metrics.failed)}
-          ${metrics.skipped > 0 ? ` skipped ${escapeHtml(metrics.skipped)}` : ''}
-          ${analysis.staleFileCount > 0 ? ` stale ${escapeHtml(analysis.staleFileCount)}` : ''}
         </small>
-        ${status === 'RUNNING' && analysis.currentRelativePath ? `<div class="knowledge-current-file">${escapeHtml(analysis.currentRelativePath)}</div>` : ''}
-        ${renderKnowledgeProgressWarning(analysis)}
       </div>
     `;
-  }
-
-  function renderKnowledgeProgressWarning(analysis) {
-    const text = renderKnowledgeProgressWarningText(analysis);
-    return text ? `<div class="knowledge-progress-warning">${escapeHtml(text)}</div>` : '';
-  }
-
-  function renderKnowledgeProgressWarningText(analysis) {
-    if (!analysis || analysis.status !== 'RUNNING' || !analysis.lastProgressAt) {
-      return '';
-    }
-    const timestamp = Date.parse(analysis.lastProgressAt);
-    if (!Number.isFinite(timestamp)) {
-      return '';
-    }
-    const seconds = Math.floor((Date.now() - timestamp) / 1000);
-    if (seconds <= 180) {
-      return '';
-    }
-    return `No progress for ${seconds}s. Current file may be slow or stalled.`;
   }
 
   async function startKnowledgeAnalysis(sourceId, button, options = {}) {
@@ -2644,16 +2618,17 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         groups: [],
         force: false,
         maxFiles: null,
-        concurrency: 1
+        concurrency: 1,
+        selection: 'DEFAULT'
       });
       setError(errorTargetId, null);
-      if (!options.skipStatusPoll) {
-        scheduleKnowledgeStatusPoll(response.jobId ? { jobId: response.jobId, status: 'QUEUED' } : null);
-      }
       if (options.afterStart) {
         await options.afterStart(response);
       } else {
         await refreshKnowledgeSourcesUntilAnalysisVisible(sourceId, response.jobId || '');
+      }
+      if (!options.skipStatusPoll && !knowledgeOverviewPolling.stopped) {
+        scheduleKnowledgeOverviewPoll();
       }
     } catch (error) {
       setError(errorTargetId, error);
@@ -2676,8 +2651,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     try {
       await postInfrastructureJson(`/knowledge/analysis/jobs/${encodeURIComponent(jobId)}/stop`, {});
       setError('knowledgeAnalysisError', null);
-      const serviceStatus = await refreshKnowledgeSourcesOnly();
-      scheduleKnowledgeStatusPoll(serviceStatus?.activeJob);
+      await executeKnowledgeOverviewPoll({ manual: true, caller: 'knowledge-manual' });
     } catch (error) {
       setError('knowledgeAnalysisError', error);
       if (button) {
@@ -2707,31 +2681,371 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     return job && ['QUEUED', 'RUNNING'].includes(String(job.status || '').toUpperCase());
   }
 
-  function scheduleKnowledgeStatusPoll(activeJob) {
-    const nextDelay = isActiveAnalysisJob(activeJob) ? knowledgeStatusActivePollMs : knowledgeStatusIdlePollMs;
-    if (knowledgeStatusPollTimer && knowledgeStatusPollDelayMs === nextDelay) {
-      return;
+  function clearKnowledgeOverviewTimer() {
+    if (knowledgeOverviewPolling.timerId) {
+      clearTimeout(knowledgeOverviewPolling.timerId);
+      knowledgeOverviewPolling.timerId = null;
     }
-    if (knowledgeStatusPollTimer) {
-      clearInterval(knowledgeStatusPollTimer);
-      knowledgeStatusPollTimer = null;
-    }
-    knowledgeStatusPollDelayMs = nextDelay;
-    knowledgeStatusPollTimer = setInterval(async () => {
-      try {
-        const serviceStatus = await refreshKnowledgeSourcesOnly();
-        scheduleKnowledgeStatusPoll(serviceStatus?.activeJob);
-      } catch (error) {
-        setError('knowledgeAnalysisError', error);
-        clearInterval(knowledgeStatusPollTimer);
-        knowledgeStatusPollTimer = null;
-        knowledgeStatusPollDelayMs = null;
-      }
-    }, nextDelay);
   }
 
-  async function refreshKnowledgeSourcesOnly() {
-    const serviceStatus = await getInfrastructureJson(knowledgeServicesStatusPath());
+  function scheduleKnowledgeOverviewPoll() {
+    if (knowledgeOverviewPolling.stopped) {
+      return;
+    }
+    clearKnowledgeOverviewTimer();
+    knowledgeOverviewPolling.timerId = setTimeout(() => {
+      knowledgeOverviewPolling.timerId = null;
+      executeKnowledgeOverviewPoll({ manual: false, caller: 'knowledge-auto' });
+    }, KNOWLEDGE_SERVICES_STATUS_POLL_MS);
+  }
+
+  function startKnowledgeOverviewPolling() {
+    stopKnowledgeStatusPolling();
+    knowledgeOverviewPolling.stopped = false;
+    executeKnowledgeOverviewPoll({ manual: true, caller: 'knowledge-initial' });
+  }
+
+  function stopKnowledgeStatusPolling() {
+    knowledgeOverviewPolling.stopped = true;
+    clearKnowledgeOverviewTimer();
+  }
+
+  function logKnowledgeStatusPolling(eventName, details = {}) {
+    if (!KNOWLEDGE_DEBUG_POLLING) {
+      return;
+    }
+    console.debug('[knowledge-overview]', eventName, details);
+  }
+
+  function applyKnowledgeOverviewSnapshot(serviceStatus, requestSeq, caller) {
+    const validation = validateKnowledgeOverviewSnapshot(serviceStatus, knowledgeOverviewPolling.lastGoodStatus);
+    if (!validation.valid) {
+      knowledgeOverviewPolling.lastRejectedReason = validation.reason;
+      logKnowledgeStatusPolling('reject-snapshot', { caller, requestSeq, reason: validation.reason });
+      setKnowledgeStatusSnapshotWarning(validation.reason);
+      if (!knowledgeOverviewPolling.lastGoodStatus) {
+        const error = new Error(validation.reason || 'Knowledge status snapshot was invalid');
+        error.code = 'KNOWLEDGE_STATUS_SNAPSHOT_REJECTED';
+        error.endpoint = knowledgeOverviewPath();
+        throw error;
+      }
+      return knowledgeOverviewPolling.lastGoodStatus;
+    }
+    if (requestSeq < knowledgeOverviewPolling.latestAppliedSeq) {
+      logKnowledgeStatusPolling('ignore-out-of-order-snapshot', {
+        caller,
+        requestSeq,
+        latestAppliedSeq: knowledgeOverviewPolling.latestAppliedSeq
+      });
+      return knowledgeOverviewPolling.lastGoodStatus;
+    }
+    knowledgeOverviewPolling.latestAppliedSeq = requestSeq;
+    knowledgeOverviewPolling.lastGoodStatus = serviceStatus;
+    knowledgeOverviewPolling.lastGoodStatusAt = Date.now();
+    knowledgeOverviewPolling.lastRejectedReason = null;
+    setKnowledgeStatusSnapshotWarning(null);
+    return serviceStatus;
+  }
+
+  function validateKnowledgeOverviewSnapshot(serviceStatus, previous) {
+    const supportedStatuses = new Set(['NOT_ANALYZED', 'RUNNING', 'STOP_REQUESTED', 'PARTIAL', 'COMPLETED', 'EMPTY']);
+    if (!serviceStatus || typeof serviceStatus !== 'object') {
+      return { valid: false, reason: 'Malformed status payload' };
+    }
+    if (!Array.isArray(serviceStatus.services)) {
+      return { valid: false, reason: 'Status payload is missing services' };
+    }
+    if (serviceStatus.services.length === 0 && Array.isArray(previous?.services) && previous.services.length > 0) {
+      return { valid: false, reason: 'Status payload unexpectedly returned no services' };
+    }
+    const previousBySource = new Map((previous?.services || []).map((service) => [service.sourceId, service]));
+    const currentBySource = new Map();
+    for (const service of serviceStatus.services) {
+      if (!service?.sourceId) {
+        return { valid: false, reason: 'Status payload contains a service without sourceId' };
+      }
+      currentBySource.set(service.sourceId, service);
+      const analysis = service.analysis || {};
+      const inventory = service.inventory || {};
+      const inventoryEligible = optionalNonNegativeNumber(inventory.eligibleFileCount);
+      const inventoryCount = optionalNonNegativeNumber(analysis.inventoryFileCount);
+      const analyzed = optionalNonNegativeNumber(analysis.analyzedFileCount);
+      const processed = optionalNonNegativeNumber(analysis.processedFileCount);
+      const failed = optionalNonNegativeNumber(analysis.failedFileCount);
+      const pending = optionalNonNegativeNumber(analysis.pendingFileCount);
+      const status = String(analysis.status || '').toUpperCase();
+      if (
+        inventoryEligible === null ||
+        inventoryCount === null ||
+        analyzed === null ||
+        processed === null ||
+        failed === null ||
+        pending === null
+      ) {
+        return { valid: false, reason: `Missing KPI counters for ${service.sourceId}` };
+      }
+      if (!supportedStatuses.has(status)) {
+        return { valid: false, reason: `Unsupported analysis status for ${service.sourceId}` };
+      }
+      if (analyzed > inventoryCount || processed > inventoryCount || failed > inventoryCount || analyzed > processed) {
+        return { valid: false, reason: `Impossible analysis counters for ${service.sourceId}` };
+      }
+      const previousService = previousBySource.get(service.sourceId);
+      const previousInventory = optionalNonNegativeNumber(previousService?.analysis?.inventoryFileCount);
+      const previousProcessed = optionalNonNegativeNumber(previousService?.analysis?.processedFileCount) ?? 0;
+      if (previousInventory && inventoryCount === 0) {
+        return { valid: false, reason: `Inventory count dropped to zero for ${service.sourceId}` };
+      }
+      if (previousProcessed > 0 && processed === 0 && inventoryCount === previousInventory) {
+        return { valid: false, reason: `Processed count dropped to zero for ${service.sourceId}` };
+      }
+    }
+    for (const sourceId of previousBySource.keys()) {
+      if (!currentBySource.has(sourceId)) {
+        return { valid: false, reason: `Source ${sourceId} disappeared from status payload` };
+      }
+    }
+    const activeJob = serviceStatus.activeJob;
+    if (activeJob?.sourceId && !currentBySource.has(activeJob.sourceId)) {
+      return { valid: false, reason: `Active job source ${activeJob.sourceId} is missing from status payload` };
+    }
+    return { valid: true, reason: null };
+  }
+
+  function setKnowledgeStatusSnapshotWarning(reason) {
+    const message = reason ? `Keeping last good Knowledge status: ${reason}.` : null;
+    ['knowledgeError', 'knowledgeGraphError'].forEach((id) => {
+      const element = document.getElementById(id);
+      if (!element) {
+        return;
+      }
+      if (!message) {
+        if (element.dataset.snapshotWarning === 'true') {
+          element.classList.add('hidden');
+          element.innerHTML = '';
+          delete element.dataset.snapshotWarning;
+        }
+        return;
+      }
+      element.dataset.snapshotWarning = 'true';
+      element.classList.remove('hidden');
+      element.innerHTML = `<strong>Warning: Knowledge status snapshot ignored</strong><div>${escapeHtml(message)}</div>`;
+    });
+  }
+
+  function attachKnowledgeStatusAbort(controller, signal) {
+    if (!signal) {
+      return () => {};
+    }
+    if (signal.aborted) {
+      controller.abort();
+      return () => {};
+    }
+    const abort = () => controller.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    return () => signal.removeEventListener('abort', abort);
+  }
+
+  async function requestKnowledgeOverview(options = {}) {
+    const caller = options.caller || 'unknown';
+    const endpoint = knowledgeOverviewPath();
+    if (knowledgeOverviewPolling.currentPromise) {
+      logKnowledgeStatusPolling('reuse-in-flight', {
+        caller,
+        endpoint,
+        activeEndpoint: knowledgeOverviewPolling.currentEndpoint,
+        requestSeq: knowledgeOverviewPolling.requestSeq
+      });
+      return knowledgeOverviewPolling.currentPromise;
+    }
+
+    clearKnowledgeOverviewTimer();
+    const requestSeq = knowledgeOverviewPolling.requestSeq + 1;
+    knowledgeOverviewPolling.requestSeq = requestSeq;
+    knowledgeOverviewPolling.sequence = requestSeq;
+    const controller = new AbortController();
+    const cleanupExternalAbort = attachKnowledgeStatusAbort(controller, options.signal);
+    const timeoutMs = Number(options.timeoutMs) || knowledgeStatusRequestTimeoutMs;
+    let timeoutFired = false;
+    const timeoutId = setTimeout(() => {
+      timeoutFired = true;
+      controller.abort();
+    }, timeoutMs);
+    const startedAt = Date.now();
+    knowledgeOverviewPolling.activeCount += 1;
+    knowledgeOverviewPolling.requestCount += 1;
+    knowledgeOverviewPolling.maxConcurrent = Math.max(
+      knowledgeOverviewPolling.maxConcurrent,
+      knowledgeOverviewPolling.activeCount
+    );
+    knowledgeOverviewPolling.abortController = controller;
+    knowledgeOverviewPolling.lastEndpoint = endpoint;
+    knowledgeOverviewPolling.currentEndpoint = endpoint;
+    knowledgeOverviewPolling.startedAt = startedAt;
+    logKnowledgeStatusPolling('start', {
+      caller,
+      endpoint,
+      startedAt,
+      requestSeq,
+      activeCount: knowledgeOverviewPolling.activeCount
+    });
+    const requestPromise = (async () => {
+      const serviceStatus = normalizeKnowledgeOverviewPayload(await getInfrastructureJson(endpoint, { signal: controller.signal }));
+      if (requestSeq < knowledgeOverviewPolling.completedSeq || requestSeq !== knowledgeOverviewPolling.requestSeq) {
+        logKnowledgeStatusPolling('stale-success', {
+          caller,
+          endpoint,
+          requestSeq,
+          durationMs: Date.now() - startedAt
+        });
+        return null;
+      }
+      const appliedStatus = applyKnowledgeOverviewSnapshot(serviceStatus, requestSeq, caller);
+      if (!appliedStatus) {
+        return null;
+      }
+      knowledgeOverviewPolling.completedSeq = requestSeq;
+      knowledgeOverviewPolling.lastSuccessAt = Date.now();
+      knowledgeOverviewPolling.errorCount = 0;
+      logKnowledgeStatusPolling('success', {
+        caller,
+        endpoint,
+        requestSeq,
+        durationMs: Date.now() - startedAt
+      });
+      return appliedStatus;
+    })();
+    knowledgeOverviewPolling.currentPromise = requestPromise.catch(() => null);
+    try {
+      return await requestPromise;
+    } catch (error) {
+      if (requestSeq !== knowledgeOverviewPolling.requestSeq) {
+        logKnowledgeStatusPolling('stale-error', {
+          caller,
+          endpoint,
+          requestSeq,
+          durationMs: Date.now() - startedAt,
+          aborted: error?.name === 'AbortError'
+        });
+        return null;
+      }
+      if (error?.name === 'AbortError' && !timeoutFired) {
+        logKnowledgeStatusPolling('aborted', {
+          caller,
+          endpoint,
+          requestSeq,
+          durationMs: Date.now() - startedAt
+        });
+        return null;
+      }
+      const visibleError = error?.name === 'AbortError' ? knowledgeTimeoutError(endpoint, timeoutMs) : error;
+      knowledgeOverviewPolling.errorCount += 1;
+      logKnowledgeStatusPolling('error', {
+        caller,
+        endpoint,
+        requestSeq,
+        durationMs: Date.now() - startedAt,
+        aborted: error?.name === 'AbortError',
+        code: visibleError?.code || null,
+        errorCount: knowledgeOverviewPolling.errorCount
+      });
+      throw visibleError;
+    } finally {
+      clearTimeout(timeoutId);
+      cleanupExternalAbort();
+      if (requestSeq === knowledgeOverviewPolling.requestSeq) {
+        knowledgeOverviewPolling.activeCount = Math.max(0, knowledgeOverviewPolling.activeCount - 1);
+        knowledgeOverviewPolling.abortController = null;
+        knowledgeOverviewPolling.currentPromise = null;
+        knowledgeOverviewPolling.currentEndpoint = null;
+        knowledgeOverviewPolling.startedAt = null;
+      }
+    }
+  }
+
+  async function executeKnowledgeOverviewPoll(options = {}) {
+    if (options.manual) {
+      clearKnowledgeOverviewTimer();
+    }
+    if (knowledgeOverviewPolling.stopped) {
+      return null;
+    }
+    let succeeded = false;
+    try {
+      const serviceStatus = await requestKnowledgeOverview({
+        caller: options.caller || (options.manual ? 'knowledge-manual' : 'knowledge-auto'),
+        signal: options.signal
+      });
+      if (!serviceStatus) {
+        return null;
+      }
+      refreshKnowledgeSourcesOnly({ serviceStatus });
+      setKnowledgeRequestError('knowledgeError', null);
+      succeeded = true;
+      return serviceStatus;
+    } catch (error) {
+      setKnowledgeRequestError('knowledgeError', error, {
+        endpoint: knowledgeOverviewPath(),
+        transient: knowledgeOverviewPolling.errorCount === 1
+      });
+      const updated = document.getElementById('knowledgeUpdated');
+      if (updated) {
+        updated.textContent = 'failed';
+      }
+      return null;
+    } finally {
+      if (succeeded && !knowledgeOverviewPolling.stopped) {
+        scheduleKnowledgeOverviewPoll();
+      }
+    }
+  }
+
+  function knowledgeTimeoutError(endpoint, timeoutMs = knowledgeStatusRequestTimeoutMs) {
+    const error = new Error('Knowledge request timed out');
+    error.code = 'KNOWLEDGE_TIMEOUT';
+    error.endpoint = endpoint;
+    error.durationMs = timeoutMs;
+    return error;
+  }
+
+  function setKnowledgeRequestError(id, error, options = {}) {
+    const element = document.getElementById(id);
+    if (!element) {
+      return;
+    }
+    if (!error) {
+      element.classList.add('hidden');
+      element.innerHTML = '';
+      return;
+    }
+    const endpoint = error.endpoint || options.endpoint || knowledgeOverviewPath();
+    const reason = error.code || error.message || 'REQUEST_FAILED';
+    const lastSuccess = knowledgeOverviewPolling.lastSuccessAt ? new Date(knowledgeOverviewPolling.lastSuccessAt).toLocaleTimeString() : 'never';
+    const severity = options.transient ? 'Warning' : 'Error';
+    element.classList.remove('hidden');
+    element.innerHTML = `
+      <strong>${severity}: Knowledge request failed</strong>
+      <div>Endpoint: ${escapeHtml(endpoint)}</div>
+      <div>Reason: ${escapeHtml(reason)}${error.status ? ` (${escapeHtml(error.status)})` : ''}</div>
+      <div>Last successful update: ${escapeHtml(lastSuccess)}</div>
+      <button class="button small" type="button" data-knowledge-retry>Retry now</button>
+    `;
+    if (!knowledgeOverviewPolling.lastGoodStatus) {
+      const body = document.getElementById('knowledgeSourcesBody');
+      if (body) {
+        body.innerHTML = '<tr><td colspan="5">Unable to load services.</td></tr>';
+      }
+    }
+  }
+
+  async function refreshKnowledgeSourcesOnly(options = {}) {
+    const serviceStatus = options.serviceStatus || await requestKnowledgeOverview({
+      caller: options.caller || 'knowledge-refresh',
+      signal: options.signal
+    });
+    if (!serviceStatus) {
+      return null;
+    }
     const updated = document.getElementById('knowledgeUpdated');
     renderKnowledgeSources(serviceStatus);
     if (updated) {
@@ -2746,7 +3060,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       if (attempt > 0) {
         await sleep(150 * attempt);
       }
-      latest = await refreshKnowledgeSourcesOnly();
+      latest = await executeKnowledgeOverviewPoll({ manual: true, caller: 'knowledge-manual' });
       const activeJob = latest?.activeJob || null;
       if (knowledgeAnalysisStartVisible(activeJob, sourceId, jobId) || !isActiveAnalysisJob(activeJob)) {
         return latest;
@@ -2759,8 +3073,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     if (!activeJob || (jobId && activeJob.jobId !== jobId)) {
       return false;
     }
-    const sourceIds = Array.isArray(activeJob.sourceIds) ? activeJob.sourceIds : [];
-    return !sourceId || activeJob.currentSourceId === sourceId || sourceIds.includes(sourceId);
+    return !sourceId || activeJob.sourceId === sourceId;
   }
 
   function sleep(ms) {
@@ -2864,7 +3177,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
 
   function initKnowledgeGraphPage() {
     const params = new URLSearchParams(window.location.search);
-    const defaultMode = params.get('graphEdgeId') ? 'full' : (params.get('mode') || 'slice');
+    const defaultMode = params.get('graphEdgeId') ? 'full' : (params.get('mode') || 'overview');
     document.getElementById('knowledgeGraphMode').value = defaultMode;
     document.getElementById('knowledgeGraphFlowDomain').value = params.get('flowDomain') || (defaultMode === 'slice' ? 'CODE' : '');
     document.getElementById('knowledgeGraphDirection').value = params.get('direction') || 'OUTBOUND';
@@ -2883,8 +3196,14 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     knowledgeGraphState.focusMode = false;
     knowledgeGraphState.detailsTab = 'overview';
     document.getElementById('analyzeKnowledgeGraph')?.addEventListener('click', (event) => startKnowledgeGraphAnalysis(event.currentTarget));
+    document.getElementById('retryFailedKnowledgeGraph')?.addEventListener('click', (event) => retryFailedKnowledgeGraph(event.currentTarget));
     document.getElementById('refreshKnowledgeGraph')?.addEventListener('click', () => loadKnowledgeGraph(true));
     document.getElementById('forceRefreshKnowledgeGraph')?.addEventListener('click', () => loadKnowledgeGraph(true, { forceRefresh: true }));
+    document.getElementById('knowledgeGraphError')?.addEventListener('click', (event) => {
+      if (event.target.closest('[data-knowledge-retry]')) {
+        loadKnowledgeGraph(true);
+      }
+    });
     document.getElementById('fitKnowledgeGraph')?.addEventListener('click', fitKnowledgeGraph);
     document.getElementById('fitKnowledgeGraphTop')?.addEventListener('click', fitKnowledgeGraph);
     document.getElementById('focusKnowledgeGraph')?.addEventListener('click', toggleKnowledgeGraphFocus);
@@ -2932,6 +3251,10 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         renderKnowledgeGraphVisual(knowledgeGraphState.data, { preservePositions: true });
       }
     });
+    window.addEventListener('beforeunload', () => {
+      stopKnowledgeStatusPolling();
+      stopKnowledgeGraphPolling();
+    });
     loadKnowledgeGraph(false);
     scheduleKnowledgeGraphPolling();
   }
@@ -2960,21 +3283,137 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     updateKnowledgeGraphAnalyzeState(knowledgeGraphState.data);
   }
 
+  async function retryFailedKnowledgeGraph(button) {
+    const sourceId = currentKnowledgeGraphSourceId();
+    const data = knowledgeGraphState.data || {};
+    const failureCount = knowledgeGraphRetryableFailureCount(data);
+    if (!sourceId || failureCount <= 0 || knowledgeGraphAnalysisRunning(data) || knowledgeGraphState.retrySubmitting) {
+      updateKnowledgeGraphAnalyzeState(data);
+      return;
+    }
+    const breakdown = knowledgeGraphFailureBreakdown(data);
+    const summary = Object.entries(breakdown)
+      .slice(0, 4)
+      .map(([code, count]) => `${code}: ${count}`)
+      .join('\n');
+    const confirmed = window.confirm(`Restart ${failureCount} failed file${failureCount === 1 ? '' : 's'} for ${sourceId}?${summary ? `\n\n${summary}` : ''}`);
+    if (!confirmed) {
+      return;
+    }
+    knowledgeGraphState.retrySubmitting = true;
+    updateKnowledgeGraphAnalyzeState(data);
+    try {
+      const response = await postInfrastructureJson('/knowledge/analysis/build', {
+        sourceIds: [sourceId],
+        groups: [],
+        force: true,
+        maxFiles: null,
+        concurrency: 1,
+        selection: 'FAILED_ONLY'
+      });
+      setError('knowledgeGraphError', null);
+      if (response?.result === 'NO_FAILED_FILES' || response?.status === 'NO_FAILED_FILES') {
+        await loadKnowledgeGraph(true);
+        return;
+      }
+      applyKnowledgeGraphAnalysisState(response?.analysisState);
+      knowledgeGraphState.retryJobId = response?.jobId || null;
+      await pollKnowledgeGraphRetryCompletion(knowledgeGraphState.retryJobId);
+    } catch (error) {
+      setKnowledgeRequestError('knowledgeGraphError', error, {
+        endpoint: '/knowledge/analysis/build',
+        transient: false
+      });
+    } finally {
+      knowledgeGraphState.retrySubmitting = false;
+      updateKnowledgeGraphAnalyzeState(knowledgeGraphState.data);
+    }
+  }
+
+  async function pollKnowledgeGraphRetryCompletion(jobId) {
+    for (let attempt = 0; attempt < 180; attempt += 1) {
+      const serviceStatus = await requestKnowledgeOverview({ caller: 'knowledge-graph-retry' }).catch(() => null);
+      const activeJob = serviceStatus?.activeJob || null;
+      if (!activeJob || (jobId && activeJob.jobId !== jobId)) {
+        knowledgeGraphState.retryJobId = null;
+        await loadKnowledgeGraph(true, { forceRefresh: true });
+        return;
+      }
+      const sourceId = currentKnowledgeGraphSourceId();
+      if (knowledgeGraphState.data?.sourceStatus?.analysis) {
+        knowledgeGraphState.data.sourceStatus.analysis.activeJobId = activeJob.jobId;
+        knowledgeGraphState.data.sourceStatus.analysis.activeJobMode = activeJob.mode;
+        knowledgeGraphState.data.sourceStatus.analysis.activeJobProcessedFileCount = activeJob.processedFileCount;
+        knowledgeGraphState.data.sourceStatus.analysis.activeJobFailedFileCount = activeJob.failedFileCount;
+        knowledgeGraphState.data.sourceStatus.analysis.activeJobCurrentRelativePath = activeJob.currentRelativePath;
+        renderKnowledgeGraphPage(knowledgeGraphState.data, { preserveLayout: true });
+      }
+      if (sourceId) {
+        await sleep(2000);
+      }
+    }
+    await loadKnowledgeGraph(true, { forceRefresh: true });
+  }
+
   function knowledgeGraphAnalysisRunning(data) {
     const analysis = data?.sourceStatus?.analysis || {};
-    const status = String(analysis.status || data?.status?.analysisStatus || '').toUpperCase();
-    return Boolean(analysis.activeJobId) || ['QUEUED', 'RUNNING', 'STOP_REQUESTED'].includes(status);
+    const activeJob = data?.status?.activeJob || null;
+    const status = String(analysis.status || data?.status?.analysisStatus || activeJob?.status || '').toUpperCase();
+    return Boolean(analysis.activeJobId || activeJob?.jobId || knowledgeGraphState.retryJobId) || ['QUEUED', 'RUNNING', 'STOP_REQUESTED'].includes(status);
   }
 
   function updateKnowledgeGraphAnalyzeState(data) {
     const running = knowledgeGraphAnalysisRunning(data);
-    const buttons = [
-      document.getElementById('analyzeKnowledgeGraph')
-    ].filter(Boolean);
-    buttons.forEach((button) => {
-      button.disabled = running || !currentKnowledgeGraphSourceId();
-      button.textContent = running ? 'Analysis running' : 'Analyze';
-    });
+    const analyzeButton = document.getElementById('analyzeKnowledgeGraph');
+    if (analyzeButton) {
+      analyzeButton.disabled = running || !currentKnowledgeGraphSourceId();
+      analyzeButton.textContent = running ? 'Analysis running' : 'Analyze';
+    }
+    const retryButton = document.getElementById('retryFailedKnowledgeGraph');
+    if (retryButton) {
+      const failureCount = knowledgeGraphRetryableFailureCount(data);
+      retryButton.disabled = running || knowledgeGraphState.retrySubmitting || !currentKnowledgeGraphSourceId() || failureCount <= 0;
+      retryButton.textContent = failureCount > 0 ? `Restart failed (${failureCount})` : 'Restart failed';
+    }
+  }
+
+  function applyKnowledgeGraphAnalysisState(analysisState) {
+    if (!analysisState || !knowledgeGraphState.data) {
+      return;
+    }
+    knowledgeGraphState.data.status = {
+      ...(knowledgeGraphState.data.status || {}),
+      ...analysisState,
+      fileCount: analysisState.totalFiles ?? knowledgeGraphState.data.status?.fileCount,
+      processedFileCount: analysisState.completedFiles ?? knowledgeGraphState.data.status?.processedFileCount,
+      failedFileCount: analysisState.failedFiles ?? knowledgeGraphState.data.status?.failedFileCount,
+      currentFailedFileCount: analysisState.failedFiles ?? knowledgeGraphState.data.status?.currentFailedFileCount,
+      retryableFailureCount: analysisState.retryableFiles ?? knowledgeGraphState.data.status?.retryableFailureCount,
+      progressPercent: analysisState.completionPercent ?? knowledgeGraphState.data.status?.progressPercent
+    };
+    if (knowledgeGraphState.data.sourceStatus?.analysis) {
+      knowledgeGraphState.data.sourceStatus.analysis = {
+        ...knowledgeGraphState.data.sourceStatus.analysis,
+        ...analysisState,
+        pendingFileCount: analysisState.pendingFiles ?? knowledgeGraphState.data.sourceStatus.analysis.pendingFileCount,
+        failedFileCount: analysisState.failedFiles ?? knowledgeGraphState.data.sourceStatus.analysis.failedFileCount,
+        currentFailedFileCount: analysisState.failedFiles ?? knowledgeGraphState.data.sourceStatus.analysis.currentFailedFileCount,
+        retryableFailureCount: analysisState.retryableFiles ?? knowledgeGraphState.data.sourceStatus.analysis.retryableFailureCount,
+        processedFileCount: analysisState.completedFiles ?? knowledgeGraphState.data.sourceStatus.analysis.processedFileCount,
+        percent: analysisState.completionPercent ?? knowledgeGraphState.data.sourceStatus.analysis.percent
+      };
+    }
+    renderKnowledgeGraphPage(knowledgeGraphState.data, { preserveLayout: true });
+  }
+
+  function knowledgeGraphRetryableFailureCount(data) {
+    const analysis = data?.sourceStatus?.analysis || {};
+    const status = data?.status || {};
+    return Number(status.retryableFailureCount ?? analysis.retryableFailureCount ?? status.currentFailedFileCount ?? analysis.currentFailedFileCount ?? analysis.failedFileCount ?? 0);
+  }
+
+  function knowledgeGraphFailureBreakdown(data) {
+    return data?.status?.failureCodeBreakdown || data?.sourceStatus?.analysis?.failureCodeBreakdown || {};
   }
 
   function toggleKnowledgeGraphFocus() {
@@ -2994,7 +3433,10 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
 
   function knowledgeGraphQueryParams() {
     const params = new URLSearchParams(window.location.search);
-    const mode = document.getElementById('knowledgeGraphMode')?.value || params.get('mode') || (params.get('graphEdgeId') ? 'full' : 'slice');
+    const requestedMode = document.getElementById('knowledgeGraphMode')?.value || params.get('mode') || (params.get('graphEdgeId') ? 'full' : 'overview');
+    const graphNodeId = params.get('graphNodeId');
+    const graphEdgeId = params.get('graphEdgeId');
+    const mode = requestedMode === 'slice' && !graphNodeId ? 'overview' : requestedMode;
     const selectedMaxNodes = document.getElementById('knowledgeGraphMaxNodes')?.value || params.get('maxNodes') || params.get('limit') || '80';
     const controls = {
       mode,
@@ -3014,8 +3456,6 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         query.set(key, value);
       }
     });
-    const graphNodeId = params.get('graphNodeId');
-    const graphEdgeId = params.get('graphEdgeId');
     if (controls.mode === 'slice' && graphNodeId) {
       query.set('rootGraphNodeId', graphNodeId);
     } else if (graphNodeId) {
@@ -3041,6 +3481,11 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       query.set('includeExternal', controls.includeExternal);
       query.set('includeUnresolved', controls.unresolved !== 'hide' ? 'true' : 'false');
       query.set('includeIsolated', controls.isolated === 'show' ? 'true' : 'false');
+      if (controls.mode === 'overview') {
+        query.set('limit', controls.maxNodes);
+      } else {
+        query.set('limit', '0');
+      }
     }
     query.set('includeEvidence', 'false');
     query.set('includeClaims', 'false');
@@ -3053,7 +3498,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   function updateKnowledgeGraphUrlFromControls(extra = {}) {
     const current = new URLSearchParams(window.location.search);
     const flowDomain = document.getElementById('knowledgeGraphFlowDomain')?.value || '';
-    const mode = document.getElementById('knowledgeGraphMode')?.value || 'slice';
+    const mode = document.getElementById('knowledgeGraphMode')?.value || 'overview';
     const depth = document.getElementById('knowledgeGraphDepth')?.value || '2';
     current.set('mode', mode);
     if (flowDomain) {
@@ -3084,9 +3529,17 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       knowledgeGraphState.pendingRefresh = true;
       return;
     }
+    if (!manual && knowledgeGraphState.loadController) {
+      knowledgeGraphState.pendingRefresh = true;
+      return;
+    }
     knowledgeGraphMetrics.dataReloadCount += 1;
     knowledgeGraphMetrics.dataFetchCount += 1;
-    knowledgeGraphState.loadController?.abort();
+    if (manual) {
+      knowledgeGraphState.loadController?.abort();
+    } else if (knowledgeGraphState.loadController) {
+      knowledgeGraphState.loadController.abort();
+    }
     const controller = new AbortController();
     const loadToken = knowledgeGraphState.loadToken + 1;
     knowledgeGraphState.loadToken = loadToken;
@@ -3095,21 +3548,29 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     const loading = document.getElementById('knowledgeGraphLoading');
     if (loading) {
       loading.classList.remove('hidden');
-      loading.textContent = manual ? 'Refreshing graph snapshot...' : 'Loading graph snapshot...';
+      loading.textContent = manual ? 'Refreshing graph...' : 'Loading graph...';
     }
     try {
       const sourceId = query.get('sourceId') || '';
-      const [data, sourceStatus] = await Promise.all([
-        mode === 'slice'
-          ? getInfrastructureJson(`/knowledge/analysis/graph/slice?${query.toString()}`, { signal: controller.signal })
-          : loadKnowledgeGraphSnapshot(query, { signal: controller.signal, forceRefresh: Boolean(options.forceRefresh), loadToken }),
-        sourceId ? getInfrastructureJson(knowledgeServicesStatusPath(sourceId), { signal: controller.signal }) : Promise.resolve(null)
+      const [data, sourceStatus, sourceFailures] = await Promise.all([
+        loadKnowledgeGraphSnapshot(query, { signal: controller.signal, forceRefresh: Boolean(options.forceRefresh), loadToken }),
+        sourceId
+          ? requestKnowledgeOverview({
+              caller: manual ? 'knowledge-graph-manual' : 'knowledge-graph-auto',
+              signal: controller.signal
+            }).catch((error) => ({ statusError: error }))
+          : Promise.resolve(null),
+        sourceId
+          ? getInfrastructureJson(`/knowledge/analysis/files?sourceId=${encodeURIComponent(sourceId)}&status=FAILED&limit=10`, { signal: controller.signal })
+              .catch(() => ({ files: [] }))
+          : Promise.resolve({ files: [] })
       ]);
       if (loadToken !== knowledgeGraphState.loadToken) {
         return;
       }
-      data.sourceStatus = (sourceStatus?.services || []).find((item) => item.sourceId === sourceId) || null;
-      data.failureFiles = data.sourceStatus?.details?.failures?.files || [];
+      const statusError = sourceStatus?.statusError || null;
+      data.sourceStatus = statusError ? null : (sourceStatus?.services || []).find((item) => item.sourceId === sourceId) || null;
+      data.failureFiles = sourceFailures?.files || [];
       data.viewMode = mode;
       const nextRootKey = `${mode}:${data.graphRevision || data.root?.id || query.get('rootGraphNodeId') || query.get('graphNodeId') || query.get('graphEdgeId') || sourceId || 'overview'}`;
       const preserveLayout = knowledgeGraphState.rootKey === nextRootKey && knowledgeGraphState.nodes.length > 0;
@@ -3125,7 +3586,14 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         knowledgeGraphState.selectedDetailError = null;
         knowledgeGraphState.selectedDetailLoading = false;
       }
-      setError('knowledgeGraphError', null);
+      if (statusError) {
+        setKnowledgeRequestError('knowledgeGraphError', statusError, {
+          endpoint: statusError.endpoint || knowledgeOverviewPath(),
+          transient: knowledgeOverviewPolling.errorCount === 1
+        });
+      } else {
+        setError('knowledgeGraphError', null);
+      }
       renderKnowledgeGraphPage(data, { preserveLayout });
       if (knowledgeGraphSelectionKey() && !knowledgeGraphState.selectedDetail && !knowledgeGraphState.selectedDetailLoading) {
         loadKnowledgeGraphSelectedDetails();
@@ -3136,10 +3604,6 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     } catch (error) {
       if (error?.name === 'AbortError') {
         return;
-      }
-      if (mode === 'slice' && query.get('rootGraphNodeId') && options.allowMissingRootFallback !== false && knowledgeGraphMissingRootError(error)) {
-        updateKnowledgeGraphUrlFromControls({ graphNodeId: null, graphEdgeId: null });
-        return loadKnowledgeGraph(true, { allowMissingRootFallback: false });
       }
       setError('knowledgeGraphError', error);
       if (loading) {
@@ -3175,6 +3639,12 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
 
     const manifestQuery = new URLSearchParams(query);
     manifestQuery.delete('depth');
+    manifestQuery.delete('direction');
+    manifestQuery.delete('maxNodes');
+    manifestQuery.delete('graphNodeId');
+    manifestQuery.delete('graphEdgeId');
+    manifestQuery.delete('rootGraphNodeId');
+    manifestQuery.delete('stableKey');
     const cachedForHeaders = !options.forceRefresh ? await readKnowledgeGraphLatestCache(filterKey) : null;
     const manifestResponse = await getInfrastructureJson(`/knowledge/analysis/graph/manifest?${manifestQuery.toString()}`, {
       signal: options.signal,
@@ -3203,8 +3673,23 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       edgesTotal: manifest.totalEdgeCount || 0,
       layout: 'pending'
     });
-    await loadKnowledgeGraphSnapshotPages('nodes', query, graphRevision, manifest.totalNodeCount || 0, store, options);
-    await loadKnowledgeGraphSnapshotPages('edges', query, graphRevision, manifest.totalEdgeCount || 0, store, options);
+    try {
+      await loadKnowledgeGraphSnapshotPages('nodes', query, graphRevision, manifest.totalNodeCount || 0, store, options);
+      await loadKnowledgeGraphSnapshotPages('edges', query, graphRevision, manifest.totalEdgeCount || 0, store, options);
+    } catch (error) {
+      if (isKnowledgeGraphExpiredSnapshotError(error) && !options.expiredSnapshotReloaded) {
+        knowledgeGraphState.graphStore = createKnowledgeGraphStore([], []);
+        knowledgeGraphState.manifest = null;
+        knowledgeGraphState.data = null;
+        await clearKnowledgeGraphCache(filterKey);
+        return loadKnowledgeGraphSnapshot(query, {
+          ...options,
+          forceRefresh: true,
+          expiredSnapshotReloaded: true
+        });
+      }
+      throw error;
+    }
     const data = knowledgeGraphDataFromStore(store, manifest);
     knowledgeGraphState.graphStore = store;
     setKnowledgeGraphLoadingProgress({
@@ -3246,6 +3731,12 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     do {
       const pageQuery = new URLSearchParams(baseQuery);
       pageQuery.delete('depth');
+      pageQuery.delete('direction');
+      pageQuery.delete('maxNodes');
+      pageQuery.delete('graphNodeId');
+      pageQuery.delete('graphEdgeId');
+      pageQuery.delete('rootGraphNodeId');
+      pageQuery.delete('stableKey');
       pageQuery.set('graphRevision', graphRevision);
       pageQuery.set('pageSize', kind === 'nodes' ? knowledgeGraphPerformanceConfig.nodePageSize : knowledgeGraphPerformanceConfig.edgePageSize);
       if (cursor) {
@@ -3370,23 +3861,6 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     };
   }
 
-  function setKnowledgeGraphLoadingProgress(progress) {
-    knowledgeGraphState.loadingProgress = {
-      ...(knowledgeGraphState.loadingProgress || {}),
-      ...progress
-    };
-    const loading = document.getElementById('knowledgeGraphLoading');
-    if (loading && !loading.classList.contains('hidden')) {
-      const current = knowledgeGraphState.loadingProgress;
-      loading.innerHTML = `
-        <strong>${escapeHtml(current.label || 'Loading graph snapshot...')}</strong>
-        <span>Nodes: ${escapeHtml(current.nodesLoaded ?? 0)} / ${escapeHtml(current.nodesTotal ?? 0)}</span>
-        <span>Edges: ${escapeHtml(current.edgesLoaded ?? 0)} / ${escapeHtml(current.edgesTotal ?? 0)}</span>
-        <span>Layout: ${escapeHtml(current.layout || 'pending')}</span>
-      `;
-    }
-  }
-
   function nextAnimationFrame() {
     return new Promise((resolve) => requestAnimationFrame(resolve));
   }
@@ -3401,6 +3875,10 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
 
   function knowledgeGraphSnapshotCacheKey(filterKey, graphRevision) {
     return `${filterKey}::${graphRevision}`;
+  }
+
+  function isKnowledgeGraphExpiredSnapshotError(error) {
+    return error?.status === 410 || error?.code === 'GRAPH_SNAPSHOT_EXPIRED' || error?.message === 'GRAPH_SNAPSHOT_EXPIRED';
   }
 
   function openKnowledgeGraphCache() {
@@ -3451,6 +3929,25 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       tx.onerror = () => resolve();
     });
     await evictKnowledgeGraphCache(db);
+  }
+
+  async function clearKnowledgeGraphCache(filterKey) {
+    const db = await openKnowledgeGraphCache();
+    if (!db) {
+      return;
+    }
+    await new Promise((resolve) => {
+      const tx = db.transaction('snapshots', 'readwrite');
+      const store = tx.objectStore('snapshots');
+      const request = store.getAll();
+      request.onsuccess = () => {
+        (request.result || [])
+          .filter((entry) => entry.filterKey === filterKey)
+          .forEach((entry) => store.delete(entry.key));
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
   }
 
   async function evictKnowledgeGraphCache(db) {
@@ -3504,6 +4001,33 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     });
   }
 
+  function validateKnowledgeGraphProjection(data) {
+    const nodeIds = new Set((data?.nodes || []).map((node) => node.id));
+    const dangling = (data?.edges || []).find((edge) => !nodeIds.has(edge.from) || !nodeIds.has(edge.to));
+    if (dangling) {
+      const error = new Error('Knowledge graph response contained an edge without both endpoint nodes.');
+      error.code = 'GRAPH_RESPONSE_NOT_NODE_CLOSED';
+      throw error;
+    }
+  }
+
+  function setKnowledgeGraphLoadingProgress(progress) {
+    knowledgeGraphState.loadingProgress = {
+      ...(knowledgeGraphState.loadingProgress || {}),
+      ...progress
+    };
+    const loading = document.getElementById('knowledgeGraphLoading');
+    if (loading && !loading.classList.contains('hidden')) {
+      const current = knowledgeGraphState.loadingProgress;
+      loading.innerHTML = `
+        <strong>${escapeHtml(current.label || 'Loading graph...')}</strong>
+        <span>Nodes: ${escapeHtml(current.nodesLoaded ?? '-')} / ${escapeHtml(current.nodesTotal ?? '-')}</span>
+        <span>Edges: ${escapeHtml(current.edgesLoaded ?? '-')} / ${escapeHtml(current.edgesTotal ?? '-')}</span>
+        <span>Layout: ${escapeHtml(current.layout || 'loading')}</span>
+      `;
+    }
+  }
+
   function knowledgeGraphMissingRootError(error) {
     const message = String(error?.message || '');
     return message.includes('GRAPH_NODE_NOT_FOUND') || message.includes('Selected graph node was not found');
@@ -3511,13 +4035,27 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
 
   function scheduleKnowledgeGraphPolling() {
     if (knowledgeGraphPollTimer) {
-      clearInterval(knowledgeGraphPollTimer);
+      clearTimeout(knowledgeGraphPollTimer);
       knowledgeGraphPollTimer = null;
     }
     if (!knowledgeGraphState.autoRefresh) {
       return;
     }
-    knowledgeGraphPollTimer = setInterval(() => loadKnowledgeGraph(false), knowledgeGraphPollMs);
+    knowledgeGraphPollTimer = setTimeout(async () => {
+      knowledgeGraphPollTimer = null;
+      await loadKnowledgeGraph(false);
+      scheduleKnowledgeGraphPolling();
+    }, knowledgeGraphPollMs);
+  }
+
+  function stopKnowledgeGraphPolling() {
+    if (knowledgeGraphPollTimer) {
+      clearTimeout(knowledgeGraphPollTimer);
+      knowledgeGraphPollTimer = null;
+    }
+    knowledgeGraphState.autoRefresh = false;
+    knowledgeGraphState.loadController?.abort();
+    knowledgeGraphState.loadController = null;
   }
 
   function renderKnowledgeGraphPage(data, options = {}) {
@@ -3556,21 +4094,32 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     }
     const status = data.status || {};
     const graphProgress = knowledgeGraphState.loadingProgress || {};
-    const percent = Math.max(0, Math.min(100, Number(status.progressPercent || 0)));
+    const completedFiles = status.completedFiles ?? status.processedFileCount ?? 0;
+    const totalFiles = status.totalFiles ?? status.fileCount ?? 0;
+    const percent = Math.max(0, Math.min(100, Number(status.completionPercent ?? status.progressPercent ?? 0)));
+    const nodesValue = graphProgress.nodesLoaded == null || graphProgress.nodesTotal == null
+      ? `${data.meta?.returnedNodeCount ?? '-'} / ${data.meta?.totalNodeCount ?? '-'}`
+      : `${graphProgress.nodesLoaded} / ${graphProgress.nodesTotal}`;
+    const edgesValue = graphProgress.edgesLoaded == null || graphProgress.edgesTotal == null
+      ? `${data.meta?.returnedEdgeCount ?? '-'} / ${data.meta?.totalEdgeCount ?? '-'}`
+      : `${graphProgress.edgesLoaded} / ${graphProgress.edgesTotal}`;
     target.innerHTML = `
       <div class="knowledge-graph-progress">
         <div class="knowledge-graph-progress-main">
           <div class="knowledge-progress-meta">
-            <strong>${escapeHtml(status.processedFileCount ?? 0)} / ${escapeHtml(status.fileCount ?? 0)} files</strong>
+            <strong>${escapeHtml(completedFiles)} / ${escapeHtml(totalFiles)} files</strong>
             <span>${escapeHtml(percent)}%</span>
           </div>
           <div class="knowledge-progress-track"><span style="width:${percent}%"></span></div>
           ${status.currentFile ? `<div class="knowledge-current-file">${escapeHtml(status.currentFile)}</div>` : ''}
         </div>
-        ${renderKnowledgeGraphMetric('Failed Files', status.failedFileCount ?? 0)}
+        ${renderKnowledgeGraphMetric('Pending', status.pendingFiles ?? 0)}
+        ${renderKnowledgeGraphMetric('Running', status.runningFiles ?? 0)}
+        ${renderKnowledgeGraphMetric('Failed Files', status.failedFiles ?? status.failedFileCount ?? 0)}
+        ${renderKnowledgeGraphMetric('Retryable', status.retryableFiles ?? status.retryableFailureCount ?? status.currentFailedFileCount ?? 0)}
         ${renderKnowledgeGraphMetric('Trusted Facts', status.trustedFactsCount ?? 0)}
-        ${renderKnowledgeGraphMetric('Nodes', `${graphProgress.nodesLoaded ?? data.meta?.returnedNodeCount ?? 0} / ${graphProgress.nodesTotal ?? data.meta?.totalNodeCount ?? 0}`)}
-        ${renderKnowledgeGraphMetric('Edges', `${graphProgress.edgesLoaded ?? data.meta?.returnedEdgeCount ?? 0} / ${graphProgress.edgesTotal ?? data.meta?.totalEdgeCount ?? 0}`)}
+        ${renderKnowledgeGraphMetric('Nodes', nodesValue)}
+        ${renderKnowledgeGraphMetric('Edges', edgesValue)}
         ${renderKnowledgeGraphMetric('Layout', graphProgress.layout || 'complete')}
         ${renderKnowledgeGraphMetric('Collapsed', data.metrics?.collapsedGroupCount ?? 0)}
         ${renderKnowledgeGraphMetric('Unresolved', data.metrics?.unresolvedCount ?? 0)}
@@ -3610,6 +4159,37 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       return {
         title: 'Analysis is running.',
         message: 'Graph facts will appear as files are processed.'
+      };
+    }
+    const emptyReason = data?.emptyReason || data?.meta?.emptyReason || null;
+    if (emptyReason === 'FILTERS_EXCLUDED_ALL') {
+      return {
+        title: 'No graph items match current filters.',
+        message: 'Try changing Flow, Domain, Depth, External, Unresolved, Max, or switch to Full mode.'
+      };
+    }
+    if (emptyReason === 'ANCHOR_NOT_FOUND') {
+      return {
+        title: 'Selected graph item was not found.',
+        message: 'Switch to Overview or select another graph item.'
+      };
+    }
+    if (emptyReason === 'SOURCE_NOT_FOUND') {
+      return {
+        title: 'Source was not found.',
+        message: 'Select another source.'
+      };
+    }
+    if (emptyReason === 'GRAPH_REVISION_STALE') {
+      return {
+        title: 'Graph changed while loading.',
+        message: 'Refresh the graph.'
+      };
+    }
+    if (emptyReason === 'NO_GRAPH_FACTS') {
+      return {
+        title: 'No graph facts yet.',
+        message: 'Use Analyze in the toolbar to build the graph.'
       };
     }
     if (knowledgeGraphHasFactsOutsideCurrentView(data)) {
@@ -4040,7 +4620,8 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
   async function loadKnowledgeGraphSelectedDetails() {
     const key = knowledgeGraphSelectionKey();
     const sourceId = currentKnowledgeGraphSourceId();
-    if (!key || !sourceId) {
+    const graphRevision = knowledgeGraphState.data?.graphRevision || knowledgeGraphState.manifest?.graphRevision;
+    if (!key || !sourceId || !graphRevision) {
       return;
     }
     knowledgeGraphState.selectedDetailLoading = true;
@@ -4049,31 +4630,32 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     renderKnowledgeGraphDetails(knowledgeGraphState.data);
     const query = new URLSearchParams();
     query.set('sourceId', sourceId);
-    query.set('depth', key.startsWith('edge:') ? '1' : '0');
-    query.set('limit', key.startsWith('edge:') ? '4' : '1');
+    query.set('graphRevision', graphRevision);
     query.set('includeEvidence', 'true');
-    query.set('includeClaims', 'true');
-    query.set('includeDiagnostics', 'true');
-    if (key.startsWith('node:')) {
-      query.set('graphNodeId', knowledgeGraphState.selectedNodeId);
-    } else {
-      query.set('graphEdgeId', knowledgeGraphState.selectedEdgeId);
-    }
+    const endpoint = key.startsWith('node:')
+      ? `/knowledge/analysis/graph/node/${encodeURIComponent(knowledgeGraphState.selectedNodeId)}?${query.toString()}`
+      : `/knowledge/analysis/graph/edge/${encodeURIComponent(knowledgeGraphState.selectedEdgeId)}?${query.toString()}`;
     try {
-      const data = await getInfrastructureJson(`/knowledge/analysis/graph?${query.toString()}`);
+      const data = await getInfrastructureJson(endpoint);
       if (knowledgeGraphSelectionKey() !== key) {
         return;
       }
       knowledgeGraphState.selectedDetail = {
         key,
-        node: data.selected?.node || (data.nodes || []).find((node) => node.id === knowledgeGraphState.selectedNodeId) || null,
-        edge: data.selected?.edge || (data.edges || []).find((edge) => edge.id === knowledgeGraphState.selectedEdgeId) || null,
-        evidence: data.evidence || [],
-        diagnostics: data.diagnostics || []
+        node: key.startsWith('node:') ? data.item : null,
+        edge: key.startsWith('edge:') ? data.item : null,
+        evidence: data.item?.evidence || [],
+        diagnostics: []
       };
     } catch (error) {
       if (knowledgeGraphSelectionKey() === key) {
-        knowledgeGraphState.selectedDetailError = error;
+        if (isKnowledgeGraphExpiredSnapshotError(error)) {
+          knowledgeGraphState.selectedDetail = null;
+          knowledgeGraphState.selectedDetailError = null;
+          await loadKnowledgeGraph(false, { forceRefresh: true });
+        } else {
+          knowledgeGraphState.selectedDetailError = error;
+        }
       }
     } finally {
       if (knowledgeGraphSelectionKey() === key) {
@@ -4232,7 +4814,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
       target.innerHTML = `
         <div class="knowledge-graph-detail-stack compact-overview">
           ${renderKnowledgeGraphOverview(data, selectedNode, selectedEdge)}
-          ${renderKnowledgeGraphSliceGroups(data.groups || [])}
+          ${renderKnowledgeGraphGroups(data.groups || [])}
           ${renderKnowledgeGraphUncertainties(data.uncertainties || [])}
         </div>
       `;
@@ -4283,7 +4865,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
         <h3>Overview</h3>
         <div class="knowledge-graph-overview-grid">
           ${renderKnowledgeGraphMetricCard('Source', source.sourceId || data.sourceId || '-')}
-          ${renderKnowledgeGraphMetricCard('Label', source.displayName || data.sourceName || '-')}
+          ${renderKnowledgeGraphMetricCard('Label', source.label || data.sourceName || '-')}
           ${renderKnowledgeGraphMetricCard('Group', source.group || '-')}
           ${renderKnowledgeGraphMetricCard('Path', source.path || '-')}
           ${renderKnowledgeGraphMetricCard('Tags', (source.tags || []).join(', ') || '-')}
@@ -4295,9 +4877,8 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
           ${renderKnowledgeGraphMetricCard('Analyzed / total', `${status.processedFileCount ?? analysis.analyzedFileCount ?? 0} / ${status.fileCount ?? analysis.totalFileCount ?? '-'}`)}
           ${renderKnowledgeGraphMetricCard('Failed', status.failedFileCount ?? analysis.failedFileCount ?? 0)}
           ${renderKnowledgeGraphMetricCard('Pending', pending)}
-          ${renderKnowledgeGraphMetricCard('Current file', status.currentFile || analysis.currentRelativePath || '-')}
+          ${renderKnowledgeGraphMetricCard('Current file', status.currentFile || '-')}
           ${renderKnowledgeGraphMetricCard('Active job', analysis.activeJobId || status.jobId || '-')}
-          ${renderKnowledgeGraphMetricCard('Last progress', analysis.lastProgressAt ? fmtDate(analysis.lastProgressAt) : '-')}
           ${renderKnowledgeGraphMetricCard('Trusted facts', status.trustedFactsCount ?? facts.symbolCount ?? 0)}
           ${renderKnowledgeGraphMetricCard('Nodes', data.meta?.returnedNodeCount ?? data.metrics?.sliceNodeCount ?? 0)}
           ${renderKnowledgeGraphMetricCard('Edges', data.meta?.returnedEdgeCount ?? data.metrics?.sliceEdgeCount ?? 0)}
@@ -4321,7 +4902,7 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
     `;
   }
 
-  function renderKnowledgeGraphSliceGroups(groups) {
+  function renderKnowledgeGraphGroups(groups) {
     return `
       <section class="knowledge-graph-detail-section">
         <h3>Collapsed Groups</h3>
@@ -5288,6 +5869,17 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
 
   initSidebar();
 
+  if (window.__FORGE_OPERATOR_TEST_HOOKS__) {
+    window.__forgeKnowledgeOverviewTestApi = {
+      state: knowledgeOverviewPolling,
+      requestKnowledgeOverview,
+      executeKnowledgeOverviewPoll,
+      startKnowledgeOverviewPolling,
+      stopKnowledgeStatusPolling,
+      clearKnowledgeOverviewTimer
+    };
+  }
+
   if (page === 'tickets') {
     document.getElementById('refreshTickets')?.addEventListener('click', loadTickets);
     document.getElementById('ticketList')?.addEventListener('click', (event) => {
@@ -5417,9 +6009,24 @@ inputs ${escapeHtml(lane.inputTaskCount || 0)}"
 
   if (page === 'knowledge') {
     document.getElementById('refreshKnowledge')?.addEventListener('click', loadKnowledge);
+    document.getElementById('knowledgeError')?.addEventListener('click', (event) => {
+      if (event.target.closest('[data-knowledge-retry]')) {
+        loadKnowledge();
+      }
+    });
     document.getElementById('knowledgeSourcesBody')?.addEventListener('click', handleKnowledgeSourceAction);
+    window.addEventListener('beforeunload', stopKnowledgeStatusPolling);
     loadKnowledge();
   }
+
+  window.__forgeKnowledgeGraphRuntime = {
+    state: knowledgeGraphState,
+    loadSnapshot: loadKnowledgeGraphSnapshot,
+    loadSelectedDetails: loadKnowledgeGraphSelectedDetails,
+    selectNode: selectKnowledgeGraphNode,
+    selectEdge: selectKnowledgeGraphEdge,
+    dispose: stopKnowledgeGraphPolling
+  };
 
   if (page === 'knowledge-graph') {
     initKnowledgeGraphPage();
