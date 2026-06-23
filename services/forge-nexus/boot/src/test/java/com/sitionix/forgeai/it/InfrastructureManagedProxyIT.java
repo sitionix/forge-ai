@@ -2,19 +2,19 @@ package com.sitionix.forgeai.it;
 
 import com.sitionix.forgeai.it.infra.InfrastructureProxyEndpoint;
 import com.sitionix.forgeai.it.infra.InfrastructureProxyAsyncMockMvc;
-import com.sitionix.forgeai.it.infra.InfrastructureProxyFixtures;
 import com.sitionix.forgeai.it.infra.InfrastructureProxyQuery;
 import com.sitionix.forgeai.it.infra.ProxyTestManager;
 import com.sitionix.forgeit.core.test.IntegrationTest;
+import com.sitionix.forgeit.wiremock.api.Parameter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
@@ -41,17 +41,63 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
     @Autowired
     private InfrastructureProxyAsyncMockMvc proxyMockMvc;
 
-    @BeforeEach
-    void setUpForgeFixtures() {
-        InfrastructureProxyFixtures.reset(this.testManager);
-        InfrastructureProxyFixtures.stubCommonKnowledgeRoutes(this.testManager);
-        InfrastructureProxyFixtures.stubCommonJarvisRoutes(this.testManager);
-        InfrastructureProxyFixtures.stubProxyErrorRoutes(this.testManager);
-        InfrastructureProxyFixtures.stubFinalGraphRoutes(this.testManager);
-    }
-
     @Test
     void itProxy01RouteAllowlistForwardsActiveRoutesWithExactContracts() {
+        //given
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeStatus()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeSources()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeOverview()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeInventoryBuild()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeInventoryStatus()).createDefault();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeInventoryFiles())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamInventoryJavaExtension())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyInventoryFiles.json"))
+                .create();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisBuild()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisRetryFailed()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisJob()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisJobStop()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisStatus()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisFiles()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisDiagnostics()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphManifest()).createDefault();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodes())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphRevisionA())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphNodes.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphEdges())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphRevisionA())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphEdges.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNode())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphRevisionA())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphNodeDetail.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphEdge())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphRevisionA())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphEdgeDetail.json"))
+                .create();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisStatus()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisActions()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisCommand()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisChat()).createDefault();
+
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeStatus()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeSources()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
@@ -102,7 +148,6 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisCommand()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisChat()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
 
-        InfrastructureProxyFixtures.reset(this.testManager);
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusUnsupportedKnowledgeSymbols()).assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusUnsupportedKnowledgeRelations()).assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusUnsupportedKnowledgeGraph()).assertDefault();
@@ -112,6 +157,44 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
     @Test
     void itProxy02RawJsonPreservationKeepsRepresentativeBodies() {
+        //given
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeOverview()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphManifest()).createDefault();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodes())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphRevisionA())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphNodes.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphEdges())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphRevisionA())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphEdges.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNode())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphRevisionA())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphNodeDetail.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphEdge())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphRevisionA())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphEdgeDetail.json"))
+                .create();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisStatus()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisStatus()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisActions()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisCommand()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisChat()).createDefault();
+
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeOverview()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphManifest()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphNodes())
@@ -139,8 +222,57 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
     @Test
     void itProxy03QueryPathAndBodyParityIsCapturedByUpstreamContracts() {
-        InfrastructureProxyFixtures.stubPostBodyRoutes(this.testManager);
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeInventoryBuildBody())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamTraceOne())
+                .applyDefault(context -> context
+                        .matchesJson("requestProxyInventoryBuild.json")
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyInventoryBuild.json"))
+                .create();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisBuildBody()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisRetryFailed()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisJobStopBody()).createDefault();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphManifestFiltered())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphFilteredManifest())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphManifestFiltered.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodesContract())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphCursorA())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphNodesContract.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphEdgesContract())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphEdgeCalls())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphEdgesContract.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodeContract())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphSource())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphNodeDetailContract.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphEdgeContract())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphSource())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphEdgeDetailContract.json"))
+                .create();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisCommand()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisChat()).createDefault();
 
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeInventoryBuildBody())
                 .withQueryParameters(InfrastructureProxyQuery.traceOne())
                 .header("X-Correlation-Id", "corr-parity")
@@ -180,6 +312,59 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
     @Test
     void itProxy04StructuredErrorMappingUsesOneEnvelope() {
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeStatus())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamTimeoutCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyKnowledgeStatus.json"))
+                .delayForResponse(3000)
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamTooLargeKnowledgeStatus())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamResponseTooLargeCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyTooLarge.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeStatusNonJson())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamNonJsonCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyInvalidJson.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeStatusServerError())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamServerErrorCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.INTERNAL_SERVER_ERROR.value())
+                        .responseBody("responseProxyUpstreamServerError.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphCursorInvalid())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphCursorMalformed())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.BAD_REQUEST.value())
+                        .responseBody("responseProxyGraphCursorInvalid.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphMissingNode())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphSource())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.NOT_FOUND.value())
+                        .responseBody("responseProxyGraphNodeNotFound.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphSnapshotExpired())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphExpiredRevision())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.GONE.value())
+                        .responseBody("responseProxyGraphSnapshotExpired.json"))
+                .create();
+
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeStatusTimeout())
                 .withQueryParameters(InfrastructureProxyQuery.timeoutCase())
                 .header("X-Correlation-Id", "corr-timeout")
@@ -220,7 +405,6 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .header("X-Correlation-Id", "corr-upstream-410")
                 .assertDefault();
 
-        InfrastructureProxyFixtures.reset(this.testManager);
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeAnalysisBuildRequestTooLarge())
                 .header("X-Correlation-Id", "corr-knowledge-request-large")
                 .assertDefault();
@@ -229,28 +413,64 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
     @Test
     void itProxy05CorrelationIdPropagationIsPreservedGeneratedAndRejectedWhenUnsafe() {
-        InfrastructureProxyFixtures.reset(this.testManager);
-        InfrastructureProxyFixtures.stubGeneratedCorrelationRoute(this.testManager);
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisActions())
+                .plainUrl()
+                .header("X-Correlation-Id", Parameter.matches("[A-Za-z0-9._:-]{1,128}"))
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyJarvisActions.json"))
+                .create();
+
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisActions())
                 .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", matchesPattern("[A-Za-z0-9._:-]{1,128}")))
                 .assertDefault();
 
-        InfrastructureProxyFixtures.reset(this.testManager);
-        InfrastructureProxyFixtures.stubCorrelationRoute(this.testManager);
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisStatus())
+                .plainUrl()
+                .header("X-Correlation-Id", "corr-123")
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyJarvisStatus.json"))
+                .create();
+
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisStatus())
                 .header("X-Correlation-Id", "corr-123")
                 .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", "corr-123"))
                 .assertDefault();
 
-        InfrastructureProxyFixtures.reset(this.testManager);
-        InfrastructureProxyFixtures.stubSafeKnowledgeCorrelationRoute(this.testManager);
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeStatus())
+                .plainUrl()
+                .header("X-Correlation-Id", Parameter.matches("[A-Za-z0-9._:-]{1,128}"))
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyKnowledgeStatus.json"))
+                .create();
+
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeStatus())
                 .header("X-Correlation-Id", "unsafe header with spaces")
                 .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", not("unsafe header with spaces")))
                 .assertDefault();
 
-        InfrastructureProxyFixtures.reset(this.testManager);
-        InfrastructureProxyFixtures.stubProxyErrorRoutes(this.testManager);
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeStatus())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamTimeoutCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyKnowledgeStatus.json"))
+                .delayForResponse(3000)
+                .create();
+
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeStatusTimeout())
                 .withQueryParameters(InfrastructureProxyQuery.timeoutCase())
                 .header("X-Correlation-Id", "corr-timeout")
@@ -260,6 +480,17 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
     @Test
     void itProxy06NonBlockingSaturationKeepsHealthAndFastRoutesResponsive() throws Exception {
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeStatus())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamSlowCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyKnowledgeStatus.json"))
+                .delayForResponse(500)
+                .create();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeSources()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisStatus()).createDefault();
         final ExecutorService executor = Executors.newFixedThreadPool(50);
         final List<Callable<Void>> slowCalls = new ArrayList<>();
         for (int index = 0; index < 50; index++) {
@@ -290,6 +521,16 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
     @Test
     void itProxy07ClientCancellationLeavesFollowingFastRequestHealthy() throws Exception {
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeStatus())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamSlowCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyKnowledgeStatus.json"))
+                .delayForResponse(500)
+                .create();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisStatus()).createDefault();
         final ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
             final var slowCall = executor.submit(() -> {
@@ -312,7 +553,9 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
     @Test
     void itProxy08RequestAndResponseBodyLimitsAreStructuredForKnowledgeAndJarvis() {
-        InfrastructureProxyFixtures.reset(this.testManager);
+        //given
+
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeAnalysisBuildRequestTooLarge())
                 .header("X-Correlation-Id", "corr-knowledge-request-large")
                 .assertDefault();
@@ -321,8 +564,23 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .header("X-Correlation-Id", "corr-jarvis-request-large")
                 .assertDefault();
 
-        InfrastructureProxyFixtures.reset(this.testManager);
-        InfrastructureProxyFixtures.stubProxyErrorRoutes(this.testManager);
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamTooLargeKnowledgeStatus())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamResponseTooLargeCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyTooLarge.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamTooLargeJarvisStatus())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamResponseTooLargeCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyTooLarge.json"))
+                .create();
+
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeStatusResponseTooLarge())
                 .withQueryParameters(InfrastructureProxyQuery.responseTooLargeCase())
                 .header("X-Correlation-Id", "corr-response-large")
@@ -338,6 +596,86 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
     @Test
     void itProxy09FinalGraphContractParityPreservesKnowledgeStatusAndBodies() {
+        //given
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphManifestQuery())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphManifestCode())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphManifestQuery.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphManifestFiltered())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphFilteredManifest())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphManifestFiltered.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodesContract())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphCursorA())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphNodesContract.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphEdgesContract())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphEdgeCalls())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphEdgesContract.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodeContract())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphSource())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphNodeDetailContract.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphEdgeContract())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphSource())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphEdgeDetailContract.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphPageSizeInvalid())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphPageSizeZero())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.UNPROCESSABLE_ENTITY.value())
+                        .responseBody("responseProxyGraphPageSizeInvalid.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphCursorInvalid())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphCursorMalformed())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.BAD_REQUEST.value())
+                        .responseBody("responseProxyGraphCursorInvalid.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphSnapshotExpired())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphExpiredRevision())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.GONE.value())
+                        .responseBody("responseProxyGraphSnapshotExpired.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphMissingNode())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphSource())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.NOT_FOUND.value())
+                        .responseBody("responseProxyGraphNodeNotFound.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphMissingEdge())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphSource())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.NOT_FOUND.value())
+                        .responseBody("responseProxyGraphEdgeNotFound.json"))
+                .create();
+
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphManifestFiltered())
                 .withQueryParameters(InfrastructureProxyQuery.graphFilteredManifest())
                 .header("X-Correlation-Id", "corr-graph-parity")
@@ -386,6 +724,24 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
     @Test
     void itProxy10JarvisRedactionThroughNexusDoesNotExposeSensitiveDetails() {
+        //given
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisChat()).createDefault();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisChatServerError())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamServerErrorCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.INTERNAL_SERVER_ERROR.value())
+                        .responseBody("responseProxyUpstreamServerError.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisCommandServerError())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamServerErrorCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.INTERNAL_SERVER_ERROR.value())
+                        .responseBody("responseProxyUpstreamServerError.json"))
+                .create();
+
+        //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisChat())
                 .header("X-Correlation-Id", "corr-jarvis-redaction")
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.usedContext").isEmpty())

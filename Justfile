@@ -176,27 +176,6 @@ _knowledge-logs:
 test:
     @scripts/test.sh
 
-test-all:
-    @scripts/test-all.sh
-
-test-python:
-    @scripts/test-python.sh
-
-test-console:
-    @scripts/test-console.sh
-
-test-graph:
-    @scripts/test-graph.sh
-
-test-graph-backend:
-    @scripts/test-graph-backend.sh
-
-test-graph-console:
-    @scripts/test-graph-console.sh
-
-test-forge-it:
-    @scripts/test-forge-it.sh
-
 lint:
     @scripts/lint.sh
 
