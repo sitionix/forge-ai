@@ -17,7 +17,6 @@
       <div class="hero-actions">
         <a class="button ghost" href="./knowledge.html">Sources</a>
         <button id="analyzeKnowledgeGraph" class="button" type="button">Analyze</button>
-        <button id="retryFailedKnowledgeGraph" class="button ghost" type="button" disabled>Restart failed</button>
         <button id="refreshKnowledgeGraph" class="button" type="button">Refresh</button>
         <button id="forceRefreshKnowledgeGraph" class="button ghost" type="button">Force Refresh</button>
         <button id="fitKnowledgeGraphTop" class="button ghost" type="button">Fit</button>
@@ -37,7 +36,7 @@
         </div>
         <span id="knowledgeGraphUpdated" class="muted">loading</span>
       </div>
-      <div id="knowledgeGraphError" class="error-box hidden"></div>
+      <div id="knowledgeGraphMetadataError" class="error-box hidden"></div>
       <div id="knowledgeGraphProgress"></div>
     </section>
 
@@ -48,9 +47,8 @@
           <label>
             <span>Mode</span>
             <select id="knowledgeGraphMode">
-              <option value="overview" selected>Overview</option>
-              <option value="slice">Compact slice</option>
-              <option value="full">Full</option>
+              <option value="slice" selected>Compact slice</option>
+              <option value="full">Full overview</option>
             </select>
           </label>
           <label>
@@ -148,6 +146,7 @@
           <button id="showKnowledgeGraphFull" class="button ghost dark small" type="button">Full</button>
         </div>
       </div>
+      <div id="knowledgeGraphError" class="error-box hidden"></div>
       <div id="knowledgeGraphTruncated" class="knowledge-graph-warning hidden"></div>
       <div id="knowledgeGraphLayout" class="knowledge-graph-layout preview-collapsed">
         <div class="knowledge-graph-stage" id="knowledgeGraphStage">

@@ -104,6 +104,12 @@ public class ForgeAiInfrastructureKnowledgeController {
         return this.proxy("knowledge.analysis.diagnostics", Map.of(), null, headers, request);
     }
 
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/metadata")
+    public CompletableFuture<ResponseEntity<byte[]>> analysisGraphMetadata(@RequestHeader final HttpHeaders headers,
+                                                                          final HttpServletRequest request) {
+        return this.proxy("knowledge.graph.metadata", Map.of(), null, headers, request);
+    }
+
     @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/manifest")
     public CompletableFuture<ResponseEntity<byte[]>> analysisGraphManifest(@RequestHeader final HttpHeaders headers,
                                                                           final HttpServletRequest request) {

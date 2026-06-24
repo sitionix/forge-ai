@@ -474,6 +474,116 @@ def test_it_graph_15_final_knowledge_route_contract(tmp_path):
         assert client.get("/api/v1/knowledge/analysis/relations?sourceId=forge-ai").status_code == 404
 
 
+def test_it_graph_meta_01_metadata_endpoint_independent_of_graph_metrics(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=6, edge_count=5)
+    with sqlite3.connect(app_config.store_path) as conn:
+        conn.execute("DELETE FROM graph_snapshot_metrics WHERE snapshot_id = 'job-1:forge-ai'")
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/knowledge/analysis/graph/metadata?sourceId=forge-ai")
+
+    assert response.status_code == 200
+    metadata = response.json()
+    assert metadata["sourceId"] == "forge-ai"
+    assert metadata["sourceName"] == "Forge AI"
+    assert metadata["graphAvailable"] is True
+    assert metadata["snapshotId"] == "job-1:forge-ai"
+    assert "nodes" not in metadata
+    assert "edges" not in metadata
+    assert "evidence" not in metadata
+    assert metadata.get("code") != "GRAPH_SNAPSHOT_METRICS_MISSING"
+
+
+def test_it_graph_meta_02_manifest_valid_filter_backfills_missing_metrics_and_matches_pages(tmp_path, monkeypatch):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=12, edge_count=11)
+    with sqlite3.connect(app_config.store_path) as conn:
+        conn.execute("DELETE FROM graph_snapshot_metrics WHERE snapshot_id = 'job-1:forge-ai'")
+    original_connect = deps.analysis_store._connect
+    traced_statements: list[str] = []
+
+    def traced_connect(*args, **kwargs):
+        conn = original_connect(*args, **kwargs)
+        conn.set_trace_callback(traced_statements.append)
+        return conn
+
+    monkeypatch.setattr(deps.analysis_store, "_connect", traced_connect)
+
+    with TestClient(app) as client:
+        manifest_response = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE")
+        manifest_selects = [statement for statement in traced_statements if statement.lstrip().upper().startswith("SELECT")]
+        traced_statements.clear()
+        manifest = manifest_response.json()
+        nodes = traverse_pages(client, "nodes", manifest["graphRevision"], 20)
+        edges = traverse_pages(client, "edges", manifest["graphRevision"], 20)
+
+    assert manifest_response.status_code == 200
+    assert manifest.get("code") != "GRAPH_SNAPSHOT_METRICS_MISSING"
+    assert manifest["totalNodeCount"] == len(nodes)
+    assert manifest["totalEdgeCount"] == len(edges)
+    assert len(manifest_selects) <= 12
+
+
+def test_it_graph_meta_03_invalid_filter_returns_controlled_400(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=3, edge_count=2)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&includeExternal=collapsed",
+            headers={"X-Correlation-Id": "graph-invalid-filter"},
+        )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["code"] == "GRAPH_FILTER_INVALID"
+    assert payload["correlationId"] == "graph-invalid-filter"
+    assert "src/GraphFixture.java" not in json.dumps(payload)
+    assert "Traceback" not in json.dumps(payload)
+
+
+def test_it_graph_meta_04_filter_matrix_parity(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=15, edge_count=14)
+
+    supported_queries = [
+        "sourceId=forge-ai",
+        "sourceId=forge-ai&flowDomain=CODE",
+        "sourceId=forge-ai&factOrigin=STATIC",
+        "sourceId=forge-ai&nodeKind=CALLABLE",
+        "sourceId=forge-ai&edgeType=CALLS",
+        "sourceId=forge-ai&includeExternal=hide",
+        "sourceId=forge-ai&includeUnresolved=false",
+        "sourceId=forge-ai&includeIsolated=false",
+        "sourceId=forge-ai&flowDomain=CONFIG",
+    ]
+    with TestClient(app) as client:
+        for query in supported_queries:
+            manifest_response = client.get(f"/api/v1/knowledge/analysis/graph/manifest?{query}")
+            assert manifest_response.status_code == 200, query
+            manifest = manifest_response.json()
+            page_query = f"{query}&graphRevision={quote(manifest['graphRevision'])}&pageSize=50"
+            nodes = client.get(f"/api/v1/knowledge/analysis/graph/nodes?{page_query}")
+            edges = client.get(f"/api/v1/knowledge/analysis/graph/edges?{page_query}")
+            assert nodes.status_code == 200, query
+            assert edges.status_code == 200, query
+            assert manifest["totalNodeCount"] == len(nodes.json()["items"])
+            assert manifest["totalEdgeCount"] == len(edges.json()["items"])
+
+        unsupported = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&includeExternal=bad")
+    assert unsupported.status_code == 400
+    assert unsupported.json()["code"] == "GRAPH_FILTER_INVALID"
+
+
 def test_graph_snapshot_manifest_cursor_pagination_details_and_legacy_route_deletion(tmp_path):
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()

@@ -60,10 +60,12 @@ function createHttp(resolver: (path: string) => Promise<unknown> | unknown) {
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => undefined;
-  const promise = new Promise<T>((next) => {
+  let reject: (error: unknown) => void = () => undefined;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 async function flushAsync() {
@@ -187,5 +189,107 @@ describe('Knowledge overview modular ownership', () => {
     await page.load({ manual: true });
     expect(http.calls).toEqual(['/knowledge/overview']);
     expect(http.calls.some((path) => /analysis\/graph|analysis\/files|analysis\/diagnostics|symbols|relations|source/i.test(path))).toBe(false);
+  });
+
+  it('UI-KNOW-REG-05 sends one final analysis build POST for Analyze', async () => {
+    const dom = createOverviewDom();
+    const start = deferred<unknown>();
+    const http = {
+      get: vi.fn(() => Promise.resolve(statusPayload(1, 'PARTIAL'))),
+      post: vi.fn(() => start.promise)
+    };
+    const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
+
+    page.mount();
+    await page.currentPromise;
+    await flushAsync();
+    const button = dom.window.document.querySelector('.knowledge-source-analysis-button') as HTMLButtonElement;
+    button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toBe('Starting...');
+    expect(http.post).toHaveBeenCalledTimes(1);
+    expect(http.post).toHaveBeenCalledWith('/knowledge/analysis/build', {
+      sourceIds: ['ntfssox'],
+      groups: [],
+      force: false,
+      maxFiles: null,
+      concurrency: 1,
+      selection: 'DEFAULT'
+    });
+    start.resolve({ accepted: true });
+    await flushAsync();
+    page.dispose();
+  });
+
+  it('UI-KNOW-REG-06 shows Analyze progress and resumes polling', async () => {
+    vi.useFakeTimers();
+    const dom = createOverviewDom();
+    const snapshots = [
+      statusPayload(1, 'PARTIAL'),
+      statusPayload(2, 'RUNNING'),
+      statusPayload(5, 'RUNNING')
+    ];
+    const http = {
+      get: vi.fn(() => Promise.resolve(snapshots.shift() || statusPayload(5, 'RUNNING'))),
+      post: vi.fn(() => Promise.resolve({ accepted: true }))
+    };
+    const page = new KnowledgeOverviewPage({
+      document: dom.window.document,
+      window: dom.window,
+      http,
+      runtimeConfig: { activeJobPollIntervalMs: 2000, statusPollIntervalMs: 60000 }
+    });
+
+    page.mount();
+    await page.currentPromise;
+    await flushAsync();
+    const button = dom.window.document.querySelector('.knowledge-source-analysis-button') as HTMLButtonElement;
+    button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flushAsync();
+    await page.currentPromise;
+    await flushAsync();
+
+    expect(http.post).toHaveBeenCalledTimes(1);
+    expect(dom.window.document.getElementById('knowledgeSourcesBody')?.textContent).toContain('RUNNING');
+    expect(dom.window.document.getElementById('knowledgeSourcesBody')?.textContent).toContain('2 / 10');
+
+    await vi.advanceTimersByTimeAsync(2000);
+    await flushAsync();
+    expect(http.get).toHaveBeenCalledTimes(3);
+    expect(dom.window.document.getElementById('knowledgeSourcesBody')?.textContent).toContain('5 / 10');
+    page.dispose();
+  });
+
+  it('UI-KNOW-REG-07 renders Analyze errors and does not start active polling', async () => {
+    vi.useFakeTimers();
+    const dom = createOverviewDom();
+    const error = Object.assign(new Error('proxy rejected analysis start'), { code: 'ANALYSIS_START_FAILED', status: 502 });
+    const http = {
+      get: vi.fn(() => Promise.resolve(statusPayload(1, 'PARTIAL'))),
+      post: vi.fn(() => Promise.reject(error))
+    };
+    const page = new KnowledgeOverviewPage({
+      document: dom.window.document,
+      window: dom.window,
+      http,
+      runtimeConfig: { activeJobPollIntervalMs: 2000, statusPollIntervalMs: 60000 }
+    });
+
+    page.mount();
+    await page.currentPromise;
+    await flushAsync();
+    const button = dom.window.document.querySelector('.knowledge-source-analysis-button') as HTMLButtonElement;
+    button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flushAsync();
+
+    expect(http.post).toHaveBeenCalledTimes(1);
+    expect(dom.window.document.getElementById('knowledgeAnalysisError')?.textContent).toContain('ANALYSIS_START_FAILED');
+    expect(button.disabled).toBe(false);
+    expect(button.textContent).toBe('Analyze');
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(http.get).toHaveBeenCalledTimes(1);
+    page.dispose();
   });
 });

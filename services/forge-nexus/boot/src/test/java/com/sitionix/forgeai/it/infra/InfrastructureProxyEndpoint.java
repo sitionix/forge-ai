@@ -76,6 +76,10 @@ public final class InfrastructureProxyEndpoint {
         return nexusGet("/api/v1/infrastructure/knowledge/analysis/diagnostics", "responseProxyAnalysisDiagnostics.json");
     }
 
+    public static Endpoint<Object, Object> nexusKnowledgeGraphMetadata() {
+        return nexusGet("/api/v1/infrastructure/knowledge/analysis/graph/metadata", "responseProxyGraphMetadata.json");
+    }
+
     public static Endpoint<Object, Object> nexusKnowledgeGraphManifest() {
         return nexusGet("/api/v1/infrastructure/knowledge/analysis/graph/manifest", "responseProxyGraphManifest.json");
     }
@@ -282,6 +286,10 @@ public final class InfrastructureProxyEndpoint {
 
     public static Endpoint<Object, Object> upstreamKnowledgeAnalysisDiagnostics() {
         return upstreamGet("/api/v1/knowledge/analysis/diagnostics", "responseProxyAnalysisDiagnostics.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamKnowledgeGraphMetadata() {
+        return upstreamGet("/api/v1/knowledge/analysis/graph/metadata", "responseProxyGraphMetadata.json");
     }
 
     public static Endpoint<Object, Object> upstreamKnowledgeGraphManifest() {

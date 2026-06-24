@@ -68,6 +68,15 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
         verify(this.transport).forward("knowledge.analysis.diagnostics", Map.of(), null, this.headers, this.request);
     }
 
+    @Test
+    void graphMetadataDelegatesToGenericProxyRoute() {
+        this.stub();
+
+        this.controller.analysisGraphMetadata(this.headers, this.request);
+
+        verify(this.transport).forward("knowledge.graph.metadata", Map.of(), null, this.headers, this.request);
+    }
+
     private void stub() {
         when(this.transport.forward(any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(ResponseEntity.ok(new byte[0])));

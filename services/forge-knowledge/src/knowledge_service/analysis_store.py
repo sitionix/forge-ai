@@ -1360,6 +1360,105 @@ class AnalysisStore:
             ).fetchall()
         return {"diagnostics": [self._diagnostic_detail(row) for row in rows], "total": total, "limit": limit, "offset": offset}
 
+    def graph_snapshot_metadata(self, source_id: Optional[str]) -> Dict[str, Any]:
+        self.init()
+        with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
+            source_row = None
+            has_sources = self._table_exists(conn, "sources")
+            if source_id and has_sources:
+                source_row = conn.execute(
+                    """
+                    SELECT source_id, display_name, group_name, path, root_exists, last_seen_at
+                    FROM sources
+                    WHERE source_id = ?
+                    """,
+                    (source_id,),
+                ).fetchone()
+            elif has_sources:
+                source_row = conn.execute(
+                    """
+                    SELECT source_id, display_name, group_name, path, root_exists, last_seen_at
+                    FROM sources
+                    ORDER BY source_id
+                    LIMIT 1
+                    """
+                ).fetchone()
+            selected_source_id = str(source_row["source_id"]) if source_row else source_id
+            overview_row = None
+            if selected_source_id:
+                overview_row = conn.execute(
+                    """
+                    SELECT *
+                    FROM knowledge_source_overview
+                    WHERE source_id = ?
+                    """,
+                    (selected_source_id,),
+                ).fetchone()
+            current = None
+            if selected_source_id:
+                current = conn.execute(
+                    """
+                    SELECT current.snapshot_id, current.published_at, snapshot.content_identity
+                    FROM graph_current_snapshots current
+                    JOIN graph_snapshots snapshot
+                      ON snapshot.source_id = current.source_id
+                     AND snapshot.snapshot_id = current.snapshot_id
+                    WHERE current.source_id = ?
+                    """,
+                    (selected_source_id,),
+                ).fetchone()
+            diagnostics = None
+            if selected_source_id:
+                diagnostics = conn.execute(
+                    """
+                    SELECT COUNT(*) AS total,
+                           SUM(CASE WHEN severity = 'ERROR' THEN 1 ELSE 0 END) AS errors,
+                           SUM(CASE WHEN severity = 'WARN' THEN 1 ELSE 0 END) AS warnings
+                    FROM analysis_graph_diagnostics
+                    WHERE source_id = ?
+                      AND (? IS NULL OR snapshot_id = ?)
+                    """,
+                    (selected_source_id, current["snapshot_id"] if current else None, current["snapshot_id"] if current else None),
+                ).fetchone()
+            analysis_state = self._current_analysis_state(conn, [selected_source_id] if selected_source_id else None)
+        source_name = source_row["display_name"] if source_row else selected_source_id
+        inventory = {
+            "status": overview_row["inventory_status"] if overview_row else ("READY" if source_row and source_row["root_exists"] else "UNKNOWN"),
+            "fileCount": int(overview_row["inventory_file_count"] or 0) if overview_row else int(analysis_state.get("totalFiles", 0)),
+            "skippedCount": int(overview_row["skipped_file_count"] or 0) if overview_row else int(analysis_state.get("skippedFiles", 0)),
+        }
+        analysis = {
+            "status": overview_row["analysis_state"] if overview_row else "UNKNOWN",
+            "totalFiles": int(overview_row["analysis_total_files"] or 0) if overview_row else int(analysis_state.get("totalFiles", 0)),
+            "processedFiles": int(overview_row["analysis_processed_files"] or 0) if overview_row else int(analysis_state.get("completedFiles", 0)),
+            "failedFiles": int(overview_row["analysis_failed_files"] or 0) if overview_row else int(analysis_state.get("failedFiles", 0)),
+            "pendingFiles": int(overview_row["analysis_pending_files"] or 0) if overview_row else int(analysis_state.get("pendingFiles", 0)),
+            "percent": float(overview_row["completion_percent"] or 0.0) if overview_row else float(analysis_state.get("completionPercent", 0.0)),
+        }
+        return {
+            "sourceId": selected_source_id,
+            "sourceName": source_name,
+            "source": {
+                "sourceId": selected_source_id,
+                "displayName": source_name,
+                "group": source_row["group_name"] if source_row else None,
+                "path": source_row["path"] if source_row else None,
+                "rootExists": bool(source_row["root_exists"]) if source_row else False,
+            },
+            "analysis": analysis,
+            "inventory": inventory,
+            "graphAvailable": current is not None,
+            "snapshotId": current["snapshot_id"] if current else None,
+            "graphRevision": current["content_identity"] if current else None,
+            "lastAnalyzedAt": overview_row["updated_at"] if overview_row else None,
+            "lastGraphPublishedAt": current["published_at"] if current else None,
+            "diagnostics": {
+                "total": int(diagnostics["total"] or 0) if diagnostics else 0,
+                "errors": int(diagnostics["errors"] or 0) if diagnostics else 0,
+                "warnings": int(diagnostics["warnings"] or 0) if diagnostics else 0,
+            },
+        }
+
     def graph_snapshot_manifest(
         self,
         source_id: Optional[str],
@@ -1418,9 +1517,7 @@ class AnalysisStore:
                 include_unresolved,
                 include_isolated,
             )
-            metric = self._graph_metric(conn, query)
-            if metric is None:
-                raise KnowledgeError("GRAPH_SNAPSHOT_METRICS_MISSING", "Graph snapshot metrics are missing for this query.")
+            metric = self._graph_metric_or_backfill(conn, query)
             revision = self._graph_snapshot_revision(query)
             return {
                 "graphRevision": revision,
@@ -1454,6 +1551,17 @@ class AnalysisStore:
             """,
             (query.snapshot_id, query.fingerprint),
         ).fetchone()
+
+    def _graph_metric_or_backfill(self, conn: sqlite3.Connection, query: GraphSnapshotQuery) -> sqlite3.Row:
+        metric = self._graph_metric(conn, query)
+        if metric is not None:
+            return metric
+        self._assert_snapshot_readable(conn, query.snapshot_id, query.source_id)
+        self._insert_graph_snapshot_metric(conn, query, datetime.now(timezone.utc).isoformat())
+        repaired = self._graph_metric(conn, query)
+        if repaired is None:
+            raise KnowledgeError("GRAPH_SNAPSHOT_METRICS_MISSING", "Graph snapshot metrics are missing for this query.")
+        return repaired
 
     def _graph_query_filters(self, query: GraphSnapshotQuery) -> Dict[str, Any]:
         return {
@@ -2763,7 +2871,7 @@ class AnalysisStore:
         }
         conn.execute(
             """
-            INSERT INTO graph_snapshot_metrics(
+            INSERT OR REPLACE INTO graph_snapshot_metrics(
                 snapshot_id, query_fingerprint, source_id, flow_domain, fact_origin, node_kind, edge_type,
                 include_external, include_unresolved, include_isolated, total_node_count, total_edge_count,
                 node_type_counts_json, edge_type_counts_json, created_at
@@ -3521,6 +3629,10 @@ class AnalysisStore:
     def _table_sql(self, conn: sqlite3.Connection, table: str) -> str:
         row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
         return str(row["sql"] or "") if row else ""
+
+    def _table_exists(self, conn: sqlite3.Connection, table: str) -> bool:
+        row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
+        return row is not None
 
     def _rebuild_graph_current_snapshots_table_if_needed(self, conn: sqlite3.Connection) -> None:
         sql = self._table_sql(conn, "graph_current_snapshots")

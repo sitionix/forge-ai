@@ -28,6 +28,7 @@ public class InfrastructureProxyRouteRegistry {
         this.knowledge(registered, "knowledge.analysis.status", HttpMethod.GET, "/api/v1/knowledge/analysis/status", false);
         this.knowledge(registered, "knowledge.analysis.files", HttpMethod.GET, "/api/v1/knowledge/analysis/files", false);
         this.knowledge(registered, "knowledge.analysis.diagnostics", HttpMethod.GET, "/api/v1/knowledge/analysis/diagnostics", false);
+        this.knowledge(registered, "knowledge.graph.metadata", HttpMethod.GET, "/api/v1/knowledge/analysis/graph/metadata", false);
         this.knowledge(registered, "knowledge.graph.manifest", HttpMethod.GET, "/api/v1/knowledge/analysis/graph/manifest", false);
         this.knowledge(registered, "knowledge.graph.nodes", HttpMethod.GET, "/api/v1/knowledge/analysis/graph/nodes", false);
         this.knowledge(registered, "knowledge.graph.edges", HttpMethod.GET, "/api/v1/knowledge/analysis/graph/edges", false);

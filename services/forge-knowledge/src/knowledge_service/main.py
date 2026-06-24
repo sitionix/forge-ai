@@ -273,6 +273,14 @@ def create_app(
         _, deps = _state(request)
         return deps.analysis_store.diagnostics(sourceId, limit, offset)
 
+    @app.get("/api/v1/knowledge/analysis/graph/metadata")
+    async def analysis_graph_metadata(
+        request: Request,
+        sourceId: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        _, deps = _state(request)
+        return deps.analysis_store.graph_snapshot_metadata(sourceId)
+
     @app.get("/api/v1/knowledge/analysis/graph/manifest")
     async def analysis_graph_manifest(
         request: Request,

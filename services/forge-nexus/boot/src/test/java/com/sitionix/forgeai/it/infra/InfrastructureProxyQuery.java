@@ -55,6 +55,10 @@ public final class InfrastructureProxyQuery {
                 .add("flowDomain", "CODE");
     }
 
+    public static QueryParams graphMetadataSource() {
+        return QueryParams.create().add("sourceId", "forge-ai");
+    }
+
     public static QueryParams graphNodesContract() {
         return QueryParams.create()
                 .add("sourceId", "forge-ai")
@@ -158,6 +162,10 @@ public final class InfrastructureProxyQuery {
         return WireMockQueryParams.create()
                 .add("sourceId", "forge-ai")
                 .add("flowDomain", "CODE");
+    }
+
+    public static WireMockQueryParams upstreamGraphMetadataSource() {
+        return WireMockQueryParams.create().add("sourceId", "forge-ai");
     }
 
     public static WireMockQueryParams upstreamGraphCursorA() {

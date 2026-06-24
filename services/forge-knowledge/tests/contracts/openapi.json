@@ -644,6 +644,45 @@
         }
       }
     },
+    "/api/v1/knowledge/analysis/graph/metadata": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Analysis Graph Metadata Api V1 Knowledge Analysis Graph Metadata Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
     "/api/v1/knowledge/analysis/graph/node/{node_id}": {
       "get": {
         "parameters": [

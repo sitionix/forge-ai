@@ -29,6 +29,7 @@ export class KnowledgeOverviewPage {
     this.maxConcurrent = 0;
     this.currentPromise = null;
     this.latestAppliedSeq = 0;
+    this.analysisStartsInFlight = new Set();
     this.refreshListener = () => this.load({ manual: true, caller: 'knowledge-manual' });
     this.retryListener = (event) => {
       if (event.target.closest('[data-knowledge-retry]')) {
@@ -177,6 +178,10 @@ export class KnowledgeOverviewPage {
   }
 
   async startAnalysis(sourceId, button) {
+    if (this.analysisStartsInFlight.has(sourceId)) {
+      return;
+    }
+    this.analysisStartsInFlight.add(sourceId);
     if (button) {
       button.disabled = true;
       button.textContent = 'Starting...';
@@ -191,13 +196,20 @@ export class KnowledgeOverviewPage {
         selection: 'DEFAULT'
       });
       renderRequestError('knowledgeAnalysisError', null, {}, this.document);
-      await this.load({ manual: true, caller: 'knowledge-analysis-start' });
+      const status = await this.load({ manual: true, caller: 'knowledge-analysis-start' });
+      if (status) {
+        this.polling.lastResult = status;
+      }
+      if (!this.disposed) {
+        this.polling.schedule();
+      }
     } catch (error) {
       renderRequestError('knowledgeAnalysisError', error, {
         endpoint: '/knowledge/analysis/build',
         title: 'Knowledge action failed'
       }, this.document);
     } finally {
+      this.analysisStartsInFlight.delete(sourceId);
       if (button) {
         button.disabled = false;
         button.textContent = 'Analyze';
@@ -499,4 +511,3 @@ function knowledgeGraphUrl(params = {}) {
 function isActiveAnalysisJob(job) {
   return job && ACTIVE_STATUSES.has(String(job.status || '').toUpperCase());
 }
-

@@ -23,6 +23,7 @@ class ForgeAiInfrastructureRouteContractTest {
                         "GET /api/v1/infrastructure/knowledge/analysis/graph/edge/{edgeId}",
                         "GET /api/v1/infrastructure/knowledge/analysis/graph/edges",
                         "GET /api/v1/infrastructure/knowledge/analysis/graph/manifest",
+                        "GET /api/v1/infrastructure/knowledge/analysis/graph/metadata",
                         "GET /api/v1/infrastructure/knowledge/analysis/graph/node/{nodeId}",
                         "GET /api/v1/infrastructure/knowledge/analysis/graph/nodes",
                         "GET /api/v1/infrastructure/knowledge/analysis/jobs/{jobId}",

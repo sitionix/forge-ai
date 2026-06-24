@@ -39,6 +39,7 @@ PUBLIC_ENDPOINTS = {
     ("GET", "/api/v1/knowledge/overview"),
     ("GET", "/api/v1/knowledge/analysis/files"),
     ("GET", "/api/v1/knowledge/analysis/diagnostics"),
+    ("GET", "/api/v1/knowledge/analysis/graph/metadata"),
     ("GET", "/api/v1/knowledge/analysis/graph/manifest"),
     ("GET", "/api/v1/knowledge/analysis/graph/nodes"),
     ("GET", "/api/v1/knowledge/analysis/graph/edges"),

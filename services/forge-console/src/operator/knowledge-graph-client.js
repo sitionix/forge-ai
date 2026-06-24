@@ -113,6 +113,8 @@ export function createKnowledgeGraphClient(options) {
 
 export function graphSnapshotQuery(query) {
   const pageQuery = new URLSearchParams(query);
+  const external = String(pageQuery.get('includeExternal') || 'show').toLowerCase();
+  pageQuery.set('includeExternal', external === 'hide' ? 'hide' : 'show');
   [
     'depth',
     'direction',
@@ -205,4 +207,3 @@ function nextFrame(windowRef = window) {
     raf(resolve);
   });
 }
-

@@ -63,6 +63,13 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisStatus()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisFiles()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeAnalysisDiagnostics()).createDefault();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphMetadata())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphMetadataSource())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphMetadata.json"))
+                .create();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphManifest()).createDefault();
         this.testManager.wiremock()
                 .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodes())
@@ -124,6 +131,10 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeAnalysisStatus()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeAnalysisFiles()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeAnalysisDiagnostics()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphMetadata())
+                .withQueryParameters(InfrastructureProxyQuery.graphMetadataSource())
+                .header("X-Correlation-Id", "corr-allowlist")
+                .assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphManifest()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphNodes())
@@ -159,6 +170,13 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
     void itProxy02RawJsonPreservationKeepsRepresentativeBodies() {
         //given
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeOverview()).createDefault();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphMetadata())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphMetadataSource())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphMetadata.json"))
+                .create();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphManifest()).createDefault();
         this.testManager.wiremock()
                 .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodes())
@@ -196,6 +214,11 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
         //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeOverview()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphMetadata())
+                .withQueryParameters(InfrastructureProxyQuery.graphMetadataSource())
+                .header("X-Correlation-Id", "corr-raw-json")
+                .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("GRAPH_SNAPSHOT_METRICS_MISSING"))))
+                .assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphManifest()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphNodes())
                 .withQueryParameters(InfrastructureProxyQuery.graphRevisionA())
