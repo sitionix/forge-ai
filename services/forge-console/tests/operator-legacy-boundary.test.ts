@@ -113,14 +113,23 @@ function statusPayload() {
 }
 
 function graphResponse(path: string) {
-  if (path.includes('/manifest')) {
-    return { status: 200, ok: true, headers: new Headers(), body: { sourceId: 'svc', graphRevision: 'rev', totalNodeCount: 1, totalEdgeCount: 1 } };
-  }
-  if (path.includes('/nodes')) {
-    return { graphRevision: 'rev', items: [{ id: 'n1', label: 'n1', nodeKind: 'CALLABLE' }], complete: true, returnedCount: 1 };
-  }
-  if (path.includes('/edges')) {
-    return { graphRevision: 'rev', items: [], complete: true, returnedCount: 0 };
+  if (path.includes('/view')) {
+    return {
+      sourceId: 'svc',
+      graphRevision: 'rev',
+      queryFingerprint: 'fingerprint-rev',
+      selectionPolicy: 'RELATIONSHIP_AWARE',
+      maxNodes: 80,
+      nodes: [{ id: 'n1', label: 'n1', nodeKind: 'CALLABLE' }],
+      edges: [],
+      totalMatchingNodeCount: 1,
+      totalMatchingEdgeCount: 0,
+      visibleNodeCount: 1,
+      visibleEdgeCount: 0,
+      hiddenNodeCount: 0,
+      hiddenEdgeCount: 0,
+      hasMore: false
+    };
   }
   throw new Error(path);
 }
@@ -223,8 +232,7 @@ describe('Operator legacy boundary', () => {
     await flushAsync();
     expect((graph.window.__forgeMountedOperatorPage as any).constructor.name).toBe('KnowledgeGraphPage');
     const graphPaths = (graphHttp.get.mock.calls as Array<[string]>).map(([path]) => path);
-    expect(graphPaths.filter((path) => path.includes('/knowledge/analysis/graph/manifest'))).toHaveLength(1);
-    expect(graphPaths.filter((path) => path.includes('/knowledge/analysis/graph/nodes'))).toHaveLength(1);
+    expect(graphPaths.filter((path) => path.includes('/knowledge/analysis/graph/view'))).toHaveLength(1);
     expect(graphPaths.some((path) => /analysis\/symbols|analysis\/relations|analysis\/graph\/slice|analysis\/graph($|\?)/.test(path))).toBe(false);
   });
 

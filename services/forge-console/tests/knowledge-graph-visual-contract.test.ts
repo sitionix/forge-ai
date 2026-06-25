@@ -29,6 +29,30 @@ function graphData(revision = 'rev-a') {
   };
 }
 
+function graphView(revision = 'rev-a') {
+  return {
+    sourceId: 'forge-ai',
+    sourceName: 'Forge AI',
+    snapshotId: 'snapshot-a',
+    graphRevision: revision,
+    queryFingerprint: `fingerprint-${revision}`,
+    selectionPolicy: 'RELATIONSHIP_AWARE',
+    maxNodes: 80,
+    nodes: [node('n1'), { ...node('n2'), nodeKind: 'TYPE' }],
+    edges: [{ id: 'e1', fromNodeId: 'n1', toNodeId: 'n2', edgeType: 'CALLS' }],
+    totalMatchingNodeCount: 2,
+    totalMatchingEdgeCount: 1,
+    visibleNodeCount: 2,
+    visibleEdgeCount: 1,
+    hiddenNodeCount: 0,
+    hiddenEdgeCount: 0,
+    hiddenBoundaryEdgeCount: 0,
+    internalEdgeCount: 1,
+    hasMore: false,
+    status: { analysisStatus: 'COMPLETED' }
+  };
+}
+
 function graphDom(url = 'http://127.0.0.1/operator/knowledge-graph.html?sourceId=forge-ai&flowDomain=CODE') {
   const dom = new JSDOM(`<!doctype html>
     <body data-page="knowledge-graph">
@@ -150,14 +174,8 @@ describe('Knowledge graph modular contract', () => {
     const http = {
       get: vi.fn((path: string) => {
         requests.push(path);
-        if (path.includes('/manifest')) {
-          return response(200, manifest());
-        }
-        if (path.includes('/nodes')) {
-          return Promise.resolve({ graphRevision: 'rev-a', items: [node('n1'), node('n2')], complete: true, returnedCount: 2 });
-        }
-        if (path.includes('/edges')) {
-          return Promise.resolve({ graphRevision: 'rev-a', items: [{ id: 'e1', fromNodeId: 'n1', toNodeId: 'n2', edgeType: 'CALLS' }], complete: true, returnedCount: 1 });
+        if (path.includes('/view')) {
+          return Promise.resolve(graphView());
         }
         if (path.includes('/node/n1')) {
           return Promise.resolve({ item: { id: 'n1', evidence: [{ id: 'ev-node' }] } });
@@ -174,9 +192,7 @@ describe('Knowledge graph modular contract', () => {
     await client.loadNodeDetail('n1', query, data.graphRevision);
     await client.loadEdgeDetail('e1', query, data.graphRevision);
 
-    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/manifest'))).toBe(true);
-    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/nodes'))).toBe(true);
-    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/edges'))).toBe(true);
+    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/view'))).toBe(true);
     expect(requests.some((path) => path.includes('/knowledge/analysis/graph/node/n1'))).toBe(true);
     expect(requests.some((path) => path.includes('/knowledge/analysis/graph/edge/e1'))).toBe(true);
     expect(requests.some((path) => /analysis\/symbols|analysis\/relations|analysis\/graph\/slice|analysis\/graph($|\?)/.test(path))).toBe(false);
@@ -228,14 +244,8 @@ describe('Knowledge graph modular contract', () => {
         if (path.includes('/knowledge/analysis/graph/metadata')) {
           return Promise.resolve(metadataPayload());
         }
-        if (path.includes('/manifest')) {
-          return Promise.resolve(response(200, manifest()));
-        }
-        if (path.includes('/nodes')) {
-          return Promise.resolve({ graphRevision: 'rev-a', items: [node('n1'), node('n2')], complete: true, returnedCount: 2 });
-        }
-        if (path.includes('/edges')) {
-          return Promise.resolve({ graphRevision: 'rev-a', items: [{ id: 'e1', fromNodeId: 'n1', toNodeId: 'n2', edgeType: 'CALLS' }], complete: true, returnedCount: 1 });
+        if (path.includes('/view')) {
+          return Promise.resolve(graphView());
         }
         throw new Error(`unexpected ${path}`);
       })
@@ -253,17 +263,18 @@ describe('Knowledge graph modular contract', () => {
     const metadataRequest = requests.find((path) => path.includes('/knowledge/analysis/graph/metadata'));
     expect(metadataRequest).toBeTruthy();
     expect(new URL(metadataRequest || '', 'http://127.0.0.1').searchParams.get('sourceId')).toBe('forge-ai');
-    const manifestRequest = requests.find((path) => path.includes('/knowledge/analysis/graph/manifest'));
-    expect(manifestRequest).toBeTruthy();
-    const manifestUrl = new URL(manifestRequest || '', 'http://127.0.0.1');
-    expect(manifestUrl.searchParams.get('sourceId')).toBe('forge-ai');
-    expect(manifestUrl.searchParams.get('flowDomain')).toBe('CODE');
-    expect(manifestUrl.searchParams.get('includeExternal')).toBe('show');
-    expect(manifestUrl.searchParams.get('includeUnresolved')).toBe('true');
-    expect(manifestUrl.searchParams.get('includeIsolated')).toBe('false');
-    expect(manifestUrl.searchParams.has('depth')).toBe(false);
-    expect(manifestUrl.searchParams.has('direction')).toBe(false);
-    expect(manifestUrl.searchParams.get('includeExternal')).not.toBe('collapsed');
+    const viewRequest = requests.find((path) => path.includes('/knowledge/analysis/graph/view'));
+    expect(viewRequest).toBeTruthy();
+    const viewUrl = new URL(viewRequest || '', 'http://127.0.0.1');
+    expect(viewUrl.searchParams.get('sourceId')).toBe('forge-ai');
+    expect(viewUrl.searchParams.get('flowDomain')).toBe('CODE');
+    expect(viewUrl.searchParams.get('includeExternal')).toBe('show');
+    expect(viewUrl.searchParams.get('includeUnresolved')).toBe('true');
+    expect(viewUrl.searchParams.get('includeIsolated')).toBe('false');
+    expect(viewUrl.searchParams.get('maxNodes')).toBe('80');
+    expect(viewUrl.searchParams.has('depth')).toBe(false);
+    expect(viewUrl.searchParams.has('direction')).toBe(false);
+    expect(viewUrl.searchParams.get('includeExternal')).not.toBe('collapsed');
     expect(requests.some((path) => /analysis\/graph\/slice|analysis\/symbols|analysis\/relations/.test(path))).toBe(false);
     expect(dom.window.document.getElementById('knowledgeGraphError')?.textContent).toBe('');
     page.dispose();
@@ -278,14 +289,8 @@ describe('Knowledge graph modular contract', () => {
         if (path.includes('/knowledge/analysis/graph/metadata')) {
           return Promise.resolve(metadataPayload());
         }
-        if (path.includes('/manifest')) {
-          return Promise.resolve(response(200, manifest()));
-        }
-        if (path.includes('/nodes')) {
-          return Promise.resolve({ graphRevision: 'rev-a', items: [node('n1')], complete: true, returnedCount: 1 });
-        }
-        if (path.includes('/edges')) {
-          return Promise.resolve({ graphRevision: 'rev-a', items: [], complete: true, returnedCount: 0 });
+        if (path.includes('/view')) {
+          return Promise.resolve({ ...graphView(), nodes: [node('n1')], edges: [], visibleNodeCount: 1, visibleEdgeCount: 0, totalMatchingNodeCount: 1, totalMatchingEdgeCount: 0 });
         }
         throw new Error(`unexpected ${path}`);
       })
@@ -300,17 +305,19 @@ describe('Knowledge graph modular contract', () => {
     page.mount();
     await flushAsync();
 
-    const manifestRequest = requests.find((path) => path.includes('/knowledge/analysis/graph/manifest'));
-    const manifestUrl = new URL(manifestRequest || '', 'http://127.0.0.1');
-    expect(Object.fromEntries(manifestUrl.searchParams.entries())).toMatchObject({
+    const viewRequest = requests.find((path) => path.includes('/knowledge/analysis/graph/view'));
+    const viewUrl = new URL(viewRequest || '', 'http://127.0.0.1');
+    expect(Object.fromEntries(viewUrl.searchParams.entries())).toMatchObject({
       sourceId: 'forge-ai',
       flowDomain: 'CODE',
       includeExternal: 'hide',
       includeUnresolved: 'false',
-      includeIsolated: 'true'
+      includeIsolated: 'true',
+      search: 'handler',
+      maxNodes: '200'
     });
-    ['mode', 'direction', 'depth', 'density', 'labels', 'maxNodes', 'max', 'search', 'rootGraphNodeId'].forEach((param) => {
-      expect(manifestUrl.searchParams.has(param)).toBe(false);
+    ['mode', 'direction', 'depth', 'density', 'labels', 'max', 'rootGraphNodeId'].forEach((param) => {
+      expect(viewUrl.searchParams.has(param)).toBe(false);
     });
     expect(graphSnapshotQuery(new URLSearchParams({
       sourceId: 'forge-ai',
@@ -330,8 +337,8 @@ describe('Knowledge graph modular contract', () => {
         if (path.includes('/knowledge/analysis/graph/metadata')) {
           return Promise.resolve(metadataPayload(4, 'PARTIAL'));
         }
-        if (path.includes('/manifest')) {
-          return Promise.resolve(response(400, { code: 'GRAPH_FILTER_INVALID', message: 'bad filter' }));
+        if (path.includes('/view')) {
+          return Promise.reject(Object.assign(new Error('GRAPH_FILTER_INVALID'), { code: 'GRAPH_FILTER_INVALID', status: 400 }));
         }
         throw new Error(`unexpected ${path}`);
       })
@@ -358,11 +365,11 @@ describe('Knowledge graph modular contract', () => {
     page.dispose();
   });
 
-  it('UI-GRAPH-PROGRESS-01 renders completed metadata progress without graph manifest', async () => {
+  it('UI-GRAPH-PROGRESS-01 renders completed metadata progress without graph view', async () => {
     const dom = graphDom();
-    let resolveManifest: (value: unknown) => void = () => undefined;
-    const manifestWait = new Promise((resolve) => {
-      resolveManifest = resolve;
+    let resolveView: (value: unknown) => void = () => undefined;
+    const viewWait = new Promise((resolve) => {
+      resolveView = resolve;
     });
     const http = {
       get: vi.fn((path: string) => {
@@ -376,8 +383,8 @@ describe('Knowledge graph modular contract', () => {
             sourceName: 'AUTOMATION SERVICE SOX'
           });
         }
-        if (path.includes('/manifest')) {
-          return manifestWait;
+        if (path.includes('/view')) {
+          return viewWait;
         }
         throw new Error(`unexpected ${path}`);
       })
@@ -393,9 +400,9 @@ describe('Knowledge graph modular contract', () => {
     expect(progress.meta.textContent).toContain('387 / 387 files');
     expect(progress.fill.style.width).toBe('100%');
     expect(progress.container).toBeTruthy();
-    expect(http.get.mock.calls.some(([path]) => path.includes('/manifest'))).toBe(true);
+    expect(http.get.mock.calls.some(([path]) => path.includes('/view'))).toBe(true);
 
-    resolveManifest(response(500, { code: 'GRAPH_FAILED' }));
+    resolveView(Promise.reject(Object.assign(new Error('GRAPH_FAILED'), { code: 'GRAPH_FAILED' })));
     await flushAsync();
     expect(graphProgress(dom).fill.style.width).toBe('100%');
     page.dispose();
@@ -469,15 +476,15 @@ describe('Knowledge graph modular contract', () => {
     }
   });
 
-  it('UI-GRAPH-PROGRESS-05 keeps metadata progress visible when graph manifest fails', async () => {
+  it('UI-GRAPH-PROGRESS-05 keeps metadata progress visible when graph view fails', async () => {
     const dom = graphDom();
     const http = {
       get: vi.fn((path: string) => {
         if (path.includes('/knowledge/analysis/graph/metadata')) {
           return Promise.resolve({ status: 'COMPLETED', processedFileCount: 10, fileCount: 20, graphAvailable: true });
         }
-        if (path.includes('/manifest')) {
-          return Promise.resolve(response(500, { code: 'GRAPH_DOWN', message: 'graph down' }));
+        if (path.includes('/view')) {
+          return Promise.reject(Object.assign(new Error('GRAPH_DOWN'), { code: 'GRAPH_DOWN' }));
         }
         throw new Error(`unexpected ${path}`);
       })
@@ -567,14 +574,8 @@ describe('Knowledge graph modular contract', () => {
         if (path.includes('/knowledge/analysis/graph/metadata')) {
           return Promise.reject(metadataError);
         }
-        if (path.includes('/manifest')) {
-          return Promise.resolve(response(200, manifest()));
-        }
-        if (path.includes('/nodes')) {
-          return Promise.resolve({ graphRevision: 'rev-a', items: [node('n1'), node('n2')], complete: true, returnedCount: 2 });
-        }
-        if (path.includes('/edges')) {
-          return Promise.resolve({ graphRevision: 'rev-a', items: [{ id: 'e1', fromNodeId: 'n1', toNodeId: 'n2', edgeType: 'CALLS' }], complete: true, returnedCount: 1 });
+        if (path.includes('/view')) {
+          return Promise.resolve(graphView());
         }
         throw new Error(`unexpected ${path}`);
       })
@@ -712,7 +713,8 @@ describe('Knowledge graph modular contract', () => {
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client });
 
     await page.loadGraph({ manual: true });
-    void page.selectNode('old-node');
+    page.selectNode('old-node');
+    void page.openSelectedDetails();
     (dom.window.document.getElementById('knowledgeGraphFlowDomain') as HTMLSelectElement).value = 'CONFIG';
     page.updateUrlFromControls();
     page.resetFilterState();

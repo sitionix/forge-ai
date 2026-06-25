@@ -32,18 +32,24 @@ export function createKnowledgeGraphClient(options) {
 
   async function loadSnapshot(query, requestOptions = {}) {
     metrics.dataFetchCount = (metrics.dataFetchCount || 0) + 1;
-    const manifest = await loadManifest(query, requestOptions);
-    const store = createGraphStore();
-    await loadGraphPages('nodes', query, manifest.graphRevision, manifest.totalNodeCount || 0, store, requestOptions);
-    await loadGraphPages('edges', query, manifest.graphRevision, manifest.totalEdgeCount || 0, store, requestOptions);
-    return graphDataFromStore(store, manifest, metrics);
+    const view = await loadGraphView(query, requestOptions);
+    return graphDataFromView(view, metrics);
   }
 
-  async function loadGraphPages(kind, baseQuery, graphRevision, total, store, requestOptions = {}) {
+  async function loadGraphView(query, requestOptions = {}) {
+    const viewQuery = graphViewQuery(query);
+    return http.get(`/knowledge/analysis/graph/view?${viewQuery.toString()}`, { signal: requestOptions.signal });
+  }
+
+  async function loadGraphPages(kind, baseQuery, graphRevision, total, store, requestOptions = {}, limit = 0) {
     let cursor = null;
     let loaded = 0;
     do {
-      const page = await loadGraphPage(kind, baseQuery, graphRevision, cursor, requestOptions);
+      const remaining = limit > 0 ? Math.max(0, limit - loaded) : 0;
+      if (limit > 0 && remaining <= 0) {
+        break;
+      }
+      const page = await loadGraphPage(kind, baseQuery, graphRevision, cursor, requestOptions, remaining);
       if (page.graphRevision !== graphRevision) {
         const error = new Error('GRAPH_SNAPSHOT_STALE');
         error.code = 'GRAPH_SNAPSHOT_STALE';
@@ -60,16 +66,18 @@ export function createKnowledgeGraphClient(options) {
       if (page.complete) {
         break;
       }
-    } while (cursor);
-    if (total > 0 && loaded < total) {
+    } while (cursor && (limit <= 0 || loaded < limit));
+    if (limit <= 0 && total > 0 && loaded < total) {
       throw new Error(`Graph ${kind} snapshot ended early: ${loaded} / ${total}`);
     }
   }
 
-  async function loadGraphPage(kind, baseQuery, graphRevision, cursor, requestOptions = {}) {
+  async function loadGraphPage(kind, baseQuery, graphRevision, cursor, requestOptions = {}, remainingLimit = 0) {
     const pageQuery = graphSnapshotQuery(baseQuery);
     pageQuery.set('graphRevision', graphRevision);
-    pageQuery.set('pageSize', kind === 'nodes' ? nodePageSize : edgePageSize);
+    const configuredPageSize = kind === 'nodes' ? nodePageSize : edgePageSize;
+    const boundedPageSize = remainingLimit > 0 ? Math.min(configuredPageSize, remainingLimit) : configuredPageSize;
+    pageQuery.set('pageSize', boundedPageSize);
     if (cursor) {
       pageQuery.set('cursor', cursor);
     }
@@ -105,6 +113,7 @@ export function createKnowledgeGraphClient(options) {
   return {
     loadManifest,
     loadSnapshot,
+    loadGraphView,
     loadGraphPage,
     loadNodeDetail,
     loadEdgeDetail
@@ -118,6 +127,7 @@ export function graphSnapshotQuery(query) {
   [
     'depth',
     'direction',
+    'mode',
     'maxNodes',
     'maxEdges',
     'graphNodeId',
@@ -132,6 +142,87 @@ export function graphSnapshotQuery(query) {
     'includeDiagnostics'
   ].forEach((key) => pageQuery.delete(key));
   return pageQuery;
+}
+
+export function graphViewQuery(query) {
+  const viewQuery = graphSnapshotQuery(query);
+  const maxNodes = boundedPositiveInteger(query.get('maxNodes'));
+  if (maxNodes > 0) {
+    viewQuery.set('maxNodes', String(maxNodes));
+  } else {
+    viewQuery.set('maxNodes', '0');
+  }
+  return viewQuery;
+}
+
+export function graphLoadLimits(query) {
+  const maxNodes = boundedPositiveInteger(query.get('maxNodes'));
+  if (maxNodes <= 0) {
+    return { nodeLimit: 0, edgeLimit: 0 };
+  }
+  const explicitMaxEdges = boundedPositiveInteger(query.get('maxEdges'));
+  return {
+    nodeLimit: maxNodes,
+    edgeLimit: explicitMaxEdges > 0 ? explicitMaxEdges : Math.max(maxNodes, maxNodes * 4)
+  };
+}
+
+export function graphDataFromView(view, metrics = {}) {
+  metrics.graphModelBuildCount = (metrics.graphModelBuildCount || 0) + 1;
+  const nodes = view.nodes || [];
+  const store = createGraphStore();
+  appendGraphNodes(store, nodes);
+  appendGraphEdges(store, view.edges || []);
+  const edges = [...store.edgesById.values()].filter((edge) => edge.from && edge.to && store.nodesById.has(edge.from) && store.nodesById.has(edge.to));
+  const totalNodeCount = view.totalMatchingNodeCount ?? nodes.length;
+  const totalEdgeCount = view.totalMatchingEdgeCount ?? edges.length;
+  const hiddenNodeCount = view.hiddenNodeCount ?? Math.max(0, totalNodeCount - nodes.length);
+  const hiddenEdgeCount = view.hiddenEdgeCount ?? Math.max(0, totalEdgeCount - edges.length);
+  return {
+    sourceId: view.sourceId,
+    sourceName: view.sourceName,
+    snapshotId: view.snapshotId,
+    graphRevision: view.graphRevision,
+    queryFingerprint: view.queryFingerprint,
+    selectionPolicy: view.selectionPolicy || 'RELATIONSHIP_AWARE',
+    status: view.status || {},
+    filters: view.filters || {},
+    nodes,
+    edges,
+    claims: [],
+    evidence: [],
+    selected: {},
+    diagnostics: [],
+    metrics: {
+      sliceNodeCount: nodes.length,
+      sliceEdgeCount: edges.length,
+      totalNodesAvailable: totalNodeCount,
+      unresolvedCount: edges.filter((edge) => !edge.to).length,
+      hiddenNodeCount,
+      hiddenEdgeCount,
+      hiddenBoundaryEdgeCount: view.hiddenBoundaryEdgeCount || 0,
+      internalEdgeCount: view.internalEdgeCount ?? edges.length,
+      selectionPolicy: view.selectionPolicy || 'RELATIONSHIP_AWARE'
+    },
+    meta: {
+      truncated: Boolean(view.hasMore || hiddenNodeCount > 0 || hiddenEdgeCount > 0),
+      totalNodeCount,
+      totalEdgeCount,
+      returnedNodeCount: view.visibleNodeCount ?? nodes.length,
+      returnedEdgeCount: view.visibleEdgeCount ?? edges.length,
+      skippedMissingEndpointCount: Math.max(0, (view.edges || []).length - edges.length),
+      skippedByLimitCount: hiddenNodeCount + hiddenEdgeCount,
+      hiddenNodeCount,
+      hiddenEdgeCount,
+      hiddenBoundaryEdgeCount: view.hiddenBoundaryEdgeCount || 0,
+      internalEdgeCount: view.internalEdgeCount ?? edges.length,
+      maxNodeLimit: view.maxNodes || null,
+      maxEdgeLimit: null,
+      hasMore: Boolean(view.hasMore),
+      selectionPolicy: view.selectionPolicy || 'RELATIONSHIP_AWARE',
+      truncationReason: view.hasMore ? 'relationship-aware graph view limit' : null
+    }
+  };
 }
 
 export function isKnowledgeGraphExpiredSnapshotError(error) {
@@ -167,10 +258,13 @@ export function appendGraphEdges(store, edges) {
   });
 }
 
-export function graphDataFromStore(store, manifest, metrics = {}) {
+export function graphDataFromStore(store, manifest, metrics = {}, limits = {}) {
   metrics.graphModelBuildCount = (metrics.graphModelBuildCount || 0) + 1;
   const nodes = [...store.nodesById.values()];
   const edges = [...store.edgesById.values()].filter((edge) => edge.from && edge.to && store.nodesById.has(edge.from) && store.nodesById.has(edge.to));
+  const totalNodeCount = manifest.totalNodeCount || nodes.length;
+  const totalEdgeCount = manifest.totalEdgeCount || store.edgesById.size;
+  const skippedByLimitCount = Math.max(0, totalNodeCount - nodes.length) + Math.max(0, totalEdgeCount - store.edgesById.size);
   return {
     sourceId: manifest.sourceId,
     sourceName: manifest.sourceName,
@@ -186,19 +280,30 @@ export function graphDataFromStore(store, manifest, metrics = {}) {
     metrics: {
       sliceNodeCount: nodes.length,
       sliceEdgeCount: edges.length,
-      totalNodesAvailable: manifest.totalNodeCount || nodes.length,
+      totalNodesAvailable: totalNodeCount,
       unresolvedCount: [...store.edgesById.values()].filter((edge) => !edge.to).length
     },
     meta: {
-      truncated: false,
-      totalNodeCount: manifest.totalNodeCount || nodes.length,
-      totalEdgeCount: manifest.totalEdgeCount || store.edgesById.size,
+      truncated: skippedByLimitCount > 0,
+      totalNodeCount,
+      totalEdgeCount,
       returnedNodeCount: nodes.length,
       returnedEdgeCount: store.edgesById.size,
       skippedMissingEndpointCount: Math.max(0, store.edgesById.size - edges.length),
-      skippedByLimitCount: 0
+      skippedByLimitCount,
+      maxNodeLimit: limits.nodeLimit || null,
+      maxEdgeLimit: limits.edgeLimit || null,
+      truncationReason: skippedByLimitCount > 0 ? 'client max limit' : null
     }
   };
+}
+
+function boundedPositiveInteger(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    return 0;
+  }
+  return Math.floor(number);
 }
 
 function nextFrame(windowRef = window) {

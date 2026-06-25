@@ -26,6 +26,7 @@ class ForgeAiInfrastructureRouteContractTest {
                         "GET /api/v1/infrastructure/knowledge/analysis/graph/metadata",
                         "GET /api/v1/infrastructure/knowledge/analysis/graph/node/{nodeId}",
                         "GET /api/v1/infrastructure/knowledge/analysis/graph/nodes",
+                        "GET /api/v1/infrastructure/knowledge/analysis/graph/view",
                         "GET /api/v1/infrastructure/knowledge/analysis/jobs/{jobId}",
                         "GET /api/v1/infrastructure/knowledge/analysis/status",
                         "GET /api/v1/infrastructure/knowledge/inventory/files",

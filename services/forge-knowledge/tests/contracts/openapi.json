@@ -517,6 +517,15 @@
               "title": "Includeunresolved",
               "type": "boolean"
             }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "title": "Search",
+              "type": "string"
+            }
           }
         ],
         "requestBody": null,
@@ -618,6 +627,15 @@
               "default": true,
               "title": "Includeisolated",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "title": "Search",
+              "type": "string"
             }
           }
         ],
@@ -844,6 +862,138 @@
               "default": true,
               "title": "Includeisolated",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "title": "Search",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/graph/view": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "title": "Sourceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "flowDomain",
+            "required": false,
+            "schema": {
+              "title": "Flowdomain",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "factOrigin",
+            "required": false,
+            "schema": {
+              "title": "Factorigin",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "nodeKind",
+            "required": false,
+            "schema": {
+              "title": "Nodekind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "edgeType",
+            "required": false,
+            "schema": {
+              "title": "Edgetype",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeExternal",
+            "required": false,
+            "schema": {
+              "default": "show",
+              "title": "Includeexternal",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeUnresolved",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Includeunresolved",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "includeIsolated",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Includeisolated",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "title": "Search",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "maxNodes",
+            "required": false,
+            "schema": {
+              "default": 80,
+              "maximum": 5000.0,
+              "minimum": 0.0,
+              "title": "Maxnodes",
+              "type": "integer"
             }
           }
         ],

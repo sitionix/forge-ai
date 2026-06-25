@@ -92,6 +92,14 @@ public final class InfrastructureProxyEndpoint {
         return nexusGet("/api/v1/infrastructure/knowledge/analysis/graph/manifest", "responseProxyGraphManifestQuery.json");
     }
 
+    public static Endpoint<Object, Object> nexusKnowledgeGraphView() {
+        return nexusGet("/api/v1/infrastructure/knowledge/analysis/graph/view", "responseProxyGraphView.json");
+    }
+
+    public static Endpoint<Object, Object> nexusKnowledgeGraphViewFilterInvalid() {
+        return nexusGet("/api/v1/infrastructure/knowledge/analysis/graph/view", HttpStatus.BAD_REQUEST, "responseProxyGraphViewFilterInvalid.json");
+    }
+
     public static Endpoint<Object, Object> nexusKnowledgeGraphNodes() {
         return nexusGet("/api/v1/infrastructure/knowledge/analysis/graph/nodes", "responseProxyGraphNodes.json");
     }
@@ -302,6 +310,14 @@ public final class InfrastructureProxyEndpoint {
 
     public static Endpoint<Object, Object> upstreamKnowledgeGraphManifestQuery() {
         return upstreamGet("/api/v1/knowledge/analysis/graph/manifest", "responseProxyGraphManifestQuery.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamKnowledgeGraphView() {
+        return upstreamGet("/api/v1/knowledge/analysis/graph/view", "responseProxyGraphView.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamKnowledgeGraphViewFilterInvalid() {
+        return upstreamGet("/api/v1/knowledge/analysis/graph/view", HttpStatus.BAD_REQUEST, "responseProxyGraphViewFilterInvalid.json");
     }
 
     public static Endpoint<Object, Object> upstreamKnowledgeGraphNodes() {

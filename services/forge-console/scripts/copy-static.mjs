@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parse } from 'yaml';
 
@@ -33,6 +33,7 @@ await cp(resolve(root, 'src', 'operator'), resolve(dist, 'operator'), {
   recursive: true,
   force: true
 });
+await removeEmptyViteEntry();
 
 const runtimeConfig = await loadRuntimeConfigFromRoot();
 const runtimeJson = `${JSON.stringify(runtimeConfig, null, 2)}\n`;
@@ -92,4 +93,20 @@ function positiveNumber(source, kebabName, camelName, fallback) {
 function booleanValue(source, kebabName, camelName, fallback) {
   const value = source[kebabName] ?? source[camelName];
   return typeof value === 'boolean' ? value : fallback;
+}
+
+async function removeEmptyViteEntry() {
+  const entryPath = resolve(dist, 'assets', 'console.js');
+  const sourceMapPath = resolve(dist, 'assets', 'console.js.map');
+  try {
+    const entry = await stat(entryPath);
+    if (entry.size === 0) {
+      await unlink(entryPath);
+      await unlink(sourceMapPath).catch(() => undefined);
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
+  }
 }

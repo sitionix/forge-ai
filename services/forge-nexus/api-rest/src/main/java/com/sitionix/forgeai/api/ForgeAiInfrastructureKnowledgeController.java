@@ -116,6 +116,12 @@ public class ForgeAiInfrastructureKnowledgeController {
         return this.proxy("knowledge.graph.manifest", Map.of(), null, headers, request);
     }
 
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/view")
+    public CompletableFuture<ResponseEntity<byte[]>> analysisGraphView(@RequestHeader final HttpHeaders headers,
+                                                                      final HttpServletRequest request) {
+        return this.proxy("knowledge.graph.view", Map.of(), null, headers, request);
+    }
+
     @GetMapping("/api/v1/infrastructure/knowledge/analysis/graph/nodes")
     public CompletableFuture<ResponseEntity<byte[]>> analysisGraphNodes(@RequestHeader final HttpHeaders headers,
                                                                        final HttpServletRequest request) {

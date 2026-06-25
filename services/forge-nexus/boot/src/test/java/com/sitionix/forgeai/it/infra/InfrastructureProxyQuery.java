@@ -59,6 +59,24 @@ public final class InfrastructureProxyQuery {
         return QueryParams.create().add("sourceId", "forge-ai");
     }
 
+    public static QueryParams graphViewContract() {
+        return QueryParams.create()
+                .add("sourceId", "forge-ai")
+                .add("flowDomain", "CODE")
+                .add("includeExternal", "hide")
+                .add("includeUnresolved", "false")
+                .add("includeIsolated", "true")
+                .add("search", "Name")
+                .add("maxNodes", "80");
+    }
+
+    public static QueryParams graphViewInvalidFilter() {
+        return QueryParams.create()
+                .add("sourceId", "forge-ai")
+                .add("includeExternal", "collapsed")
+                .add("maxNodes", "20");
+    }
+
     public static QueryParams graphNodesContract() {
         return QueryParams.create()
                 .add("sourceId", "forge-ai")
@@ -166,6 +184,24 @@ public final class InfrastructureProxyQuery {
 
     public static WireMockQueryParams upstreamGraphMetadataSource() {
         return WireMockQueryParams.create().add("sourceId", "forge-ai");
+    }
+
+    public static WireMockQueryParams upstreamGraphViewContract() {
+        return WireMockQueryParams.create()
+                .add("sourceId", "forge-ai")
+                .add("flowDomain", "CODE")
+                .add("includeExternal", "hide")
+                .add("includeUnresolved", false)
+                .add("includeIsolated", true)
+                .add("search", "Name")
+                .add("maxNodes", "80");
+    }
+
+    public static WireMockQueryParams upstreamGraphViewInvalidFilter() {
+        return WireMockQueryParams.create()
+                .add("sourceId", "forge-ai")
+                .add("includeExternal", "collapsed")
+                .add("maxNodes", "20");
     }
 
     public static WireMockQueryParams upstreamGraphCursorA() {

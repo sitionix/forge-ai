@@ -565,6 +565,9 @@ def test_it_graph_meta_04_filter_matrix_parity(tmp_path):
         "sourceId=forge-ai&includeUnresolved=false",
         "sourceId=forge-ai&includeIsolated=false",
         "sourceId=forge-ai&flowDomain=CONFIG",
+        "sourceId=forge-ai&search=Name1",
+        "sourceId=forge-ai&search=GraphFixture",
+        "sourceId=forge-ai&search=CALLABLE",
     ]
     with TestClient(app) as client:
         for query in supported_queries:
@@ -580,8 +583,311 @@ def test_it_graph_meta_04_filter_matrix_parity(tmp_path):
             assert manifest["totalEdgeCount"] == len(edges.json()["items"])
 
         unsupported = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&includeExternal=bad")
+        unsupported_search = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&search=bad%25")
     assert unsupported.status_code == 400
     assert unsupported.json()["code"] == "GRAPH_FILTER_INVALID"
+    assert unsupported_search.status_code == 400
+    assert unsupported_search.json()["code"] == "GRAPH_FILTER_INVALID"
+
+
+def test_it_graph_filter_be_01_page_size_bounds_20_40_80_120_200_and_all(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=260, edge_count=520)
+
+    with TestClient(app) as client:
+        manifest_response = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true")
+        assert manifest_response.status_code == 200
+        manifest = manifest_response.json()
+        assert manifest.get("code") not in {"GRAPH_FILTER_INVALID", "GRAPH_SNAPSHOT_METRICS_MISSING"}
+        assert manifest["totalNodeCount"] > 200
+        assert manifest["totalEdgeCount"] > 200
+
+        for page_size in (20, 40, 80, 120, 200):
+            nodes = client.get(
+                f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&graphRevision={quote(manifest['graphRevision'])}&pageSize={page_size}"
+            )
+            edges = client.get(
+                f"/api/v1/knowledge/analysis/graph/edges?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&graphRevision={quote(manifest['graphRevision'])}&pageSize={page_size}"
+            )
+            assert nodes.status_code == 200, page_size
+            assert edges.status_code == 200, page_size
+            node_page = nodes.json()
+            edge_page = edges.json()
+            assert len(node_page["items"]) <= page_size
+            assert len(edge_page["items"]) <= page_size
+            assert len(node_page["items"]) == page_size
+            assert len(edge_page["items"]) == page_size
+            assert node_page["nextCursor"]
+            assert edge_page["nextCursor"]
+            assert not node_page["complete"]
+            assert not edge_page["complete"]
+
+        all_nodes = client.get(
+            f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&graphRevision={quote(manifest['graphRevision'])}&pageSize=5000"
+        )
+        all_edges = client.get(
+            f"/api/v1/knowledge/analysis/graph/edges?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&graphRevision={quote(manifest['graphRevision'])}&pageSize=5000"
+        )
+        assert all_nodes.status_code == 200
+        assert all_edges.status_code == 200
+        assert len(all_nodes.json()["items"]) == manifest["totalNodeCount"]
+        assert len(all_edges.json()["items"]) == manifest["totalEdgeCount"]
+        assert all_nodes.json()["complete"] is True
+        assert all_edges.json()["complete"] is True
+        assert not all_nodes.json().get("nextCursor")
+        assert not all_edges.json().get("nextCursor")
+
+
+def test_it_graph_filter_be_02_monotonic_page_size_counts(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=260, edge_count=520)
+
+    with TestClient(app) as client:
+        manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true").json()
+        counts = []
+        for page_size in (20, 40, 80, 120, 200):
+            response = client.get(
+                f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&graphRevision={quote(manifest['graphRevision'])}&pageSize={page_size}"
+            )
+            assert response.status_code == 200
+            counts.append(len(response.json()["items"]))
+        all_response = client.get(
+            f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&graphRevision={quote(manifest['graphRevision'])}&pageSize=5000"
+        )
+    assert counts == [20, 40, 80, 120, 200]
+    assert counts == sorted(counts)
+    assert len(all_response.json()["items"]) == 260
+    assert counts[-1] <= len(all_response.json()["items"])
+
+
+def test_it_graph_filter_be_03_cursor_bound_to_query_fingerprint(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=260, edge_count=520)
+
+    base_query = "sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeUnresolved=true&includeIsolated=true"
+    with TestClient(app) as client:
+        manifest = client.get(f"/api/v1/knowledge/analysis/graph/manifest?{base_query}").json()
+        first_page = client.get(
+            f"/api/v1/knowledge/analysis/graph/nodes?{base_query}&graphRevision={quote(manifest['graphRevision'])}&pageSize=5"
+        ).json()
+        assert first_page["nextCursor"]
+        valid_next = client.get(
+            f"/api/v1/knowledge/analysis/graph/nodes?{base_query}&graphRevision={quote(manifest['graphRevision'])}&pageSize=5&cursor={quote(first_page['nextCursor'])}"
+        )
+        assert valid_next.status_code == 200
+
+        changed_queries = [
+            "sourceId=forge-ai&flowDomain=CONFIG&includeExternal=show&includeUnresolved=true&includeIsolated=true",
+            "sourceId=forge-ai&flowDomain=CODE&factOrigin=DERIVED&includeExternal=show&includeUnresolved=true&includeIsolated=true",
+            "sourceId=forge-ai&flowDomain=CODE&nodeKind=CALLABLE&includeExternal=show&includeUnresolved=true&includeIsolated=true",
+            "sourceId=forge-ai&flowDomain=CODE&includeExternal=hide&includeUnresolved=true&includeIsolated=true",
+            "sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeUnresolved=false&includeIsolated=true",
+            "sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeUnresolved=true&includeIsolated=false",
+            "sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeUnresolved=true&includeIsolated=true&search=Name1",
+        ]
+        for changed_query in changed_queries:
+            mismatch = client.get(
+                f"/api/v1/knowledge/analysis/graph/nodes?{changed_query}&graphRevision={quote(manifest['graphRevision'])}&pageSize=5&cursor={quote(first_page['nextCursor'])}"
+            )
+            assert mismatch.status_code == 400, changed_query
+            assert mismatch.json()["code"] == "GRAPH_CURSOR_QUERY_MISMATCH"
+
+
+def test_it_graph_filter_be_04_search_by_node_file_kind_and_cursor_fingerprint(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=260, edge_count=520)
+
+    cases = [
+        ("Name1", lambda item: "Name1" in item["name"]),
+        ("GraphFixture", lambda item: item["relativePath"] == "src/GraphFixture.java"),
+        ("CALLABLE", lambda item: item["nodeKind"] == "CALLABLE"),
+    ]
+    with TestClient(app) as client:
+        for search, predicate in cases:
+            query = f"sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&search={quote(search)}"
+            manifest = client.get(f"/api/v1/knowledge/analysis/graph/manifest?{query}")
+            assert manifest.status_code == 200, search
+            assert manifest.json().get("code") not in {"GRAPH_FILTER_INVALID", "GRAPH_SNAPSHOT_METRICS_MISSING"}
+            page = client.get(
+                f"/api/v1/knowledge/analysis/graph/nodes?{query}&graphRevision={quote(manifest.json()['graphRevision'])}&pageSize=10"
+            )
+            assert page.status_code == 200, search
+            items = page.json()["items"]
+            assert 0 < len(items) <= 10
+            assert all(predicate(item) for item in items)
+
+        name_manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&search=Name1").json()
+        name_page = client.get(
+            f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&search=Name1&graphRevision={quote(name_manifest['graphRevision'])}&pageSize=5"
+        ).json()
+        assert name_page["nextCursor"]
+        search_mismatch = client.get(
+            f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&search=CALLABLE&graphRevision={quote(name_manifest['graphRevision'])}&pageSize=5&cursor={quote(name_page['nextCursor'])}"
+        )
+        assert search_mismatch.status_code == 400
+        assert search_mismatch.json()["code"] == "GRAPH_CURSOR_QUERY_MISMATCH"
+
+
+def test_it_graph_view_01_returns_nodes_with_internal_edges(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=320, edge_count=700)
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes=40")
+
+    assert response.status_code == 200
+    view = response.json()
+    node_ids = {node["id"] for node in view["nodes"]}
+    assert view["selectionPolicy"] == "RELATIONSHIP_AWARE"
+    assert view["visibleNodeCount"] == 40
+    assert len(view["nodes"]) == 40
+    assert view["edges"]
+    assert all(edge["fromNodeId"] in node_ids and edge["toNodeId"] in node_ids for edge in view["edges"])
+    assert view["hiddenNodeCount"] == view["totalMatchingNodeCount"] - view["visibleNodeCount"]
+    assert view["hiddenEdgeCount"] == view["totalMatchingEdgeCount"] - view["visibleEdgeCount"]
+    assert view["hiddenBoundaryEdgeCount"] >= 0
+    assert view["hasMore"] is True
+
+
+def test_it_graph_view_02_max_monotonic_and_deterministic(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=320, edge_count=700)
+
+    with TestClient(app) as client:
+        views = [
+            client.get(f"/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes={max_nodes}").json()
+            for max_nodes in (20, 40, 80, 120, 200, 0)
+        ]
+        repeated = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes=40").json()
+
+    node_counts = [view["visibleNodeCount"] for view in views]
+    edge_counts = [view["visibleEdgeCount"] for view in views]
+    assert node_counts == [20, 40, 80, 120, 200, 320]
+    assert node_counts == sorted(node_counts)
+    assert edge_counts == sorted(edge_counts)
+    assert [node["id"] for node in views[1]["nodes"]] == [node["id"] for node in repeated["nodes"]]
+    assert views[4]["visibleNodeCount"] > views[2]["visibleNodeCount"]
+
+
+def test_it_graph_view_03_relationship_aware_selection_prefers_connected_cluster(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=60, edge_count=0)
+    replace_edges_with_late_connected_cluster(app_config.store_path, start=30, node_count=60, edge_count=90)
+
+    with TestClient(app) as client:
+        view = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes=20").json()
+
+    node_ids = {node["id"] for node in view["nodes"]}
+    assert view["visibleNodeCount"] == 20
+    assert view["visibleEdgeCount"] > 0
+    assert all(int(node_id.rsplit("-", 1)[1]) >= 30 for node_id in node_ids)
+    assert all(edge["fromNodeId"] in node_ids and edge["toNodeId"] in node_ids for edge in view["edges"])
+
+
+def test_it_graph_view_04_filters_apply_before_selection(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=320, edge_count=700)
+
+    cases = [
+        ("flowDomain=CODE", lambda node, edge: node["flowDomain"] == "CODE"),
+        ("includeExternal=hide", lambda node, edge: node["nodeKind"] != "EXTERNAL"),
+        ("includeIsolated=false", lambda node, edge: node["degree"] > 0),
+        ("search=CALLABLE", lambda node, edge: node["nodeKind"] == "CALLABLE"),
+        ("includeUnresolved=false", lambda node, edge: edge is None or edge["resolutionStatus"] != "UNRESOLVED"),
+    ]
+    with TestClient(app) as client:
+        for query, predicate in cases:
+            response = client.get(f"/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&{query}&maxNodes=40")
+            assert response.status_code == 200, query
+            payload = response.json()
+            assert payload.get("code") not in {"GRAPH_FILTER_INVALID", "GRAPH_SNAPSHOT_METRICS_MISSING"}
+            assert all(predicate(node, None) for node in payload["nodes"]), query
+            assert all(predicate(payload["nodes"][0], edge) for edge in payload["edges"]) if payload["nodes"] else True
+            node_ids = {node["id"] for node in payload["nodes"]}
+            assert all(edge["fromNodeId"] in node_ids and edge["toNodeId"] in node_ids for edge in payload["edges"])
+
+
+def test_it_graph_view_05_invalid_filter_returns_controlled_400(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=20, edge_count=30)
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&includeExternal=collapsed&maxNodes=20",
+            headers={"X-Correlation-Id": "graph-view-invalid"},
+        )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["code"] == "GRAPH_FILTER_INVALID"
+    assert payload["correlationId"] == "graph-view-invalid"
+    assert "src/GraphFixture.java" not in json.dumps(payload)
+    assert "Traceback" not in json.dumps(payload)
+
+
+def test_it_graph_view_06_query_fingerprint_distinguishes_filter_shapes(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=120, edge_count=200)
+
+    with TestClient(app) as client:
+        first = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&maxNodes=40").json()
+        repeat = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&maxNodes=40").json()
+        changed_external = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=hide&maxNodes=40").json()
+        changed_search = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&search=CALLABLE&maxNodes=40").json()
+        changed_max = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&maxNodes=80").json()
+
+    assert first["queryFingerprint"] == repeat["queryFingerprint"]
+    assert first["queryFingerprint"] != changed_external["queryFingerprint"]
+    assert first["queryFingerprint"] != changed_search["queryFingerprint"]
+    assert first["queryFingerprint"] == changed_max["queryFingerprint"]
+    assert [node["id"] for node in first["nodes"]] != [node["id"] for node in changed_search["nodes"]]
+
+
+def test_it_graph_view_07_performance_query_bound(tmp_path, monkeypatch):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=320, edge_count=700)
+    original_connect = deps.analysis_store._connect
+    traced_statements: list[str] = []
+
+    def traced_connect(*args, **kwargs):
+        conn = original_connect(*args, **kwargs)
+        conn.set_trace_callback(traced_statements.append)
+        return conn
+
+    monkeypatch.setattr(deps.analysis_store, "_connect", traced_connect)
+
+    with TestClient(app) as client:
+        for max_nodes in (20, 40, 80, 120, 200):
+            traced_statements.clear()
+            response = client.get(f"/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes={max_nodes}")
+            statements = [statement for statement in traced_statements if statement.lstrip().upper().startswith("SELECT")]
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["visibleNodeCount"] == max_nodes
+            assert len(json.dumps(payload)) < 500_000
+            assert len(statements) <= 14
 
 
 def test_graph_snapshot_manifest_cursor_pagination_details_and_legacy_route_deletion(tmp_path):
@@ -1261,6 +1567,40 @@ def seed_graph_fixture(db_path, node_count: int, edge_count: int) -> None:
             (snapshot_id, now),
         )
 
+    refresh_snapshot_projection(db_path, snapshot_id, "forge-ai", now)
+
+
+def replace_edges_with_late_connected_cluster(db_path, start: int, node_count: int, edge_count: int) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    snapshot_id = "job-1:forge-ai"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM analysis_graph_edges WHERE snapshot_id = ?", (snapshot_id,))
+        cluster_size = max(1, node_count - start)
+        for index in range(edge_count):
+            from_index = start + (index % cluster_size)
+            to_index = start + ((index + 1) % cluster_size)
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_graph_edges(
+                    id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id, to_node_id, edge_type,
+                    resolution_status, confidence, evidence_id, unresolved_target_json, metadata_json, status,
+                    created_at, fact_origin, flow_domain
+                )
+                VALUES (?, ?, 'job-1', 'forge-ai', 1, 1, ?, ?, 'CALLS', 'RESOLVED', 0.8, NULL, NULL, ?, 'TRUSTED', ?, 'STATIC', 'CODE')
+                """,
+                (
+                    f"edge-{index:05d}",
+                    snapshot_id,
+                    f"node-{from_index:05d}",
+                    f"node-{to_index:05d}",
+                    json.dumps({"flowScore": 0.9}),
+                    now,
+                ),
+            )
+        conn.execute(
+            "UPDATE analysis_files SET relation_count = ? WHERE file_id = 1",
+            (edge_count,),
+        )
     refresh_snapshot_projection(db_path, snapshot_id, "forge-ai", now)
 
 

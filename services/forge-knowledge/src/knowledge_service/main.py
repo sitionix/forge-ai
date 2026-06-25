@@ -292,6 +292,7 @@ def create_app(
         includeExternal: str = "show",
         includeUnresolved: bool = True,
         includeIsolated: bool = True,
+        search: Optional[str] = None,
     ) -> Response:
         _, deps = _state(request)
         manifest = deps.analysis_store.graph_snapshot_manifest(
@@ -303,6 +304,7 @@ def create_app(
             include_external=includeExternal,
             include_unresolved=includeUnresolved,
             include_isolated=includeIsolated,
+            search=search,
         )
         etag = manifest["etag"]
         headers = {
@@ -313,6 +315,41 @@ def create_app(
         if request.headers.get("if-none-match") == etag:
             return Response(status_code=304, headers=headers)
         return JSONResponse(content=manifest, headers=headers)
+
+    @app.get("/api/v1/knowledge/analysis/graph/view")
+    async def analysis_graph_view(
+        request: Request,
+        sourceId: Optional[str] = None,
+        flowDomain: Optional[str] = None,
+        factOrigin: Optional[str] = None,
+        nodeKind: Optional[str] = None,
+        edgeType: Optional[str] = None,
+        includeExternal: str = "show",
+        includeUnresolved: bool = True,
+        includeIsolated: bool = True,
+        search: Optional[str] = None,
+        maxNodes: int = Query(80, ge=0, le=5000),
+    ) -> JSONResponse:
+        _, deps = _state(request)
+        view = deps.analysis_store.graph_snapshot_view(
+            sourceId,
+            flowDomain,
+            fact_origin=factOrigin,
+            node_kind=nodeKind,
+            edge_type=edgeType,
+            include_external=includeExternal,
+            include_unresolved=includeUnresolved,
+            include_isolated=includeIsolated,
+            search=search,
+            max_nodes=maxNodes,
+        )
+        return JSONResponse(
+            content=view,
+            headers={
+                "X-Graph-Revision": view["graphRevision"],
+                "Cache-Control": "private, no-cache",
+            },
+        )
 
     @app.get("/api/v1/knowledge/analysis/graph/nodes")
     async def analysis_graph_nodes(
@@ -327,6 +364,7 @@ def create_app(
         includeExternal: str = "show",
         includeUnresolved: bool = True,
         includeIsolated: bool = True,
+        search: Optional[str] = None,
     ) -> JSONResponse:
         _, deps = _state(request)
         page = deps.analysis_store.graph_snapshot_nodes(
@@ -340,6 +378,7 @@ def create_app(
             include_external=includeExternal,
             include_unresolved=includeUnresolved,
             include_isolated=includeIsolated,
+            search=search,
         )
         return JSONResponse(
             content=page,
@@ -361,6 +400,7 @@ def create_app(
         edgeType: Optional[str] = None,
         includeExternal: str = "show",
         includeUnresolved: bool = True,
+        search: Optional[str] = None,
     ) -> JSONResponse:
         _, deps = _state(request)
         page = deps.analysis_store.graph_snapshot_edges(
@@ -373,6 +413,7 @@ def create_app(
             edge_type=edgeType,
             include_external=includeExternal,
             include_unresolved=includeUnresolved,
+            search=search,
         )
         return JSONResponse(
             content=page,

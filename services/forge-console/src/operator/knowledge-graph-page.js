@@ -79,14 +79,26 @@ export class KnowledgeGraphPage {
     };
     this.refreshListener = () => this.loadGraph({ manual: true });
     this.forceRefreshListener = () => this.loadGraph({ manual: true, forceRefresh: true });
-    this.filterListener = () => {
+    this.apiFilterListener = () => {
       this.updateUrlFromControls();
-      this.state.labelsMode = this.document.getElementById('knowledgeGraphLabelsMode')?.value || 'auto';
-      this.state.density = this.document.getElementById('knowledgeGraphDensity')?.value || 'compact';
       this.resetFilterState();
       this.loadGraph({ manual: true });
     };
-    this.searchListener = () => this.renderSelectionState();
+    this.displayFilterListener = () => {
+      this.updateUrlFromControls();
+      this.state.labelsMode = this.document.getElementById('knowledgeGraphLabelsMode')?.value || 'auto';
+      this.state.density = this.document.getElementById('knowledgeGraphDensity')?.value || 'compact';
+      if (this.state.data) {
+        this.renderVisual(this.state.data, { preservePositions: false });
+        this.renderDetails();
+        this.renderTruncated(this.state.data);
+      }
+    };
+    this.searchListener = () => {
+      this.updateUrlFromControls();
+      this.resetFilterState();
+      this.loadGraph({ manual: true });
+    };
     this.focusListener = () => this.toggleFocus();
     this.panelListener = () => {
       this.state.previewCollapsed = !this.state.previewCollapsed;
@@ -99,6 +111,8 @@ export class KnowledgeGraphPage {
     };
     this.fullListener = () => {
       setControlValue(this.document, 'knowledgeGraphMode', 'full');
+      setControlValue(this.document, 'knowledgeGraphMaxNodes', '0');
+      setControlValue(this.document, 'knowledgeGraphIsolated', 'show');
       this.updateUrlFromControls({ mode: 'full', graphNodeId: null, graphEdgeId: null });
       this.resetFilterState();
       this.loadGraph({ manual: true });
@@ -129,17 +143,21 @@ export class KnowledgeGraphPage {
     this.document.getElementById('knowledgeGraphSearch')?.addEventListener('input', this.searchListener);
     this.document.querySelectorAll('[data-graph-tab]').forEach((button) => button.addEventListener('click', this.tabListener));
     [
-      'knowledgeGraphMode',
       'knowledgeGraphFlowDomain',
-      'knowledgeGraphDirection',
-      'knowledgeGraphDepth',
       'knowledgeGraphExternal',
       'knowledgeGraphUnresolved',
-      'knowledgeGraphDensity',
-      'knowledgeGraphLabelsMode',
       'knowledgeGraphMaxNodes',
       'knowledgeGraphIsolated'
-    ].forEach((id) => this.document.getElementById(id)?.addEventListener('change', this.filterListener));
+    ].forEach((id) => this.document.getElementById(id)?.addEventListener('change', this.apiFilterListener));
+    [
+      'knowledgeGraphDensity',
+      'knowledgeGraphLabelsMode'
+    ].forEach((id) => this.document.getElementById(id)?.addEventListener('change', this.displayFilterListener));
+    [
+      'knowledgeGraphMode',
+      'knowledgeGraphDirection',
+      'knowledgeGraphDepth'
+    ].forEach((id) => this.document.getElementById(id)?.addEventListener('change', this.displayFilterListener));
     this.window.addEventListener('resize', this.resizeListener);
     this.window.addEventListener('beforeunload', this.beforeUnloadListener);
     this.loadMetadata({ manual: false });
@@ -161,6 +179,20 @@ export class KnowledgeGraphPage {
     this.document.getElementById('showKnowledgeGraphEntrypoints')?.removeEventListener('click', this.entrypointsListener);
     this.document.getElementById('showKnowledgeGraphFull')?.removeEventListener('click', this.fullListener);
     this.document.getElementById('knowledgeGraphSearch')?.removeEventListener('input', this.searchListener);
+    [
+      'knowledgeGraphFlowDomain',
+      'knowledgeGraphExternal',
+      'knowledgeGraphUnresolved',
+      'knowledgeGraphMaxNodes',
+      'knowledgeGraphIsolated'
+    ].forEach((id) => this.document.getElementById(id)?.removeEventListener('change', this.apiFilterListener));
+    [
+      'knowledgeGraphDensity',
+      'knowledgeGraphLabelsMode',
+      'knowledgeGraphMode',
+      'knowledgeGraphDirection',
+      'knowledgeGraphDepth'
+    ].forEach((id) => this.document.getElementById(id)?.removeEventListener('change', this.displayFilterListener));
     this.document.querySelectorAll('[data-graph-tab]').forEach((button) => button.removeEventListener('click', this.tabListener));
     this.window.removeEventListener('resize', this.resizeListener);
     this.window.removeEventListener('beforeunload', this.beforeUnloadListener);
@@ -180,6 +212,9 @@ export class KnowledgeGraphPage {
     setControlValue(this.document, 'knowledgeGraphLabelsMode', params.get('labels') || 'auto');
     setControlValue(this.document, 'knowledgeGraphMaxNodes', params.get('maxNodes') || params.get('limit') || '80');
     setControlValue(this.document, 'knowledgeGraphIsolated', params.get('isolated') || 'hide');
+    setControlValue(this.document, 'knowledgeGraphSearch', params.get('search') || '');
+    markObsoleteGraphSliceControl(this.document, 'knowledgeGraphDirection');
+    markObsoleteGraphSliceControl(this.document, 'knowledgeGraphDepth');
     const autoRefresh = this.document.getElementById('knowledgeGraphAutoRefresh');
     if (autoRefresh) {
       autoRefresh.checked = true;
@@ -206,6 +241,8 @@ export class KnowledgeGraphPage {
     const { query, mode } = this.queryParams();
     const filterKey = query.toString();
     const previousFilterKey = this.state.filterKey;
+    const previousGraphRevision = this.state.data?.graphRevision;
+    const previousSelectionKey = this.selectionKey();
     const loading = this.document.getElementById('knowledgeGraphLoading');
     if (loading) {
       loading.classList.remove('hidden');
@@ -228,16 +265,16 @@ export class KnowledgeGraphPage {
       this.state.filterKey = filterKey;
       this.state.data = data;
       this.applySelectionFromQuery(query, data);
+      if (this.selectionKey() && (previousFilterKey !== filterKey || previousGraphRevision !== data.graphRevision)) {
+        this.clearSelectedDetail(previousSelectionKey);
+      }
       setError('knowledgeGraphError', null, this.document);
       this.renderPage(data, { preserveLayout });
-      if (this.selectionKey()) {
-        this.loadSelectedDetails();
-      }
       return data;
     } catch (error) {
       if (!this.disposed && error?.name !== 'AbortError') {
         renderRequestError('knowledgeGraphError', error, {
-          endpoint: error.endpoint || '/knowledge/analysis/graph/manifest',
+          endpoint: error.endpoint || '/knowledge/analysis/graph/view',
           title: 'Knowledge graph failed'
         }, this.document);
       }
@@ -294,9 +331,12 @@ export class KnowledgeGraphPage {
   }
 
   async loadSelectedDetails() {
-    const key = this.selectionKey();
+    const selectedNodeId = this.state.selectedNodeId;
+    const selectedEdgeId = this.state.selectedEdgeId;
+    const key = selectedNodeId ? `node:${selectedNodeId}` : (selectedEdgeId ? `edge:${selectedEdgeId}` : '');
     const graphRevision = this.state.data?.graphRevision;
     const { query } = this.queryParams();
+    const filterKey = query.toString();
     if (!key || !graphRevision) {
       return null;
     }
@@ -305,12 +345,12 @@ export class KnowledgeGraphPage {
     this.renderDetails();
     try {
       const result = await this.requestCoordinator.run(`knowledge-graph-detail:${key}`, ({ signal }) => {
-        if (this.state.selectedNodeId) {
-          return this.client.loadNodeDetail(this.state.selectedNodeId, query, graphRevision, { signal });
+        if (selectedNodeId) {
+          return this.client.loadNodeDetail(selectedNodeId, query, graphRevision, { signal });
         }
-        return this.client.loadEdgeDetail(this.state.selectedEdgeId, query, graphRevision, { signal });
+        return this.client.loadEdgeDetail(selectedEdgeId, query, graphRevision, { signal });
       });
-      if (!result.applied || this.disposed || this.selectionKey() !== key || this.state.filterKey !== this.queryParams().query.toString()) {
+      if (!result.applied || !this.isSelectedDetailCurrent(key, graphRevision, filterKey)) {
         return null;
       }
       this.state.selectedDetail = normalizeDetail(key, result.value);
@@ -318,18 +358,25 @@ export class KnowledgeGraphPage {
       this.renderDetails();
       return result.value;
     } catch (error) {
-      if (!this.disposed && this.selectionKey() === key) {
+      if (this.isSelectedDetailCurrent(key, graphRevision, filterKey)) {
         this.state.selectedDetail = null;
         this.state.selectedDetailError = error;
         this.renderDetails();
       }
       return null;
     } finally {
-      if (!this.disposed && this.selectionKey() === key) {
+      if (this.isSelectedDetailCurrent(key, graphRevision, filterKey)) {
         this.state.selectedDetailLoading = false;
         this.renderDetails();
       }
     }
+  }
+
+  isSelectedDetailCurrent(key, graphRevision, filterKey) {
+    return !this.disposed
+      && this.selectionKey() === key
+      && this.state.data?.graphRevision === graphRevision
+      && this.queryParams().query.toString() === filterKey;
   }
 
   queryParams() {
@@ -355,7 +402,14 @@ export class KnowledgeGraphPage {
     if (flowDomain) {
       query.set('flowDomain', flowDomain);
     }
-    query.set('depth', this.document.getElementById('knowledgeGraphDepth')?.value || params.get('depth') || '2');
+    const search = String(this.document.getElementById('knowledgeGraphSearch')?.value || params.get('search') || '').trim();
+    if (search) {
+      query.set('search', search);
+    }
+    const maxNodes = graphMaxNodesValue(this.document.getElementById('knowledgeGraphMaxNodes')?.value || params.get('maxNodes') || params.get('limit') || '80');
+    if (maxNodes > 0) {
+      query.set('maxNodes', String(maxNodes));
+    }
     query.set('includeExternal', graphApiExternalValue(this.document.getElementById('knowledgeGraphExternal')?.value || params.get('includeExternal') || 'collapsed'));
     query.set('includeUnresolved', (this.document.getElementById('knowledgeGraphUnresolved')?.value || 'summarize') !== 'hide' ? 'true' : 'false');
     query.set('includeIsolated', (this.document.getElementById('knowledgeGraphIsolated')?.value || 'hide') === 'show' ? 'true' : 'false');
@@ -381,6 +435,12 @@ export class KnowledgeGraphPage {
     current.set('labels', this.document.getElementById('knowledgeGraphLabelsMode')?.value || 'auto');
     current.set('maxNodes', this.document.getElementById('knowledgeGraphMaxNodes')?.value || '80');
     current.set('isolated', this.document.getElementById('knowledgeGraphIsolated')?.value || 'hide');
+    const search = String(this.document.getElementById('knowledgeGraphSearch')?.value || '').trim();
+    if (search) {
+      current.set('search', search);
+    } else {
+      current.delete('search');
+    }
     Object.entries(extra).forEach(([key, value]) => {
       if (value) {
         current.set(key, value);
@@ -392,26 +452,21 @@ export class KnowledgeGraphPage {
   }
 
   resetFilterState() {
+    const previousKey = this.selectionKey();
     this.requestCoordinator.abort('knowledge-graph');
-    if (this.state.selectedNodeId || this.state.selectedEdgeId) {
-      this.requestCoordinator.abort(`knowledge-graph-detail:${this.selectionKey()}`);
-    }
+    this.clearSelectedDetail(previousKey);
     this.state.selectedNodeId = null;
     this.state.selectedEdgeId = null;
-    this.state.selectedDetail = null;
-    this.state.selectedDetailError = null;
-    this.state.selectedDetailLoading = false;
   }
 
   applySelectionFromQuery(query, data) {
+    const previousKey = this.selectionKey();
     const candidateNodeId = data.selected?.node?.id || data.root?.id || query.get('graphNodeId') || query.get('rootGraphNodeId') || null;
     const candidateEdgeId = data.selected?.edge?.id || query.get('graphEdgeId') || null;
     this.state.selectedNodeId = (data.nodes || []).some((node) => node.id === candidateNodeId) ? candidateNodeId : null;
     this.state.selectedEdgeId = (data.edges || []).some((edge) => edge.id === candidateEdgeId) ? candidateEdgeId : null;
-    if (!this.selectionKey()) {
-      this.state.selectedDetail = null;
-      this.state.selectedDetailError = null;
-      this.state.selectedDetailLoading = false;
+    if (this.selectionKey() !== previousKey) {
+      this.clearSelectedDetail(previousKey);
     }
   }
 
@@ -426,22 +481,44 @@ export class KnowledgeGraphPage {
   }
 
   selectNode(nodeId) {
+    const previousKey = this.selectionKey();
     this.state.selectedNodeId = nodeId;
     this.state.selectedEdgeId = null;
-    this.state.selectedDetail = null;
     this.state.previewCollapsed = false;
+    if (this.selectionKey() !== previousKey) {
+      this.clearSelectedDetail(previousKey);
+    }
     this.updateUrlFromControls({ graphNodeId: nodeId, graphEdgeId: null });
     this.renderSelectionState();
-    return this.loadSelectedDetails();
+    return null;
   }
 
   selectEdge(edgeId) {
+    const previousKey = this.selectionKey();
     this.state.selectedEdgeId = edgeId;
     this.state.selectedNodeId = null;
-    this.state.selectedDetail = null;
     this.state.previewCollapsed = false;
+    if (this.selectionKey() !== previousKey) {
+      this.clearSelectedDetail(previousKey);
+    }
     this.updateUrlFromControls({ graphEdgeId: edgeId, graphNodeId: null });
     this.renderSelectionState();
+    return null;
+  }
+
+  clearSelectedDetail(previousKey = this.selectionKey()) {
+    if (previousKey) {
+      this.requestCoordinator.abort(`knowledge-graph-detail:${previousKey}`);
+    }
+    this.state.selectedDetail = null;
+    this.state.selectedDetailError = null;
+    this.state.selectedDetailLoading = false;
+  }
+
+  openSelectedDetails(tab = 'selected') {
+    this.state.detailsTab = tab || 'selected';
+    this.document.querySelectorAll('[data-graph-tab]').forEach((item) => item.classList.toggle('active', item.dataset.graphTab === this.state.detailsTab));
+    this.renderDetails();
     return this.loadSelectedDetails();
   }
 
@@ -686,41 +763,17 @@ export class KnowledgeGraphPage {
   }
 
   visibleGraph(data) {
-    const nodes = data.nodes || [];
+    const search = String(this.document.getElementById('knowledgeGraphSearch')?.value || '').trim().toLowerCase();
+    const sourceNodes = data.nodes || [];
+    const nodes = search
+      ? sourceNodes.filter((node) => graphNodeMatchesSearch(node, search))
+      : sourceNodes;
+    const nodeIds = new Set(nodes.map((node) => node.id));
     const edges = data.edges || [];
-    const isolatedMode = this.document.getElementById('knowledgeGraphIsolated')?.value || 'hide';
-    if (isolatedMode === 'show' || nodes.length < 35) {
-      return { nodes, edges, hiddenIsolatedCount: 0 };
-    }
-    const endpointIds = new Set();
-    edges.forEach((edge) => {
-      if (edge.from) {
-        endpointIds.add(edge.from);
-      }
-      if (edge.to) {
-        endpointIds.add(edge.to);
-      }
-    });
-    if (endpointIds.size === 0) {
-      return { nodes, edges, hiddenIsolatedCount: 0 };
-    }
-    const keepIds = new Set(endpointIds);
-    [
-      data.root?.id,
-      data.selected?.node?.id,
-      this.state.selectedNodeId
-    ].filter(Boolean).forEach((id) => keepIds.add(id));
-    nodes.forEach((node) => {
-      if (Number(node.diagnosticCount || 0) > 0 || node.isRoot) {
-        keepIds.add(node.id);
-      }
-    });
-    const visibleNodes = nodes.filter((node) => keepIds.has(node.id));
-    const visibleIds = new Set(visibleNodes.map((node) => node.id));
     return {
-      nodes: visibleNodes,
-      edges: edges.filter((edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to)),
-      hiddenIsolatedCount: Math.max(0, nodes.length - visibleNodes.length)
+      nodes,
+      edges: edges.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to)),
+      hiddenIsolatedCount: 0
     };
   }
 
@@ -842,10 +895,13 @@ export class KnowledgeGraphPage {
       return;
     }
     const hiddenIsolated = Number(data.metrics?.hiddenIsolatedCount ?? data.meta?.hiddenIsolatedCount ?? this.state.hiddenIsolatedCount ?? 0);
+    const hiddenNodes = Number(data.meta?.hiddenNodeCount ?? data.metrics?.hiddenNodeCount ?? 0);
+    const hiddenEdges = Number(data.meta?.hiddenEdgeCount ?? data.metrics?.hiddenEdgeCount ?? 0);
+    const hiddenBoundaryEdges = Number(data.meta?.hiddenBoundaryEdgeCount ?? data.metrics?.hiddenBoundaryEdgeCount ?? 0);
     const skippedMissing = Number(data.meta?.skippedMissingEndpointCount ?? data.metrics?.skippedMissingEndpointCount ?? 0);
     const skippedByLimit = Number(data.meta?.skippedByLimitCount ?? data.metrics?.skippedByLimitCount ?? 0);
     const truncationReason = data.meta?.truncationReason || data.metrics?.truncationReason || '';
-    if (!data.meta?.truncated && hiddenIsolated === 0 && skippedMissing === 0 && skippedByLimit === 0) {
+    if (!data.meta?.truncated && hiddenIsolated === 0 && hiddenNodes === 0 && hiddenEdges === 0 && skippedMissing === 0 && skippedByLimit === 0) {
       target.classList.add('hidden');
       target.textContent = '';
       return;
@@ -860,10 +916,19 @@ export class KnowledgeGraphPage {
     if (hiddenIsolated > 0) {
       messages.push(`Showing connected overview. ${hiddenIsolated} isolated nodes are hidden. Use Display / Isolated / Show to include them.`);
     }
+    if (hiddenNodes > 0) {
+      messages.push(`${hiddenNodes} matching nodes are outside the current graph view.`);
+    }
+    if (hiddenEdges > 0) {
+      messages.push(`${hiddenEdges} matching relationships are outside the current graph view.`);
+    }
+    if (hiddenBoundaryEdges > 0) {
+      messages.push(`${hiddenBoundaryEdges} relationships cross from visible nodes to hidden nodes.`);
+    }
     if (skippedMissing > 0) {
       messages.push(`${skippedMissing} edges were hidden because their endpoint nodes were outside the current result.`);
     }
-    if (skippedByLimit > 0) {
+    if (skippedByLimit > 0 && hiddenNodes === 0 && hiddenEdges === 0) {
       messages.push(`${skippedByLimit} edges were hidden by the current edge limit.`);
     }
     if (truncationReason) {
@@ -977,9 +1042,7 @@ export class KnowledgeGraphPage {
     });
     target.querySelectorAll('[data-open-graph-details]').forEach((button) => {
       button.addEventListener('click', () => {
-        this.state.detailsTab = button.dataset.openGraphDetails || 'selected';
-        this.document.querySelectorAll('[data-graph-tab]').forEach((item) => item.classList.toggle('active', item.dataset.graphTab === this.state.detailsTab));
-        this.renderDetails();
+        this.openSelectedDetails(button.dataset.openGraphDetails || 'selected');
       });
     });
   }
@@ -1024,30 +1087,37 @@ export class KnowledgeGraphPage {
       return '<p class="knowledge-graph-detail-state">Loading selected item evidence...</p>';
     }
     if (this.state.selectedDetailError) {
-      return `<p class="knowledge-graph-detail-state error">Selected item details failed: ${escapeHtml(this.state.selectedDetailError.message || this.state.selectedDetailError)}</p>`;
+      return `<p class="knowledge-graph-detail-state error">Selected item details failed: ${escapeHtml(detailErrorMessage(this.state.selectedDetailError))}</p>`;
     }
     if (!node && !edge) {
       return '<section class="knowledge-graph-detail-section"><h3>Selected Item</h3><p class="muted">No node or relation selected.</p></section>';
     }
     if (node) {
+      const detailNode = this.state.selectedDetail?.node || {};
+      const summary = detailNode.claimSummary || detailNode.responsibilitySummary || detailNode.summary || detailNode.description || '';
       return `
         <section class="knowledge-graph-detail-section">
           <h3>Selected Node</h3>
           <div class="knowledge-detail-grid">
-            <div>${renderKnowledgeKv('name', node.label || node.name)}${renderKnowledgeKv('kind', node.nodeKind)}${renderKnowledgeKv('domain', node.flowDomain)}</div>
-            <div>${renderKnowledgeKv('file', node.relativePath)}${renderKnowledgeKv('lines', `${node.lineStart ?? '-'} - ${node.lineEnd ?? '-'}`)}</div>
+            <div>${renderKnowledgeKv('name', detailNode.label || detailNode.name || node.label || node.name)}${renderKnowledgeKv('kind', detailNode.nodeKind || detailNode.kind || node.nodeKind)}${renderKnowledgeKv('domain', detailNode.flowDomain || node.flowDomain)}</div>
+            <div>${renderKnowledgeKv('file', detailNode.relativePath || node.relativePath)}${renderKnowledgeKv('source', detailNode.sourceId || node.sourceId)}${renderKnowledgeKv('lines', `${detailNode.lineStart ?? node.lineStart ?? '-'} - ${detailNode.lineEnd ?? node.lineEnd ?? '-'}`)}</div>
           </div>
+          ${renderDetailSummary(summary)}
+          ${renderClaims(detailNode.claims || [])}
           ${renderEvidence(this.state.selectedDetail?.evidence || [])}
         </section>
       `;
     }
+    const detailEdge = this.state.selectedDetail?.edge || {};
+    const summary = detailEdge.summary || detailEdge.description || '';
     return `
       <section class="knowledge-graph-detail-section">
         <h3>Selected Relation</h3>
         <div class="knowledge-detail-grid">
-          <div>${renderKnowledgeKv('relation', edge.edgeType)}${renderKnowledgeKv('from', edge.fromLabel || edge.from)}${renderKnowledgeKv('to', edge.toLabel || edge.to)}</div>
-          <div>${renderKnowledgeKv('domain', edge.flowDomain)}${renderKnowledgeKv('evidence', edge.evidenceCount ?? 0)}</div>
+          <div>${renderKnowledgeKv('relation', detailEdge.edgeType || detailEdge.relation || edge.edgeType)}${renderKnowledgeKv('from', detailEdge.fromLabel || detailEdge.from || edge.fromLabel || edge.from)}${renderKnowledgeKv('to', detailEdge.toLabel || detailEdge.to || edge.toLabel || edge.to)}</div>
+          <div>${renderKnowledgeKv('domain', detailEdge.flowDomain || edge.flowDomain)}${renderKnowledgeKv('source', detailEdge.sourceId || edge.sourceId)}${renderKnowledgeKv('evidence', detailEdge.evidenceCount ?? edge.evidenceCount ?? 0)}</div>
         </div>
+        ${renderDetailSummary(summary)}
         ${renderEvidence(this.state.selectedDetail?.evidence || [])}
       </section>
     `;
@@ -1465,6 +1535,38 @@ function setControlValue(documentRef, id, value) {
   }
 }
 
+function markObsoleteGraphSliceControl(documentRef, id) {
+  const element = documentRef.getElementById(id);
+  if (!element) {
+    return;
+  }
+  element.disabled = true;
+  element.title = 'Legacy GraphSlice control retained for visual parity; final graph APIs do not support this filter.';
+}
+
+function graphMaxNodesValue(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    return 0;
+  }
+  return Math.floor(number);
+}
+
+function graphNodeMatchesSearch(node, search) {
+  const haystack = [
+    node.id,
+    node.graphNodeId,
+    node.label,
+    node.name,
+    node.displayName,
+    node.qualifiedName,
+    node.nodeKind,
+    node.relativePath,
+    node.flowDomain
+  ].join(' ').toLowerCase();
+  return haystack.includes(search);
+}
+
 function createSvgElement(documentRef, name, attributes = {}, text = null) {
   const element = documentRef.createElementNS('http://www.w3.org/2000/svg', name);
   Object.entries(attributes).forEach(([key, value]) => {
@@ -1507,6 +1609,17 @@ function renderKnowledgeGraphMetric(label, value) {
 function renderPill(value) {
   const label = value || 'UNKNOWN';
   return `<span class="pill ${statusClass(label)}">${escapeHtml(label)}</span>`;
+}
+
+function detailErrorMessage(error) {
+  const parts = [error?.message || String(error || 'Request failed')];
+  if (error?.code) {
+    parts.push(`code ${error.code}`);
+  }
+  if (error?.status) {
+    parts.push(`status ${error.status}`);
+  }
+  return parts.join(' · ');
 }
 
 function renderGraphOverview(data, selectedNode, selectedEdge) {
@@ -1572,6 +1685,36 @@ function renderEdgesTable(edges) {
           </tbody>
         </table>
       </div>
+    </section>
+  `;
+}
+
+function renderDetailSummary(summary) {
+  if (!summary) {
+    return '';
+  }
+  return `
+    <section class="knowledge-graph-detail-section">
+      <h3>Summary</h3>
+      <p>${escapeHtml(summary)}</p>
+    </section>
+  `;
+}
+
+function renderClaims(claims) {
+  if (!claims.length) {
+    return '';
+  }
+  return `
+    <section class="knowledge-graph-detail-section">
+      <h3>Claims</h3>
+      <div class="knowledge-graph-fact-list">${claims.slice(0, 50).map((item) => `
+        <article>
+          <strong>${escapeHtml(item.claimKind || item.id || 'Claim')}</strong>
+          <p>${escapeHtml(item.summary || '-')}</p>
+          <small>${escapeHtml(item.status || '-')} ${escapeHtml(item.confidence ?? '')}</small>
+        </article>
+      `).join('')}</div>
     </section>
   `;
 }

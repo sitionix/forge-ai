@@ -47,6 +47,7 @@ class GraphSnapshotQuery:
     include_external: str
     include_unresolved: bool
     include_isolated: bool
+    search: str = ""
     contract_version: str = GRAPH_CONTRACT_VERSION
     sort_version: str = GRAPH_SORT_VERSION
 
@@ -68,6 +69,7 @@ class GraphSnapshotQuery:
             "includeExternal": self.include_external,
             "includeUnresolved": self.include_unresolved,
             "includeIsolated": self.include_isolated,
+            "search": self.search,
         }
 
 
@@ -1469,6 +1471,7 @@ class AnalysisStore:
         include_external: str = "show",
         include_unresolved: bool = True,
         include_isolated: bool = True,
+        search: Optional[str] = None,
         default_node_page_size: int = 500,
         default_edge_page_size: int = 1000,
     ) -> Dict[str, Any]:
@@ -1490,6 +1493,7 @@ class AnalysisStore:
                         "includeExternal": include_external,
                         "includeUnresolved": include_unresolved,
                         "includeIsolated": include_isolated,
+                        "search": self._normalize_graph_search(search),
                     },
                     "totalNodeCount": 0,
                     "totalEdgeCount": 0,
@@ -1516,6 +1520,7 @@ class AnalysisStore:
                 include_external,
                 include_unresolved,
                 include_isolated,
+                search,
             )
             metric = self._graph_metric_or_backfill(conn, query)
             revision = self._graph_snapshot_revision(query)
@@ -1571,6 +1576,7 @@ class AnalysisStore:
             "includeExternal": query.include_external,
             "includeUnresolved": query.include_unresolved,
             "includeIsolated": query.include_isolated,
+            "search": query.search or None,
         }
 
     def _graph_query(
@@ -1586,9 +1592,10 @@ class AnalysisStore:
         include_external: str,
         include_unresolved: bool,
         include_isolated: bool,
+        search: Optional[str] = None,
     ) -> GraphSnapshotQuery:
         resource_normalized = str(resource or "").lower()
-        if resource_normalized not in {"manifest", "nodes", "edges"}:
+        if resource_normalized not in {"manifest", "nodes", "edges", "view"}:
             raise KnowledgeError("GRAPH_FILTER_INVALID", "Graph resource is not supported.")
         source = source_id
         if not source:
@@ -1608,7 +1615,102 @@ class AnalysisStore:
             include_external=include_external_normalized,
             include_unresolved=bool(include_unresolved),
             include_isolated=bool(include_isolated),
+            search=self._normalize_graph_search(search),
         )
+
+    def graph_snapshot_view(
+        self,
+        source_id: Optional[str],
+        flow_domain: Optional[str],
+        fact_origin: Optional[str] = None,
+        node_kind: Optional[str] = None,
+        edge_type: Optional[str] = None,
+        include_external: str = "show",
+        include_unresolved: bool = True,
+        include_isolated: bool = True,
+        search: Optional[str] = None,
+        max_nodes: int = 80,
+    ) -> Dict[str, Any]:
+        self.init()
+        safe_max_nodes = max(0, min(int(max_nodes or 0), 5000))
+        with self._connect() as conn:
+            snapshot_id = self._current_snapshot_id(conn, source_id)
+            if snapshot_id is None:
+                revision = f"{source_id or 'all'}:{flow_domain or 'ALL'}:graph-empty"
+                return self._empty_graph_snapshot_view(source_id, flow_domain, revision, safe_max_nodes)
+            query = self._graph_query(
+                conn,
+                "view",
+                snapshot_id,
+                source_id,
+                flow_domain,
+                fact_origin,
+                node_kind,
+                edge_type,
+                include_external,
+                include_unresolved,
+                include_isolated,
+                search,
+            )
+            metric = self._graph_metric_or_backfill(conn, query)
+            revision = self._graph_snapshot_revision(query)
+            total_nodes = int(metric["total_node_count"] or 0)
+            total_edges = int(metric["total_edge_count"] or 0)
+            node_limit = total_nodes if safe_max_nodes <= 0 else min(safe_max_nodes, total_nodes)
+            visible_nodes = self._relationship_aware_graph_view_nodes(conn, query, node_limit)
+            visible_ids = [node["id"] for node in visible_nodes]
+            visible_edges, visible_internal_edge_count = self._relationship_aware_graph_view_edges(conn, query, visible_ids, max(node_limit * 2, 80))
+            boundary_edge_count = self._graph_view_boundary_edge_count(conn, query, visible_ids) if visible_ids else 0
+            hidden_edge_count = max(0, total_edges - len(visible_edges))
+            canonical_fingerprint = self._graph_revision_payload(query)["queryFingerprint"]
+            return {
+                "sourceId": query.source_id,
+                "sourceName": query.source_id,
+                "snapshotId": query.snapshot_id,
+                "graphRevision": revision,
+                "queryFingerprint": canonical_fingerprint,
+                "selectionPolicy": "RELATIONSHIP_AWARE",
+                "maxNodes": safe_max_nodes,
+                "filters": self._graph_query_filters(query),
+                "nodes": visible_nodes,
+                "edges": visible_edges,
+                "totalMatchingNodeCount": total_nodes,
+                "totalMatchingEdgeCount": total_edges,
+                "visibleNodeCount": len(visible_nodes),
+                "visibleEdgeCount": len(visible_edges),
+                "hiddenNodeCount": max(0, total_nodes - len(visible_nodes)),
+                "hiddenEdgeCount": hidden_edge_count,
+                "hiddenBoundaryEdgeCount": boundary_edge_count,
+                "internalEdgeCount": visible_internal_edge_count,
+                "hasMore": len(visible_nodes) < total_nodes or hidden_edge_count > 0,
+                "generatedAt": metric["created_at"],
+                "status": {},
+            }
+
+    def _empty_graph_snapshot_view(self, source_id: Optional[str], flow_domain: Optional[str], revision: str, max_nodes: int) -> Dict[str, Any]:
+        return {
+            "sourceId": source_id,
+            "sourceName": source_id,
+            "snapshotId": None,
+            "graphRevision": revision,
+            "queryFingerprint": None,
+            "selectionPolicy": "RELATIONSHIP_AWARE",
+            "maxNodes": max_nodes,
+            "filters": {"flowDomain": flow_domain},
+            "nodes": [],
+            "edges": [],
+            "totalMatchingNodeCount": 0,
+            "totalMatchingEdgeCount": 0,
+            "visibleNodeCount": 0,
+            "visibleEdgeCount": 0,
+            "hiddenNodeCount": 0,
+            "hiddenEdgeCount": 0,
+            "hiddenBoundaryEdgeCount": 0,
+            "internalEdgeCount": 0,
+            "hasMore": False,
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "status": {},
+        }
 
     def _normalize_graph_dimension(self, value: Optional[str]) -> str:
         if value is None or str(value).strip() == "":
@@ -1617,6 +1719,14 @@ class AnalysisStore:
         if any(ch in normalized for ch in ("%", "'", "\"", ";", "\x00")):
             raise KnowledgeError("GRAPH_FILTER_INVALID", "Graph filter value is invalid.")
         return normalized
+
+    def _normalize_graph_search(self, value: Optional[str]) -> str:
+        if value is None:
+            return ""
+        normalized = str(value).strip()
+        if any(ch in normalized for ch in ("%", "'", "\"", ";", "\x00")):
+            raise KnowledgeError("GRAPH_FILTER_INVALID", "Graph search value is invalid.")
+        return normalized[:120]
 
     def _graph_revision_payload(self, query: GraphSnapshotQuery) -> Dict[str, Any]:
         payload = query.as_payload()
@@ -1638,6 +1748,7 @@ class AnalysisStore:
             "includeExternal",
             "includeUnresolved",
             "includeIsolated",
+            "search",
             "queryFingerprint",
         ):
             if payload.get(key) != expected.get(key):
@@ -1688,6 +1799,7 @@ class AnalysisStore:
         include_external: str = "show",
         include_unresolved: bool = True,
         include_isolated: bool = True,
+        search: Optional[str] = None,
     ) -> Dict[str, Any]:
         safe_page_size = max(1, min(int(page_size or 500), 5000))
         with self._connect() as conn:
@@ -1705,11 +1817,12 @@ class AnalysisStore:
                 include_external,
                 include_unresolved,
                 include_isolated,
+                search,
             )
             self._graph_payload_matches_query(revision_payload, query)
             self._assert_snapshot_readable(conn, snapshot_id, query.source_id)
             cursor_value = self._decode_graph_snapshot_cursor(cursor, query, "nodes")
-            where, params = self._graph_snapshot_node_where(snapshot_id, query.source_id, query.flow_domain, query.fact_origin, query.node_kind, query.include_external, query.include_isolated)
+            where, params = self._graph_snapshot_node_where(snapshot_id, query.source_id, query.flow_domain, query.fact_origin, query.node_kind, query.include_external, query.include_isolated, query.search)
             if cursor_value:
                 where = f"{where} AND n.id > ?"
                 params = [*params, cursor_value]
@@ -1759,6 +1872,7 @@ class AnalysisStore:
         edge_type: Optional[str] = None,
         include_external: str = "show",
         include_unresolved: bool = True,
+        search: Optional[str] = None,
     ) -> Dict[str, Any]:
         safe_page_size = max(1, min(int(page_size or 1000), 5000))
         with self._connect() as conn:
@@ -1776,11 +1890,12 @@ class AnalysisStore:
                 include_external,
                 include_unresolved,
                 bool(revision_payload.get("includeIsolated", True)),
+                search,
             )
             self._graph_payload_matches_query(revision_payload, query)
             self._assert_snapshot_readable(conn, snapshot_id, query.source_id)
             cursor_value = self._decode_graph_snapshot_cursor(cursor, query, "edges")
-            where, params = self._graph_snapshot_edge_where(snapshot_id, query.source_id, query.flow_domain, query.fact_origin, query.edge_type, query.include_unresolved)
+            where, params = self._graph_snapshot_edge_where(snapshot_id, query.source_id, query.flow_domain, query.fact_origin, query.edge_type, query.include_unresolved, query.search)
             if cursor_value:
                 where = f"{where} AND e.id > ?"
                 params = [*params, cursor_value]
@@ -1994,6 +2109,7 @@ class AnalysisStore:
         node_kind: Optional[str],
         include_external: str,
         include_isolated: bool,
+        search: str = "",
     ) -> tuple[str, List[Any]]:
         clauses = ["n.snapshot_id = ?"]
         params: List[Any] = [snapshot_id]
@@ -2020,6 +2136,24 @@ class AnalysisStore:
                       AND (ge.from_node_id = n.id OR ge.to_node_id = n.id)
                 )"""
             )
+        if search:
+            pattern = self._graph_search_pattern(search)
+            clauses.append(
+                """(
+                    n.id LIKE ? ESCAPE '\\'
+                    OR n.name LIKE ? ESCAPE '\\'
+                    OR n.qualified_name LIKE ? ESCAPE '\\'
+                    OR n.display_name LIKE ? ESCAPE '\\'
+                    OR n.node_kind LIKE ? ESCAPE '\\'
+                    OR EXISTS (
+                        SELECT 1
+                        FROM analysis_files sf
+                        WHERE sf.file_id = n.analysis_file_id
+                          AND sf.relative_path LIKE ? ESCAPE '\\'
+                    )
+                )"""
+            )
+            params.extend([pattern, pattern, pattern, pattern, pattern, pattern])
         return " AND ".join(clauses), params
 
     def _graph_snapshot_edge_where(
@@ -2030,6 +2164,7 @@ class AnalysisStore:
         fact_origin: Optional[str],
         edge_type: Optional[str],
         include_unresolved: bool,
+        search: str = "",
     ) -> tuple[str, List[Any]]:
         clauses = ["e.snapshot_id = ?"]
         params: List[Any] = [snapshot_id]
@@ -2048,7 +2183,270 @@ class AnalysisStore:
         if not include_unresolved:
             clauses.append("e.to_node_id IS NOT NULL")
             clauses.append("e.resolution_status NOT IN ('UNRESOLVED', 'DYNAMIC_TARGET', 'EXTERNAL_TARGET')")
+        if search:
+            pattern = self._graph_search_pattern(search)
+            clauses.append(
+                """(
+                    e.edge_type LIKE ? ESCAPE '\\'
+                    OR EXISTS (
+                        SELECT 1
+                        FROM analysis_graph_nodes sn
+                        WHERE sn.snapshot_id = e.snapshot_id
+                          AND sn.id IN (e.from_node_id, e.to_node_id)
+                          AND (
+                            sn.id LIKE ? ESCAPE '\\'
+                            OR sn.name LIKE ? ESCAPE '\\'
+                            OR sn.qualified_name LIKE ? ESCAPE '\\'
+                            OR sn.display_name LIKE ? ESCAPE '\\'
+                            OR sn.node_kind LIKE ? ESCAPE '\\'
+                            OR EXISTS (
+                                SELECT 1
+                                FROM analysis_files sf
+                                WHERE sf.file_id = sn.analysis_file_id
+                                  AND sf.relative_path LIKE ? ESCAPE '\\'
+                            )
+                          )
+                    )
+                )"""
+            )
+            params.extend([pattern, pattern, pattern, pattern, pattern, pattern, pattern])
         return " AND ".join(clauses), params
+
+    def _relationship_aware_graph_view_nodes(self, conn: sqlite3.Connection, query: GraphSnapshotQuery, limit: int) -> List[Dict[str, Any]]:
+        if limit <= 0:
+            return []
+        node_where, node_params = self._graph_snapshot_node_where(
+            query.snapshot_id,
+            query.source_id,
+            query.flow_domain,
+            query.fact_origin,
+            query.node_kind,
+            query.include_external,
+            query.include_isolated,
+            query.search,
+        )
+        edge_where, edge_params = self._graph_snapshot_edge_where(
+            query.snapshot_id,
+            query.source_id,
+            query.flow_domain,
+            query.fact_origin,
+            query.edge_type,
+            query.include_unresolved,
+            query.search,
+        )
+        rows = conn.execute(
+            f"""
+            WITH candidate_nodes AS (
+                SELECT n.*, af.relative_path,
+                       CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint
+                FROM analysis_graph_nodes n
+                LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
+                LEFT JOIN analysis_graph_claims entry
+                  ON entry.node_id = n.id
+                 AND entry.snapshot_id = n.snapshot_id
+                 AND entry.claim_kind = 'ENTRYPOINT_HINT'
+                 AND entry.status IN ('TRUSTED', 'DERIVED')
+                WHERE {node_where}
+            ),
+            filtered_edges AS (
+                SELECT e.from_node_id, e.to_node_id
+                FROM analysis_graph_edges e
+                JOIN candidate_nodes fn ON fn.id = e.from_node_id
+                JOIN candidate_nodes tn ON tn.id = e.to_node_id
+                WHERE {edge_where}
+                  AND e.to_node_id IS NOT NULL
+            ),
+            node_degree AS (
+                SELECT node_id, COUNT(*) AS count
+                FROM (
+                    SELECT from_node_id AS node_id FROM filtered_edges
+                    UNION ALL
+                    SELECT to_node_id AS node_id FROM filtered_edges
+                )
+                GROUP BY node_id
+            )
+            SELECT candidate_nodes.*, COALESCE(node_degree.count, 0) AS graph_degree
+            FROM candidate_nodes
+            LEFT JOIN node_degree ON node_degree.node_id = candidate_nodes.id
+            ORDER BY
+              CASE WHEN COALESCE(node_degree.count, 0) > 0 THEN 0 ELSE 1 END,
+              candidate_nodes.entrypoint DESC,
+              COALESCE(node_degree.count, 0) DESC,
+              CASE candidate_nodes.node_kind
+                WHEN 'FILE' THEN 0
+                WHEN 'TYPE' THEN 1
+                WHEN 'CALLABLE' THEN 2
+                WHEN 'FIELD' THEN 3
+                WHEN 'EXTERNAL' THEN 4
+                ELSE 5
+              END,
+              lower(COALESCE(candidate_nodes.relative_path, '')),
+              lower(COALESCE(candidate_nodes.display_name, candidate_nodes.qualified_name, candidate_nodes.name, candidate_nodes.id)),
+              candidate_nodes.id
+            """,
+            [*node_params, *edge_params],
+        ).fetchall()
+        if not rows:
+            return []
+        if len(rows) <= limit:
+            return [self._graph_snapshot_node_projection(self._row_dict(row)) for row in rows]
+        rank = {str(row["id"]): index for index, row in enumerate(rows)}
+        candidate_ids = set(rank)
+        edge_rows = conn.execute(
+            f"""
+            WITH candidate_nodes AS (
+                SELECT n.id
+                FROM analysis_graph_nodes n
+                LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
+                WHERE {node_where}
+            )
+            SELECT e.from_node_id, e.to_node_id
+            FROM analysis_graph_edges e
+            JOIN candidate_nodes fn ON fn.id = e.from_node_id
+            JOIN candidate_nodes tn ON tn.id = e.to_node_id
+            WHERE {edge_where}
+              AND e.to_node_id IS NOT NULL
+            ORDER BY
+              CASE e.edge_type
+                WHEN 'DECLARES' THEN 0
+                WHEN 'CALLS' THEN 1
+                WHEN 'USES' THEN 2
+                WHEN 'IMPLEMENTS' THEN 3
+                WHEN 'EXTENDS' THEN 4
+                ELSE 5
+              END,
+              e.id
+            """,
+            [*node_params, *edge_params],
+        ).fetchall()
+        adjacency: Dict[str, List[str]] = {node_id: [] for node_id in candidate_ids}
+        for edge in edge_rows:
+            source = str(edge["from_node_id"])
+            target = str(edge["to_node_id"])
+            if source in candidate_ids and target in candidate_ids:
+                adjacency[source].append(target)
+                adjacency[target].append(source)
+        for node_id, neighbors in adjacency.items():
+            seen: Set[str] = set()
+            ordered: List[str] = []
+            for neighbor in sorted(neighbors, key=lambda item: rank.get(item, len(rank))):
+                if neighbor not in seen:
+                    seen.add(neighbor)
+                    ordered.append(neighbor)
+            adjacency[node_id] = ordered
+
+        selected: List[sqlite3.Row] = []
+        selected_ids: Set[str] = set()
+
+        def add_node(node_id: str) -> None:
+            if len(selected) >= limit or node_id in selected_ids:
+                return
+            selected_ids.add(node_id)
+            selected.append(rows[rank[node_id]])
+
+        for row in rows:
+            if len(selected) >= limit:
+                break
+            seed_id = str(row["id"])
+            add_node(seed_id)
+            for neighbor_id in adjacency.get(seed_id, []):
+                add_node(neighbor_id)
+                if len(selected) >= limit:
+                    break
+
+        return [self._graph_snapshot_node_projection(self._row_dict(row)) for row in selected]
+
+    def _relationship_aware_graph_view_edges(self, conn: sqlite3.Connection, query: GraphSnapshotQuery, visible_node_ids: List[str], max_edges: int) -> tuple[List[Dict[str, Any]], int]:
+        if not visible_node_ids:
+            return [], 0
+        edge_where, edge_params = self._graph_snapshot_edge_where(
+            query.snapshot_id,
+            query.source_id,
+            query.flow_domain,
+            query.fact_origin,
+            query.edge_type,
+            query.include_unresolved,
+            query.search,
+        )
+        placeholders = ",".join("?" for _ in visible_node_ids)
+        internal_count = int(
+            conn.execute(
+                f"""
+                SELECT COUNT(*) AS count
+                FROM analysis_graph_edges e
+                WHERE {edge_where}
+                  AND e.from_node_id IN ({placeholders})
+                  AND e.to_node_id IN ({placeholders})
+                """,
+                [*edge_params, *visible_node_ids, *visible_node_ids],
+            ).fetchone()["count"]
+            or 0
+        )
+        edge_limit = max(0, min(int(max_edges or 0), 5000))
+        if edge_limit <= 0:
+            return [], internal_count
+        rows = conn.execute(
+            f"""
+            SELECT e.*,
+                   fn.display_name AS from_display_name,
+                   fn.qualified_name AS from_qualified_name,
+                   fn.name AS from_name,
+                   tn.display_name AS to_display_name,
+                   tn.qualified_name AS to_qualified_name,
+                   tn.name AS to_name
+            FROM analysis_graph_edges e
+            LEFT JOIN analysis_graph_nodes fn ON fn.snapshot_id = e.snapshot_id AND fn.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes tn ON tn.snapshot_id = e.snapshot_id AND tn.id = e.to_node_id
+            WHERE {edge_where}
+              AND e.from_node_id IN ({placeholders})
+              AND e.to_node_id IN ({placeholders})
+            ORDER BY
+              CASE e.edge_type
+                WHEN 'DECLARES' THEN 0
+                WHEN 'CALLS' THEN 1
+                WHEN 'REFERENCES' THEN 2
+                WHEN 'IMPORTS' THEN 3
+                ELSE 4
+              END,
+              e.id
+            LIMIT ?
+            """,
+            [*edge_params, *visible_node_ids, *visible_node_ids, edge_limit],
+        ).fetchall()
+        return [self._graph_snapshot_edge_projection(self._row_dict(row)) for row in rows], internal_count
+
+    def _graph_view_boundary_edge_count(self, conn: sqlite3.Connection, query: GraphSnapshotQuery, visible_node_ids: List[str]) -> int:
+        if not visible_node_ids:
+            return 0
+        edge_where, edge_params = self._graph_snapshot_edge_where(
+            query.snapshot_id,
+            query.source_id,
+            query.flow_domain,
+            query.fact_origin,
+            query.edge_type,
+            query.include_unresolved,
+            query.search,
+        )
+        placeholders = ",".join("?" for _ in visible_node_ids)
+        return int(
+            conn.execute(
+                f"""
+                SELECT COUNT(*) AS count
+                FROM analysis_graph_edges e
+                WHERE {edge_where}
+                  AND (
+                    (e.from_node_id IN ({placeholders}) AND (e.to_node_id IS NULL OR e.to_node_id NOT IN ({placeholders})))
+                    OR (e.to_node_id IN ({placeholders}) AND e.from_node_id NOT IN ({placeholders}))
+                  )
+                """,
+                [*edge_params, *visible_node_ids, *visible_node_ids, *visible_node_ids, *visible_node_ids],
+            ).fetchone()["count"]
+            or 0
+        )
+
+    def _graph_search_pattern(self, value: str) -> str:
+        escaped = str(value).replace("\\", "\\\\").replace("_", "\\_")
+        return f"%{escaped}%"
 
     def _graph_snapshot_revision(self, query: GraphSnapshotQuery) -> str:
         payload = self._graph_revision_payload(query)
@@ -2844,6 +3242,7 @@ class AnalysisStore:
             query.node_kind,
             query.include_external,
             query.include_isolated,
+            query.search,
         )
         edge_where, edge_params = self._graph_snapshot_edge_where(
             query.snapshot_id,
@@ -2852,6 +3251,7 @@ class AnalysisStore:
             query.fact_origin,
             query.edge_type,
             query.include_unresolved,
+            query.search,
         )
         node_count = int(conn.execute(f"SELECT COUNT(*) AS count FROM analysis_graph_nodes n WHERE {node_where}", node_params).fetchone()["count"] or 0)
         edge_count = int(conn.execute(f"SELECT COUNT(*) AS count FROM analysis_graph_edges e WHERE {edge_where}", edge_params).fetchone()["count"] or 0)

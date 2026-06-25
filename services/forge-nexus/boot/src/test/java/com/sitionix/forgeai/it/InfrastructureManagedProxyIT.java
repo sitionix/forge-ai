@@ -71,6 +71,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseBody("responseProxyGraphMetadata.json"))
                 .create();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphManifest()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphView()).createDefault();
         this.testManager.wiremock()
                 .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodes())
                 .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphRevisionA())
@@ -136,6 +137,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .header("X-Correlation-Id", "corr-allowlist")
                 .assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphManifest()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphView()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphNodes())
                 .withQueryParameters(InfrastructureProxyQuery.graphRevisionA())
@@ -178,6 +180,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseBody("responseProxyGraphMetadata.json"))
                 .create();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphManifest()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphView()).createDefault();
         this.testManager.wiremock()
                 .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodes())
                 .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphRevisionA())
@@ -220,6 +223,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("GRAPH_SNAPSHOT_METRICS_MISSING"))))
                 .assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphManifest()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphView()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphNodes())
                 .withQueryParameters(InfrastructureProxyQuery.graphRevisionA())
                 .header("X-Correlation-Id", "corr-raw-json")
@@ -263,6 +267,20 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .applyDefault(context -> context
                         .responseStatus(HttpStatus.OK.value())
                         .responseBody("responseProxyGraphManifestFiltered.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphView())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphViewContract())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphView.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphViewFilterInvalid())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphViewInvalidFilter())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.BAD_REQUEST.value())
+                        .responseBody("responseProxyGraphViewFilterInvalid.json"))
                 .create();
         this.testManager.wiremock()
                 .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodesContract())
@@ -309,6 +327,10 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphManifestFiltered())
                 .withQueryParameters(InfrastructureProxyQuery.graphFilteredManifest())
+                .header("X-Correlation-Id", "corr-parity")
+                .assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphView())
+                .withQueryParameters(InfrastructureProxyQuery.graphViewContract())
                 .header("X-Correlation-Id", "corr-parity")
                 .assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphNodesContract())
@@ -700,6 +722,20 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseBody("responseProxyGraphManifestFiltered.json"))
                 .create();
         this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphView())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphViewContract())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyGraphView.json"))
+                .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphViewFilterInvalid())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphViewInvalidFilter())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.BAD_REQUEST.value())
+                        .responseBody("responseProxyGraphViewFilterInvalid.json"))
+                .create();
+        this.testManager.wiremock()
                 .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphNodesContract())
                 .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphCursorA())
                 .applyDefault(context -> context
@@ -771,6 +807,16 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphManifestQuery())
                 .withQueryParameters(InfrastructureProxyQuery.graphManifestCode())
                 .header("X-Correlation-Id", "corr-graph-parity")
+                .assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphView())
+                .withQueryParameters(InfrastructureProxyQuery.graphViewContract())
+                .header("X-Correlation-Id", "corr-graph-parity")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.selectionPolicy").value("RELATIONSHIP_AWARE"))
+                .assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphViewFilterInvalid())
+                .withQueryParameters(InfrastructureProxyQuery.graphViewInvalidFilter())
+                .header("X-Correlation-Id", "corr-graph-parity")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("GRAPH_FILTER_INVALID"))
                 .assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphNodesContract())
                 .withQueryParameters(InfrastructureProxyQuery.graphNodesContract())
