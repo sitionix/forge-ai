@@ -29,6 +29,13 @@ class LoggingSettings(BaseModel):
 
 class KnowledgeStorageSettings(BaseModel):
     sqlite_path: Path
+    retention_inventory_build_days: int = Field(default=30, ge=1)
+    retention_analysis_job_days: int = Field(default=30, ge=1)
+    retention_analysis_diagnostic_days: int = Field(default=30, ge=1)
+    retention_graph_snapshot_days: int = Field(default=30, ge=1)
+    retention_graph_tombstone_days: int = Field(default=7, ge=1)
+    retention_keep_completed_jobs: int = Field(default=50, ge=1)
+    retention_keep_snapshots_per_source: int = Field(default=5, ge=1)
 
 
 class InventorySettings(BaseModel):
@@ -44,11 +51,16 @@ class AnalysisSettings(BaseModel):
     base_url: AnyHttpUrl
     model: str = Field(min_length=1)
     prompt_path: Path
-    request_timeout_seconds: int = Field(default=180, ge=1)
+    request_timeout_seconds: int = Field(default=90, ge=1)
+    ai_call_timeout_seconds: Optional[int] = Field(default=None, ge=1)
+    per_file_timeout_seconds: int = Field(default=120, ge=1)
+    stall_threshold_seconds: int = Field(default=300, ge=1)
     context_tokens: int = Field(default=8192, ge=1)
     max_file_chars: int = Field(default=60000, ge=1)
     max_chunk_chars: int = Field(default=20000, ge=1)
     concurrency: int = Field(default=1, ge=1)
+    queue_capacity: int = Field(default=4, ge=1)
+    shutdown_grace_seconds: float = Field(default=5.0, ge=0.1)
     max_attempts_per_file: int = Field(default=3, ge=1)
     repair_attempts_per_file: int = Field(default=1, ge=0)
 
@@ -105,13 +117,25 @@ class AppConfig(BaseModel):
     analysis_base_url: str = "http://localhost:11434"
     analysis_model: str = "qwen2.5-coder:14b"
     analysis_prompt_path: Path = Path("analysis-prompt.md")
-    analysis_request_timeout_seconds: int = 180
+    analysis_request_timeout_seconds: int = 90
+    analysis_ai_call_timeout_seconds: int = 90
+    analysis_per_file_timeout_seconds: int = 120
+    analysis_stall_threshold_seconds: int = 300
     analysis_context_tokens: int = 8192
     analysis_max_file_chars: int = 60000
     analysis_max_chunk_chars: int = 20000
     analysis_concurrency: int = 1
+    analysis_queue_capacity: int = 4
+    analysis_shutdown_grace_seconds: float = 5.0
     analysis_max_attempts_per_file: int = 3
     analysis_repair_attempts_per_file: int = 1
+    retention_inventory_build_days: int = 30
+    retention_analysis_job_days: int = 30
+    retention_analysis_diagnostic_days: int = 30
+    retention_graph_snapshot_days: int = 30
+    retention_graph_tombstone_days: int = 7
+    retention_keep_completed_jobs: int = 50
+    retention_keep_snapshots_per_source: int = 5
     logging: LoggingSettings = Field(default_factory=lambda: LoggingSettings(directory=forge_ai_home() / "var" / "logs"))
     runtime_dir: Path = Field(default_factory=lambda: forge_ai_home() / "var")
     workspace_root: Optional[Path] = None
@@ -155,12 +179,24 @@ class AppConfig(BaseModel):
             analysis_model=analysis.model,
             analysis_prompt_path=analysis.prompt_path,
             analysis_request_timeout_seconds=analysis.request_timeout_seconds,
+            analysis_ai_call_timeout_seconds=analysis.ai_call_timeout_seconds or analysis.request_timeout_seconds,
+            analysis_per_file_timeout_seconds=analysis.per_file_timeout_seconds,
+            analysis_stall_threshold_seconds=analysis.stall_threshold_seconds,
             analysis_context_tokens=analysis.context_tokens,
             analysis_max_file_chars=analysis.max_file_chars,
             analysis_max_chunk_chars=analysis.max_chunk_chars,
             analysis_concurrency=analysis.concurrency,
+            analysis_queue_capacity=analysis.queue_capacity,
+            analysis_shutdown_grace_seconds=analysis.shutdown_grace_seconds,
             analysis_max_attempts_per_file=analysis.max_attempts_per_file,
             analysis_repair_attempts_per_file=analysis.repair_attempts_per_file,
+            retention_inventory_build_days=knowledge.storage.retention_inventory_build_days,
+            retention_analysis_job_days=knowledge.storage.retention_analysis_job_days,
+            retention_analysis_diagnostic_days=knowledge.storage.retention_analysis_diagnostic_days,
+            retention_graph_snapshot_days=knowledge.storage.retention_graph_snapshot_days,
+            retention_graph_tombstone_days=knowledge.storage.retention_graph_tombstone_days,
+            retention_keep_completed_jobs=knowledge.storage.retention_keep_completed_jobs,
+            retention_keep_snapshots_per_source=knowledge.storage.retention_keep_snapshots_per_source,
             logging=settings.logging,
             runtime_dir=settings.runtime_dir,
             workspace_root=settings.workspace_root,
@@ -330,11 +366,24 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                     "prompt_path": _path(
                         str(analysis.get("prompt-path") or analysis.get("prompt_path") or "${FORGE_CONFIG_DIR}/knowledge/analysis-prompt.md"), env
                     ),
-                    "request_timeout_seconds": int(analysis.get("request-timeout-seconds") or analysis.get("request_timeout_seconds") or 180),
+                    "request_timeout_seconds": int(analysis.get("request-timeout-seconds") or analysis.get("request_timeout_seconds") or 90),
+                    "ai_call_timeout_seconds": int(
+                        analysis.get("ai-call-timeout-seconds")
+                        or analysis.get("ai_call_timeout_seconds")
+                        or analysis.get("request-timeout-seconds")
+                        or analysis.get("request_timeout_seconds")
+                        or 90
+                    ),
+                    "per_file_timeout_seconds": int(analysis.get("per-file-timeout-seconds") or analysis.get("per_file_timeout_seconds") or 120),
+                    "stall_threshold_seconds": int(analysis.get("stall-threshold-seconds") or analysis.get("stall_threshold_seconds") or 300),
                     "context_tokens": int(analysis.get("context-tokens") or analysis.get("context_tokens") or 8192),
                     "max_file_chars": int(analysis.get("max-file-chars") or analysis.get("max_file_chars") or 60000),
                     "max_chunk_chars": int(analysis.get("max-chunk-chars") or analysis.get("max_chunk_chars") or 20000),
                     "concurrency": int(analysis.get("concurrency") or 1),
+                    "queue_capacity": int(analysis.get("queue-capacity") or analysis.get("queue_capacity") or 4),
+                    "shutdown_grace_seconds": float(
+                        analysis.get("shutdown-grace-seconds") or analysis.get("shutdown_grace_seconds") or 5.0
+                    ),
                     "max_attempts_per_file": int(analysis.get("max-attempts-per-file") or analysis.get("max_attempts_per_file") or 3),
                     "repair_attempts_per_file": int(analysis.get("repair-attempts-per-file") or analysis.get("repair_attempts_per_file") or 1),
                 },
@@ -366,6 +415,9 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
         "KNOWLEDGE_ANALYSIS_MODEL": ("model", str),
         "KNOWLEDGE_ANALYSIS_PROMPT_PATH": ("prompt_path", lambda value: _path(value, env)),
         "KNOWLEDGE_ANALYSIS_REQUEST_TIMEOUT_SECONDS": ("request_timeout_seconds", int),
+        "KNOWLEDGE_ANALYSIS_AI_CALL_TIMEOUT_SECONDS": ("ai_call_timeout_seconds", int),
+        "KNOWLEDGE_ANALYSIS_PER_FILE_TIMEOUT_SECONDS": ("per_file_timeout_seconds", int),
+        "KNOWLEDGE_ANALYSIS_STALL_THRESHOLD_SECONDS": ("stall_threshold_seconds", int),
         "KNOWLEDGE_ANALYSIS_CONTEXT_TOKENS": ("context_tokens", int),
         "KNOWLEDGE_ANALYSIS_MAX_FILE_CHARS": ("max_file_chars", int),
         "KNOWLEDGE_ANALYSIS_MAX_CHARS": ("max_chunk_chars", int),

@@ -7,21 +7,3 @@ selection:
   include_groups: []
   include_services: []
   exclude_services: []
-
-indexing:
-  exclude:
-    - ".git/**"
-    - "**/.git/**"
-    - "target/**"
-    - "**/target/**"
-    - "build/**"
-    - "**/build/**"
-    - "node_modules/**"
-    - "**/node_modules/**"
-    - ".venv/**"
-    - "**/.venv/**"
-    - "var/**"
-    - "**/var/**"
-    - "logs/**"
-    - "**/logs/**"
-    - "**/.env"

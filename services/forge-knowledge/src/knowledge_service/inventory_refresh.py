@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 import threading
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
@@ -31,25 +32,38 @@ class InventoryRefreshService:
         wait: bool = True,
         block_if_analysis_active: bool = True,
     ) -> Dict[str, Any]:
-        return self._with_lock(
+        return asyncio.run(self.build_async(source_ids, groups, wait=wait, block_if_analysis_active=block_if_analysis_active))
+
+    async def build_async(
+        self,
+        source_ids: Optional[List[str]] = None,
+        groups: Optional[List[str]] = None,
+        *,
+        wait: bool = True,
+        block_if_analysis_active: bool = True,
+    ) -> Dict[str, Any]:
+        return await self._with_lock(
             lambda source_config: self._build_locked(source_config, source_ids or [], groups or []),
             wait=wait,
             block_if_analysis_active=block_if_analysis_active,
         )
 
-    def build_then(
+    async def build_then(
         self,
         source_ids: Optional[List[str]],
         groups: Optional[List[str]],
         callback: Callable[[], Dict[str, Any]],
     ) -> Dict[str, Any]:
-        def run(source_config: SourceConfig) -> Dict[str, Any]:
+        async def run(source_config: SourceConfig) -> Dict[str, Any]:
             self._build_locked(source_config, source_ids or [], groups or [])
-            return callback()
+            result = callback()
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
 
-        return self._with_lock(run, wait=True, block_if_analysis_active=True)
+        return await self._with_lock(run, wait=True, block_if_analysis_active=True)
 
-    def build_available_while_analysis_runs(self, *, wait: bool = False) -> Dict[str, Any]:
+    async def build_available_while_analysis_runs(self, *, wait: bool = False) -> Dict[str, Any]:
         def run(source_config: SourceConfig) -> Dict[str, Any]:
             active_source_ids = self._active_analysis_source_ids()
             if active_source_ids is None:
@@ -70,9 +84,9 @@ class InventoryRefreshService:
                 )
             return self._build_locked(source_config, refresh_source_ids, [])
 
-        return self._with_lock(run, wait=wait, block_if_analysis_active=False)
+        return await self._with_lock(run, wait=wait, block_if_analysis_active=False)
 
-    def _with_lock(
+    async def _with_lock(
         self,
         action: Callable[[SourceConfig], Dict[str, Any]],
         *,
@@ -86,7 +100,10 @@ class InventoryRefreshService:
             if block_if_analysis_active and AnalysisStore(self.store.db_path).active_job() is not None:
                 raise KnowledgeError("INVENTORY_BUILD_BLOCKED_BY_ANALYSIS", "Inventory refresh is blocked while AI analysis is running")
             source_config = require_source_config(self.config.local_config_path)
-            return action(source_config)
+            result = action(source_config)
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
         finally:
             self._lock.release()
 
@@ -113,13 +130,13 @@ class InventoryRefreshService:
         return None
 
 
-class BackgroundInventoryScheduler:
+class AsyncInventoryScheduler:
     def __init__(self, refresh: InventoryRefreshService, config: AppConfig):
         self.refresh = refresh
         self.config = config
-        self._stop = threading.Event()
+        self._stop: Optional[asyncio.Event] = None
         self._state_lock = threading.Lock()
-        self._thread: Optional[threading.Thread] = None
+        self._task: Optional[asyncio.Task[None]] = None
         self._state: Dict[str, Any] = {
             "enabled": config.inventory_auto_refresh_enabled,
             "intervalSeconds": config.inventory_auto_refresh_interval_seconds,
@@ -132,30 +149,34 @@ class BackgroundInventoryScheduler:
             "skipCount": 0,
         }
 
-    def start(self) -> None:
+    async def start(self) -> None:
         if not self.config.inventory_auto_refresh_enabled:
             return
-        if self._thread is not None and self._thread.is_alive():
+        if self._task is not None and not self._task.done():
             return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="knowledge-inventory-refresh", daemon=True)
-        self._thread.start()
+        self._stop = asyncio.Event()
+        self._task = asyncio.create_task(self._loop(), name="knowledge-inventory-refresh")
 
-    def stop(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
+    async def stop(self) -> None:
+        if self._stop is not None:
+            self._stop.set()
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await asyncio.wait_for(self._task, timeout=5)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            self._task = None
 
-    def run_once(self) -> Dict[str, Any]:
+    async def run_once(self) -> Dict[str, Any]:
         if not self.config.inventory_auto_refresh_enabled:
-            self._set_state(status="DISABLED")
-            return self.status()
+            await self._set_state(status="DISABLED")
+            return await self.status()
         started_at = self._now()
-        self._set_state(status="RUNNING", lastStartedAt=started_at, lastErrorCode=None, lastErrorMessage=None)
+        await self._set_state(status="RUNNING", lastStartedAt=started_at, lastErrorCode=None, lastErrorMessage=None)
         try:
-            self.refresh.build_available_while_analysis_runs(wait=False)
-            self._set_state(status="READY", lastCompletedAt=self._now(), increment="runCount")
+            await self.refresh.build_available_while_analysis_runs(wait=False)
+            await self._set_state(status="READY", lastCompletedAt=self._now(), increment="runCount")
         except KnowledgeError as exc:
             if exc.code in {
                 "INVENTORY_BUILD_BLOCKED_BY_ANALYSIS",
@@ -163,7 +184,7 @@ class BackgroundInventoryScheduler:
                 "INVENTORY_REFRESH_NO_AVAILABLE_SOURCES",
                 "KNOWLEDGE_CONFIG_MISSING",
             }:
-                self._set_state(
+                await self._set_state(
                     status="SKIPPED",
                     lastCompletedAt=self._now(),
                     lastErrorCode=exc.code,
@@ -171,7 +192,7 @@ class BackgroundInventoryScheduler:
                     increment="skipCount",
                 )
             else:
-                self._set_state(
+                await self._set_state(
                     status="FAILED",
                     lastCompletedAt=self._now(),
                     lastErrorCode=exc.code,
@@ -179,26 +200,34 @@ class BackgroundInventoryScheduler:
                 )
                 LOGGER.warning("Background inventory refresh failed: %s", exc.message)
         except Exception as exc:
-            self._set_state(
+            await self._set_state(
                 status="FAILED",
                 lastCompletedAt=self._now(),
                 lastErrorCode="INVENTORY_REFRESH_FAILED",
                 lastErrorMessage=str(exc),
             )
             LOGGER.exception("Background inventory refresh failed")
-        return self.status()
+        return await self.status()
 
-    def status(self) -> Dict[str, Any]:
+    async def status_async(self) -> Dict[str, Any]:
+        return await self.status()
+
+    async def status(self) -> Dict[str, Any]:
         with self._state_lock:
             return dict(self._state)
 
-    def _loop(self) -> None:
-        while not self._stop.is_set():
-            self.run_once()
-            if self._stop.wait(self.config.inventory_auto_refresh_interval_seconds):
+    async def _loop(self) -> None:
+        while self._stop is not None and not self._stop.is_set():
+            await self.run_once()
+            try:
+                if self._stop is None:
+                    return
+                await asyncio.wait_for(self._stop.wait(), timeout=self.config.inventory_auto_refresh_interval_seconds)
                 return
+            except asyncio.TimeoutError:
+                continue
 
-    def _set_state(self, **updates: Any) -> None:
+    async def _set_state(self, **updates: Any) -> None:
         increment = updates.pop("increment", None)
         with self._state_lock:
             self._state.update(updates)

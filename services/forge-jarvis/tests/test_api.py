@@ -44,11 +44,11 @@ def test_status_endpoint_returns_runtime_status(tmp_path) -> None:
 
     assert body["status"] == "UP"
     assert body["model"]["defaultModel"] == "qwen2.5-coder:7b"
-    assert body["ollama"]["status"] == "UP"
+    assert body["ollama"]["status"] == "UNKNOWN"
     assert body["actions"]["count"] == 2
 
 
-def test_status_endpoint_marks_ollama_down(tmp_path) -> None:
+def test_status_endpoint_does_not_call_ollama(tmp_path) -> None:
     model = FakeModelClient(health_error=ollama_unavailable())
     app, *_ = build_test_app(write_runtime_config(tmp_path), model=model)
 
@@ -56,7 +56,8 @@ def test_status_endpoint_marks_ollama_down(tmp_path) -> None:
         body = client.get("/api/v1/jarvis/status").json()
 
     assert body["status"] == "UP"
-    assert body["ollama"]["status"] == "DOWN"
+    assert body["ollama"]["status"] == "UNKNOWN"
+    assert model.health_calls == 0
 
 
 def test_command_returns_controlled_error_when_ollama_unavailable(tmp_path) -> None:
@@ -173,6 +174,7 @@ def test_chat_response_includes_answer_and_used_context(tmp_path) -> None:
     assert body["answer"] == "Answer from context"
     assert body["usedContext"][0]["sourceId"] == "forge-ai"
     assert body["usedContext"][0]["relativePath"] == "application/src/main/java/JarvisGateway.java"
+    assert body["usedContext"][0]["content"] is None
 
 
 def test_chat_empty_context_returns_clear_answer_and_diagnostic(tmp_path) -> None:

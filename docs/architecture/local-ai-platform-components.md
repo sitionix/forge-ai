@@ -26,7 +26,6 @@ Forge Nexus is the Java facade and public local API entrypoint. It owns the move
 - `services/forge-nexus/domain`
 - `services/forge-nexus/infrastructure/jarvis-client`
 - `services/forge-nexus/infrastructure/knowledge-client`
-- `services/forge-nexus/infrastructure/knowledge-sqlite`
 - other Java infrastructure modules under `services/forge-nexus/infrastructure/*`
 
 Existing public paths remain unchanged under `/fgaisox`, including actuator health and `/api/v1/infrastructure/jarvis/*` plus `/api/v1/infrastructure/knowledge/*`.
@@ -37,7 +36,7 @@ Forge Console is the Operator UI under `services/forge-console/src/operator`. Fo
 
 ## Forge Knowledge
 
-Forge Knowledge is the flat Python project under `services/forge-knowledge`, with `pyproject.toml`, `src/knowledge_service`, and `tests` directly in that service root. It owns inventory, context, analysis, graph, and GraphSlice runtime. Local endpoints under `/api/v1/knowledge/*` remain internal and unchanged.
+Forge Knowledge is the flat Python project under `services/forge-knowledge`, with `pyproject.toml`, `src/knowledge_service`, and `tests` directly in that service root. It owns inventory, context, analysis, and the immutable graph snapshot manifest/page/detail API. Local endpoints under `/api/v1/knowledge/*` remain internal to the Nexus forwarding boundary and may change with repository consumers in the same implementation.
 
 ## Forge Jarvis
 

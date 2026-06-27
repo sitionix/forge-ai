@@ -118,7 +118,6 @@ A services/forge-knowledge/src/knowledge_service/graph_call_intelligence.py
 A services/forge-knowledge/src/knowledge_service/graph_model.py
 A services/forge-knowledge/src/knowledge_service/graph_response_parser.py
 A services/forge-knowledge/src/knowledge_service/graph_schema.py
-A services/forge-knowledge/src/knowledge_service/graph_slice_service.py
 A services/forge-knowledge/src/knowledge_service/graph_validation.py
 A services/forge-knowledge/src/knowledge_service/inventory_builder.py
 A services/forge-knowledge/src/knowledge_service/inventory_file_resolver.py
@@ -158,7 +157,7 @@ A services/forge-nexus/boot/pom.xml
 
 ## File Decisions
 
-- `services/forge-knowledge/**`: moved by the reorganization, then refactored where needed for typed settings, application factory composition, deterministic tests, logging, and quality gates. GraphStore, GraphSlice, graph schema, parser-backed analysis semantics, and structural analysis behavior were retained. Several files were reformatted by `ruff format`; those formatting-only changes were reviewed and are intentional.
+- `services/forge-knowledge/**`: moved by the reorganization, then refactored where needed for typed settings, application factory composition, deterministic tests, logging, and quality gates. The graph schema, parser-backed analysis semantics, and structural analysis behavior were retained. Several files were reformatted by `ruff format`; those formatting-only changes were reviewed and are intentional.
 - `services/forge-jarvis/**`: moved by the reorganization, then refactored for typed settings, application factory composition, injected clients/executor, response parsing, route tests, and quality gates. Jarvis command and chat behavior were retained.
 - `services/forge-console/**`: retained current pages and URLs, replaced the monolithic-only project shape with a strict TypeScript/Vite/Vitest project, and added runtime config loading. Existing DOM UI behavior was preserved.
 - `config/forge-ai.yaml`: retained as the canonical root runtime configuration and refactored to own service ports, URLs, SQLite path, logging paths, model runtime settings, timeouts, and console polling intervals.
@@ -257,12 +256,13 @@ Location: `services/forge-knowledge/tests/forge_it/test_knowledge_service_it.py`
 | GET | `/api/v1/knowledge/analysis/jobs/{job_id}` | yes |
 | POST | `/api/v1/knowledge/analysis/jobs/{job_id}/stop` | yes |
 | GET | `/api/v1/knowledge/analysis/status` | yes |
-| GET | `/api/v1/knowledge/services/status` | yes |
+| GET | `/api/v1/knowledge/overview` | yes |
 | GET | `/api/v1/knowledge/analysis/files` | yes |
-| GET | `/api/v1/knowledge/analysis/symbols` | yes |
-| GET | `/api/v1/knowledge/analysis/relations` | yes |
-| GET | `/api/v1/knowledge/analysis/graph` | yes |
-| GET | `/api/v1/knowledge/analysis/graph/slice` | yes |
+| GET | `/api/v1/knowledge/analysis/graph/manifest` | yes |
+| GET | `/api/v1/knowledge/analysis/graph/nodes` | yes |
+| GET | `/api/v1/knowledge/analysis/graph/edges` | yes |
+| GET | `/api/v1/knowledge/analysis/graph/node/{node_id}` | yes |
+| GET | `/api/v1/knowledge/analysis/graph/edge/{edge_id}` | yes |
 
 Knowledge IT scenarios covered:
 

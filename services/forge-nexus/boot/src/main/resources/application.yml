@@ -25,6 +25,8 @@ spring:
     mongodb:
       uri: ${MONGODB_URI:mongodb://localhost:27019/forge_ai}
       uuid-representation: standard
+  jpa:
+    open-in-view: false
 management:
   endpoint:
     health:
@@ -72,7 +74,6 @@ forge:
         read-timeout: 120s
       knowledge:
         enabled: true
-        mode: http
         base-url: ${FORGE_KNOWLEDGE_BASE_URL:http://127.0.0.1:7081}
         connect-timeout: 2s
         read-timeout: 120s

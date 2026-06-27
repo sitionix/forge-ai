@@ -14,8 +14,11 @@ Endpoints:
 - `POST /analysis/jobs/{jobId}/stop`
 - `GET /analysis/status`
 - `GET /analysis/files`
-- `GET /analysis/symbols`
-- `GET /analysis/relations`
+- `GET /analysis/graph/manifest`
+- `GET /analysis/graph/nodes`
+- `GET /analysis/graph/edges`
+- `GET /analysis/graph/node/{nodeId}`
+- `GET /analysis/graph/edge/{edgeId}`
 
 Forge AI Java no longer exposes public inventory-backed search, retrieval context, facts, or flow context proxy endpoints. Browser Knowledge flows use status, source, inventory diagnostics, and AI analysis endpoints only.
 
@@ -40,4 +43,4 @@ Skipped means the inventory builder saw a file/path/root candidate but did not i
 
 Controlled proxy failures are mapped to `KNOWLEDGE_UNAVAILABLE`, `KNOWLEDGE_TIMEOUT`, and `KNOWLEDGE_BAD_RESPONSE`.
 
-Analysis endpoints are proxy-only in Forge Java. `POST /analysis/build` returns a queued job id immediately. `POST /analysis/jobs/{jobId}/stop` requests cooperative cancellation and frees the active slot for a new analysis job; any in-flight per-file Ollama call is prevented from writing results after it returns or times out. Job/status endpoints expose progress counters, current source/file, failures, and diagnostics. Files/symbols/relations endpoints expose validated Knowledge service JSON; Forge does not call Ollama, scan files, parse source, or classify roles.
+Analysis endpoints are proxy-only in Forge Java. `POST /analysis/build` returns a queued job id immediately. `POST /analysis/jobs/{jobId}/stop` requests cooperative cancellation and frees the active slot for a new analysis job; any in-flight per-file Ollama call is prevented from writing results after it returns or times out. Job/status endpoints expose progress counters, current source/file, failures, and diagnostics. Graph manifest, page, and detail endpoints expose bounded Knowledge service JSON; Forge does not call Ollama, scan files, parse source, or classify roles.

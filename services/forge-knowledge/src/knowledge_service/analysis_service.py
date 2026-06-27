@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
+import inspect
 import json
 import logging
-import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Protocol, Union
+from typing import Any, Dict, List, Optional, Protocol, Union
 
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
-from knowledge_service.analysis_schema import AnalysisBuildRequest, AnalysisResult
+from knowledge_service.analysis_schema import AnalysisBuildRequest, AnalysisResult, RetryFailedAnalysisRequest
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.config import AppConfig
@@ -26,7 +27,7 @@ class AnalysisProvider(Protocol):
     name: str
     version: str
 
-    def analyze(
+    async def analyze(
         self,
         payload: Dict[str, Any],
         line_count: int,
@@ -34,17 +35,7 @@ class AnalysisProvider(Protocol):
     ) -> Union[GraphAnalysisResult, AnalysisResult]: ...
 
 
-class JobExecutor(Protocol):
-    def submit(self, action: Callable[[], None]) -> None: ...
-
-
-class ThreadedJobExecutor:
-    def submit(self, action: Callable[[], None]) -> None:
-        thread = threading.Thread(target=action, daemon=True)
-        thread.start()
-
-
-class AnalysisJobRunner:
+class AnalysisSupervisor:
     REPAIR_PROMPT = (
         "Your previous response was invalid JSON or did not match the schema. "
         "Return the same analysis as one valid JSON object matching the schema. "
@@ -63,14 +54,12 @@ class AnalysisJobRunner:
         inventory_store: InventoryStore,
         config: AppConfig,
         analysis_provider: Optional[AnalysisProvider] = None,
-        job_executor: Optional[JobExecutor] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.inventory_store = inventory_store
         self.config = config
         self.analysis_store = AnalysisStore(inventory_store.db_path)
         self.analysis_provider = analysis_provider
-        self.job_executor = job_executor or ThreadedJobExecutor()
         self.logger = logger or logging.getLogger("knowledge_service.analysis")
         self.snippets = SnippetExtractor()
         self.graph_engine = GraphAnalysisEngine()
@@ -78,33 +67,90 @@ class AnalysisJobRunner:
         self.structural_engine = StructuralAnalysisEngine()
         self.static_materializer = StaticGraphMaterializer()
         self.anchor_validator = AnchorAwareGraphValidator()
-        self._lock = threading.Lock()
+        self._admission_lock: Optional[asyncio.Lock] = None
+        self._queue: Optional[asyncio.Queue[tuple[str, AnalysisBuildRequest, AnalysisProvider, Optional[List[Any]], str, bool]]] = None
+        self._workers: list[asyncio.Task[None]] = []
+        self._running: dict[str, asyncio.Task[None]] = {}
+        self._stopping = False
+        self._started = False
 
-    def start(self, request: AnalysisBuildRequest, client: Optional[AnalysisProvider] = None) -> Dict[str, Any]:
-        with self._lock:
+    async def start(self, request: AnalysisBuildRequest, client: Optional[AnalysisProvider] = None) -> Dict[str, Any]:
+        if self._admission_lock is None or self._queue is None:
+            raise KnowledgeError("ANALYSIS_SUPERVISOR_NOT_STARTED", "Knowledge analysis supervisor is not started")
+        async with self._admission_lock:
+            if self._stopping:
+                raise KnowledgeError("ANALYSIS_SUPERVISOR_STOPPING", "Knowledge analysis supervisor is shutting down")
             active = self.analysis_store.active_job()
             if active:
                 raise KnowledgeError("ANALYSIS_JOB_ALREADY_RUNNING", "Knowledge analysis job already running")
+            if self._queue.full():
+                raise KnowledgeError("ANALYSIS_QUEUE_FULL", "Knowledge analysis queue is full")
+            selection = str(request.selection or "DEFAULT").upper()
+            selected_rows: Optional[List[Any]] = None
+            failure_breakdown: Dict[str, int] = {}
+            job_files_precreated = False
+            if selection == "FAILED_ONLY":
+                source_ids = sorted(set(request.sourceIds or []))
+                selected_rows = list(self.analysis_store.current_failed_inventory_rows(source_ids or None))
+                failure_breakdown = self.analysis_store.current_failure_breakdown(source_ids or None)
+                if not selected_rows:
+                    return {
+                        "result": "NO_FAILED_FILES",
+                        "job": {
+                            "jobId": None,
+                            "selection": "FAILED_ONLY",
+                            "status": "NO_FAILED_FILES",
+                            "selectedFileCount": 0,
+                        },
+                        "jobId": None,
+                        "selection": "FAILED_ONLY",
+                        "status": "NO_FAILED_FILES",
+                        "selectedFileCount": 0,
+                        "sourceIds": source_ids,
+                        "failureCodeBreakdown": {},
+                        "analysisState": self.analysis_store.current_analysis_state(source_ids or None),
+                    }
+                request = AnalysisBuildRequest(
+                    sourceIds=sorted({row["source_id"] for row in selected_rows}),
+                    groups=[],
+                    force=True,
+                    maxFiles=None,
+                    concurrency=request.concurrency,
+                    selection="FAILED_ONLY",
+                )
             job_id = str(uuid.uuid4())
+            now = self._now()
             job = {
                 "jobId": job_id,
+                "mode": selection,
                 "status": "QUEUED",
                 "startedAt": None,
                 "completedAt": None,
                 "sourceCount": len(request.sourceIds),
-                "fileCount": 0,
+                "fileCount": len(selected_rows) if selected_rows is not None else 0,
                 "processedFileCount": 0,
                 "failedFileCount": 0,
                 "currentSourceId": request.sourceIds[0] if request.sourceIds else None,
                 "currentRelativePath": None,
                 "sourceIds": sorted(set(request.sourceIds)),
-                "lastProgressAt": None,
+                "lastProgressAt": now if selected_rows is not None else None,
                 "symbolCount": 0,
                 "relationCount": 0,
                 "diagnostics": [],
                 "engineVersion": GRAPH_ENGINE_VERSION,
             }
-            self.analysis_store.create_job(job)
+            if selected_rows is None:
+                self.analysis_store.create_job(job)
+            else:
+                flow_domain_by_file_id = {int(row["id"]): self.structural_engine.flow_domain(row["relative_path"]) for row in selected_rows}
+                self.analysis_store.create_job_with_pending_files(
+                    job,
+                    selected_rows,
+                    flow_domain_by_file_id,
+                    GRAPH_ENGINE_VERSION,
+                    reset_failed_current_state=True,
+                )
+                job_files_precreated = True
             self._log("job_created", jobId=job_id, sourceId=None, processed=0, failed=0)
             analyzer = (
                 client
@@ -112,18 +158,51 @@ class AnalysisJobRunner:
                 or OllamaAnalysisClient(
                     self.config.analysis_base_url,
                     self.config.analysis_model,
-                    self.config.analysis_request_timeout_seconds,
+                    min(self.config.analysis_ai_call_timeout_seconds, self.config.analysis_per_file_timeout_seconds),
                     self.config.analysis_prompt_path,
                     self.config.analysis_context_tokens,
                 )
             )
-            self.job_executor.submit(lambda: self._run(job_id, request, analyzer))
-        return {"jobId": job_id, "status": "QUEUED", "message": "Knowledge analysis job queued"}
+            self._queue.put_nowait((job_id, request, analyzer, selected_rows, selection, job_files_precreated))
+            analysis_state = self.analysis_store.current_analysis_state(request.sourceIds or None)
+        response: Dict[str, Any] = {"jobId": job_id, "selection": selection, "status": "QUEUED", "message": "Knowledge analysis job queued"}
+        if selection == "FAILED_ONLY":
+            response.update(
+                {
+                    "job": {
+                        "jobId": job_id,
+                        "selection": "FAILED_ONLY",
+                        "status": "QUEUED",
+                        "selectedFileCount": len(selected_rows or []),
+                    },
+                    "selectedFileCount": len(selected_rows or []),
+                    "sourceIds": request.sourceIds,
+                    "failureCodeBreakdown": failure_breakdown,
+                    "analysisState": analysis_state,
+                }
+            )
+        return response
 
-    def stop(self, job_id: str) -> Dict[str, Any]:
+    async def retry_failed(self, request: RetryFailedAnalysisRequest, client: Optional[AnalysisProvider] = None) -> Dict[str, Any]:
+        return await self.start(
+            AnalysisBuildRequest(
+                sourceIds=request.sourceIds,
+                groups=[],
+                force=True,
+                maxFiles=None,
+                concurrency=request.concurrency,
+                selection="FAILED_ONLY",
+            ),
+            client,
+        )
+
+    async def stop(self, job_id: str) -> Dict[str, Any]:
         job = self.analysis_store.request_stop(job_id)
         if job is None:
             raise KnowledgeError("ANALYSIS_JOB_NOT_FOUND", "Analysis job not found")
+        running = self._running.get(job_id)
+        if running is not None:
+            running.cancel()
         self._log(
             "stop_requested",
             jobId=job_id,
@@ -137,19 +216,85 @@ class AnalysisJobRunner:
             "message": "Knowledge analysis stop requested" if job["status"] == "STOP_REQUESTED" else "Knowledge analysis job is not running",
         }
 
-    def _run(self, job_id: str, request: AnalysisBuildRequest, analyzer: AnalysisProvider) -> None:
+    async def start_lifespan(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        self._admission_lock = asyncio.Lock()
+        self._queue = asyncio.Queue(maxsize=max(1, self.config.analysis_queue_capacity))
+        self._stopping = False
+        self.analysis_store.mark_interrupted_jobs()
+        worker_count = max(1, self.config.analysis_concurrency)
+        self._workers = [asyncio.create_task(self._worker(index), name=f"knowledge-analysis-worker-{index}") for index in range(worker_count)]
+
+    async def shutdown(self) -> None:
+        self._stopping = True
+        for task in list(self._running.values()):
+            task.cancel()
+        for worker in self._workers:
+            worker.cancel()
+        tasks = [*self._workers, *self._running.values()]
+        if tasks:
+            try:
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=self.config.analysis_shutdown_grace_seconds)
+            except asyncio.TimeoutError:
+                self.logger.warning("Knowledge analysis supervisor shutdown exceeded grace budget")
+        self._workers.clear()
+        self._running.clear()
+        self.analysis_store.mark_interrupted_jobs()
+        provider = self.analysis_provider
+        close = getattr(provider, "aclose", None)
+        if close is not None:
+            await close()
+
+    async def _worker(self, index: int) -> None:
+        while not self._stopping:
+            try:
+                if self._queue is None:
+                    return
+                job_id, request, analyzer, selected_rows, mode, job_files_precreated = await self._queue.get()
+            except asyncio.CancelledError:
+                return
+            task = asyncio.create_task(
+                self._run(job_id, request, analyzer, selected_rows=selected_rows, mode=mode, job_files_precreated=job_files_precreated),
+                name=f"knowledge-analysis-job-{job_id}",
+            )
+            self._running[job_id] = task
+            try:
+                await task
+            except asyncio.CancelledError:
+                self._mark_job_stopped(job_id)
+            finally:
+                self._running.pop(job_id, None)
+                if self._queue is not None:
+                    self._queue.task_done()
+
+    async def _run(
+        self,
+        job_id: str,
+        request: AnalysisBuildRequest,
+        analyzer: AnalysisProvider,
+        selected_rows: Optional[List[Any]] = None,
+        mode: str = "FULL",
+        job_files_precreated: bool = False,
+    ) -> None:
         started_at = datetime.now(timezone.utc).isoformat()
         started_monotonic = datetime.now(timezone.utc)
-        rows, _ = self.inventory_store.search_rows(request.sourceIds, request.groups)
+        if selected_rows is None:
+            rows, _ = self.inventory_store.search_rows(request.sourceIds, request.groups)
+        else:
+            rows = list(selected_rows)
         scoped_source_ids = sorted({row["source_id"] for row in rows}) or request.sourceIds
-        self.analysis_store.cleanup_stale_files(scoped_source_ids or None)
-        if not request.force:
+        if selected_rows is None:
+            self.analysis_store.cleanup_stale_files(scoped_source_ids or None)
+        if selected_rows is None and not request.force:
             unchanged_ids = self.analysis_store.unchanged_file_ids(rows, analyzer.name, analyzer.version, GRAPH_ENGINE_VERSION)
             rows = [row for row in rows if row["id"] not in unchanged_ids]
         if request.maxFiles is not None:
             rows = rows[: max(0, request.maxFiles)]
         flow_domain_by_file_id = {int(row["id"]): self.structural_engine.flow_domain(row["relative_path"]) for row in rows}
-        self.analysis_store.create_job_files(job_id, rows, flow_domain_by_file_id, GRAPH_ENGINE_VERSION)
+        if not job_files_precreated:
+            self.analysis_store.create_job_files(job_id, rows, flow_domain_by_file_id, GRAPH_ENGINE_VERSION)
         if self._stop_requested(job_id):
             self._mark_job_stopped(job_id)
             return
@@ -162,6 +307,7 @@ class AnalysisJobRunner:
                 "sourceCount": len({row["source_id"] for row in rows}),
                 "fileCount": len(rows),
                 "sourceIds": scoped_source_ids,
+                "mode": mode,
             },
         )
         self._log("job_started", jobId=job_id, sourceId=None, processed=0, failed=0)
@@ -263,6 +409,7 @@ class AnalysisJobRunner:
                     continue
                 content = "\n".join(lines)
                 try:
+                    file_started_at = datetime.now(timezone.utc)
                     row_data = dict(row)
                     structural_result = self.structural_engine.parse(row_data, lines)
                     static_graph = self.static_materializer.to_graph(structural_result)
@@ -275,6 +422,7 @@ class AnalysisJobRunner:
                         "last_error_message": None,
                         "last_raw_response_preview": None,
                     }
+                    skip_llm_reason = self._skip_llm_enrichment_reason(structural_result, row_data)
                     if len(content) > self.config.analysis_max_file_chars:
                         retry_diagnostics.append(
                             {
@@ -284,9 +432,11 @@ class AnalysisJobRunner:
                                 "relativePath": row["relative_path"],
                             }
                         )
+                    elif skip_llm_reason is not None:
+                        retry_diagnostics.append(skip_llm_reason)
                     else:
                         try:
-                            result, retry_diagnostics, attempt_state = self._analyze_with_retry(
+                            result, retry_diagnostics, attempt_state = await self._analyze_with_retry(
                                 analyzer,
                                 self._payload(row_data, metadata, content, structural_result, static_graph),
                                 len(lines),
@@ -300,16 +450,25 @@ class AnalysisJobRunner:
                     if self._stop_requested(job_id):
                         self._mark_job_stopped(job_id, diagnostics)
                         return
+                    elapsed_seconds = self._elapsed_seconds(file_started_at)
+                    if elapsed_seconds > self.config.analysis_per_file_timeout_seconds:
+                        retry_diagnostics.append(
+                            {
+                                "code": "ANALYSIS_FILE_TIMEOUT",
+                                "message": "File analysis exceeded configured per-file timeout; static parser facts were preserved.",
+                                "sourceId": row["source_id"],
+                                "relativePath": row["relative_path"],
+                                "stage": "FILE_ANALYSIS",
+                                "elapsedSeconds": elapsed_seconds,
+                            }
+                        )
                     graph_result = self.anchor_validator.merge(static_graph, enrichment_result, len(lines))
                     graph_diagnostics = self._file_diagnostics_from_graph(graph_result)
                     for diagnostic in retry_diagnostics:
-                        graph_result.diagnostics.append(
-                            {
-                                "severity": "WARN" if diagnostic.get("code") != "ANALYSIS_FILE_FAILED" else "ERROR",
-                                "stage": diagnostic.get("stage") or "LLM_ENRICHMENT",
-                                **diagnostic,
-                            }
-                        )
+                        enriched_diagnostic = dict(diagnostic)
+                        enriched_diagnostic.setdefault("severity", "WARN" if diagnostic.get("code") != "ANALYSIS_FILE_FAILED" else "ERROR")
+                        enriched_diagnostic.setdefault("stage", "LLM_ENRICHMENT")
+                        graph_result.diagnostics.append(enriched_diagnostic)
                     graph = self.graph_engine.materialize(row_data, job_id, analyzer.name, analyzer.version, graph_result, lines)
                     file_diagnostics = [*retry_diagnostics, *graph_diagnostics]
                     self.analysis_store.replace_file_graph_analysis(
@@ -474,7 +633,29 @@ class AnalysisJobRunner:
             "content": content,
         }
 
-    def _analyze_with_retry(self, analyzer: AnalysisProvider, payload: Dict[str, Any], line_count: int):
+    def _skip_llm_enrichment_reason(self, structural_result, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        unsupported = any(self._diagnostic_code(item) == "STRUCTURAL_PARSER_NOT_AVAILABLE" for item in structural_result.diagnostics or [])
+        if not unsupported:
+            return None
+        extension = str(row.get("extension") or "").lower()
+        flow_domain = str(structural_result.file.flow_domain or "").upper()
+        if extension not in {".yml", ".yaml", ".json", ".toml", ".properties", ".env"} and flow_domain not in {"WORKFLOW", "CONFIG", "BUILD"}:
+            return None
+        return {
+            "code": "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE",
+            "message": "LLM enrichment skipped for unsupported structured/config file; static file facts were stored.",
+            "sourceId": row["source_id"],
+            "relativePath": row["relative_path"],
+            "stage": "LLM_ENRICHMENT",
+            "severity": "WARN",
+        }
+
+    def _diagnostic_code(self, diagnostic: Any) -> Optional[str]:
+        if isinstance(diagnostic, dict):
+            return diagnostic.get("code")
+        return getattr(diagnostic, "code", None)
+
+    async def _analyze_with_retry(self, analyzer: AnalysisProvider, payload: Dict[str, Any], line_count: int):
         attempts = max(1, self.config.analysis_max_attempts_per_file)
         repair_attempts = max(0, self.config.analysis_repair_attempts_per_file)
         diagnostics: List[Dict[str, Any]] = []
@@ -490,7 +671,8 @@ class AnalysisJobRunner:
                 repair_prompt = self.REPAIR_PROMPT
                 repair_used += 1
             try:
-                result = analyzer.analyze(payload, line_count, repair_prompt)
+                pending = analyzer.analyze(payload, line_count, repair_prompt)
+                result = await pending if inspect.isawaitable(pending) else pending
                 if attempt > 1:
                     diagnostics.append(
                         {
@@ -648,6 +830,8 @@ class AnalysisJobRunner:
         if details.get("severity"):
             diagnostic["severity"] = details["severity"]
         metadata = {key: details[key] for key in ("exceptionType", "sqliteMessage", "table", "operation") if key in details}
+        if not metadata and code == "ANALYSIS_FILE_FAILED":
+            metadata = {"exceptionType": type(exc).__name__, "rootCause": str(exc)[:MAX_RAW_PREVIEW_CHARS]}
         if metadata:
             diagnostic["metadata"] = metadata
         if attempt:
@@ -689,6 +873,9 @@ class AnalysisJobRunner:
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def _elapsed_seconds(self, started_at: datetime) -> int:
+        return max(0, int((datetime.now(timezone.utc) - started_at).total_seconds()))
 
     def _log(self, event: str, **fields: Any) -> None:
         payload = {

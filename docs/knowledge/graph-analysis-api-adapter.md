@@ -36,7 +36,8 @@ Old symbol/relation projection cache tables are dropped during initialization.
 
 ## Endpoint Mapping
 
-Graph nodes map directly to `/analysis/symbols` responses:
+Graph nodes are exposed through the final snapshot-bound graph node page and
+detail responses:
 
 ```text
 analysis_graph_nodes.id                   -> symbolId and graphNodeId
@@ -49,7 +50,8 @@ RESPONSIBILITY claim                      -> responsibilitySummary and summary
 ROLE claims                               -> roles[]
 ```
 
-Graph edges map directly to `/analysis/relations` responses:
+Graph edges are exposed through the final snapshot-bound graph edge page and
+detail responses:
 
 ```text
 analysis_graph_edges.id                   -> relationId and graphEdgeId

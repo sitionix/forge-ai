@@ -1,0 +1,1 @@
+{"code":"UPSTREAM_BODY_TOO_LARGE","message":"Upstream response body exceeds the configured proxy limit.","correlationId":"corr-response-large","upstreamStatus":null,"route":"knowledge.status"}

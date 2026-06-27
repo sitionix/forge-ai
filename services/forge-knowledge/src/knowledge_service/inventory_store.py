@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -9,8 +10,13 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from knowledge_service.file_metadata import FileMetadata
 from knowledge_service.graph_schema import GRAPH_ANALYSIS_ENGINE_VERSION
+from knowledge_service.observability import observed_connect
+from knowledge_service.overview_projection import ensure_overview_schema, rebuild_overview, refresh_overview_for_sources
 from knowledge_service.skipped_reasons import SkippedBreakdown, normalize_skipped_breakdown
 from knowledge_service.source_catalog import SourceMetadata
+
+
+SQLITE_WRITE_BUSY_TIMEOUT_MS = 5000
 
 
 class InventoryStore:
@@ -29,6 +35,7 @@ class InventoryStore:
             if init_key in InventoryStore._initialized_paths:
                 return
             with self._connect() as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS inventory_builds (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,6 +84,28 @@ class InventoryStore:
                 self._ensure_column(conn, "files", "decode_policy", "TEXT NOT NULL DEFAULT 'utf-8:replace'")
                 self._ensure_column(conn, "files", "language", "TEXT")
                 self._ensure_column(conn, "files", "flow_domain", "TEXT")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_files_source ON files(source_id)")
+                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_files_source_path ON files(source_id, relative_path)")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS context_chunks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        file_id INTEGER NOT NULL,
+                        source_id TEXT NOT NULL,
+                        relative_path TEXT NOT NULL,
+                        content_hash TEXT NOT NULL,
+                        line_start INTEGER NOT NULL,
+                        line_end INTEGER NOT NULL,
+                        content TEXT NOT NULL,
+                        indexed_at TEXT NOT NULL,
+                        FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_context_chunks_file ON context_chunks(file_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_context_chunks_source_path ON context_chunks(source_id, relative_path)")
+                conn.execute("""
+                    CREATE VIRTUAL TABLE IF NOT EXISTS context_chunks_fts
+                    USING fts5(content, source_id UNINDEXED, relative_path UNINDEXED, chunk_id UNINDEXED)
+                """)
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS inventory_source_state (
                         source_id TEXT PRIMARY KEY,
@@ -84,8 +113,10 @@ class InventoryStore:
                         skipped_count INTEGER,
                         skipped_reasons_json TEXT,
                         last_inventory_at TEXT NOT NULL
-                    )
-                """)
+                        )
+                    """)
+                ensure_overview_schema(conn)
+                rebuild_overview(conn)
             InventoryStore._initialized_paths.add(init_key)
 
     def replace_inventory(
@@ -105,18 +136,36 @@ class InventoryStore:
         skipped_count = skipped_breakdown["total"]
         scoped_source_ids = sorted(set(replace_source_ids or [source.sourceId for source in sources]))
         with self._connect() as conn:
+            self._ensure_context_schema(conn)
             if replace_all:
-                conn.execute("DELETE FROM files")
-                conn.execute("DELETE FROM sources")
-                conn.execute("DELETE FROM inventory_source_state")
-            elif scoped_source_ids:
-                placeholders = ",".join("?" for _ in scoped_source_ids)
-                conn.execute(f"DELETE FROM files WHERE source_id IN ({placeholders})", scoped_source_ids)
-                conn.execute(f"DELETE FROM sources WHERE source_id IN ({placeholders})", scoped_source_ids)
-                conn.execute(f"DELETE FROM inventory_source_state WHERE source_id IN ({placeholders})", scoped_source_ids)
+                incoming_source_ids = sorted({source.sourceId for source in sources})
+                if incoming_source_ids:
+                    placeholders = ",".join("?" for _ in incoming_source_ids)
+                    removed_rows = conn.execute(f"SELECT id FROM files WHERE source_id NOT IN ({placeholders})", incoming_source_ids).fetchall()
+                    self._delete_context_for_file_ids(conn, [int(row["id"]) for row in removed_rows])
+                    conn.execute(f"DELETE FROM files WHERE source_id NOT IN ({placeholders})", incoming_source_ids)
+                    conn.execute(f"DELETE FROM sources WHERE source_id NOT IN ({placeholders})", incoming_source_ids)
+                    conn.execute(f"DELETE FROM inventory_source_state WHERE source_id NOT IN ({placeholders})", incoming_source_ids)
+                else:
+                    removed_rows = conn.execute("SELECT id FROM files").fetchall()
+                    self._delete_context_for_file_ids(conn, [int(row["id"]) for row in removed_rows])
+                    conn.execute("DELETE FROM files")
+                    conn.execute("DELETE FROM sources")
+                    conn.execute("DELETE FROM inventory_source_state")
             for source in sources:
                 conn.execute(
-                    "INSERT INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    """
+                    INSERT INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(source_id) DO UPDATE SET
+                        display_name = excluded.display_name,
+                        group_name = excluded.group_name,
+                        path = excluded.path,
+                        root_exists = excluded.root_exists,
+                        tags_json = excluded.tags_json,
+                        metadata_json = excluded.metadata_json,
+                        last_seen_at = excluded.last_seen_at
+                    """,
                     (
                         source.sourceId,
                         source.displayName,
@@ -128,14 +177,60 @@ class InventoryStore:
                         now,
                     ),
                 )
+            files_by_source_path: Dict[str, set[str]] = {}
             for file in files:
+                files_by_source_path.setdefault(file.sourceId, set()).add(file.relativePath)
+            for source_id in scoped_source_ids:
+                current_paths = files_by_source_path.get(source_id, set())
+                if current_paths:
+                    placeholders = ",".join("?" for _ in current_paths)
+                    params = [source_id, *sorted(current_paths)]
+                    removed_rows = conn.execute(f"SELECT id FROM files WHERE source_id = ? AND relative_path NOT IN ({placeholders})", params).fetchall()
+                    self._delete_context_for_file_ids(conn, [int(row["id"]) for row in removed_rows])
+                    conn.execute(f"DELETE FROM files WHERE source_id = ? AND relative_path NOT IN ({placeholders})", params)
+                else:
+                    removed_rows = conn.execute("SELECT id FROM files WHERE source_id = ?", (source_id,)).fetchall()
+                    self._delete_context_for_file_ids(conn, [int(row["id"]) for row in removed_rows])
+                    conn.execute("DELETE FROM files WHERE source_id = ?", (source_id,))
+            for file in files:
+                existing = conn.execute(
+                    "SELECT id, content_hash FROM files WHERE source_id = ? AND relative_path = ?",
+                    (file.sourceId, file.relativePath),
+                ).fetchone()
+                if existing is None:
+                    cursor = conn.execute(
+                        "INSERT INTO files(source_id, source_path, absolute_path, relative_path, extension, language, flow_domain, size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            file.sourceId,
+                            file.sourcePath,
+                            file.absolutePath,
+                            file.relativePath,
+                            file.extension,
+                            file.language,
+                            file.flowDomain,
+                            file.sizeBytes,
+                            file.contentHash,
+                            file.lastModified,
+                            file.lineCount,
+                            file.decodePolicy,
+                            now,
+                        ),
+                    )
+                    file_id = int(cursor.lastrowid)
+                    self._replace_context_chunks(conn, file_id, file, now)
+                    continue
+                file_id = int(existing["id"])
+                content_changed = str(existing["content_hash"]) != file.contentHash
                 conn.execute(
-                    "INSERT INTO files(source_id, source_path, absolute_path, relative_path, extension, language, flow_domain, size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    """
+                    UPDATE files
+                    SET source_path = ?, absolute_path = ?, extension = ?, language = ?, flow_domain = ?,
+                        size_bytes = ?, content_hash = ?, last_modified = ?, line_count = ?, decode_policy = ?, indexed_at = ?
+                    WHERE id = ?
+                    """,
                     (
-                        file.sourceId,
                         file.sourcePath,
                         file.absolutePath,
-                        file.relativePath,
                         file.extension,
                         file.language,
                         file.flowDomain,
@@ -145,8 +240,11 @@ class InventoryStore:
                         file.lineCount,
                         file.decodePolicy,
                         now,
+                        file_id,
                     ),
                 )
+                if content_changed or file.changed:
+                    self._replace_context_chunks(conn, file_id, file, now)
             files_by_source: Dict[str, int] = {}
             for file in files:
                 files_by_source[file.sourceId] = files_by_source.get(file.sourceId, 0) + 1
@@ -163,6 +261,7 @@ class InventoryStore:
                         now,
                     ),
                 )
+            refresh_overview_for_sources(conn, scoped_source_ids)
             conn.execute(
                 "INSERT INTO inventory_builds(started_at, completed_at, status, source_count, file_count, skipped_count, skipped_reasons_json, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (started_at, completed_at, "COMPLETED", len(sources), len(files), skipped_count, json.dumps(skipped_breakdown), None),
@@ -175,6 +274,28 @@ class InventoryStore:
             "skippedBreakdown": skipped_breakdown,
             "startedAt": started_at,
             "completedAt": completed_at,
+        }
+
+    def current_file_index(self, source_id: str) -> Dict[str, Dict[str, object]]:
+        self.init()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT relative_path, content_hash, size_bytes, last_modified, line_count, decode_policy
+                FROM files
+                WHERE source_id = ?
+                """,
+                (source_id,),
+            ).fetchall()
+        return {
+            row["relative_path"]: {
+                "contentHash": row["content_hash"],
+                "sizeBytes": row["size_bytes"],
+                "lastModified": row["last_modified"],
+                "lineCount": row["line_count"],
+                "decodePolicy": row["decode_policy"],
+            }
+            for row in rows
         }
 
     def status(self) -> Dict[str, Any]:
@@ -333,9 +454,148 @@ class InventoryStore:
             sources = {row["source_id"]: row for row in conn.execute("SELECT * FROM sources").fetchall()}
         return files, sources
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=30.0)
-        conn.execute("PRAGMA busy_timeout = 30000")
+    def search_context_chunks(self, query: str, source_ids: List[str], groups: List[str], limit: int, include_content: bool) -> List[sqlite3.Row]:
+        self.init()
+        safe_limit = max(1, min(int(limit or 1), 200))
+        clauses = ["context_chunks_fts MATCH ?"]
+        params: list[Any] = [self._fts_query(query)]
+        if source_ids:
+            clauses.append("c.source_id IN (%s)" % ",".join("?" for _ in source_ids))
+            params.extend(source_ids)
+        if groups:
+            clauses.append("s.group_name IN (%s)" % ",".join("?" for _ in groups))
+            params.extend(groups)
+        content_column = "c.content" if include_content else "NULL AS content"
+        with self._connect() as conn:
+            return conn.execute(
+                f"""
+                SELECT
+                    c.id AS chunk_id,
+                    c.source_id,
+                    c.relative_path,
+                    c.content_hash,
+                    c.line_start,
+                    c.line_end,
+                    {content_column},
+                    f.language,
+                    f.flow_domain,
+                    s.display_name,
+                    s.group_name,
+                    s.metadata_json,
+                    bm25(context_chunks_fts) AS rank_score
+                FROM context_chunks_fts
+                JOIN context_chunks c ON c.id = context_chunks_fts.chunk_id
+                JOIN files f ON f.id = c.file_id
+                JOIN sources s ON s.source_id = c.source_id
+                WHERE {' AND '.join(clauses)}
+                ORDER BY rank_score, c.source_id, c.relative_path, c.line_start
+                LIMIT ?
+                """,
+                [*params, safe_limit],
+            ).fetchall()
+
+    def _ensure_context_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS context_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                source_id TEXT NOT NULL,
+                relative_path TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                line_start INTEGER NOT NULL,
+                line_end INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                indexed_at TEXT NOT NULL,
+                FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_context_chunks_file ON context_chunks(file_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_context_chunks_source_path ON context_chunks(source_id, relative_path)")
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS context_chunks_fts
+            USING fts5(content, source_id UNINDEXED, relative_path UNINDEXED, chunk_id UNINDEXED)
+        """)
+
+    def _replace_context_chunks(self, conn: sqlite3.Connection, file_id: int, file: FileMetadata, indexed_at: str) -> None:
+        self._delete_context_for_file_ids(conn, [file_id])
+        if not file.chunks:
+            return
+        source = conn.execute("SELECT display_name, group_name, tags_json, metadata_json FROM sources WHERE source_id = ?", (file.sourceId,)).fetchone()
+        source_text = ""
+        if source is not None:
+            source_text = " ".join(
+                [
+                    str(source["display_name"] or ""),
+                    str(source["group_name"] or ""),
+                    str(source["tags_json"] or ""),
+                    str(source["metadata_json"] or ""),
+                ]
+            )
+        for chunk in file.chunks:
+            cursor = conn.execute(
+                """
+                INSERT INTO context_chunks(file_id, source_id, relative_path, content_hash, line_start, line_end, content, indexed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (file_id, file.sourceId, file.relativePath, file.contentHash, chunk.lineStart, chunk.lineEnd, chunk.content, indexed_at),
+            )
+            chunk_id = int(cursor.lastrowid)
+            conn.execute(
+                "INSERT INTO context_chunks_fts(rowid, content, source_id, relative_path, chunk_id) VALUES (?, ?, ?, ?, ?)",
+                (chunk_id, self._searchable_content(chunk.content, file.relativePath, source_text), file.sourceId, file.relativePath, chunk_id),
+            )
+
+    def _delete_context_for_file_ids(self, conn: sqlite3.Connection, file_ids: List[int]) -> None:
+        if not file_ids:
+            return
+        placeholders = ",".join("?" for _ in file_ids)
+        chunk_ids = [int(row["id"]) for row in conn.execute(f"SELECT id FROM context_chunks WHERE file_id IN ({placeholders})", file_ids).fetchall()]
+        if chunk_ids:
+            chunk_placeholders = ",".join("?" for _ in chunk_ids)
+            conn.execute(f"DELETE FROM context_chunks_fts WHERE rowid IN ({chunk_placeholders})", chunk_ids)
+        conn.execute(f"DELETE FROM context_chunks WHERE file_id IN ({placeholders})", file_ids)
+
+    def _chunk_content(self, content: str, chunk_lines: int = 80, overlap_lines: int = 8) -> List[tuple[int, int, str]]:
+        lines = content.splitlines()
+        if not lines:
+            return []
+        chunks: list[tuple[int, int, str]] = []
+        start = 1
+        step = max(1, chunk_lines - overlap_lines)
+        while start <= len(lines):
+            end = min(len(lines), start + chunk_lines - 1)
+            chunk = "\n".join(lines[start - 1 : end]).strip()
+            if chunk:
+                chunks.append((start, end, chunk))
+            if end == len(lines):
+                break
+            start += step
+        return chunks
+
+    def _fts_query(self, query: str) -> str:
+        terms = []
+        for raw in query.replace("/", " ").replace("\\", " ").replace(".", " ").replace("_", " ").replace("-", " ").split():
+            for part in self._split_identifier(raw):
+                term = "".join(ch for ch in part.lower() if ch.isalnum())
+                if term:
+                    terms.append(f"{term}*")
+        return " OR ".join(terms) if terms else '""'
+
+    def _searchable_content(self, content: str, relative_path: str, source_text: str) -> str:
+        tokens: list[str] = [relative_path, content, source_text]
+        for raw in re.findall(r"[A-Za-z][A-Za-z0-9_]*", f"{relative_path}\n{content}\n{source_text}"):
+            tokens.extend(self._split_identifier(raw))
+        return "\n".join(tokens)
+
+    def _split_identifier(self, value: str) -> List[str]:
+        spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", value.replace("_", " "))
+        return [part for part in spaced.split() if part]
+
+    def _connect(self, busy_timeout_ms: int = SQLITE_WRITE_BUSY_TIMEOUT_MS) -> sqlite3.Connection:
+        timeout_seconds = max(busy_timeout_ms, 1) / 1000.0
+        conn = observed_connect(self.db_path, timeout=timeout_seconds)
+        conn.execute(f"PRAGMA busy_timeout = {max(int(busy_timeout_ms), 1)}")
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         return conn
 

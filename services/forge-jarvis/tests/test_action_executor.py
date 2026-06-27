@@ -1,65 +1,83 @@
-import subprocess
 from pathlib import Path
-from unittest.mock import Mock, patch
+from typing import List, Optional
 
 import pytest
 
-from jarvis_agent.action_executor import ActionExecutor
+from jarvis_agent.action_executor import ActionExecutionError, ActionExecutor
 from jarvis_agent.action_registry import ActionNotAllowedError, ActionRegistry
 from jarvis_agent.intent_schema import Intent
 
 
-def registry() -> ActionRegistry:
-    root = Path(__file__).resolve().parents[3]
-    return ActionRegistry.from_yaml(root / "config" / "jarvis" / "allowed-actions.yaml")
+def registry(tmp_path: Path, command: Optional[List[str]] = None) -> ActionRegistry:
+    command = command or ["bash", "-lc", "printf 'jarvis-ok'"]
+    yaml_path = tmp_path / "allowed-actions.yaml"
+    yaml_path.write_text(
+        """
+actions:
+  safe:
+    description: "safe test command"
+    targets:
+      run:
+        command: COMMAND
+""".replace("COMMAND", repr(command)),
+        encoding="utf-8",
+    )
+    return ActionRegistry.from_yaml(yaml_path)
 
 
-def test_known_safe_action_executes_through_subprocess() -> None:
-    command = ["bash", "-lc", "curl -s http://localhost:11434/api/tags >/dev/null && echo 'Ollama is reachable'"]
-    completed = subprocess.CompletedProcess(args=command, returncode=0, stdout="Ollama is reachable\n", stderr="")
-    with patch("jarvis_agent.action_executor.subprocess.run", return_value=completed) as run:
-        result = ActionExecutor(registry()).execute(
-            Intent(action="ollama_status", target="health", arguments={}),
-            user_text="перевір ollama",
+def test_known_safe_action_executes_through_async_subprocess(tmp_path) -> None:
+    result = ActionExecutor(registry(tmp_path)).execute(
+        Intent(action="safe", target="run", arguments={}),
+        user_text="run safe command",
+    )
+
+    assert result.executed is True
+    assert result.message == "Action executed: safe.run"
+    assert result.output == "jarvis-ok"
+
+
+def test_unknown_action_is_not_executed(tmp_path) -> None:
+    with pytest.raises(ActionNotAllowedError):
+        ActionExecutor(registry(tmp_path)).execute(
+            Intent(action="delete_files", target="home", arguments={}),
+            user_text="delete files",
         )
 
-    run.assert_called_once_with(command, check=True, capture_output=True, text=True, timeout=30)
-    assert result.executed is True
-    assert result.message == "Action executed: ollama_status.health"
-    assert result.output == "Ollama is reachable"
+
+def test_unsupported_action_is_not_executed(tmp_path) -> None:
+    with pytest.raises(ActionNotAllowedError):
+        ActionExecutor(registry(tmp_path)).execute(
+            Intent(action="unsupported", target=None, arguments={"reason": "not supported"}),
+            user_text="format my drive",
+        )
 
 
-def test_unknown_action_is_not_executed() -> None:
-    run = Mock()
-    with patch("jarvis_agent.action_executor.subprocess.run", run):
-        with pytest.raises(ActionNotAllowedError):
-            ActionExecutor(registry()).execute(
-                Intent(action="delete_files", target="home", arguments={}),
-                user_text="delete files",
-            )
-
-    run.assert_not_called()
+def test_model_generated_shell_command_intent_is_not_executed(tmp_path) -> None:
+    with pytest.raises(ActionNotAllowedError):
+        ActionExecutor(registry(tmp_path)).execute(
+            Intent(action="bash", target="rm_rf", arguments={"command": "rm -rf /"}),
+            user_text="delete everything",
+        )
 
 
-def test_unsupported_action_is_not_executed() -> None:
-    run = Mock()
-    with patch("jarvis_agent.action_executor.subprocess.run", run):
-        with pytest.raises(ActionNotAllowedError):
-            ActionExecutor(registry()).execute(
-                Intent(action="unsupported", target=None, arguments={"reason": "not supported"}),
-                user_text="format my drive",
-            )
+def test_output_is_capped_before_full_collection(tmp_path) -> None:
+    executor = ActionExecutor(
+        registry(tmp_path, ["bash", "-lc", "yes jarvis | head -n 1000"]),
+        max_output_bytes=64,
+    )
 
-    run.assert_not_called()
+    result = executor.execute(Intent(action="safe", target="run", arguments={}), user_text="cap output")
+
+    assert result.output is not None
+    assert len(result.output.encode("utf-8")) <= 96
+    assert "[output truncated]" in result.output
 
 
-def test_model_generated_shell_command_intent_is_not_executed() -> None:
-    run = Mock()
-    with patch("jarvis_agent.action_executor.subprocess.run", run):
-        with pytest.raises(ActionNotAllowedError):
-            ActionExecutor(registry()).execute(
-                Intent(action="bash", target="rm_rf", arguments={"command": "rm -rf /"}),
-                user_text="delete everything",
-            )
+def test_timeout_terminates_command(tmp_path) -> None:
+    executor = ActionExecutor(
+        registry(tmp_path, ["bash", "-lc", "sleep 5"]),
+        timeout_seconds=1,
+    )
 
-    run.assert_not_called()
+    with pytest.raises(ActionExecutionError, match="timed out"):
+        executor.execute(Intent(action="safe", target="run", arguments={}), user_text="timeout")

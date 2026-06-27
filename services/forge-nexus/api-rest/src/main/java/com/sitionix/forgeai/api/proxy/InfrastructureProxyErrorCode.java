@@ -1,0 +1,11 @@
+package com.sitionix.forgeai.api.proxy;
+
+enum InfrastructureProxyErrorCode {
+    ROUTE_NOT_ALLOWLISTED,
+    UPSTREAM_UNAVAILABLE,
+    UPSTREAM_TIMEOUT,
+    UPSTREAM_INVALID_RESPONSE,
+    UPSTREAM_BODY_TOO_LARGE,
+    REQUEST_BODY_TOO_LARGE,
+    UPSTREAM_ERROR
+}

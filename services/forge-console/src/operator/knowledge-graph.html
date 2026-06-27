@@ -36,7 +36,7 @@
         </div>
         <span id="knowledgeGraphUpdated" class="muted">loading</span>
       </div>
-      <div id="knowledgeGraphError" class="error-box hidden"></div>
+      <div id="knowledgeGraphMetadataError" class="error-box hidden"></div>
       <div id="knowledgeGraphProgress"></div>
     </section>
 
@@ -120,6 +120,7 @@
           <label>
             <span>Max</span>
             <select id="knowledgeGraphMaxNodes">
+              <option value="20">20</option>
               <option value="40">40</option>
               <option value="80" selected>80</option>
               <option value="120">120</option>
@@ -146,6 +147,7 @@
           <button id="showKnowledgeGraphFull" class="button ghost dark small" type="button">Full</button>
         </div>
       </div>
+      <div id="knowledgeGraphError" class="error-box hidden"></div>
       <div id="knowledgeGraphTruncated" class="knowledge-graph-warning hidden"></div>
       <div id="knowledgeGraphLayout" class="knowledge-graph-layout preview-collapsed">
         <div class="knowledge-graph-stage" id="knowledgeGraphStage">
@@ -186,6 +188,6 @@
     </section>
   </main>
   <script src="./runtime-config.js"></script>
-  <script src="./operator-ui.js"></script>
+  <script type="module" src="./operator-ui.js"></script>
 </body>
 </html>

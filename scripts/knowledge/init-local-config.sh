@@ -45,18 +45,6 @@ indexing:
     - "**/*.xml"
     - "**/pom.xml"
     - "**/README*"
-  exclude:
-    - ".git/**"
-    - "target/**"
-    - "build/**"
-    - "dist/**"
-    - "node_modules/**"
-    - ".venv/**"
-    - "var/**"
-    - "logs/**"
-    - "**/.env"
-    - "**/*.class"
-    - "**/*.jar"
 YAML
 
 echo "Generated local Knowledge config: ${CONFIG_FILE}"

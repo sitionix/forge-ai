@@ -6,12 +6,14 @@ from logging.handlers import RotatingFileHandler
 from typing import Optional
 
 from knowledge_service.analysis_client import OllamaAnalysisClient
-from knowledge_service.analysis_service import AnalysisJobRunner, AnalysisProvider, JobExecutor
+from knowledge_service.analysis_service import AnalysisProvider, AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.config import AppConfig, ForgeSettings
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
-from knowledge_service.inventory_refresh import BackgroundInventoryScheduler, InventoryRefreshService
+from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
+from knowledge_service.storage_operations import StorageOperations
+from knowledge_service.storage_operations import RetentionPolicy
 
 
 @dataclass(frozen=True)
@@ -21,30 +23,42 @@ class KnowledgeDependencies:
     graph_store: AnalysisStore
     source_resolver: InventoryFileResolver
     analysis_provider: Optional[AnalysisProvider]
-    analysis_runner: AnalysisJobRunner
+    analysis_supervisor: AnalysisSupervisor
     inventory_refresh: InventoryRefreshService
-    inventory_scheduler: BackgroundInventoryScheduler
+    inventory_scheduler: AsyncInventoryScheduler
+    storage_operations: StorageOperations
 
 
 def build_dependencies(
     config: AppConfig,
     *,
     analysis_provider: Optional[AnalysisProvider] = None,
-    job_executor: Optional[JobExecutor] = None,
 ) -> KnowledgeDependencies:
     inventory_store = InventoryStore(config.store_path)
     analysis_store = AnalysisStore(config.store_path)
     inventory_store.init()
     analysis_store.init()
+    storage_operations = StorageOperations(
+        config.store_path,
+        RetentionPolicy(
+            inventory_build_days=config.retention_inventory_build_days,
+            analysis_job_days=config.retention_analysis_job_days,
+            analysis_diagnostic_days=config.retention_analysis_diagnostic_days,
+            graph_snapshot_days=config.retention_graph_snapshot_days,
+            graph_tombstone_days=config.retention_graph_tombstone_days,
+            keep_completed_jobs=config.retention_keep_completed_jobs,
+            keep_snapshots_per_source=config.retention_keep_snapshots_per_source,
+        ),
+    )
+    storage_operations.startup_maintenance()
     analysis_store.mark_interrupted_jobs()
     inventory_refresh = InventoryRefreshService(config, inventory_store)
-    inventory_scheduler = BackgroundInventoryScheduler(inventory_refresh, config)
+    inventory_scheduler = AsyncInventoryScheduler(inventory_refresh, config)
     logger = logging.getLogger("knowledge_service.analysis")
-    runner = AnalysisJobRunner(
+    supervisor = AnalysisSupervisor(
         inventory_store,
         config,
         analysis_provider=analysis_provider,
-        job_executor=job_executor,
         logger=logger,
     )
     return KnowledgeDependencies(
@@ -53,9 +67,10 @@ def build_dependencies(
         graph_store=analysis_store,
         source_resolver=InventoryFileResolver(inventory_store),
         analysis_provider=analysis_provider,
-        analysis_runner=runner,
+        analysis_supervisor=supervisor,
         inventory_refresh=inventory_refresh,
         inventory_scheduler=inventory_scheduler,
+        storage_operations=storage_operations,
     )
 
 

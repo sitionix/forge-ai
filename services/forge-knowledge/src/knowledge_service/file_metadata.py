@@ -4,6 +4,13 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class ContextChunk:
+    lineStart: int
+    lineEnd: int
+    content: str
+
+
+@dataclass(frozen=True)
 class FileMetadata:
     sourceId: str
     sourcePath: str
@@ -17,3 +24,5 @@ class FileMetadata:
     lastModified: str
     lineCount: int
     decodePolicy: str
+    chunks: tuple[ContextChunk, ...] = ()
+    changed: bool = True

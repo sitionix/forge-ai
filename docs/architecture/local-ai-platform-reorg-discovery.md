@@ -22,7 +22,6 @@ Infrastructure aggregator modules:
 - `local-cli`
 - `jarvis-client`
 - `knowledge-client`
-- `knowledge-sqlite`
 
 ## Python Services
 
@@ -52,7 +51,6 @@ Forge Nexus maps to existing Java modules rather than a physical move in this ph
 - domain contracts: `domain`
 - Jarvis client: `infrastructure/jarvis-client`
 - Knowledge client: `infrastructure/knowledge-client`
-- legacy/local sqlite Knowledge adapter: `infrastructure/knowledge-sqlite`
 
 ## Forge Console
 

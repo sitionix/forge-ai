@@ -45,8 +45,11 @@ Missing source roots are catalog/configured roots that do not exist locally. The
 - `POST /api/v1/knowledge/analysis/jobs/{jobId}/stop` requests cooperative cancellation for a running analysis job.
 - `GET /api/v1/knowledge/analysis/status` returns latest/active analysis state.
 - `GET /api/v1/knowledge/analysis/files` previews analyzed file state.
-- `GET /api/v1/knowledge/analysis/symbols` previews AI-classified symbols and roles.
-- `GET /api/v1/knowledge/analysis/relations` previews AI-classified relations.
+- `GET /api/v1/knowledge/analysis/graph/manifest` returns the stored current graph manifest.
+- `GET /api/v1/knowledge/analysis/graph/nodes` returns a bounded snapshot-bound node page.
+- `GET /api/v1/knowledge/analysis/graph/edges` returns a bounded snapshot-bound edge page.
+- `GET /api/v1/knowledge/analysis/graph/node/{nodeId}` returns bounded node details and optional evidence.
+- `GET /api/v1/knowledge/analysis/graph/edge/{edgeId}` returns bounded edge details and optional evidence.
 
 Context retrieval is a transitional internal Jarvis chat dependency. New user-facing semantic UI and future Q&A flows should consume AI analysis results rather than treating inventory as a semantic knowledge system.
 

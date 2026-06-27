@@ -1,0 +1,23 @@
+{
+  "sourceId": "forge-ai",
+  "snapshotId": "snapshot-a",
+  "graphRevision": "rev-a",
+  "queryFingerprint": "fingerprint-view-a",
+  "selectionPolicy": "RELATIONSHIP_AWARE",
+  "maxNodes": 80,
+  "nodes": [
+    { "id": "node-a", "nodeKind": "CALLABLE", "label": "NameA" },
+    { "id": "node-b", "nodeKind": "TYPE", "label": "NameB" }
+  ],
+  "edges": [
+    { "id": "edge-a", "fromNodeId": "node-a", "toNodeId": "node-b", "edgeType": "CALLS" }
+  ],
+  "totalMatchingNodeCount": 320,
+  "totalMatchingEdgeCount": 700,
+  "visibleNodeCount": 2,
+  "visibleEdgeCount": 1,
+  "hiddenNodeCount": 318,
+  "hiddenEdgeCount": 699,
+  "hiddenBoundaryEdgeCount": 1,
+  "hasMore": true
+}

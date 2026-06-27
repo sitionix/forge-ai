@@ -33,7 +33,8 @@ class InventoryBuilder:
                 skipped_by_source[source.sourceId] = missing
                 skipped.merge(missing)
         for source in selected:
-            source_files, source_skipped = scan_source(source, self.config.indexing, self.config.file_classifier)
+            previous_files = self.store.current_file_index(source.sourceId)
+            source_files, source_skipped = scan_source(source, self.config.indexing, self.config.file_classifier, previous_files)
             files.extend(source_files)
             skipped_by_source[source.sourceId] = source_skipped
             skipped.merge(source_skipped)

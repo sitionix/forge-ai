@@ -22,6 +22,7 @@ from jarvis_agent.ollama_client import OllamaBadResponseError, OllamaUnavailable
 class AsgiResponse:
     status_code: int
     body: bytes
+    headers: Dict[str, str]
 
     def json(self) -> Dict[str, Any]:
         return json.loads(self.body.decode("utf-8") or "{}")
@@ -39,13 +40,13 @@ class AsgiTestClient:
     def __exit__(self, exc_type, exc, tb) -> None:
         return None
 
-    def get(self, path: str) -> AsgiResponse:
-        return asyncio.run(self._request("GET", path, None))
+    def get(self, path: str, headers: Optional[Dict[str, str]] = None) -> AsgiResponse:
+        return asyncio.run(self._request("GET", path, None, headers or {}))
 
-    def post(self, path: str, json: Optional[Dict[str, Any]] = None) -> AsgiResponse:
-        return asyncio.run(self._request("POST", path, json or {}))
+    def post(self, path: str, json: Optional[Dict[str, Any]] = None, headers: Optional[Dict[str, str]] = None) -> AsgiResponse:
+        return asyncio.run(self._request("POST", path, json or {}, headers or {}))
 
-    async def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]]) -> AsgiResponse:
+    async def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]], headers: Dict[str, str]) -> AsgiResponse:
         raw_path, _, query = path.partition("?")
         body = b"" if payload is None else json.dumps(payload).encode("utf-8")
         messages: List[Dict[str, Any]] = []
@@ -69,15 +70,21 @@ class AsgiTestClient:
             "path": raw_path,
             "raw_path": raw_path.encode("utf-8"),
             "query_string": query.encode("utf-8"),
-            "headers": [(b"content-type", b"application/json"), (b"accept", b"application/json")],
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"accept", b"application/json"),
+                *[(key.lower().encode("utf-8"), value.encode("utf-8")) for key, value in headers.items()],
+            ],
             "client": ("testclient", 50000),
             "server": ("testserver", 80),
             "scheme": "http",
         }
         await self.app(scope, receive, send)
-        status = next(message["status"] for message in messages if message["type"] == "http.response.start")
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        status = start["status"]
+        response_headers = {key.decode("utf-8").lower(): value.decode("utf-8") for key, value in start.get("headers", [])}
         response_body = b"".join(message.get("body", b"") for message in messages if message["type"] == "http.response.body")
-        return AsgiResponse(status, response_body)
+        return AsgiResponse(status, response_body, response_headers)
 
 
 class FakeModelClient:
@@ -96,8 +103,10 @@ class FakeModelClient:
         self.classify_error = classify_error
         self.generate_error = generate_error
         self.prompts: List[str] = []
+        self.health_calls = 0
 
     async def health(self) -> None:
+        self.health_calls += 1
         if self.health_error:
             raise self.health_error
 
