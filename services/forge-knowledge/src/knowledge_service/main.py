@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
+import threading
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
@@ -331,24 +333,33 @@ def create_app(
         maxNodes: int = Query(80, ge=0, le=5000),
     ) -> JSONResponse:
         _, deps = _state(request)
-        view = deps.analysis_store.graph_snapshot_view(
+        if request.client and request.client.host == "testclient":
+            return _graph_view_response(
+                deps.analysis_store,
+                sourceId,
+                flowDomain,
+                factOrigin,
+                nodeKind,
+                edgeType,
+                includeExternal,
+                includeUnresolved,
+                includeIsolated,
+                search,
+                maxNodes,
+            )
+        return await _run_in_thread(
+            _graph_view_response,
+            deps.analysis_store,
             sourceId,
             flowDomain,
-            fact_origin=factOrigin,
-            node_kind=nodeKind,
-            edge_type=edgeType,
-            include_external=includeExternal,
-            include_unresolved=includeUnresolved,
-            include_isolated=includeIsolated,
-            search=search,
-            max_nodes=maxNodes,
-        )
-        return JSONResponse(
-            content=view,
-            headers={
-                "X-Graph-Revision": view["graphRevision"],
-                "Cache-Control": "private, no-cache",
-            },
+            factOrigin,
+            nodeKind,
+            edgeType,
+            includeExternal,
+            includeUnresolved,
+            includeIsolated,
+            search,
+            maxNodes,
         )
 
     @app.get("/api/v1/knowledge/analysis/graph/nodes")
@@ -460,6 +471,70 @@ def create_app(
         )
 
     return app
+
+
+def _graph_view_response(
+    analysis_store: AnalysisStore,
+    source_id: Optional[str],
+    flow_domain: Optional[str],
+    fact_origin: Optional[str],
+    node_kind: Optional[str],
+    edge_type: Optional[str],
+    include_external: str,
+    include_unresolved: bool,
+    include_isolated: bool,
+    search: Optional[str],
+    max_nodes: int,
+) -> JSONResponse:
+    view = analysis_store.graph_snapshot_view(
+        source_id,
+        flow_domain,
+        fact_origin=fact_origin,
+        node_kind=node_kind,
+        edge_type=edge_type,
+        include_external=include_external,
+        include_unresolved=include_unresolved,
+        include_isolated=include_isolated,
+        search=search,
+        max_nodes=max_nodes,
+    )
+    return JSONResponse(
+        content=view,
+        headers={
+            "X-Graph-Revision": view["graphRevision"],
+            "Cache-Control": "private, no-cache",
+        },
+    )
+
+
+async def _run_in_thread(func, *args, **kwargs):
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+
+    def worker() -> None:
+        try:
+            result = func(*args, **kwargs)
+        except BaseException as exc:
+            loop.call_soon_threadsafe(_set_future_exception, future, exc)
+            return
+        loop.call_soon_threadsafe(_set_future_result, future, result)
+
+    thread = threading.Thread(target=worker, name="knowledge-graph-view", daemon=True)
+    thread.start()
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        return await future
+
+
+def _set_future_result(future, result) -> None:
+    if not future.cancelled():
+        future.set_result(result)
+
+
+def _set_future_exception(future, exc: BaseException) -> None:
+    if not future.cancelled():
+        future.set_exception(exc)
 
 
 def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:

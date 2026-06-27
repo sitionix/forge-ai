@@ -17,6 +17,8 @@ from support import AsgiTestClient as TestClient
 from support import build_test_app, write_runtime_config
 
 from knowledge_service.analysis_store import AnalysisStore
+from knowledge_service.main import _graph_view_response
+from knowledge_service.overview_projection import read_overview
 
 pytestmark = pytest.mark.forge_it
 
@@ -185,6 +187,70 @@ def test_perf_kno_04_sqlite_writer_and_readers_keep_snapshot_visibility_bounded(
             assert (manifest_nodes, manifest_edges) in {(6, 5), (4, 3)}
 
     assert sqlite_integrity(app_config.store_path) == ("ok", [])
+
+
+def test_ui_nav_real_04_backend_overview_returns_while_graph_view_is_still_running(tmp_path, monkeypatch):
+    _, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=360, edge_count=720)
+
+    graph_started = threading.Event()
+    graph_finished = threading.Event()
+    release_graph = threading.Event()
+    original_graph_view = deps.analysis_store.graph_snapshot_view
+
+    def slow_graph_view(*args, **kwargs):
+        graph_started.set()
+        try:
+            release_graph.wait(timeout=1)
+            return original_graph_view(*args, **kwargs)
+        finally:
+            graph_finished.set()
+
+    monkeypatch.setattr(deps.analysis_store, "graph_snapshot_view", slow_graph_view)
+
+    graph_result: dict[str, object] = {}
+    graph_errors: list[BaseException] = []
+
+    def graph_worker() -> None:
+        try:
+            graph_result["response"] = _graph_view_response(
+                deps.analysis_store,
+                "forge-ai",
+                "CODE",
+                None,
+                None,
+                None,
+                "show",
+                True,
+                True,
+                None,
+                500,
+            )
+        except BaseException as exc:
+            graph_errors.append(exc)
+
+    thread = threading.Thread(target=graph_worker)
+    thread.start()
+    assert graph_started.wait(timeout=1)
+
+    overview_started = time.perf_counter()
+    overview_payload = read_overview(deps.inventory_store.db_path)
+    overview_ms = (time.perf_counter() - overview_started) * 1000
+    graph_still_running = not graph_finished.is_set()
+
+    release_graph.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert not graph_errors
+    graph_response = graph_result["response"]
+
+    assert isinstance(overview_payload.get("sources"), list)
+    assert graph_response.status_code == 200
+    assert graph_still_running
+    assert overview_ms < 150
 
 
 class _RouteSample:

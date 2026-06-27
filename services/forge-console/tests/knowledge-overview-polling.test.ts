@@ -100,7 +100,7 @@ describe('Knowledge overview modular ownership', () => {
     vi.restoreAllMocks();
   });
 
-  it('UI-IT-02 uses one poll owner and does not duplicate timers on remount', async () => {
+  it('UI-IT-02 / UI-NAV-REAL-05 uses one poll owner and does not duplicate timers on remount', async () => {
     vi.useFakeTimers();
     const dom = createOverviewDom();
     const http = createHttp(() => statusPayload(8, 'RUNNING'));

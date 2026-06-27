@@ -11,6 +11,9 @@ import { RequestCoordinator } from './request-coordinator.js';
 
 const graphMetricDefaults = {
   layoutRunCount: 0,
+  layoutChunkCount: 0,
+  layoutYieldCount: 0,
+  layoutAbortCount: 0,
   dataFetchCount: 0,
   graphModelBuildCount: 0,
   renderFrameCount: 0,
@@ -26,8 +29,14 @@ const graphMetricDefaults = {
   labelRenderCount: 0,
   lastPanFrameMs: 0,
   lastZoomFrameMs: 0,
-  longTaskCount: 0
+  longTaskCount: 0,
+  renderCancellationCount: 0
 };
+
+const GRAPH_LAYOUT_TICKS = 190;
+const GRAPH_ASYNC_LAYOUT_NODE_THRESHOLD = 300;
+const GRAPH_ASYNC_LAYOUT_TICKS_PER_FRAME = 8;
+const GRAPH_RENDER_ELEMENTS_PER_FRAME = 80;
 
 export class KnowledgeGraphPage {
   constructor(options) {
@@ -59,6 +68,9 @@ export class KnowledgeGraphPage {
       minimumZoom: 0.18,
       graphBounds: null,
       graphFrame: 0,
+      layoutFrame: 0,
+      graphRenderGeneration: 0,
+      activeRenderFilterKey: '',
       pendingWheel: null,
       wheelFrame: 0,
       transformFrame: 0,
@@ -77,6 +89,9 @@ export class KnowledgeGraphPage {
       metadata: null,
       metadataFilterKey: ''
     };
+    this.scheduledTimeouts = new Set();
+    this.layoutYieldResolver = null;
+    this.boundGraphSvg = null;
     this.refreshListener = () => this.loadGraph({ manual: true });
     this.forceRefreshListener = () => this.loadGraph({ manual: true, forceRefresh: true });
     this.apiFilterListener = () => {
@@ -89,9 +104,7 @@ export class KnowledgeGraphPage {
       this.state.labelsMode = this.document.getElementById('knowledgeGraphLabelsMode')?.value || 'auto';
       this.state.density = this.document.getElementById('knowledgeGraphDensity')?.value || 'compact';
       if (this.state.data) {
-        this.renderVisual(this.state.data, { preservePositions: false });
-        this.renderDetails();
-        this.renderTruncated(this.state.data);
+        this.renderPage(this.state.data, { preserveLayout: false });
       }
     };
     this.searchListener = () => {
@@ -123,10 +136,29 @@ export class KnowledgeGraphPage {
     };
     this.resizeListener = () => {
       if (this.state.data) {
-        this.renderVisual(this.state.data, { preservePositions: true });
+        this.renderPage(this.state.data, { preserveLayout: true });
       }
     };
     this.beforeUnloadListener = () => this.dispose();
+    this.fitListener = () => this.fitKnowledgeGraph();
+    this.autoRefreshListener = (event) => {
+      this.state.autoRefresh = event.target.checked;
+      this.schedulePolling();
+    };
+    this.graphSvgPointerDownListener = (event) => this.startPan(event);
+    this.graphSvgPointerMoveListener = (event) => this.movePointer(event);
+    this.graphSvgPointerUpListener = () => this.stopPointer();
+    this.graphSvgPointerLeaveListener = () => this.stopPointer();
+    this.graphSvgWheelListener = (event) => this.zoomKnowledgeGraph(event);
+    this.graphSvgClickListener = () => {
+      if (!this.isPageMounted()) {
+        return;
+      }
+      this.state.selectedNodeId = null;
+      this.state.selectedEdgeId = null;
+      this.updateUrlFromControls({ graphNodeId: null, graphEdgeId: null });
+      this.renderSelectionState();
+    };
   }
 
   mount() {
@@ -134,8 +166,8 @@ export class KnowledgeGraphPage {
     this.initializeControls();
     this.document.getElementById('refreshKnowledgeGraph')?.addEventListener('click', this.refreshListener);
     this.document.getElementById('forceRefreshKnowledgeGraph')?.addEventListener('click', this.forceRefreshListener);
-    this.document.getElementById('fitKnowledgeGraph')?.addEventListener('click', () => this.fitKnowledgeGraph());
-    this.document.getElementById('fitKnowledgeGraphTop')?.addEventListener('click', () => this.fitKnowledgeGraph());
+    this.document.getElementById('fitKnowledgeGraph')?.addEventListener('click', this.fitListener);
+    this.document.getElementById('fitKnowledgeGraphTop')?.addEventListener('click', this.fitListener);
     this.document.getElementById('focusKnowledgeGraph')?.addEventListener('click', this.focusListener);
     this.document.getElementById('toggleKnowledgeGraphPanel')?.addEventListener('click', this.panelListener);
     this.document.getElementById('showKnowledgeGraphEntrypoints')?.addEventListener('click', this.entrypointsListener);
@@ -170,10 +202,13 @@ export class KnowledgeGraphPage {
       return;
     }
     this.disposed = true;
+    this.invalidateGraphRender();
     this.stopPolling();
     this.requestCoordinator.dispose();
     this.document.getElementById('refreshKnowledgeGraph')?.removeEventListener('click', this.refreshListener);
     this.document.getElementById('forceRefreshKnowledgeGraph')?.removeEventListener('click', this.forceRefreshListener);
+    this.document.getElementById('fitKnowledgeGraph')?.removeEventListener('click', this.fitListener);
+    this.document.getElementById('fitKnowledgeGraphTop')?.removeEventListener('click', this.fitListener);
     this.document.getElementById('focusKnowledgeGraph')?.removeEventListener('click', this.focusListener);
     this.document.getElementById('toggleKnowledgeGraphPanel')?.removeEventListener('click', this.panelListener);
     this.document.getElementById('showKnowledgeGraphEntrypoints')?.removeEventListener('click', this.entrypointsListener);
@@ -193,7 +228,9 @@ export class KnowledgeGraphPage {
       'knowledgeGraphDirection',
       'knowledgeGraphDepth'
     ].forEach((id) => this.document.getElementById(id)?.removeEventListener('change', this.displayFilterListener));
+    this.document.getElementById('knowledgeGraphAutoRefresh')?.removeEventListener('change', this.autoRefreshListener);
     this.document.querySelectorAll('[data-graph-tab]').forEach((button) => button.removeEventListener('click', this.tabListener));
+    this.unbindGraphSvgListeners();
     this.window.removeEventListener('resize', this.resizeListener);
     this.window.removeEventListener('beforeunload', this.beforeUnloadListener);
     this.document.body.classList.remove('knowledge-graph-focus-mode');
@@ -218,10 +255,8 @@ export class KnowledgeGraphPage {
     const autoRefresh = this.document.getElementById('knowledgeGraphAutoRefresh');
     if (autoRefresh) {
       autoRefresh.checked = true;
-      autoRefresh.addEventListener('change', (event) => {
-        this.state.autoRefresh = event.target.checked;
-        this.schedulePolling();
-      });
+      autoRefresh.removeEventListener('change', this.autoRefreshListener);
+      autoRefresh.addEventListener('change', this.autoRefreshListener);
     }
     this.state.labelsMode = this.document.getElementById('knowledgeGraphLabelsMode')?.value || 'auto';
     this.state.density = this.document.getElementById('knowledgeGraphDensity')?.value || 'compact';
@@ -269,7 +304,13 @@ export class KnowledgeGraphPage {
         this.clearSelectedDetail(previousSelectionKey);
       }
       setError('knowledgeGraphError', null, this.document);
-      this.renderPage(data, { preserveLayout });
+      const renderResult = this.renderPage(data, { preserveLayout });
+      if (isPromiseLike(renderResult)) {
+        const completed = await renderResult;
+        if (!completed) {
+          return null;
+        }
+      }
       return data;
     } catch (error) {
       if (!this.disposed && error?.name !== 'AbortError') {
@@ -280,7 +321,7 @@ export class KnowledgeGraphPage {
       }
       return null;
     } finally {
-      if (loading) {
+      if (loading && !this.disposed) {
         loading.classList.add('hidden');
       }
     }
@@ -453,6 +494,7 @@ export class KnowledgeGraphPage {
 
   resetFilterState() {
     const previousKey = this.selectionKey();
+    this.invalidateGraphRender();
     this.requestCoordinator.abort('knowledge-graph');
     this.clearSelectedDetail(previousKey);
     this.state.selectedNodeId = null;
@@ -522,15 +564,112 @@ export class KnowledgeGraphPage {
     return this.loadSelectedDetails();
   }
 
+  isPageMounted() {
+    return !this.disposed;
+  }
+
+  beginGraphRender(data) {
+    this.cancelScheduledGraphWork();
+    const { query } = this.queryParams();
+    const generation = this.state.graphRenderGeneration + 1;
+    const token = {
+      generation,
+      sourceId: data?.sourceId || query.get('sourceId') || '',
+      filterKey: query.toString()
+    };
+    this.state.graphRenderGeneration = generation;
+    this.state.activeRenderFilterKey = token.filterKey;
+    return token;
+  }
+
+  invalidateGraphRender() {
+    this.state.graphRenderGeneration += 1;
+    this.state.activeRenderFilterKey = '';
+    this.cancelScheduledGraphWork();
+  }
+
+  isGraphRenderCurrent(token = null) {
+    if (!this.isPageMounted()) {
+      return false;
+    }
+    if (!token) {
+      return true;
+    }
+    if (token.generation !== this.state.graphRenderGeneration) {
+      return false;
+    }
+    const { query } = this.queryParams();
+    if (token.filterKey !== query.toString()) {
+      return false;
+    }
+    const currentSourceId = this.state.data?.sourceId || query.get('sourceId') || '';
+    return !token.sourceId || !currentSourceId || token.sourceId === currentSourceId;
+  }
+
+  cancelScheduledGraphWork() {
+    if (this.state.graphFrame) {
+      this.window.cancelAnimationFrame(this.state.graphFrame);
+      this.state.graphFrame = 0;
+    }
+    if (this.state.layoutFrame) {
+      this.window.cancelAnimationFrame(this.state.layoutFrame);
+      this.state.layoutFrame = 0;
+    }
+    if (this.state.wheelFrame) {
+      this.window.cancelAnimationFrame(this.state.wheelFrame);
+      this.state.wheelFrame = 0;
+    }
+    if (this.state.transformFrame) {
+      this.window.cancelAnimationFrame(this.state.transformFrame);
+      this.state.transformFrame = 0;
+    }
+    if (this.layoutYieldResolver) {
+      const resolve = this.layoutYieldResolver;
+      this.layoutYieldResolver = null;
+      resolve(false);
+    }
+    this.state.pendingWheel = null;
+    this.scheduledTimeouts.forEach((id) => this.window.clearTimeout(id));
+    this.scheduledTimeouts.clear();
+  }
+
+  scheduleGraphTimeout(callback, delay = 0) {
+    if (!this.isPageMounted()) {
+      return null;
+    }
+    const id = this.window.setTimeout(() => {
+      this.scheduledTimeouts.delete(id);
+      if (this.isPageMounted()) {
+        callback();
+      }
+    }, delay);
+    this.scheduledTimeouts.add(id);
+    return id;
+  }
+
   renderPage(data, options = {}) {
     if (!data || this.disposed) {
-      return;
+      return false;
     }
-    this.renderSummary(data);
-    this.renderVisual(data, { preservePositions: Boolean(options.preserveLayout) });
-    this.renderDetails();
-    this.renderLegend();
-    this.renderTruncated(data);
+    const token = this.beginGraphRender(data);
+    if (!this.isGraphRenderCurrent(token)) {
+      return false;
+    }
+    this.renderSummary(data, token);
+    const visualResult = this.renderVisual(data, { preservePositions: Boolean(options.preserveLayout), token });
+    const finish = (completed) => {
+      if (!completed || !this.isGraphRenderCurrent(token)) {
+        this.metrics.renderCancellationCount += 1;
+        return false;
+      }
+      this.renderDetails(token);
+      this.renderLegend(token);
+      this.renderTruncated(data, token);
+      return true;
+    };
+    return isPromiseLike(visualResult)
+      ? visualResult.then(finish)
+      : finish(visualResult);
   }
 
   renderMetadata(metadata) {
@@ -602,7 +741,10 @@ export class KnowledgeGraphPage {
     `;
   }
 
-  renderSummary(data) {
+  renderSummary(data, token = null) {
+    if (!this.isGraphRenderCurrent(token)) {
+      return;
+    }
     const target = this.document.getElementById('knowledgeGraphSummary');
     if (!target) {
       return;
@@ -626,10 +768,11 @@ export class KnowledgeGraphPage {
   }
 
   renderVisual(data, options = {}) {
+    const token = options.token || this.beginGraphRender(data);
     const svg = this.document.getElementById('knowledgeGraphSvg');
     const stage = this.document.getElementById('knowledgeGraphStage');
-    if (!svg || !stage) {
-      return;
+    if (!svg || !stage || !this.isGraphRenderCurrent(token)) {
+      return false;
     }
     this.metrics.fullGraphRebuildCount += 1;
     this.metrics.fullRendererRebuildCount += 1;
@@ -645,6 +788,9 @@ export class KnowledgeGraphPage {
     const visibleEdges = visibleGraph.edges;
     this.state.hiddenIsolatedCount = visibleGraph.hiddenIsolatedCount;
     if (!visibleNodes.length) {
+      if (!this.isGraphRenderCurrent(token)) {
+        return false;
+      }
       viewport.appendChild(createSvgElement(this.document, 'text', {
         x: width / 2,
         y: height / 2,
@@ -653,11 +799,11 @@ export class KnowledgeGraphPage {
       }, this.emptyText(data)));
       this.state.nodes = [];
       this.state.edges = [];
-      this.renderPreview();
-      this.renderEmptyAction(data, true);
-      return;
+      this.renderPreview(token);
+      this.renderEmptyAction(data, true, token);
+      return true;
     }
-    this.renderEmptyAction(data, false);
+    this.renderEmptyAction(data, false, token);
     const previous = options.preservePositions ? new Map(this.state.nodes.map((node) => [node.id, node])) : new Map();
     const nodes = visibleNodes.map((node, index) => ({
       ...node,
@@ -673,93 +819,178 @@ export class KnowledgeGraphPage {
       .filter((edge) => edge.fromNode && edge.toNode);
     this.state.nodes = nodes;
     this.state.edges = edges;
-    this.runLayout(nodes, edges, width, height);
+    const layoutResult = this.runLayout(nodes, edges, width, height, token);
+    const finishVisual = (completed) => {
+      if (!completed || !this.isGraphRenderCurrent(token)) {
+        this.metrics.renderCancellationCount += 1;
+        return false;
+      }
+      return this.renderGraphElements(svg, viewport, nodes, edges, data, options, token);
+    };
+    return isPromiseLike(layoutResult)
+      ? layoutResult.then(finishVisual)
+      : finishVisual(layoutResult);
+  }
+
+  renderGraphElements(svg, viewport, nodes, edges, data, options, token) {
+    if (!this.isGraphRenderCurrent(token)) {
+      return false;
+    }
     const edgeLayer = createSvgElement(this.document, 'g', { class: 'knowledge-graph-edge-layer' });
     const nodeLayer = createSvgElement(this.document, 'g', { class: 'knowledge-graph-node-layer' });
     viewport.appendChild(edgeLayer);
     viewport.appendChild(nodeLayer);
-    edges.forEach((edge) => {
-      const metadata = edge.metadata || {};
-      const line = createSvgElement(this.document, 'line', {
-        class: `knowledge-graph-edge edge-${statusClass(edge.edgeType || 'edge')} resolution-${statusClass(edge.resolutionStatus)} confidence-${knowledgeGraphConfidenceState(edge)} target-${statusClass(metadata.callTargetCategory)} visibility-${statusClass(metadata.sliceDefaultVisibility)}`,
-        'data-edge-id': edge.id,
-        'marker-end': 'url(#knowledge-graph-arrow)'
-      });
-      line.appendChild(createSvgElement(this.document, 'title', {}, [
-        edge.edgeType || 'Relation',
-        edge.resolutionStatus ? `resolution: ${edge.resolutionStatus}` : '',
-        metadata.callKind ? `call: ${metadata.callKind}` : '',
-        metadata.receiverText ? `receiver: ${metadata.receiverText}` : '',
-        metadata.methodName ? `method: ${metadata.methodName}` : '',
-        metadata.unresolvedReason ? `unresolved: ${metadata.unresolvedReason}` : '',
-        metadata.callsiteLineStart || metadata.lineStart ? `line: ${metadata.callsiteLineStart || metadata.lineStart}` : ''
-      ].filter(Boolean).join('\n')));
-      line.addEventListener('click', (event) => {
-        event.stopPropagation();
-        this.selectEdge(edge.id);
-      });
+    if (this.shouldUseChunkedElementRender(nodes, edges)) {
+      return this.renderGraphElementsChunked(svg, nodeLayer, edgeLayer, nodes, edges, data, options, token);
+    }
+    const renderedEdges = this.renderEdgeElements(edgeLayer, edges, 0, edges.length, token);
+    if (!renderedEdges) {
+      return false;
+    }
+    const renderedNodes = this.renderNodeElements(nodeLayer, nodes, 0, nodes.length, token);
+    if (!renderedNodes) {
+      return false;
+    }
+    return this.finishGraphElements(svg, nodes, data, options, token);
+  }
+
+  shouldUseChunkedElementRender(nodes, edges) {
+    const threshold = Number(this.runtimeConfig.graphAsyncLayoutNodeThreshold) || GRAPH_ASYNC_LAYOUT_NODE_THRESHOLD;
+    return nodes.length + edges.length >= threshold;
+  }
+
+  async renderGraphElementsChunked(svg, nodeLayer, edgeLayer, nodes, edges, data, options, token) {
+    const batchSize = Math.max(1, Math.floor(Number(this.runtimeConfig.graphRenderElementsPerFrame) || GRAPH_RENDER_ELEMENTS_PER_FRAME));
+    for (let index = 0; index < edges.length; index += batchSize) {
+      if (!this.renderEdgeElements(edgeLayer, edges, index, Math.min(index + batchSize, edges.length), token)) {
+        return false;
+      }
+      if (index + batchSize < edges.length && !await this.waitForGraphRenderFrame(token)) {
+        return false;
+      }
+    }
+    for (let index = 0; index < nodes.length; index += batchSize) {
+      if (!this.renderNodeElements(nodeLayer, nodes, index, Math.min(index + batchSize, nodes.length), token)) {
+        return false;
+      }
+      if (index + batchSize < nodes.length && !await this.waitForGraphRenderFrame(token)) {
+        return false;
+      }
+    }
+    return this.finishGraphElements(svg, nodes, data, options, token);
+  }
+
+  renderEdgeElements(edgeLayer, edges, start, end, token) {
+    for (let index = start; index < end; index += 1) {
+      if (!this.isGraphRenderCurrent(token)) {
+        return false;
+      }
+      const edge = edges[index];
+      const line = this.createGraphEdgeElement(edge);
+      if (!this.isGraphRenderCurrent(token)) {
+        return false;
+      }
       edge.element = line;
       edgeLayer.appendChild(line);
-    });
-    nodes.forEach((node) => {
-      const group = createSvgElement(this.document, 'g', {
-        class: `knowledge-graph-node node-${statusClass(node.nodeKind || 'unknown')} confidence-${knowledgeGraphConfidenceState(node)}`,
-        'data-node-id': node.id,
-        tabindex: '0'
-      });
-      group.appendChild(createSvgElement(this.document, 'circle', { r: node.r }));
-      group.appendChild(createSvgElement(this.document, 'text', {
-        class: 'knowledge-graph-node-label',
-        y: node.r + 14,
-        'text-anchor': 'middle'
-      }, knowledgeGraphNodeLabel(node)));
-      group.appendChild(createSvgElement(this.document, 'title', {}, `${node.label || node.id}\n${node.relativePath || ''}`));
-      group.addEventListener('pointerdown', (event) => this.startNodeDrag(event, node));
-      group.addEventListener('click', (event) => {
-        event.stopPropagation();
-        if (!node.__dragMoved) {
-          this.selectNode(node.id);
-        }
-      });
-      group.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          this.selectNode(node.id);
-        }
-      });
+    }
+    return this.isGraphRenderCurrent(token);
+  }
+
+  renderNodeElements(nodeLayer, nodes, start, end, token) {
+    for (let index = start; index < end; index += 1) {
+      if (!this.isGraphRenderCurrent(token)) {
+        return false;
+      }
+      const node = nodes[index];
+      const group = this.createGraphNodeElement(node);
+      if (!this.isGraphRenderCurrent(token)) {
+        return false;
+      }
       node.element = group;
       nodeLayer.appendChild(group);
+    }
+    return this.isGraphRenderCurrent(token);
+  }
+
+  createGraphEdgeElement(edge) {
+    const metadata = edge.metadata || {};
+    const line = createSvgElement(this.document, 'line', {
+      class: `knowledge-graph-edge edge-${statusClass(edge.edgeType || 'edge')} resolution-${statusClass(edge.resolutionStatus)} confidence-${knowledgeGraphConfidenceState(edge)} target-${statusClass(metadata.callTargetCategory)} visibility-${statusClass(metadata.sliceDefaultVisibility)}`,
+      'data-edge-id': edge.id,
+      'marker-end': 'url(#knowledge-graph-arrow)'
     });
+    line.appendChild(createSvgElement(this.document, 'title', {}, [
+      edge.edgeType || 'Relation',
+      edge.resolutionStatus ? `resolution: ${edge.resolutionStatus}` : '',
+      metadata.callKind ? `call: ${metadata.callKind}` : '',
+      metadata.receiverText ? `receiver: ${metadata.receiverText}` : '',
+      metadata.methodName ? `method: ${metadata.methodName}` : '',
+      metadata.unresolvedReason ? `unresolved: ${metadata.unresolvedReason}` : '',
+      metadata.callsiteLineStart || metadata.lineStart ? `line: ${metadata.callsiteLineStart || metadata.lineStart}` : ''
+    ].filter(Boolean).join('\n')));
+    line.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.selectEdge(edge.id);
+    });
+    return line;
+  }
+
+  createGraphNodeElement(node) {
+    const group = createSvgElement(this.document, 'g', {
+      class: `knowledge-graph-node node-${statusClass(node.nodeKind || 'unknown')} confidence-${knowledgeGraphConfidenceState(node)}`,
+      'data-node-id': node.id,
+      tabindex: '0'
+    });
+    group.appendChild(createSvgElement(this.document, 'circle', { r: node.r }));
+    group.appendChild(createSvgElement(this.document, 'text', {
+      class: 'knowledge-graph-node-label',
+      y: node.r + 14,
+      'text-anchor': 'middle'
+    }, knowledgeGraphNodeLabel(node)));
+    group.appendChild(createSvgElement(this.document, 'title', {}, `${node.label || node.id}\n${node.relativePath || ''}`));
+    group.addEventListener('pointerdown', (event) => this.startNodeDrag(event, node));
+    group.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!node.__dragMoved) {
+        this.selectNode(node.id);
+      }
+    });
+    group.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        this.selectNode(node.id);
+      }
+    });
+    return group;
+  }
+
+  finishGraphElements(svg, nodes, data, options, token) {
+    if (!this.isGraphRenderCurrent(token)) {
+      return false;
+    }
     this.metrics.labelRenderCount += nodes.length;
-    svg.onpointerdown = (event) => this.startPan(event);
-    svg.onpointermove = (event) => this.movePointer(event);
-    svg.onpointerup = () => this.stopPointer();
-    svg.onpointerleave = () => this.stopPointer();
-    if (!svg.__forgeKnowledgeGraphPointerBound) {
-      svg.addEventListener('pointerdown', (event) => this.startPan(event));
-      svg.addEventListener('pointermove', (event) => this.movePointer(event));
-      svg.addEventListener('pointerup', () => this.stopPointer());
-      svg.addEventListener('pointerleave', () => this.stopPointer());
-      svg.__forgeKnowledgeGraphPointerBound = true;
+    this.bindGraphSvgListeners(svg);
+    if (!this.isGraphRenderCurrent(token)) {
+      return false;
     }
-    if (!svg.__forgeKnowledgeGraphWheelBound) {
-      svg.addEventListener('wheel', (event) => this.zoomKnowledgeGraph(event), { passive: false });
-      svg.__forgeKnowledgeGraphWheelBound = true;
-    }
-    svg.onclick = () => {
-      this.state.selectedNodeId = null;
-      this.state.selectedEdgeId = null;
-      this.updateUrlFromControls({ graphNodeId: null, graphEdgeId: null });
-      this.renderSelectionState();
-    };
     this.recomputeKnowledgeGraphFitZoom();
+    if (!this.isGraphRenderCurrent(token)) {
+      return false;
+    }
     if (!options.preservePositions) {
       this.fitKnowledgeGraph();
     } else {
       this.scheduleKnowledgeGraphTransform('pan');
     }
+    if (!this.isGraphRenderCurrent(token)) {
+      return false;
+    }
     this.renderFrame();
+    if (!this.isGraphRenderCurrent(token)) {
+      return false;
+    }
     this.renderSelectionState();
+    return true;
   }
 
   visibleGraph(data) {
@@ -777,13 +1008,30 @@ export class KnowledgeGraphPage {
     };
   }
 
-  runLayout(nodes, edges, width, height) {
+  runLayout(nodes, edges, width, height, token = null) {
     this.metrics.layoutRunCount += 1;
     const density = this.state.density || 'compact';
     const densityScale = density === 'spacious' ? 1.08 : density === 'normal' ? 0.86 : 0.54;
     const repulsion = density === 'spacious' ? 720 : density === 'normal' ? 480 : 260;
     const centerForce = density === 'spacious' ? 0.0042 : density === 'normal' ? 0.0062 : 0.0086;
-    for (let tick = 0; tick < 190; tick += 1) {
+    const layout = { density, densityScale, repulsion, centerForce };
+    if (!this.shouldUseChunkedLayout(nodes, edges)) {
+      return this.runLayoutTicks(nodes, edges, width, height, layout, 0, GRAPH_LAYOUT_TICKS, token);
+    }
+    return this.runLayoutChunked(nodes, edges, width, height, layout, token);
+  }
+
+  shouldUseChunkedLayout(nodes, edges) {
+    const threshold = Number(this.runtimeConfig.graphAsyncLayoutNodeThreshold) || GRAPH_ASYNC_LAYOUT_NODE_THRESHOLD;
+    return nodes.length >= threshold || nodes.length * Math.max(nodes.length - 1, 0) / 2 + edges.length >= threshold * threshold;
+  }
+
+  runLayoutTicks(nodes, edges, width, height, layout, startTick, endTick, token = null) {
+    for (let tick = startTick; tick < endTick; tick += 1) {
+      if (!this.isGraphRenderCurrent(token)) {
+        this.metrics.layoutAbortCount += 1;
+        return false;
+      }
       for (let i = 0; i < nodes.length; i += 1) {
         for (let j = i + 1; j < nodes.length; j += 1) {
           const left = nodes[i];
@@ -791,7 +1039,7 @@ export class KnowledgeGraphPage {
           const dx = left.x - right.x || 0.01;
           const dy = left.y - right.y || 0.01;
           const distance = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-          const collision = left.r + right.r + (density === 'compact' ? 8 : 14);
+          const collision = left.r + right.r + (layout.density === 'compact' ? 8 : 14);
           if (distance < collision) {
             const push = (collision - distance) * 0.024;
             const cfx = (dx / distance) * push;
@@ -802,7 +1050,7 @@ export class KnowledgeGraphPage {
             right.vy -= cfy;
           }
           const distanceSq = Math.max(distance * distance, 120);
-          const force = repulsion / distanceSq;
+          const force = layout.repulsion / distanceSq;
           const fx = dx * force;
           const fy = dy * force;
           left.vx += fx;
@@ -815,7 +1063,7 @@ export class KnowledgeGraphPage {
         const dx = edge.toNode.x - edge.fromNode.x;
         const dy = edge.toNode.y - edge.fromNode.y;
         const distance = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-        const target = (62 * densityScale) + edge.fromNode.r + edge.toNode.r;
+        const target = (62 * layout.densityScale) + edge.fromNode.r + edge.toNode.r;
         const force = (distance - target) * 0.021;
         const fx = (dx / distance) * force;
         const fy = (dy / distance) * force;
@@ -825,17 +1073,68 @@ export class KnowledgeGraphPage {
         edge.toNode.vy -= fy;
       });
       nodes.forEach((node) => {
-        node.vx += (width / 2 - node.x) * centerForce;
-        node.vy += (height / 2 - node.y) * centerForce;
+        node.vx += (width / 2 - node.x) * layout.centerForce;
+        node.vy += (height / 2 - node.y) * layout.centerForce;
         node.vx *= 0.78;
         node.vy *= 0.78;
         node.x += node.vx;
         node.y += node.vy;
       });
     }
+    return this.isGraphRenderCurrent(token);
+  }
+
+  async runLayoutChunked(nodes, edges, width, height, layout, token) {
+    const ticksPerFrame = Math.max(1, Math.floor(Number(this.runtimeConfig.graphAsyncLayoutTicksPerFrame) || GRAPH_ASYNC_LAYOUT_TICKS_PER_FRAME));
+    for (let tick = 0; tick < GRAPH_LAYOUT_TICKS; tick += ticksPerFrame) {
+      if (!this.isGraphRenderCurrent(token)) {
+        this.metrics.layoutAbortCount += 1;
+        return false;
+      }
+      this.metrics.layoutChunkCount += 1;
+      const completed = this.runLayoutTicks(
+        nodes,
+        edges,
+        width,
+        height,
+        layout,
+        tick,
+        Math.min(tick + ticksPerFrame, GRAPH_LAYOUT_TICKS),
+        token
+      );
+      if (!completed) {
+        return false;
+      }
+      if (tick + ticksPerFrame < GRAPH_LAYOUT_TICKS) {
+        this.metrics.layoutYieldCount += 1;
+        const current = await this.waitForGraphRenderFrame(token);
+        if (!current) {
+          this.metrics.layoutAbortCount += 1;
+          return false;
+        }
+      }
+    }
+    return this.isGraphRenderCurrent(token);
+  }
+
+  waitForGraphRenderFrame(token) {
+    if (!this.isGraphRenderCurrent(token)) {
+      return Promise.resolve(false);
+    }
+    return new Promise((resolve) => {
+      this.layoutYieldResolver = resolve;
+      this.state.layoutFrame = this.window.requestAnimationFrame(() => {
+        this.state.layoutFrame = 0;
+        this.layoutYieldResolver = null;
+        resolve(this.isGraphRenderCurrent(token));
+      });
+    });
   }
 
   renderFrame() {
+    if (!this.isPageMounted()) {
+      return;
+    }
     this.metrics.renderFrameCount += 1;
     this.state.edges.forEach((edge) => {
       edge.element?.setAttribute('x1', edge.fromNode.x);
@@ -849,6 +1148,9 @@ export class KnowledgeGraphPage {
   }
 
   scheduleFrame() {
+    if (!this.isPageMounted()) {
+      return;
+    }
     if (this.state.graphFrame) {
       return;
     }
@@ -856,6 +1158,33 @@ export class KnowledgeGraphPage {
       this.state.graphFrame = 0;
       this.renderFrame();
     });
+  }
+
+  bindGraphSvgListeners(svg) {
+    if (!svg || this.boundGraphSvg === svg) {
+      return;
+    }
+    this.unbindGraphSvgListeners();
+    svg.addEventListener('pointerdown', this.graphSvgPointerDownListener);
+    svg.addEventListener('pointermove', this.graphSvgPointerMoveListener);
+    svg.addEventListener('pointerup', this.graphSvgPointerUpListener);
+    svg.addEventListener('pointerleave', this.graphSvgPointerLeaveListener);
+    svg.addEventListener('wheel', this.graphSvgWheelListener, { passive: false });
+    svg.addEventListener('click', this.graphSvgClickListener);
+    this.boundGraphSvg = svg;
+  }
+
+  unbindGraphSvgListeners() {
+    if (!this.boundGraphSvg) {
+      return;
+    }
+    this.boundGraphSvg.removeEventListener('pointerdown', this.graphSvgPointerDownListener);
+    this.boundGraphSvg.removeEventListener('pointermove', this.graphSvgPointerMoveListener);
+    this.boundGraphSvg.removeEventListener('pointerup', this.graphSvgPointerUpListener);
+    this.boundGraphSvg.removeEventListener('pointerleave', this.graphSvgPointerLeaveListener);
+    this.boundGraphSvg.removeEventListener('wheel', this.graphSvgWheelListener);
+    this.boundGraphSvg.removeEventListener('click', this.graphSvgClickListener);
+    this.boundGraphSvg = null;
   }
 
   renderMarkers() {
@@ -874,7 +1203,10 @@ export class KnowledgeGraphPage {
     return defs;
   }
 
-  renderLegend() {
+  renderLegend(token = null) {
+    if (!this.isGraphRenderCurrent(token)) {
+      return;
+    }
     const target = this.document.getElementById('knowledgeGraphLegend');
     if (!target) {
       return;
@@ -889,7 +1221,10 @@ export class KnowledgeGraphPage {
     ].map(([kind, label]) => `<span><i class="legend-node node-${statusClass(kind)}"></i>${escapeHtml(label)}</span>`).join('');
   }
 
-  renderTruncated(data) {
+  renderTruncated(data, token = null) {
+    if (!this.isGraphRenderCurrent(token)) {
+      return;
+    }
     const target = this.document.getElementById('knowledgeGraphTruncated');
     if (!target) {
       return;
@@ -940,7 +1275,10 @@ export class KnowledgeGraphPage {
     `;
   }
 
-  renderEmptyAction(data, visible) {
+  renderEmptyAction(data, visible, token = null) {
+    if (!this.isGraphRenderCurrent(token)) {
+      return;
+    }
     const target = this.document.getElementById('knowledgeGraphEmptyAction');
     if (!target) {
       return;
@@ -982,7 +1320,10 @@ export class KnowledgeGraphPage {
     return 'Use Analyze in the toolbar to build the graph.';
   }
 
-  renderPreview() {
+  renderPreview(token = null) {
+    if (!this.isGraphRenderCurrent(token)) {
+      return;
+    }
     const target = this.document.getElementById('knowledgeGraphPreview');
     if (!target) {
       return;
@@ -1055,7 +1396,10 @@ export class KnowledgeGraphPage {
     layout.classList.toggle('preview-collapsed', this.state.previewCollapsed && !hasSelection);
   }
 
-  renderDetails() {
+  renderDetails(token = null) {
+    if (!this.isGraphRenderCurrent(token)) {
+      return;
+    }
     const target = this.document.getElementById('knowledgeGraphDetails');
     const data = this.state.data;
     if (!target || !data) {
@@ -1124,6 +1468,9 @@ export class KnowledgeGraphPage {
   }
 
   renderSelectionState() {
+    if (!this.isPageMounted()) {
+      return;
+    }
     const selectedNodeId = this.state.selectedNodeId;
     const selectedEdgeId = this.state.selectedEdgeId;
     const connected = new Set();
@@ -1184,21 +1531,35 @@ export class KnowledgeGraphPage {
   }
 
   toggleFocus() {
+    if (!this.isPageMounted()) {
+      return;
+    }
     this.state.focusMode = !this.state.focusMode;
     this.document.body.classList.toggle('knowledge-graph-focus-mode', this.state.focusMode);
     const button = this.document.getElementById('focusKnowledgeGraph');
     if (button) {
       button.textContent = this.state.focusMode ? 'Exit focus' : 'Focus';
     }
-    this.window.setTimeout(() => {
+    this.scheduleGraphTimeout(() => {
       if (this.state.data) {
-        this.renderVisual(this.state.data, { preservePositions: true });
+        const renderResult = this.renderPage(this.state.data, { preserveLayout: true });
+        if (isPromiseLike(renderResult)) {
+          renderResult.then((completed) => {
+            if (completed) {
+              this.fitKnowledgeGraph();
+            }
+          });
+          return;
+        }
       }
       this.fitKnowledgeGraph();
     }, 50);
   }
 
   startNodeDrag(event, node) {
+    if (!this.isPageMounted()) {
+      return;
+    }
     event.stopPropagation();
     node.__dragMoved = false;
     this.state.draggingNode = {
@@ -1210,6 +1571,9 @@ export class KnowledgeGraphPage {
   }
 
   startPan(event) {
+    if (!this.isPageMounted()) {
+      return;
+    }
     if (event.target.closest?.('.knowledge-graph-node') || event.target.closest?.('.knowledge-graph-edge')) {
       return;
     }
@@ -1221,6 +1585,9 @@ export class KnowledgeGraphPage {
   }
 
   movePointer(event) {
+    if (!this.isPageMounted()) {
+      return;
+    }
     if (this.state.draggingNode) {
       const drag = this.state.draggingNode;
       const point = this.graphPointFromEvent(event);
@@ -1244,11 +1611,14 @@ export class KnowledgeGraphPage {
   }
 
   stopPointer() {
+    if (!this.isPageMounted()) {
+      return;
+    }
     const dragNode = this.state.draggingNode?.node;
     this.state.draggingNode = null;
     this.state.panning = null;
     if (dragNode) {
-      this.window.setTimeout(() => {
+      this.scheduleGraphTimeout(() => {
         dragNode.__dragMoved = false;
       }, 0);
     }
@@ -1259,6 +1629,9 @@ export class KnowledgeGraphPage {
   }
 
   zoomKnowledgeGraph(event) {
+    if (!this.isPageMounted()) {
+      return;
+    }
     event.preventDefault();
     this.metrics.wheelEventCount += 1;
     this.state.pendingWheel = {
@@ -1271,6 +1644,11 @@ export class KnowledgeGraphPage {
       return;
     }
     this.state.wheelFrame = this.window.requestAnimationFrame(() => {
+      if (!this.isPageMounted()) {
+        this.state.wheelFrame = 0;
+        this.state.pendingWheel = null;
+        return;
+      }
       const wheel = this.state.pendingWheel;
       this.state.pendingWheel = null;
       this.state.wheelFrame = 0;
@@ -1279,6 +1657,9 @@ export class KnowledgeGraphPage {
   }
 
   applyWheelZoom(event) {
+    if (!this.isPageMounted()) {
+      return;
+    }
     const svg = this.document.getElementById('knowledgeGraphSvg');
     if (!svg || !event) {
       return;
@@ -1307,6 +1688,9 @@ export class KnowledgeGraphPage {
   }
 
   centerNode(nodeId) {
+    if (!this.isPageMounted()) {
+      return;
+    }
     const node = this.state.nodes.find((item) => item.id === nodeId);
     const svg = this.document.getElementById('knowledgeGraphSvg');
     if (!node || !svg) {
@@ -1319,12 +1703,19 @@ export class KnowledgeGraphPage {
   }
 
   schedulePolling() {
+    if (!this.isPageMounted()) {
+      return;
+    }
     this.stopPolling();
     if (!this.state.autoRefresh) {
       return;
     }
     const interval = Number(this.runtimeConfig.graphPollIntervalMs) || 30000;
     this.pollTimer = this.window.setTimeout(async () => {
+      if (!this.isPageMounted()) {
+        this.pollTimer = null;
+        return;
+      }
       this.pollTimer = null;
       await this.loadGraph({ manual: false });
       this.schedulePolling();
@@ -1339,6 +1730,9 @@ export class KnowledgeGraphPage {
   }
 
   fitKnowledgeGraph() {
+    if (!this.isPageMounted()) {
+      return;
+    }
     const svg = this.document.getElementById('knowledgeGraphSvg');
     if (!svg || !this.state.nodes.length) {
       return;
@@ -1360,18 +1754,28 @@ export class KnowledgeGraphPage {
   }
 
   scheduleKnowledgeGraphTransform(reason = 'pan') {
+    if (!this.isPageMounted()) {
+      return;
+    }
     this.state.pendingTransformReason = reason;
     if (this.state.transformFrame) {
       return;
     }
     const scheduledAt = performance.now();
     this.state.transformFrame = this.window.requestAnimationFrame(() => {
+      if (!this.isPageMounted()) {
+        this.state.transformFrame = 0;
+        return;
+      }
       this.state.transformFrame = 0;
       this.applyKnowledgeGraphTransformNow(this.state.pendingTransformReason || reason, scheduledAt);
     });
   }
 
   applyKnowledgeGraphTransformNow(reason, scheduledAt) {
+    if (!this.isPageMounted()) {
+      return;
+    }
     const startedAt = performance.now();
     const svg = this.document.getElementById('knowledgeGraphSvg');
     if (svg) {
@@ -1542,6 +1946,10 @@ function markObsoleteGraphSliceControl(documentRef, id) {
   }
   element.disabled = true;
   element.title = 'Legacy GraphSlice control retained for visual parity; final graph APIs do not support this filter.';
+}
+
+function isPromiseLike(value) {
+  return value && typeof value.then === 'function';
 }
 
 function graphMaxNodesValue(value) {

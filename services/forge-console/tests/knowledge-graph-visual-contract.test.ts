@@ -3,6 +3,7 @@ import { JSDOM } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
 import { createKnowledgeGraphClient, graphSnapshotQuery } from '../src/operator/knowledge-graph-client.js';
 import { KnowledgeGraphPage, knowledgeGraphNodeRadius } from '../src/operator/knowledge-graph-page.js';
+import { KnowledgeOverviewPage } from '../src/operator/knowledge-overview-page.js';
 
 function manifest(revision = 'rev-a') {
   return {
@@ -25,6 +26,37 @@ function graphData(revision = 'rev-a') {
     nodes: [node('n1'), { ...node('n2'), nodeKind: 'TYPE' }],
     edges: [{ id: 'e1', from: 'n1', to: 'n2', edgeType: 'CALLS' }],
     meta: { returnedNodeCount: 2, returnedEdgeCount: 1, totalNodeCount: 2, totalEdgeCount: 1 },
+    status: { analysisStatus: 'COMPLETED' }
+  };
+}
+
+function largeGraphData(count = 320, sourceId = 'forge-ai', revision = `rev-${sourceId}`) {
+  const nodes = Array.from({ length: count }, (_, index) => ({
+    id: `${sourceId}-node-${String(index).padStart(5, '0')}`,
+    nodeKind: index % 4 === 0 ? 'FILE' : index % 3 === 0 ? 'TYPE' : 'CALLABLE',
+    label: `${sourceId} Node ${index}`,
+    name: `${sourceId} Node ${index}`,
+    relativePath: `src/${sourceId}/${index}.js`,
+    degree: index % 7
+  }));
+  const edges = Array.from({ length: count - 1 }, (_, index) => ({
+    id: `${sourceId}-edge-${String(index).padStart(5, '0')}`,
+    from: nodes[index]?.id || '',
+    to: nodes[index + 1]?.id || '',
+    edgeType: index % 2 === 0 ? 'CALLS' : 'USES'
+  }));
+  return {
+    sourceId,
+    sourceName: `${sourceId} graph`,
+    graphRevision: revision,
+    nodes,
+    edges,
+    meta: {
+      returnedNodeCount: nodes.length,
+      returnedEdgeCount: edges.length,
+      totalNodeCount: nodes.length,
+      totalEdgeCount: edges.length
+    },
     status: { analysisStatus: 'COMPLETED' }
   };
 }
@@ -148,6 +180,47 @@ function graphDom(url = 'http://127.0.0.1/operator/knowledge-graph.html?sourceId
   Object.defineProperty(stage, 'clientWidth', { configurable: true, value: 840 });
   Object.defineProperty(stage, 'clientHeight', { configurable: true, value: 600 });
   return dom;
+}
+
+function overviewDom() {
+  const dom = new JSDOM(`<!doctype html>
+    <body data-page="knowledge">
+      <button id="refreshKnowledge" type="button">Refresh</button>
+      <div id="knowledgeError" class="hidden"></div>
+      <div id="knowledgeAnalysisError" class="hidden"></div>
+      <span id="knowledgeUpdated"></span>
+      <table><tbody id="knowledgeSourcesBody"></tbody></table>
+      <div id="knowledgeDiagnostics"></div>
+    </body>`, { url: 'http://127.0.0.1/operator/knowledge.html' });
+  dom.window.setTimeout = globalThis.setTimeout as typeof dom.window.setTimeout;
+  dom.window.clearTimeout = globalThis.clearTimeout as typeof dom.window.clearTimeout;
+  return dom;
+}
+
+function overviewPayload() {
+  return {
+    services: [{
+      sourceId: 'forge-ai',
+      label: 'Forge AI',
+      group: 'local',
+      rootExists: true,
+      tags: ['js'],
+      inventory: { eligibleFileCount: 10, skippedCount: 0 },
+      analysis: {
+        status: 'COMPLETED',
+        inventoryFileCount: 10,
+        analyzedFileCount: 10,
+        processedFileCount: 10,
+        failedFileCount: 0,
+        skippedTooLargeFileCount: 0,
+        pendingFileCount: 0,
+        percent: 100,
+        activeJobId: null
+      },
+      facts: { symbolCount: 20, relationCount: 19 }
+    }],
+    activeJob: null
+  };
 }
 
 async function applyOperatorStyles(dom: JSDOM) {
@@ -906,6 +979,204 @@ describe('Knowledge graph modular contract', () => {
     resolvePending({ ...manifest('rev-disposed'), graphRevision: 'rev-disposed', nodes: [node('n1')], edges: [], meta: {} });
     await request;
     expect(dom.window.document.getElementById('knowledgeGraphSourceTitle')?.textContent).toBe('');
+  });
+
+  it('UI-GRAPH-NAV-01 / UI-NAV-REAL-02 dispose cancels pending graph render', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=forge-ai&flowDomain=CODE&maxNodes=0');
+    const page = new KnowledgeGraphPage({
+      document: dom.window.document,
+      window: dom.window,
+      http: {},
+      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+    });
+    const data = largeGraphData(340);
+    page.state.data = data;
+
+    const render = page.renderPage(data);
+    expect(typeof (render as Promise<boolean>).then).toBe('function');
+    const generation = page.state.graphRenderGeneration;
+    page.dispose();
+    const completed = await render;
+    const nodeCountAfterDispose = dom.window.document.querySelectorAll('.knowledge-graph-node').length;
+    await flushAsync(3);
+
+    expect(completed).toBe(false);
+    expect(page.state.graphRenderGeneration).toBeGreaterThan(generation);
+    expect(page.state.layoutFrame).toBe(0);
+    expect(page.state.graphFrame).toBe(0);
+    expect(page.state.wheelFrame).toBe(0);
+    expect(page.state.transformFrame).toBe(0);
+    expect(nodeCountAfterDispose).toBe(0);
+    expect(dom.window.document.querySelectorAll('.knowledge-graph-node')).toHaveLength(0);
+    expect(page.metrics.renderCancellationCount).toBeGreaterThan(0);
+  });
+
+  it('UI-GRAPH-NAV-02 / UI-NAV-REAL-01 / UI-NAV-REAL-03 overview mounts while graph render was pending', async () => {
+    const graph = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=forge-ai&flowDomain=CODE&maxNodes=0');
+    const graphPage = new KnowledgeGraphPage({
+      document: graph.window.document,
+      window: graph.window,
+      http: {},
+      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+    });
+    const data = largeGraphData(360);
+    graphPage.state.data = data;
+    const render = graphPage.renderPage(data);
+    expect(typeof (render as Promise<boolean>).then).toBe('function');
+
+    graphPage.dispose();
+    const overview = overviewDom();
+    const http = { get: vi.fn(() => Promise.resolve(overviewPayload())), post: vi.fn() };
+    const overviewPage = new KnowledgeOverviewPage({
+      document: overview.window.document,
+      window: overview.window,
+      http,
+      runtimeConfig: { activeJobPollIntervalMs: 60000, statusPollIntervalMs: 60000 }
+    });
+    overviewPage.mount();
+    await flushAsync(3);
+
+    expect(http.get).toHaveBeenCalledWith('/knowledge/overview', expect.any(Object));
+    expect(overview.window.document.getElementById('knowledgeSourcesBody')?.textContent).toContain('Forge AI');
+    expect(graph.window.document.querySelectorAll('.knowledge-graph-node')).toHaveLength(0);
+    expect(await render).toBe(false);
+    overviewPage.dispose();
+  });
+
+  it('UI-GRAPH-NAV-03 / UI-NAV-REAL-03 stale graph render ignored after source switch', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=source-a&flowDomain=CODE&maxNodes=0');
+    const page = new KnowledgeGraphPage({
+      document: dom.window.document,
+      window: dom.window,
+      http: {},
+      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+    });
+    const sourceA = largeGraphData(340, 'source-a', 'rev-source-a');
+    const sourceB = {
+      ...graphData('rev-source-b'),
+      sourceId: 'source-b',
+      sourceName: 'source-b graph',
+      nodes: [{ ...node('source-b-node'), label: 'source-b node' }],
+      edges: [],
+      meta: { returnedNodeCount: 1, returnedEdgeCount: 0, totalNodeCount: 1, totalEdgeCount: 0 }
+    };
+    page.state.data = sourceA;
+    const staleRender = page.renderPage(sourceA);
+    expect(typeof (staleRender as Promise<boolean>).then).toBe('function');
+
+    dom.window.history.replaceState(null, '', '/operator/knowledge-graph.html?sourceId=source-b&flowDomain=CODE');
+    page.state.data = sourceB;
+    const currentRender = page.renderPage(sourceB);
+    if (typeof (currentRender as Promise<boolean>)?.then === 'function') {
+      await currentRender;
+    }
+    expect(await staleRender).toBe(false);
+    await flushAsync(2);
+
+    const summary = dom.window.document.getElementById('knowledgeGraphSummary')?.textContent || '';
+    expect(summary).toContain('source-b graph');
+    expect(summary).not.toContain('source-a graph');
+    expect(dom.window.document.querySelector('[data-node-id="source-b-node"]')).toBeTruthy();
+    expect(dom.window.document.querySelector('[data-node-id^="source-a-node"]')).toBeNull();
+  });
+
+  it('UI-GRAPH-NAV-04 large graph render yields and can be interrupted', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=forge-ai&flowDomain=CODE&maxNodes=0');
+    const page = new KnowledgeGraphPage({
+      document: dom.window.document,
+      window: dom.window,
+      http: {},
+      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() },
+      runtimeConfig: { graphAsyncLayoutTicksPerFrame: 2 }
+    });
+    const data = largeGraphData(420);
+    page.state.data = data;
+    const render = page.renderPage(data);
+    expect(typeof (render as Promise<boolean>).then).toBe('function');
+    await flushAsync(2);
+    expect(page.metrics.layoutChunkCount).toBeGreaterThan(0);
+    expect(page.metrics.layoutYieldCount).toBeGreaterThan(0);
+
+    page.dispose();
+    expect(await render).toBe(false);
+    expect(page.metrics.layoutAbortCount).toBeGreaterThan(0);
+    expect(page.metrics.renderCancellationCount).toBeGreaterThan(0);
+    expect(dom.window.document.querySelectorAll('.knowledge-graph-node')).toHaveLength(0);
+  });
+
+  it('UI-GRAPH-NAV-05 visual parity after successful render', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=forge-ai&flowDomain=CODE&maxNodes=0');
+    const page = new KnowledgeGraphPage({
+      document: dom.window.document,
+      window: dom.window,
+      http: {},
+      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+    });
+    const data = largeGraphData(180);
+    page.state.data = data;
+    const render = page.renderPage(data);
+    if (typeof (render as Promise<boolean>)?.then === 'function') {
+      expect(await render).toBe(true);
+    }
+    await flushAsync(2);
+
+    const firstNode = page.state.nodes[0];
+    const circle = dom.window.document.querySelector(`[data-node-id="${firstNode.id}"] circle`);
+    expect(dom.window.document.querySelector('.knowledge-graph-viewport')).toBeTruthy();
+    expect(dom.window.document.querySelector('.knowledge-graph-edge.edge-calls')).toBeTruthy();
+    expect(dom.window.document.querySelector('.knowledge-graph-node-label')?.textContent).toContain('forge-ai Node');
+    expect(circle?.getAttribute('r')).toBe(String(knowledgeGraphNodeRadius(firstNode, data)));
+    page.fitKnowledgeGraph();
+    await flushAsync(2);
+    expect(page.state.transform.k).toBeGreaterThan(0);
+    expect(page.metrics.transformOnlyFrameCount).toBeGreaterThan(0);
+  });
+
+  it('UI-GRAPH-NAV-06 no request regression', async () => {
+    const dom = graphDom();
+    const requests: string[] = [];
+    const http = {
+      get: vi.fn((path: string) => {
+        requests.push(path);
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve(metadataPayload());
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(graphView());
+        }
+        if (path.includes('/knowledge/analysis/graph/node/n1')) {
+          return Promise.resolve({ item: { id: 'n1', evidence: [{ id: 'node-evidence' }] } });
+        }
+        if (path.includes('/knowledge/analysis/graph/edge/e1')) {
+          return Promise.resolve({ item: { id: 'e1', evidence: [{ id: 'edge-evidence' }] } });
+        }
+        throw new Error(`unexpected ${path}`);
+      }),
+      post: vi.fn()
+    };
+    const page = new KnowledgeGraphPage({
+      document: dom.window.document,
+      window: dom.window,
+      http,
+      runtimeConfig: { graphPollIntervalMs: 60000 }
+    });
+
+    page.mount();
+    await flushAsync();
+    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/metadata'))).toBe(true);
+    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/view'))).toBe(true);
+    expect(requests.some((path) => /analysis\/symbols|analysis\/relations|analysis\/graph\/slice|analysis\/graph($|\?)/.test(path))).toBe(false);
+    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/node/'))).toBe(false);
+    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/edge/'))).toBe(false);
+
+    page.selectNode('n1');
+    await page.openSelectedDetails();
+    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/node/n1'))).toBe(true);
+    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/edge/e1'))).toBe(false);
+    page.selectEdge('e1');
+    await page.openSelectedDetails();
+    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/edge/e1'))).toBe(true);
+    page.dispose();
   });
 
   it('UI-IT-08 resets filters, cursor ownership, and stale details', async () => {

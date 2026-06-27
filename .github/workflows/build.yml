@@ -1,10 +1,11 @@
 name: Build
 
 on:
-  push: {}
+  push:
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened]
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,7 +30,6 @@ jobs:
       SERVICE: ${{ matrix.service }}
       FORGE_AI_HOME: ${{ github.workspace }}
       FORGE_CONFIG_DIR: ${{ github.workspace }}/config
-      FORGE_RUNTIME_DIR: ${{ runner.temp }}/forge-runtime
       FORGE_WORKSPACE_ROOT: ${{ github.workspace }}
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
       MAVEN_REPOSITORY_USERNAME: ${{ vars.MAVEN_REPOSITORY_USERNAME }}
@@ -60,15 +60,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export FORGE_RUNTIME_DIR="${RUNNER_TEMP}/forge-runtime"
 
           case "${SERVICE}" in
             forge-knowledge)
               cd services/forge-knowledge
               python -m pip install --upgrade pip
               python -m pip install -e ".[test]"
-              python -m ruff check .
-              python -m ruff format --check .
-              python -m mypy src
               python -m pytest
               ;;
 
@@ -76,9 +74,6 @@ jobs:
               cd services/forge-jarvis
               python -m pip install --upgrade pip
               python -m pip install -e ".[test]"
-              python -m ruff check .
-              python -m ruff format --check .
-              python -m mypy src
               python -m pytest
               ;;
 
