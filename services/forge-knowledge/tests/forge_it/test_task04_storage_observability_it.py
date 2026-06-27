@@ -188,6 +188,7 @@ def test_it_storage_06_wal_checkpoint_and_bounded_growth(tmp_path):
     _, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     db_path = app_config.store_path
     before = _wal_size(db_path)
+    rows_written = 0
 
     reader = sqlite3.connect(db_path)
     try:
@@ -197,22 +198,30 @@ def test_it_storage_06_wal_checkpoint_and_bounded_growth(tmp_path):
         with sqlite3.connect(db_path) as writer:
             writer.execute("PRAGMA journal_mode=WAL")
             writer.execute("PRAGMA wal_autocheckpoint=1000000")
-            for batch in range(12):
-                payload = "x" * 2048
+            after_writes = before
+            for batch in range(1, 65):
+                payload = "x" * 8192
                 writer.execute(
                     """
                     INSERT INTO inventory_builds(started_at, completed_at, status, source_count, file_count, skipped_count, error_message)
                     VALUES (?, ?, 'COMPLETED', 0, 0, 0, ?)
                     """,
-                    (_old(batch + 1), _old(batch + 1), payload),
+                    (_old(batch), _old(batch), payload),
                 )
-            writer.commit()
-        after_writes = _wal_size(db_path)
+                rows_written = batch
+                if batch >= 12 and batch % 4 == 0:
+                    writer.commit()
+                    after_writes = _wal_size(db_path)
+                    if after_writes > before:
+                        break
+            else:
+                writer.commit()
+                after_writes = _wal_size(db_path)
     finally:
         reader.rollback()
         reader.close()
 
-    assert after_writes > before
+    assert after_writes > before, f"WAL did not grow after {rows_written} writes: before={before}, after={after_writes}"
 
     result = deps.storage_operations.run_maintenance(checkpoint_mode="TRUNCATE")
     after_checkpoint = _wal_size(db_path)
@@ -224,7 +233,7 @@ def test_it_storage_06_wal_checkpoint_and_bounded_growth(tmp_path):
     assert diagnostics["integrityCheck"] == "ok"
     assert diagnostics["foreignKeyCheckResult"] == "ok"
     with sqlite3.connect(db_path) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM inventory_builds").fetchone()[0] >= 12
+        assert conn.execute("SELECT COUNT(*) FROM inventory_builds").fetchone()[0] >= rows_written
 
 
 def test_it_storage_07_writer_plus_readers(tmp_path):
