@@ -53,6 +53,40 @@ function graphView(revision = 'rev-a') {
   };
 }
 
+function contractMetadataPayload(graphAvailable = true) {
+  return {
+    ...metadataPayload(84, 'COMPLETED', graphAvailable),
+    sourceId: 'app-afesox-contracts',
+    sourceName: 'API Contracts',
+    source: { sourceId: 'app-afesox-contracts', displayName: 'API Contracts', group: 'api', path: 'contracts/openapi.yaml', rootExists: true },
+    snapshotId: graphAvailable ? 'contracts-snapshot' : null,
+    graphRevision: graphAvailable ? 'contracts-rev' : null
+  };
+}
+
+function contractGraphView(revision = 'contracts-rev', overrides: Record<string, unknown> = {}) {
+  return {
+    ...graphView(revision),
+    sourceId: 'app-afesox-contracts',
+    sourceName: 'API Contracts',
+    snapshotId: 'contracts-snapshot',
+    graphRevision: revision,
+    queryFingerprint: `contracts-${revision}`,
+    nodes: [node('contract-node')],
+    edges: [],
+    totalMatchingNodeCount: 1,
+    totalMatchingEdgeCount: 0,
+    visibleNodeCount: 1,
+    visibleEdgeCount: 0,
+    hiddenNodeCount: 0,
+    hiddenEdgeCount: 0,
+    hiddenBoundaryEdgeCount: 0,
+    internalEdgeCount: 0,
+    hasMore: false,
+    ...overrides
+  };
+}
+
 function graphDom(url = 'http://127.0.0.1/operator/knowledge-graph.html?sourceId=forge-ai&flowDomain=CODE') {
   const dom = new JSDOM(`<!doctype html>
     <body data-page="knowledge-graph">
@@ -362,6 +396,195 @@ describe('Knowledge graph modular contract', () => {
     await flushAsync();
     expect(http.get).toHaveBeenCalledWith('/knowledge/analysis/graph/metadata?sourceId=forge-ai', expect.any(Object));
     expect(http.get.mock.calls.filter(([path]) => path.includes('/knowledge/analysis/graph/metadata'))).toHaveLength(1);
+    page.dispose();
+  });
+
+  it('UI-GRAPH-STALE-01 opening contract source does not send stale revision', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE&graphRevision=old-rev&cursor=old-cursor');
+    const requests: string[] = [];
+    const http = {
+      get: vi.fn((path: string) => {
+        requests.push(path);
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve(contractMetadataPayload());
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(contractGraphView());
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+
+    const metadataRequest = requests.find((path) => path.includes('/knowledge/analysis/graph/metadata'));
+    const viewRequest = requests.find((path) => path.includes('/knowledge/analysis/graph/view'));
+    expect(new URL(metadataRequest || '', 'http://127.0.0.1').searchParams.get('sourceId')).toBe('app-afesox-contracts');
+    const viewUrl = new URL(viewRequest || '', 'http://127.0.0.1');
+    expect(viewUrl.searchParams.get('sourceId')).toBe('app-afesox-contracts');
+    expect(viewUrl.searchParams.has('graphRevision')).toBe(false);
+    expect(viewUrl.searchParams.has('cursor')).toBe(false);
+    expect(dom.window.document.getElementById('knowledgeGraphError')?.textContent).not.toContain('GRAPH_SNAPSHOT_STALE');
+    page.dispose();
+  });
+
+  it('UI-GRAPH-STALE-02 source switch resets graph state', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=forge-ai&flowDomain=CODE');
+    const requests: string[] = [];
+    const http = {
+      get: vi.fn((path: string) => {
+        requests.push(path);
+        const url = new URL(path, 'http://127.0.0.1');
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve(url.searchParams.get('sourceId') === 'app-afesox-contracts'
+            ? contractMetadataPayload()
+            : metadataPayload());
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(url.searchParams.get('sourceId') === 'app-afesox-contracts'
+            ? contractGraphView('contracts-switched')
+            : graphView('source-a-rev'));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+    dom.window.history.replaceState(null, '', '/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE&graphRevision=source-a-rev&cursor=source-a-cursor');
+    page.resetFilterState();
+    await page.loadMetadata({ manual: true });
+    await page.loadGraph({ manual: true });
+
+    const contractViewRequests = requests.filter((path) => path.includes('/knowledge/analysis/graph/view') && path.includes('sourceId=app-afesox-contracts'));
+    expect(contractViewRequests).toHaveLength(1);
+    const contractViewUrl = new URL(contractViewRequests[0] as string, 'http://127.0.0.1');
+    expect(contractViewUrl.searchParams.has('graphRevision')).toBe(false);
+    expect(contractViewUrl.searchParams.has('cursor')).toBe(false);
+    expect(dom.window.document.getElementById('knowledgeGraphSourceTitle')?.textContent).toBe('API Contracts');
+    expect(page.state.data?.sourceId).toBe('app-afesox-contracts');
+    expect(dom.window.document.getElementById('knowledgeGraphError')?.textContent).toBe('');
+    page.dispose();
+  });
+
+  it('UI-GRAPH-STALE-03 real stale graph error is graph-only and retry clears state', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE&graphRevision=old-rev');
+    const requests: string[] = [];
+    let viewCalls = 0;
+    const http = {
+      get: vi.fn((path: string) => {
+        requests.push(path);
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve(contractMetadataPayload());
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          viewCalls += 1;
+          if (viewCalls === 1) {
+            return Promise.reject(Object.assign(new Error('GRAPH_SNAPSHOT_STALE'), { code: 'GRAPH_SNAPSHOT_STALE', status: 409 }));
+          }
+          return Promise.resolve(contractGraphView('contracts-retry'));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+    expect(dom.window.document.getElementById('knowledgeGraphSourceTitle')?.textContent).toBe('API Contracts');
+    expect(dom.window.document.getElementById('knowledgeGraphError')?.textContent).toContain('GRAPH_SNAPSHOT_STALE');
+
+    dom.window.document.getElementById('refreshKnowledgeGraph')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flushAsync();
+
+    expect(viewCalls).toBe(2);
+    const retryViewRequests = requests.filter((path) => path.includes('/knowledge/analysis/graph/view'));
+    const retryViewUrl = new URL(retryViewRequests[retryViewRequests.length - 1] || '', 'http://127.0.0.1');
+    expect(retryViewUrl.searchParams.has('graphRevision')).toBe(false);
+    expect(retryViewUrl.searchParams.has('cursor')).toBe(false);
+    expect(dom.window.document.getElementById('knowledgeGraphError')?.textContent).toBe('');
+    expect(page.state.data?.graphRevision).toBe('contracts-retry');
+    page.dispose();
+  });
+
+  it('UI-GRAPH-STALE-04 empty/no-edge graph renders controlled state', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE');
+    const http = {
+      get: vi.fn((path: string) => {
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve(contractMetadataPayload());
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(contractGraphView('contracts-empty'));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('knowledgeGraphSourceTitle')?.textContent).toBe('API Contracts');
+    expect(dom.window.document.getElementById('knowledgeGraphError')?.textContent).toBe('');
+    expect((page.state.nodes as Array<{ id: string }>).map((item) => item.id)).toEqual(['contract-node']);
+    expect(page.state.edges).toEqual([]);
+    expect(dom.window.document.querySelectorAll('.knowledge-graph-node')).toHaveLength(1);
+    page.dispose();
+  });
+
+  it('UI-GRAPH-STALE-05 filter changes do not reuse stale state', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE&graphRevision=old-rev&cursor=old-cursor');
+    const requests: string[] = [];
+    let resolveOldView: (value: unknown) => void = () => undefined;
+    const oldView = new Promise((resolve) => {
+      resolveOldView = resolve;
+    });
+    let viewCalls = 0;
+    const http = {
+      get: vi.fn((path: string) => {
+        requests.push(path);
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve(contractMetadataPayload());
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          viewCalls += 1;
+          return viewCalls === 1
+            ? oldView
+            : Promise.resolve(contractGraphView('contracts-filtered', {
+              nodes: [node('filtered-contract-node')],
+              visibleNodeCount: 1,
+              totalMatchingNodeCount: 1
+            }));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync(2);
+    (dom.window.document.getElementById('knowledgeGraphSearch') as HTMLInputElement).value = 'contract';
+    page.updateUrlFromControls();
+    page.resetFilterState();
+    await page.loadGraph({ manual: true });
+    resolveOldView(contractGraphView('contracts-old', { nodes: [node('old-contract-node')] }));
+    await flushAsync();
+
+    expect(page.state.data?.graphRevision).toBe('contracts-filtered');
+    expect((page.state.nodes as Array<{ id: string }>).map((item) => item.id)).toEqual(['filtered-contract-node']);
+    const contractViewRequests = requests.filter((path) => path.includes('/knowledge/analysis/graph/view'));
+    expect(contractViewRequests).toHaveLength(2);
+    contractViewRequests.forEach((path) => {
+      const url = new URL(path, 'http://127.0.0.1');
+      expect(url.searchParams.get('sourceId')).toBe('app-afesox-contracts');
+      expect(url.searchParams.has('graphRevision')).toBe(false);
+      expect(url.searchParams.has('cursor')).toBe(false);
+    });
+    expect(new URL(contractViewRequests[1] as string, 'http://127.0.0.1').searchParams.get('search')).toBe('contract');
     page.dispose();
   });
 

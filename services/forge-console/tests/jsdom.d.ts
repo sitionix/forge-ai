@@ -12,6 +12,7 @@ declare module '../src/operator/operator-bootstrap.js' {
 declare module '../src/operator/knowledge-overview-page.js' {
   export const KnowledgeOverviewPage: any;
   export const normalizeKnowledgeOverviewPayload: any;
+  export const deriveKnowledgeSourceAction: any;
 }
 
 declare module '../src/operator/knowledge-graph-client.js' {

@@ -1396,19 +1396,7 @@ class AnalysisStore:
                     """,
                     (selected_source_id,),
                 ).fetchone()
-            current = None
-            if selected_source_id:
-                current = conn.execute(
-                    """
-                    SELECT current.snapshot_id, current.published_at, snapshot.content_identity
-                    FROM graph_current_snapshots current
-                    JOIN graph_snapshots snapshot
-                      ON snapshot.source_id = current.source_id
-                     AND snapshot.snapshot_id = current.snapshot_id
-                    WHERE current.source_id = ?
-                    """,
-                    (selected_source_id,),
-                ).fetchone()
+            current = self._current_snapshot_row(conn, selected_source_id) if selected_source_id else None
             diagnostics = None
             if selected_source_id:
                 diagnostics = conn.execute(
@@ -3073,7 +3061,10 @@ class AnalysisStore:
             """
             SELECT current.snapshot_id, snapshot.published_at
             FROM graph_current_snapshots current
-            JOIN graph_snapshots snapshot ON snapshot.snapshot_id = current.snapshot_id
+            JOIN graph_snapshots snapshot
+              ON snapshot.source_id = current.source_id
+             AND snapshot.snapshot_id = current.snapshot_id
+             AND snapshot.state IN ('PUBLISHED', 'RETIRED')
             WHERE current.source_id = ?
             """,
             (row["source_id"],),
@@ -3326,11 +3317,35 @@ class AnalysisStore:
         }
 
     def _current_snapshot_id(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Optional[str]:
-        if not source_id:
-            row = conn.execute("SELECT snapshot_id FROM graph_current_snapshots ORDER BY published_at DESC LIMIT 1").fetchone()
-            return row["snapshot_id"] if row else None
-        row = conn.execute("SELECT snapshot_id FROM graph_current_snapshots WHERE source_id = ?", (source_id,)).fetchone()
+        row = self._current_snapshot_row(conn, source_id)
         return row["snapshot_id"] if row else None
+
+    def _current_snapshot_row(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Optional[sqlite3.Row]:
+        if not source_id:
+            return conn.execute(
+                """
+                SELECT current.snapshot_id, current.published_at, snapshot.content_identity, snapshot.source_id
+                FROM graph_current_snapshots current
+                JOIN graph_snapshots snapshot
+                  ON snapshot.source_id = current.source_id
+                 AND snapshot.snapshot_id = current.snapshot_id
+                 AND snapshot.state IN ('PUBLISHED', 'RETIRED')
+                ORDER BY current.published_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return conn.execute(
+            """
+            SELECT current.snapshot_id, current.published_at, snapshot.content_identity, snapshot.source_id
+            FROM graph_current_snapshots current
+            JOIN graph_snapshots snapshot
+              ON snapshot.source_id = current.source_id
+             AND snapshot.snapshot_id = current.snapshot_id
+             AND snapshot.state IN ('PUBLISHED', 'RETIRED')
+            WHERE current.source_id = ?
+            """,
+            (source_id,),
+        ).fetchone()
 
     def _snapshot_id_from_revision(self, graph_revision: str) -> Optional[str]:
         marker = ":graph-snapshot:"

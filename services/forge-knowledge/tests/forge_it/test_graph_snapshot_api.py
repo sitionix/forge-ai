@@ -474,6 +474,146 @@ def test_it_graph_15_final_knowledge_route_contract(tmp_path):
         assert client.get("/api/v1/knowledge/analysis/relations?sourceId=forge-ai").status_code == 404
 
 
+def test_it_graph_stale_01_normal_current_get_for_contract_source_does_not_409(tmp_path):
+    source_id = "app-afesox-contracts"
+    snapshot_id = "contracts-1:app-afesox-contracts"
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    insert_graph_snapshot(app_config.store_path, source_id, snapshot_id, 3, 0)
+    publish_graph_snapshot(app_config.store_path, snapshot_id)
+
+    with TestClient(app) as client:
+        metadata = client.get(f"/api/v1/knowledge/analysis/graph/metadata?sourceId={source_id}")
+        manifest = client.get(f"/api/v1/knowledge/analysis/graph/manifest?sourceId={source_id}&flowDomain=CODE")
+        view = client.get(f"/api/v1/knowledge/analysis/graph/view?sourceId={source_id}&flowDomain=CODE&maxNodes=80")
+        revision = quote(manifest.json()["graphRevision"])
+        nodes = client.get(f"/api/v1/knowledge/analysis/graph/nodes?sourceId={source_id}&flowDomain=CODE&graphRevision={revision}&pageSize=10")
+        edges = client.get(f"/api/v1/knowledge/analysis/graph/edges?sourceId={source_id}&flowDomain=CODE&graphRevision={revision}&pageSize=10")
+
+    for response in (metadata, manifest, view, nodes, edges):
+        assert response.status_code == 200
+        assert response.json().get("code") != "GRAPH_SNAPSHOT_STALE"
+    assert metadata.json()["graphAvailable"] is True
+    assert manifest.json()["snapshotId"] == snapshot_id
+    assert view.json()["sourceId"] == source_id
+    assert view.json()["edges"] == []
+    assert edges.json()["items"] == []
+
+
+def test_it_graph_stale_02_empty_graph_no_edges_is_not_stale(tmp_path):
+    source_id = "app-afesox-contracts"
+    snapshot_id = "contracts-empty:app-afesox-contracts"
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    insert_graph_snapshot(app_config.store_path, source_id, snapshot_id, 4, 0)
+    publish_graph_snapshot(app_config.store_path, snapshot_id)
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/knowledge/analysis/graph/view?sourceId={source_id}&flowDomain=CODE&maxNodes=80")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body.get("code") != "GRAPH_SNAPSHOT_STALE"
+    assert body["visibleNodeCount"] == 4
+    assert body["visibleEdgeCount"] == 0
+    assert body["totalMatchingEdgeCount"] == 0
+    assert body["hiddenEdgeCount"] == 0
+    assert body["edges"] == []
+
+
+def test_it_graph_stale_03_no_current_snapshot_is_not_stale(tmp_path):
+    source_id = "app-afesox-contracts"
+    expired_snapshot = "expired-contracts:app-afesox-contracts"
+    now = datetime.now(timezone.utc).isoformat()
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    with sqlite3.connect(app_config.store_path) as conn:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at)
+            VALUES (?, 'API Contracts', 'api', '.', 1, '[]', '{}', ?)
+            """,
+            (source_id, now),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO graph_snapshot_tombstones(snapshot_id, source_id, expired_at, reason)
+            VALUES (?, ?, ?, 'RETENTION')
+            """,
+            (expired_snapshot, source_id, now),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO graph_current_snapshots(source_id, snapshot_id, published_at)
+            VALUES (?, ?, ?)
+            """,
+            (source_id, expired_snapshot, now),
+        )
+
+    with TestClient(app) as client:
+        metadata = client.get(f"/api/v1/knowledge/analysis/graph/metadata?sourceId={source_id}")
+        manifest = client.get(f"/api/v1/knowledge/analysis/graph/manifest?sourceId={source_id}&flowDomain=CODE")
+        view = client.get(f"/api/v1/knowledge/analysis/graph/view?sourceId={source_id}&flowDomain=CODE&maxNodes=80")
+
+    for response in (metadata, manifest, view):
+        assert response.status_code == 200
+        assert response.json().get("code") != "GRAPH_SNAPSHOT_STALE"
+    assert metadata.json()["graphAvailable"] is False
+    assert manifest.json()["snapshotId"] is None
+    assert manifest.json()["totalNodeCount"] == 0
+    assert view.json()["snapshotId"] is None
+    assert view.json()["nodes"] == []
+    assert view.json()["edges"] == []
+
+
+def test_it_graph_stale_04_explicit_stale_revision_returns_controlled_409(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=3, edge_count=2)
+
+    with TestClient(app) as client:
+        stale = client.get("/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&graphRevision=stale&pageSize=10")
+
+    assert stale.status_code == 409
+    body = stale.json()
+    assert body["code"] == "GRAPH_SNAPSHOT_STALE"
+    assert body["correlationId"]
+
+
+def test_it_graph_stale_05_source_switch_clears_stale_state(tmp_path):
+    source_id = "app-afesox-contracts"
+    snapshot_id = "contracts-switch:app-afesox-contracts"
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=10, edge_count=9)
+    insert_graph_snapshot(app_config.store_path, source_id, snapshot_id, 2, 0)
+    publish_graph_snapshot(app_config.store_path, snapshot_id)
+
+    with TestClient(app) as client:
+        source_a_manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
+        source_a_page = client.get(
+            f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&graphRevision={quote(source_a_manifest['graphRevision'])}&pageSize=2"
+        ).json()
+        metadata_b = client.get(f"/api/v1/knowledge/analysis/graph/metadata?sourceId={source_id}")
+        manifest_b = client.get(f"/api/v1/knowledge/analysis/graph/manifest?sourceId={source_id}&flowDomain=CODE")
+        view_b = client.get(f"/api/v1/knowledge/analysis/graph/view?sourceId={source_id}&flowDomain=CODE&maxNodes=80")
+
+    assert source_a_page["nextCursor"]
+    for response in (metadata_b, manifest_b, view_b):
+        assert response.status_code == 200
+        assert response.json().get("code") != "GRAPH_SNAPSHOT_STALE"
+    assert metadata_b.json()["sourceId"] == source_id
+    assert manifest_b.json()["snapshotId"] == snapshot_id
+    assert view_b.json()["sourceId"] == source_id
+    assert view_b.json()["edges"] == []
+
+
 def test_it_graph_meta_01_metadata_endpoint_independent_of_graph_metrics(tmp_path):
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()
@@ -1010,6 +1150,11 @@ def traverse_pages(client: TestClient, kind: str, graph_revision: str, page_size
             assert not cursor
             return items
         assert cursor
+
+
+def publish_graph_snapshot(db_path, snapshot_id: str) -> None:
+    store = AnalysisStore(db_path)
+    store._write_with_busy_retry(lambda conn: store._publish_graph_snapshot(conn, snapshot_id))
 
 
 def sqlite_objects(db_path):

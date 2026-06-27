@@ -12,6 +12,18 @@ import { RequestCoordinator } from './request-coordinator.js';
 
 const OVERVIEW_ENDPOINT = '/knowledge/overview';
 const ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING', 'STOP_REQUESTED']);
+const SUPPORTED_ANALYSIS_STATUSES = new Set([
+  'NOT_ANALYZED',
+  'QUEUED',
+  'RUNNING',
+  'STOP_REQUESTED',
+  'PARTIAL',
+  'FAILED',
+  'COMPLETED',
+  'COMPLETED_WITH_FAILURES',
+  'READY',
+  'EMPTY'
+]);
 
 export class KnowledgeOverviewPage {
   constructor(options) {
@@ -166,35 +178,62 @@ export class KnowledgeOverviewPage {
   }
 
   async handleSourceAction(event) {
-    const stopButton = event.target.closest('.knowledge-source-stop-button');
-    if (stopButton) {
-      await this.stopAnalysis(stopButton.dataset.sourceId || '', stopButton.dataset.jobId || '', stopButton);
+    const actionButton = event.target.closest('[data-knowledge-action]');
+    if (!actionButton?.dataset.sourceId) {
       return;
     }
-    const analyzeButton = event.target.closest('.knowledge-source-analysis-button');
-    if (analyzeButton?.dataset.sourceId) {
-      await this.startAnalysis(analyzeButton.dataset.sourceId, analyzeButton);
+    const sourceId = actionButton.dataset.sourceId || '';
+    const action = this.currentSourceAction(sourceId);
+    if (action.kind === 'stop') {
+      await this.stopAnalysis(sourceId, action.jobId || '', actionButton);
+      return;
+    }
+    if (action.kind === 'analyze' || action.kind === 'retry-failed') {
+      await this.startAnalysis(sourceId, action, actionButton);
     }
   }
 
-  async startAnalysis(sourceId, button) {
+  currentSourceAction(sourceId) {
+    const source = (this.lastGoodStatus?.services || []).find((item) => item.sourceId === sourceId);
+    return deriveKnowledgeSourceAction(source || { sourceId, analysis: {} });
+  }
+
+  async startAnalysis(sourceId, action, button) {
     if (this.analysisStartsInFlight.has(sourceId)) {
+      return;
+    }
+    if (!['analyze', 'retry-failed'].includes(action?.kind)) {
       return;
     }
     this.analysisStartsInFlight.add(sourceId);
     if (button) {
       button.disabled = true;
-      button.textContent = 'Starting...';
+      button.textContent = action.pendingLabel;
     }
+    const endpoint = action.kind === 'retry-failed'
+      ? '/knowledge/analysis/retry-failed'
+      : '/knowledge/analysis/build';
+    const body = action.kind === 'retry-failed'
+      ? {
+          sourceIds: sourceId ? [sourceId] : [],
+          concurrency: 1
+        }
+      : {
+          sourceIds: sourceId ? [sourceId] : [],
+          groups: [],
+          force: false,
+          maxFiles: null,
+          concurrency: 1,
+          selection: 'DEFAULT'
+        };
     try {
-      await this.http.post('/knowledge/analysis/build', {
-        sourceIds: sourceId ? [sourceId] : [],
-        groups: [],
-        force: false,
-        maxFiles: null,
-        concurrency: 1,
-        selection: 'DEFAULT'
-      });
+      const response = await this.http.post(endpoint, body);
+      if (action.kind === 'retry-failed' && isRetryNoop(response)) {
+        const error = new Error('No failed files are available to retry.');
+        error.code = response?.result || response?.status || 'NO_FAILED_FILES';
+        error.endpoint = endpoint;
+        throw error;
+      }
       renderRequestError('knowledgeAnalysisError', null, {}, this.document);
       const status = await this.load({ manual: true, caller: 'knowledge-analysis-start' });
       if (status) {
@@ -205,14 +244,14 @@ export class KnowledgeOverviewPage {
       }
     } catch (error) {
       renderRequestError('knowledgeAnalysisError', error, {
-        endpoint: '/knowledge/analysis/build',
+        endpoint,
         title: 'Knowledge action failed'
       }, this.document);
     } finally {
       this.analysisStartsInFlight.delete(sourceId);
       if (button) {
         button.disabled = false;
-        button.textContent = 'Analyze';
+        button.textContent = action.label;
       }
     }
   }
@@ -305,7 +344,6 @@ export function normalizeKnowledgeOverviewPayload(payload) {
 }
 
 export function validateKnowledgeOverviewSnapshot(serviceStatus, previous) {
-  const supportedStatuses = new Set(['NOT_ANALYZED', 'RUNNING', 'STOP_REQUESTED', 'PARTIAL', 'COMPLETED', 'EMPTY']);
   if (!serviceStatus || typeof serviceStatus !== 'object') {
     return { valid: false, reason: 'Malformed status payload' };
   }
@@ -334,7 +372,7 @@ export function validateKnowledgeOverviewSnapshot(serviceStatus, previous) {
     if ([inventoryEligible, inventoryCount, analyzed, processed, failed, pending].some((value) => value === null)) {
       return { valid: false, reason: `Missing KPI counters for ${service.sourceId}` };
     }
-    if (!supportedStatuses.has(status)) {
+    if (!SUPPORTED_ANALYSIS_STATUSES.has(status)) {
       return { valid: false, reason: `Unsupported analysis status for ${service.sourceId}` };
     }
     if (analyzed > inventoryCount || processed > inventoryCount || failed > inventoryCount || analyzed > processed) {
@@ -400,10 +438,7 @@ function renderKnowledgeSourceCells(source) {
         ${extraTags ? `<span class="knowledge-chip">+${escapeHtml(extraTags)}</span>` : ''}
       </div>`
     : '';
-  const isRunning = ACTIVE_STATUSES.has(String(analysis.status || '').toUpperCase()) && analysis.activeJobId;
-  const actionButton = isRunning
-    ? `<button class="button knowledge-source-stop-button" data-source-id="${escapeHtml(source.sourceId || '')}" data-job-id="${escapeHtml(analysis.activeJobId || '')}">Stop</button>`
-    : `<button class="button knowledge-source-analysis-button" data-source-id="${escapeHtml(source.sourceId || '')}">Analyze</button>`;
+  const actionButton = renderKnowledgeSourceAction(deriveKnowledgeSourceAction(source));
   return `
     <td>
       <div class="knowledge-source-label">
@@ -423,6 +458,109 @@ function renderKnowledgeSourceCells(source) {
       </div>
     </td>
   `;
+}
+
+export function deriveKnowledgeSourceAction(sourceOverview) {
+  const sourceId = sourceOverview?.sourceId || '';
+  const analysis = sourceOverview?.analysis || {};
+  const status = String(analysis.status || '').toUpperCase();
+  const rawMetrics = rawKnowledgeAnalysisMetrics(analysis);
+  const metrics = knowledgeAnalysisMetrics(analysis);
+  if (!sourceId) {
+    return disabledKnowledgeSourceAction('Unavailable', 'Missing source id');
+  }
+  if (!SUPPORTED_ANALYSIS_STATUSES.has(status)) {
+    return disabledKnowledgeSourceAction('Unavailable', `Unsupported analysis status: ${status || 'missing'}`);
+  }
+  if ([rawMetrics.total, rawMetrics.processed, rawMetrics.failed].some((value) => value === null)) {
+    return disabledKnowledgeSourceAction('Unavailable', 'Missing analysis counters');
+  }
+  if (rawMetrics.processed > rawMetrics.total || rawMetrics.failed > rawMetrics.total || metrics.analyzed > rawMetrics.processed) {
+    return disabledKnowledgeSourceAction('Unavailable', 'Invalid analysis counters');
+  }
+  if (ACTIVE_STATUSES.has(status)) {
+    if (analysis.activeJobId) {
+      return {
+        kind: 'stop',
+        label: 'Stop',
+        pendingLabel: 'Stopping...',
+        sourceId,
+        jobId: analysis.activeJobId,
+        disabled: false
+      };
+    }
+    return disabledKnowledgeSourceAction(status === 'STOP_REQUESTED' ? 'Stopping...' : 'Running', 'Analysis job is active');
+  }
+  if (metrics.total > 0 && metrics.processed < metrics.total) {
+    return {
+      kind: 'analyze',
+      label: 'Analyze',
+      pendingLabel: 'Starting...',
+      sourceId,
+      disabled: false
+    };
+  }
+  if (metrics.total > 0 && metrics.processed >= metrics.total && metrics.failed > 0) {
+    return {
+      kind: 'retry-failed',
+      label: 'Retry Failed',
+      pendingLabel: 'Retrying...',
+      sourceId,
+      disabled: false
+    };
+  }
+  return {
+    kind: 'complete',
+    label: metrics.total > 0 ? 'Complete' : 'No files',
+    sourceId,
+    disabled: true
+  };
+}
+
+function renderKnowledgeSourceAction(action) {
+  if (action.kind === 'complete') {
+    return `<span class="knowledge-source-action-state">${escapeHtml(action.label)}</span>`;
+  }
+  if (action.kind === 'invalid') {
+    return `<button class="button ghost dark knowledge-source-action-disabled" type="button" disabled title="${escapeHtml(action.reason || '')}">${escapeHtml(action.label)}</button>`;
+  }
+  const className = action.kind === 'stop' ? 'knowledge-source-stop-button' : 'knowledge-source-analysis-button';
+  const job = action.jobId ? ` data-job-id="${escapeHtml(action.jobId)}"` : '';
+  return `<button class="button ${className}" type="button" data-knowledge-action="${escapeHtml(action.kind)}" data-source-id="${escapeHtml(action.sourceId || '')}"${job}>${escapeHtml(action.label)}</button>`;
+}
+
+function disabledKnowledgeSourceAction(label, reason) {
+  return {
+    kind: 'invalid',
+    label,
+    reason,
+    disabled: true
+  };
+}
+
+function rawKnowledgeAnalysisMetrics(analysis) {
+  return {
+    total: firstOptionalNonNegativeNumber(analysis?.inventoryFileCount, analysis?.totalFiles, analysis?.totalFileCount, analysis?.fileCount),
+    processed: firstOptionalNonNegativeNumber(analysis?.processedFileCount, analysis?.processedFiles),
+    failed: firstOptionalNonNegativeNumber(analysis?.failedFileCount, analysis?.failedFiles)
+  };
+}
+
+function firstOptionalNonNegativeNumber(...values) {
+  for (const value of values) {
+    const number = optionalNonNegativeNumber(value);
+    if (number !== null) {
+      return number;
+    }
+  }
+  return null;
+}
+
+function isRetryNoop(response) {
+  return response?.result === 'NO_FAILED_FILES'
+    || response?.status === 'NO_FAILED_FILES'
+    || response?.job?.status === 'NO_FAILED_FILES'
+    || response?.selectedFileCount === 0;
 }
 
 function renderKnowledgeInventoryMini(inventory) {
