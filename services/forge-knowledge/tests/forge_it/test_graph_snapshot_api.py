@@ -380,7 +380,7 @@ def test_it_graph_13_bounded_pages_sql_first_filtering_and_fixed_query_counts(tm
         assert edge_detail_response.status_code == 200
         assert len(node_sql) == 2
         assert len(edge_sql) == 2
-        assert len(node_detail_sql) == 3
+        assert len(node_detail_sql) == 5
         assert len(edge_detail_sql) == 3
         assert " ORDER BY n.id" in node_sql[-1] and " LIMIT " in node_sql[-1]
         assert " ORDER BY e.id" in edge_sql[-1] and " LIMIT " in edge_sql[-1]
@@ -392,7 +392,7 @@ def test_it_graph_13_bounded_pages_sql_first_filtering_and_fixed_query_counts(tm
         assert all("evidence" not in item for item in edges)
         observed_counts.append((len(manifest_sql), len(node_sql), len(edge_sql), len(node_detail_sql), len(edge_detail_sql)))
 
-    assert observed_counts[0] == observed_counts[1] == (2, 2, 2, 3, 3)
+    assert observed_counts[0] == observed_counts[1] == (2, 2, 2, 5, 3)
 
 
 def test_it_graph_14_complete_snapshot_specific_node_edge_detail_error_matrix(tmp_path):
@@ -455,6 +455,128 @@ def test_it_graph_14_complete_snapshot_specific_node_edge_detail_error_matrix(tm
     assert never_snapshot.json()["code"] == "GRAPH_SNAPSHOT_NOT_FOUND"
     assert expired_snapshot.status_code == 410
     assert expired_snapshot.json()["code"] == "GRAPH_SNAPSHOT_EXPIRED"
+
+
+def test_it_graph_node_details_01_node_detail_includes_responsibility_summary_fields(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=3, edge_count=2)
+
+    with TestClient(app) as client:
+        manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
+        response = client.get(
+            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}&includeEvidence=true"
+        )
+
+    item = response.json()["item"]
+    assert response.status_code == 200
+    assert item["claimSummary"] == "Fixture responsibility"
+    assert item["responsibilitySummary"] == "Fixture responsibility"
+    assert item["claims"][0]["summary"] == "Fixture responsibility"
+    assert item["evidence"][0]["id"] == "evidence-node-0"
+
+
+def test_it_graph_node_details_02_node_detail_includes_bounded_outgoing_edges(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=40, edge_count=0)
+    add_node_detail_relation_fixture(app_config.store_path, outgoing_count=30, incoming_count=1)
+
+    with TestClient(app) as client:
+        manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
+        response = client.get(
+            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}"
+        )
+
+    outgoing = response.json()["item"]["relations"]["outgoing"]
+    first = outgoing["items"][0]
+    assert response.status_code == 200
+    assert outgoing["totalCount"] == 30
+    assert len(outgoing["items"]) == 25
+    assert first["edgeKind"] == "CALLS"
+    assert first["sourceNodeId"] == "node-00000"
+    assert first["sourceName"] == "Name0"
+    assert first["sourceKind"] == "FILE"
+    assert first["targetNodeId"] == "node-00001"
+    assert first["targetName"] == "Name1"
+    assert first["targetKind"] == "TYPE"
+    assert first["sourcePath"] == "src/GraphFixture.java"
+    assert first["lineStart"] == 10
+    assert first["lineEnd"] == 10
+    assert first["confidence"] == 0.8
+    assert first["evidenceCount"] == 0
+
+
+def test_it_graph_node_details_03_node_detail_includes_bounded_incoming_edges(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=40, edge_count=0)
+    add_node_detail_relation_fixture(app_config.store_path, outgoing_count=1, incoming_count=30)
+
+    with TestClient(app) as client:
+        manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
+        response = client.get(
+            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}"
+        )
+
+    incoming = response.json()["item"]["relations"]["incoming"]
+    first = incoming["items"][0]
+    assert response.status_code == 200
+    assert incoming["totalCount"] == 30
+    assert len(incoming["items"]) == 25
+    assert first["edgeKind"] == "REFERENCES"
+    assert first["sourceNodeId"] == "node-00001"
+    assert first["sourceName"] == "Name1"
+    assert first["sourceKind"] == "TYPE"
+    assert first["targetNodeId"] == "node-00000"
+    assert first["targetName"] == "Name0"
+    assert first["targetKind"] == "FILE"
+
+
+def test_it_graph_node_details_04_node_with_no_edges_returns_empty_relation_groups(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=3, edge_count=0)
+
+    with TestClient(app) as client:
+        manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
+        response = client.get(
+            f"/api/v1/knowledge/analysis/graph/node/node-00002?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}"
+        )
+
+    relations = response.json()["item"]["relations"]
+    assert response.status_code == 200
+    assert relations["incoming"] == {"totalCount": 0, "items": []}
+    assert relations["outgoing"] == {"totalCount": 0, "items": []}
+
+
+def test_it_graph_node_details_05_wrong_source_and_stale_revision_cannot_leak_edges(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_graph_fixture(app_config.store_path, node_count=3, edge_count=0)
+
+    with TestClient(app) as client:
+        manifest_a = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
+        wrong_source = client.get(
+            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=other&graphRevision={quote(manifest_a['graphRevision'])}"
+        )
+        insert_graph_snapshot(app_config.store_path, "forge-ai", "b:forge-ai", 3, 2, state="BUILDING")
+        AnalysisStore(app_config.store_path)._write_with_busy_retry(lambda conn: AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, "b:forge-ai"))
+        stale_detail = client.get(
+            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}"
+        )
+
+    assert wrong_source.status_code == 409
+    assert wrong_source.json()["code"] == "GRAPH_SNAPSHOT_SOURCE_MISMATCH"
+    assert stale_detail.status_code == 200
+    assert stale_detail.json()["snapshotId"] == manifest_a["snapshotId"]
+    assert stale_detail.json()["item"]["relations"]["incoming"]["totalCount"] == 0
+    assert stale_detail.json()["item"]["relations"]["outgoing"]["totalCount"] == 0
 
 
 def test_it_graph_15_final_knowledge_route_contract(tmp_path):
@@ -1713,6 +1835,53 @@ def seed_graph_fixture(db_path, node_count: int, edge_count: int) -> None:
         )
 
     refresh_snapshot_projection(db_path, snapshot_id, "forge-ai", now)
+
+
+def add_node_detail_relation_fixture(db_path, outgoing_count: int, incoming_count: int) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    snapshot_id = "job-1:forge-ai"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        for index in range(outgoing_count):
+            target_index = (index % 39) + 1
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_graph_edges(
+                    id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id, to_node_id, edge_type,
+                    resolution_status, confidence, evidence_id, unresolved_target_json, metadata_json, status,
+                    created_at, fact_origin, flow_domain
+                )
+                VALUES (?, ?, 'job-1', 'forge-ai', 1, 1, 'node-00000', ?, 'CALLS',
+                        'RESOLVED', 0.8, NULL, NULL, ?, 'TRUSTED', ?, 'STATIC', 'CODE')
+                """,
+                (
+                    f"node-detail-out-{index:05d}",
+                    snapshot_id,
+                    f"node-{target_index:05d}",
+                    json.dumps({"sourcePath": "src/GraphFixture.java", "lineStart": index + 10, "lineEnd": index + 10}),
+                    now,
+                ),
+            )
+        for index in range(incoming_count):
+            source_index = (index % 39) + 1
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_graph_edges(
+                    id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id, to_node_id, edge_type,
+                    resolution_status, confidence, evidence_id, unresolved_target_json, metadata_json, status,
+                    created_at, fact_origin, flow_domain
+                )
+                VALUES (?, ?, 'job-1', 'forge-ai', 1, 1, ?, 'node-00000', 'REFERENCES',
+                        'RESOLVED', 0.8, NULL, NULL, ?, 'TRUSTED', ?, 'STATIC', 'CODE')
+                """,
+                (
+                    f"node-detail-in-{index:05d}",
+                    snapshot_id,
+                    f"node-{source_index:05d}",
+                    json.dumps({"sourcePath": "src/GraphFixture.java", "lineStart": index + 40, "lineEnd": index + 40}),
+                    now,
+                ),
+            )
 
 
 def replace_edges_with_late_connected_cluster(db_path, start: int, node_count: int, edge_count: int) -> None:

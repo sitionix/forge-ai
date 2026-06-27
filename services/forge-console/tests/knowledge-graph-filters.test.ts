@@ -89,10 +89,6 @@ function graphDom(url = 'http://127.0.0.1/operator/knowledge-graph.html?sourceId
       <select id="knowledgeGraphIsolated"><option value="hide">Hide</option><option value="show">Show</option></select>
       <input id="knowledgeGraphAutoRefresh" type="checkbox">
       <input id="knowledgeGraphSearch">
-      <button data-graph-tab="overview"></button>
-      <button data-graph-tab="nodes"></button>
-      <button data-graph-tab="edges"></button>
-      <button data-graph-tab="selected"></button>
       <section id="knowledgeGraphSummary"></section>
       <div id="knowledgeGraphTruncated" class="knowledge-graph-warning hidden"></div>
       <div id="knowledgeGraphLayout" class="knowledge-graph-layout preview-collapsed">
@@ -103,7 +99,6 @@ function graphDom(url = 'http://127.0.0.1/operator/knowledge-graph.html?sourceId
         <aside id="knowledgeGraphPreview" class="knowledge-graph-preview"></aside>
       </div>
       <div id="knowledgeGraphLegend"></div>
-      <section id="knowledgeGraphDetails"></section>
     </body>`, { url, pretendToBeVisual: true });
   dom.window.requestAnimationFrame = ((callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 0)) as unknown as typeof dom.window.requestAnimationFrame;
   dom.window.cancelAnimationFrame = ((id: number) => clearTimeout(id)) as typeof dom.window.cancelAnimationFrame;
@@ -182,13 +177,6 @@ function graphViewPayload(count: number, total = 300, revision = `rev-${count ||
   };
 }
 
-function clickOpenDetails(dom: JSDOM) {
-  const button = dom.window.document.querySelector('[data-open-graph-details]') as HTMLButtonElement | null;
-  expect(button).toBeTruthy();
-  expect(button?.disabled).toBe(false);
-  button?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-}
-
 function graphDetailRequests(requests: string[]) {
   return requests.filter((path) => /\/knowledge\/analysis\/graph\/(node|edge)\//.test(path));
 }
@@ -206,28 +194,66 @@ function nodeDetailFixture(id = 'node-00000') {
       lineStart: 12,
       lineEnd: 18,
       claimSummary: 'Does important work',
+      responsibilitySummary: 'Coordinates graph detail loading',
       claims: [{ id: 'claim-1', claimKind: 'RESPONSIBILITY', summary: 'Coordinates graph detail loading', status: 'TRUSTED', confidence: 0.91 }],
-      evidence: [{ id: 'ev-node', text: 'Uses parsed AST evidence', relativePath: 'src/Detail.java', lineStart: 12 }]
-    }
-  };
-}
-
-function edgeDetailFixture(id = 'edge-00000') {
-  return {
-    graphRevision: 'rev-a',
-    snapshotId: 'snapshot-a',
-    item: {
-      id,
-      edgeType: 'CALLS',
-      relation: 'CALLS',
-      from: 'node-00000',
-      to: 'node-00001',
-      fromLabel: 'Source Node',
-      toLabel: 'Target Node',
-      sourceId: 'forge-ai',
-      flowDomain: 'CODE',
-      summary: 'Source invokes target',
-      evidence: [{ id: 'ev-edge', text: 'Callsite evidence', relativePath: 'src/Callsite.java', lineStart: 44 }]
+      evidence: [{ id: 'ev-node', text: 'Uses parsed AST evidence', relativePath: 'src/Detail.java', lineStart: 12 }],
+      relations: {
+        outgoing: {
+          totalCount: 2,
+          items: [
+            {
+              edgeId: 'edge-out-1',
+              edgeKind: 'CALLS',
+              sourceNodeId: id,
+              sourceName: 'Detail Node',
+              sourceKind: 'CALLABLE',
+              targetNodeId: 'node-00001',
+              targetName: 'buildRequest',
+              targetKind: 'CALLABLE',
+              sourcePath: 'src/Detail.java',
+              lineStart: 14,
+              lineEnd: 14,
+              confidence: 0.9,
+              evidenceCount: 1
+            },
+            {
+              edgeId: 'edge-out-2',
+              edgeKind: 'REFERENCES',
+              sourceNodeId: id,
+              sourceName: 'Detail Node',
+              sourceKind: 'CALLABLE',
+              targetNodeId: 'node-00002',
+              targetName: 'ConversationStatus',
+              targetKind: 'TYPE',
+              sourcePath: 'src/Detail.java',
+              lineStart: 15,
+              lineEnd: 15,
+              confidence: 0.88,
+              evidenceCount: 0
+            }
+          ]
+        },
+        incoming: {
+          totalCount: 1,
+          items: [
+            {
+              edgeId: 'edge-in-1',
+              edgeKind: 'CONTAINS',
+              sourceNodeId: 'node-00003',
+              sourceName: 'DetailContainer',
+              sourceKind: 'TYPE',
+              targetNodeId: id,
+              targetName: 'Detail Node',
+              targetKind: 'CALLABLE',
+              sourcePath: 'src/Detail.java',
+              lineStart: 12,
+              lineEnd: 18,
+              confidence: 1,
+              evidenceCount: 1
+            }
+          ]
+        }
+      }
     }
   };
 }
@@ -851,54 +877,7 @@ describe('Knowledge graph filters and max limit', () => {
     page.dispose();
   });
 
-  it('UI-GRAPH-DETAIL-01 node Open detail sends request', async () => {
-    const dom = graphDom();
-    const requests: string[] = [];
-    let resolveDetail: (value: unknown) => void = () => undefined;
-    const pendingDetail = new Promise((resolve) => {
-      resolveDetail = resolve;
-    });
-    const http = {
-      get: vi.fn((path: string) => {
-        requests.push(path);
-        if (path.includes('/metadata')) {
-          return Promise.resolve(metadataPayload());
-        }
-        if (path.includes('/view')) {
-          return Promise.resolve(graphViewPayload(2, 2, 'rev-a', 1));
-        }
-        if (path.includes('/node/node-00000')) {
-          return pendingDetail;
-        }
-        throw new Error(`unexpected ${path}`);
-      })
-    };
-    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
-    page.mount();
-    await flushAsync();
-    page.selectNode('node-00000');
-    await flushAsync(1);
-    expect(graphDetailRequests(requests)).toHaveLength(0);
-
-    clickOpenDetails(dom);
-    expect(dom.window.document.getElementById('knowledgeGraphDetails')?.textContent).toContain('Loading selected item evidence');
-    await flushAsync(1);
-
-    const detailRequests = graphDetailRequests(requests);
-    expect(detailRequests).toHaveLength(1);
-    const detailRequest = detailRequests[0] || '';
-    expect(detailRequest).toContain('/knowledge/analysis/graph/node/node-00000');
-    const detailUrl = new URL(detailRequest, 'http://127.0.0.1');
-    expect(detailUrl.searchParams.get('sourceId')).toBe('forge-ai');
-    expect(detailUrl.searchParams.get('graphRevision')).toBe('rev-a');
-    expect(detailUrl.searchParams.get('includeEvidence')).toBe('true');
-    expect(requests.some((path) => /\/analysis\/graph\/slice|\/analysis\/symbols|\/analysis\/relations|\/analysis\/graph($|\?)/.test(path))).toBe(false);
-    resolveDetail(nodeDetailFixture());
-    await flushAsync();
-    page.dispose();
-  });
-
-  it('UI-GRAPH-DETAIL-02 node detail renders response', async () => {
+  it('UI-GRAPH-DETAIL-UX-01 no lower Facts details section', async () => {
     const dom = graphDom();
     const http = {
       get: vi.fn((path: string) => {
@@ -917,22 +896,17 @@ describe('Knowledge graph filters and max limit', () => {
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
     page.mount();
     await flushAsync();
-    page.selectNode('node-00000');
-    clickOpenDetails(dom);
+    void page.selectNode('node-00000');
     await flushAsync();
 
-    const detailText = dom.window.document.getElementById('knowledgeGraphDetails')?.textContent || '';
-    expect(detailText).toContain('Detail Node');
-    expect(detailText).toContain('CALLABLE');
-    expect(detailText).toContain('src/Detail.java');
-    expect(detailText).toContain('Does important work');
-    expect(detailText).toContain('RESPONSIBILITY');
-    expect(detailText).toContain('Uses parsed AST evidence');
-    expect(detailText).not.toContain('{"');
+    expect(dom.window.document.querySelector('.knowledge-graph-details-panel')).toBeNull();
+    expect(dom.window.document.querySelector('[data-graph-tab]')).toBeNull();
+    expect(dom.window.document.getElementById('knowledgeGraphDetails')).toBeNull();
+    expect(dom.window.document.getElementById('knowledgeGraphPreview')?.textContent).toContain('Coordinates graph detail loading');
     page.dispose();
   });
 
-  it('UI-GRAPH-DETAIL-03 edge Open detail sends request', async () => {
+  it('UI-GRAPH-DETAIL-UX-02 no Open Details button', async () => {
     const dom = graphDom();
     const requests: string[] = [];
     let resolveDetail: (value: unknown) => void = () => undefined;
@@ -948,7 +922,7 @@ describe('Knowledge graph filters and max limit', () => {
         if (path.includes('/view')) {
           return Promise.resolve(graphViewPayload(2, 2, 'rev-a', 1));
         }
-        if (path.includes('/edge/edge-00000')) {
+        if (path.includes('/node/node-00000')) {
           return pendingDetail;
         }
         throw new Error(`unexpected ${path}`);
@@ -957,29 +931,90 @@ describe('Knowledge graph filters and max limit', () => {
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
     page.mount();
     await flushAsync();
-    page.selectEdge('edge-00000');
-    await flushAsync(1);
-    expect(graphDetailRequests(requests)).toHaveLength(0);
-
-    clickOpenDetails(dom);
-    expect(dom.window.document.getElementById('knowledgeGraphDetails')?.textContent).toContain('Loading selected item evidence');
+    void page.selectNode('node-00000');
+    const preview = dom.window.document.getElementById('knowledgeGraphPreview');
+    expect(preview?.textContent).toContain('Loading details');
+    expect(preview?.textContent).toContain('Center');
+    expect(preview?.textContent).not.toContain('Open details');
+    expect(preview?.querySelector('[data-open-graph-details]')).toBeNull();
     await flushAsync(1);
 
     const detailRequests = graphDetailRequests(requests);
     expect(detailRequests).toHaveLength(1);
     const detailRequest = detailRequests[0] || '';
-    expect(detailRequest).toContain('/knowledge/analysis/graph/edge/edge-00000');
+    expect(detailRequest).toContain('/knowledge/analysis/graph/node/node-00000');
     const detailUrl = new URL(detailRequest, 'http://127.0.0.1');
     expect(detailUrl.searchParams.get('sourceId')).toBe('forge-ai');
     expect(detailUrl.searchParams.get('graphRevision')).toBe('rev-a');
     expect(detailUrl.searchParams.get('includeEvidence')).toBe('true');
     expect(requests.some((path) => /\/analysis\/graph\/slice|\/analysis\/symbols|\/analysis\/relations|\/analysis\/graph($|\?)/.test(path))).toBe(false);
-    resolveDetail(edgeDetailFixture());
+    resolveDetail(nodeDetailFixture());
     await flushAsync();
+    expect(preview?.textContent).toContain('Purpose');
+    expect(preview?.textContent).not.toContain('Open details');
     page.dispose();
   });
 
-  it('UI-GRAPH-DETAIL-04 edge detail renders response', async () => {
+  it('UI-GRAPH-DETAIL-UX-03 no technical IDs in normal UI', async () => {
+    const dom = graphDom();
+    const technicalNodeId = 'analysis-graph-node:1234567890abcdef';
+    const technicalDetail = {
+      graphRevision: 'graphRevision-secret-hash',
+      snapshotId: 'snapshot-secret-hash',
+      queryFingerprint: 'fingerprint-secret-hash',
+      item: {
+        id: technicalNodeId,
+        label: 'SiteUpdatedEventMapper',
+        nodeKind: 'TYPE',
+        flowDomain: 'CODE',
+        factOrigin: 'STATIC',
+        sourceId: 'source-internal-id',
+        relativePath: '/home/user/workspace/pipe/event/src/main/java/com/example/SiteUpdatedEventMapper.java',
+        lineStart: 9,
+        lineEnd: 28,
+        responsibilitySummary: 'Maps SiteUpdatedPayload to SiteUpdatedEvent.',
+        summaryClaimId: 'claim-hash-secret',
+        claims: [{ id: 'claim-hash-secret', claimKind: 'RESPONSIBILITY', summary: 'Maps SiteUpdatedPayload to SiteUpdatedEvent.', status: 'TRUSTED' }],
+        evidence: [{ id: 'evidence-hash-secret', excerptHash: 'excerpt-hash-secret', text: 'Mapper uses payload fields.', relativePath: 'src/main/java/SiteUpdatedEventMapper.java', lineStart: 12 }],
+        relations: {
+          outgoing: { totalCount: 1, items: [{ edgeId: 'edge-hash-secret', edgeKind: 'REFERENCES', targetNodeId: 'target-node-secret', targetName: 'SiteUpdatedPayload', targetKind: 'TYPE' }] },
+          incoming: { totalCount: 0, items: [] }
+        }
+      }
+    };
+    const client = {
+      loadSnapshot: vi.fn().mockResolvedValue({
+        ...manifest(1, 0, 'graphRevision-secret-hash'),
+        snapshotId: 'snapshot-secret-hash',
+        queryFingerprint: 'fingerprint-secret-hash',
+        nodes: [node(0, { id: technicalNodeId, label: 'SiteUpdatedEventMapper', name: 'SiteUpdatedEventMapper', nodeKind: 'TYPE', flowDomain: 'CODE' })],
+        edges: [],
+        meta: { returnedNodeCount: 1, returnedEdgeCount: 0, totalNodeCount: 1, totalEdgeCount: 0 }
+      }),
+      loadNodeDetail: vi.fn(() => Promise.resolve(technicalDetail)),
+      loadEdgeDetail: vi.fn()
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: { get: vi.fn(() => Promise.resolve(metadataPayload())) }, client, runtimeConfig: { graphPollIntervalMs: 60000 } });
+    page.mount();
+    await flushAsync();
+    void page.selectNode(technicalNodeId);
+    await flushAsync();
+
+    const visibleText = [
+      dom.window.document.getElementById('knowledgeGraphPreview')?.textContent || '',
+      dom.window.document.getElementById('knowledgeGraphProgress')?.textContent || '',
+      dom.window.document.getElementById('knowledgeGraphSubtitle')?.textContent || ''
+    ].join(' ');
+    expect(visibleText).toContain('SiteUpdatedEventMapper');
+    expect(visibleText).toContain('Maps SiteUpdatedPayload to SiteUpdatedEvent.');
+    expect(visibleText).toContain('SiteUpdatedEventMapper.java');
+    ['analysis-graph-node:', 'graphRevision-secret-hash', 'snapshot-secret-hash', 'fingerprint-secret-hash', 'claim-hash-secret', 'evidence-hash-secret', 'edge-hash-secret', 'source-internal-id', 'excerpt-hash-secret'].forEach((value) => {
+      expect(visibleText).not.toContain(value);
+    });
+    page.dispose();
+  });
+
+  it('UI-GRAPH-DETAIL-UX-04 purpose is visible and primary', async () => {
     const dom = graphDom();
     const http = {
       get: vi.fn((path: string) => {
@@ -989,8 +1024,8 @@ describe('Knowledge graph filters and max limit', () => {
         if (path.includes('/view')) {
           return Promise.resolve(graphViewPayload(2, 2, 'rev-a', 1));
         }
-        if (path.includes('/edge/edge-00000')) {
-          return Promise.resolve(edgeDetailFixture());
+        if (path.includes('/node/node-00000')) {
+          return Promise.resolve(nodeDetailFixture());
         }
         throw new Error(`unexpected ${path}`);
       })
@@ -998,26 +1033,140 @@ describe('Knowledge graph filters and max limit', () => {
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
     page.mount();
     await flushAsync();
-    page.selectEdge('edge-00000');
-    clickOpenDetails(dom);
+    void page.selectNode('node-00000');
     await flushAsync();
 
-    const detailText = dom.window.document.getElementById('knowledgeGraphDetails')?.textContent || '';
-    expect(detailText).toContain('CALLS');
-    expect(detailText).toContain('Source Node');
-    expect(detailText).toContain('Target Node');
-    expect(detailText).toContain('Source invokes target');
-    expect(detailText).toContain('Callsite evidence');
-    expect(detailText).not.toContain('{"');
+    const previewText = dom.window.document.getElementById('knowledgeGraphPreview')?.textContent || '';
+    expect(previewText).toContain('Purpose');
+    expect(previewText).toContain('Coordinates graph detail loading');
+    expect(previewText.indexOf('Purpose')).toBeLessThan(previewText.indexOf('Claims'));
+    expect(previewText.indexOf('Purpose')).toBeLessThan(previewText.indexOf('Evidence'));
     page.dispose();
   });
 
-  it('UI-GRAPH-DETAIL-05 no eager detail loading', async () => {
+  it('UI-GRAPH-DETAIL-UX-05 relationships are readable and compact', async () => {
     const dom = graphDom();
-    const requests: string[] = [];
+    const outgoing = Array.from({ length: 7 }, (_, index) => ({
+      edgeId: `edge-out-${index}`,
+      edgeKind: index % 2 === 0 ? 'DECLARES' : 'REFERENCES',
+      sourceNodeId: 'node-00000',
+      sourceName: 'Detail Node',
+      sourceKind: 'CALLABLE',
+      targetNodeId: `target-${index}`,
+      targetName: `Neighbor${index}`,
+      targetKind: index % 2 === 0 ? 'CALLABLE' : 'TYPE',
+      sourcePath: 'src/Detail.java',
+      lineStart: 20 + index
+    }));
+    const incoming = Array.from({ length: 6 }, (_, index) => ({
+      edgeId: `edge-in-${index}`,
+      edgeKind: 'CONTAINS',
+      sourceNodeId: `source-${index}`,
+      sourceName: `Container${index}`,
+      sourceKind: 'FILE',
+      targetNodeId: 'node-00000',
+      targetName: 'Detail Node',
+      targetKind: 'CALLABLE',
+      sourcePath: 'src/Detail.java',
+      lineStart: 10 + index
+    }));
+    const detail = {
+      ...nodeDetailFixture(),
+      item: {
+        ...nodeDetailFixture().item,
+        relations: {
+          outgoing: { totalCount: outgoing.length, items: outgoing },
+          incoming: { totalCount: incoming.length, items: incoming }
+        }
+      }
+    };
     const http = {
       get: vi.fn((path: string) => {
-        requests.push(path);
+        if (path.includes('/metadata')) {
+          return Promise.resolve(metadataPayload());
+        }
+        if (path.includes('/view')) {
+          return Promise.resolve(graphViewPayload(2, 2, 'rev-a', 1));
+        }
+        if (path.includes('/node/node-00000')) {
+          return Promise.resolve(detail);
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+    page.mount();
+    await flushAsync();
+    void page.selectNode('node-00000');
+    await flushAsync();
+
+    const previewText = dom.window.document.getElementById('knowledgeGraphPreview')?.textContent || '';
+    expect(previewText).toContain('Relationships');
+    expect(previewText).toContain('Outgoing 7');
+    expect(previewText).toContain('DECLARES -> Neighbor0');
+    expect(previewText).toContain('REFERENCES -> Neighbor1');
+    expect(previewText).toContain('+2 more');
+    expect(previewText).toContain('Incoming 6');
+    expect(previewText).toContain('CONTAINS <- Container0');
+    expect(previewText).toContain('+1 more');
+    expect(previewText).not.toContain('edge-out-');
+    expect(previewText).not.toContain('edge-in-');
+    expect(dom.window.document.querySelectorAll('#knowledgeGraphPreview .knowledge-graph-fact-list article')).toHaveLength(0);
+    expect(dom.window.document.querySelectorAll('#knowledgeGraphPreview .knowledge-graph-relation-row')).toHaveLength(10);
+    page.dispose();
+  });
+
+  it('UI-GRAPH-DETAIL-UX-06 empty states are compact', async () => {
+    const dom = graphDom();
+    const emptyDetail = {
+      graphRevision: 'rev-a',
+      snapshotId: 'snapshot-a',
+      item: {
+        id: 'node-00000',
+        label: 'Empty Detail',
+        nodeKind: 'CALLABLE',
+        claims: [],
+        evidence: [],
+        relations: {
+          incoming: { totalCount: 0, items: [] },
+          outgoing: { totalCount: 0, items: [] }
+        }
+      }
+    };
+    const http = {
+      get: vi.fn((path: string) => {
+        if (path.includes('/metadata')) {
+          return Promise.resolve(metadataPayload());
+        }
+        if (path.includes('/view')) {
+          return Promise.resolve(graphViewPayload(2, 2, 'rev-a', 1));
+        }
+        if (path.includes('/node/node-00000')) {
+          return Promise.resolve(emptyDetail);
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+    page.mount();
+    await flushAsync();
+    void page.selectNode('node-00000');
+    await flushAsync();
+
+    const previewText = dom.window.document.getElementById('knowledgeGraphPreview')?.textContent || '';
+    expect(previewText).toContain('No description available yet');
+    expect(previewText).toContain('No claims available');
+    expect(previewText).toContain('No evidence available');
+    expect(previewText).toContain('No outgoing relationships');
+    expect(previewText).toContain('No incoming relationships');
+    expect(dom.window.document.querySelectorAll('#knowledgeGraphPreview .knowledge-graph-fact-list article')).toHaveLength(0);
+    page.dispose();
+  });
+
+  it('UI-GRAPH-DETAIL-UX-07 top metadata layout is compact', async () => {
+    const dom = graphDom();
+    const http = {
+      get: vi.fn((path: string) => {
         if (path.includes('/metadata')) {
           return Promise.resolve(metadataPayload());
         }
@@ -1030,19 +1179,74 @@ describe('Knowledge graph filters and max limit', () => {
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
     page.mount();
     await flushAsync();
-    expect(graphDetailRequests(requests)).toHaveLength(0);
-    page.selectNode('node-00000');
-    await flushAsync();
-    expect(graphDetailRequests(requests)).toHaveLength(0);
-    expect(page.state.data.claims).toEqual([]);
-    expect(page.state.data.evidence).toEqual([]);
-    expect(page.state.data.nodes[0]).not.toHaveProperty('claims');
-    expect(page.state.data.nodes[0]).not.toHaveProperty('evidence');
-    expect(page.state.data.edges[0]).not.toHaveProperty('evidence');
+
+    const progressText = dom.window.document.getElementById('knowledgeGraphProgress')?.textContent || '';
+    expect(dom.window.document.getElementById('knowledgeGraphSourceTitle')?.textContent).toBe('Forge AI');
+    expect(dom.window.document.getElementById('knowledgeGraphStatusText')?.textContent).toContain('COMPLETED');
+    expect(progressText).toContain('10 / 10 files');
+    expect(progressText).toContain('failed 0');
+    expect(progressText).toContain('diagnostics 0');
+    expect(progressText).toContain('graph available');
+    expect(progressText).not.toContain('rev-a');
+    expect(dom.window.document.querySelector('.knowledge-graph-metric')).toBeNull();
+    expect(dom.window.document.querySelector('.detail-card')).toBeNull();
     page.dispose();
   });
 
-  it('UI-GRAPH-DETAIL-06 stale detail response ignored', async () => {
+  it('UI-GRAPH-DETAIL-UX-08 right panel scroll is local', async () => {
+    const dom = graphDom();
+    const manyRelations = Array.from({ length: 40 }, (_, index) => ({
+      edgeId: `edge-many-${index}`,
+      edgeKind: 'REFERENCES',
+      sourceNodeId: 'node-00000',
+      sourceName: 'Detail Node',
+      targetNodeId: `many-target-${index}`,
+      targetName: `RelatedThing${index}`,
+      targetKind: 'TYPE',
+      sourcePath: 'src/Detail.java',
+      lineStart: 30 + index
+    }));
+    const detail = {
+      ...nodeDetailFixture(),
+      item: {
+        ...nodeDetailFixture().item,
+        relations: {
+          outgoing: { totalCount: manyRelations.length, items: manyRelations },
+          incoming: { totalCount: 0, items: [] }
+        }
+      }
+    };
+    const http = {
+      get: vi.fn((path: string) => {
+        if (path.includes('/metadata')) {
+          return Promise.resolve(metadataPayload());
+        }
+        if (path.includes('/view')) {
+          return Promise.resolve(graphViewPayload(2, 2, 'rev-a', 1));
+        }
+        if (path.includes('/node/node-00000')) {
+          return Promise.resolve(detail);
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+    page.mount();
+    await flushAsync();
+    void page.selectNode('node-00000');
+    await flushAsync();
+
+    const preview = dom.window.document.getElementById('knowledgeGraphPreview') as HTMLElement;
+    preview.scrollTop = 24;
+    expect(preview.scrollTop).toBe(24);
+    expect(preview.textContent).toContain('Outgoing 40');
+    expect(preview.textContent).toContain('+35 more');
+    expect(dom.window.document.getElementById('knowledgeGraphSvg')).toBeTruthy();
+    expect(dom.window.document.getElementById('knowledgeGraphDetails')).toBeNull();
+    page.dispose();
+  });
+
+  it('UI-GRAPH-DETAIL-UX-10 stale detail response still ignored', async () => {
     const dom = graphDom();
     let resolveNodeA: (value: unknown) => void = () => undefined;
     const nodeADetail = new Promise((resolve) => {
@@ -1074,11 +1278,9 @@ describe('Knowledge graph filters and max limit', () => {
     page.mount();
     await flushAsync();
 
-    page.selectNode('node-00000');
-    clickOpenDetails(dom);
+    void page.selectNode('node-00000');
     await flushAsync(1);
-    page.selectNode('node-00001');
-    clickOpenDetails(dom);
+    void page.selectNode('node-00001');
     await flushAsync();
     resolveNodeA({
       graphRevision: 'rev-a',
@@ -1086,60 +1288,53 @@ describe('Knowledge graph filters and max limit', () => {
     });
     await flushAsync();
 
-    const detailText = dom.window.document.getElementById('knowledgeGraphDetails')?.textContent || '';
+    const detailText = dom.window.document.getElementById('knowledgeGraphPreview')?.textContent || '';
     expect(client.loadNodeDetail).toHaveBeenCalledTimes(2);
     expect(detailText).toContain('Node B Detail');
     expect(detailText).toContain('fresh evidence for B');
     expect(detailText).not.toContain('Stale Node A');
     expect(detailText).not.toContain('stale evidence');
+    expect(dom.window.document.getElementById('knowledgeGraphDetails')).toBeNull();
     page.dispose();
   });
 
-  it('UI-GRAPH-DETAIL-07 detail error visible', async () => {
+  it('UI-GRAPH-NODE-DETAILS-06 detail error shown in right panel without breaking graph', async () => {
     const cases = [
       { status: 404, code: 'GRAPH_NODE_NOT_FOUND' },
       { status: 410, code: 'GRAPH_SNAPSHOT_EXPIRED' },
       { status: 400, code: 'GRAPH_ITEM_SCOPE_MISMATCH' },
       { status: 500, code: 'GRAPH_BACKEND_FAILED' }
     ];
-    for (const kind of ['node', 'edge']) {
-      for (const item of cases) {
-        const dom = graphDom();
-        const error = Object.assign(new Error(item.code), item);
-        const client = {
-          loadSnapshot: vi.fn().mockResolvedValue({
-            ...manifest(2, 1, 'rev-a'),
-            nodes: [node(0), node(1)],
-            edges: [{ ...edge(0), from: 'node-00000', to: 'node-00001' }],
-            meta: { returnedNodeCount: 2, returnedEdgeCount: 1 }
-          }),
-          loadNodeDetail: vi.fn(() => Promise.reject(error)),
-          loadEdgeDetail: vi.fn(() => Promise.reject(error))
-        };
-        const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: { get: vi.fn(() => Promise.resolve(metadataPayload())) }, client, runtimeConfig: { graphPollIntervalMs: 60000 } });
-        page.mount();
-        await flushAsync();
-        if (kind === 'node') {
-          page.selectNode('node-00000');
-        } else {
-          page.selectEdge('edge-00000');
-        }
-        clickOpenDetails(dom);
-        await flushAsync();
+    for (const item of cases) {
+      const dom = graphDom();
+      const error = Object.assign(new Error(item.code), item);
+      const client = {
+        loadSnapshot: vi.fn().mockResolvedValue({
+          ...manifest(2, 1, 'rev-a'),
+          nodes: [node(0), node(1)],
+          edges: [{ ...edge(0), from: 'node-00000', to: 'node-00001' }],
+          meta: { returnedNodeCount: 2, returnedEdgeCount: 1 }
+        }),
+        loadNodeDetail: vi.fn(() => Promise.reject(error)),
+        loadEdgeDetail: vi.fn()
+      };
+      const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: { get: vi.fn(() => Promise.resolve(metadataPayload())) }, client, runtimeConfig: { graphPollIntervalMs: 60000 } });
+      page.mount();
+      await flushAsync();
+      await page.selectNode('node-00000');
 
-        const detailText = dom.window.document.getElementById('knowledgeGraphDetails')?.textContent || '';
-        const button = dom.window.document.querySelector('[data-open-graph-details]') as HTMLButtonElement | null;
-        expect(detailText).toContain('Selected item details failed');
-        expect(detailText).toContain(item.code);
-        expect(detailText).toContain(`status ${item.status}`);
-        expect(page.state.selectedDetailLoading).toBe(false);
-        expect(button?.disabled).toBe(false);
-        page.dispose();
-      }
+      const previewText = dom.window.document.getElementById('knowledgeGraphPreview')?.textContent || '';
+      const nodeElement = dom.window.document.querySelector('[data-node-id="node-00000"]') as SVGGElement;
+      expect(previewText).toContain('Detail load failed');
+      expect(previewText).toContain(item.code);
+      expect(previewText).toContain(`status ${item.status}`);
+      expect(page.state.selectedDetailLoading).toBe(false);
+      expect(nodeElement.classList.contains('selected')).toBe(true);
+      page.dispose();
     }
   });
 
-  it('UI-GRAPH-DETAIL-08 visual parity and graph interaction preserved', async () => {
+  it('UI-GRAPH-NODE-DETAILS-08 Center button still works', async () => {
     const dom = graphDom();
     const client = {
       loadSnapshot: vi.fn().mockResolvedValue({
@@ -1154,14 +1349,16 @@ describe('Knowledge graph filters and max limit', () => {
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: { get: vi.fn(() => Promise.resolve(metadataPayload())) }, client, runtimeConfig: { graphPollIntervalMs: 60000 } });
     page.mount();
     await flushAsync();
-    page.selectNode('node-00000');
+    void page.selectNode('node-00000');
+    await flushAsync();
     const nodeElement = dom.window.document.querySelector('[data-node-id="node-00000"]') as SVGGElement;
     const circle = nodeElement.querySelector('circle') as SVGCircleElement;
     const radiusBefore = circle.getAttribute('r');
     const classBefore = nodeElement.getAttribute('class');
+    const centerSpy = vi.spyOn(page, 'centerNode');
+    const centerButton = dom.window.document.querySelector('[data-center-node="node-00000"]') as HTMLButtonElement | null;
 
-    clickOpenDetails(dom);
-    await flushAsync();
+    centerButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
     const svg = dom.window.document.getElementById('knowledgeGraphSvg') as unknown as SVGSVGElement;
     svg.dispatchEvent(new dom.window.PointerEvent('pointerdown', { clientX: 10, clientY: 10, bubbles: true }));
@@ -1171,49 +1368,11 @@ describe('Knowledge graph filters and max limit', () => {
 
     expect(circle.getAttribute('r')).toBe(radiusBefore);
     expect(nodeElement.getAttribute('class')).toBe(classBefore);
+    expect(centerSpy).toHaveBeenCalledWith('node-00000');
     expect(nodeElement.classList.contains('selected')).toBe(true);
     expect(page.metrics.panEventCount).toBeGreaterThan(0);
     expect(page.metrics.wheelEventCount).toBeGreaterThan(0);
     expect(dom.window.document.getElementById('knowledgeGraphLayout')).toBeTruthy();
-    page.dispose();
-  });
-
-  it('UI-GRAPH-VIEW-07 Open Details still uses detail endpoints only after selection', async () => {
-    const dom = graphDom();
-    const requests: string[] = [];
-    const http = {
-      get: vi.fn((path: string) => {
-        requests.push(path);
-        if (path.includes('/metadata')) {
-          return Promise.resolve(metadataPayload());
-        }
-        if (path.includes('/view')) {
-          return Promise.resolve(graphViewPayload(2, 2, 'rev-a', 1));
-        }
-        if (path.includes('/node/node-00000')) {
-          return Promise.resolve({ item: { id: 'node-00000', evidence: [{ id: 'node-evidence' }] } });
-        }
-        if (path.includes('/edge/edge-00000')) {
-          return Promise.resolve({ item: { id: 'edge-00000', evidence: [{ id: 'edge-evidence' }] } });
-        }
-        throw new Error(`unexpected ${path}`);
-      })
-    };
-    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
-    page.mount();
-    await flushAsync();
-    expect(requests.filter((path) => /\/analysis\/graph\/(node|edge)\//.test(path))).toHaveLength(0);
-
-    page.selectNode('node-00000');
-    clickOpenDetails(dom);
-    await flushAsync();
-    page.selectEdge('edge-00000');
-    clickOpenDetails(dom);
-    await flushAsync();
-
-    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/node/node-00000'))).toBe(true);
-    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/edge/edge-00000'))).toBe(true);
-    expect(requests.some((path) => /\/analysis\/graph\/slice|\/analysis\/symbols|\/analysis\/relations|\/analysis\/graph($|\?)/.test(path))).toBe(false);
     page.dispose();
   });
 });

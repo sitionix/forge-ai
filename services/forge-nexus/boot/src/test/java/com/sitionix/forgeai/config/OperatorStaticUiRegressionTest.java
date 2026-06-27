@@ -159,13 +159,13 @@ class OperatorStaticUiRegressionTest {
                 .contains("id=\"knowledgeGraphEmptyAction\"")
                 .contains("id=\"knowledgeGraphSvg\"")
                 .contains("id=\"knowledgeGraphPreview\"")
-                .contains("data-graph-tab=\"overview\"")
-                .contains("data-graph-tab=\"selected\"")
-                .contains("data-graph-tab=\"nodes\"")
-                .contains("data-graph-tab=\"edges\"")
-                .contains("data-graph-tab=\"claims\"")
-                .contains("data-graph-tab=\"diagnostics\"")
-                .contains("id=\"knowledgeGraphDetails\"")
+                .doesNotContain("data-graph-tab=\"overview\"")
+                .doesNotContain("data-graph-tab=\"selected\"")
+                .doesNotContain("data-graph-tab=\"nodes\"")
+                .doesNotContain("data-graph-tab=\"edges\"")
+                .doesNotContain("data-graph-tab=\"claims\"")
+                .doesNotContain("data-graph-tab=\"diagnostics\"")
+                .doesNotContain("id=\"knowledgeGraphDetails\"")
                 .doesNotContain("id=\"analyzeKnowledgeGraphEmpty\"");
     }
 
