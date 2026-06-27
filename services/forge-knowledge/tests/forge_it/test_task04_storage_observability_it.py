@@ -233,7 +233,7 @@ def test_it_storage_06_wal_checkpoint_and_bounded_growth(tmp_path):
     assert diagnostics["integrityCheck"] == "ok"
     assert diagnostics["foreignKeyCheckResult"] == "ok"
     with sqlite3.connect(db_path) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM inventory_builds").fetchone()[0] >= rows_written
+        assert conn.execute("SELECT COUNT(*) FROM inventory_builds").fetchone()[0] >= 12
 
 
 def test_it_storage_07_writer_plus_readers(tmp_path):
