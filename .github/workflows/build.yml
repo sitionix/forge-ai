@@ -1,10 +1,10 @@
 name: Build
 
 on:
-  push: {}
+  push:
   pull_request:
     types: [opened, synchronize, reopened]
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,7 +29,6 @@ jobs:
       SERVICE: ${{ matrix.service }}
       FORGE_AI_HOME: ${{ github.workspace }}
       FORGE_CONFIG_DIR: ${{ github.workspace }}/config
-      FORGE_RUNTIME_DIR: ${{ runner.temp }}/forge-runtime
       FORGE_WORKSPACE_ROOT: ${{ github.workspace }}
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
       MAVEN_REPOSITORY_USERNAME: ${{ vars.MAVEN_REPOSITORY_USERNAME }}
@@ -60,6 +59,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export FORGE_RUNTIME_DIR="${RUNNER_TEMP}/forge-runtime"
 
           case "${SERVICE}" in
             forge-knowledge)
