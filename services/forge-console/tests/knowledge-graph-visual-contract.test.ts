@@ -271,7 +271,8 @@ function graphProgress(dom: JSDOM) {
     meta: document.querySelector('.knowledge-progress-meta') as HTMLElement,
     track: document.querySelector('.knowledge-progress-track') as HTMLElement,
     fill: document.querySelector('.knowledge-progress-track span') as HTMLElement,
-    metrics: [...document.querySelectorAll('.knowledge-graph-metric')] as HTMLElement[]
+    metrics: [...document.querySelectorAll('.knowledge-graph-metric')] as HTMLElement[],
+    extras: document.querySelector('.knowledge-graph-progress-extra') as HTMLElement
   };
 }
 
@@ -745,8 +746,8 @@ describe('Knowledge graph modular contract', () => {
     const progress = graphProgress(dom);
     expect(dom.window.document.getElementById('knowledgeGraphStatusText')?.textContent).toContain('PARTIAL · 84 / 84 files');
     expect(progress.fill.style.width).toBe('100%');
-    expect(progress.metrics.map((metric) => metric.textContent).join(' ')).toContain('Failed Files');
-    expect(progress.metrics.map((metric) => metric.textContent).join(' ')).toContain('2');
+    expect(progress.metrics).toHaveLength(0);
+    expect(progress.extras.textContent).toContain('failed 2');
     expect(progress.meta.textContent).not.toContain('97');
   });
 
@@ -848,14 +849,16 @@ describe('Knowledge graph modular contract', () => {
     await page.loadMetadata({ manual: true });
 
     const progress = graphProgress(dom);
-    expect(progress.container.className).toBe('knowledge-graph-progress');
+    expect(progress.container.className).toBe('knowledge-graph-progress compact');
     expect(progress.main.className).toBe('knowledge-graph-progress-main');
     expect(progress.meta.className).toBe('knowledge-progress-meta');
     expect(progress.track.className).toBe('knowledge-progress-track');
+    expect(progress.metrics).toHaveLength(0);
+    expect(progress.extras.textContent).toContain('failed 0');
     expect(progress.fill.style.width).toBe('50%');
     expect(dom.window.getComputedStyle(progress.container).display).toBe('grid');
     expect(dom.window.getComputedStyle(progress.container).padding).toBe('12px');
-    expect(dom.window.getComputedStyle(progress.main).borderRadius).toBe('10px');
+    expect(dom.window.getComputedStyle(progress.main).borderRadius).toBe('0');
     expect(dom.window.getComputedStyle(progress.track).height).toBe('8px');
     expect(dom.window.getComputedStyle(progress.track).borderRadius).toBe('999px');
     expect(dom.window.getComputedStyle(progress.track).backgroundColor).toBe('rgba(27, 36, 31, 0.12)');
@@ -888,7 +891,7 @@ describe('Knowledge graph modular contract', () => {
 
     expect(dom.window.document.getElementById('knowledgeGraphMetadataError')?.textContent).toContain('GRAPH_METADATA_FAILED');
     expect(page.state.data?.graphRevision).toBe('rev-a');
-    expect(dom.window.document.getElementById('knowledgeGraphDetails')?.textContent).toContain('rev-a');
+    expect(dom.window.document.getElementById('knowledgeGraphDetails')?.textContent || '').not.toContain('rev-a');
     expect(dom.window.document.getElementById('knowledgeGraphError')?.textContent).toBe('');
     page.dispose();
   });
@@ -1132,7 +1135,7 @@ describe('Knowledge graph modular contract', () => {
     expect(page.metrics.transformOnlyFrameCount).toBeGreaterThan(0);
   });
 
-  it('UI-GRAPH-NAV-06 no request regression', async () => {
+  it('UI-GRAPH-NAV-06 node selection uses detail endpoint without legacy route regression', async () => {
     const dom = graphDom();
     const requests: string[] = [];
     const http = {
@@ -1169,13 +1172,13 @@ describe('Knowledge graph modular contract', () => {
     expect(requests.some((path) => path.includes('/knowledge/analysis/graph/node/'))).toBe(false);
     expect(requests.some((path) => path.includes('/knowledge/analysis/graph/edge/'))).toBe(false);
 
-    page.selectNode('n1');
-    await page.openSelectedDetails();
+    await page.selectNode('n1');
     expect(requests.some((path) => path.includes('/knowledge/analysis/graph/node/n1'))).toBe(true);
     expect(requests.some((path) => path.includes('/knowledge/analysis/graph/edge/e1'))).toBe(false);
     page.selectEdge('e1');
-    await page.openSelectedDetails();
-    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/edge/e1'))).toBe(true);
+    expect(page.openSelectedDetails()).toBeNull();
+    expect(dom.window.document.querySelector('[data-open-graph-details]')).toBeNull();
+    expect(requests.some((path) => path.includes('/knowledge/analysis/graph/edge/e1'))).toBe(false);
     page.dispose();
   });
 
@@ -1207,8 +1210,7 @@ describe('Knowledge graph modular contract', () => {
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client });
 
     await page.loadGraph({ manual: true });
-    page.selectNode('old-node');
-    void page.openSelectedDetails();
+    void page.selectNode('old-node');
     (dom.window.document.getElementById('knowledgeGraphFlowDomain') as HTMLSelectElement).value = 'CONFIG';
     page.updateUrlFromControls();
     page.resetFilterState();
@@ -1234,6 +1236,25 @@ describe('Knowledge graph modular contract', () => {
     expect(dom.window.document.querySelector('.knowledge-graph-edge.edge-calls')).toBeTruthy();
     expect(knowledgeGraphNodeRadius({ id: 'n', nodeKind: 'CALLABLE' }, {})).toBe(19);
     expect(knowledgeGraphNodeRadius({ id: 'n', nodeKind: 'TYPE' }, {})).toBe(22);
+    expect(page.state.minimumZoom).toBeLessThanOrEqual(0.18);
+  });
+
+  it('UI-GRAPH-DETAIL-UX-09 graph visual parity preserved', async () => {
+    const dom = graphDom();
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
+    const css = await readFile('src/operator/operator-ui.css', 'utf8');
+
+    page.renderPage(graphData());
+    await flushAsync(2);
+
+    expect(knowledgeGraphNodeRadius({ id: 'n', nodeKind: 'CALLABLE' }, {})).toBe(19);
+    expect(knowledgeGraphNodeRadius({ id: 'n', nodeKind: 'TYPE' }, {})).toBe(22);
+    expect(dom.window.document.querySelector('.knowledge-graph-viewport')).toBeTruthy();
+    expect(dom.window.document.querySelector('.knowledge-graph-edge.edge-calls')).toBeTruthy();
+    expect(dom.window.document.querySelector('.knowledge-graph-node-label')).toBeTruthy();
+    expect(css).toContain('.knowledge-graph-node.selected circle');
+    expect(css).toContain('.knowledge-graph-edge.edge-calls');
+    expect(css).toContain('.knowledge-graph-node-label');
     expect(page.state.minimumZoom).toBeLessThanOrEqual(0.18);
   });
 
@@ -1279,7 +1300,7 @@ describe('Knowledge graph modular contract', () => {
     const dom = graphDom();
     const client = {
       loadSnapshot: vi.fn().mockResolvedValue(graphData('rev-full')),
-      loadNodeDetail: vi.fn(),
+      loadNodeDetail: vi.fn().mockResolvedValue({ item: { id: 'n1', relations: { incoming: { totalCount: 0, items: [] }, outgoing: { totalCount: 0, items: [] } } } }),
       loadEdgeDetail: vi.fn()
     };
     const http = { get: vi.fn(() => Promise.resolve(metadataPayload())) };

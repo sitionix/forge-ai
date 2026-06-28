@@ -383,6 +383,8 @@ export class KnowledgeGraphPage {
     }
     this.state.selectedDetailLoading = true;
     this.state.selectedDetailError = null;
+    this.state.selectedDetail = null;
+    this.renderPreview();
     this.renderDetails();
     try {
       const result = await this.requestCoordinator.run(`knowledge-graph-detail:${key}`, ({ signal }) => {
@@ -396,18 +398,17 @@ export class KnowledgeGraphPage {
       }
       this.state.selectedDetail = normalizeDetail(key, result.value);
       this.state.selectedDetailError = null;
-      this.renderDetails();
       return result.value;
     } catch (error) {
       if (this.isSelectedDetailCurrent(key, graphRevision, filterKey)) {
         this.state.selectedDetail = null;
         this.state.selectedDetailError = error;
-        this.renderDetails();
       }
       return null;
     } finally {
       if (this.isSelectedDetailCurrent(key, graphRevision, filterKey)) {
         this.state.selectedDetailLoading = false;
+        this.renderPreview();
         this.renderDetails();
       }
     }
@@ -532,7 +533,7 @@ export class KnowledgeGraphPage {
     }
     this.updateUrlFromControls({ graphNodeId: nodeId, graphEdgeId: null });
     this.renderSelectionState();
-    return null;
+    return this.loadSelectedDetails();
   }
 
   selectEdge(edgeId) {
@@ -558,6 +559,10 @@ export class KnowledgeGraphPage {
   }
 
   openSelectedDetails(tab = 'selected') {
+    const target = this.document.getElementById('knowledgeGraphDetails');
+    if (!target || target.dataset.graphDebug !== 'true') {
+      return null;
+    }
     this.state.detailsTab = tab || 'selected';
     this.document.querySelectorAll('[data-graph-tab]').forEach((item) => item.classList.toggle('active', item.dataset.graphTab === this.state.detailsTab));
     this.renderDetails();
@@ -684,8 +689,7 @@ export class KnowledgeGraphPage {
       sourceTitle.textContent = metadata.label || metadata.sourceId || 'All sources';
     }
     if (subtitle) {
-      const group = metadata.group ? ` · ${metadata.group}` : '';
-      subtitle.textContent = metadata.sourceId ? `${metadata.sourceId}${group}` : 'Graph-backed structural analysis projection.';
+      subtitle.textContent = metadata.group || 'Structural analysis projection.';
     }
     if (updated) {
       updated.textContent = metadata.updatedAt ? `metadata ${timeOnly(Date.parse(metadata.updatedAt))}` : `metadata ${timeOnly()}`;
@@ -723,7 +727,7 @@ export class KnowledgeGraphPage {
     const status = metadata.progress || {};
     const percent = clampProgressPercent(status.progressPercent);
     target.innerHTML = `
-      <div class="knowledge-graph-progress">
+      <div class="knowledge-graph-progress compact">
         <div class="knowledge-graph-progress-main">
           <div class="knowledge-progress-meta">
             <strong>${escapeHtml(status.processedFileCount ?? 0)} / ${escapeHtml(status.fileCount ?? 0)} files</strong>
@@ -732,11 +736,11 @@ export class KnowledgeGraphPage {
           <div class="knowledge-progress-track"><span style="width:${percent}%"></span></div>
           ${status.currentFile ? `<div class="knowledge-current-file">${escapeHtml(status.currentFile)}</div>` : ''}
         </div>
-        ${renderKnowledgeGraphMetric('Failed Files', status.failedFileCount ?? 0)}
-        ${renderKnowledgeGraphMetric('Trusted Facts', status.trustedFactsCount ?? 0)}
-        ${renderKnowledgeGraphMetric('Graph', status.graphAvailable ? 'available' : 'unavailable')}
-        ${renderKnowledgeGraphMetric('Diagnostics', status.diagnosticsCount ?? 0)}
-        ${renderKnowledgeGraphMetric('Revision', status.graphRevision || '-')}
+        <div class="knowledge-graph-progress-extra">
+          <span>failed ${escapeHtml(status.failedFileCount ?? 0)}</span>
+          <span>diagnostics ${escapeHtml(status.diagnosticsCount ?? 0)}</span>
+          <span>${escapeHtml(status.graphAvailable ? 'graph available' : 'graph unavailable')}</span>
+        </div>
       </div>
     `;
   }
@@ -750,20 +754,11 @@ export class KnowledgeGraphPage {
       return;
     }
     target.innerHTML = `
-      <article class="detail-card">
-        <div class="detail-card-head">
-          <div>
-            <strong>${escapeHtml(data.sourceName || data.sourceId || 'Knowledge Graph')}</strong>
-            <p>${escapeHtml(data.graphRevision || '-')}</p>
-          </div>
-        </div>
-        <div class="knowledge-detail-grid">
-          ${renderKnowledgeMetric('Nodes', data.meta?.returnedNodeCount ?? data.nodes.length)}
-          ${renderKnowledgeMetric('Edges', data.meta?.returnedEdgeCount ?? data.edges.length)}
-          ${renderKnowledgeMetric('Total nodes', data.meta?.totalNodeCount ?? data.nodes.length)}
-          ${renderKnowledgeMetric('Total edges', data.meta?.totalEdgeCount ?? data.edges.length)}
-        </div>
-      </article>
+      <div class="knowledge-graph-summary-strip">
+        <strong>${escapeHtml(data.sourceName || 'Knowledge Graph')}</strong>
+        <span>${escapeHtml(data.meta?.returnedNodeCount ?? data.nodes.length)} nodes · ${escapeHtml(data.meta?.returnedEdgeCount ?? data.edges.length)} relations</span>
+        <span>${escapeHtml(data.meta?.totalNodeCount ?? data.nodes.length)} total nodes · ${escapeHtml(data.meta?.totalEdgeCount ?? data.edges.length)} total relations</span>
+      </div>
     `;
   }
 
@@ -1335,22 +1330,27 @@ export class KnowledgeGraphPage {
     }
     this.updatePreviewLayout(Boolean(node || edge));
     if (node) {
+      const selectedDetail = this.state.selectedDetail?.key === `node:${node.id}` ? this.state.selectedDetail : null;
+      const detailNode = selectedDetail?.node || {};
+      const title = nodeDisplayName(detailNode, node, 'Node');
+      const locationPath = compactPath(detailNode.relativePath || node.relativePath || '');
+      const lineLabel = formatLineRange(detailNode.lineStart ?? node.lineStart, detailNode.lineEnd ?? node.lineEnd);
       target.innerHTML = `
-        <h3>${escapeHtml(node.label || node.name || 'Node')}</h3>
+        <h3>${escapeHtml(title)}</h3>
         <div class="pill-row">
-          ${renderPill(node.nodeKind || 'UNKNOWN')}
-          ${renderPill(node.flowDomain || 'UNKNOWN')}
-          ${renderPill(node.factOrigin || 'UNKNOWN')}
+          ${renderPill(detailNode.nodeKind || detailNode.kind || node.nodeKind || 'UNKNOWN')}
+          ${renderPill(detailNode.flowDomain || node.flowDomain || 'UNKNOWN')}
+          ${renderPill(detailNode.factOrigin || node.factOrigin || 'UNKNOWN')}
         </div>
-        <dl>
-          <dt>File</dt><dd>${escapeHtml(node.relativePath || '-')}</dd>
-          <dt>Lines</dt><dd>${escapeHtml(node.lineStart ?? '-')} - ${escapeHtml(node.lineEnd ?? '-')}</dd>
-          <dt>Node</dt><dd>${escapeHtml(node.id || '-')}</dd>
-        </dl>
+        <section class="knowledge-graph-detail-section knowledge-graph-location-section">
+          <h3>Location</h3>
+          <p>${escapeHtml(locationPath || 'Location not available.')}</p>
+          ${lineLabel ? `<small>${escapeHtml(lineLabel)}</small>` : ''}
+        </section>
         <div class="knowledge-graph-preview-actions">
           <button class="button ghost dark small" type="button" data-center-node="${escapeHtml(node.id)}">Center</button>
-          <button class="button ghost dark small" type="button" data-open-graph-details="selected">Open details</button>
         </div>
+        ${renderNodePreviewDetails(detailNode, selectedDetail?.evidence || [], this.state.selectedDetailLoading, this.state.selectedDetailError)}
       `;
     } else if (edge) {
       target.innerHTML = `
@@ -1360,15 +1360,11 @@ export class KnowledgeGraphPage {
           ${renderPill(edge.flowDomain || 'UNKNOWN')}
           ${renderPill(edge.factOrigin || 'UNKNOWN')}
         </div>
-        <p>${escapeHtml(edge.fromLabel || edge.from)} -> ${escapeHtml(edge.toLabel || edge.to)}</p>
-        <dl>
-          <dt>From</dt><dd>${escapeHtml(edge.from || '-')}</dd>
-          <dt>To</dt><dd>${escapeHtml(edge.to || '-')}</dd>
-          <dt>Evidence</dt><dd>${escapeHtml(edge.evidenceCount ?? 0)}</dd>
-        </dl>
-        <div class="knowledge-graph-preview-actions">
-          <button class="button ghost dark small" type="button" data-open-graph-details="selected">Open details</button>
-        </div>
+        <section class="knowledge-graph-detail-section">
+          <h3>Relationship</h3>
+          <p>${escapeHtml(readableEdgeEndpoint(edge.fromLabel, 'Source node'))} -> ${escapeHtml(readableEdgeEndpoint(edge.toLabel, 'Target node'))}</p>
+          <small>${escapeHtml(edge.evidenceCount ?? 0)} evidence item${Number(edge.evidenceCount) === 1 ? '' : 's'}</small>
+        </section>
       `;
     } else {
       target.innerHTML = `
@@ -1380,11 +1376,6 @@ export class KnowledgeGraphPage {
     }
     target.querySelectorAll('[data-center-node]').forEach((button) => {
       button.addEventListener('click', () => this.centerNode(button.dataset.centerNode));
-    });
-    target.querySelectorAll('[data-open-graph-details]').forEach((button) => {
-      button.addEventListener('click', () => {
-        this.openSelectedDetails(button.dataset.openGraphDetails || 'selected');
-      });
     });
   }
 
@@ -1403,6 +1394,10 @@ export class KnowledgeGraphPage {
     const target = this.document.getElementById('knowledgeGraphDetails');
     const data = this.state.data;
     if (!target || !data) {
+      return;
+    }
+    if (target.dataset.graphDebug !== 'true') {
+      target.innerHTML = '';
       return;
     }
     this.metrics.tabRenderCount += 1;
@@ -2028,6 +2023,176 @@ function detailErrorMessage(error) {
     parts.push(`status ${error.status}`);
   }
   return parts.join(' · ');
+}
+
+function nodeDisplayName(detailNode, node = {}, fallback = 'Node') {
+  return detailNode?.label || detailNode?.name || node.label || node.name || fallback;
+}
+
+function readableEdgeEndpoint(value, fallback) {
+  const text = String(value || '').trim();
+  return text && !looksTechnicalIdentifier(text) ? text : fallback;
+}
+
+function looksTechnicalIdentifier(value) {
+  return /^(analysis-graph-|node-|edge-|claim-|evidence-|ev-|snapshot-|fingerprint-|[0-9a-f]{8}-[0-9a-f-]{13,}|[0-9a-f]{16,})/i.test(String(value || '').trim());
+}
+
+function formatLineRange(start, end) {
+  const lineStart = Number(start);
+  const lineEnd = Number(end);
+  if (Number.isFinite(lineStart) && Number.isFinite(lineEnd) && lineEnd > lineStart) {
+    return `lines ${lineStart}-${lineEnd}`;
+  }
+  if (Number.isFinite(lineStart)) {
+    return `line ${lineStart}`;
+  }
+  return '';
+}
+
+function compactPath(value, maxLength = 78) {
+  const path = String(value || '').replace(/\\/g, '/').replace(/^file:\/\//, '');
+  if (!path) {
+    return '';
+  }
+  if (path.length <= maxLength) {
+    return path;
+  }
+  const segments = path.split('/').filter(Boolean);
+  if (segments.length >= 4) {
+    const compact = `.../${segments.slice(-3).join('/')}`;
+    if (compact.length <= maxLength) {
+      return compact;
+    }
+  }
+  return `...${path.slice(-(maxLength - 3))}`;
+}
+
+function nodePurpose(detailNode) {
+  const claims = Array.isArray(detailNode?.claims) ? detailNode.claims : [];
+  const summaryClaim = claims.find((claim) => claim.id && claim.id === detailNode?.summaryClaimId && claim.summary);
+  const responsibilityClaim = claims.find((claim) => String(claim.claimKind || '').toUpperCase() === 'RESPONSIBILITY' && claim.summary);
+  const usefulClaim = claims.find((claim) => claim.summary);
+  return detailNode?.responsibilitySummary
+    || detailNode?.claimSummary
+    || summaryClaim?.summary
+    || responsibilityClaim?.summary
+    || usefulClaim?.summary
+    || 'No description available yet.';
+}
+
+function renderNodePreviewDetails(detailNode, evidence, loading, error) {
+  if (loading) {
+    return `
+      <section class="knowledge-graph-detail-section">
+        <h3>Purpose</h3>
+        <p class="knowledge-graph-detail-state">Loading details...</p>
+      </section>
+    `;
+  }
+  if (error) {
+    return `
+      <section class="knowledge-graph-detail-section">
+        <h3>Purpose</h3>
+        <p class="knowledge-graph-detail-state error">Detail load failed: ${escapeHtml(detailErrorMessage(error))}</p>
+      </section>
+    `;
+  }
+  const claims = Array.isArray(detailNode?.claims) ? detailNode.claims : [];
+  const relations = detailNode?.relations || {};
+  return `
+    <section class="knowledge-graph-detail-section">
+      <h3>Purpose</h3>
+      <p>${escapeHtml(nodePurpose(detailNode))}</p>
+    </section>
+    <section class="knowledge-graph-detail-section">
+      <h3>Relationships</h3>
+      ${renderPreviewRelations('Outgoing', relations.outgoing, 'outgoing')}
+      ${renderPreviewRelations('Incoming', relations.incoming, 'incoming')}
+    </section>
+    ${renderPreviewClaims(claims)}
+    ${renderPreviewEvidence(evidence)}
+  `;
+}
+
+function renderPreviewClaims(claims) {
+  const items = Array.isArray(claims) ? claims.filter((item) => item?.summary).slice(0, 5) : [];
+  const total = Array.isArray(claims) ? claims.filter((item) => item?.summary).length : 0;
+  return `
+    <section class="knowledge-graph-detail-section">
+      <h3>Claims</h3>
+      ${items.length ? `<ul class="knowledge-graph-compact-list">${items.map((item) => `
+        <li>
+          <span>${escapeHtml(item.summary)}</span>
+        </li>
+      `).join('')}</ul>${total > items.length ? `<p class="knowledge-graph-more">+${escapeHtml(total - items.length)} more</p>` : ''}` : '<p class="muted">No claims available.</p>'}
+    </section>
+  `;
+}
+
+function renderPreviewRelations(title, group, direction) {
+  const items = Array.isArray(group?.items) ? group.items.slice(0, 5) : [];
+  const total = Number.isFinite(Number(group?.totalCount)) ? Number(group.totalCount) : items.length;
+  const emptyText = direction === 'outgoing' ? 'No outgoing relationships.' : 'No incoming relationships.';
+  return `
+    <div class="knowledge-graph-relation-group">
+      <h4>${escapeHtml(title)} <span>${escapeHtml(total)}</span></h4>
+      ${items.length ? `<ul class="knowledge-graph-compact-list relations">${items.map((item) => renderPreviewRelationRow(item, direction)).join('')}</ul>${total > items.length ? `<p class="knowledge-graph-more">+${escapeHtml(total - items.length)} more</p>` : ''}` : `<p class="muted">${emptyText}</p>`}
+    </div>
+  `;
+}
+
+function renderPreviewRelationRow(item, direction) {
+  const outgoing = direction === 'outgoing';
+  const neighborName = outgoing
+    ? readableEdgeEndpoint(item.targetName, 'Unresolved target')
+    : readableEdgeEndpoint(item.sourceName, 'Unknown source');
+  const neighborKind = outgoing ? item.targetKind : item.sourceKind;
+  const arrow = outgoing ? '->' : '<-';
+  const location = formatRelationLocation(item);
+  return `
+    <li class="knowledge-graph-relation-row">
+      <span><strong>${escapeHtml(item.edgeKind || item.edgeType || 'RELATES')} ${arrow} ${escapeHtml(neighborName)}</strong>${neighborKind ? `<em>${escapeHtml(neighborKind)}</em>` : ''}</span>
+      ${location ? `<small>${escapeHtml(location)}</small>` : ''}
+    </li>
+  `;
+}
+
+function formatRelationLocation(item) {
+  const path = item.sourcePath || item.relativePath || '';
+  const lineStart = item.lineStart;
+  const lineEnd = item.lineEnd;
+  if (path && lineStart && lineEnd && lineEnd !== lineStart) {
+    return `${compactPath(path)}:${lineStart}-${lineEnd}`;
+  }
+  if (path && lineStart) {
+    return `${compactPath(path)}:${lineStart}`;
+  }
+  if (path) {
+    return compactPath(path);
+  }
+  if (lineStart && lineEnd && lineEnd !== lineStart) {
+    return `lines ${lineStart}-${lineEnd}`;
+  }
+  if (lineStart) {
+    return `line ${lineStart}`;
+  }
+  return '';
+}
+
+function renderPreviewEvidence(evidence) {
+  const items = Array.isArray(evidence) ? evidence.slice(0, 5) : [];
+  return `
+    <section class="knowledge-graph-detail-section">
+      <h3>Evidence</h3>
+      ${items.length ? `<ul class="knowledge-graph-compact-list">${items.map((item) => `
+        <li>
+          <span>${escapeHtml(item.text || item.excerpt || 'Evidence captured for this node.')}</span>
+          ${formatRelationLocation(item) ? `<small>${escapeHtml(formatRelationLocation(item))}</small>` : ''}
+        </li>
+      `).join('')}</ul>${evidence.length > items.length ? `<p class="knowledge-graph-more">+${escapeHtml(evidence.length - items.length)} more</p>` : ''}` : '<p class="muted">No evidence available.</p>'}
+    </section>
+  `;
 }
 
 function renderGraphOverview(data, selectedNode, selectedEdge) {

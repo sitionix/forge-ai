@@ -2426,7 +2426,7 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .knowledge-graph-progress {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(280px, 1.4fr) repeat(5, minmax(115px, 0.42fr));
+  grid-template-columns: minmax(280px, 1fr) auto;
   gap: 10px;
   padding: 12px;
 }
@@ -2438,6 +2438,48 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
   border-radius: 10px;
   background: rgba(255, 252, 235, 0.68);
   padding: 10px;
+}
+
+.knowledge-graph-progress.compact .knowledge-graph-progress-main {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.knowledge-graph-progress-extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.knowledge-graph-progress-extra span,
+.knowledge-graph-summary-strip span {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border: 1px solid rgba(27, 36, 31, 0.09);
+  border-radius: 999px;
+  background: rgba(27, 36, 31, 0.04);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  padding: 4px 8px;
+}
+
+.knowledge-graph-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.knowledge-graph-summary-strip strong {
+  margin-right: auto;
+  font-size: 13px;
 }
 
 .knowledge-graph-metric {
@@ -2543,6 +2585,7 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 310px;
   gap: 0;
+  height: max(720px, calc(100vh - 260px));
   min-height: max(720px, calc(100vh - 260px));
   transition: grid-template-columns 160ms ease;
 }
@@ -2629,6 +2672,7 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 .knowledge-graph-preview {
   position: relative;
   min-width: 0;
+  max-height: max(720px, calc(100vh - 260px));
   overflow: auto;
   border-left: 1px solid rgba(27, 36, 31, 0.12);
   background: rgba(255, 252, 235, 0.72);
@@ -2672,6 +2716,7 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin: 10px 0;
 }
 
 .knowledge-graph-legend {
@@ -2924,9 +2969,99 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
   padding: 10px;
 }
 
+.knowledge-graph-preview .knowledge-graph-detail-section {
+  border: 0;
+  border-top: 1px solid rgba(27, 36, 31, 0.1);
+  border-radius: 0;
+  background: transparent;
+  padding: 11px 0;
+}
+
 .knowledge-graph-detail-section h3 {
   margin: 0 0 8px;
   font-size: 13px;
+}
+
+.knowledge-graph-detail-section h4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 9px 0 6px;
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.knowledge-graph-detail-section h4 span {
+  color: var(--muted);
+  font: 800 10px/1 var(--mono);
+}
+
+.knowledge-graph-location-section p {
+  margin: 0;
+  color: var(--ink);
+  font: 800 11px/1.45 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.knowledge-graph-location-section small,
+.knowledge-graph-detail-section > small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.knowledge-graph-relation-group + .knowledge-graph-relation-group {
+  margin-top: 10px;
+}
+
+.knowledge-graph-compact-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.knowledge-graph-compact-list li {
+  min-width: 0;
+  border-left: 2px solid rgba(27, 36, 31, 0.12);
+  padding-left: 8px;
+}
+
+.knowledge-graph-compact-list span,
+.knowledge-graph-compact-list strong,
+.knowledge-graph-compact-list small,
+.knowledge-graph-compact-list em {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-graph-compact-list span {
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.knowledge-graph-compact-list strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.knowledge-graph-compact-list em,
+.knowledge-graph-compact-list small {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.knowledge-graph-more {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font: 800 10px/1.3 var(--mono);
 }
 
 .knowledge-graph-call-intel {

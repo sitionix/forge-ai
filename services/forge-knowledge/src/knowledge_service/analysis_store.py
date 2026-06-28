@@ -33,6 +33,7 @@ SERVICE_DIAGNOSTIC_ROW_LIMIT = 1000
 GRAPH_CONTRACT_VERSION = "GRAPH_SNAPSHOT_V2"
 GRAPH_SORT_VERSION = "ID_ASC_V1"
 GRAPH_CURSOR_SIGNATURE_CONTEXT = "knowledge-graph-cursor-v1"
+GRAPH_NODE_DETAIL_RELATION_LIMIT = 25
 
 
 @dataclass(frozen=True)
@@ -2024,6 +2025,7 @@ class AnalysisStore:
             )
             if include_evidence:
                 detail["evidence"] = self._graph_snapshot_evidence(conn, snapshot_id, node_id=node_id)
+            detail["relations"] = self._graph_snapshot_node_relations(conn, snapshot_id, node_id, requested_source)
             return {"graphRevision": graph_revision, "snapshotId": snapshot_id, "item": detail}
 
     def graph_snapshot_edge_detail(
@@ -2552,6 +2554,114 @@ class AnalysisStore:
             }
             for row in rows
         ]
+
+    def _graph_snapshot_node_relations(
+        self,
+        conn: sqlite3.Connection,
+        snapshot_id: str,
+        node_id: str,
+        source_id: str,
+        limit: int = GRAPH_NODE_DETAIL_RELATION_LIMIT,
+    ) -> Dict[str, Any]:
+        def rows_for(direction: str) -> List[sqlite3.Row]:
+            column = "e.from_node_id" if direction == "outgoing" else "e.to_node_id"
+            return conn.execute(
+                f"""
+                SELECT e.id, e.edge_type, e.from_node_id, e.to_node_id, e.confidence, e.evidence_id,
+                       e.metadata_json, e.fact_origin, e.flow_domain, e.unresolved_target_json,
+                       ev_af.relative_path AS evidence_relative_path,
+                       ev.line_start AS evidence_line_start,
+                       ev.line_end AS evidence_line_end,
+                       fn.display_name AS source_display_name,
+                       fn.qualified_name AS source_qualified_name,
+                       fn.name AS source_name,
+                       fn.node_kind AS source_node_kind,
+                       tn.display_name AS target_display_name,
+                       tn.qualified_name AS target_qualified_name,
+                       tn.name AS target_name,
+                       tn.node_kind AS target_node_kind,
+                       COUNT(*) OVER() AS total_count
+                FROM analysis_graph_edges e
+                JOIN analysis_graph_nodes fn
+                  ON fn.snapshot_id = e.snapshot_id
+                 AND fn.source_id = e.source_id
+                 AND fn.id = e.from_node_id
+                LEFT JOIN analysis_graph_nodes tn
+                  ON tn.snapshot_id = e.snapshot_id
+                 AND tn.source_id = e.source_id
+                 AND tn.id = e.to_node_id
+                LEFT JOIN analysis_graph_evidence ev
+                  ON ev.snapshot_id = e.snapshot_id
+                 AND ev.source_id = e.source_id
+                 AND ev.id = e.evidence_id
+                LEFT JOIN analysis_files ev_af ON ev_af.file_id = ev.analysis_file_id
+                WHERE e.snapshot_id = ?
+                  AND e.source_id = ?
+                  AND {column} = ?
+                ORDER BY e.edge_type, e.id
+                LIMIT ?
+                """,
+                (snapshot_id, source_id, node_id, limit),
+            ).fetchall()
+
+        def unresolved_target_name(row: sqlite3.Row) -> Optional[str]:
+            if not row["unresolved_target_json"]:
+                return None
+            try:
+                value = json.loads(row["unresolved_target_json"])
+            except (TypeError, json.JSONDecodeError):
+                return str(row["unresolved_target_json"])
+            if isinstance(value, dict):
+                return value.get("name") or value.get("qualifiedName") or value.get("displayName") or value.get("symbol")
+            return str(value)
+
+        def line_value(metadata: Dict[str, Any], *keys: str) -> Optional[Any]:
+            for key in keys:
+                if metadata.get(key) is not None:
+                    return metadata.get(key)
+            return None
+
+        def item_from(row: sqlite3.Row) -> Dict[str, Any]:
+            metadata = self._json_dict(row["metadata_json"])
+            line_start = row["evidence_line_start"] or line_value(metadata, "lineStart", "callsiteLineStart", "sourceLineStart")
+            line_end = row["evidence_line_end"] or line_value(metadata, "lineEnd", "callsiteLineEnd", "sourceLineEnd") or line_start
+            source_path = (
+                row["evidence_relative_path"]
+                or metadata.get("relativePath")
+                or metadata.get("sourcePath")
+                or metadata.get("file")
+            )
+            return {
+                "edgeId": row["id"],
+                "edgeKind": row["edge_type"],
+                "edgeType": row["edge_type"],
+                "sourceNodeId": row["from_node_id"],
+                "sourceName": row["source_display_name"] or row["source_qualified_name"] or row["source_name"] or row["from_node_id"],
+                "sourceKind": row["source_node_kind"],
+                "targetNodeId": row["to_node_id"],
+                "targetName": row["target_display_name"] or row["target_qualified_name"] or row["target_name"] or unresolved_target_name(row) or row["to_node_id"],
+                "targetKind": row["target_node_kind"],
+                "sourcePath": source_path,
+                "lineStart": line_start,
+                "lineEnd": line_end,
+                "confidence": row["confidence"],
+                "evidenceCount": 1 if row["evidence_id"] else 0,
+                "factOrigin": row["fact_origin"],
+                "flowDomain": row["flow_domain"],
+            }
+
+        def group(rows: List[sqlite3.Row]) -> Dict[str, Any]:
+            return {
+                "totalCount": int(rows[0]["total_count"]) if rows else 0,
+                "items": [item_from(row) for row in rows],
+            }
+
+        outgoing = rows_for("outgoing")
+        incoming = rows_for("incoming")
+        return {
+            "incoming": group(incoming),
+            "outgoing": group(outgoing),
+        }
 
     def _assert_graph_snapshot_revision(self, requested: str, current: str) -> None:
         if not requested:
