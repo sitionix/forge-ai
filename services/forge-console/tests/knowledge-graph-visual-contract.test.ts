@@ -610,6 +610,166 @@ describe('Knowledge graph modular contract', () => {
     page.dispose();
   });
 
+  it('UI-GRAPH-EMPTY-STATE-01 true no graph facts shows Analyze message', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE');
+    const http = {
+      get: vi.fn((path: string) => {
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve({
+            ...contractMetadataPayload(false),
+            currentSnapshotId: null,
+            currentSnapshotState: null,
+            currentGraphNodeCount: 0,
+            currentGraphEdgeCount: 0,
+            representedFileCount: 0,
+            expectedAnalyzedFileCount: 0,
+            coverageStatus: 'NO_GRAPH'
+          });
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(contractGraphView('contracts-empty', {
+            snapshotId: null,
+            nodes: [],
+            edges: [],
+            totalMatchingNodeCount: 0,
+            totalMatchingEdgeCount: 0,
+            visibleNodeCount: 0,
+            visibleEdgeCount: 0
+          }));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction strong')?.textContent).toBe('No graph facts yet.');
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction span')?.textContent).toBe('Use Analyze to build the graph.');
+    page.dispose();
+  });
+
+  it('UI-GRAPH-EMPTY-STATE-02 graph exists but filters hide all nodes shows filter message', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE');
+    const http = {
+      get: vi.fn((path: string) => {
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve({
+            ...contractMetadataPayload(true),
+            currentSnapshotId: 'contracts-snapshot',
+            currentSnapshotState: 'PUBLISHED',
+            currentGraphNodeCount: 12,
+            currentGraphEdgeCount: 8,
+            representedFileCount: 10,
+            expectedAnalyzedFileCount: 10,
+            coverageStatus: 'COMPLETE'
+          });
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(contractGraphView('contracts-filter-empty', {
+            nodes: [],
+            edges: [],
+            totalMatchingNodeCount: 0,
+            totalMatchingEdgeCount: 0,
+            visibleNodeCount: 0,
+            visibleEdgeCount: 0
+          }));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction strong')?.textContent).toBe('No nodes match the current graph filters.');
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction span')?.textContent).toBe('Try All domains, include isolated nodes, or increase Max.');
+    page.dispose();
+  });
+
+  it('UI-GRAPH-EMPTY-STATE-03 degraded/incomplete graph shows degraded message', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE');
+    const http = {
+      get: vi.fn((path: string) => {
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve({
+            ...contractMetadataPayload(true),
+            currentSnapshotId: 'contracts-partial',
+            currentSnapshotState: 'PUBLISHED',
+            currentGraphNodeCount: 4,
+            currentGraphEdgeCount: 0,
+            representedFileCount: 4,
+            expectedAnalyzedFileCount: 10,
+            coverageStatus: 'DEGRADED',
+            degradedReason: 'CURRENT_GRAPH_COVERAGE_PARTIAL'
+          });
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(contractGraphView('contracts-degraded-empty', {
+            snapshotId: 'contracts-partial',
+            nodes: [],
+            edges: [],
+            totalMatchingNodeCount: 0,
+            totalMatchingEdgeCount: 0,
+            visibleNodeCount: 0,
+            visibleEdgeCount: 0
+          }));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction strong')?.textContent).toBe('Graph is incomplete.');
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction span')?.textContent).toBe('Current graph coverage does not match analyzed files.');
+    page.dispose();
+  });
+
+  it('UI-GRAPH-EMPTY-STATE-04 overview counts vs graph metadata coverage mismatch is visible', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE');
+    const http = {
+      get: vi.fn((path: string) => {
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve({
+            ...contractMetadataPayload(true),
+            currentSnapshotId: 'contracts-partial',
+            currentSnapshotState: 'PUBLISHED',
+            currentGraphNodeCount: 4,
+            currentGraphEdgeCount: 0,
+            representedFileCount: 4,
+            expectedAnalyzedFileCount: 10,
+            coverageStatus: 'DEGRADED',
+            degradedReason: 'CURRENT_GRAPH_COVERAGE_PARTIAL'
+          });
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(contractGraphView('contracts-degraded-empty', {
+            snapshotId: 'contracts-partial',
+            nodes: [],
+            edges: [],
+            totalMatchingNodeCount: 0,
+            totalMatchingEdgeCount: 0,
+            visibleNodeCount: 0,
+            visibleEdgeCount: 0
+          }));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('knowledgeGraphStatusText')?.textContent).toContain('graph coverage 4 / 10 DEGRADED');
+    page.dispose();
+  });
+
   it('UI-GRAPH-STALE-05 filter changes do not reuse stale state', async () => {
     const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE&graphRevision=old-rev&cursor=old-cursor');
     const requests: string[] = [];
