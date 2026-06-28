@@ -1,6 +1,7 @@
 export class RequestCoordinator {
   constructor() {
     this.requests = new Map();
+    this.sequences = new Map();
     this.disposed = false;
   }
 
@@ -12,7 +13,8 @@ export class RequestCoordinator {
     if (options.abortPrevious !== false && previous) {
       previous.controller.abort();
     }
-    const sequence = (previous?.sequence || 0) + 1;
+    const sequence = (this.sequences.get(resourceKey) || 0) + 1;
+    this.sequences.set(resourceKey, sequence);
     const controller = new AbortController();
     const record = { sequence, controller };
     this.requests.set(resourceKey, record);
@@ -39,7 +41,7 @@ export class RequestCoordinator {
       })
       .finally(() => {
         const current = this.requests.get(resourceKey);
-        if (current?.sequence === sequence) {
+        if (current === record) {
           this.requests.delete(resourceKey);
         }
       });
@@ -64,6 +66,6 @@ export class RequestCoordinator {
     this.disposed = true;
     this.requests.forEach((request) => request.controller.abort());
     this.requests.clear();
+    this.sequences.clear();
   }
 }
-

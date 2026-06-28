@@ -34,6 +34,9 @@ GRAPH_CONTRACT_VERSION = "GRAPH_SNAPSHOT_V2"
 GRAPH_SORT_VERSION = "ID_ASC_V1"
 GRAPH_CURSOR_SIGNATURE_CONTEXT = "knowledge-graph-cursor-v1"
 GRAPH_NODE_DETAIL_RELATION_LIMIT = 25
+PARTIAL_SNAPSHOT_NOT_PROMOTED_CODE = "PARTIAL_SNAPSHOT_NOT_PROMOTED"
+GRAPH_COVERAGE_RECOVERY_REASON = "CURRENT_POINTER_DEGRADED_RECOVERED_TO_BETTER_SAME_SOURCE_SNAPSHOT"
+GRAPH_COVERAGE_PARTIAL_REASON = "CURRENT_GRAPH_COVERAGE_PARTIAL"
 
 
 @dataclass(frozen=True)
@@ -81,6 +84,7 @@ class AnalysisStore:
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
+        self._current_resolution_has_coverage_tables: Optional[bool] = None
 
     def init(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -368,6 +372,8 @@ class AnalysisStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_snapshot_page ON analysis_graph_edges(source_id, flow_domain, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_flow_created ON analysis_graph_edges(source_id, flow_domain, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_diagnostics_source_code ON analysis_graph_diagnostics(source_id, severity, code)")
+            ensure_overview_schema(conn)
+            self._current_resolution_has_coverage_tables = self._table_exists(conn, "files") and self._table_exists(conn, "knowledge_source_overview")
             self._migration_stage("after_canonical_schema")
             self._migrate_legacy_symbol_relation_tables(conn)
             self._migration_stage("after_pointer_mutation")
@@ -1412,6 +1418,7 @@ class AnalysisStore:
                     (selected_source_id, current["snapshot_id"] if current else None, current["snapshot_id"] if current else None),
                 ).fetchone()
             analysis_state = self._current_analysis_state(conn, [selected_source_id] if selected_source_id else None)
+            coverage = self._current_graph_coverage_metadata(conn, selected_source_id, current, overview_row)
         source_name = source_row["display_name"] if source_row else selected_source_id
         inventory = {
             "status": overview_row["inventory_status"] if overview_row else ("READY" if source_row and source_row["root_exists"] else "UNKNOWN"),
@@ -1441,6 +1448,16 @@ class AnalysisStore:
             "graphAvailable": current is not None,
             "snapshotId": current["snapshot_id"] if current else None,
             "graphRevision": current["content_identity"] if current else None,
+            "currentSnapshotId": coverage["currentSnapshotId"],
+            "currentPointerSnapshotId": coverage["currentPointerSnapshotId"],
+            "currentSnapshotState": coverage["currentSnapshotState"],
+            "currentGraphNodeCount": coverage["currentGraphNodeCount"],
+            "currentGraphEdgeCount": coverage["currentGraphEdgeCount"],
+            "representedFileCount": coverage["representedFileCount"],
+            "expectedAnalyzedFileCount": coverage["expectedAnalyzedFileCount"],
+            "coverageStatus": coverage["coverageStatus"],
+            "degradedReason": coverage["degradedReason"],
+            "promotionReason": coverage["promotionReason"],
             "lastAnalyzedAt": overview_row["updated_at"] if overview_row else None,
             "lastGraphPublishedAt": current["published_at"] if current else None,
             "diagnostics": {
@@ -3163,6 +3180,231 @@ class AnalysisStore:
             (state, job_id),
         )
 
+    def _expected_analyzed_file_count(
+        self,
+        conn: sqlite3.Connection,
+        source_id: Optional[str],
+        overview_row: Optional[sqlite3.Row] = None,
+    ) -> int:
+        if not source_id:
+            return 0
+        if overview_row is not None:
+            return int(overview_row["analysis_succeeded_files"] or 0) + int(overview_row["analysis_partial_files"] or 0)
+        if self._table_exists(conn, "knowledge_source_overview"):
+            row = conn.execute(
+                """
+                SELECT analysis_succeeded_files, analysis_partial_files
+                FROM knowledge_source_overview
+                WHERE source_id = ?
+                """,
+                (source_id,),
+            ).fetchone()
+            if row is not None:
+                return int(row["analysis_succeeded_files"] or 0) + int(row["analysis_partial_files"] or 0)
+        if self._table_exists(conn, "files"):
+            current_files = int(conn.execute("SELECT COUNT(*) AS count FROM files WHERE source_id = ?", (source_id,)).fetchone()["count"] or 0)
+            if current_files > 0:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM files f
+                    JOIN analysis_files af
+                      ON af.source_id = f.source_id
+                     AND af.relative_path = f.relative_path
+                     AND af.content_hash = f.content_hash
+                    WHERE f.source_id = ?
+                      AND af.status IN ('ANALYZED', 'PARTIAL')
+                    """,
+                    (source_id,),
+                ).fetchone()
+                return int(row["count"] or 0)
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM analysis_files
+            WHERE source_id = ?
+              AND status IN ('ANALYZED', 'PARTIAL')
+            """,
+            (source_id,),
+        ).fetchone()
+        return int(row["count"] or 0)
+
+    def _graph_snapshot_represented_file_count(self, conn: sqlite3.Connection, source_id: str, snapshot_id: str) -> int:
+        row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT file_id) AS count
+            FROM (
+                SELECT COALESCE(analysis_file_id, inventory_file_id) AS file_id
+                FROM analysis_graph_nodes
+                WHERE source_id = ? AND snapshot_id = ? AND COALESCE(analysis_file_id, inventory_file_id) IS NOT NULL
+                UNION
+                SELECT COALESCE(analysis_file_id, inventory_file_id) AS file_id
+                FROM analysis_graph_edges
+                WHERE source_id = ? AND snapshot_id = ? AND COALESCE(analysis_file_id, inventory_file_id) IS NOT NULL
+                UNION
+                SELECT COALESCE(analysis_file_id, inventory_file_id) AS file_id
+                FROM analysis_graph_evidence
+                WHERE source_id = ? AND snapshot_id = ? AND COALESCE(analysis_file_id, inventory_file_id) IS NOT NULL
+                UNION
+                SELECT COALESCE(analysis_file_id, inventory_file_id) AS file_id
+                FROM analysis_graph_diagnostics
+                WHERE source_id = ? AND snapshot_id = ? AND COALESCE(analysis_file_id, inventory_file_id) IS NOT NULL
+            )
+            """,
+            (source_id, snapshot_id, source_id, snapshot_id, source_id, snapshot_id, source_id, snapshot_id),
+        ).fetchone()
+        return int(row["count"] or 0)
+
+    def _graph_snapshot_job_file_count(self, conn: sqlite3.Connection, source_id: str, job_id: Optional[str]) -> int:
+        if not job_id:
+            return 0
+        row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT COALESCE(analysis_file_id, inventory_file_id)) AS count
+            FROM analysis_job_files
+            WHERE source_id = ?
+              AND job_id = ?
+              AND COALESCE(analysis_file_id, inventory_file_id) IS NOT NULL
+            """,
+            (source_id, job_id),
+        ).fetchone()
+        return int(row["count"] or 0)
+
+    def _graph_snapshot_coverage(
+        self,
+        conn: sqlite3.Connection,
+        source_id: Optional[str],
+        snapshot_id: Optional[str],
+        expected_analyzed: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        expected = self._expected_analyzed_file_count(conn, source_id) if expected_analyzed is None else int(expected_analyzed or 0)
+        empty = {
+            "currentSnapshotId": snapshot_id,
+            "currentSnapshotState": None,
+            "currentGraphNodeCount": 0,
+            "currentGraphEdgeCount": 0,
+            "representedFileCount": 0,
+            "promotionCoverageFileCount": 0,
+            "expectedAnalyzedFileCount": expected,
+            "coverageStatus": "NO_GRAPH",
+            "promotionReason": None,
+        }
+        if not source_id or not snapshot_id:
+            return empty
+        snapshot = conn.execute(
+            """
+            SELECT snapshot_id, source_id, job_id, state
+            FROM graph_snapshots
+            WHERE source_id = ?
+              AND snapshot_id = ?
+            """,
+            (source_id, snapshot_id),
+        ).fetchone()
+        if snapshot is None:
+            return empty
+        counts = conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = ? AND snapshot_id = ?) AS node_count,
+              (SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = ? AND snapshot_id = ?) AS edge_count
+            """,
+            (source_id, snapshot_id, source_id, snapshot_id),
+        ).fetchone()
+        represented = self._graph_snapshot_represented_file_count(conn, source_id, snapshot_id)
+        job_files = self._graph_snapshot_job_file_count(conn, source_id, snapshot["job_id"])
+        promotion_coverage = max(represented, job_files)
+        node_count = int(counts["node_count"] or 0)
+        edge_count = int(counts["edge_count"] or 0)
+        if expected <= 0:
+            coverage_status = "UNKNOWN" if node_count > 0 or edge_count > 0 else "NO_GRAPH"
+            promotion_reason = "COVERAGE_UNKNOWN_ALLOWED" if coverage_status == "UNKNOWN" else None
+        elif promotion_coverage >= expected:
+            coverage_status = "COMPLETE"
+            promotion_reason = "SOURCE_WIDE_GRAPH_COVERAGE" if represented >= expected else "SOURCE_WIDE_JOB_COVERAGE"
+        elif node_count > 0 or edge_count > 0 or represented > 0:
+            coverage_status = "PARTIAL"
+            promotion_reason = None
+        else:
+            coverage_status = "NO_GRAPH"
+            promotion_reason = None
+        return {
+            "currentSnapshotId": snapshot_id,
+            "currentSnapshotState": snapshot["state"],
+            "currentGraphNodeCount": node_count,
+            "currentGraphEdgeCount": edge_count,
+            "representedFileCount": represented,
+            "promotionCoverageFileCount": promotion_coverage,
+            "expectedAnalyzedFileCount": expected,
+            "coverageStatus": coverage_status,
+            "promotionReason": promotion_reason,
+        }
+
+    def _snapshot_promotion_assessment(self, conn: sqlite3.Connection, source_id: str, snapshot_id: str) -> Dict[str, Any]:
+        coverage = self._graph_snapshot_coverage(conn, source_id, snapshot_id)
+        if coverage["coverageStatus"] in {"COMPLETE", "UNKNOWN"}:
+            return {**coverage, "promotable": True}
+        return {
+            **coverage,
+            "promotable": False,
+            "promotionReason": PARTIAL_SNAPSHOT_NOT_PROMOTED_CODE,
+            "degradedReason": GRAPH_COVERAGE_PARTIAL_REASON,
+        }
+
+    def _record_snapshot_not_promoted_diagnostic(
+        self,
+        conn: sqlite3.Connection,
+        snapshot_id: str,
+        source_id: str,
+        job_id: str,
+        assessment: Dict[str, Any],
+    ) -> None:
+        message = (
+            "Graph snapshot was not promoted because it does not cover the current analyzed file set "
+            f"({assessment['promotionCoverageFileCount']} represented, {assessment['expectedAnalyzedFileCount']} expected)."
+        )
+        metadata = {
+            "snapshotId": snapshot_id,
+            "representedFileCount": assessment["representedFileCount"],
+            "promotionCoverageFileCount": assessment["promotionCoverageFileCount"],
+            "expectedAnalyzedFileCount": assessment["expectedAnalyzedFileCount"],
+            "coverageStatus": assessment["coverageStatus"],
+        }
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_diagnostics(
+                id, snapshot_id, job_id, source_id, severity, stage, code, message, metadata_json, created_at,
+                fact_origin, flow_domain
+            )
+            VALUES (?, ?, ?, ?, 'WARN', 'SNAPSHOT_PROMOTION', ?, ?, ?, ?, 'SYSTEM', 'ALL')
+            """,
+            (
+                f"promotion:{PARTIAL_SNAPSHOT_NOT_PROMOTED_CODE}",
+                snapshot_id,
+                job_id,
+                source_id,
+                PARTIAL_SNAPSHOT_NOT_PROMOTED_CODE,
+                message,
+                json.dumps(metadata, separators=(",", ":")),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+    def _store_graph_snapshot_as_history(self, conn: sqlite3.Connection, snapshot_id: str, source_id: str) -> None:
+        self._rebuild_graph_snapshot_metrics(conn, snapshot_id, source_id)
+        published_at = datetime.now(timezone.utc).isoformat()
+        manifest = self._stored_graph_manifest(conn, snapshot_id, source_id, published_at)
+        conn.execute(
+            """
+            UPDATE graph_snapshots
+            SET state = 'RETIRED',
+                published_at = ?,
+                manifest_json = ?,
+                content_identity = ?
+            WHERE snapshot_id = ?
+            """,
+            (published_at, json.dumps(manifest, separators=(",", ":")), manifest["graphRevision"], snapshot_id),
+        )
+
     def _publish_graph_snapshot(self, conn: sqlite3.Connection, snapshot_id: str) -> None:
         row = conn.execute("SELECT * FROM graph_snapshots WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
         if row is None:
@@ -3191,6 +3433,11 @@ class AnalysisStore:
             raise KnowledgeError("GRAPH_SNAPSHOT_STALE", "A newer graph snapshot is already current.")
         source_id = row["source_id"]
         self._validate_graph_snapshot_for_publication(conn, snapshot_id, source_id)
+        assessment = self._snapshot_promotion_assessment(conn, source_id, snapshot_id)
+        if not assessment["promotable"]:
+            self._record_snapshot_not_promoted_diagnostic(conn, snapshot_id, source_id, row["job_id"], assessment)
+            self._store_graph_snapshot_as_history(conn, snapshot_id, source_id)
+            return
         self._rebuild_graph_snapshot_metrics(conn, snapshot_id, source_id)
         published_at = datetime.now(timezone.utc).isoformat()
         manifest = self._stored_graph_manifest(conn, snapshot_id, source_id, published_at)
@@ -3430,11 +3677,43 @@ class AnalysisStore:
         row = self._current_snapshot_row(conn, source_id)
         return row["snapshot_id"] if row else None
 
+    def _current_resolution_expected_sql(self, conn: sqlite3.Connection) -> str:
+        if self._current_resolution_has_coverage_tables is None:
+            self._current_resolution_has_coverage_tables = self._table_exists(conn, "files") and self._table_exists(conn, "knowledge_source_overview")
+        if not self._current_resolution_has_coverage_tables:
+            return "0 AS expected_analyzed_file_count"
+        return """
+                       COALESCE(
+                         (SELECT overview.analysis_succeeded_files + overview.analysis_partial_files
+                          FROM knowledge_source_overview overview
+                          WHERE overview.source_id = current.source_id),
+                         CASE
+                           WHEN (SELECT COUNT(*) FROM files f WHERE f.source_id = current.source_id) > 0 THEN
+                             (SELECT COUNT(*)
+                              FROM files f
+                              JOIN analysis_files af
+                                ON af.source_id = f.source_id
+                               AND af.relative_path = f.relative_path
+                               AND af.content_hash = f.content_hash
+                              WHERE f.source_id = current.source_id
+                                AND af.status IN ('ANALYZED', 'PARTIAL'))
+                           ELSE
+                             (SELECT COUNT(*)
+                              FROM analysis_files af
+                              WHERE af.source_id = current.source_id
+                                AND af.status IN ('ANALYZED', 'PARTIAL'))
+                         END
+                       ) AS expected_analyzed_file_count
+            """
+
     def _current_snapshot_row(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Optional[sqlite3.Row]:
+        expected_sql = self._current_resolution_expected_sql(conn)
         if not source_id:
-            return conn.execute(
-                """
-                SELECT current.snapshot_id, current.published_at, snapshot.content_identity, snapshot.source_id
+            row = conn.execute(
+                f"""
+                SELECT current.snapshot_id, current.snapshot_id AS pointer_snapshot_id, current.published_at AS pointer_published_at,
+                       snapshot.published_at, snapshot.content_identity, snapshot.source_id, snapshot.state,
+                       {expected_sql}
                 FROM graph_current_snapshots current
                 JOIN graph_snapshots snapshot
                   ON snapshot.source_id = current.source_id
@@ -3444,9 +3723,12 @@ class AnalysisStore:
                 LIMIT 1
                 """
             ).fetchone()
-        return conn.execute(
-            """
-            SELECT current.snapshot_id, current.published_at, snapshot.content_identity, snapshot.source_id
+            return self._resolve_current_snapshot_row(conn, row["source_id"], row) if row else None
+        row = conn.execute(
+            f"""
+            SELECT current.snapshot_id, current.snapshot_id AS pointer_snapshot_id, current.published_at AS pointer_published_at,
+                   snapshot.published_at, snapshot.content_identity, snapshot.source_id, snapshot.state,
+                   {expected_sql}
             FROM graph_current_snapshots current
             JOIN graph_snapshots snapshot
               ON snapshot.source_id = current.source_id
@@ -3456,6 +3738,120 @@ class AnalysisStore:
             """,
             (source_id,),
         ).fetchone()
+        return self._resolve_current_snapshot_row(conn, source_id, row) if row else None
+
+    def _resolve_current_snapshot_row(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        pointer_row: sqlite3.Row,
+    ) -> Dict[str, Any]:
+        pointer = dict(pointer_row)
+        pointer["recovery_reason"] = None
+        pointer["promotion_reason"] = None
+        expected = int(pointer.get("expected_analyzed_file_count") or 0)
+        if expected <= 1:
+            return pointer
+        pointer_coverage = self._graph_snapshot_coverage(conn, source_id, pointer["snapshot_id"], expected)
+        if pointer_coverage["promotionCoverageFileCount"] >= expected:
+            pointer["promotion_reason"] = pointer_coverage["promotionReason"]
+            return pointer
+        recovered = self._best_same_source_recovery_snapshot_row(
+            conn,
+            source_id,
+            expected,
+            pointer["snapshot_id"],
+            pointer_coverage["promotionCoverageFileCount"],
+        )
+        if recovered is None:
+            pointer["promotion_reason"] = PARTIAL_SNAPSHOT_NOT_PROMOTED_CODE
+            return pointer
+        recovered_row = dict(recovered["row"])
+        recovered_row["pointer_snapshot_id"] = pointer["snapshot_id"]
+        recovered_row["pointer_published_at"] = pointer["pointer_published_at"]
+        recovered_row["recovery_reason"] = GRAPH_COVERAGE_RECOVERY_REASON
+        recovered_row["promotion_reason"] = "RECOVERED_SAME_SOURCE_READABLE_SNAPSHOT"
+        return recovered_row
+
+    def _best_same_source_recovery_snapshot_row(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        expected: int,
+        current_snapshot_id: str,
+        current_coverage: int,
+    ) -> Optional[Dict[str, Any]]:
+        candidates = []
+        for row in conn.execute(
+            """
+            SELECT snapshot_id, snapshot_id AS pointer_snapshot_id, published_at AS pointer_published_at,
+                   published_at, content_identity, source_id, state, created_at
+            FROM graph_snapshots
+            WHERE source_id = ?
+              AND state IN ('PUBLISHED', 'RETIRED')
+              AND snapshot_id != ?
+            ORDER BY published_at DESC, created_at DESC
+            """,
+            (source_id, current_snapshot_id),
+        ).fetchall():
+            coverage = self._graph_snapshot_coverage(conn, source_id, row["snapshot_id"], expected)
+            if coverage["promotionCoverageFileCount"] < expected:
+                continue
+            if coverage["promotionCoverageFileCount"] <= current_coverage:
+                continue
+            candidates.append(
+                (
+                    coverage["promotionCoverageFileCount"],
+                    coverage["currentGraphNodeCount"] + coverage["currentGraphEdgeCount"],
+                    row["published_at"] or row["created_at"] or "",
+                    row,
+                    coverage,
+                )
+            )
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        return {"row": candidates[0][3], "coverage": candidates[0][4]}
+
+    def _current_graph_coverage_metadata(
+        self,
+        conn: sqlite3.Connection,
+        source_id: Optional[str],
+        current: Optional[Dict[str, Any]],
+        overview_row: Optional[sqlite3.Row] = None,
+    ) -> Dict[str, Any]:
+        expected = self._expected_analyzed_file_count(conn, source_id, overview_row)
+        if current is None:
+            return {
+                "currentSnapshotId": None,
+                "currentPointerSnapshotId": None,
+                "currentSnapshotState": None,
+                "currentGraphNodeCount": 0,
+                "currentGraphEdgeCount": 0,
+                "representedFileCount": 0,
+                "expectedAnalyzedFileCount": expected,
+                "coverageStatus": "NO_GRAPH",
+                "degradedReason": None,
+                "promotionReason": None,
+            }
+        coverage = self._graph_snapshot_coverage(conn, source_id, current["snapshot_id"], expected)
+        coverage_status = coverage["coverageStatus"]
+        degraded_reason = current.get("recovery_reason")
+        if coverage_status == "PARTIAL":
+            coverage_status = "DEGRADED"
+            degraded_reason = degraded_reason or GRAPH_COVERAGE_PARTIAL_REASON
+        return {
+            "currentSnapshotId": current["snapshot_id"],
+            "currentPointerSnapshotId": current.get("pointer_snapshot_id") or current["snapshot_id"],
+            "currentSnapshotState": coverage["currentSnapshotState"] or current.get("state"),
+            "currentGraphNodeCount": coverage["currentGraphNodeCount"],
+            "currentGraphEdgeCount": coverage["currentGraphEdgeCount"],
+            "representedFileCount": coverage["representedFileCount"],
+            "expectedAnalyzedFileCount": coverage["expectedAnalyzedFileCount"],
+            "coverageStatus": coverage_status,
+            "degradedReason": degraded_reason,
+            "promotionReason": current.get("promotion_reason") or coverage["promotionReason"],
+        }
 
     def _snapshot_id_from_revision(self, graph_revision: str) -> Optional[str]:
         marker = ":graph-snapshot:"

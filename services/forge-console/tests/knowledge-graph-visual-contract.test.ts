@@ -262,6 +262,87 @@ async function flushAsync(turns = 6) {
   }
 }
 
+async function flushFakeTimers(turns = 6) {
+  for (let index = 0; index < turns; index += 1) {
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+  }
+}
+
+function deferred<T = unknown>() {
+  let resolve: (value: T) => void = () => undefined;
+  let reject: (reason?: unknown) => void = () => undefined;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function abortError() {
+  return Object.assign(new Error('Aborted'), { name: 'AbortError' });
+}
+
+function graphDomWithFakeTimers(url?: string) {
+  const dom = graphDom(url);
+  dom.window.setTimeout = globalThis.setTimeout as typeof dom.window.setTimeout;
+  dom.window.clearTimeout = globalThis.clearTimeout as typeof dom.window.clearTimeout;
+  return dom;
+}
+
+function metadataHttp(payload: unknown = metadataPayload()) {
+  return {
+    get: vi.fn((path: string) => {
+      if (path.includes('/knowledge/analysis/graph/metadata')) {
+        return Promise.resolve(payload);
+      }
+      throw new Error(`unexpected ${path}`);
+    })
+  };
+}
+
+function automationGraphData() {
+  const nodes = Array.from({ length: 80 }, (_, index) => ({
+    id: `atmssox-node-${String(index).padStart(3, '0')}`,
+    nodeKind: index % 5 === 0 ? 'TYPE' : 'CALLABLE',
+    label: `Automation Node ${index}`,
+    name: `Automation Node ${index}`,
+    sourceId: 'atmssox',
+    flowDomain: 'CODE'
+  }));
+  const edges = Array.from({ length: 133 }, (_, index) => ({
+    id: `atmssox-edge-${String(index).padStart(3, '0')}`,
+    from: nodes[index % nodes.length]?.id || '',
+    to: nodes[(index + 1) % nodes.length]?.id || '',
+    edgeType: index % 2 === 0 ? 'CALLS' : 'REFERENCES'
+  }));
+  return {
+    sourceId: 'atmssox',
+    sourceName: 'Automation Service SOX',
+    snapshotId: 'legacy:atmssox',
+    graphRevision: 'atmssox-code-recovered',
+    nodes,
+    edges,
+    metrics: {
+      sliceNodeCount: nodes.length,
+      sliceEdgeCount: edges.length,
+      totalNodesAvailable: 3335,
+      hiddenNodeCount: 3255,
+      hiddenEdgeCount: 7403
+    },
+    meta: {
+      returnedNodeCount: nodes.length,
+      returnedEdgeCount: edges.length,
+      totalNodeCount: 3335,
+      totalEdgeCount: 7536,
+      hiddenNodeCount: 3255,
+      hiddenEdgeCount: 7403,
+      truncated: true
+    },
+    status: { analysisStatus: 'COMPLETED' }
+  };
+}
+
 function graphProgress(dom: JSDOM) {
   const document = dom.window.document;
   return {
@@ -610,6 +691,166 @@ describe('Knowledge graph modular contract', () => {
     page.dispose();
   });
 
+  it('UI-GRAPH-EMPTY-STATE-01 true no graph facts shows Analyze message', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE');
+    const http = {
+      get: vi.fn((path: string) => {
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve({
+            ...contractMetadataPayload(false),
+            currentSnapshotId: null,
+            currentSnapshotState: null,
+            currentGraphNodeCount: 0,
+            currentGraphEdgeCount: 0,
+            representedFileCount: 0,
+            expectedAnalyzedFileCount: 0,
+            coverageStatus: 'NO_GRAPH'
+          });
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(contractGraphView('contracts-empty', {
+            snapshotId: null,
+            nodes: [],
+            edges: [],
+            totalMatchingNodeCount: 0,
+            totalMatchingEdgeCount: 0,
+            visibleNodeCount: 0,
+            visibleEdgeCount: 0
+          }));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction strong')?.textContent).toBe('No graph facts yet.');
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction span')?.textContent).toBe('Use Analyze to build the graph.');
+    page.dispose();
+  });
+
+  it('UI-GRAPH-EMPTY-STATE-02 graph exists but filters hide all nodes shows filter message', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE');
+    const http = {
+      get: vi.fn((path: string) => {
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve({
+            ...contractMetadataPayload(true),
+            currentSnapshotId: 'contracts-snapshot',
+            currentSnapshotState: 'PUBLISHED',
+            currentGraphNodeCount: 12,
+            currentGraphEdgeCount: 8,
+            representedFileCount: 10,
+            expectedAnalyzedFileCount: 10,
+            coverageStatus: 'COMPLETE'
+          });
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(contractGraphView('contracts-filter-empty', {
+            nodes: [],
+            edges: [],
+            totalMatchingNodeCount: 0,
+            totalMatchingEdgeCount: 0,
+            visibleNodeCount: 0,
+            visibleEdgeCount: 0
+          }));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction strong')?.textContent).toBe('No nodes match the current graph filters.');
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction span')?.textContent).toBe('Try All domains, include isolated nodes, or increase Max.');
+    page.dispose();
+  });
+
+  it('UI-GRAPH-EMPTY-STATE-03 degraded/incomplete graph shows degraded message', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE');
+    const http = {
+      get: vi.fn((path: string) => {
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve({
+            ...contractMetadataPayload(true),
+            currentSnapshotId: 'contracts-partial',
+            currentSnapshotState: 'PUBLISHED',
+            currentGraphNodeCount: 4,
+            currentGraphEdgeCount: 0,
+            representedFileCount: 4,
+            expectedAnalyzedFileCount: 10,
+            coverageStatus: 'DEGRADED',
+            degradedReason: 'CURRENT_GRAPH_COVERAGE_PARTIAL'
+          });
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(contractGraphView('contracts-degraded-empty', {
+            snapshotId: 'contracts-partial',
+            nodes: [],
+            edges: [],
+            totalMatchingNodeCount: 0,
+            totalMatchingEdgeCount: 0,
+            visibleNodeCount: 0,
+            visibleEdgeCount: 0
+          }));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction strong')?.textContent).toBe('Graph is incomplete.');
+    expect(dom.window.document.querySelector('#knowledgeGraphEmptyAction span')?.textContent).toBe('Current graph coverage does not match analyzed files.');
+    page.dispose();
+  });
+
+  it('UI-GRAPH-EMPTY-STATE-04 overview counts vs graph metadata coverage mismatch is visible', async () => {
+    const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE');
+    const http = {
+      get: vi.fn((path: string) => {
+        if (path.includes('/knowledge/analysis/graph/metadata')) {
+          return Promise.resolve({
+            ...contractMetadataPayload(true),
+            currentSnapshotId: 'contracts-partial',
+            currentSnapshotState: 'PUBLISHED',
+            currentGraphNodeCount: 4,
+            currentGraphEdgeCount: 0,
+            representedFileCount: 4,
+            expectedAnalyzedFileCount: 10,
+            coverageStatus: 'DEGRADED',
+            degradedReason: 'CURRENT_GRAPH_COVERAGE_PARTIAL'
+          });
+        }
+        if (path.includes('/knowledge/analysis/graph/view')) {
+          return Promise.resolve(contractGraphView('contracts-degraded-empty', {
+            snapshotId: 'contracts-partial',
+            nodes: [],
+            edges: [],
+            totalMatchingNodeCount: 0,
+            totalMatchingEdgeCount: 0,
+            visibleNodeCount: 0,
+            visibleEdgeCount: 0
+          }));
+        }
+        throw new Error(`unexpected ${path}`);
+      })
+    };
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http, runtimeConfig: { graphPollIntervalMs: 60000 } });
+
+    page.mount();
+    await flushAsync();
+
+    expect(dom.window.document.getElementById('knowledgeGraphStatusText')?.textContent).toContain('graph coverage 4 / 10 DEGRADED');
+    page.dispose();
+  });
+
   it('UI-GRAPH-STALE-05 filter changes do not reuse stale state', async () => {
     const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE&graphRevision=old-rev&cursor=old-cursor');
     const requests: string[] = [];
@@ -660,6 +901,318 @@ describe('Knowledge graph modular contract', () => {
     });
     expect(new URL(contractViewRequests[1] as string, 'http://127.0.0.1').searchParams.get('search')).toBe('contract');
     page.dispose();
+  });
+
+  it('UI-GRAPH-POLL-01 initial graph load is not aborted by poll timer', async () => {
+    vi.useFakeTimers();
+    const dom = graphDomWithFakeTimers();
+    const initial = deferred<unknown>();
+    let abortCount = 0;
+    const client = {
+      loadSnapshot: vi.fn((_query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
+        options.signal?.addEventListener('abort', () => {
+          abortCount += 1;
+          initial.reject(abortError());
+        });
+        return initial.promise;
+      }),
+      loadNodeDetail: vi.fn(),
+      loadEdgeDetail: vi.fn()
+    };
+    const page = new KnowledgeGraphPage({
+      document: dom.window.document,
+      window: dom.window,
+      http: metadataHttp(),
+      client,
+      runtimeConfig: { graphPollIntervalMs: 30 }
+    });
+
+    try {
+      page.mount();
+      await flushFakeTimers(2);
+      expect(client.loadSnapshot).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(31);
+      await flushFakeTimers(2);
+
+      expect(client.loadSnapshot).toHaveBeenCalledTimes(1);
+      expect(abortCount).toBe(0);
+
+      initial.resolve(graphData('rev-initial'));
+      await flushFakeTimers(8);
+
+      expect(page.state.data?.graphRevision).toBe('rev-initial');
+      expect(dom.window.document.querySelectorAll('.knowledge-graph-node')).toHaveLength(2);
+    } finally {
+      page.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('UI-GRAPH-POLL-02 polling starts after initial load settles', async () => {
+    vi.useFakeTimers();
+    const dom = graphDomWithFakeTimers();
+    const client = {
+      loadSnapshot: vi.fn()
+        .mockResolvedValueOnce(graphData('rev-initial'))
+        .mockResolvedValueOnce(graphData('rev-polled')),
+      loadNodeDetail: vi.fn(),
+      loadEdgeDetail: vi.fn()
+    };
+    const page = new KnowledgeGraphPage({
+      document: dom.window.document,
+      window: dom.window,
+      http: metadataHttp(),
+      client,
+      runtimeConfig: { graphPollIntervalMs: 30 }
+    });
+
+    try {
+      page.mount();
+      await flushFakeTimers(8);
+      expect(client.loadSnapshot).toHaveBeenCalledTimes(1);
+      expect(page.pollTimer).toBeTruthy();
+
+      await vi.advanceTimersByTimeAsync(30);
+      await flushFakeTimers(8);
+
+      expect(client.loadSnapshot).toHaveBeenCalledTimes(2);
+      expect(page.state.data?.graphRevision).toBe('rev-polled');
+    } finally {
+      page.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('UI-GRAPH-POLL-03 poll skips while graph request is in flight', async () => {
+    vi.useFakeTimers();
+    const dom = graphDomWithFakeTimers();
+    const slowPoll = deferred<unknown>();
+    let abortCount = 0;
+    const client = {
+      loadSnapshot: vi.fn((_query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
+        options.signal?.addEventListener('abort', () => {
+          abortCount += 1;
+          slowPoll.reject(abortError());
+        });
+        if (client.loadSnapshot.mock.calls.length === 1) {
+          return Promise.resolve(graphData('rev-initial'));
+        }
+        return slowPoll.promise;
+      }),
+      loadNodeDetail: vi.fn(),
+      loadEdgeDetail: vi.fn()
+    };
+    const page = new KnowledgeGraphPage({
+      document: dom.window.document,
+      window: dom.window,
+      http: metadataHttp(),
+      client,
+      runtimeConfig: { graphPollIntervalMs: 30 }
+    });
+
+    try {
+      page.mount();
+      await flushFakeTimers(8);
+      await vi.advanceTimersByTimeAsync(30);
+      await flushFakeTimers(2);
+      expect(client.loadSnapshot).toHaveBeenCalledTimes(2);
+
+      page.schedulePolling();
+      await vi.advanceTimersByTimeAsync(30);
+      await flushFakeTimers(2);
+
+      expect(client.loadSnapshot).toHaveBeenCalledTimes(2);
+      expect(abortCount).toBe(0);
+
+      slowPoll.resolve(graphData('rev-polled'));
+      await flushFakeTimers(8);
+
+      expect(page.state.data?.graphRevision).toBe('rev-polled');
+    } finally {
+      page.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('UI-GRAPH-POLL-04 filter change still aborts stale graph request', async () => {
+    vi.useFakeTimers();
+    const dom = graphDomWithFakeTimers('http://127.0.0.1/operator/knowledge-graph.html?sourceId=app-afesox-contracts&flowDomain=CODE');
+    const oldRequest = deferred<unknown>();
+    const queries: string[] = [];
+    const signals: AbortSignal[] = [];
+    const client = {
+      loadSnapshot: vi.fn((query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
+        queries.push(query.toString());
+        if (options.signal) {
+          signals.push(options.signal);
+        }
+        if (client.loadSnapshot.mock.calls.length === 1) {
+          options.signal?.addEventListener('abort', () => oldRequest.reject(abortError()));
+          return oldRequest.promise;
+        }
+        return Promise.resolve(contractGraphView('contracts-filtered', {
+          nodes: [node('filtered-contract-node')],
+          visibleNodeCount: 1,
+          totalMatchingNodeCount: 1
+        }));
+      }),
+      loadNodeDetail: vi.fn(),
+      loadEdgeDetail: vi.fn()
+    };
+    const page = new KnowledgeGraphPage({
+      document: dom.window.document,
+      window: dom.window,
+      http: metadataHttp(contractMetadataPayload()),
+      client,
+      runtimeConfig: { graphPollIntervalMs: 60000 }
+    });
+
+    try {
+      const firstLoad = page.loadGraph({ manual: true });
+      await flushFakeTimers(2);
+      (dom.window.document.getElementById('knowledgeGraphSearch') as HTMLInputElement).value = 'contract';
+      page.updateUrlFromControls();
+      page.resetFilterState();
+      await page.loadGraph({ manual: true });
+      await firstLoad;
+
+      expect(signals[0]?.aborted).toBe(true);
+      expect(queries).toHaveLength(2);
+      expect(new URLSearchParams(queries[1]).get('search')).toBe('contract');
+      expect(page.state.data?.graphRevision).toBe('contracts-filtered');
+      expect((page.state.nodes as Array<{ id: string }>).map((item) => item.id)).toEqual(['filtered-contract-node']);
+
+      oldRequest.resolve(contractGraphView('contracts-old', { nodes: [node('old-contract-node')] }));
+      await flushFakeTimers(2);
+      expect((page.state.nodes as Array<{ id: string }>).map((item) => item.id)).toEqual(['filtered-contract-node']);
+    } finally {
+      page.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('UI-GRAPH-POLL-05 Automation exact slow-view scenario renders after poll interval', async () => {
+    vi.useFakeTimers();
+    const dom = graphDomWithFakeTimers('http://127.0.0.1/operator/knowledge-graph.html?sourceId=atmssox&flowDomain=CODE&includeExternal=show&unresolved=show&isolated=hide&maxNodes=80');
+    const slowAutomation = deferred<unknown>();
+    let abortCount = 0;
+    const queries: string[] = [];
+    const client = {
+      loadSnapshot: vi.fn((query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
+        queries.push(query.toString());
+        options.signal?.addEventListener('abort', () => {
+          abortCount += 1;
+          slowAutomation.reject(abortError());
+        });
+        return slowAutomation.promise;
+      }),
+      loadNodeDetail: vi.fn(),
+      loadEdgeDetail: vi.fn()
+    };
+    const page = new KnowledgeGraphPage({
+      document: dom.window.document,
+      window: dom.window,
+      http: metadataHttp({
+        ...metadataPayload(387, 'COMPLETED', true),
+        sourceId: 'atmssox',
+        sourceName: 'Automation Service SOX',
+        currentSnapshotId: 'legacy:atmssox',
+        currentPointerSnapshotId: '661e40ad-f31e-4912-a00e-71af9d074f2d:atmssox',
+        currentGraphNodeCount: 6983,
+        currentGraphEdgeCount: 29955,
+        representedFileCount: 387,
+        expectedAnalyzedFileCount: 387,
+        coverageStatus: 'COMPLETE'
+      }),
+      client,
+      runtimeConfig: { graphPollIntervalMs: 30 }
+    });
+
+    try {
+      page.mount();
+      await flushFakeTimers(2);
+      await vi.advanceTimersByTimeAsync(31);
+      await flushFakeTimers(2);
+
+      expect(client.loadSnapshot).toHaveBeenCalledTimes(1);
+      expect(abortCount).toBe(0);
+      expect(Object.fromEntries(new URLSearchParams(queries[0]).entries())).toMatchObject({
+        sourceId: 'atmssox',
+        flowDomain: 'CODE',
+        maxNodes: '80',
+        includeExternal: 'show',
+        includeUnresolved: 'true',
+        includeIsolated: 'false'
+      });
+
+      slowAutomation.resolve(automationGraphData());
+      await flushFakeTimers(12);
+
+      expect(dom.window.document.querySelectorAll('.knowledge-graph-node')).toHaveLength(80);
+      expect(dom.window.document.querySelectorAll('.knowledge-graph-edge')).toHaveLength(133);
+      expect(dom.window.document.getElementById('knowledgeGraphEmptyAction')?.classList.contains('hidden')).toBe(true);
+    } finally {
+      page.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('UI-GRAPH-POLL-06 dispose cancels request and polling', async () => {
+    vi.useFakeTimers();
+    const dom = graphDomWithFakeTimers();
+    const slowPoll = deferred<unknown>();
+    const signals: AbortSignal[] = [];
+    const client = {
+      loadSnapshot: vi.fn((_query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
+        if (options.signal) {
+          signals.push(options.signal);
+        }
+        if (client.loadSnapshot.mock.calls.length === 1) {
+          return Promise.resolve(graphData('rev-initial'));
+        }
+        options.signal?.addEventListener('abort', () => slowPoll.reject(abortError()));
+        return slowPoll.promise;
+      }),
+      loadNodeDetail: vi.fn(),
+      loadEdgeDetail: vi.fn()
+    };
+    const page = new KnowledgeGraphPage({
+      document: dom.window.document,
+      window: dom.window,
+      http: metadataHttp(),
+      client,
+      runtimeConfig: { graphPollIntervalMs: 30 }
+    });
+
+    try {
+      page.mount();
+      await flushFakeTimers(8);
+      expect(page.pollTimer).toBeTruthy();
+
+      await vi.advanceTimersByTimeAsync(30);
+      await flushFakeTimers(2);
+      expect(client.loadSnapshot).toHaveBeenCalledTimes(2);
+
+      page.dispose();
+      expect(signals[1]?.aborted).toBe(true);
+      expect(page.pollTimer).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(90);
+      slowPoll.resolve({
+        ...graphData('rev-after-dispose'),
+        nodes: [node('after-dispose')],
+        edges: [],
+        meta: { returnedNodeCount: 1, returnedEdgeCount: 0 }
+      });
+      await flushFakeTimers(4);
+
+      expect(client.loadSnapshot).toHaveBeenCalledTimes(2);
+      expect((page.state.nodes as Array<{ id: string }>).map((item) => item.id)).not.toContain('after-dispose');
+    } finally {
+      page.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it('UI-GRAPH-PROGRESS-01 renders completed metadata progress without graph view', async () => {

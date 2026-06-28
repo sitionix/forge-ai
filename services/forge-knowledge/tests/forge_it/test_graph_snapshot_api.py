@@ -222,6 +222,155 @@ def test_it_graph_09_activation_idempotency_and_stale_race(tmp_path):
     assert current_snapshot(app_config.store_path, "forge-ai") == "c:forge-ai"
 
 
+def test_it_graph_current_model_01_partial_job_does_not_replace_full_source_graph(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_current_model_snapshot(app_config.store_path, "source-a", "full-1:source-a", expected_files=10, covered_files=10, node_count=20, edge_count=30, state="PUBLISHED", current=True)
+    seed_current_model_snapshot(app_config.store_path, "source-a", "partial-2:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="BUILDING")
+
+    publish_graph_snapshot(app_config.store_path, "partial-2:source-a")
+
+    assert current_snapshot(app_config.store_path, "source-a") == "full-1:source-a"
+    assert snapshot_state(app_config.store_path, "partial-2:source-a") == "RETIRED"
+    with TestClient(app) as client:
+        metadata = client.get("/api/v1/knowledge/analysis/graph/metadata?sourceId=source-a").json()
+        manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=source-a&flowDomain=CODE").json()
+    assert metadata["snapshotId"] == "full-1:source-a"
+    assert metadata["coverageStatus"] == "COMPLETE"
+    assert metadata["representedFileCount"] == 10
+    assert metadata["expectedAnalyzedFileCount"] == 10
+    assert manifest["snapshotId"] == "full-1:source-a"
+    assert manifest["totalNodeCount"] == 20
+    assert manifest["totalEdgeCount"] == 30
+
+
+def test_it_graph_current_model_02_full_source_snapshot_can_become_current(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_current_model_snapshot(app_config.store_path, "source-a", "full-1:source-a", expected_files=6, covered_files=6, node_count=6, edge_count=5, state="PUBLISHED", current=True)
+    seed_current_model_snapshot(app_config.store_path, "source-a", "full-2:source-a", expected_files=6, covered_files=6, node_count=12, edge_count=11, state="BUILDING")
+
+    publish_graph_snapshot(app_config.store_path, "full-2:source-a")
+
+    assert current_snapshot(app_config.store_path, "source-a") == "full-2:source-a"
+    assert snapshot_state(app_config.store_path, "full-1:source-a") == "RETIRED"
+    with TestClient(app) as client:
+        manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=source-a&flowDomain=CODE").json()
+    assert manifest["snapshotId"] == "full-2:source-a"
+    assert manifest["totalNodeCount"] == 12
+    assert manifest["totalEdgeCount"] == 11
+
+
+def test_it_graph_current_model_03_degraded_current_pointer_recovers_to_same_source_readable_full_snapshot(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_current_model_snapshot(app_config.store_path, "source-a", "legacy:source-a", expected_files=10, covered_files=10, node_count=25, edge_count=40, state="RETIRED")
+    seed_current_model_snapshot(app_config.store_path, "source-a", "partial:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="PUBLISHED", current=True)
+
+    with TestClient(app) as client:
+        metadata = client.get("/api/v1/knowledge/analysis/graph/metadata?sourceId=source-a").json()
+        manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=source-a&flowDomain=CODE").json()
+
+    assert current_snapshot(app_config.store_path, "source-a") == "partial:source-a"
+    assert metadata["snapshotId"] == "legacy:source-a"
+    assert metadata["currentSnapshotId"] == "legacy:source-a"
+    assert metadata["currentPointerSnapshotId"] == "partial:source-a"
+    assert metadata["coverageStatus"] == "COMPLETE"
+    assert metadata["degradedReason"] == "CURRENT_POINTER_DEGRADED_RECOVERED_TO_BETTER_SAME_SOURCE_SNAPSHOT"
+    assert manifest["snapshotId"] == "legacy:source-a"
+    assert manifest["totalNodeCount"] == 25
+    assert manifest["totalEdgeCount"] == 40
+
+
+def test_it_graph_current_model_04_no_cross_source_fallback(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_current_model_snapshot(app_config.store_path, "source-a", "partial:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="PUBLISHED", current=True)
+    seed_current_model_snapshot(app_config.store_path, "source-b", "rich:source-b", expected_files=10, covered_files=10, node_count=30, edge_count=29, state="PUBLISHED", current=True)
+
+    with TestClient(app) as client:
+        metadata = client.get("/api/v1/knowledge/analysis/graph/metadata?sourceId=source-a").json()
+        manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=source-a&flowDomain=CODE").json()
+
+    assert metadata["snapshotId"] == "partial:source-a"
+    assert metadata["currentPointerSnapshotId"] == "partial:source-a"
+    assert metadata["coverageStatus"] == "DEGRADED"
+    assert manifest["snapshotId"] == "partial:source-a"
+    assert manifest["sourceId"] == "source-a"
+    assert manifest["totalNodeCount"] == 4
+
+
+def test_it_graph_current_model_05_non_promoted_partial_snapshot_records_reason(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_current_model_snapshot(app_config.store_path, "source-a", "full-1:source-a", expected_files=10, covered_files=10, node_count=20, edge_count=30, state="PUBLISHED", current=True)
+    seed_current_model_snapshot(app_config.store_path, "source-a", "partial-2:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="BUILDING")
+
+    publish_graph_snapshot(app_config.store_path, "partial-2:source-a")
+
+    with sqlite3.connect(app_config.store_path) as conn:
+        row = conn.execute(
+            """
+            SELECT code, severity, stage, message, metadata_json
+            FROM analysis_graph_diagnostics
+            WHERE source_id = 'source-a'
+              AND snapshot_id = 'partial-2:source-a'
+              AND code = 'PARTIAL_SNAPSHOT_NOT_PROMOTED'
+            """
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "PARTIAL_SNAPSHOT_NOT_PROMOTED"
+    assert row[1] == "WARN"
+    assert row[2] == "SNAPSHOT_PROMOTION"
+    assert "4 represented, 10 expected" in row[3]
+    assert json.loads(row[4])["expectedAnalyzedFileCount"] == 10
+
+
+def test_it_graph_current_model_06_metadata_exposes_represented_vs_expected_file_coverage(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_current_model_snapshot(app_config.store_path, "source-a", "partial:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="PUBLISHED", current=True)
+
+    with TestClient(app) as client:
+        metadata = client.get("/api/v1/knowledge/analysis/graph/metadata?sourceId=source-a").json()
+
+    assert metadata["currentSnapshotId"] == "partial:source-a"
+    assert metadata["currentSnapshotState"] == "PUBLISHED"
+    assert metadata["currentGraphNodeCount"] == 4
+    assert metadata["currentGraphEdgeCount"] == 0
+    assert metadata["representedFileCount"] == 4
+    assert metadata["expectedAnalyzedFileCount"] == 10
+    assert metadata["coverageStatus"] == "DEGRADED"
+    assert metadata["degradedReason"] == "CURRENT_GRAPH_COVERAGE_PARTIAL"
+
+
+def test_it_graph_current_model_07_partial_snapshot_remains_stored_as_history(tmp_path):
+    app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
+    deps.inventory_store.init()
+    deps.analysis_store.init()
+    seed_current_model_snapshot(app_config.store_path, "source-a", "full-1:source-a", expected_files=10, covered_files=10, node_count=20, edge_count=30, state="PUBLISHED", current=True)
+    seed_current_model_snapshot(app_config.store_path, "source-a", "partial-2:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="BUILDING")
+
+    publish_graph_snapshot(app_config.store_path, "partial-2:source-a")
+
+    with sqlite3.connect(app_config.store_path) as conn:
+        snapshot = conn.execute(
+            "SELECT state, content_identity FROM graph_snapshots WHERE source_id = 'source-a' AND snapshot_id = 'partial-2:source-a'"
+        ).fetchone()
+        node_count = conn.execute(
+            "SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = 'source-a' AND snapshot_id = 'partial-2:source-a'"
+        ).fetchone()[0]
+    assert snapshot[0] == "RETIRED"
+    assert snapshot[1]
+    assert node_count == 4
+
+
 def test_it_graph_10_11_stable_cursor_across_activation_and_expired_after_retention(tmp_path):
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()
@@ -1612,11 +1761,131 @@ def create_legacy_symbol_relation_fixture(db_path) -> None:
         )
 
 
+def seed_current_model_snapshot(
+    db_path,
+    source_id: str,
+    snapshot_id: str,
+    expected_files: int,
+    covered_files: int,
+    node_count: int,
+    edge_count: int,
+    state: str = "BUILDING",
+    current: bool = False,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    job_id = snapshot_id.split(":", 1)[0]
+    source_offset = (sum(ord(char) for char in source_id) % 10000) * 1000
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at)
+            VALUES (?, ?, 'platform', '.', 1, '[]', '{}', ?)
+            """,
+            (source_id, source_id, now),
+        )
+        for index in range(expected_files):
+            file_id = source_offset + index + 1
+            relative_path = f"src/File{index:03d}.java"
+            content_hash = f"hash-{source_id}-{index:03d}"
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO files(
+                    id, source_id, source_path, absolute_path, relative_path, extension, language, flow_domain,
+                    size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at
+                )
+                VALUES (?, ?, '.', '.', ?, '.java', 'java', 'CODE', 100, ?, ?, 10, 'utf-8:replace', ?)
+                """,
+                (file_id, source_id, relative_path, content_hash, now, now),
+            )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_files(
+                    file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status,
+                    analyzed_at, symbol_count, relation_count, diagnostics_json, engine_version, flow_domain
+                )
+                VALUES (?, ?, ?, ?, 'fixture', '1', 'ANALYZED', ?, 1, 1, '[]', 'GRAPH_V1', 'CODE')
+                """,
+                (file_id, source_id, relative_path, content_hash, now),
+            )
+        published_at = now if state in {"PUBLISHED", "RETIRED"} else None
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO graph_snapshots(snapshot_id, source_id, job_id, state, created_at, published_at, manifest_json)
+            VALUES (?, ?, ?, ?, ?, ?, '{}')
+            """,
+            (snapshot_id, source_id, job_id, state, now, published_at),
+        )
+        safe_covered_files = max(covered_files, 1)
+        for index in range(node_count):
+            file_index = index % safe_covered_files
+            file_id = source_offset + file_index + 1
+            node_id = f"{snapshot_id}-node-{index:05d}"
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_graph_nodes(
+                    id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, stable_key, node_kind,
+                    language, name, qualified_name, display_name, line_start, line_end, confidence, status,
+                    metadata_json, created_at, fact_origin, flow_domain
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'CALLABLE', 'java', ?, ?, ?, 1, 1, 0.9, 'TRUSTED', '{}', ?, 'STATIC', 'CODE')
+                """,
+                (
+                    node_id,
+                    snapshot_id,
+                    job_id,
+                    source_id,
+                    file_id,
+                    file_id,
+                    f"stable:{snapshot_id}:{node_id}",
+                    f"Callable{index}",
+                    f"{source_id}.Callable{index}",
+                    f"Callable{index}",
+                    now,
+                ),
+            )
+        for index in range(edge_count):
+            if node_count < 2:
+                break
+            file_index = index % safe_covered_files
+            file_id = source_offset + file_index + 1
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_graph_edges(
+                    id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id, to_node_id,
+                    edge_type, resolution_status, confidence, metadata_json, status, created_at, fact_origin, flow_domain
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CALLS', 'RESOLVED', 0.8, '{}', 'TRUSTED', ?, 'STATIC', 'CODE')
+                """,
+                (
+                    f"{snapshot_id}-edge-{index:05d}",
+                    snapshot_id,
+                    job_id,
+                    source_id,
+                    file_id,
+                    file_id,
+                    f"{snapshot_id}-node-{index % node_count:05d}",
+                    f"{snapshot_id}-node-{(index + 1) % node_count:05d}",
+                    now,
+                ),
+            )
+        if current:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO graph_current_snapshots(source_id, snapshot_id, published_at)
+                VALUES (?, ?, ?)
+                """,
+                (source_id, snapshot_id, now),
+            )
+    if state in {"PUBLISHED", "RETIRED"}:
+        refresh_snapshot_projection(db_path, snapshot_id, source_id, now)
+
+
 def insert_graph_snapshot(db_path, source_id: str, snapshot_id: str, node_count: int, edge_count: int, state: str = "BUILDING", job_id: str | None = None) -> None:
     now = datetime.now(timezone.utc).isoformat()
     job = job_id or snapshot_id.split(":", 1)[0]
     prefix = snapshot_id.split(":", 1)[0]
-    file_id = abs(hash((source_id, snapshot_id))) % 1000000 + 100
+    file_id = sum(ord(char) for char in source_id) % 1000000 + 100
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute(

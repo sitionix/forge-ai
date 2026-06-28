@@ -53,6 +53,9 @@ export class KnowledgeGraphPage {
     this.requestCoordinator = options.requestCoordinator || new RequestCoordinator();
     this.disposed = false;
     this.pollTimer = null;
+    this.graphLoadInFlight = false;
+    this.graphLoadSequence = 0;
+    this.graphLoadInFlightSequence = 0;
     this.state = {
       data: null,
       nodes: [],
@@ -193,8 +196,11 @@ export class KnowledgeGraphPage {
     this.window.addEventListener('resize', this.resizeListener);
     this.window.addEventListener('beforeunload', this.beforeUnloadListener);
     this.loadMetadata({ manual: false });
-    this.loadGraph({ manual: false });
-    this.schedulePolling();
+    this.loadGraph({ manual: false }).finally(() => {
+      if (!this.disposed) {
+        this.schedulePolling();
+      }
+    });
   }
 
   dispose() {
@@ -204,6 +210,8 @@ export class KnowledgeGraphPage {
     this.disposed = true;
     this.invalidateGraphRender();
     this.stopPolling();
+    this.graphLoadInFlight = false;
+    this.graphLoadInFlightSequence = 0;
     this.requestCoordinator.dispose();
     this.document.getElementById('refreshKnowledgeGraph')?.removeEventListener('click', this.refreshListener);
     this.document.getElementById('forceRefreshKnowledgeGraph')?.removeEventListener('click', this.forceRefreshListener);
@@ -268,8 +276,14 @@ export class KnowledgeGraphPage {
     if (this.disposed) {
       return null;
     }
+    const passiveRefresh = !options.manual && !options.forceRefresh;
+    if (passiveRefresh && this.graphLoadInFlight) {
+      return null;
+    }
+    const loadSequence = this.beginGraphLoad();
     if (this.state.draggingNode) {
       this.state.pendingRefresh = true;
+      this.finishGraphLoad(loadSequence);
       return null;
     }
     this.metrics.dataReloadCount += 1;
@@ -321,10 +335,26 @@ export class KnowledgeGraphPage {
       }
       return null;
     } finally {
+      this.finishGraphLoad(loadSequence);
       if (loading && !this.disposed) {
         loading.classList.add('hidden');
       }
     }
+  }
+
+  beginGraphLoad() {
+    this.graphLoadSequence += 1;
+    this.graphLoadInFlight = true;
+    this.graphLoadInFlightSequence = this.graphLoadSequence;
+    return this.graphLoadSequence;
+  }
+
+  finishGraphLoad(sequence) {
+    if (this.graphLoadInFlightSequence !== sequence) {
+      return;
+    }
+    this.graphLoadInFlight = false;
+    this.graphLoadInFlightSequence = 0;
   }
 
   async loadMetadata(options = {}) {
@@ -1298,8 +1328,11 @@ export class KnowledgeGraphPage {
     if (status === 'RUNNING') {
       return 'Analysis is running.';
     }
-    if ((data.meta?.totalNodeCount || 0) > 0 || (data.metrics?.totalNodesAvailable || 0) > 0) {
-      return 'No graph items match current filters.';
+    if (this.isCurrentGraphCoverageDegraded()) {
+      return 'Graph is incomplete.';
+    }
+    if (this.hasGraphFactsOutsideCurrentProjection(data)) {
+      return 'No nodes match the current graph filters.';
     }
     return 'No graph facts yet.';
   }
@@ -1309,10 +1342,26 @@ export class KnowledgeGraphPage {
     if (status === 'RUNNING') {
       return 'Analysis is running; no graph facts match this projection yet.';
     }
-    if ((data.meta?.totalNodeCount || 0) > 0 || (data.metrics?.totalNodesAvailable || 0) > 0) {
-      return 'Try changing Flow, Domain, Depth, External, Unresolved, Max, or switch to Full mode.';
+    if (this.isCurrentGraphCoverageDegraded()) {
+      return 'Current graph coverage does not match analyzed files.';
     }
-    return 'Use Analyze in the toolbar to build the graph.';
+    if (this.hasGraphFactsOutsideCurrentProjection(data)) {
+      return 'Try All domains, include isolated nodes, or increase Max.';
+    }
+    return 'Use Analyze to build the graph.';
+  }
+
+  isCurrentGraphCoverageDegraded() {
+    const coverageStatus = String(this.state.metadata?.progress?.coverageStatus || '').toUpperCase();
+    return coverageStatus === 'PARTIAL' || coverageStatus === 'DEGRADED';
+  }
+
+  hasGraphFactsOutsideCurrentProjection(data) {
+    if ((data.meta?.totalNodeCount || 0) > 0 || (data.metrics?.totalNodesAvailable || 0) > 0) {
+      return true;
+    }
+    const progress = this.state.metadata?.progress || {};
+    return (progress.currentGraphNodeCount || 0) > 0 || (progress.currentGraphEdgeCount || 0) > 0;
   }
 
   renderPreview(token = null) {
@@ -1712,6 +1761,10 @@ export class KnowledgeGraphPage {
         return;
       }
       this.pollTimer = null;
+      if (this.graphLoadInFlight) {
+        this.schedulePolling();
+        return;
+      }
       await this.loadGraph({ manual: false });
       this.schedulePolling();
     }, interval);
@@ -1886,12 +1939,18 @@ function metadataFromGraphMetadata(metadata, query) {
   const diagnostics = metadata?.diagnostics || {};
   const diagnosticsCount = nonNegativeNumber(metadata?.diagnosticsCount ?? diagnostics.total);
   const graphStatus = metadata?.graphAvailable ? 'graph available' : 'graph unavailable';
+  const representedFileCount = nonNegativeNumber(metadata?.representedFileCount);
+  const expectedAnalyzedFileCount = nonNegativeNumber(metadata?.expectedAnalyzedFileCount);
+  const coverageStatus = String(metadata?.coverageStatus || '').toUpperCase();
+  const coverageText = coverageStatus
+    ? ` · graph coverage ${representedFileCount} / ${expectedAnalyzedFileCount} ${coverageStatus}`
+    : '';
   return {
     sourceId: metadata?.sourceId || sourceId,
     label: metadata?.sourceName || metadata?.source?.displayName || metadata?.sourceId || sourceId || 'All sources',
     group: metadata?.source?.group || null,
     updatedAt: metadata?.lastGraphPublishedAt || metadata?.lastAnalyzedAt || null,
-    statusText: `${statusLabel} · ${processed} / ${total} files · ${graphStatus}`,
+    statusText: `${statusLabel} · ${processed} / ${total} files · ${graphStatus}${coverageText}`,
     progress: {
       processedFileCount: processed,
       fileCount: total,
@@ -1901,7 +1960,17 @@ function metadataFromGraphMetadata(metadata, query) {
       graphRevision: metadata?.graphRevision || null,
       diagnosticsCount,
       currentFile: metadata?.currentFile || analysis.currentFile || null,
-      progressPercent: progressPercent(processed, total)
+      progressPercent: progressPercent(processed, total),
+      currentSnapshotId: metadata?.currentSnapshotId || metadata?.snapshotId || null,
+      currentPointerSnapshotId: metadata?.currentPointerSnapshotId || null,
+      currentSnapshotState: metadata?.currentSnapshotState || null,
+      currentGraphNodeCount: nonNegativeNumber(metadata?.currentGraphNodeCount),
+      currentGraphEdgeCount: nonNegativeNumber(metadata?.currentGraphEdgeCount),
+      representedFileCount,
+      expectedAnalyzedFileCount,
+      coverageStatus,
+      degradedReason: metadata?.degradedReason || null,
+      promotionReason: metadata?.promotionReason || null
     }
   };
 }
