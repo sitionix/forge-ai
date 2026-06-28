@@ -152,7 +152,8 @@ class RecordingActionExecutor:
 def knowledge_query_bundle(
     *,
     status: str = "OK",
-    anchors: Optional[List[Dict[str, Any]]] = None,
+    matched_nodes: Optional[List[Dict[str, Any]]] = None,
+    flow_paths: Optional[List[Dict[str, Any]]] = None,
     nodes: Optional[List[Dict[str, Any]]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     evidence: Optional[List[Dict[str, Any]]] = None,
@@ -171,8 +172,10 @@ def knowledge_query_bundle(
         ]
         if status != "NO_CANDIDATES"
         else [],
-        "anchors": anchors
-        if anchors is not None
+        "matchedNodes": matched_nodes
+        if matched_nodes is not None
+        else []
+        if status == "NO_CANDIDATES"
         else [
             {
                 "sourceId": "forge-ai",
@@ -186,6 +189,21 @@ def knowledge_query_bundle(
         ],
         "nodes": nodes if nodes is not None else [{"id": "node-jarvis-gateway", "sourceId": "forge-ai", "label": "JarvisGateway"}],
         "edges": edges if edges is not None else [],
+        "flowPaths": flow_paths
+        if flow_paths is not None
+        else []
+        if status == "NO_CANDIDATES"
+        else [
+            {
+                "flowId": "flow-1",
+                "sourceId": "forge-ai",
+                "nodes": [{"id": "node-jarvis-gateway", "sourceId": "forge-ai", "label": "JarvisGateway"}],
+                "edges": [],
+                "evidence": [],
+                "complete": True,
+                "stopReason": "TERMINAL_NODE",
+            }
+        ],
         "verifiedPaths": [],
         "evidence": evidence if evidence is not None else [],
         "unresolved": [],
@@ -193,11 +211,13 @@ def knowledge_query_bundle(
         "coverage": {
             "searchedSourceCount": 1,
             "matchedSourceCount": 0 if status == "NO_CANDIDATES" else 1,
-            "anchorCount": 0 if status == "NO_CANDIDATES" else 1,
+            "matchedNodeCount": 0 if status == "NO_CANDIDATES" else 1,
+            "flowPathCount": 0 if status == "NO_CANDIDATES" else 1,
             "nodeCount": 0 if status == "NO_CANDIDATES" else 1,
             "edgeCount": 0,
             "evidenceCount": len(evidence or []),
             "truncated": False,
+            "continuationAvailable": False,
         },
         "diagnostics": diagnostics or [],
     }

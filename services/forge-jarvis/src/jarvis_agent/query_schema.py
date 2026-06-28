@@ -17,8 +17,6 @@ class JarvisQueryStatus(str, Enum):
 class JarvisQueryRequest(BaseModel):
     query: str = Field(min_length=1)
     intent: str = "AUTO"
-    maxAnchors: int = Field(default=5, ge=1, le=20)
-    depth: int = Field(default=2, ge=1, le=4)
 
     class Config:
         extra = "forbid"
@@ -41,7 +39,8 @@ class JarvisQueryResponse(BaseModel):
     status: JarvisQueryStatus
     intent: str
     matchedSources: List[Dict[str, Any]] = Field(default_factory=list)
-    anchors: List[Dict[str, Any]] = Field(default_factory=list)
+    matchedNodes: List[Dict[str, Any]] = Field(default_factory=list)
+    flowPaths: List[Dict[str, Any]] = Field(default_factory=list)
     nodes: List[Dict[str, Any]] = Field(default_factory=list)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
     verifiedPaths: List[Dict[str, Any]] = Field(default_factory=list)

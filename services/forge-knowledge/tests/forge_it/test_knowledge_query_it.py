@@ -19,23 +19,30 @@ def test_knowledge_query_searches_all_current_graph_sources_without_source_id(tm
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/knowledge/query",
-            json={"query": "поясни як працює JarvisGateway", "intent": "AUTO", "maxAnchors": 5, "depth": 2},
+            json={"query": "поясни як працює JarvisGateway", "intent": "AUTO"},
         )
-        no_candidates = client.post("/api/v1/knowledge/query", json={"query": "does-not-exist", "maxAnchors": 5, "depth": 2})
+        no_candidates = client.post("/api/v1/knowledge/query", json={"query": "does-not-exist"})
 
     assert response.status_code == 200
     body = response.json()
     assert body["status"] in {"OK", "AMBIGUOUS"}
     assert {source["sourceId"] for source in body["matchedSources"]} >= {"source-a", "source-b"}
-    assert all(anchor["sourceId"] for anchor in body["anchors"])
-    assert any(anchor["sourceId"] == "source-a" and anchor["label"] == "JarvisGateway" for anchor in body["anchors"])
+    assert all(node["sourceId"] for node in body["matchedNodes"])
+    assert any(node["sourceId"] == "source-a" and node["label"] == "JarvisGateway" for node in body["matchedNodes"])
     assert body["coverage"]["searchedSourceCount"] == 2
-    assert body["coverage"]["anchorCount"] >= 2
+    assert body["coverage"]["matchedNodeCount"] >= 2
+    assert body["flowPaths"]
+    assert body["coverage"]["flowPathCount"] == len(body["flowPaths"])
     assert body["nodes"]
     node_ids = {node["id"] for node in body["nodes"]}
     for edge in body["edges"]:
         assert edge["fromNodeId"] in node_ids
         assert edge["toNodeId"] in node_ids
+    for flow in body["flowPaths"]:
+        flow_node_ids = {node["id"] for node in flow["nodes"]}
+        for edge in flow["edges"]:
+            assert edge["fromNodeId"] in flow_node_ids
+            assert edge["toNodeId"] in flow_node_ids
     assert body["evidence"]
     raw_text = json.dumps(body)
     assert "class JarvisGateway" not in raw_text
@@ -45,6 +52,8 @@ def test_knowledge_query_searches_all_current_graph_sources_without_source_id(tm
     assert no_candidates.status_code == 200
     no_candidates_body = no_candidates.json()
     assert no_candidates_body["status"] == "NO_CANDIDATES"
+    assert no_candidates_body["matchedNodes"] == []
+    assert no_candidates_body["flowPaths"] == []
     assert any(diagnostic["code"] == "NO_GRAPH_CANDIDATES" for diagnostic in no_candidates_body["diagnostics"])
 
 

@@ -17,8 +17,6 @@ class JarvisQueryService:
         payload = {
             "query": request.query,
             "intent": request.intent,
-            "maxAnchors": request.maxAnchors,
-            "depth": request.depth,
         }
         bundle = await self.knowledge_gateway.query(payload)
         return JarvisQueryResponse.parse_obj(bundle)

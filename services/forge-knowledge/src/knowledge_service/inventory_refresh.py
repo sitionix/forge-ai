@@ -4,7 +4,7 @@ import logging
 import asyncio
 import threading
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.config import AppConfig
@@ -52,14 +52,14 @@ class InventoryRefreshService:
         self,
         source_ids: Optional[List[str]],
         groups: Optional[List[str]],
-        callback: Callable[[], Dict[str, Any]],
+        callback: Callable[[], Union[Dict[str, Any], Awaitable[Dict[str, Any]]]],
     ) -> Dict[str, Any]:
         async def run(source_config: SourceConfig) -> Dict[str, Any]:
             self._build_locked(source_config, source_ids or [], groups or [])
             result = callback()
-            if asyncio.iscoroutine(result):
-                return await result
-            return result
+            if isinstance(result, dict):
+                return result
+            return await result
 
         return await self._with_lock(run, wait=True, block_if_analysis_active=True)
 
@@ -88,7 +88,7 @@ class InventoryRefreshService:
 
     async def _with_lock(
         self,
-        action: Callable[[SourceConfig], Dict[str, Any]],
+        action: Callable[[SourceConfig], Union[Dict[str, Any], Awaitable[Dict[str, Any]]]],
         *,
         wait: bool,
         block_if_analysis_active: bool,
@@ -101,9 +101,9 @@ class InventoryRefreshService:
                 raise KnowledgeError("INVENTORY_BUILD_BLOCKED_BY_ANALYSIS", "Inventory refresh is blocked while AI analysis is running")
             source_config = require_source_config(self.config.local_config_path)
             result = action(source_config)
-            if asyncio.iscoroutine(result):
-                return await result
-            return result
+            if isinstance(result, dict):
+                return result
+            return await result
         finally:
             self._lock.release()
 

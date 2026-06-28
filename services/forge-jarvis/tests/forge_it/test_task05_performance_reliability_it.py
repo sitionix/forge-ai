@@ -56,7 +56,8 @@ def test_perf_jar_02_query_records_knowledge_timing_and_does_not_generate_answer
         timing = _parse_server_timing(sample.response.headers["server-timing"])
         assert timing["knowledge"] > 0
         assert timing["ollama"] == 0
-        assert body["anchors"]
+        assert body["matchedNodes"]
+        assert body["flowPaths"]
         assert "answer" not in body
         text = sample.response.body.decode("utf-8")
         assert "Answer should not be generated" not in text

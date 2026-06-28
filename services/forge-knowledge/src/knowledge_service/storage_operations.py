@@ -264,9 +264,20 @@ class StorageOperations:
 
     def _row_counts(self, conn: sqlite3.Connection) -> Dict[str, int]:
         tables = [
-            "inventory_builds", "sources", "files", "context_chunks", "analysis_jobs", "analysis_job_files",
-            "analysis_files", "graph_snapshots", "graph_current_snapshots", "graph_snapshot_tombstones",
-            "analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_evidence", "analysis_graph_claims",
+            "inventory_builds",
+            "sources",
+            "files",
+            "context_chunks",
+            "analysis_jobs",
+            "analysis_job_files",
+            "analysis_files",
+            "graph_snapshots",
+            "graph_current_snapshots",
+            "graph_snapshot_tombstones",
+            "analysis_graph_nodes",
+            "analysis_graph_edges",
+            "analysis_graph_evidence",
+            "analysis_graph_claims",
             "analysis_graph_diagnostics",
         ]
         return {table: self._count(conn, table) for table in tables if self._table_exists(conn, table)}

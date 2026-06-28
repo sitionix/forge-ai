@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import concurrent.futures
-import json
 import re
 import sqlite3
 import threading
@@ -103,11 +102,15 @@ def test_it_storage_02_representative_migration_idempotency(tmp_path):
     assert sqlite_objects(db_path) == first_objects
     assert LEGACY_GRAPH_OBJECTS.isdisjoint(sqlite_objects(db_path))
     assert {source["sourceId"]: source["inventory"] for source in read_overview(db_path)["sources"]} == first_overview_sources
-    assert _current_snapshots(db_path) == first_current == {
-        "config-source": "legacy-symbols:config-source",
-        "forge-ai": "job-1:forge-ai",
-        "legacy-source": "legacy-symbols:legacy-source",
-    }
+    assert (
+        _current_snapshots(db_path)
+        == first_current
+        == {
+            "config-source": "legacy-symbols:config-source",
+            "forge-ai": "job-1:forge-ai",
+            "legacy-source": "legacy-symbols:legacy-source",
+        }
+    )
     assert _duplicate_count(db_path, "graph_snapshots", "source_id, snapshot_id") == 0
     assert _duplicate_count(db_path, "graph_current_snapshots", "source_id") == 0
     assert _duplicate_count(db_path, "analysis_job_files", "id") == 0
@@ -334,10 +337,20 @@ def test_it_obs_02_graph_route_observability(tmp_path):
         revision = quote(manifest["graphRevision"])
         responses = [
             manifest_response,
-            client.get(f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&graphRevision={revision}&pageSize=10", headers={"X-Correlation-Id": "obs-graph"}),
-            client.get(f"/api/v1/knowledge/analysis/graph/edges?sourceId=forge-ai&flowDomain=CODE&graphRevision={revision}&pageSize=10", headers={"X-Correlation-Id": "obs-graph"}),
-            client.get(f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={revision}", headers={"X-Correlation-Id": "obs-graph"}),
-            client.get(f"/api/v1/knowledge/analysis/graph/edge/edge-00000?sourceId=forge-ai&graphRevision={revision}", headers={"X-Correlation-Id": "obs-graph"}),
+            client.get(
+                f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&graphRevision={revision}&pageSize=10",
+                headers={"X-Correlation-Id": "obs-graph"},
+            ),
+            client.get(
+                f"/api/v1/knowledge/analysis/graph/edges?sourceId=forge-ai&flowDomain=CODE&graphRevision={revision}&pageSize=10",
+                headers={"X-Correlation-Id": "obs-graph"},
+            ),
+            client.get(
+                f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={revision}", headers={"X-Correlation-Id": "obs-graph"}
+            ),
+            client.get(
+                f"/api/v1/knowledge/analysis/graph/edge/edge-00000?sourceId=forge-ai&graphRevision={revision}", headers={"X-Correlation-Id": "obs-graph"}
+            ),
         ]
 
     for response in responses:

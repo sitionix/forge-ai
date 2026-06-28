@@ -6,12 +6,6 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, validator
 
 
-DEFAULT_QUERY_MAX_ANCHORS = 5
-MAX_QUERY_ANCHORS = 20
-DEFAULT_QUERY_DEPTH = 2
-MAX_QUERY_DEPTH = 4
-
-
 class KnowledgeQueryStatus(str, Enum):
     OK = "OK"
     NO_CANDIDATES = "NO_CANDIDATES"
@@ -23,8 +17,6 @@ class KnowledgeQueryStatus(str, Enum):
 class KnowledgeQueryRequest(BaseModel):
     query: str = Field(min_length=1)
     intent: str = "AUTO"
-    maxAnchors: int = Field(default=DEFAULT_QUERY_MAX_ANCHORS, ge=1, le=MAX_QUERY_ANCHORS)
-    depth: int = Field(default=DEFAULT_QUERY_DEPTH, ge=1, le=MAX_QUERY_DEPTH)
 
     class Config:
         extra = "forbid"
@@ -56,7 +48,7 @@ class KnowledgeQueryMatchedSource(BaseModel):
     score: float
 
 
-class KnowledgeQueryAnchor(BaseModel):
+class KnowledgeQueryMatchedNode(BaseModel):
     sourceId: str
     nodeId: str
     stableKey: str
@@ -70,14 +62,26 @@ class KnowledgeQueryAnchor(BaseModel):
     qualifiedName: Optional[str] = None
 
 
+class KnowledgeQueryFlowPath(BaseModel):
+    flowId: str
+    sourceId: Optional[str] = None
+    nodes: List[Dict[str, Any]] = Field(default_factory=list)
+    edges: List[Dict[str, Any]] = Field(default_factory=list)
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    complete: bool = True
+    stopReason: str = "TERMINAL_NODE"
+
+
 class KnowledgeQueryCoverage(BaseModel):
     searchedSourceCount: int = 0
     matchedSourceCount: int = 0
-    anchorCount: int = 0
+    matchedNodeCount: int = 0
+    flowPathCount: int = 0
     nodeCount: int = 0
     edgeCount: int = 0
     evidenceCount: int = 0
     truncated: bool = False
+    continuationAvailable: bool = False
 
 
 class KnowledgeQueryResponse(BaseModel):
@@ -85,7 +89,8 @@ class KnowledgeQueryResponse(BaseModel):
     status: KnowledgeQueryStatus
     intent: str
     matchedSources: List[KnowledgeQueryMatchedSource] = Field(default_factory=list)
-    anchors: List[KnowledgeQueryAnchor] = Field(default_factory=list)
+    matchedNodes: List[KnowledgeQueryMatchedNode] = Field(default_factory=list)
+    flowPaths: List[KnowledgeQueryFlowPath] = Field(default_factory=list)
     nodes: List[Dict[str, Any]] = Field(default_factory=list)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
     verifiedPaths: List[Dict[str, Any]] = Field(default_factory=list)

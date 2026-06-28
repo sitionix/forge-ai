@@ -19,9 +19,6 @@ function jarvisDom() {
       <section id="jarvisCommandResult" class="hidden"></section>
       <form id="jarvisQueryForm">
         <textarea id="jarvisQueryText"></textarea>
-        <select id="jarvisQueryIntent"><option value="AUTO">AUTO</option></select>
-        <input id="jarvisQueryMaxAnchors">
-        <input id="jarvisQueryDepth">
         <button id="sendJarvisQuery" type="submit">Send</button>
       </form>
       <div id="jarvisQueryLoading" class="hidden"></div>
@@ -54,7 +51,7 @@ describe('Jarvis runtime rendering', () => {
           status: 'OK',
           intent: 'AUTO',
           matchedSources: [{ sourceId: 'forge-ai', displayName: 'Forge AI', score: 0.95 }],
-          anchors: [{
+          matchedNodes: [{
             sourceId: 'forge-ai',
             nodeId: 'n1',
             stableKey: 'src/JarvisGateway.java|CALLABLE|JarvisGateway',
@@ -64,10 +61,19 @@ describe('Jarvis runtime rendering', () => {
             matchReasons: ['NAME_MATCH'],
             content: 'SECRET_SOURCE_CONTENT'
           }],
+          flowPaths: [{
+            flowId: 'flow-1',
+            sourceId: 'forge-ai',
+            nodes: [{ id: 'n1', sourceId: 'forge-ai', label: 'JarvisGateway' }],
+            edges: [],
+            evidence: [],
+            complete: true,
+            stopReason: 'TERMINAL_NODE'
+          }],
           nodes: [{ id: 'n1', sourceId: 'forge-ai', label: 'JarvisGateway', content: 'SECRET_SOURCE_CONTENT' }],
           edges: [],
           evidence: [],
-          coverage: { matchedSourceCount: 1, anchorCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
+          coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowPathCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
           diagnostics: [{ code: 'OK', message: 'No sensitive data' }]
         });
       })
@@ -77,8 +83,6 @@ describe('Jarvis runtime rendering', () => {
     await flushAsync();
 
     (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'explain';
-    (dom.window.document.getElementById('jarvisQueryMaxAnchors') as HTMLInputElement).value = '5';
-    (dom.window.document.getElementById('jarvisQueryDepth') as HTMLInputElement).value = '2';
     await page.submitQuery({ preventDefault: () => undefined });
     (dom.window.document.getElementById('jarvisCommandText') as HTMLTextAreaElement).value = 'run';
     await page.submitCommand({ preventDefault: () => undefined });
@@ -89,7 +93,7 @@ describe('Jarvis runtime rendering', () => {
     expect(text).not.toContain('SECRET_SOURCE_CONTENT');
     expect(text).not.toContain('["bash"');
     expect(text).not.toContain('sleep 0.2');
-    expect(http.post).toHaveBeenCalledWith('/jarvis/query', expect.objectContaining({ query: 'explain' }), expect.any(Object));
+    expect(http.post).toHaveBeenCalledWith('/jarvis/query', { query: 'explain', intent: 'AUTO' }, expect.any(Object));
     page.dispose();
   });
 
@@ -101,10 +105,11 @@ describe('Jarvis runtime rendering', () => {
         status: 'NO_CANDIDATES',
         intent: 'AUTO',
         matchedSources: [],
-        anchors: [],
+        matchedNodes: [],
+        flowPaths: [],
         nodes: [],
         edges: [],
-        coverage: { searchedSourceCount: 2, matchedSourceCount: 0, anchorCount: 0, nodeCount: 0, edgeCount: 0, evidenceCount: 0 },
+        coverage: { searchedSourceCount: 2, matchedSourceCount: 0, matchedNodeCount: 0, flowPathCount: 0, nodeCount: 0, edgeCount: 0, evidenceCount: 0 },
         diagnostics: [{ code: 'NO_GRAPH_CANDIDATES', message: 'No matches' }]
       }))
     };
@@ -116,7 +121,7 @@ describe('Jarvis runtime rendering', () => {
     await page.submitQuery({ preventDefault: () => undefined });
 
     const text = dom.window.document.body.textContent || '';
-    expect(text).toContain('No graph candidates found');
+    expect(text).toContain('No graph matches found');
     expect(text).toContain('NO_GRAPH_CANDIDATES');
     expect(http.post).toHaveBeenCalledWith('/jarvis/query', expect.any(Object), expect.any(Object));
     const calls = http.post.mock.calls as unknown as Array<[string, unknown?, unknown?]>;

@@ -69,12 +69,6 @@ public class ForgeAiInfrastructureJarvisController {
             if (body.intent() != null) {
                 payload.put("intent", body.intent());
             }
-            if (body.maxAnchors() != null) {
-                payload.put("maxAnchors", body.maxAnchors());
-            }
-            if (body.depth() != null) {
-                payload.put("depth", body.depth());
-            }
             return this.objectMapper.writeValueAsBytes(payload);
         } catch (final JsonProcessingException exception) {
             throw new IllegalArgumentException("Jarvis query request could not be serialized.", exception);
@@ -87,12 +81,6 @@ public class ForgeAiInfrastructureJarvisController {
         }
         if (body.query() == null || body.query().isBlank()) {
             return this.validationError("query must not be blank");
-        }
-        if (body.maxAnchors() != null && (body.maxAnchors() < 1 || body.maxAnchors() > 20)) {
-            return this.validationError("maxAnchors must be between 1 and 20");
-        }
-        if (body.depth() != null && (body.depth() < 1 || body.depth() > 4)) {
-            return this.validationError("depth must be between 1 and 4");
         }
         return null;
     }

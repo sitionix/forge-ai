@@ -81,10 +81,11 @@ def test_status_actions_command_and_query_success_paths(tmp_path):
     assert actions["actions"] and "command" not in str(actions)
     assert command["execution"]["executed"] is True
     assert executor.invocations == [("ollama_status", "health", "check ollama")]
-    assert knowledge.calls == [{"query": "explain JarvisGateway", "intent": "AUTO", "maxAnchors": 5, "depth": 2}]
+    assert knowledge.calls == [{"query": "explain JarvisGateway", "intent": "AUTO"}]
     assert model.prompts == []
     assert model.health_calls == 0
-    assert query["anchors"][0]["sourceId"] == "forge-ai"
+    assert query["matchedNodes"][0]["sourceId"] == "forge-ai"
+    assert query["flowPaths"][0]["flowId"] == "flow-1"
     assert query["diagnostics"] == []
 
 
@@ -135,12 +136,15 @@ def test_query_failure_matrix_and_diagnostics(tmp_path):
         assert blank.status_code == 422
 
     empty = FakeKnowledgeClient(
-        bundle=knowledge_query_bundle(status="NO_CANDIDATES", anchors=[], nodes=[], diagnostics=[{"code": "NO_GRAPH_CANDIDATES", "message": "No matches"}])
+        bundle=knowledge_query_bundle(
+            status="NO_CANDIDATES", matched_nodes=[], flow_paths=[], nodes=[], diagnostics=[{"code": "NO_GRAPH_CANDIDATES", "message": "No matches"}]
+        )
     )
     with TestClient(build_test_app(write_runtime_config(tmp_path), knowledge=empty)[0]) as client:
         response = client.post("/api/v1/jarvis/query", json={"query": "missing"})
         body = response.json()
-        assert body["anchors"] == []
+        assert body["matchedNodes"] == []
+        assert body["flowPaths"] == []
         assert {item["code"] for item in body["diagnostics"]} == {"NO_GRAPH_CANDIDATES"}
 
     with TestClient(build_test_app(write_runtime_config(tmp_path), knowledge=FakeKnowledgeClient(error=knowledge_unavailable()))[0]) as client:
@@ -166,7 +170,8 @@ def test_query_surfaces_knowledge_analysis_diagnostics_when_graph_is_not_ready(t
     knowledge = FakeKnowledgeClient(
         bundle=knowledge_query_bundle(
             status="NO_CANDIDATES",
-            anchors=[],
+            matched_nodes=[],
+            flow_paths=[],
             nodes=[],
             diagnostics=[
                 {
@@ -184,7 +189,8 @@ def test_query_surfaces_knowledge_analysis_diagnostics_when_graph_is_not_ready(t
 
     body = response.json()
     assert response.status_code == 200
-    assert body["anchors"] == []
+    assert body["matchedNodes"] == []
+    assert body["flowPaths"] == []
     assert "answer" not in body
     assert {item["code"] for item in body["diagnostics"]} == {"ANALYSIS_NOT_READY"}
-    assert knowledge.calls == [{"query": "explain analyzed files", "intent": "AUTO", "maxAnchors": 5, "depth": 2}]
+    assert knowledge.calls == [{"query": "explain analyzed files", "intent": "AUTO"}]

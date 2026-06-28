@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from knowledge_service.observability import observed_connect
 
@@ -195,13 +194,13 @@ def _refresh_one(conn: sqlite3.Connection, source: sqlite3.Row) -> None:
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-            (
-                source_id,
-                source["display_name"],
-                group_name,
-                source_path,
-                root_exists,
-                "READY" if root_exists else "UNAVAILABLE",
+        (
+            source_id,
+            source["display_name"],
+            group_name,
+            source_path,
+            root_exists,
+            "READY" if root_exists else "UNAVAILABLE",
             _int_value(inventory, "eligible_file_count", total),
             _int_value(inventory, "skipped_count"),
             analysis_state,

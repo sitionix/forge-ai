@@ -3,12 +3,13 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from knowledge_service.knowledge_query_schema import (
-    KnowledgeQueryAnchor,
     KnowledgeQueryCoverage,
     KnowledgeQueryDiagnostic,
+    KnowledgeQueryFlowPath,
+    KnowledgeQueryMatchedNode,
     KnowledgeQueryMatchedSource,
     KnowledgeQueryRequest,
     KnowledgeQueryResponse,
@@ -17,6 +18,15 @@ from knowledge_service.knowledge_query_schema import (
 
 
 TOKEN_PATTERN = re.compile(r"[\w.$:/\\-]+", re.UNICODE)
+
+
+@dataclass(frozen=True)
+class KnowledgeQueryPolicy:
+    max_search_candidates: int = 100
+    max_matched_nodes: int = 5
+    traversal_depth: int = 2
+    max_flow_paths: int = 5
+    max_evidence_chars: int = 2000
 
 
 @dataclass(frozen=True)
@@ -88,22 +98,38 @@ class UnifiedAnchorSearcher:
     def __init__(self, graph_store: Any) -> None:
         self.graph_store = graph_store
 
-    def search(self, query: str, eligible_sources: Sequence[QuerySource], max_anchors: int) -> List[KnowledgeQueryAnchor]:
+    def search(
+        self,
+        query: str,
+        eligible_sources: Sequence[QuerySource],
+        policy: KnowledgeQueryPolicy,
+    ) -> tuple[List[KnowledgeQueryMatchedNode], List[KnowledgeQueryDiagnostic], bool]:
         tokens = self._tokens(query)
         if not tokens or not eligible_sources:
-            return []
-        raw_candidates = self.graph_store.query_anchor_candidates(tokens, [source.source_id for source in eligible_sources], max_anchors * 20)
-        anchors: List[KnowledgeQueryAnchor] = []
+            return [], [], False
+        raw_candidates = self.graph_store.query_anchor_candidates(tokens, [source.source_id for source in eligible_sources], policy.max_search_candidates)
+        matched_nodes: List[KnowledgeQueryMatchedNode] = []
         seen: set[tuple[str, str, str]] = set()
         for candidate in raw_candidates:
-            anchor = self._anchor(candidate, tokens)
-            key = (anchor.sourceId, anchor.snapshotId or "", anchor.nodeId)
+            matched_node = self._matched_node(candidate, tokens)
+            key = (matched_node.sourceId, matched_node.snapshotId or "", matched_node.nodeId)
             if key in seen:
                 continue
             seen.add(key)
-            anchors.append(anchor)
-        anchors.sort(key=lambda item: (-item.score, item.sourceId, item.label.lower(), item.nodeId))
-        return anchors[:max_anchors]
+            matched_nodes.append(matched_node)
+        matched_nodes.sort(key=lambda item: (-item.score, item.sourceId, item.label.lower(), item.nodeId))
+        truncated = len(matched_nodes) > policy.max_matched_nodes
+        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        if truncated:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="FLOW_RESULT_LIMIT_REACHED",
+                    message="Matched graph nodes exceeded the query policy and were truncated before flow extraction.",
+                    severity="INFO",
+                    metadata={"limit": policy.max_matched_nodes},
+                )
+            )
+        return matched_nodes[: policy.max_matched_nodes], diagnostics, truncated
 
     def _tokens(self, query: str) -> List[str]:
         seen: set[str] = set()
@@ -119,7 +145,7 @@ class UnifiedAnchorSearcher:
             tokens.append(token)
         return tokens
 
-    def _anchor(self, candidate: Dict[str, Any], tokens: Sequence[str]) -> KnowledgeQueryAnchor:
+    def _matched_node(self, candidate: Dict[str, Any], tokens: Sequence[str]) -> KnowledgeQueryMatchedNode:
         reasons: set[str] = set()
         score = 0.0
         field_values = {
@@ -161,7 +187,7 @@ class UnifiedAnchorSearcher:
         if not reasons:
             reasons.add("LEXICAL_MATCH")
             score = max(score, 0.25)
-        return KnowledgeQueryAnchor(
+        return KnowledgeQueryMatchedNode(
             sourceId=str(candidate.get("sourceId") or ""),
             nodeId=str(candidate.get("id") or candidate.get("nodeId") or ""),
             stableKey=str(candidate.get("stableKey") or candidate.get("id") or ""),
@@ -180,16 +206,20 @@ class GraphSliceQueryService:
     def __init__(self, graph_store: Any) -> None:
         self.graph_store = graph_store
 
-    def build(self, anchors: Sequence[KnowledgeQueryAnchor], depth: int) -> tuple[Dict[str, List[Dict[str, Any]]], List[KnowledgeQueryDiagnostic]]:
-        if not anchors:
+    def build(
+        self,
+        matched_nodes: Sequence[KnowledgeQueryMatchedNode],
+        policy: KnowledgeQueryPolicy,
+    ) -> tuple[Dict[str, List[Dict[str, Any]]], List[KnowledgeQueryDiagnostic]]:
+        if not matched_nodes:
             return self._empty_slice(), []
         try:
-            slice_bundle = self.graph_store.query_graph_slice([anchor.dict() for anchor in anchors], depth)
+            slice_bundle = self.graph_store.query_graph_slice([matched_node.dict() for matched_node in matched_nodes], policy.traversal_depth)
         except Exception:
             return self._empty_slice(), [
                 KnowledgeQueryDiagnostic(
                     code="GRAPH_SLICE_FAILED",
-                    message="Graph slice could not be built from the selected anchors.",
+                    message="Graph slice could not be built from the selected matched nodes.",
                     severity="WARN",
                 )
             ]
@@ -204,6 +234,140 @@ class GraphSliceQueryService:
 
     def _empty_slice(self) -> Dict[str, List[Dict[str, Any]]]:
         return {"nodes": [], "edges": [], "evidence": [], "unresolved": [], "external": [], "verifiedPaths": []}
+
+
+class FlowPathExtractor:
+    def extract(
+        self,
+        matched_nodes: Sequence[KnowledgeQueryMatchedNode],
+        slice_bundle: Dict[str, List[Dict[str, Any]]],
+        evidence: Sequence[Dict[str, Any]],
+        policy: KnowledgeQueryPolicy,
+    ) -> tuple[List[KnowledgeQueryFlowPath], List[KnowledgeQueryDiagnostic], bool]:
+        if not matched_nodes:
+            return [], [], False
+        nodes = list(slice_bundle.get("nodes") or [])
+        edges = list(slice_bundle.get("edges") or [])
+        node_by_id = {str(node.get("id") or node.get("nodeId") or ""): node for node in nodes if node.get("id") or node.get("nodeId")}
+        calls_by_from: Dict[str, List[Dict[str, Any]]] = {}
+        for edge in edges:
+            if str(edge.get("edgeType") or edge.get("relation") or edge.get("kind") or "").upper() != "CALLS":
+                continue
+            from_node = str(edge.get("fromNodeId") or edge.get("from") or "")
+            to_node = str(edge.get("toNodeId") or edge.get("to") or "")
+            if not from_node or not to_node or from_node not in node_by_id or to_node not in node_by_id:
+                continue
+            calls_by_from.setdefault(from_node, []).append(edge)
+        for outgoing in calls_by_from.values():
+            outgoing.sort(key=lambda item: str(item.get("id") or ""))
+
+        flow_paths: List[KnowledgeQueryFlowPath] = []
+        truncated = False
+        for matched_node in matched_nodes:
+            if len(flow_paths) >= policy.max_flow_paths:
+                truncated = True
+                break
+            node_id = matched_node.nodeId
+            if node_id not in node_by_id:
+                continue
+            path_edges = self._first_calls_path(node_id, calls_by_from, policy)
+            if not path_edges:
+                continue
+            node_ids = [node_id]
+            for edge in path_edges:
+                node_ids.append(str(edge.get("toNodeId") or edge.get("to") or ""))
+            unique_nodes = [node_by_id[current] for current in node_ids if current in node_by_id]
+            stop_reason = "TERMINAL_NODE"
+            complete = True
+            last_node_id = node_ids[-1] if node_ids else node_id
+            if len(path_edges) >= policy.traversal_depth and calls_by_from.get(last_node_id):
+                stop_reason = "FLOW_RESULT_LIMIT_REACHED"
+                complete = False
+                truncated = True
+            flow_paths.append(
+                KnowledgeQueryFlowPath(
+                    flowId=f"flow-{len(flow_paths) + 1}",
+                    sourceId=matched_node.sourceId,
+                    nodes=unique_nodes,
+                    edges=path_edges,
+                    evidence=self._evidence_for_path(evidence, matched_node.sourceId, unique_nodes, path_edges, policy),
+                    complete=complete,
+                    stopReason=stop_reason,
+                )
+            )
+
+        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        if not flow_paths:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="FLOW_PATH_EXTRACTION_NOT_READY",
+                    message="Matched graph nodes were found, but no CALLS flow path could be extracted from the current graph slice.",
+                    severity="INFO",
+                )
+            )
+        if truncated:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="FLOW_RESULT_LIMIT_REACHED",
+                    message="Flow extraction reached the internal query policy limit.",
+                    severity="INFO",
+                    metadata={"maxFlowPaths": policy.max_flow_paths, "traversalDepth": policy.traversal_depth},
+                )
+            )
+        return flow_paths, diagnostics, truncated
+
+    def _first_calls_path(
+        self,
+        start_node_id: str,
+        calls_by_from: Dict[str, List[Dict[str, Any]]],
+        policy: KnowledgeQueryPolicy,
+    ) -> List[Dict[str, Any]]:
+        current = start_node_id
+        seen = {start_node_id}
+        path: List[Dict[str, Any]] = []
+        for _ in range(policy.traversal_depth):
+            outgoing = calls_by_from.get(current) or []
+            next_edge: Optional[Dict[str, Any]] = None
+            for edge in outgoing:
+                target = str(edge.get("toNodeId") or edge.get("to") or "")
+                if target and target not in seen:
+                    next_edge = edge
+                    break
+            if next_edge is None:
+                break
+            path.append(next_edge)
+            current = str(next_edge.get("toNodeId") or next_edge.get("to") or "")
+            seen.add(current)
+        return path
+
+    def _evidence_for_path(
+        self,
+        evidence: Sequence[Dict[str, Any]],
+        source_id: str,
+        nodes: Sequence[Dict[str, Any]],
+        edges: Sequence[Dict[str, Any]],
+        policy: KnowledgeQueryPolicy,
+    ) -> List[Dict[str, Any]]:
+        node_ids = {str(node.get("id") or node.get("nodeId") or "") for node in nodes}
+        edge_ids = {str(edge.get("id") or edge.get("edgeId") or edge.get("graphEdgeId") or "") for edge in edges}
+        selected: List[Dict[str, Any]] = []
+        char_budget = policy.max_evidence_chars
+        for item in evidence:
+            item_source = str(item.get("sourceId") or "")
+            item_node = str(item.get("nodeId") or "")
+            item_edge = str(item.get("edgeId") or item.get("graphEdgeId") or "")
+            if item_source not in {"", source_id}:
+                continue
+            if item_node and item_node not in node_ids:
+                continue
+            if item_edge and item_edge not in edge_ids:
+                continue
+            text_size = len(str(item.get("text") or item.get("summary") or item))
+            if text_size > char_budget:
+                break
+            char_budget -= text_size
+            selected.append(dict(item))
+        return selected
 
 
 class EvidenceBundleBuilder:
@@ -231,19 +395,24 @@ class KnowledgeQueryService:
         source_scope_resolver: SourceScopeResolver,
         anchor_searcher: UnifiedAnchorSearcher,
         graph_slice_service: GraphSliceQueryService,
+        flow_path_extractor: FlowPathExtractor,
         evidence_builder: EvidenceBundleBuilder,
+        policy: KnowledgeQueryPolicy | None = None,
     ) -> None:
         self.source_scope_resolver = source_scope_resolver
         self.anchor_searcher = anchor_searcher
         self.graph_slice_service = graph_slice_service
+        self.flow_path_extractor = flow_path_extractor
         self.evidence_builder = evidence_builder
+        self.policy = policy or KnowledgeQueryPolicy()
 
     def query(self, request: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         eligible_sources, scope_diagnostics = self.source_scope_resolver.resolve()
         diagnostics.extend(scope_diagnostics)
-        anchors = self.anchor_searcher.search(request.query, eligible_sources, request.maxAnchors)
-        if not anchors:
+        matched_nodes, search_diagnostics, search_truncated = self.anchor_searcher.search(request.query, eligible_sources, self.policy)
+        diagnostics.extend(search_diagnostics)
+        if not matched_nodes:
             return KnowledgeQueryResponse(
                 queryId=self._query_id(),
                 status=KnowledgeQueryStatus.NO_CANDIDATES,
@@ -259,17 +428,24 @@ class KnowledgeQueryService:
                 ],
             )
 
-        slice_bundle, slice_diagnostics = self.graph_slice_service.build(anchors, request.depth)
+        slice_bundle, slice_diagnostics = self.graph_slice_service.build(matched_nodes, self.policy)
         diagnostics.extend(slice_diagnostics)
         evidence_bundle = self.evidence_builder.build(slice_bundle)
-        matched_sources = self._matched_sources(anchors, eligible_sources)
+        flow_paths, flow_diagnostics, flow_truncated = self.flow_path_extractor.extract(
+            matched_nodes,
+            slice_bundle,
+            evidence_bundle["evidence"],
+            self.policy,
+        )
+        diagnostics.extend(flow_diagnostics)
+        matched_sources = self._matched_sources(matched_nodes, eligible_sources)
         status = KnowledgeQueryStatus.OK
-        if len(matched_sources) > 1 and self._is_ambiguous(anchors):
+        if len(matched_sources) > 1 and self._is_ambiguous(matched_nodes):
             status = KnowledgeQueryStatus.AMBIGUOUS
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
                     code="MULTIPLE_SOURCES_MATCHED",
-                    message="Multiple sources produced similarly scored anchors.",
+                    message="Multiple sources produced similarly scored matched nodes.",
                     severity="INFO",
                 )
             )
@@ -278,7 +454,8 @@ class KnowledgeQueryService:
             status=status,
             intent=request.intent,
             matchedSources=matched_sources,
-            anchors=anchors,
+            matchedNodes=matched_nodes,
+            flowPaths=flow_paths,
             nodes=slice_bundle["nodes"],
             edges=slice_bundle["edges"],
             verifiedPaths=evidence_bundle["verifiedPaths"],
@@ -288,30 +465,34 @@ class KnowledgeQueryService:
             coverage=KnowledgeQueryCoverage(
                 searchedSourceCount=len(eligible_sources),
                 matchedSourceCount=len(matched_sources),
-                anchorCount=len(anchors),
+                matchedNodeCount=len(matched_nodes),
+                flowPathCount=len(flow_paths),
                 nodeCount=len(slice_bundle["nodes"]),
                 edgeCount=len(slice_bundle["edges"]),
                 evidenceCount=len(evidence_bundle["evidence"]),
-                truncated=False,
+                truncated=search_truncated or flow_truncated,
+                continuationAvailable=search_truncated or flow_truncated,
             ),
             diagnostics=diagnostics,
         )
 
-    def _matched_sources(self, anchors: Sequence[KnowledgeQueryAnchor], eligible_sources: Sequence[QuerySource]) -> List[KnowledgeQueryMatchedSource]:
+    def _matched_sources(
+        self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], eligible_sources: Sequence[QuerySource]
+    ) -> List[KnowledgeQueryMatchedSource]:
         display_names = {source.source_id: source.display_name for source in eligible_sources}
         scores: Dict[str, float] = {}
-        for anchor in anchors:
-            scores[anchor.sourceId] = max(scores.get(anchor.sourceId, 0.0), anchor.score)
+        for matched_node in matched_nodes:
+            scores[matched_node.sourceId] = max(scores.get(matched_node.sourceId, 0.0), matched_node.score)
         return [
             KnowledgeQueryMatchedSource(sourceId=source_id, displayName=display_names.get(source_id, source_id), score=round(score, 4))
             for source_id, score in sorted(scores.items(), key=lambda item: (-item[1], item[0]))
         ]
 
-    def _is_ambiguous(self, anchors: Sequence[KnowledgeQueryAnchor]) -> bool:
-        if len(anchors) < 2:
+    def _is_ambiguous(self, matched_nodes: Sequence[KnowledgeQueryMatchedNode]) -> bool:
+        if len(matched_nodes) < 2:
             return False
-        top = anchors[0].score
-        top_sources = {anchor.sourceId for anchor in anchors if top - anchor.score <= 0.03}
+        top = matched_nodes[0].score
+        top_sources = {matched_node.sourceId for matched_node in matched_nodes if top - matched_node.score <= 0.03}
         return len(top_sources) > 1
 
     def _query_id(self) -> str:
@@ -323,5 +504,6 @@ def build_knowledge_query_service(graph_store: Any) -> KnowledgeQueryService:
         source_scope_resolver=SourceScopeResolver(graph_store),
         anchor_searcher=UnifiedAnchorSearcher(graph_store),
         graph_slice_service=GraphSliceQueryService(graph_store),
+        flow_path_extractor=FlowPathExtractor(),
         evidence_builder=EvidenceBundleBuilder(),
     )

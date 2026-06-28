@@ -83,9 +83,6 @@ function jarvisBody() {
     <section id="jarvisCommandResult" class="hidden"></section>
     <form id="jarvisQueryForm">
       <textarea id="jarvisQueryText"></textarea>
-      <select id="jarvisQueryIntent"><option value="AUTO">AUTO</option></select>
-      <input id="jarvisQueryMaxAnchors">
-      <input id="jarvisQueryDepth">
       <button id="sendJarvisQuery" type="submit">Send</button>
     </form>
     <div id="jarvisQueryLoading" class="hidden"></div>
@@ -248,6 +245,10 @@ describe('Operator legacy boundary', () => {
       operatorSource('agents.html')
     ]);
     expect(jarvis).toContain('type="module" src="./operator-ui.js"');
+    expect(jarvis).toContain('Graph Knowledge Query');
+    expect(jarvis).not.toContain('jarvisQueryMaxAnchors');
+    expect(jarvis).not.toContain('jarvisQueryDepth');
+    expect(jarvis).not.toContain('Max anchors');
     expect(knowledge).toContain('type="module" src="./operator-ui.js"');
     expect(graph).toContain('type="module" src="./operator-ui.js"');
     expect(legacy).toContain('src="./operator-legacy-ui.js"');

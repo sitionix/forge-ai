@@ -70,9 +70,6 @@ function jarvisHtml() {
     <section id="jarvisCommandResult" class="hidden"></section>
     <form id="jarvisQueryForm">
       <textarea id="jarvisQueryText"></textarea>
-      <select id="jarvisQueryIntent"><option value="AUTO">AUTO</option></select>
-      <input id="jarvisQueryMaxAnchors">
-      <input id="jarvisQueryDepth">
       <button id="sendJarvisQuery" type="submit">Send</button>
     </form>
     <div id="jarvisQueryLoading" class="hidden"></div>
@@ -193,15 +190,14 @@ describe('Operator Console modular request ownership', () => {
     page.mount();
     await flushAsync();
     (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'hello';
-    (dom.window.document.getElementById('jarvisQueryMaxAnchors') as HTMLInputElement).value = '5';
-    (dom.window.document.getElementById('jarvisQueryDepth') as HTMLInputElement).value = '2';
 
     const first = page.submitQuery(new dom.window.Event('submit'));
     const second = page.submitQuery(new dom.window.Event('submit'));
     await flushAsync();
     expect(http.post).toHaveBeenCalledTimes(1);
+    expect(http.post).toHaveBeenCalledWith('/jarvis/query', { query: 'hello', intent: 'AUTO' }, expect.any(Object));
     await second;
-    slow.resolve({ status: 'OK', intent: 'AUTO', matchedSources: [], anchors: [], nodes: [], edges: [], coverage: {}, diagnostics: [] });
+    slow.resolve({ status: 'OK', intent: 'AUTO', matchedSources: [], matchedNodes: [], flowPaths: [], nodes: [], edges: [], coverage: {}, diagnostics: [] });
     await first;
     expect(dom.window.document.getElementById('sendJarvisQuery')?.textContent).toBe('Send');
   });
@@ -227,7 +223,7 @@ describe('Operator Console modular request ownership', () => {
         status: 'OK',
         intent: 'AUTO',
         matchedSources: [{ sourceId: 'svc', displayName: 'Service', score: 0.9 }],
-        anchors: [{
+        matchedNodes: [{
           sourceId: 'svc',
           nodeId: 'n1',
           stableKey: 'src/App.java|CALLABLE|run',
@@ -238,9 +234,18 @@ describe('Operator Console modular request ownership', () => {
           content: 'SECRET_SOURCE_CONTENT',
           sourceContent: 'ALSO_SECRET'
         }],
+        flowPaths: [{
+          flowId: 'flow-1',
+          sourceId: 'svc',
+          nodes: [{ id: 'n1', sourceId: 'svc', label: 'run' }],
+          edges: [],
+          evidence: [],
+          complete: true,
+          stopReason: 'TERMINAL_NODE'
+        }],
         nodes: [{ id: 'n1', sourceId: 'svc', label: 'run', content: 'SECRET_SOURCE_CONTENT' }],
         edges: [],
-        coverage: { matchedSourceCount: 1, anchorCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
+        coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowPathCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
         diagnostics: [{ code: 'D1', message: 'diag' }]
       }))
     };
@@ -252,6 +257,7 @@ describe('Operator Console modular request ownership', () => {
     expect(text).toContain('svc');
     expect(text).toContain('run');
     expect(text).toContain('NAME_MATCH');
+    expect(text).toContain('flow-1');
     expect(text).not.toContain('SECRET_SOURCE_CONTENT');
     expect(text).not.toContain('ALSO_SECRET');
   });

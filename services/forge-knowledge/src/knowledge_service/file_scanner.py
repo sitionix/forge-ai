@@ -58,7 +58,9 @@ def scan_source(
             continue
         last_modified = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()
         previous = (previous_files or {}).get(relative_path)
-        if previous and int(previous.get("sizeBytes") or -1) == stat.st_size and str(previous.get("lastModified") or "") == last_modified:
+        previous_size = previous.get("sizeBytes") if previous else None
+        previous_modified = str(previous.get("lastModified") or "") if previous else ""
+        if previous and int(str(previous_size or -1)) == stat.st_size and previous_modified == last_modified:
             files.append(
                 FileMetadata(
                     sourceId=source.sourceId,
@@ -71,7 +73,7 @@ def scan_source(
                     sizeBytes=stat.st_size,
                     contentHash=str(previous.get("contentHash") or ""),
                     lastModified=last_modified,
-                    lineCount=int(previous.get("lineCount") or 0),
+                    lineCount=int(str(previous.get("lineCount") or 0)),
                     decodePolicy=str(previous.get("decodePolicy") or DECODE_POLICY),
                     chunks=(),
                     changed=False,

@@ -143,11 +143,11 @@ def test_query_calls_knowledge_gateway(tmp_path) -> None:
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": " explain JarvisGateway ", "intent": "AUTO", "maxAnchors": 5, "depth": 2})
+        response = client.post("/api/v1/jarvis/query", json={"query": " explain JarvisGateway ", "intent": "AUTO"})
 
     assert response.status_code == 200
-    assert knowledge.calls == [{"query": "explain JarvisGateway", "intent": "AUTO", "maxAnchors": 5, "depth": 2}]
-    assert response.json()["anchors"][0]["sourceId"] == "forge-ai"
+    assert knowledge.calls == [{"query": "explain JarvisGateway", "intent": "AUTO"}]
+    assert response.json()["matchedNodes"][0]["sourceId"] == "forge-ai"
 
 
 def test_query_does_not_call_ollama_generation(tmp_path) -> None:
@@ -171,7 +171,8 @@ def test_query_response_preserves_factual_bundle(tmp_path) -> None:
     body = response.json()
     assert body["status"] == "OK"
     assert body["matchedSources"][0]["sourceId"] == "forge-ai"
-    assert body["anchors"][0]["label"] == "JarvisGateway"
+    assert body["matchedNodes"][0]["label"] == "JarvisGateway"
+    assert body["flowPaths"][0]["flowId"] == "flow-1"
     assert body["nodes"][0]["sourceId"] == "forge-ai"
     assert "answer" not in body
 
@@ -179,7 +180,7 @@ def test_query_response_preserves_factual_bundle(tmp_path) -> None:
 def test_query_no_candidates_preserves_controlled_response(tmp_path) -> None:
     knowledge = FakeKnowledgeClient(
         bundle=knowledge_query_bundle(
-            status="NO_CANDIDATES", anchors=[], nodes=[], diagnostics=[{"code": "NO_GRAPH_CANDIDATES", "message": "No graph candidates"}]
+            status="NO_CANDIDATES", matched_nodes=[], flow_paths=[], nodes=[], diagnostics=[{"code": "NO_GRAPH_CANDIDATES", "message": "No graph candidates"}]
         )
     )
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
@@ -189,7 +190,8 @@ def test_query_no_candidates_preserves_controlled_response(tmp_path) -> None:
 
     body = response.json()
     assert body["status"] == "NO_CANDIDATES"
-    assert body["anchors"] == []
+    assert body["matchedNodes"] == []
+    assert body["flowPaths"] == []
     assert any(diagnostic["code"] == "NO_GRAPH_CANDIDATES" for diagnostic in body["diagnostics"])
 
 

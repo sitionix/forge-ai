@@ -113,21 +113,14 @@ export class JarvisPage {
       return null;
     }
     const queryInput = this.document.getElementById('jarvisQueryText');
-    const intentInput = this.document.getElementById('jarvisQueryIntent');
-    const maxInput = this.document.getElementById('jarvisQueryMaxAnchors');
-    const depthInput = this.document.getElementById('jarvisQueryDepth');
     const query = queryInput?.value?.trim() || '';
     if (!query) {
       setError('jarvisQueryError', new Error('Question is required.'), this.document);
       return null;
     }
-    const maxAnchors = Number(maxInput?.value || 5);
-    const depth = Number(depthInput?.value || 2);
     const payload = {
       query,
-      intent: intentInput?.value || 'AUTO',
-      maxAnchors: Number.isFinite(maxAnchors) ? maxAnchors : 5,
-      depth: Number.isFinite(depth) ? depth : 2
+      intent: 'AUTO'
     };
     this.setQueryBusy(true);
     try {
@@ -262,7 +255,7 @@ export class JarvisPage {
         <article class="detail-card">
           <div class="detail-card-head">
             <div>
-              <strong>No graph candidates found</strong>
+              <strong>No graph matches found</strong>
               <p>${escapeHtml(response.intent || 'AUTO')}</p>
             </div>
             ${pill(response.status, response.status)}
@@ -272,7 +265,9 @@ export class JarvisPage {
       return;
     }
     const coverage = response.coverage || {};
-    const anchors = response.anchors || [];
+    const matchedNodes = response.matchedNodes || [];
+    const flowPaths = response.flowPaths || [];
+    const evidence = response.evidence || [];
     const matchedSources = response.matchedSources || [];
     panel.innerHTML = `
       <article class="detail-card">
@@ -285,16 +280,21 @@ export class JarvisPage {
         </div>
         <div class="pill-row">
           ${pill(`sources ${coverage.matchedSourceCount ?? matchedSources.length ?? 0}`, 'READY_TO_START')}
-          ${pill(`anchors ${coverage.anchorCount ?? anchors.length ?? 0}`, 'READY_TO_START')}
+          ${pill(`matched nodes ${coverage.matchedNodeCount ?? matchedNodes.length ?? 0}`, 'READY_TO_START')}
+          ${pill(`flows ${coverage.flowPathCount ?? flowPaths.length ?? 0}`, 'READY_TO_START')}
           ${pill(`nodes ${coverage.nodeCount ?? 0}`, 'READY_TO_START')}
           ${pill(`edges ${coverage.edgeCount ?? 0}`, 'READY_TO_START')}
-          ${pill(`evidence ${coverage.evidenceCount ?? 0}`, 'READY_TO_START')}
+          ${pill(`evidence ${coverage.evidenceCount ?? evidence.length ?? 0}`, 'READY_TO_START')}
         </div>
       </article>
       <h3>Matched Sources</h3>
       ${this.renderMatchedSources(matchedSources)}
-      <h3>Anchors</h3>
-      ${this.renderAnchors(anchors)}
+      <h3>Matched Nodes</h3>
+      ${this.renderMatchedNodes(matchedNodes)}
+      <h3>Flow Paths</h3>
+      ${this.renderFlowPaths(flowPaths)}
+      <h3>Evidence</h3>
+      ${this.renderEvidence(evidence)}
     `;
   }
 
@@ -319,9 +319,9 @@ export class JarvisPage {
     `;
   }
 
-  renderAnchors(items) {
+  renderMatchedNodes(items) {
     if (items.length === 0) {
-      return '<div class="empty-state">No anchors.</div>';
+      return '<div class="empty-state">No matched nodes.</div>';
     }
     return `
       <div class="jarvis-context-list">
@@ -336,6 +336,55 @@ export class JarvisPage {
             </div>
             <p class="detail-meta">${escapeHtml(item.stableKey || item.nodeId || '-')}</p>
             <p class="detail-meta">${escapeHtml((item.matchReasons || []).join(', ') || '-')}</p>
+          </article>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  renderFlowPaths(items) {
+    if (items.length === 0) {
+      return '<div class="empty-state">No flow paths.</div>';
+    }
+    return `
+      <div class="jarvis-context-list">
+        ${items.map((item) => {
+          const nodes = item.nodes || [];
+          const edges = item.edges || [];
+          const labels = nodes.map((node) => node.label || node.name || node.id || '-').join(' -> ');
+          return `
+            <article class="detail-card">
+              <div class="detail-card-head">
+                <div>
+                  <strong>${escapeHtml(item.flowId || 'flow')}</strong>
+                  <p>${escapeHtml(item.sourceId || '-')}</p>
+                </div>
+                ${pill(item.complete === false ? 'partial' : 'complete', item.complete === false ? 'FAILED' : 'READY_TO_START')}
+              </div>
+              <p class="detail-meta">${escapeHtml(labels || '-')}</p>
+              <p class="detail-meta">${escapeHtml(`${nodes.length} nodes / ${edges.length} edges / ${item.stopReason || 'TERMINAL_NODE'}`)}</p>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  renderEvidence(items) {
+    if (items.length === 0) {
+      return '<div class="empty-state">No evidence.</div>';
+    }
+    return `
+      <div class="jarvis-context-list">
+        ${items.map((item) => `
+          <article class="detail-card">
+            <div class="detail-card-head">
+              <div>
+                <strong>${escapeHtml(item.label || item.id || item.nodeId || 'evidence')}</strong>
+                <p>${escapeHtml(item.sourceId || '-')}</p>
+              </div>
+            </div>
+            <p class="detail-meta">${escapeHtml(item.summary || item.text || item.relativePath || item.edgeId || '-')}</p>
           </article>
         `).join('')}
       </div>

@@ -97,24 +97,10 @@
       "JarvisQueryRequest": {
         "additionalProperties": false,
         "properties": {
-          "depth": {
-            "default": 2,
-            "maximum": 4.0,
-            "minimum": 1.0,
-            "title": "Depth",
-            "type": "integer"
-          },
           "intent": {
             "default": "AUTO",
             "title": "Intent",
             "type": "string"
-          },
-          "maxAnchors": {
-            "default": 5,
-            "maximum": 20.0,
-            "minimum": 1.0,
-            "title": "Maxanchors",
-            "type": "integer"
           },
           "query": {
             "minLength": 1,
@@ -130,13 +116,6 @@
       },
       "JarvisQueryResponse": {
         "properties": {
-          "anchors": {
-            "items": {
-              "type": "object"
-            },
-            "title": "Anchors",
-            "type": "array"
-          },
           "coverage": {
             "title": "Coverage",
             "type": "object"
@@ -169,9 +148,23 @@
             "title": "External",
             "type": "array"
           },
+          "flowPaths": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Flowpaths",
+            "type": "array"
+          },
           "intent": {
             "title": "Intent",
             "type": "string"
+          },
+          "matchedNodes": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Matchednodes",
+            "type": "array"
           },
           "matchedSources": {
             "items": {

@@ -125,73 +125,12 @@
         "title": "InventoryBuildRequest",
         "type": "object"
       },
-      "KnowledgeQueryAnchor": {
-        "properties": {
-          "graphRevision": {
-            "title": "Graphrevision",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "matchReasons": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Matchreasons",
-            "type": "array"
-          },
-          "nodeId": {
-            "title": "Nodeid",
-            "type": "string"
-          },
-          "qualifiedName": {
-            "title": "Qualifiedname",
-            "type": "string"
-          },
-          "relativePath": {
-            "title": "Relativepath",
-            "type": "string"
-          },
-          "score": {
-            "title": "Score",
-            "type": "number"
-          },
-          "snapshotId": {
-            "title": "Snapshotid",
-            "type": "string"
-          },
-          "sourceId": {
-            "title": "Sourceid",
-            "type": "string"
-          },
-          "stableKey": {
-            "title": "Stablekey",
-            "type": "string"
-          }
-        },
-        "required": [
-          "sourceId",
-          "nodeId",
-          "stableKey",
-          "kind",
-          "label",
-          "score"
-        ],
-        "title": "KnowledgeQueryAnchor",
-        "type": "object"
-      },
       "KnowledgeQueryCoverage": {
         "properties": {
-          "anchorCount": {
-            "default": 0,
-            "title": "Anchorcount",
-            "type": "integer"
+          "continuationAvailable": {
+            "default": false,
+            "title": "Continuationavailable",
+            "type": "boolean"
           },
           "edgeCount": {
             "default": 0,
@@ -201,6 +140,16 @@
           "evidenceCount": {
             "default": 0,
             "title": "Evidencecount",
+            "type": "integer"
+          },
+          "flowPathCount": {
+            "default": 0,
+            "title": "Flowpathcount",
+            "type": "integer"
+          },
+          "matchedNodeCount": {
+            "default": 0,
+            "title": "Matchednodecount",
             "type": "integer"
           },
           "matchedSourceCount": {
@@ -258,6 +207,115 @@
         "title": "KnowledgeQueryDiagnostic",
         "type": "object"
       },
+      "KnowledgeQueryFlowPath": {
+        "properties": {
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "edges": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "flowId": {
+            "title": "Flowid",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "stopReason": {
+            "default": "TERMINAL_NODE",
+            "title": "Stopreason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flowId"
+        ],
+        "title": "KnowledgeQueryFlowPath",
+        "type": "object"
+      },
+      "KnowledgeQueryMatchedNode": {
+        "properties": {
+          "graphRevision": {
+            "title": "Graphrevision",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "matchReasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matchreasons",
+            "type": "array"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "qualifiedName": {
+            "title": "Qualifiedname",
+            "type": "string"
+          },
+          "relativePath": {
+            "title": "Relativepath",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "snapshotId": {
+            "title": "Snapshotid",
+            "type": "string"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "stableKey": {
+            "title": "Stablekey",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "nodeId",
+          "stableKey",
+          "kind",
+          "label",
+          "score"
+        ],
+        "title": "KnowledgeQueryMatchedNode",
+        "type": "object"
+      },
       "KnowledgeQueryMatchedSource": {
         "properties": {
           "displayName": {
@@ -284,24 +342,10 @@
       "KnowledgeQueryRequest": {
         "additionalProperties": false,
         "properties": {
-          "depth": {
-            "default": 2,
-            "maximum": 4.0,
-            "minimum": 1.0,
-            "title": "Depth",
-            "type": "integer"
-          },
           "intent": {
             "default": "AUTO",
             "title": "Intent",
             "type": "string"
-          },
-          "maxAnchors": {
-            "default": 5,
-            "maximum": 20.0,
-            "minimum": 1.0,
-            "title": "Maxanchors",
-            "type": "integer"
           },
           "query": {
             "minLength": 1,
@@ -317,13 +361,6 @@
       },
       "KnowledgeQueryResponse": {
         "properties": {
-          "anchors": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryAnchor"
-            },
-            "title": "Anchors",
-            "type": "array"
-          },
           "coverage": {
             "$ref": "#/components/schemas/KnowledgeQueryCoverage"
           },
@@ -355,9 +392,23 @@
             "title": "External",
             "type": "array"
           },
+          "flowPaths": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryFlowPath"
+            },
+            "title": "Flowpaths",
+            "type": "array"
+          },
           "intent": {
             "title": "Intent",
             "type": "string"
+          },
+          "matchedNodes": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryMatchedNode"
+            },
+            "title": "Matchednodes",
+            "type": "array"
           },
           "matchedSources": {
             "items": {
