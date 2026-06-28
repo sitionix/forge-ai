@@ -67,30 +67,42 @@
       </section>
     </div>
 
-    <section class="panel jarvis-chat-panel">
+    <section class="panel jarvis-query-panel">
       <div class="panel-head compact">
         <div>
-          <h2>Chat</h2>
-          <p>Questions are sent through Forge AI to Jarvis. Jarvis retrieves Knowledge context and asks Ollama for a read-only answer.</p>
+          <h2>Graph Knowledge Query</h2>
+          <p>Questions are sent through Forge AI to Jarvis. Jarvis asks Knowledge for graph-backed facts. LLM answer composition is not enabled yet.</p>
         </div>
       </div>
-      <form id="jarvisChatForm" class="jarvis-chat-form">
-        <label class="field jarvis-chat-message">
-          <span>Message</span>
-          <textarea id="jarvisChatMessage" placeholder="поясни як працює JarvisGateway"></textarea>
+      <form id="jarvisQueryForm" class="jarvis-query-form">
+        <label class="field jarvis-query-message">
+          <span>Question</span>
+          <textarea id="jarvisQueryText" placeholder="поясни як працює JarvisGateway"></textarea>
         </label>
-        <label class="field jarvis-chat-max">
-          <span>Max context chars</span>
-          <input id="jarvisChatMaxContext" type="number" min="1000" max="50000" step="1000" value="12000">
+        <label class="field jarvis-query-control">
+          <span>Intent</span>
+          <select id="jarvisQueryIntent">
+            <option value="AUTO">AUTO</option>
+          </select>
+        </label>
+        <label class="field jarvis-query-control">
+          <span>Max anchors</span>
+          <input id="jarvisQueryMaxAnchors" type="number" min="1" max="20" step="1" value="5">
+        </label>
+        <label class="field jarvis-query-control">
+          <span>Depth</span>
+          <input id="jarvisQueryDepth" type="number" min="1" max="4" step="1" value="2">
         </label>
         <div class="form-actions">
-          <button id="sendJarvisChat" type="submit" class="button">Send</button>
+          <button id="sendJarvisQuery" type="submit" class="button">Send</button>
         </div>
       </form>
-      <div id="jarvisChatError" class="error-box hidden"></div>
-      <div id="jarvisChatAnswer" class="jarvis-chat-answer hidden"></div>
-      <div id="jarvisChatContext" class="jarvis-chat-context hidden"></div>
-      <div id="jarvisChatDiagnostics" class="jarvis-chat-diagnostics hidden"></div>
+      <div class="notice-box jarvis-security-notice">Scope: Auto / all analyzed sources.</div>
+      <div id="jarvisQueryLoading" class="notice-box hidden">Loading graph facts...</div>
+      <div id="jarvisQueryError" class="error-box hidden"></div>
+      <div id="jarvisQueryResult" class="jarvis-query-result hidden"></div>
+      <div id="jarvisQueryDiagnostics" class="jarvis-query-diagnostics hidden"></div>
+      <div id="jarvisQueryRaw" class="jarvis-query-raw hidden"></div>
     </section>
   </main>
 

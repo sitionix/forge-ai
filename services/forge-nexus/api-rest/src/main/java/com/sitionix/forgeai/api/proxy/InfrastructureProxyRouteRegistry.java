@@ -41,7 +41,7 @@ public class InfrastructureProxyRouteRegistry {
         this.jarvis(registered, "jarvis.status", HttpMethod.GET, "/api/v1/jarvis/status", false);
         this.jarvis(registered, "jarvis.actions", HttpMethod.GET, "/api/v1/jarvis/actions", false);
         this.jarvis(registered, "jarvis.command", HttpMethod.POST, "/api/v1/jarvis/command", true);
-        this.jarvis(registered, "jarvis.chat", HttpMethod.POST, "/api/v1/jarvis/chat", true);
+        this.jarvis(registered, "jarvis.query", HttpMethod.POST, "/api/v1/jarvis/query", true);
         this.routes = Map.copyOf(registered);
     }
 

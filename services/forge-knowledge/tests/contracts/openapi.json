@@ -125,6 +125,296 @@
         "title": "InventoryBuildRequest",
         "type": "object"
       },
+      "KnowledgeQueryAnchor": {
+        "properties": {
+          "graphRevision": {
+            "title": "Graphrevision",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "matchReasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matchreasons",
+            "type": "array"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "string"
+          },
+          "qualifiedName": {
+            "title": "Qualifiedname",
+            "type": "string"
+          },
+          "relativePath": {
+            "title": "Relativepath",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "snapshotId": {
+            "title": "Snapshotid",
+            "type": "string"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          },
+          "stableKey": {
+            "title": "Stablekey",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "nodeId",
+          "stableKey",
+          "kind",
+          "label",
+          "score"
+        ],
+        "title": "KnowledgeQueryAnchor",
+        "type": "object"
+      },
+      "KnowledgeQueryCoverage": {
+        "properties": {
+          "anchorCount": {
+            "default": 0,
+            "title": "Anchorcount",
+            "type": "integer"
+          },
+          "edgeCount": {
+            "default": 0,
+            "title": "Edgecount",
+            "type": "integer"
+          },
+          "evidenceCount": {
+            "default": 0,
+            "title": "Evidencecount",
+            "type": "integer"
+          },
+          "matchedSourceCount": {
+            "default": 0,
+            "title": "Matchedsourcecount",
+            "type": "integer"
+          },
+          "nodeCount": {
+            "default": 0,
+            "title": "Nodecount",
+            "type": "integer"
+          },
+          "searchedSourceCount": {
+            "default": 0,
+            "title": "Searchedsourcecount",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "KnowledgeQueryCoverage",
+        "type": "object"
+      },
+      "KnowledgeQueryDiagnostic": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "metadata": {
+            "title": "Metadata",
+            "type": "object"
+          },
+          "severity": {
+            "default": "INFO",
+            "title": "Severity",
+            "type": "string"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "KnowledgeQueryDiagnostic",
+        "type": "object"
+      },
+      "KnowledgeQueryMatchedSource": {
+        "properties": {
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "displayName",
+          "score"
+        ],
+        "title": "KnowledgeQueryMatchedSource",
+        "type": "object"
+      },
+      "KnowledgeQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "depth": {
+            "default": 2,
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "intent": {
+            "default": "AUTO",
+            "title": "Intent",
+            "type": "string"
+          },
+          "maxAnchors": {
+            "default": 5,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Maxanchors",
+            "type": "integer"
+          },
+          "query": {
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "KnowledgeQueryRequest",
+        "type": "object"
+      },
+      "KnowledgeQueryResponse": {
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryAnchor"
+            },
+            "title": "Anchors",
+            "type": "array"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/KnowledgeQueryCoverage"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "edges": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "external": {
+            "items": {
+              "type": "object"
+            },
+            "title": "External",
+            "type": "array"
+          },
+          "intent": {
+            "title": "Intent",
+            "type": "string"
+          },
+          "matchedSources": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryMatchedSource"
+            },
+            "title": "Matchedsources",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "queryId": {
+            "title": "Queryid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/KnowledgeQueryStatus"
+          },
+          "unresolved": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Unresolved",
+            "type": "array"
+          },
+          "verifiedPaths": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Verifiedpaths",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queryId",
+          "status",
+          "intent"
+        ],
+        "title": "KnowledgeQueryResponse",
+        "type": "object"
+      },
+      "KnowledgeQueryStatus": {
+        "description": "An enumeration.",
+        "enum": [
+          "OK",
+          "NO_CANDIDATES",
+          "AMBIGUOUS",
+          "INVALID_REQUEST",
+          "QUERY_FAILED"
+        ],
+        "title": "KnowledgeQueryStatus",
+        "type": "string"
+      },
       "RetryFailedAnalysisRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1366,6 +1656,43 @@
               }
             },
             "description": "Successful Response"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/query": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeQueryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         }
       }

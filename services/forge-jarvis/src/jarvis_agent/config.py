@@ -43,7 +43,6 @@ class ModelRuntimeSettings(BaseModel):
 
 class JarvisKnowledgeSettings(BaseModel):
     request_timeout_seconds: int = Field(default=120, ge=1)
-    default_max_context_chars: int = Field(default=12000, ge=1000)
 
 
 class JarvisSettings(BaseModel):
@@ -54,7 +53,6 @@ class JarvisSettings(BaseModel):
     knowledge: JarvisKnowledgeSettings
     actions_file: Path
     system_prompt_path: Path
-    chat_prompt_path: Path
 
     @validator("knowledge_base_url")
     def require_local_knowledge(cls, value: AnyHttpUrl) -> AnyHttpUrl:
@@ -97,7 +95,6 @@ class ModelConfig(BaseModel):
 class KnowledgeConfig(BaseModel):
     base_url: str
     request_timeout_seconds: int
-    default_max_context_chars: int
 
 
 class AppConfig(BaseModel):
@@ -109,7 +106,6 @@ class AppConfig(BaseModel):
     model: ModelConfig
     knowledge: KnowledgeConfig
     system_prompt: str
-    chat_prompt: str
     allowed_actions_path: Path
     logging: LoggingSettings
 
@@ -122,7 +118,6 @@ class AppConfig(BaseModel):
         jarvis = settings.services.jarvis
         _require_file(jarvis.actions_file, "Jarvis actions file")
         _require_file(jarvis.system_prompt_path, "Jarvis system prompt")
-        _require_file(jarvis.chat_prompt_path, "Jarvis chat prompt")
         log_file = Path(env.get("JARVIS_LOG_FILE") or settings.logging.directory / "jarvis-agent.log").resolve()
         return cls(
             repo_root=settings.home,
@@ -138,10 +133,8 @@ class AppConfig(BaseModel):
             knowledge=KnowledgeConfig(
                 base_url=str(jarvis.knowledge_base_url).rstrip("/"),
                 request_timeout_seconds=jarvis.knowledge.request_timeout_seconds,
-                default_max_context_chars=jarvis.knowledge.default_max_context_chars,
             ),
             system_prompt=jarvis.system_prompt_path.read_text(encoding="utf-8"),
-            chat_prompt=jarvis.chat_prompt_path.read_text(encoding="utf-8"),
             allowed_actions_path=jarvis.actions_file,
             logging=settings.logging,
         )
@@ -287,11 +280,9 @@ def _jarvis_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]
                 },
                 "knowledge": {
                     "request_timeout_seconds": int(knowledge.get("request-timeout-seconds") or knowledge.get("request_timeout_seconds") or 120),
-                    "default_max_context_chars": int(knowledge.get("default-max-context-chars") or knowledge.get("default_max_context_chars") or 12000),
                 },
                 "actions_file": _path(str(jarvis.get("actions-file") or jarvis.get("actions_file") or prompt_base / "allowed-actions.yaml"), env),
                 "system_prompt_path": _path(str(jarvis.get("system-prompt-path") or jarvis.get("system_prompt_path") or prompt_base / "system-prompt.md"), env),
-                "chat_prompt_path": _path(str(jarvis.get("chat-prompt-path") or jarvis.get("chat_prompt_path") or prompt_base / "chat-prompt.md"), env),
             }
         },
     }
@@ -303,7 +294,6 @@ def _apply_jarvis_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) -> 
         config_dir = _path(env["JARVIS_CONFIG_DIR"], env)
         jarvis["actions_file"] = config_dir / "allowed-actions.yaml"
         jarvis["system_prompt_path"] = config_dir / "system-prompt.md"
-        jarvis["chat_prompt_path"] = config_dir / "chat-prompt.md"
     if env.get("JARVIS_HOST"):
         jarvis["host"] = env["JARVIS_HOST"]
     if env.get("JARVIS_PORT"):

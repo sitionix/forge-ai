@@ -20,12 +20,11 @@ def test_root_forge_config_is_supported(tmp_path) -> None:
     assert config.allowed_actions_path == tmp_path / "config" / "jarvis" / "allowed-actions.yaml"
 
 
-def test_jarvis_config_dir_prompt_files_are_supported(tmp_path) -> None:
+def test_jarvis_config_dir_files_are_supported(tmp_path) -> None:
     config_file = write_runtime_config(tmp_path)
     override_dir = tmp_path / "override-jarvis"
     override_dir.mkdir()
     (override_dir / "system-prompt.md").write_text("override system", encoding="utf-8")
-    (override_dir / "chat-prompt.md").write_text("override chat", encoding="utf-8")
     (override_dir / "allowed-actions.yaml").write_text("actions: {}\n", encoding="utf-8")
 
     config = load_app_config(
@@ -40,5 +39,4 @@ def test_jarvis_config_dir_prompt_files_are_supported(tmp_path) -> None:
     )
 
     assert config.system_prompt == "override system"
-    assert config.chat_prompt == "override chat"
     assert config.allowed_actions_path == override_dir / "allowed-actions.yaml"

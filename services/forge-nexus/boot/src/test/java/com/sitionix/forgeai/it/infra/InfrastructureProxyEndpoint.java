@@ -164,8 +164,16 @@ public final class InfrastructureProxyEndpoint {
         return nexusPost("/api/v1/infrastructure/jarvis/command", "requestProxyJarvisCommand.json", "responseProxyJarvisCommand.json");
     }
 
-    public static Endpoint<Object, Object> nexusJarvisChat() {
-        return nexusPost("/api/v1/infrastructure/jarvis/chat", "requestProxyJarvisChat.json", "responseProxyJarvisChat.json");
+    public static Endpoint<Object, Object> nexusJarvisQuery() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQuery.json", "responseProxyJarvisQuery.json");
+    }
+
+    public static Endpoint<Object, Object> nexusJarvisQueryNoCandidates() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", "responseProxyJarvisQueryNoCandidates.json");
+    }
+
+    public static Endpoint<Object, Object> nexusJarvisQueryBlank() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryBlank.json", HttpStatus.BAD_REQUEST, null);
     }
 
     public static Endpoint<Object, Object> nexusUnsupportedKnowledgeSymbols() {
@@ -213,14 +221,24 @@ public final class InfrastructureProxyEndpoint {
                 "responseProxyErrorKnowledgeRequestTooLarge.json");
     }
 
-    public static Endpoint<Object, Object> nexusJarvisChatRequestTooLarge() {
-        return nexusPost("/api/v1/infrastructure/jarvis/chat", "requestProxyOversized.json", HttpStatus.PAYLOAD_TOO_LARGE,
+    public static Endpoint<Object, Object> nexusJarvisQueryRequestTooLarge() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryOversized.json", HttpStatus.PAYLOAD_TOO_LARGE,
                 "responseProxyErrorJarvisRequestTooLarge.json");
     }
 
-    public static Endpoint<Object, Object> nexusJarvisChatUpstreamServerError() {
-        return nexusPost("/api/v1/infrastructure/jarvis/chat", "requestProxyJarvisChat.json", HttpStatus.BAD_GATEWAY,
-                "responseProxyErrorJarvisChatServerError.json");
+    public static Endpoint<Object, Object> nexusJarvisQueryUpstreamServerError() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQuery.json", HttpStatus.BAD_GATEWAY,
+                "responseProxyErrorJarvisQueryServerError.json");
+    }
+
+    public static Endpoint<Object, Object> nexusJarvisQueryTimeout() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQuery.json", HttpStatus.GATEWAY_TIMEOUT,
+                "responseProxyErrorJarvisQueryTimeout.json");
+    }
+
+    public static Endpoint<Object, Object> nexusJarvisQueryConnectionRefused() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQuery.json", HttpStatus.SERVICE_UNAVAILABLE,
+                "responseProxyErrorJarvisQueryConnectionRefused.json");
     }
 
     public static Endpoint<Object, Object> nexusJarvisCommandUpstreamServerError() {
@@ -384,8 +402,12 @@ public final class InfrastructureProxyEndpoint {
         return upstreamPost("/api/v1/jarvis/command", "requestProxyJarvisCommand.json", "responseProxyJarvisCommand.json");
     }
 
-    public static Endpoint<Object, Object> upstreamJarvisChat() {
-        return upstreamPost("/api/v1/jarvis/chat", "requestProxyJarvisChat.json", "responseProxyJarvisChat.json");
+    public static Endpoint<Object, Object> upstreamJarvisQuery() {
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQuery.json", "responseProxyJarvisQuery.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamJarvisQueryNoCandidates() {
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", "responseProxyJarvisQueryNoCandidates.json");
     }
 
     public static Endpoint<Object, Object> upstreamTooLargeKnowledgeStatus() {
@@ -404,8 +426,12 @@ public final class InfrastructureProxyEndpoint {
         return upstreamGet("/api/v1/knowledge/status", HttpStatus.INTERNAL_SERVER_ERROR, "responseProxyUpstreamServerError.json");
     }
 
-    public static Endpoint<Object, Object> upstreamJarvisChatServerError() {
-        return upstreamPost("/api/v1/jarvis/chat", "requestProxyJarvisChat.json", HttpStatus.INTERNAL_SERVER_ERROR, "responseProxyUpstreamServerError.json");
+    public static Endpoint<Object, Object> upstreamJarvisQueryServerError() {
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQuery.json", HttpStatus.INTERNAL_SERVER_ERROR, "responseProxyUpstreamServerError.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamJarvisQueryTimeout() {
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQuery.json", "responseProxyJarvisQuery.json");
     }
 
     public static Endpoint<Object, Object> upstreamJarvisCommandServerError() {

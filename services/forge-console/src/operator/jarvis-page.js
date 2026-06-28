@@ -12,14 +12,15 @@ export class JarvisPage {
       this.loadActions();
     };
     this.commandListener = (event) => this.submitCommand(event);
-    this.chatListener = (event) => this.submitChat(event);
+    this.queryListener = (event) => this.submitQuery(event);
+    this.queryInFlight = false;
   }
 
   mount() {
     this.disposed = false;
     this.document.getElementById('refreshJarvis')?.addEventListener('click', this.refreshListener);
     this.document.getElementById('jarvisCommandForm')?.addEventListener('submit', this.commandListener);
-    this.document.getElementById('jarvisChatForm')?.addEventListener('submit', this.chatListener);
+    this.document.getElementById('jarvisQueryForm')?.addEventListener('submit', this.queryListener);
     this.loadStatus();
     this.loadActions();
   }
@@ -32,7 +33,7 @@ export class JarvisPage {
     this.requestCoordinator.dispose();
     this.document.getElementById('refreshJarvis')?.removeEventListener('click', this.refreshListener);
     this.document.getElementById('jarvisCommandForm')?.removeEventListener('submit', this.commandListener);
-    this.document.getElementById('jarvisChatForm')?.removeEventListener('submit', this.chatListener);
+    this.document.getElementById('jarvisQueryForm')?.removeEventListener('submit', this.queryListener);
   }
 
   async loadStatus() {
@@ -106,37 +107,45 @@ export class JarvisPage {
     }
   }
 
-  async submitChat(event) {
+  async submitQuery(event) {
     event.preventDefault();
-    const messageInput = this.document.getElementById('jarvisChatMessage');
-    const maxInput = this.document.getElementById('jarvisChatMaxContext');
-    const message = messageInput?.value?.trim() || '';
-    if (!message) {
-      setError('jarvisChatError', new Error('Chat message is required.'), this.document);
+    if (this.queryInFlight) {
       return null;
     }
-    const maxContextChars = Number(maxInput?.value || 0);
-    const payload = { message };
-    if (Number.isFinite(maxContextChars) && maxContextChars > 0) {
-      payload.maxContextChars = maxContextChars;
+    const queryInput = this.document.getElementById('jarvisQueryText');
+    const intentInput = this.document.getElementById('jarvisQueryIntent');
+    const maxInput = this.document.getElementById('jarvisQueryMaxAnchors');
+    const depthInput = this.document.getElementById('jarvisQueryDepth');
+    const query = queryInput?.value?.trim() || '';
+    if (!query) {
+      setError('jarvisQueryError', new Error('Question is required.'), this.document);
+      return null;
     }
-    this.setChatBusy(true);
+    const maxAnchors = Number(maxInput?.value || 5);
+    const depth = Number(depthInput?.value || 2);
+    const payload = {
+      query,
+      intent: intentInput?.value || 'AUTO',
+      maxAnchors: Number.isFinite(maxAnchors) ? maxAnchors : 5,
+      depth: Number.isFinite(depth) ? depth : 2
+    };
+    this.setQueryBusy(true);
     try {
-      const result = await this.requestCoordinator.run('jarvis-chat', ({ signal }) => this.http.post('/jarvis/chat', payload, { signal }));
+      const result = await this.requestCoordinator.run('jarvis-query', ({ signal }) => this.http.post('/jarvis/query', payload, { signal }));
       if (!result.applied || this.disposed) {
         return null;
       }
-      setError('jarvisChatError', null, this.document);
-      this.renderChatResponse(result.value);
+      setError('jarvisQueryError', null, this.document);
+      this.renderQueryResponse(result.value);
       return result.value;
     } catch (error) {
       if (!this.disposed) {
-        renderRequestError('jarvisChatError', error, { endpoint: '/jarvis/chat', title: 'Jarvis chat failed' }, this.document);
+        renderRequestError('jarvisQueryError', error, { endpoint: '/jarvis/query', title: 'Jarvis query failed' }, this.document);
       }
       return null;
     } finally {
       if (!this.disposed) {
-        this.setChatBusy(false);
+        this.setQueryBusy(false);
       }
     }
   }
@@ -224,72 +233,117 @@ export class JarvisPage {
     `;
   }
 
-  setChatBusy(busy) {
-    const button = this.document.getElementById('sendJarvisChat');
+  setQueryBusy(busy) {
+    this.queryInFlight = busy;
+    const button = this.document.getElementById('sendJarvisQuery');
+    const loading = this.document.getElementById('jarvisQueryLoading');
     if (!button) {
       return;
     }
     button.disabled = busy;
     button.textContent = busy ? 'Sending...' : 'Send';
+    loading?.classList.toggle('hidden', !busy);
   }
 
-  renderChatResponse(response) {
-    this.renderChatAnswer(response.answer || '');
-    this.renderChatContext(response.usedContext || []);
-    this.renderChatDiagnostics(response.diagnostics || []);
+  renderQueryResponse(response) {
+    this.renderQueryResult(response);
+    this.renderQueryDiagnostics(response.diagnostics || []);
+    this.renderQueryRaw(response);
   }
 
-  renderChatAnswer(answer) {
-    const panel = this.document.getElementById('jarvisChatAnswer');
+  renderQueryResult(response) {
+    const panel = this.document.getElementById('jarvisQueryResult');
     if (!panel) {
       return;
     }
     panel.classList.remove('hidden');
+    if (response.status === 'NO_CANDIDATES') {
+      panel.innerHTML = `
+        <article class="detail-card">
+          <div class="detail-card-head">
+            <div>
+              <strong>No graph candidates found</strong>
+              <p>${escapeHtml(response.intent || 'AUTO')}</p>
+            </div>
+            ${pill(response.status, response.status)}
+          </div>
+        </article>
+      `;
+      return;
+    }
+    const coverage = response.coverage || {};
+    const anchors = response.anchors || [];
+    const matchedSources = response.matchedSources || [];
     panel.innerHTML = `
       <article class="detail-card">
         <div class="detail-card-head">
           <div>
-            <strong>Answer</strong>
-            <p>plain text from Jarvis</p>
+            <strong>Status</strong>
+            <p>Intent: ${escapeHtml(response.intent || 'AUTO')}</p>
           </div>
+          ${pill(response.status || 'UNKNOWN', response.status || 'UNKNOWN')}
         </div>
-        <pre class="stacktrace">${escapeHtml(answer || '-')}</pre>
+        <div class="pill-row">
+          ${pill(`sources ${coverage.matchedSourceCount ?? matchedSources.length ?? 0}`, 'READY_TO_START')}
+          ${pill(`anchors ${coverage.anchorCount ?? anchors.length ?? 0}`, 'READY_TO_START')}
+          ${pill(`nodes ${coverage.nodeCount ?? 0}`, 'READY_TO_START')}
+          ${pill(`edges ${coverage.edgeCount ?? 0}`, 'READY_TO_START')}
+          ${pill(`evidence ${coverage.evidenceCount ?? 0}`, 'READY_TO_START')}
+        </div>
       </article>
+      <h3>Matched Sources</h3>
+      ${this.renderMatchedSources(matchedSources)}
+      <h3>Anchors</h3>
+      ${this.renderAnchors(anchors)}
     `;
   }
 
-  renderChatContext(items) {
-    const panel = this.document.getElementById('jarvisChatContext');
-    if (!panel) {
-      return;
-    }
-    panel.classList.remove('hidden');
+  renderMatchedSources(items) {
     if (items.length === 0) {
-      panel.innerHTML = '<div class="empty-state">No used context files.</div>';
-      return;
+      return '<div class="empty-state">No matched sources.</div>';
     }
-    panel.innerHTML = `
-      <h3>Used Context</h3>
+    return `
       <div class="jarvis-context-list">
         ${items.map((item) => `
           <article class="detail-card">
             <div class="detail-card-head">
               <div>
-                <strong>${escapeHtml(item.sourceId || '-')}</strong>
-                <p>${escapeHtml(item.relativePath || item.path || '-')}</p>
+                <strong>${escapeHtml(item.displayName || item.sourceId || '-')}</strong>
+                <p>${escapeHtml(item.sourceId || '-')}</p>
               </div>
               ${pill(`score ${Number(item.score ?? 0).toFixed(2)}`, 'READY_TO_START')}
             </div>
-            <p class="detail-meta">lines ${escapeHtml(item.lineStart ?? '-')} - ${escapeHtml(item.lineEnd ?? '-')}</p>
-            <p class="detail-meta">${escapeHtml(item.reason || '-')}</p>
           </article>
         `).join('')}
       </div>
     `;
   }
 
-  renderChatDiagnostics(diagnostics) {
-    const panel = this.document.getElementById('jarvisChatDiagnostics');
+  renderAnchors(items) {
+    if (items.length === 0) {
+      return '<div class="empty-state">No anchors.</div>';
+    }
+    return `
+      <div class="jarvis-context-list">
+        ${items.map((item) => `
+          <article class="detail-card">
+            <div class="detail-card-head">
+              <div>
+                <strong>${escapeHtml(item.label || item.nodeId || '-')}</strong>
+                <p>${escapeHtml(item.sourceId || '-')} / ${escapeHtml(item.kind || '-')}</p>
+              </div>
+              ${pill(`score ${Number(item.score ?? 0).toFixed(2)}`, 'READY_TO_START')}
+            </div>
+            <p class="detail-meta">${escapeHtml(item.stableKey || item.nodeId || '-')}</p>
+            <p class="detail-meta">${escapeHtml((item.matchReasons || []).join(', ') || '-')}</p>
+          </article>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  renderQueryDiagnostics(diagnostics) {
+    const panel = this.document.getElementById('jarvisQueryDiagnostics');
     if (!panel) {
       return;
     }
@@ -310,5 +364,32 @@ export class JarvisPage {
       </div>
     `;
   }
-}
 
+  renderQueryRaw(response) {
+    const panel = this.document.getElementById('jarvisQueryRaw');
+    if (!panel) {
+      return;
+    }
+    panel.classList.remove('hidden');
+    panel.innerHTML = `
+      <details>
+        <summary>Raw JSON</summary>
+        <pre class="stacktrace">${escapeHtml(JSON.stringify(this.safeQueryResponse(response), null, 2))}</pre>
+      </details>
+    `;
+  }
+
+  safeQueryResponse(value) {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.safeQueryResponse(item));
+    }
+    if (!value || typeof value !== 'object') {
+      return value;
+    }
+    const redactedKeys = new Set(['content', 'sourceContent', 'rawContent', 'prompt']);
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key,
+      redactedKeys.has(key) ? '[redacted]' : this.safeQueryResponse(item)
+    ]));
+  }
+}

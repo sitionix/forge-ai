@@ -22,6 +22,8 @@ from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_schema import InventoryBuildRequest
 from knowledge_service.inventory_store import InventoryStore
+from knowledge_service.knowledge_query_schema import KnowledgeQueryDiagnostic, KnowledgeQueryRequest, KnowledgeQueryResponse, KnowledgeQueryStatus
+from knowledge_service.knowledge_query_service import build_knowledge_query_service
 from knowledge_service.observability import (
     CORRELATION_HEADER,
     ObservabilityMiddleware,
@@ -199,6 +201,25 @@ def create_app(
             if isinstance(exc, KnowledgeError):
                 raise
             raise KnowledgeError("CONTEXT_BUILD_FAILED", "Context build failed") from exc
+
+    @app.post("/api/v1/knowledge/query", response_model=KnowledgeQueryResponse)
+    async def knowledge_query(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
+        _, deps = _state(request)
+        try:
+            return build_knowledge_query_service(deps.graph_store).query(body)
+        except Exception:
+            return KnowledgeQueryResponse(
+                queryId="query-failed",
+                status=KnowledgeQueryStatus.QUERY_FAILED,
+                intent=body.intent,
+                diagnostics=[
+                    KnowledgeQueryDiagnostic(
+                        code="KNOWLEDGE_QUERY_FAILED",
+                        message="Knowledge query failed before a factual bundle could be built.",
+                        severity="ERROR",
+                    )
+                ],
+            )
 
     @app.post("/api/v1/knowledge/analysis/build")
     async def analysis_build(request: Request, body: AnalysisBuildRequest) -> Dict[str, Any]:

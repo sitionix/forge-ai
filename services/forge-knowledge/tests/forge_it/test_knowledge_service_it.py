@@ -31,6 +31,7 @@ PUBLIC_ENDPOINTS = {
     ("GET", "/api/v1/knowledge/inventory/status"),
     ("GET", "/api/v1/knowledge/inventory/files"),
     ("POST", "/api/v1/knowledge/context"),
+    ("POST", "/api/v1/knowledge/query"),
     ("POST", "/api/v1/knowledge/analysis/build"),
     ("POST", "/api/v1/knowledge/analysis/retry-failed"),
     ("GET", "/api/v1/knowledge/analysis/jobs/{job_id}"),
@@ -188,13 +189,9 @@ def test_inventory_context_analysis_and_sqlite_persistence(tmp_path):
 
         manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai").json()
         assert manifest["totalNodeCount"] > 0
-        nodes = client.get(
-            f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&graphRevision={manifest['graphRevision']}&pageSize=10"
-        ).json()
+        nodes = client.get(f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&graphRevision={manifest['graphRevision']}&pageSize=10").json()
         assert nodes["items"]
-        edges = client.get(
-            f"/api/v1/knowledge/analysis/graph/edges?sourceId=forge-ai&graphRevision={manifest['graphRevision']}&pageSize=10"
-        ).json()
+        edges = client.get(f"/api/v1/knowledge/analysis/graph/edges?sourceId=forge-ai&graphRevision={manifest['graphRevision']}&pageSize=10").json()
         assert "items" in edges
         node_detail = client.get(
             f"/api/v1/knowledge/analysis/graph/node/{nodes['items'][0]['id']}?sourceId=forge-ai&graphRevision={manifest['graphRevision']}&includeEvidence=true"
