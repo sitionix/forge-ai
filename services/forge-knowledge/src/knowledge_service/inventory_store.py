@@ -216,6 +216,7 @@ class InventoryStore:
                             now,
                         ),
                     )
+                    assert cursor.lastrowid is not None
                     file_id = int(cursor.lastrowid)
                     self._replace_context_chunks(conn, file_id, file, now)
                     continue
@@ -487,7 +488,7 @@ class InventoryStore:
                 JOIN context_chunks c ON c.id = context_chunks_fts.chunk_id
                 JOIN files f ON f.id = c.file_id
                 JOIN sources s ON s.source_id = c.source_id
-                WHERE {' AND '.join(clauses)}
+                WHERE {" AND ".join(clauses)}
                 ORDER BY rank_score, c.source_id, c.relative_path, c.line_start
                 LIMIT ?
                 """,
@@ -539,6 +540,7 @@ class InventoryStore:
                 """,
                 (file_id, file.sourceId, file.relativePath, file.contentHash, chunk.lineStart, chunk.lineEnd, chunk.content, indexed_at),
             )
+            assert cursor.lastrowid is not None
             chunk_id = int(cursor.lastrowid)
             conn.execute(
                 "INSERT INTO context_chunks_fts(rowid, content, source_id, relative_path, chunk_id) VALUES (?, ?, ?, ?, ?)",

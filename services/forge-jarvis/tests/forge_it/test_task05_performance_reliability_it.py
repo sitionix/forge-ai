@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from support import AsgiResponse
 from support import AsgiTestClient as TestClient
-from support import FakeKnowledgeClient, FakeModelClient, build_test_app, knowledge_bundle, write_runtime_config
+from support import FakeKnowledgeClient, FakeModelClient, build_test_app, knowledge_query_bundle, write_runtime_config
 
 from jarvis_agent.action_executor import ActionExecutionError, ActionExecutor
 from jarvis_agent.action_registry import ActionRegistry
@@ -38,42 +38,32 @@ def test_perf_jar_01_status_and_actions_are_bounded_and_do_not_call_ollama(tmp_p
         assert timing["action"] == 0
 
 
-def test_perf_jar_02_chat_records_dependency_timings_and_redacts_context(tmp_path):
+def test_perf_jar_02_query_records_knowledge_timing_and_does_not_generate_answer(tmp_path):
     knowledge = DelayedKnowledgeClient(
-        bundle=knowledge_bundle(
-            context=[
-                {
-                    "sourceId": "forge-ai",
-                    "displayName": "Forge AI",
-                    "relativePath": "src/JarvisGateway.java",
-                    "lineStart": 1,
-                    "lineEnd": 3,
-                    "content": "secret source content must not return",
-                    "matchType": "content",
-                    "reason": "Matched JarvisGateway",
-                    "score": 1.0,
-                    "metadata": {"tags": ["java"]},
-                }
-            ]
+        bundle=knowledge_query_bundle(
+            nodes=[{"id": "n1", "sourceId": "forge-ai", "label": "JarvisGateway"}],
+            evidence=[{"id": "ev1", "sourceId": "forge-ai", "relativePath": "src/JarvisGateway.java", "lineStart": 1, "lineEnd": 3}],
         )
     )
-    model = DelayedModelClient(generate_response="Answer without source content")
+    model = DelayedModelClient(generate_response="Answer should not be generated")
     app, *_ = build_test_app(write_runtime_config(tmp_path), model=model, knowledge=knowledge)
 
     with TestClient(app) as client:
-        samples = _sample_route(lambda: client.post("/api/v1/jarvis/chat", json={"message": "explain JarvisGateway"}))
+        samples = _sample_route(lambda: client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"}))
 
     for sample in samples:
         body = sample.response.json()
         timing = _parse_server_timing(sample.response.headers["server-timing"])
         assert timing["knowledge"] > 0
-        assert timing["ollama"] > 0
-        assert body["usedContext"]
-        assert all(item.get("content") is None for item in body["usedContext"])
+        assert timing["ollama"] == 0
+        assert body["matchedNodes"]
+        assert body["flowPaths"]
+        assert "answer" not in body
         text = sample.response.body.decode("utf-8")
-        assert "secret source content" not in text
+        assert "Answer should not be generated" not in text
         assert "http://localhost" not in text
         assert "Traceback" not in text
+    assert model.prompts == []
     _assert_samples(samples, max_p50_ms=80, max_p95_ms=140, max_p99_ms=180, max_bytes=8192)
 
 
@@ -138,9 +128,9 @@ actions:
 
 
 class DelayedKnowledgeClient(FakeKnowledgeClient):
-    async def context(self, query: str, max_context_chars: int):
+    async def query(self, payload):
         await asyncio.sleep(0.002)
-        return await super().context(query, max_context_chars)
+        return await super().query(payload)
 
 
 class DelayedModelClient(FakeModelClient):

@@ -20,13 +20,13 @@ class ModelClient(Protocol):
     async def generate_text(self, prompt: str) -> str: ...
 
 
-class KnowledgeContextClient(Protocol):
-    async def context(self, query: str, max_context_chars: int) -> Dict[str, Any]: ...
+class KnowledgeQueryClient(Protocol):
+    async def query(self, payload: Dict[str, Any]) -> Dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
 class JarvisDependencies:
-    knowledge_client: KnowledgeContextClient
+    knowledge_client: KnowledgeQueryClient
     model_client: ModelClient
     action_registry: ActionRegistry
     action_executor: ActionExecutor

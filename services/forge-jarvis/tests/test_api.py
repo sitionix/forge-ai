@@ -8,9 +8,8 @@ from support import (
     RecordingActionExecutor,
     build_test_app,
     knowledge_bad_response,
-    knowledge_bundle,
+    knowledge_query_bundle,
     knowledge_unavailable,
-    ollama_bad_response,
     ollama_unavailable,
     write_runtime_config,
 )
@@ -130,117 +129,101 @@ def test_command_maps_action_execution_failure(tmp_path) -> None:
     assert response.json()["code"] == "ACTION_EXECUTION_FAILED"
 
 
-def test_chat_rejects_blank_message(tmp_path) -> None:
+def test_query_rejects_blank_question(tmp_path) -> None:
     app, *_ = build_test_app(write_runtime_config(tmp_path))
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/chat", json={"message": "   "})
+        response = client.post("/api/v1/jarvis/query", json={"query": "   "})
 
-    assert response.status_code == 400
-    assert response.json()["code"] == "INVALID_CHAT_MESSAGE"
+    assert response.status_code == 422
 
 
-def test_chat_calls_knowledge_context(tmp_path) -> None:
+def test_query_calls_knowledge_gateway(tmp_path) -> None:
     knowledge = FakeKnowledgeClient()
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/chat", json={"message": " explain JarvisGateway ", "maxContextChars": 12000})
+        response = client.post("/api/v1/jarvis/query", json={"query": " explain JarvisGateway ", "intent": "AUTO"})
 
     assert response.status_code == 200
-    assert knowledge.calls == [("explain JarvisGateway", 12000)]
-    assert response.json()["answer"] == "Answer from context"
+    assert knowledge.calls == [{"query": "explain JarvisGateway", "intent": "AUTO"}]
+    assert response.json()["matchedNodes"][0]["sourceId"] == "forge-ai"
 
 
-def test_chat_calls_ollama_with_retrieved_context(tmp_path) -> None:
+def test_query_does_not_call_ollama_generation(tmp_path) -> None:
     model = FakeModelClient()
     app, *_ = build_test_app(write_runtime_config(tmp_path), model=model)
 
     with TestClient(app) as client:
-        client.post("/api/v1/jarvis/chat", json={"message": "explain JarvisGateway"})
+        response = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"})
 
-    assert "Knowledge context:" in model.prompts[0]
-    assert "[1] forge-ai/application/src/main/java/JarvisGateway.java lines 1-40" in model.prompts[0]
-    assert "public interface JarvisGateway {}" in model.prompts[0]
+    assert response.status_code == 200
+    assert model.prompts == []
+    assert model.health_calls == 0
 
 
-def test_chat_response_includes_answer_and_used_context(tmp_path) -> None:
+def test_query_response_preserves_factual_bundle(tmp_path) -> None:
     app, *_ = build_test_app(write_runtime_config(tmp_path))
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/chat", json={"message": "explain JarvisGateway"})
+        response = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"})
 
     body = response.json()
-    assert body["answer"] == "Answer from context"
-    assert body["usedContext"][0]["sourceId"] == "forge-ai"
-    assert body["usedContext"][0]["relativePath"] == "application/src/main/java/JarvisGateway.java"
-    assert body["usedContext"][0]["content"] is None
+    assert body["status"] == "OK"
+    assert body["matchedSources"][0]["sourceId"] == "forge-ai"
+    assert body["matchedNodes"][0]["label"] == "JarvisGateway"
+    assert body["flowPaths"][0]["flowId"] == "flow-1"
+    assert body["nodes"][0]["sourceId"] == "forge-ai"
+    assert "answer" not in body
 
 
-def test_chat_empty_context_returns_clear_answer_and_diagnostic(tmp_path) -> None:
-    knowledge = FakeKnowledgeClient(bundle=knowledge_bundle(context=[]))
+def test_query_no_candidates_preserves_controlled_response(tmp_path) -> None:
+    knowledge = FakeKnowledgeClient(
+        bundle=knowledge_query_bundle(
+            status="NO_CANDIDATES", matched_nodes=[], flow_paths=[], nodes=[], diagnostics=[{"code": "NO_GRAPH_CANDIDATES", "message": "No graph candidates"}]
+        )
+    )
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/chat", json={"message": "unknown"})
+        response = client.post("/api/v1/jarvis/query", json={"query": "unknown"})
 
     body = response.json()
-    assert "No relevant local Knowledge context was found" in body["answer"]
-    assert body["usedContext"] == []
-    assert any(diagnostic["code"] == "CONTEXT_EMPTY" for diagnostic in body["diagnostics"])
+    assert body["status"] == "NO_CANDIDATES"
+    assert body["matchedNodes"] == []
+    assert body["flowPaths"] == []
+    assert any(diagnostic["code"] == "NO_GRAPH_CANDIDATES" for diagnostic in body["diagnostics"])
 
 
-def test_chat_maps_knowledge_unavailable_to_controlled_error(tmp_path) -> None:
+def test_query_maps_knowledge_unavailable_to_controlled_error(tmp_path) -> None:
     knowledge = FakeKnowledgeClient(error=knowledge_unavailable())
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/chat", json={"message": "explain JarvisGateway"})
+        response = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"})
 
     assert response.status_code == 503
     assert response.json()["code"] == "KNOWLEDGE_UNAVAILABLE"
 
 
-def test_chat_maps_malformed_knowledge_response(tmp_path) -> None:
+def test_query_maps_malformed_knowledge_response(tmp_path) -> None:
     knowledge = FakeKnowledgeClient(error=knowledge_bad_response())
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/chat", json={"message": "explain JarvisGateway"})
+        response = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"})
 
     assert response.status_code == 502
     assert response.json()["code"] == "KNOWLEDGE_BAD_RESPONSE"
 
 
-def test_chat_maps_ollama_unavailable_to_controlled_error(tmp_path) -> None:
-    model = FakeModelClient(generate_error=ollama_unavailable())
-    app, *_ = build_test_app(write_runtime_config(tmp_path), model=model)
-
-    with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/chat", json={"message": "explain JarvisGateway"})
-
-    assert response.status_code == 503
-    assert response.json()["code"] == "OLLAMA_UNAVAILABLE"
-
-
-def test_chat_maps_malformed_model_response(tmp_path) -> None:
-    model = FakeModelClient(generate_error=ollama_bad_response())
-    app, *_ = build_test_app(write_runtime_config(tmp_path), model=model)
-
-    with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/chat", json={"message": "explain JarvisGateway"})
-
-    assert response.status_code == 502
-    assert response.json()["code"] == "OLLAMA_BAD_RESPONSE"
-
-
-def test_chat_does_not_execute_actions(tmp_path) -> None:
+def test_query_does_not_execute_actions(tmp_path) -> None:
     app, _, _, _, executor, _, _ = build_test_app(write_runtime_config(tmp_path))
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/chat", json={"message": "explain JarvisGateway"})
+        response = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"})
 
-    assert response.json()["answer"] == "Answer from context"
+    assert response.json()["status"] == "OK"
     assert executor.invocations == []
 
 

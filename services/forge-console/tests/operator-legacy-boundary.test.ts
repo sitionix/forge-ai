@@ -81,15 +81,15 @@ function jarvisBody() {
     </form>
     <div id="jarvisCommandError" class="hidden"></div>
     <section id="jarvisCommandResult" class="hidden"></section>
-    <form id="jarvisChatForm">
-      <textarea id="jarvisChatMessage"></textarea>
-      <input id="jarvisChatMaxContext">
-      <button id="sendJarvisChat" type="submit">Send</button>
+    <form id="jarvisQueryForm">
+      <textarea id="jarvisQueryText"></textarea>
+      <button id="sendJarvisQuery" type="submit">Send</button>
     </form>
-    <div id="jarvisChatError" class="hidden"></div>
-    <section id="jarvisChatAnswer" class="hidden"></section>
-    <section id="jarvisChatContext" class="hidden"></section>
-    <section id="jarvisChatDiagnostics" class="hidden"></section>
+    <div id="jarvisQueryLoading" class="hidden"></div>
+    <div id="jarvisQueryError" class="hidden"></div>
+    <section id="jarvisQueryResult" class="hidden"></section>
+    <section id="jarvisQueryDiagnostics" class="hidden"></section>
+    <section id="jarvisQueryRaw" class="hidden"></section>
   `;
 }
 
@@ -174,7 +174,8 @@ describe('Operator legacy boundary', () => {
       '/jarvis/status',
       '/jarvis/actions',
       '/jarvis/command',
-      '/jarvis/chat',
+      `/jarvis/${'chat'}`,
+      '/jarvis/query',
       '/knowledge/overview',
       '/knowledge/analysis',
       '/analysis/symbols',
@@ -244,6 +245,10 @@ describe('Operator legacy boundary', () => {
       operatorSource('agents.html')
     ]);
     expect(jarvis).toContain('type="module" src="./operator-ui.js"');
+    expect(jarvis).toContain('Graph Knowledge Query');
+    expect(jarvis).not.toContain('jarvisQueryMaxAnchors');
+    expect(jarvis).not.toContain('jarvisQueryDepth');
+    expect(jarvis).not.toContain('Max anchors');
     expect(knowledge).toContain('type="module" src="./operator-ui.js"');
     expect(graph).toContain('type="module" src="./operator-ui.js"');
     expect(legacy).toContain('src="./operator-legacy-ui.js"');

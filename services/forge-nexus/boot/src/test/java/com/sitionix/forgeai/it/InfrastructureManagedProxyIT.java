@@ -30,7 +30,7 @@ import static org.hamcrest.Matchers.not;
         "forge.ai.infrastructure.knowledge.read-timeout=2500ms",
         "forge.ai.infrastructure.jarvis.read-timeout=2500ms",
         "forge.ai.infrastructure.proxy.max-request-body-bytes=128",
-        "forge.ai.infrastructure.proxy.max-response-body-bytes=1024"
+        "forge.ai.infrastructure.proxy.max-response-body-bytes=1600"
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
@@ -103,7 +103,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisStatus()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisActions()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisCommand()).createDefault();
-        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisChat()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
 
         //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeStatus()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
@@ -159,7 +159,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisStatus()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisActions()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisCommand()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisChat()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusUnsupportedKnowledgeSymbols()).assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusUnsupportedKnowledgeRelations()).assertDefault();
@@ -213,7 +213,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisStatus()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisActions()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisCommand()).createDefault();
-        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisChat()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
 
         //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeOverview()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
@@ -244,7 +244,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisStatus()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisActions()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisCommand()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisChat()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
     }
 
     @Test
@@ -311,7 +311,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseBody("responseProxyGraphEdgeDetailContract.json"))
                 .create();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisCommand()).createDefault();
-        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisChat()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
 
         //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeInventoryBuildBody())
@@ -352,7 +352,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisCommand()).header("X-Correlation-Id", "corr-parity").assertDefault();
 
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisChat()).header("X-Correlation-Id", "corr-parity").assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery()).header("X-Correlation-Id", "corr-parity").assertDefault();
     }
 
     @Test
@@ -408,12 +408,27 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseStatus(HttpStatus.GONE.value())
                         .responseBody("responseProxyGraphSnapshotExpired.json"))
                 .create();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryTimeout())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamTimeoutCase())
+                .applyDefault(context -> context
+                        .responseStatus(HttpStatus.OK.value())
+                        .responseBody("responseProxyJarvisQuery.json"))
+                .delayForResponse(3000)
+                .create();
 
         //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeStatusTimeout())
                 .withQueryParameters(InfrastructureProxyQuery.timeoutCase())
                 .header("X-Correlation-Id", "corr-timeout")
                 .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", "corr-timeout"))
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryTimeout())
+                .withQueryParameters(InfrastructureProxyQuery.timeoutCase())
+                .header("X-Correlation-Id", "corr-jarvis-query-timeout")
+                .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", "corr-jarvis-query-timeout"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.route").value("jarvis.query"))
                 .assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeStatusResponseTooLarge())
@@ -543,9 +558,9 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseBody("responseProxyGraphManifest.json"))
                 .create();
         this.testManager.wiremock()
-                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisChatServerError())
+                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryServerError())
                 .urlWithQueryParam(InfrastructureProxyQuery.upstreamServerErrorCase())
-                .header("X-Correlation-Id", "corr-jarvis-chat-error")
+                .header("X-Correlation-Id", "corr-jarvis-query-error")
                 .applyDefault(context -> context
                         .responseStatus(HttpStatus.INTERNAL_SERVER_ERROR.value())
                         .responseBody("responseProxyUpstreamServerError.json"))
@@ -560,11 +575,11 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .header("X-Correlation-Id", "corr-task04b-graph-manifest")
                 .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", "corr-task04b-graph-manifest"))
                 .assertDefault();
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisChatUpstreamServerError())
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryUpstreamServerError())
                 .withQueryParameters(InfrastructureProxyQuery.serverErrorCase())
-                .header("X-Correlation-Id", "corr-jarvis-chat-error")
-                .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", "corr-jarvis-chat-error"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.correlationId").value("corr-jarvis-chat-error"))
+                .header("X-Correlation-Id", "corr-jarvis-query-error")
+                .andExpectPath(MockMvcResultMatchers.header().string("X-Correlation-Id", "corr-jarvis-query-error"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.correlationId").value("corr-jarvis-query-error"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.message", not(containsString("SYSTEM PROMPT"))))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.message", not(containsString("source content"))))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.message", not(containsString("127.0.0.1"))))
@@ -670,7 +685,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .header("X-Correlation-Id", "corr-knowledge-request-large")
                 .assertDefault();
 
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisChatRequestTooLarge())
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryRequestTooLarge())
                 .header("X-Correlation-Id", "corr-jarvis-request-large")
                 .assertDefault();
 
@@ -857,11 +872,56 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
     }
 
     @Test
-    void itProxy10JarvisRedactionThroughNexusDoesNotExposeSensitiveDetails() {
+    void itProxy10JarvisQueryPositiveFactualBundlePreservesFields() {
         //given
-        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisChat()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryNoCandidates()).createDefault();
+
+        //when then
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery())
+                .header("X-Correlation-Id", "corr-jarvis-query-positive")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedSources[0].sourceId").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].sourceId").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].nodeId").value("node-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].flowId").value("flow-1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].nodes[0].sourceId").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].edges[0].sourceId").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.nodes[0].sourceId").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.nodes[1].sourceId").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.edges[0].sourceId").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.evidence[0].sourceId").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics[0].code").value("GRAPH_SLICE_OK"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.matchedNodeCount").value(1))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.flowPathCount").value(1))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.nodeCount").value(2))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.edgeCount").value(1))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.evidenceCount").value(1))
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryNoCandidates())
+                .header("X-Correlation-Id", "corr-jarvis-query-no-candidates")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("NO_CANDIDATES"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes").isEmpty())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths").isEmpty())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.matchedNodeCount").value(0))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.flowPathCount").value(0))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics[0].code").value("NO_GRAPH_CANDIDATES"))
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryBlank())
+                .header("X-Correlation-Id", "corr-jarvis-query-blank")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.title").value("VALIDATION_FAILED"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.details", containsString("query")))
+                .assertDefault();
+    }
+
+    @Test
+    void itProxy11JarvisRedactionThroughNexusDoesNotExposeSensitiveDetails() {
+        //given
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
         this.testManager.wiremock()
-                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisChatServerError())
+                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryServerError())
                 .urlWithQueryParam(InfrastructureProxyQuery.upstreamServerErrorCase())
                 .applyDefault(context -> context
                         .responseStatus(HttpStatus.INTERNAL_SERVER_ERROR.value())
@@ -876,17 +936,18 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .create();
 
         //when then
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisChat())
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery())
                 .header("X-Correlation-Id", "corr-jarvis-redaction")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.usedContext").isEmpty())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].sourceId").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answer").doesNotExist())
                 .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("SYSTEM PROMPT"))))
                 .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("source content"))))
                 .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("127.0.0.1"))))
                 .assertDefault();
 
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisChatUpstreamServerError())
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryUpstreamServerError())
                 .withQueryParameters(InfrastructureProxyQuery.serverErrorCase())
-                .header("X-Correlation-Id", "corr-jarvis-chat-error")
+                .header("X-Correlation-Id", "corr-jarvis-query-error")
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.message", not(containsString("SYSTEM PROMPT"))))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.message", not(containsString("source content"))))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.message", not(containsString("127.0.0.1"))))

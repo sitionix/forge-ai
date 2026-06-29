@@ -17,15 +17,15 @@ function jarvisDom() {
       </form>
       <div id="jarvisCommandError" class="hidden"></div>
       <section id="jarvisCommandResult" class="hidden"></section>
-      <form id="jarvisChatForm">
-        <textarea id="jarvisChatMessage"></textarea>
-        <input id="jarvisChatMaxContext">
-        <button id="sendJarvisChat" type="submit">Send</button>
+      <form id="jarvisQueryForm">
+        <textarea id="jarvisQueryText"></textarea>
+        <button id="sendJarvisQuery" type="submit">Send</button>
       </form>
-      <div id="jarvisChatError" class="hidden"></div>
-      <section id="jarvisChatAnswer" class="hidden"></section>
-      <section id="jarvisChatContext" class="hidden"></section>
-      <section id="jarvisChatDiagnostics" class="hidden"></section>
+      <div id="jarvisQueryLoading" class="hidden"></div>
+      <div id="jarvisQueryError" class="hidden"></div>
+      <section id="jarvisQueryResult" class="hidden"></section>
+      <section id="jarvisQueryDiagnostics" class="hidden"></section>
+      <section id="jarvisQueryRaw" class="hidden"></section>
     </body>`, { url: 'http://127.0.0.1/operator/jarvis.html' });
 }
 
@@ -48,16 +48,32 @@ describe('Jarvis runtime rendering', () => {
           });
         }
         return Promise.resolve({
-          answer: 'Answer without private context',
-          usedContext: [{
+          status: 'OK',
+          intent: 'AUTO',
+          matchedSources: [{ sourceId: 'forge-ai', displayName: 'Forge AI', score: 0.95 }],
+          matchedNodes: [{
             sourceId: 'forge-ai',
-            relativePath: 'src/JarvisGateway.java',
-            lineStart: 1,
-            lineEnd: 3,
+            nodeId: 'n1',
+            stableKey: 'src/JarvisGateway.java|CALLABLE|JarvisGateway',
+            kind: 'CALLABLE',
+            label: 'JarvisGateway',
             score: 1,
-            reason: 'Matched JarvisGateway',
+            matchReasons: ['NAME_MATCH'],
             content: 'SECRET_SOURCE_CONTENT'
           }],
+          flowPaths: [{
+            flowId: 'flow-1',
+            sourceId: 'forge-ai',
+            nodes: [{ id: 'n1', sourceId: 'forge-ai', label: 'JarvisGateway' }],
+            edges: [],
+            evidence: [],
+            complete: true,
+            stopReason: 'TERMINAL_NODE'
+          }],
+          nodes: [{ id: 'n1', sourceId: 'forge-ai', label: 'JarvisGateway', content: 'SECRET_SOURCE_CONTENT' }],
+          edges: [],
+          evidence: [],
+          coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowPathCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
           diagnostics: [{ code: 'OK', message: 'No sensitive data' }]
         });
       })
@@ -66,17 +82,78 @@ describe('Jarvis runtime rendering', () => {
     page.mount();
     await flushAsync();
 
-    (dom.window.document.getElementById('jarvisChatMessage') as HTMLTextAreaElement).value = 'explain';
-    await page.submitChat({ preventDefault: () => undefined });
+    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'explain';
+    await page.submitQuery({ preventDefault: () => undefined });
     (dom.window.document.getElementById('jarvisCommandText') as HTMLTextAreaElement).value = 'run';
     await page.submitCommand({ preventDefault: () => undefined });
 
     const text = dom.window.document.body.textContent || '';
-    expect(text).toContain('Answer without private context');
+    expect(text).toContain('JarvisGateway');
     expect(text).toContain('src/JarvisGateway.java');
     expect(text).not.toContain('SECRET_SOURCE_CONTENT');
     expect(text).not.toContain('["bash"');
     expect(text).not.toContain('sleep 0.2');
+    expect(http.post).toHaveBeenCalledWith('/jarvis/query', { query: 'explain', intent: 'AUTO' }, expect.any(Object));
     page.dispose();
+  });
+
+  it('renders no-candidates response and does not call Knowledge directly', async () => {
+    const dom = jarvisDom();
+    const http = {
+      get: vi.fn(() => Promise.resolve({ status: 'UP', model: {}, ollama: {}, actions: { count: 0 } })),
+      post: vi.fn(() => Promise.resolve({
+        status: 'NO_CANDIDATES',
+        intent: 'AUTO',
+        matchedSources: [],
+        matchedNodes: [],
+        flowPaths: [],
+        nodes: [],
+        edges: [],
+        coverage: { searchedSourceCount: 2, matchedSourceCount: 0, matchedNodeCount: 0, flowPathCount: 0, nodeCount: 0, edgeCount: 0, evidenceCount: 0 },
+        diagnostics: [{ code: 'NO_GRAPH_CANDIDATES', message: 'No matches' }]
+      }))
+    };
+    const page = new JarvisPage({ document: dom.window.document, http });
+    page.mount();
+    await flushAsync();
+    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'missing';
+
+    await page.submitQuery({ preventDefault: () => undefined });
+
+    const text = dom.window.document.body.textContent || '';
+    expect(text).toContain('No graph matches found');
+    expect(text).toContain('NO_GRAPH_CANDIDATES');
+    expect(http.post).toHaveBeenCalledWith('/jarvis/query', expect.any(Object), expect.any(Object));
+    const calls = http.post.mock.calls as unknown as Array<[string, unknown?, unknown?]>;
+    expect(calls.some(([path]) => path.includes('/knowledge/query'))).toBe(false);
+    expect(calls.some(([path]) => path.includes(`/jarvis/${'chat'}`))).toBe(false);
+    page.dispose();
+  });
+
+  it('shows loading and controlled error state for failed query', async () => {
+    const dom = jarvisDom();
+    let rejectRequest: (error: Error) => void = () => undefined;
+    const http = {
+      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'UP', model: {}, ollama: {}, actions: { count: 0 } } : { actions: [] })),
+      post: vi.fn(() => new Promise((_resolve, reject) => {
+        rejectRequest = reject;
+      }))
+    };
+    const page = new JarvisPage({ document: dom.window.document, http });
+    page.mount();
+    await flushAsync();
+    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'JarvisGateway';
+
+    const request = page.submitQuery({ preventDefault: () => undefined });
+    await flushAsync();
+    expect(dom.window.document.getElementById('sendJarvisQuery')?.getAttribute('disabled')).not.toBeNull();
+    expect(dom.window.document.getElementById('jarvisQueryLoading')?.className).not.toContain('hidden');
+
+    rejectRequest(new Error('controlled failure'));
+    await request;
+
+    expect(dom.window.document.getElementById('sendJarvisQuery')?.getAttribute('disabled')).toBeNull();
+    expect(dom.window.document.getElementById('jarvisQueryLoading')?.className).toContain('hidden');
+    expect(dom.window.document.getElementById('jarvisQueryError')?.textContent).toContain('controlled failure');
   });
 });

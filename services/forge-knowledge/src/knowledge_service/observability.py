@@ -45,10 +45,7 @@ class RouteMetrics:
         }
 
     def server_timing(self) -> str:
-        return (
-            f"route;dur={self.total_ms:.3f}, "
-            f"db;dur={self.db_ms:.3f};desc=\"queries={self.query_count}\""
-        )
+        return f'route;dur={self.total_ms:.3f}, db;dur={self.db_ms:.3f};desc="queries={self.query_count}"'
 
 
 class ObservedConnection(sqlite3.Connection):

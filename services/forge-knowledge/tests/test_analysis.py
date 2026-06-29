@@ -7,7 +7,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.parse import quote
 
 import pytest
 from pydantic import ValidationError
@@ -995,8 +994,7 @@ def test_graph_snapshot_migration_rebuilds_old_primary_key_tables(tmp_path):
         pk = {row["name"]: row["pk"] for row in conn.execute("PRAGMA table_info(analysis_graph_nodes)").fetchall() if row["pk"]}
         assert pk == {"snapshot_id": 1, "id": 2}
         assert (
-            conn.execute("SELECT snapshot_id FROM graph_current_snapshots WHERE source_id = 'edge-gateway'").fetchone()["snapshot_id"]
-            == "legacy:edge-gateway"
+            conn.execute("SELECT snapshot_id FROM graph_current_snapshots WHERE source_id = 'edge-gateway'").fetchone()["snapshot_id"] == "legacy:edge-gateway"
         )
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute(
@@ -1064,7 +1062,10 @@ def test_duplicate_evidence_id_is_reported_as_graph_store_error_without_partial_
     assert raised.value.details["stage"] == "GRAPH_STORE"
     assert raised.value.details["table"] == "analysis_graph_evidence"
     assert raised.value.details["operation"] == "insert_evidence"
-    assert "UNIQUE constraint failed: analysis_graph_evidence.source_id, analysis_graph_evidence.snapshot_id, analysis_graph_evidence.id" in raised.value.details["sqliteMessage"]
+    assert (
+        "UNIQUE constraint failed: analysis_graph_evidence.source_id, analysis_graph_evidence.snapshot_id, analysis_graph_evidence.id"
+        in raised.value.details["sqliteMessage"]
+    )
     with sqlite3.connect(store.db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence").fetchone()[0] == 0
@@ -1763,11 +1764,11 @@ def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
     assert migrations == [
         (1, "remove_legacy_analysis_job_counter"),
         (2, "add_analysis_job_source_scope"),
-            (3, "reset_analysis_cache_for_graph_v1_cutover"),
-            (4, "reconcile_graph_diagnostics_schema"),
-            (5, "add_analysis_job_mode"),
-            (6, "add_immutable_graph_snapshots"),
-        ]
+        (3, "reset_analysis_cache_for_graph_v1_cutover"),
+        (4, "reconcile_graph_diagnostics_schema"),
+        (5, "add_analysis_job_mode"),
+        (6, "add_immutable_graph_snapshots"),
+    ]
     assert migration_count == 6
 
 
@@ -2100,12 +2101,7 @@ def test_runtime_analysis_writes_graph_tables_and_not_legacy_symbols(tmp_path):
                 "analysis_graph_evidence",
             ]
         }
-        objects = {
-            row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view', 'trigger', 'index')"
-            ).fetchall()
-        }
+        objects = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'view', 'trigger', 'index')").fetchall()}
 
     assert counts["analysis_graph_nodes"] > 0
     assert counts["analysis_graph_edges"] > 0
@@ -2888,8 +2884,8 @@ def test_services_status_size_does_not_grow_with_diagnostics(tmp_path, monkeypat
     analysis_store = AnalysisStore(store.db_path)
     analysis_store.init()
     with sqlite3.connect(store.db_path) as conn:
-            conn.executemany(
-                """
+        conn.executemany(
+            """
                 INSERT INTO analysis_graph_diagnostics(
                     id, snapshot_id, job_id, source_id, severity, stage, code, message, metadata_json, created_at
                 )

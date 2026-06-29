@@ -124,14 +124,14 @@ class FakeModelClient:
 
 class FakeKnowledgeClient:
     def __init__(self, *, bundle: Optional[Dict[str, Any]] = None, error: Optional[Exception] = None) -> None:
-        self.bundle = bundle if bundle is not None else knowledge_bundle()
+        self.bundle = bundle if bundle is not None else knowledge_query_bundle()
         self.error = error
-        self.calls: List[tuple[str, int]] = []
+        self.calls: List[Dict[str, Any]] = []
 
-    async def context(self, query: str, max_context_chars: int) -> Dict[str, Any]:
+    async def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if self.error:
             raise self.error
-        self.calls.append((query, max_context_chars))
+        self.calls.append(dict(payload))
         return self.bundle
 
 
@@ -149,27 +149,76 @@ class RecordingActionExecutor:
         return ExecutionResult(executed=True, message=f"Action executed: {intent.action}.{intent.target}", output="ok")
 
 
-def knowledge_bundle(context: Optional[List[Dict[str, Any]]] = None, diagnostics: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+def knowledge_query_bundle(
+    *,
+    status: str = "OK",
+    matched_nodes: Optional[List[Dict[str, Any]]] = None,
+    flow_paths: Optional[List[Dict[str, Any]]] = None,
+    nodes: Optional[List[Dict[str, Any]]] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
+    evidence: Optional[List[Dict[str, Any]]] = None,
+    diagnostics: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
     return {
-        "query": "JarvisGateway",
-        "context": context
-        if context is not None
-        else [
+        "queryId": "query-test",
+        "status": status,
+        "intent": "AUTO",
+        "matchedSources": [
             {
                 "sourceId": "forge-ai",
                 "displayName": "Forge AI",
-                "relativePath": "application/src/main/java/JarvisGateway.java",
-                "lineStart": 1,
-                "lineEnd": 40,
-                "content": "public interface JarvisGateway {}",
-                "matchType": "content",
-                "reason": "Matched JarvisGateway",
-                "score": 1.0,
-                "metadata": {"tags": ["java"]},
+                "score": 0.95,
+            }
+        ]
+        if status != "NO_CANDIDATES"
+        else [],
+        "matchedNodes": matched_nodes
+        if matched_nodes is not None
+        else []
+        if status == "NO_CANDIDATES"
+        else [
+            {
+                "sourceId": "forge-ai",
+                "nodeId": "node-jarvis-gateway",
+                "stableKey": "src/JarvisGateway.java|CALLABLE|JarvisGateway",
+                "kind": "CALLABLE",
+                "label": "JarvisGateway",
+                "score": 0.95,
+                "matchReasons": ["NAME_MATCH"],
             }
         ],
-        "sourcesUsed": [],
-        "budget": {"maxChars": 12000, "usedChars": 33, "truncated": False},
+        "nodes": nodes if nodes is not None else [{"id": "node-jarvis-gateway", "sourceId": "forge-ai", "label": "JarvisGateway"}],
+        "edges": edges if edges is not None else [],
+        "flowPaths": flow_paths
+        if flow_paths is not None
+        else []
+        if status == "NO_CANDIDATES"
+        else [
+            {
+                "flowId": "flow-1",
+                "sourceId": "forge-ai",
+                "nodes": [{"id": "node-jarvis-gateway", "sourceId": "forge-ai", "label": "JarvisGateway"}],
+                "edges": [],
+                "evidence": [],
+                "complete": True,
+                "stopReason": "TERMINAL_NODE",
+            }
+        ],
+        "verifiedPaths": [],
+        "evidence": evidence if evidence is not None else [],
+        "unresolved": [],
+        "external": [],
+        "coverage": {
+            "searchedSourceCount": 1,
+            "matchedSourceCount": 0 if status == "NO_CANDIDATES" else 1,
+            "matchedNodeCount": 0 if status == "NO_CANDIDATES" else 1,
+            "flowPathCount": 0 if status == "NO_CANDIDATES" else 1,
+            "nodeCount": 0 if status == "NO_CANDIDATES" else 1,
+            "edgeCount": 0,
+            "evidenceCount": len(evidence or []),
+            "truncated": False,
+            "continuationAvailable": False,
+        },
         "diagnostics": diagnostics or [],
     }
 
@@ -180,7 +229,6 @@ def write_runtime_config(tmp_path: Path) -> Path:
     jarvis_dir = config_dir / "jarvis"
     jarvis_dir.mkdir(parents=True, exist_ok=True)
     (jarvis_dir / "system-prompt.md").write_text("Return one intent JSON object.\n", encoding="utf-8")
-    (jarvis_dir / "chat-prompt.md").write_text("Answer from Knowledge context.\n", encoding="utf-8")
     (jarvis_dir / "allowed-actions.yaml").write_text(
         """
 actions:
@@ -223,10 +271,8 @@ forge:
           request-timeout-seconds: 120
         knowledge:
           request-timeout-seconds: 120
-          default-max-context-chars: 12000
         actions-file: "{jarvis_dir / "allowed-actions.yaml"}"
         system-prompt-path: "{jarvis_dir / "system-prompt.md"}"
-        chat-prompt-path: "{jarvis_dir / "chat-prompt.md"}"
 """.lstrip(),
         encoding="utf-8",
     )

@@ -1259,11 +1259,11 @@ body.sidebar-collapsed .sidebar-link {
   padding: 0 20px 20px;
 }
 
-.jarvis-chat-panel {
+.jarvis-query-panel {
   margin-top: 18px;
 }
 
-.jarvis-chat-form {
+.jarvis-query-form {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) auto;
@@ -1272,12 +1272,12 @@ body.sidebar-collapsed .sidebar-link {
   padding: 18px 20px 10px;
 }
 
-.jarvis-chat-message,
-.jarvis-chat-max {
+.jarvis-query-message,
+.jarvis-query-control {
   min-width: 0;
 }
 
-.jarvis-chat-form .field input[type="number"] {
+.jarvis-query-form .field input[type="number"] {
   width: 100%;
   min-width: 0;
   border: 1px solid rgba(27, 36, 31, 0.14);
@@ -1290,20 +1290,20 @@ body.sidebar-collapsed .sidebar-link {
   text-align: right;
 }
 
-.jarvis-chat-form .field textarea {
+.jarvis-query-form .field textarea {
   min-height: 116px;
   max-height: 260px;
 }
 
-.jarvis-chat-answer,
-.jarvis-chat-context,
-.jarvis-chat-diagnostics {
+.jarvis-query-result,
+.jarvis-query-raw,
+.jarvis-query-diagnostics {
   position: relative;
   padding: 0 20px 20px;
 }
 
-.jarvis-chat-context h3,
-.jarvis-chat-diagnostics h3 {
+.jarvis-query-raw h3,
+.jarvis-query-diagnostics h3 {
   margin: 0 0 12px;
   color: var(--muted);
   font-size: 11px;

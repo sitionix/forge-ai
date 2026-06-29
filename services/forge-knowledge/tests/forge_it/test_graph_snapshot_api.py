@@ -126,6 +126,7 @@ def test_it_graph_06_atomic_activation_with_concurrent_readers(tmp_path):
     observed = []
 
     with TestClient(app) as client:
+
         def read_loop():
             for _ in range(20):
                 manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
@@ -157,14 +158,18 @@ def test_it_graph_06_atomic_activation_with_concurrent_readers(tmp_path):
 
         reader = threading.Thread(target=read_loop)
         reader.start()
-        AnalysisStore(app_config.store_path)._write_with_busy_retry(lambda conn: AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, "job-2:forge-ai"))
+        AnalysisStore(app_config.store_path)._write_with_busy_retry(
+            lambda conn: AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, "job-2:forge-ai")
+        )
         reader.join()
 
     assert observed
-    assert set(observed).issubset({
-        ("job-1:forge-ai", 8, 7, "job-1:forge-ai", 8, "job-1:forge-ai", 7, "job-1:forge-ai", "job-1:forge-ai"),
-        ("job-2:forge-ai", 5, 4, "job-2:forge-ai", 5, "job-2:forge-ai", 4, "job-2:forge-ai", "job-2:forge-ai"),
-    })
+    assert set(observed).issubset(
+        {
+            ("job-1:forge-ai", 8, 7, "job-1:forge-ai", 8, "job-1:forge-ai", 7, "job-1:forge-ai", "job-1:forge-ai"),
+            ("job-2:forge-ai", 5, 4, "job-2:forge-ai", 5, "job-2:forge-ai", 4, "job-2:forge-ai", "job-2:forge-ai"),
+        }
+    )
     with TestClient(app) as client:
         final_manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
     assert final_manifest["snapshotId"] == "job-2:forge-ai"
@@ -186,7 +191,9 @@ def test_it_graph_07_failed_validation_preserves_current(tmp_path):
             (datetime.now(timezone.utc).isoformat(),),
         )
     with pytest.raises(KnowledgeError):
-        AnalysisStore(app_config.store_path)._write_with_busy_retry(lambda conn: AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, "bad:forge-ai"))
+        AnalysisStore(app_config.store_path)._write_with_busy_retry(
+            lambda conn: AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, "bad:forge-ai")
+        )
 
     assert current_snapshot(app_config.store_path, "forge-ai") == "job-1:forge-ai"
 
@@ -226,8 +233,12 @@ def test_it_graph_current_model_01_partial_job_does_not_replace_full_source_grap
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()
     deps.analysis_store.init()
-    seed_current_model_snapshot(app_config.store_path, "source-a", "full-1:source-a", expected_files=10, covered_files=10, node_count=20, edge_count=30, state="PUBLISHED", current=True)
-    seed_current_model_snapshot(app_config.store_path, "source-a", "partial-2:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="BUILDING")
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "full-1:source-a", expected_files=10, covered_files=10, node_count=20, edge_count=30, state="PUBLISHED", current=True
+    )
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "partial-2:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="BUILDING"
+    )
 
     publish_graph_snapshot(app_config.store_path, "partial-2:source-a")
 
@@ -249,8 +260,12 @@ def test_it_graph_current_model_02_full_source_snapshot_can_become_current(tmp_p
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()
     deps.analysis_store.init()
-    seed_current_model_snapshot(app_config.store_path, "source-a", "full-1:source-a", expected_files=6, covered_files=6, node_count=6, edge_count=5, state="PUBLISHED", current=True)
-    seed_current_model_snapshot(app_config.store_path, "source-a", "full-2:source-a", expected_files=6, covered_files=6, node_count=12, edge_count=11, state="BUILDING")
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "full-1:source-a", expected_files=6, covered_files=6, node_count=6, edge_count=5, state="PUBLISHED", current=True
+    )
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "full-2:source-a", expected_files=6, covered_files=6, node_count=12, edge_count=11, state="BUILDING"
+    )
 
     publish_graph_snapshot(app_config.store_path, "full-2:source-a")
 
@@ -267,8 +282,12 @@ def test_it_graph_current_model_03_degraded_current_pointer_recovers_to_same_sou
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()
     deps.analysis_store.init()
-    seed_current_model_snapshot(app_config.store_path, "source-a", "legacy:source-a", expected_files=10, covered_files=10, node_count=25, edge_count=40, state="RETIRED")
-    seed_current_model_snapshot(app_config.store_path, "source-a", "partial:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="PUBLISHED", current=True)
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "legacy:source-a", expected_files=10, covered_files=10, node_count=25, edge_count=40, state="RETIRED"
+    )
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "partial:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="PUBLISHED", current=True
+    )
 
     with TestClient(app) as client:
         metadata = client.get("/api/v1/knowledge/analysis/graph/metadata?sourceId=source-a").json()
@@ -289,8 +308,12 @@ def test_it_graph_current_model_04_no_cross_source_fallback(tmp_path):
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()
     deps.analysis_store.init()
-    seed_current_model_snapshot(app_config.store_path, "source-a", "partial:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="PUBLISHED", current=True)
-    seed_current_model_snapshot(app_config.store_path, "source-b", "rich:source-b", expected_files=10, covered_files=10, node_count=30, edge_count=29, state="PUBLISHED", current=True)
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "partial:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="PUBLISHED", current=True
+    )
+    seed_current_model_snapshot(
+        app_config.store_path, "source-b", "rich:source-b", expected_files=10, covered_files=10, node_count=30, edge_count=29, state="PUBLISHED", current=True
+    )
 
     with TestClient(app) as client:
         metadata = client.get("/api/v1/knowledge/analysis/graph/metadata?sourceId=source-a").json()
@@ -308,8 +331,12 @@ def test_it_graph_current_model_05_non_promoted_partial_snapshot_records_reason(
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()
     deps.analysis_store.init()
-    seed_current_model_snapshot(app_config.store_path, "source-a", "full-1:source-a", expected_files=10, covered_files=10, node_count=20, edge_count=30, state="PUBLISHED", current=True)
-    seed_current_model_snapshot(app_config.store_path, "source-a", "partial-2:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="BUILDING")
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "full-1:source-a", expected_files=10, covered_files=10, node_count=20, edge_count=30, state="PUBLISHED", current=True
+    )
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "partial-2:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="BUILDING"
+    )
 
     publish_graph_snapshot(app_config.store_path, "partial-2:source-a")
 
@@ -335,7 +362,9 @@ def test_it_graph_current_model_06_metadata_exposes_represented_vs_expected_file
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()
     deps.analysis_store.init()
-    seed_current_model_snapshot(app_config.store_path, "source-a", "partial:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="PUBLISHED", current=True)
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "partial:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="PUBLISHED", current=True
+    )
 
     with TestClient(app) as client:
         metadata = client.get("/api/v1/knowledge/analysis/graph/metadata?sourceId=source-a").json()
@@ -354,8 +383,12 @@ def test_it_graph_current_model_07_partial_snapshot_remains_stored_as_history(tm
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()
     deps.analysis_store.init()
-    seed_current_model_snapshot(app_config.store_path, "source-a", "full-1:source-a", expected_files=10, covered_files=10, node_count=20, edge_count=30, state="PUBLISHED", current=True)
-    seed_current_model_snapshot(app_config.store_path, "source-a", "partial-2:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="BUILDING")
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "full-1:source-a", expected_files=10, covered_files=10, node_count=20, edge_count=30, state="PUBLISHED", current=True
+    )
+    seed_current_model_snapshot(
+        app_config.store_path, "source-a", "partial-2:source-a", expected_files=10, covered_files=4, node_count=4, edge_count=0, state="BUILDING"
+    )
 
     publish_graph_snapshot(app_config.store_path, "partial-2:source-a")
 
@@ -363,9 +396,7 @@ def test_it_graph_current_model_07_partial_snapshot_remains_stored_as_history(tm
         snapshot = conn.execute(
             "SELECT state, content_identity FROM graph_snapshots WHERE source_id = 'source-a' AND snapshot_id = 'partial-2:source-a'"
         ).fetchone()
-        node_count = conn.execute(
-            "SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = 'source-a' AND snapshot_id = 'partial-2:source-a'"
-        ).fetchone()[0]
+        node_count = conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = 'source-a' AND snapshot_id = 'partial-2:source-a'").fetchone()[0]
     assert snapshot[0] == "RETIRED"
     assert snapshot[1]
     assert node_count == 4
@@ -412,8 +443,12 @@ def test_it_graph_12_18_retention_safety_and_database_integrity(tmp_path):
             )
         insert_graph_snapshot(app_config.store_path, source, f"failed:{source}", 1, 0, state="FAILED")
         insert_graph_snapshot(app_config.store_path, source, f"building:{source}", 1, 0, state="BUILDING")
-        AnalysisStore(app_config.store_path)._write_with_busy_retry(lambda conn, candidate=source: AnalysisStore(app_config.store_path)._retain_graph_snapshots(conn, candidate))
-        AnalysisStore(app_config.store_path)._write_with_busy_retry(lambda conn, candidate=source: AnalysisStore(app_config.store_path)._retain_graph_snapshots(conn, candidate))
+        AnalysisStore(app_config.store_path)._write_with_busy_retry(
+            lambda conn, candidate=source: AnalysisStore(app_config.store_path)._retain_graph_snapshots(conn, candidate)
+        )
+        AnalysisStore(app_config.store_path)._write_with_busy_retry(
+            lambda conn, candidate=source: AnalysisStore(app_config.store_path)._retain_graph_snapshots(conn, candidate)
+        )
 
     with sqlite3.connect(app_config.store_path) as conn:
         retained = conn.execute("SELECT source_id, snapshot_id FROM graph_current_snapshots ORDER BY source_id").fetchall()
@@ -435,7 +470,14 @@ def test_it_graph_12_18_retention_safety_and_database_integrity(tmp_path):
                 JOIN graph_snapshot_tombstones tombstone ON tombstone.snapshot_id = child.snapshot_id
                 """
             ).fetchone()[0]
-            for table in ("analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_evidence", "analysis_graph_claims", "analysis_graph_diagnostics", "graph_snapshot_metrics")
+            for table in (
+                "analysis_graph_nodes",
+                "analysis_graph_edges",
+                "analysis_graph_evidence",
+                "analysis_graph_claims",
+                "analysis_graph_diagnostics",
+                "graph_snapshot_metrics",
+            )
         }
 
     assert [tuple(row) for row in retained] == [("forge-ai", "job-4:forge-ai"), ("other", "job-4:other")]
@@ -488,17 +530,13 @@ def test_it_graph_13_bounded_pages_sql_first_filtering_and_fixed_query_counts(tm
             return response, statements
 
         with TestClient(app) as client:
-            manifest_response, manifest_sql = count_selects(
-                lambda: client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE")
-            )
+            manifest_response, manifest_sql = count_selects(lambda: client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE"))
             manifest = manifest_response.json()
             assert len(manifest_sql) == 2
             assert client.get(f"/api/v1/knowledge/analysis/graph/nodes?graphRevision={quote(manifest['graphRevision'])}&pageSize=0").status_code == 422
             assert client.get(f"/api/v1/knowledge/analysis/graph/nodes?graphRevision={quote(manifest['graphRevision'])}&pageSize=-1").status_code == 422
             assert client.get(f"/api/v1/knowledge/analysis/graph/nodes?graphRevision={quote(manifest['graphRevision'])}&pageSize=5001").status_code == 422
-            assert client.get(
-                f"/api/v1/knowledge/analysis/graph/nodes?graphRevision={quote(manifest['graphRevision'])}&includeExternal=bad"
-            ).status_code == 400
+            assert client.get(f"/api/v1/knowledge/analysis/graph/nodes?graphRevision={quote(manifest['graphRevision'])}&includeExternal=bad").status_code == 400
 
             nodes_response, node_sql = count_selects(
                 lambda: client.get(
@@ -511,9 +549,7 @@ def test_it_graph_13_bounded_pages_sql_first_filtering_and_fixed_query_counts(tm
                 )
             )
             node_detail_response, node_detail_sql = count_selects(
-                lambda: client.get(
-                    f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}"
-                )
+                lambda: client.get(f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}")
             )
             edge_detail_response, edge_detail_sql = count_selects(
                 lambda: client.get(
@@ -552,37 +588,27 @@ def test_it_graph_14_complete_snapshot_specific_node_edge_detail_error_matrix(tm
     with TestClient(app) as client:
         manifest_a = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
         insert_graph_snapshot(app_config.store_path, "forge-ai", "b:forge-ai", 2, 1, state="BUILDING")
-        AnalysisStore(app_config.store_path)._write_with_busy_retry(lambda conn: AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, "b:forge-ai"))
-        node_detail = client.get(
-            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}"
+        AnalysisStore(app_config.store_path)._write_with_busy_retry(
+            lambda conn: AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, "b:forge-ai")
         )
+        node_detail = client.get(f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}")
         edge_detail = client.get(
             f"/api/v1/knowledge/analysis/graph/edge/edge-00000?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}&includeEvidence=true"
         )
-        missing_node = client.get(
-            f"/api/v1/knowledge/analysis/graph/node/missing-node?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}"
-        )
-        missing_edge = client.get(
-            f"/api/v1/knowledge/analysis/graph/edge/missing-edge?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}"
-        )
-        wrong_source = client.get(
-            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=other&graphRevision={quote(manifest_a['graphRevision'])}"
-        )
+        missing_node = client.get(f"/api/v1/knowledge/analysis/graph/node/missing-node?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}")
+        missing_edge = client.get(f"/api/v1/knowledge/analysis/graph/edge/missing-edge?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}")
+        wrong_source = client.get(f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=other&graphRevision={quote(manifest_a['graphRevision'])}")
         wrong_snapshot_item = client.get(
             f"/api/v1/knowledge/analysis/graph/node/b-node-00000?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}"
         )
         never_revision = graph_revision_for_snapshot(app_config.store_path, "never:forge-ai", "forge-ai", "CODE")
-        never_snapshot = client.get(
-            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(never_revision)}"
-        )
+        never_snapshot = client.get(f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(never_revision)}")
         for name, count in (("c", 3), ("d", 4)):
             insert_graph_snapshot(app_config.store_path, "forge-ai", f"{name}:forge-ai", count, max(count - 1, 0), state="BUILDING")
             AnalysisStore(app_config.store_path)._write_with_busy_retry(
                 lambda conn, candidate=f"{name}:forge-ai": AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, candidate)
             )
-        expired_snapshot = client.get(
-            f"/api/v1/knowledge/analysis/graph/edge/edge-00000?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}"
-        )
+        expired_snapshot = client.get(f"/api/v1/knowledge/analysis/graph/edge/edge-00000?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}")
 
     assert node_detail.status_code == 200
     assert node_detail.json()["snapshotId"] == manifest_a["snapshotId"]
@@ -635,9 +661,7 @@ def test_it_graph_node_details_02_node_detail_includes_bounded_outgoing_edges(tm
 
     with TestClient(app) as client:
         manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
-        response = client.get(
-            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}"
-        )
+        response = client.get(f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}")
 
     outgoing = response.json()["item"]["relations"]["outgoing"]
     first = outgoing["items"][0]
@@ -667,9 +691,7 @@ def test_it_graph_node_details_03_node_detail_includes_bounded_incoming_edges(tm
 
     with TestClient(app) as client:
         manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
-        response = client.get(
-            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}"
-        )
+        response = client.get(f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}")
 
     incoming = response.json()["item"]["relations"]["incoming"]
     first = incoming["items"][0]
@@ -693,9 +715,7 @@ def test_it_graph_node_details_04_node_with_no_edges_returns_empty_relation_grou
 
     with TestClient(app) as client:
         manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
-        response = client.get(
-            f"/api/v1/knowledge/analysis/graph/node/node-00002?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}"
-        )
+        response = client.get(f"/api/v1/knowledge/analysis/graph/node/node-00002?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}")
 
     relations = response.json()["item"]["relations"]
     assert response.status_code == 200
@@ -711,14 +731,12 @@ def test_it_graph_node_details_05_wrong_source_and_stale_revision_cannot_leak_ed
 
     with TestClient(app) as client:
         manifest_a = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE").json()
-        wrong_source = client.get(
-            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=other&graphRevision={quote(manifest_a['graphRevision'])}"
-        )
+        wrong_source = client.get(f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=other&graphRevision={quote(manifest_a['graphRevision'])}")
         insert_graph_snapshot(app_config.store_path, "forge-ai", "b:forge-ai", 3, 2, state="BUILDING")
-        AnalysisStore(app_config.store_path)._write_with_busy_retry(lambda conn: AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, "b:forge-ai"))
-        stale_detail = client.get(
-            f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}"
+        AnalysisStore(app_config.store_path)._write_with_busy_retry(
+            lambda conn: AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, "b:forge-ai")
         )
+        stale_detail = client.get(f"/api/v1/knowledge/analysis/graph/node/node-00000?sourceId=forge-ai&graphRevision={quote(manifest_a['graphRevision'])}")
 
     assert wrong_source.status_code == 409
     assert wrong_source.json()["code"] == "GRAPH_SNAPSHOT_SOURCE_MISMATCH"
@@ -737,8 +755,18 @@ def test_it_graph_15_final_knowledge_route_contract(tmp_path):
     with TestClient(app) as client:
         manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE")
         assert manifest.status_code == 200
-        assert client.get("/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&graphRevision=" + quote(manifest.json()["graphRevision"])).status_code == 200
-        assert client.get("/api/v1/knowledge/analysis/graph/edges?sourceId=forge-ai&flowDomain=CODE&graphRevision=" + quote(manifest.json()["graphRevision"])).status_code == 200
+        assert (
+            client.get(
+                "/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&graphRevision=" + quote(manifest.json()["graphRevision"])
+            ).status_code
+            == 200
+        )
+        assert (
+            client.get(
+                "/api/v1/knowledge/analysis/graph/edges?sourceId=forge-ai&flowDomain=CODE&graphRevision=" + quote(manifest.json()["graphRevision"])
+            ).status_code
+            == 200
+        )
         assert client.get("/api/v1/knowledge/analysis/graph?sourceId=forge-ai").status_code == 404
         assert client.get("/api/v1/knowledge/analysis/graph/slice?sourceId=forge-ai").status_code == 404
         assert client.get("/api/v1/knowledge/analysis/symbols?sourceId=forge-ai").status_code == 404
@@ -1084,9 +1112,7 @@ def test_it_graph_filter_be_03_cursor_bound_to_query_fingerprint(tmp_path):
     base_query = "sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeUnresolved=true&includeIsolated=true"
     with TestClient(app) as client:
         manifest = client.get(f"/api/v1/knowledge/analysis/graph/manifest?{base_query}").json()
-        first_page = client.get(
-            f"/api/v1/knowledge/analysis/graph/nodes?{base_query}&graphRevision={quote(manifest['graphRevision'])}&pageSize=5"
-        ).json()
+        first_page = client.get(f"/api/v1/knowledge/analysis/graph/nodes?{base_query}&graphRevision={quote(manifest['graphRevision'])}&pageSize=5").json()
         assert first_page["nextCursor"]
         valid_next = client.get(
             f"/api/v1/knowledge/analysis/graph/nodes?{base_query}&graphRevision={quote(manifest['graphRevision'])}&pageSize=5&cursor={quote(first_page['nextCursor'])}"
@@ -1127,15 +1153,15 @@ def test_it_graph_filter_be_04_search_by_node_file_kind_and_cursor_fingerprint(t
             manifest = client.get(f"/api/v1/knowledge/analysis/graph/manifest?{query}")
             assert manifest.status_code == 200, search
             assert manifest.json().get("code") not in {"GRAPH_FILTER_INVALID", "GRAPH_SNAPSHOT_METRICS_MISSING"}
-            page = client.get(
-                f"/api/v1/knowledge/analysis/graph/nodes?{query}&graphRevision={quote(manifest.json()['graphRevision'])}&pageSize=10"
-            )
+            page = client.get(f"/api/v1/knowledge/analysis/graph/nodes?{query}&graphRevision={quote(manifest.json()['graphRevision'])}&pageSize=10")
             assert page.status_code == 200, search
             items = page.json()["items"]
             assert 0 < len(items) <= 10
             assert all(predicate(item) for item in items)
 
-        name_manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&search=Name1").json()
+        name_manifest = client.get(
+            "/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&search=Name1"
+        ).json()
         name_page = client.get(
             f"/api/v1/knowledge/analysis/graph/nodes?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&search=Name1&graphRevision={quote(name_manifest['graphRevision'])}&pageSize=5"
         ).json()
@@ -1178,10 +1204,14 @@ def test_it_graph_view_02_max_monotonic_and_deterministic(tmp_path):
 
     with TestClient(app) as client:
         views = [
-            client.get(f"/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes={max_nodes}").json()
+            client.get(
+                f"/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes={max_nodes}"
+            ).json()
             for max_nodes in (20, 40, 80, 120, 200, 0)
         ]
-        repeated = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes=40").json()
+        repeated = client.get(
+            "/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes=40"
+        ).json()
 
     node_counts = [view["visibleNodeCount"] for view in views]
     edge_counts = [view["visibleEdgeCount"] for view in views]
@@ -1200,7 +1230,9 @@ def test_it_graph_view_03_relationship_aware_selection_prefers_connected_cluster
     replace_edges_with_late_connected_cluster(app_config.store_path, start=30, node_count=60, edge_count=90)
 
     with TestClient(app) as client:
-        view = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes=20").json()
+        view = client.get(
+            "/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes=20"
+        ).json()
 
     node_ids = {node["id"] for node in view["nodes"]}
     assert view["visibleNodeCount"] == 20
@@ -1264,7 +1296,9 @@ def test_it_graph_view_06_query_fingerprint_distinguishes_filter_shapes(tmp_path
         first = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&maxNodes=40").json()
         repeat = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&maxNodes=40").json()
         changed_external = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=hide&maxNodes=40").json()
-        changed_search = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&search=CALLABLE&maxNodes=40").json()
+        changed_search = client.get(
+            "/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&search=CALLABLE&maxNodes=40"
+        ).json()
         changed_max = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&maxNodes=80").json()
 
     assert first["queryFingerprint"] == repeat["queryFingerprint"]
@@ -1292,7 +1326,9 @@ def test_it_graph_view_07_performance_query_bound(tmp_path, monkeypatch):
     with TestClient(app) as client:
         for max_nodes in (20, 40, 80, 120, 200):
             traced_statements.clear()
-            response = client.get(f"/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes={max_nodes}")
+            response = client.get(
+                f"/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&includeExternal=show&includeIsolated=true&maxNodes={max_nodes}"
+            )
             statements = [statement for statement in traced_statements if statement.lstrip().upper().startswith("SELECT")]
             assert response.status_code == 200
             payload = response.json()
@@ -1377,7 +1413,9 @@ def test_graph_snapshot_manifest_cursor_pagination_details_and_legacy_route_dele
         assert no_isolated["totalNodeCount"] < manifest["totalNodeCount"]
 
         insert_graph_snapshot(app_config.store_path, "other", "other-1:other", 10, 9, state="BUILDING")
-        AnalysisStore(app_config.store_path)._write_with_busy_retry(lambda conn: AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, "other-1:other"))
+        AnalysisStore(app_config.store_path)._write_with_busy_retry(
+            lambda conn: AnalysisStore(app_config.store_path)._publish_graph_snapshot(conn, "other-1:other")
+        )
         other_manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=other&flowDomain=CODE").json()
         other_page = client.get(
             f"/api/v1/knowledge/analysis/graph/nodes?sourceId=other&flowDomain=CODE&graphRevision={quote(other_manifest['graphRevision'])}&pageSize=5"
@@ -1559,8 +1597,7 @@ def edge_endpoint_violations(db_path) -> int:
 def legacy_counts(db_path):
     with sqlite3.connect(db_path) as conn:
         return {
-            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("analysis_symbols", "analysis_symbol_roles", "analysis_relations")
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in ("analysis_symbols", "analysis_symbol_roles", "analysis_relations")
         }
 
 
@@ -1881,7 +1918,9 @@ def seed_current_model_snapshot(
         refresh_snapshot_projection(db_path, snapshot_id, source_id, now)
 
 
-def insert_graph_snapshot(db_path, source_id: str, snapshot_id: str, node_count: int, edge_count: int, state: str = "BUILDING", job_id: str | None = None) -> None:
+def insert_graph_snapshot(
+    db_path, source_id: str, snapshot_id: str, node_count: int, edge_count: int, state: str = "BUILDING", job_id: str | None = None
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
     job = job_id or snapshot_id.split(":", 1)[0]
     prefix = snapshot_id.split(":", 1)[0]
@@ -1955,7 +1994,11 @@ def insert_graph_snapshot(db_path, source_id: str, snapshot_id: str, node_count:
         )
         for index in range(edge_count):
             from_node = f"{prefix}-node-{index % max(node_count, 1):05d}" if prefix not in {"job-1", "fixture"} else f"node-{index % max(node_count, 1):05d}"
-            to_node = f"{prefix}-node-{(index + 1) % max(node_count, 1):05d}" if prefix not in {"job-1", "fixture"} else f"node-{(index + 1) % max(node_count, 1):05d}"
+            to_node = (
+                f"{prefix}-node-{(index + 1) % max(node_count, 1):05d}"
+                if prefix not in {"job-1", "fixture"}
+                else f"node-{(index + 1) % max(node_count, 1):05d}"
+            )
             conn.execute(
                 """
                 INSERT OR REPLACE INTO analysis_graph_edges(
@@ -1996,13 +2039,19 @@ def seed_graph_fixture(db_path, node_count: int, edge_count: int) -> None:
             (now, node_count, edge_count),
         )
         manifest = {
-            "graphRevision": f"forge-ai:CODE:graph-snapshot:fixture",
+            "graphRevision": "forge-ai:CODE:graph-snapshot:fixture",
             "snapshotId": snapshot_id,
             "sourceId": "forge-ai",
             "totalNodeCount": node_count,
             "totalEdgeCount": edge_count,
-            "nodeTypeCounts": {kind: sum(1 for index in range(node_count) if ["FILE", "TYPE", "CALLABLE", "FIELD", "EXTERNAL"][index % 5] == kind) for kind in ["FILE", "TYPE", "CALLABLE", "FIELD", "EXTERNAL"]},
-            "edgeTypeCounts": {kind: sum(1 for index in range(edge_count) if ["DECLARES", "CALLS", "REFERENCES", "IMPORTS"][index % 4] == kind) for kind in ["DECLARES", "CALLS", "REFERENCES", "IMPORTS"]},
+            "nodeTypeCounts": {
+                kind: sum(1 for index in range(node_count) if ["FILE", "TYPE", "CALLABLE", "FIELD", "EXTERNAL"][index % 5] == kind)
+                for kind in ["FILE", "TYPE", "CALLABLE", "FIELD", "EXTERNAL"]
+            },
+            "edgeTypeCounts": {
+                kind: sum(1 for index in range(edge_count) if ["DECLARES", "CALLS", "REFERENCES", "IMPORTS"][index % 4] == kind)
+                for kind in ["DECLARES", "CALLS", "REFERENCES", "IMPORTS"]
+            },
         }
         conn.execute(
             """

@@ -1,122 +1,6 @@
 {
   "components": {
     "schemas": {
-      "ChatContextItem": {
-        "properties": {
-          "content": {
-            "title": "Content",
-            "type": "string"
-          },
-          "displayName": {
-            "title": "Displayname",
-            "type": "string"
-          },
-          "lineEnd": {
-            "title": "Lineend",
-            "type": "integer"
-          },
-          "lineStart": {
-            "title": "Linestart",
-            "type": "integer"
-          },
-          "metadata": {
-            "title": "Metadata",
-            "type": "object"
-          },
-          "reason": {
-            "title": "Reason",
-            "type": "string"
-          },
-          "relativePath": {
-            "title": "Relativepath",
-            "type": "string"
-          },
-          "score": {
-            "title": "Score",
-            "type": "number"
-          },
-          "sourceId": {
-            "title": "Sourceid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "sourceId",
-          "displayName",
-          "relativePath",
-          "lineStart",
-          "lineEnd",
-          "reason",
-          "score"
-        ],
-        "title": "ChatContextItem",
-        "type": "object"
-      },
-      "ChatDiagnostic": {
-        "properties": {
-          "code": {
-            "title": "Code",
-            "type": "string"
-          },
-          "message": {
-            "title": "Message",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message"
-        ],
-        "title": "ChatDiagnostic",
-        "type": "object"
-      },
-      "ChatRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "maxContextChars": {
-            "maximum": 50000.0,
-            "minimum": 1000.0,
-            "title": "Maxcontextchars",
-            "type": "integer"
-          },
-          "message": {
-            "title": "Message",
-            "type": "string"
-          }
-        },
-        "required": [
-          "message"
-        ],
-        "title": "ChatRequest",
-        "type": "object"
-      },
-      "ChatResponse": {
-        "properties": {
-          "answer": {
-            "title": "Answer",
-            "type": "string"
-          },
-          "diagnostics": {
-            "items": {
-              "$ref": "#/components/schemas/ChatDiagnostic"
-            },
-            "title": "Diagnostics",
-            "type": "array"
-          },
-          "usedContext": {
-            "items": {
-              "$ref": "#/components/schemas/ChatContextItem"
-            },
-            "title": "Usedcontext",
-            "type": "array"
-          }
-        },
-        "required": [
-          "answer"
-        ],
-        "title": "ChatResponse",
-        "type": "object"
-      },
       "CommandRequest": {
         "additionalProperties": false,
         "properties": {
@@ -210,6 +94,134 @@
         "title": "Intent",
         "type": "object"
       },
+      "JarvisQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "intent": {
+            "default": "AUTO",
+            "title": "Intent",
+            "type": "string"
+          },
+          "query": {
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "JarvisQueryRequest",
+        "type": "object"
+      },
+      "JarvisQueryResponse": {
+        "properties": {
+          "coverage": {
+            "title": "Coverage",
+            "type": "object"
+          },
+          "diagnostics": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "edges": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "external": {
+            "items": {
+              "type": "object"
+            },
+            "title": "External",
+            "type": "array"
+          },
+          "flowPaths": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Flowpaths",
+            "type": "array"
+          },
+          "intent": {
+            "title": "Intent",
+            "type": "string"
+          },
+          "matchedNodes": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Matchednodes",
+            "type": "array"
+          },
+          "matchedSources": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Matchedsources",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "queryId": {
+            "title": "Queryid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JarvisQueryStatus"
+          },
+          "unresolved": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Unresolved",
+            "type": "array"
+          },
+          "verifiedPaths": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Verifiedpaths",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queryId",
+          "status",
+          "intent"
+        ],
+        "title": "JarvisQueryResponse",
+        "type": "object"
+      },
+      "JarvisQueryStatus": {
+        "description": "An enumeration.",
+        "enum": [
+          "OK",
+          "NO_CANDIDATES",
+          "AMBIGUOUS",
+          "INVALID_REQUEST",
+          "QUERY_FAILED"
+        ],
+        "title": "JarvisQueryStatus",
+        "type": "string"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -266,43 +278,6 @@
         }
       }
     },
-    "/api/v1/jarvis/chat": {
-      "post": {
-        "parameters": [],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChatRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChatResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        }
-      }
-    },
     "/api/v1/jarvis/command": {
       "post": {
         "parameters": [],
@@ -322,6 +297,43 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/jarvis/query": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JarvisQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JarvisQueryResponse"
                 }
               }
             },

@@ -68,15 +68,15 @@ function jarvisHtml() {
     </form>
     <div id="jarvisCommandError" class="hidden"></div>
     <section id="jarvisCommandResult" class="hidden"></section>
-    <form id="jarvisChatForm">
-      <textarea id="jarvisChatMessage"></textarea>
-      <input id="jarvisChatMaxContext">
-      <button id="sendJarvisChat" type="submit">Send</button>
+    <form id="jarvisQueryForm">
+      <textarea id="jarvisQueryText"></textarea>
+      <button id="sendJarvisQuery" type="submit">Send</button>
     </form>
-    <div id="jarvisChatError" class="hidden"></div>
-    <section id="jarvisChatAnswer" class="hidden"></section>
-    <section id="jarvisChatContext" class="hidden"></section>
-    <section id="jarvisChatDiagnostics" class="hidden"></section>
+    <div id="jarvisQueryLoading" class="hidden"></div>
+    <div id="jarvisQueryError" class="hidden"></div>
+    <section id="jarvisQueryResult" class="hidden"></section>
+    <section id="jarvisQueryDiagnostics" class="hidden"></section>
+    <section id="jarvisQueryRaw" class="hidden"></section>
   `);
 }
 
@@ -179,31 +179,27 @@ describe('Operator Console modular request ownership', () => {
     expect(http.get.mock.calls.filter(([path]: [string]) => path === '/jarvis/actions')).toHaveLength(4);
   });
 
-  it('UI-IT-03 ignores stale Jarvis chat responses', async () => {
+  it('UI-IT-03 prevents duplicate Jarvis query submissions while loading', async () => {
     const dom = jarvisHtml();
     const slow = deferred<unknown>();
-    const fast = deferred<unknown>();
-    let chatCall = 0;
     const http = {
       get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { actions: [] })),
-      post: vi.fn(() => {
-        chatCall += 1;
-        return chatCall === 1 ? slow.promise : fast.promise;
-      })
+      post: vi.fn(() => slow.promise)
     };
     const page = new JarvisPage({ document: dom.window.document, http });
-    (dom.window.document.getElementById('jarvisChatMessage') as HTMLTextAreaElement).value = 'hello';
+    page.mount();
+    await flushAsync();
+    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'hello';
 
-    const first = page.submitChat(new dom.window.Event('submit'));
-    const second = page.submitChat(new dom.window.Event('submit'));
-    fast.resolve({ answer: 'new answer', usedContext: [] });
+    const first = page.submitQuery(new dom.window.Event('submit'));
+    const second = page.submitQuery(new dom.window.Event('submit'));
+    await flushAsync();
+    expect(http.post).toHaveBeenCalledTimes(1);
+    expect(http.post).toHaveBeenCalledWith('/jarvis/query', { query: 'hello', intent: 'AUTO' }, expect.any(Object));
     await second;
-    expect(dom.window.document.getElementById('jarvisChatAnswer')?.textContent).toContain('new answer');
-
-    slow.resolve({ answer: 'old answer', usedContext: [] });
+    slow.resolve({ status: 'OK', intent: 'AUTO', matchedSources: [], matchedNodes: [], flowPaths: [], nodes: [], edges: [], coverage: {}, diagnostics: [] });
     await first;
-    expect(dom.window.document.getElementById('jarvisChatAnswer')?.textContent).toContain('new answer');
-    expect(dom.window.document.getElementById('jarvisChatAnswer')?.textContent).not.toContain('old answer');
+    expect(dom.window.document.getElementById('sendJarvisQuery')?.textContent).toBe('Send');
   });
 
   it('UI-IT-04 prevents Jarvis DOM mutation after dispose', async () => {
@@ -219,33 +215,49 @@ describe('Operator Console modular request ownership', () => {
     expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toBe('');
   });
 
-  it('UI-IT-09 redacts Jarvis usedContext source content', async () => {
+  it('UI-IT-09 renders Jarvis query preview without source content', async () => {
     const dom = jarvisHtml();
     const http = {
       get: vi.fn(),
       post: vi.fn(() => Promise.resolve({
-        answer: 'ok',
-        usedContext: [{
+        status: 'OK',
+        intent: 'AUTO',
+        matchedSources: [{ sourceId: 'svc', displayName: 'Service', score: 0.9 }],
+        matchedNodes: [{
           sourceId: 'svc',
-          relativePath: 'src/App.java',
-          lineStart: 1,
-          lineEnd: 2,
+          nodeId: 'n1',
+          stableKey: 'src/App.java|CALLABLE|run',
+          kind: 'CALLABLE',
+          label: 'run',
           score: 0.9,
-          reason: 'matched',
+          matchReasons: ['NAME_MATCH'],
           content: 'SECRET_SOURCE_CONTENT',
           sourceContent: 'ALSO_SECRET'
         }],
+        flowPaths: [{
+          flowId: 'flow-1',
+          sourceId: 'svc',
+          nodes: [{ id: 'n1', sourceId: 'svc', label: 'run' }],
+          edges: [],
+          evidence: [],
+          complete: true,
+          stopReason: 'TERMINAL_NODE'
+        }],
+        nodes: [{ id: 'n1', sourceId: 'svc', label: 'run', content: 'SECRET_SOURCE_CONTENT' }],
+        edges: [],
+        coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowPathCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
         diagnostics: [{ code: 'D1', message: 'diag' }]
       }))
     };
     const page = new JarvisPage({ document: dom.window.document, http });
-    (dom.window.document.getElementById('jarvisChatMessage') as HTMLTextAreaElement).value = 'hello';
-    await page.submitChat(new dom.window.Event('submit'));
+    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'hello';
+    await page.submitQuery(new dom.window.Event('submit'));
 
-    const text = dom.window.document.getElementById('jarvisChatContext')?.textContent || '';
+    const text = dom.window.document.body.textContent || '';
     expect(text).toContain('svc');
-    expect(text).toContain('src/App.java');
-    expect(text).toContain('matched');
+    expect(text).toContain('run');
+    expect(text).toContain('NAME_MATCH');
+    expect(text).toContain('flow-1');
     expect(text).not.toContain('SECRET_SOURCE_CONTENT');
     expect(text).not.toContain('ALSO_SECRET');
   });

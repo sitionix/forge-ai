@@ -381,9 +381,7 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                     "max_chunk_chars": int(analysis.get("max-chunk-chars") or analysis.get("max_chunk_chars") or 20000),
                     "concurrency": int(analysis.get("concurrency") or 1),
                     "queue_capacity": int(analysis.get("queue-capacity") or analysis.get("queue_capacity") or 4),
-                    "shutdown_grace_seconds": float(
-                        analysis.get("shutdown-grace-seconds") or analysis.get("shutdown_grace_seconds") or 5.0
-                    ),
+                    "shutdown_grace_seconds": float(analysis.get("shutdown-grace-seconds") or analysis.get("shutdown_grace_seconds") or 5.0),
                     "max_attempts_per_file": int(analysis.get("max-attempts-per-file") or analysis.get("max_attempts_per_file") or 3),
                     "repair_attempts_per_file": int(analysis.get("repair-attempts-per-file") or analysis.get("repair_attempts_per_file") or 1),
                 },

@@ -50,7 +50,7 @@ class ActionExecutor:
         semaphore = self._get_semaphore()
         try:
             await asyncio.wait_for(semaphore.acquire(), timeout=self._timeout_seconds)
-        except asyncio.TimeoutError as exc:
+        except asyncio.TimeoutError:
             raise ActionExecutionError("Action executor concurrency limit reached")
         process: Optional[asyncio.subprocess.Process] = None
         try:

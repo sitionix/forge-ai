@@ -11,12 +11,10 @@ from fastapi.responses import JSONResponse
 from jarvis_agent.action_executor import ActionExecutionError
 from jarvis_agent.action_registry import ActionNotAllowedError
 from jarvis_agent.bootstrap import JarvisDependencies, build_dependencies, configure_logging
-from jarvis_agent.chat_prompt import build_chat_prompt
-from jarvis_agent.chat_schema import ChatDiagnostic, ChatRequest, ChatResponse
 from jarvis_agent.config import AppConfig, ForgeSettings, load_forge_settings
 from jarvis_agent.intent_parser import IntentParseError, parse_intent
 from jarvis_agent.intent_schema import CommandRequest, CommandResponse
-from jarvis_agent.knowledge_client import KnowledgeBadResponseError, KnowledgeUnavailableError, diagnostics, used_context_items
+from jarvis_agent.knowledge_client import KnowledgeBadResponseError, KnowledgeUnavailableError
 from jarvis_agent.observability import (
     CORRELATION_HEADER,
     ObservabilityMiddleware,
@@ -25,6 +23,8 @@ from jarvis_agent.observability import (
     track_dependency,
 )
 from jarvis_agent.ollama_client import OllamaBadResponseError, OllamaUnavailableError
+from jarvis_agent.query_schema import JarvisQueryRequest, JarvisQueryResponse
+from jarvis_agent.query_service import JarvisQueryService
 from jarvis_agent.security import SecurityError
 
 
@@ -125,6 +125,7 @@ def create_app(
 
         try:
             executor = getattr(deps.action_executor, "execute_async", deps.action_executor.execute)
+
             async def execute_action():
                 maybe_execution = executor(intent, text)
                 return await maybe_execution if inspect.isawaitable(maybe_execution) else maybe_execution
@@ -138,53 +139,18 @@ def create_app(
 
         return CommandResponse(input=text, intent=intent, execution=execution)
 
-    @app.post("/api/v1/jarvis/chat", response_model=ChatResponse)
-    async def chat(request: Request, body: ChatRequest):
-        config, deps = _state(request)
-        message = body.message.strip()
-        if not message:
-            return error_response(400, "INVALID_CHAT_MESSAGE", "Chat message must not be empty", request)
-
-        max_context_chars = body.maxContextChars or config.knowledge.default_max_context_chars
-        logging.getLogger("jarvis_agent").info("chat received")
+    @app.post("/api/v1/jarvis/query", response_model=JarvisQueryResponse)
+    async def query(request: Request, body: JarvisQueryRequest):
+        _, deps = _state(request)
+        logging.getLogger("jarvis_agent").info("knowledge query received")
         try:
-            context_bundle = await track_dependency("knowledge", lambda: deps.knowledge_client.context(message, max_context_chars))
+            return await track_dependency("knowledge", lambda: JarvisQueryService(deps.knowledge_client).query(body))
         except KnowledgeUnavailableError:
             logging.getLogger("jarvis_agent").warning("knowledge unavailable")
             return error_response(503, "KNOWLEDGE_UNAVAILABLE", "Knowledge is not reachable", request)
         except KnowledgeBadResponseError:
             logging.getLogger("jarvis_agent").warning("knowledge returned malformed response")
-            return error_response(502, "KNOWLEDGE_BAD_RESPONSE", "Knowledge returned a malformed context response", request)
-
-        context_items = used_context_items(context_bundle)
-        chat_diagnostics = diagnostics(context_bundle)
-        if not context_items:
-            chat_diagnostics.append(
-                ChatDiagnostic(
-                    code="CONTEXT_EMPTY",
-                    message="No relevant local Knowledge context was found.",
-                )
-            )
-            return ChatResponse(
-                answer="No relevant local Knowledge context was found, so I cannot answer from local files with confidence.",
-                usedContext=[],
-                diagnostics=chat_diagnostics,
-            )
-
-        prompt = build_chat_prompt(config.chat_prompt, message, context_items)
-        try:
-            answer = await track_dependency("ollama", lambda: deps.model_client.generate_text(prompt))
-        except OllamaUnavailableError:
-            logging.getLogger("jarvis_agent").warning("ollama unavailable")
-            return error_response(503, "OLLAMA_UNAVAILABLE", "Ollama is not reachable", request)
-        except OllamaBadResponseError:
-            logging.getLogger("jarvis_agent").warning("ollama returned malformed response")
-            return error_response(502, "OLLAMA_BAD_RESPONSE", "Ollama returned a malformed response", request)
-        if not answer:
-            answer = "Ollama returned an empty answer."
-            chat_diagnostics.append(ChatDiagnostic(code="OLLAMA_EMPTY_RESPONSE", message=answer))
-
-        return ChatResponse(answer=answer, usedContext=[item.copy(update={"content": None}) for item in context_items], diagnostics=chat_diagnostics)
+            return error_response(502, "KNOWLEDGE_BAD_RESPONSE", "Knowledge returned a malformed query response", request)
 
     return app
 
@@ -201,7 +167,6 @@ def error_response(status_code: int, code: str, message: str, request: Optional[
     if route:
         payload["route"] = route
     return JSONResponse(status_code=status_code, content=payload)
-
 
 
 app = create_app()

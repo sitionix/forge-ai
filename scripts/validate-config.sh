@@ -48,7 +48,6 @@ require_file "${FORGE_CONFIG_DIR}/knowledge/knowledge-sources.yaml"
 require_file "${FORGE_CONFIG_DIR}/knowledge/analysis-prompt.md"
 require_file "${FORGE_CONFIG_DIR}/jarvis/allowed-actions.yaml"
 require_file "${FORGE_CONFIG_DIR}/jarvis/system-prompt.md"
-require_file "${FORGE_CONFIG_DIR}/jarvis/chat-prompt.md"
 require_dir "${FORGE_WORKSPACE_ROOT}"
 
 require_local_http_url "Forge Nexus" "${FORGE_NEXUS_BASE_URL}"
