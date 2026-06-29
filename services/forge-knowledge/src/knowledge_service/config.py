@@ -72,12 +72,37 @@ class AnalysisSettings(BaseModel):
         return value
 
 
+class SemanticSettings(BaseModel):
+    enabled: bool = True
+    auto_build_enabled: bool = False
+    provider: str = "ollama"
+    embedding_model: str = Field(default="embeddinggemma", min_length=1)
+    ollama_base_url: AnyHttpUrl = "http://127.0.0.1:11434"
+    request_timeout_seconds: int = Field(default=30, ge=1)
+    batch_size: int = Field(default=16, ge=1)
+    max_document_chars: int = Field(default=4000, ge=1)
+    max_edges_per_document: int = Field(default=20, ge=0)
+    max_documents_per_build: int = Field(default=20000, ge=1)
+    max_search_vectors: int = Field(default=50000, ge=1)
+    semantic_top_k: int = Field(default=20, ge=1)
+    min_similarity: float = Field(default=0.35, ge=0.0, le=1.0)
+    query_timeout_ms: int = Field(default=1500, ge=1)
+
+    @validator("ollama_base_url")
+    def require_local_embedding_runtime(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        parsed = urlparse(str(value))
+        if (parsed.hostname or "").lower() not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("knowledge semantic ollama_base_url must point to localhost")
+        return value
+
+
 class KnowledgeSettings(BaseModel):
     host: str = Field(min_length=1)
     port: int = Field(ge=1, le=65535)
     storage: KnowledgeStorageSettings
     inventory: InventorySettings
     analysis: AnalysisSettings
+    semantic: SemanticSettings = Field(default_factory=SemanticSettings)
 
 
 class ServicesSettings(BaseModel):
@@ -129,6 +154,20 @@ class AppConfig(BaseModel):
     analysis_shutdown_grace_seconds: float = 5.0
     analysis_max_attempts_per_file: int = 3
     analysis_repair_attempts_per_file: int = 1
+    semantic_enabled: bool = True
+    semantic_auto_build_enabled: bool = False
+    semantic_provider: str = "ollama"
+    semantic_embedding_model: str = "embeddinggemma"
+    semantic_ollama_base_url: str = "http://127.0.0.1:11434"
+    semantic_request_timeout_seconds: int = 30
+    semantic_batch_size: int = 16
+    semantic_max_document_chars: int = 4000
+    semantic_max_edges_per_document: int = 20
+    semantic_max_documents_per_build: int = 20000
+    semantic_max_search_vectors: int = 50000
+    semantic_top_k: int = 20
+    semantic_min_similarity: float = 0.35
+    semantic_query_timeout_ms: int = 1500
     retention_inventory_build_days: int = 30
     retention_analysis_job_days: int = 30
     retention_analysis_diagnostic_days: int = 30
@@ -161,10 +200,18 @@ class AppConfig(BaseModel):
     def analysis_retry_attempts(self) -> int:
         return self.analysis_max_attempts_per_file
 
+    @validator("semantic_ollama_base_url")
+    def require_local_semantic_runtime(cls, value: str) -> str:
+        parsed = urlparse(str(value))
+        if (parsed.hostname or "").lower() not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("knowledge semantic_ollama_base_url must point to localhost")
+        return str(value).rstrip("/")
+
     @classmethod
     def from_forge_settings(cls, settings: ForgeSettings, module_dir: Optional[Path] = None) -> "AppConfig":
         knowledge = settings.services.knowledge
         analysis = knowledge.analysis
+        semantic = knowledge.semantic
         return cls(
             module_dir=(module_dir or knowledge_module_dir()).resolve(),
             host=knowledge.host,
@@ -190,6 +237,20 @@ class AppConfig(BaseModel):
             analysis_shutdown_grace_seconds=analysis.shutdown_grace_seconds,
             analysis_max_attempts_per_file=analysis.max_attempts_per_file,
             analysis_repair_attempts_per_file=analysis.repair_attempts_per_file,
+            semantic_enabled=semantic.enabled,
+            semantic_auto_build_enabled=semantic.auto_build_enabled,
+            semantic_provider=semantic.provider,
+            semantic_embedding_model=semantic.embedding_model,
+            semantic_ollama_base_url=str(semantic.ollama_base_url).rstrip("/"),
+            semantic_request_timeout_seconds=semantic.request_timeout_seconds,
+            semantic_batch_size=semantic.batch_size,
+            semantic_max_document_chars=semantic.max_document_chars,
+            semantic_max_edges_per_document=semantic.max_edges_per_document,
+            semantic_max_documents_per_build=semantic.max_documents_per_build,
+            semantic_max_search_vectors=semantic.max_search_vectors,
+            semantic_top_k=semantic.semantic_top_k,
+            semantic_min_similarity=semantic.min_similarity,
+            semantic_query_timeout_ms=semantic.query_timeout_ms,
             retention_inventory_build_days=knowledge.storage.retention_inventory_build_days,
             retention_analysis_job_days=knowledge.storage.retention_analysis_job_days,
             retention_analysis_diagnostic_days=knowledge.storage.retention_analysis_diagnostic_days,
@@ -321,6 +382,7 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
     inventory = _mapping_field(knowledge, "inventory")
     storage = _mapping_field(knowledge, "storage")
     analysis = _mapping_field(knowledge, "analysis")
+    semantic = _mapping_field(knowledge, "semantic")
     return {
         "home": _path(str(forge_ai.get("home") or env["FORGE_AI_HOME"]), env),
         "config_dir": _path(str(forge_ai.get("config-dir") or forge_ai.get("config_dir") or env["FORGE_CONFIG_DIR"]), env),
@@ -385,6 +447,30 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                     "max_attempts_per_file": int(analysis.get("max-attempts-per-file") or analysis.get("max_attempts_per_file") or 3),
                     "repair_attempts_per_file": int(analysis.get("repair-attempts-per-file") or analysis.get("repair_attempts_per_file") or 1),
                 },
+                "semantic": {
+                    "enabled": _bool(semantic.get("enabled", True)),
+                    "auto_build_enabled": _bool(semantic.get("auto-build-enabled", semantic.get("auto_build_enabled", False))),
+                    "provider": str(semantic.get("provider") or "ollama"),
+                    "embedding_model": str(semantic.get("embedding-model") or semantic.get("embedding_model") or "embeddinggemma"),
+                    "ollama_base_url": str(
+                        semantic.get("ollama-base-url") or semantic.get("ollama_base_url") or "http://127.0.0.1:11434"
+                    ),
+                    "request_timeout_seconds": int(
+                        semantic.get("request-timeout-seconds") or semantic.get("request_timeout_seconds") or 30
+                    ),
+                    "batch_size": int(semantic.get("batch-size") or semantic.get("batch_size") or 16),
+                    "max_document_chars": int(semantic.get("max-document-chars") or semantic.get("max_document_chars") or 4000),
+                    "max_edges_per_document": int(
+                        semantic.get("max-edges-per-document") or semantic.get("max_edges_per_document") or 20
+                    ),
+                    "max_documents_per_build": int(
+                        semantic.get("max-documents-per-build") or semantic.get("max_documents_per_build") or 20000
+                    ),
+                    "max_search_vectors": int(semantic.get("max-search-vectors") or semantic.get("max_search_vectors") or 50000),
+                    "semantic_top_k": int(semantic.get("semantic-top-k") or semantic.get("semantic_top_k") or 20),
+                    "min_similarity": float(semantic.get("min-similarity") or semantic.get("min_similarity") or 0.35),
+                    "query_timeout_ms": int(semantic.get("query-timeout-ms") or semantic.get("query_timeout_ms") or 1500),
+                },
             }
         },
     }
@@ -428,6 +514,27 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
             analysis[field] = converter(env[name])
     if env.get("KNOWLEDGE_ANALYSIS_RETRY_ATTEMPTS") and not env.get("KNOWLEDGE_ANALYSIS_MAX_ATTEMPTS_PER_FILE"):
         analysis["max_attempts_per_file"] = int(env["KNOWLEDGE_ANALYSIS_RETRY_ATTEMPTS"])
+
+    semantic = knowledge["semantic"]
+    semantic_env_map: Dict[str, Tuple[str, Callable[[str], object]]] = {
+        "KNOWLEDGE_SEMANTIC_ENABLED": ("enabled", lambda value: value.lower() != "false"),
+        "KNOWLEDGE_SEMANTIC_AUTO_BUILD_ENABLED": ("auto_build_enabled", lambda value: value.lower() != "false"),
+        "KNOWLEDGE_SEMANTIC_PROVIDER": ("provider", str),
+        "KNOWLEDGE_SEMANTIC_EMBEDDING_MODEL": ("embedding_model", str),
+        "KNOWLEDGE_SEMANTIC_OLLAMA_BASE_URL": ("ollama_base_url", str),
+        "KNOWLEDGE_SEMANTIC_REQUEST_TIMEOUT_SECONDS": ("request_timeout_seconds", int),
+        "KNOWLEDGE_SEMANTIC_BATCH_SIZE": ("batch_size", int),
+        "KNOWLEDGE_SEMANTIC_MAX_DOCUMENT_CHARS": ("max_document_chars", int),
+        "KNOWLEDGE_SEMANTIC_MAX_EDGES_PER_DOCUMENT": ("max_edges_per_document", int),
+        "KNOWLEDGE_SEMANTIC_MAX_DOCUMENTS_PER_BUILD": ("max_documents_per_build", int),
+        "KNOWLEDGE_SEMANTIC_MAX_SEARCH_VECTORS": ("max_search_vectors", int),
+        "KNOWLEDGE_SEMANTIC_TOP_K": ("semantic_top_k", int),
+        "KNOWLEDGE_SEMANTIC_MIN_SIMILARITY": ("min_similarity", float),
+        "KNOWLEDGE_SEMANTIC_QUERY_TIMEOUT_MS": ("query_timeout_ms", int),
+    }
+    for name, (field, converter) in semantic_env_map.items():
+        if env.get(name):
+            semantic[field] = converter(env[name])
 
 
 def _bool(value: Any) -> bool:

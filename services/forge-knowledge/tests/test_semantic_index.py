@@ -1,11 +1,28 @@
 import sqlite3
 
+from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
+from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_index import (
     SEMANTIC_BUILDER_VERSION,
     SemanticIndexStatus,
     SemanticIndexStatusView,
     SemanticIndexStore,
 )
+from semantic_test_support import seed_semantic_graph
+
+
+class FailingEmbeddingProvider:
+    model = "failing-test"
+
+    def embed_texts(self, texts):
+        raise RuntimeError("provider failed")
+
+
+class MixedDimensionEmbeddingProvider:
+    model = "mixed-dimension-test"
+
+    def embed_texts(self, texts):
+        return [[1.0, 0.0], [1.0, 0.0, 0.0]][: len(texts)]
 
 
 def test_semantic_index_status_model_supports_all_states():
@@ -149,3 +166,98 @@ def test_total_node_count_zero_does_not_report_ready_or_100_percent():
 
     assert payload["progressPercent"] == 0.0
     assert payload["ready"] is False
+
+
+def test_semantic_index_builder_pending_to_ready_creates_docs_and_vectors(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_semantic_graph(
+        db_path,
+        claims=[{"id": "claim-trusted", "node_id": "node-query", "summary": "Trusted indexed summary.", "evidence_ids": ["ev-node-query"]}],
+    )
+    builder = SemanticIndexBuilder(db_path, FakeDeterministicEmbeddingProvider(dimension=12), config=SemanticBuildConfig(batch_size=1))
+
+    result = builder.build(["semantic-source"], force=True)
+
+    assert result.status == "COMPLETED"
+    state = SemanticIndexStore(db_path).status_for_source("semantic-source")
+    assert state.status == SemanticIndexStatus.READY
+    assert state.indexed_node_count == state.total_node_count == 1
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM semantic_documents").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM semantic_vectors").fetchone()[0] == 1
+        row = conn.execute("SELECT claim_ids_json, evidence_ids_json FROM semantic_documents").fetchone()
+    assert row[0] == '["claim-trusted"]'
+    assert row[1] == '["ev-node-query"]'
+
+
+def test_semantic_index_builder_stale_to_ready_for_new_revision(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_semantic_graph(db_path, snapshot_suffix="old")
+    builder = SemanticIndexBuilder(db_path, FakeDeterministicEmbeddingProvider(dimension=8), config=SemanticBuildConfig())
+    builder.build(["semantic-source"], force=True)
+    old_state = SemanticIndexStore(db_path).status_for_source("semantic-source")
+
+    seed_semantic_graph(
+        db_path,
+        snapshot_suffix="new",
+        nodes=[
+            {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
+            {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
+        ],
+    )
+    stale_state = SemanticIndexStore(db_path).status_for_source("semantic-source")
+    result = builder.build(["semantic-source"], force=False)
+    new_state = SemanticIndexStore(db_path).status_for_source("semantic-source")
+
+    assert stale_state.status == SemanticIndexStatus.STALE
+    assert result.status == "COMPLETED"
+    assert new_state.status == SemanticIndexStatus.READY
+    assert new_state.graph_revision != old_state.graph_revision
+    assert new_state.total_node_count == 2
+
+
+def test_semantic_index_builder_provider_failure_marks_failed_and_graph_unchanged(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_semantic_graph(db_path)
+    with sqlite3.connect(db_path) as conn:
+        before_nodes = conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0]
+        before_edges = conn.execute("SELECT COUNT(*) FROM analysis_graph_edges").fetchone()[0]
+
+    result = SemanticIndexBuilder(db_path, FailingEmbeddingProvider(), config=SemanticBuildConfig()).build(["semantic-source"], force=True)
+
+    state = SemanticIndexStore(db_path).status_for_source("semantic-source")
+    assert result.status == "FAILED"
+    assert state.status == SemanticIndexStatus.FAILED
+    assert state.last_error
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0] == before_nodes
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edges").fetchone()[0] == before_edges
+
+
+def test_semantic_index_builder_dimension_mismatch_marks_failed(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_semantic_graph(
+        db_path,
+        nodes=[
+            {"id": "node-a", "kind": "CALLABLE", "name": "A.call", "qualified": "example.A.call"},
+            {"id": "node-b", "kind": "CALLABLE", "name": "B.call", "qualified": "example.B.call"},
+        ],
+    )
+
+    result = SemanticIndexBuilder(db_path, MixedDimensionEmbeddingProvider(), config=SemanticBuildConfig()).build(["semantic-source"], force=True)
+
+    assert result.status == "FAILED"
+    assert SemanticIndexStore(db_path).status_for_source("semantic-source").status == SemanticIndexStatus.FAILED
+
+
+def test_semantic_index_builder_idempotent_rebuild_replaces_current_docs(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_semantic_graph(db_path)
+    builder = SemanticIndexBuilder(db_path, FakeDeterministicEmbeddingProvider(dimension=8), config=SemanticBuildConfig())
+
+    builder.build(["semantic-source"], force=True)
+    builder.build(["semantic-source"], force=True)
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM semantic_documents").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM semantic_vectors").fetchone()[0] == 1

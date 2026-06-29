@@ -129,7 +129,7 @@ class UnifiedAnchorSearcher:
             for candidate in result.candidates
         ]
         truncated = len(matched_nodes) > policy.max_matched_nodes
-        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        diagnostics: List[KnowledgeQueryDiagnostic] = [self._search_diagnostic(item) for item in result.diagnostics]
         if policy.enable_search_diagnostics and (document_truncated or result.candidate_limit_reached):
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
@@ -161,6 +161,16 @@ class UnifiedAnchorSearcher:
                 )
             )
         return matched_nodes[: policy.max_matched_nodes], diagnostics, truncated
+
+    def _search_diagnostic(self, item: Dict[str, Any]) -> KnowledgeQueryDiagnostic:
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        return KnowledgeQueryDiagnostic(
+            code=str(item.get("code") or "SEARCH_DIAGNOSTIC"),
+            message=str(item.get("message") or "Search diagnostic."),
+            severity=str(item.get("severity") or "INFO"),
+            sourceId=item.get("sourceId"),
+            metadata=dict(metadata),
+        )
 
     def _load_search_documents(
         self,
@@ -891,11 +901,48 @@ class KnowledgeQueryService:
         return str(uuid.uuid4())
 
 
-def build_knowledge_query_service(graph_store: Any) -> KnowledgeQueryService:
+def build_knowledge_query_service(graph_store: Any, app_config: Any | None = None, embedding_provider: Any | None = None) -> KnowledgeQueryService:
+    search_engine = None
+    semantic_provider = _semantic_candidate_provider(graph_store, app_config, embedding_provider)
+    if semantic_provider is not None:
+        search_engine = DeterministicCodeSearchEngine(extra_broad_providers=[semantic_provider])
     return KnowledgeQueryService(
         source_scope_resolver=SourceScopeResolver(graph_store),
-        anchor_searcher=UnifiedAnchorSearcher(graph_store),
+        anchor_searcher=UnifiedAnchorSearcher(graph_store, search_engine=search_engine),
         graph_slice_service=GraphSliceQueryService(graph_store),
         flow_path_extractor=FlowPathExtractor(graph_store),
         evidence_builder=EvidenceBundleBuilder(),
+    )
+
+
+def _semantic_candidate_provider(graph_store: Any, app_config: Any | None, embedding_provider: Any | None):
+    if not hasattr(graph_store, "db_path"):
+        return None
+    enabled = bool(getattr(app_config, "semantic_enabled", True)) if app_config is not None else embedding_provider is not None
+    if not enabled:
+        return None
+    try:
+        from knowledge_service.embedding_provider import OllamaEmbeddingProvider
+        from knowledge_service.semantic_search import SemanticCandidateProvider, SemanticSearchConfig
+    except Exception:
+        return None
+    provider = embedding_provider
+    if provider is None:
+        if app_config is None:
+            return None
+        provider = OllamaEmbeddingProvider(
+            getattr(app_config, "semantic_ollama_base_url", "http://127.0.0.1:11434"),
+            getattr(app_config, "semantic_embedding_model", "embeddinggemma"),
+            getattr(app_config, "semantic_request_timeout_seconds", 30),
+        )
+    return SemanticCandidateProvider(
+        graph_store.db_path,
+        provider,
+        config=SemanticSearchConfig(
+            enabled=enabled,
+            max_search_vectors=getattr(app_config, "semantic_max_search_vectors", 50000) if app_config is not None else 50000,
+            semantic_top_k=getattr(app_config, "semantic_top_k", 20) if app_config is not None else 20,
+            min_similarity=getattr(app_config, "semantic_min_similarity", 0.35) if app_config is not None else 0.35,
+            query_timeout_ms=getattr(app_config, "semantic_query_timeout_ms", 1500) if app_config is not None else 1500,
+        ),
     )

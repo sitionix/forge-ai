@@ -161,7 +161,7 @@ def test_empty_query_validation():
         KnowledgeQueryRequest(query="   ")
 
 
-@pytest.mark.parametrize("field,value", [("maxAnchors", 5), ("depth", 2)])
+@pytest.mark.parametrize("field,value", [("maxAnchors", 5), ("depth", 2), ("sourceId", "source-a"), ("sourceIds", ["source-a"])])
 def test_public_retrieval_knobs_are_not_accepted(field, value):
     payload = {"query": "JarvisGateway", field: value}
     with pytest.raises(ValueError):
@@ -177,6 +177,15 @@ def test_auto_source_scope_resolves_all_current_graph_sources():
     assert store.source_searches[0][1] == ["source-a", "source-b"]
     assert response.coverage.searchedSourceCount == 2
     assert response.matchedNodes[0].sourceId == "source-a"
+
+
+def test_knowledge_query_response_contract_remains_flow_oriented():
+    response = service(FakeGraphStore(candidates=[candidate()])).query(KnowledgeQueryRequest(query="JarvisGateway"))
+
+    payload = response.dict()
+
+    assert {"matchedSources", "matchedNodes", "flowPaths", "coverage", "diagnostics"} <= set(payload)
+    assert "answer" not in payload
 
 
 def test_baseline_search_finds_by_node_name_stable_key_and_qualified_name():
