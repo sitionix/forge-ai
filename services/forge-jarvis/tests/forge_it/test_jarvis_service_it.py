@@ -86,6 +86,8 @@ def test_status_actions_command_and_query_success_paths(tmp_path):
     assert model.health_calls == 0
     assert query["matchedNodes"][0]["sourceId"] == "forge-ai"
     assert query["flowPaths"][0]["flowId"] == "flow-1"
+    assert query["flowPaths"][0]["nodeIds"] == ["node-jarvis-gateway"]
+    assert query["flowPaths"][0]["edgeIds"] == []
     assert query["diagnostics"] == []
 
 

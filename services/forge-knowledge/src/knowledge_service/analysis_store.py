@@ -1602,6 +1602,145 @@ class AnalysisStore:
             "verifiedPaths": verified_paths,
         }
 
+    def load_call_adjacency_for_sources(
+        self,
+        source_scopes: List[Dict[str, Any]],
+        max_edges: int = 2000,
+        max_evidence: int = 25,
+    ) -> Dict[str, Any]:
+        self.init()
+        safe_max_edges = max(1, min(int(max_edges or 1), 10000))
+        safe_max_evidence = max(0, min(int(max_evidence or 0), 500))
+        grouped: Dict[tuple[str, str], Set[str]] = {}
+        source_ids: Set[str] = set()
+        for scope in source_scopes:
+            source_id = str(scope.get("sourceId") or "")
+            snapshot_id = str(scope.get("snapshotId") or "")
+            if not source_id:
+                continue
+            source_ids.add(source_id)
+            anchor_ids = {str(node_id) for node_id in scope.get("nodeIds") or [] if str(node_id)}
+            grouped.setdefault((source_id, snapshot_id), set()).update(anchor_ids)
+        if not source_ids:
+            return {"nodes": [], "edges": [], "evidence": [], "unresolved": [], "external": [], "verifiedPaths": [], "truncated": False}
+
+        nodes: List[Dict[str, Any]] = []
+        edges: List[Dict[str, Any]] = []
+        evidence: List[Dict[str, Any]] = []
+        truncated = False
+        with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
+            resolved_grouped: Dict[tuple[str, str], Set[str]] = {}
+            for (source_id, requested_snapshot_id), anchor_ids in grouped.items():
+                snapshot_id = requested_snapshot_id or self._current_snapshot_id(conn, source_id)
+                if snapshot_id:
+                    resolved_grouped.setdefault((source_id, snapshot_id), set()).update(anchor_ids)
+
+            remaining_edges = safe_max_edges + 1
+            edge_ids_by_scope: Dict[tuple[str, str], Set[str]] = {}
+            node_ids_by_scope: Dict[tuple[str, str], Set[str]] = {scope: set(anchor_ids) for scope, anchor_ids in resolved_grouped.items()}
+            for (source_id, snapshot_id), anchor_ids in sorted(resolved_grouped.items()):
+                if remaining_edges <= 0:
+                    truncated = True
+                    break
+                node_ids = node_ids_by_scope.setdefault((source_id, snapshot_id), set())
+                frontier = {node_id for node_id in anchor_ids if node_id}
+                scope_edge_ids = edge_ids_by_scope.setdefault((source_id, snapshot_id), set())
+                if not frontier:
+                    continue
+                while frontier and remaining_edges > 0:
+                    frontier_list = sorted(frontier)
+                    frontier_placeholders = ",".join("?" for _ in frontier_list)
+                    edge_rows = conn.execute(
+                        f"""
+                        SELECT e.*,
+                               fn.display_name AS from_display_name,
+                               fn.qualified_name AS from_qualified_name,
+                               fn.name AS from_name,
+                               tn.display_name AS to_display_name,
+                               tn.qualified_name AS to_qualified_name,
+                               tn.name AS to_name
+                        FROM analysis_graph_edges e
+                        LEFT JOIN analysis_graph_nodes fn
+                          ON fn.source_id = e.source_id
+                         AND fn.snapshot_id = e.snapshot_id
+                         AND fn.id = e.from_node_id
+                        LEFT JOIN analysis_graph_nodes tn
+                          ON tn.source_id = e.source_id
+                         AND tn.snapshot_id = e.snapshot_id
+                         AND tn.id = e.to_node_id
+                        WHERE e.source_id = ?
+                          AND e.snapshot_id = ?
+                          AND e.edge_type = 'CALLS'
+                          AND e.status IN ('TRUSTED', 'DERIVED')
+                          AND (
+                            e.from_node_id IN ({frontier_placeholders})
+                            OR e.to_node_id IN ({frontier_placeholders})
+                          )
+                        ORDER BY e.id
+                        LIMIT ?
+                        """,
+                        [source_id, snapshot_id, *frontier_list, *frontier_list, remaining_edges],
+                    ).fetchall()
+                    if len(edge_rows) >= remaining_edges:
+                        truncated = True
+                        edge_rows = edge_rows[: max(0, remaining_edges - 1)]
+                    remaining_edges -= len(edge_rows)
+                    next_frontier: Set[str] = set()
+                    for row in edge_rows:
+                        edge_id = str(row["id"])
+                        if edge_id in scope_edge_ids:
+                            continue
+                        item = self._graph_snapshot_edge_projection(self._row_dict(row))
+                        item["sourceId"] = row["source_id"]
+                        item["snapshotId"] = snapshot_id
+                        edges.append(item)
+                        scope_edge_ids.add(edge_id)
+                        for node_id in (str(row["from_node_id"]), str(row["to_node_id"] or "")):
+                            if node_id and node_id not in node_ids:
+                                node_ids.add(node_id)
+                                next_frontier.add(node_id)
+                    if truncated or not next_frontier:
+                        break
+                    frontier = next_frontier
+
+            for (source_id, snapshot_id), node_ids in sorted(node_ids_by_scope.items()):
+                nodes.extend(self._query_slice_nodes(conn, source_id, snapshot_id, node_ids))
+
+            remaining_evidence = safe_max_evidence
+            for (source_id, snapshot_id), node_ids in sorted(node_ids_by_scope.items()):
+                if remaining_evidence <= 0:
+                    break
+                scope_evidence = self._query_flow_path_evidence(
+                    conn,
+                    source_id,
+                    snapshot_id,
+                    node_ids,
+                    edge_ids_by_scope.get((source_id, snapshot_id), set()),
+                    remaining_evidence,
+                )
+                evidence.extend(scope_evidence)
+                remaining_evidence -= len(scope_evidence)
+
+        nodes = self._dedupe_by_id(nodes, "id")
+        edges = self._dedupe_by_id(edges, "id")
+        evidence = self._dedupe_by_id(evidence, "id")
+        unresolved = [
+            edge
+            for edge in edges
+            if not edge.get("toNodeId") or str(edge.get("resolutionStatus") or "").upper() in {"UNRESOLVED", "DYNAMIC_TARGET", "MULTIPLE_CANDIDATES"}
+        ]
+        external = [node for node in nodes if node.get("nodeKind") == "EXTERNAL" or node.get("external")]
+        verified_paths = self._verified_paths_from_evidence(evidence)
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "evidence": evidence,
+            "unresolved": unresolved,
+            "external": external,
+            "verifiedPaths": verified_paths,
+            "truncated": truncated,
+        }
+
     def _query_slice_nodes(self, conn: sqlite3.Connection, source_id: str, snapshot_id: str, node_ids: Set[str]) -> List[Dict[str, Any]]:
         if not node_ids:
             return []
@@ -1786,6 +1925,93 @@ class AnalysisStore:
                 [source_id, snapshot_id, *ids],
             ).fetchall()
             result.extend(self._evidence_projection(rows))
+        return result
+
+    def _query_flow_path_evidence(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        snapshot_id: str,
+        node_ids: Set[str],
+        edge_ids: Set[str],
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        if limit <= 0:
+            return []
+        result: List[Dict[str, Any]] = []
+        if edge_ids:
+            ids = sorted(edge_ids)
+            placeholders = ",".join("?" for _ in ids)
+            rows = conn.execute(
+                f"""
+                SELECT ev.id, ev.source_id, ev.analysis_file_id, af.relative_path, ev.line_start, ev.line_end,
+                       ev.evidence_kind, ev.excerpt_hash, ev.metadata_json, ev.fact_origin, ev.flow_domain,
+                       edge.id AS edge_id, NULL AS node_id
+                FROM analysis_graph_edges edge
+                JOIN analysis_graph_evidence ev
+                  ON ev.snapshot_id = edge.snapshot_id
+                 AND ev.source_id = edge.source_id
+                 AND ev.id = edge.evidence_id
+                LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
+                WHERE edge.source_id = ?
+                  AND edge.snapshot_id = ?
+                  AND edge.id IN ({placeholders})
+                ORDER BY ev.id
+                LIMIT ?
+                """,
+                [source_id, snapshot_id, *ids, limit],
+            ).fetchall()
+            result.extend(self._linked_evidence_projection(rows))
+        remaining = limit - len(result)
+        if remaining > 0 and node_ids:
+            ids = sorted(node_ids)
+            placeholders = ",".join("?" for _ in ids)
+            rows = conn.execute(
+                f"""
+                SELECT ev.id, ev.source_id, ev.analysis_file_id, af.relative_path, ev.line_start, ev.line_end,
+                       ev.evidence_kind, ev.excerpt_hash, ev.metadata_json, ev.fact_origin, ev.flow_domain,
+                       NULL AS edge_id, claim.node_id AS node_id
+                FROM analysis_graph_claims claim
+                JOIN analysis_graph_evidence ev
+                  ON ev.snapshot_id = claim.snapshot_id
+                 AND ev.source_id = claim.source_id
+                 AND EXISTS (
+                    SELECT 1
+                    FROM json_each(claim.evidence_ids_json)
+                    WHERE value = ev.id
+                 )
+                LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
+                WHERE claim.source_id = ?
+                  AND claim.snapshot_id = ?
+                  AND claim.node_id IN ({placeholders})
+                ORDER BY ev.id
+                LIMIT ?
+                """,
+                [source_id, snapshot_id, *ids, remaining],
+            ).fetchall()
+            result.extend(self._linked_evidence_projection(rows))
+        return result
+
+    def _linked_evidence_projection(self, rows: List[sqlite3.Row]) -> List[Dict[str, Any]]:
+        result = []
+        for row in rows:
+            item = {
+                "id": row["id"],
+                "sourceId": row["source_id"],
+                "relativePath": row["relative_path"],
+                "lineStart": row["line_start"],
+                "lineEnd": row["line_end"],
+                "evidenceKind": row["evidence_kind"],
+                "excerptHash": row["excerpt_hash"],
+                "factOrigin": row["fact_origin"],
+                "flowDomain": row["flow_domain"],
+                "metadata": self._json_dict(row["metadata_json"]),
+            }
+            if row["edge_id"]:
+                item["edgeId"] = row["edge_id"]
+            if row["node_id"]:
+                item["nodeId"] = row["node_id"]
+            result.append(item)
         return result
 
     def _evidence_projection(self, rows: List[sqlite3.Row]) -> List[Dict[str, Any]]:

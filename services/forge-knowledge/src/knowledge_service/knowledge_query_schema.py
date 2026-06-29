@@ -65,6 +65,11 @@ class KnowledgeQueryMatchedNode(BaseModel):
 class KnowledgeQueryFlowPath(BaseModel):
     flowId: str
     sourceId: Optional[str] = None
+    matchedNodeIds: List[str] = Field(default_factory=list)
+    nodeIds: List[str] = Field(default_factory=list)
+    edgeIds: List[str] = Field(default_factory=list)
+    boundaryEdgeIds: List[str] = Field(default_factory=list)
+    evidenceIds: List[str] = Field(default_factory=list)
     nodes: List[Dict[str, Any]] = Field(default_factory=list)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
     evidence: List[Dict[str, Any]] = Field(default_factory=list)

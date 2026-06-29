@@ -77,7 +77,7 @@ class ForgeAiInfrastructureJarvisControllerTest {
     @Test
     void queryPreservesSuccessfulFactualBundleBytes() throws Exception {
         this.stub("""
-                {"queryId":"q1","status":"OK","intent":"AUTO","matchedSources":[{"sourceId":"source-a","displayName":"Source A","score":0.98}],"matchedNodes":[{"sourceId":"source-a","nodeId":"n1","stableKey":"source-a|src/App.tsx|FILE","kind":"FILE","label":"App.tsx","score":0.98,"matchReasons":["NAME_MATCH"]}],"flowPaths":[{"flowId":"flow-1","sourceId":"source-a","nodes":[{"id":"n1","sourceId":"source-a","kind":"FILE","label":"App.tsx"}],"edges":[{"id":"e1","sourceId":"source-a","fromNodeId":"n1","toNodeId":"n2","kind":"CALLS"}],"evidence":[{"sourceId":"source-a","nodeId":"n1","text":"export function App() {}"}],"complete":true,"stopReason":"TERMINAL_NODE"}],"nodes":[{"id":"n1","sourceId":"source-a","kind":"FILE","label":"App.tsx"}],"edges":[{"id":"e1","sourceId":"source-a","fromNodeId":"n1","toNodeId":"n2","kind":"CALLS"}],"verifiedPaths":[],"evidence":[{"sourceId":"source-a","nodeId":"n1","text":"export function App() {}"}],"unresolved":[],"external":[],"coverage":{"searchedSourceCount":2,"matchedSourceCount":1,"matchedNodeCount":1,"flowPathCount":1,"nodeCount":1,"edgeCount":1,"evidenceCount":1,"truncated":false,"continuationAvailable":false},"diagnostics":[{"code":"FLOW_RESULT_LIMIT_REACHED","severity":"INFO","message":"slice limited"}]}
+                {"queryId":"q1","status":"OK","intent":"AUTO","matchedSources":[{"sourceId":"source-a","displayName":"Source A","score":0.98}],"matchedNodes":[{"sourceId":"source-a","nodeId":"n1","stableKey":"source-a|src/App.tsx|FILE","kind":"FILE","label":"App.tsx","score":0.98,"matchReasons":["NAME_MATCH"]}],"flowPaths":[{"flowId":"flow-1","sourceId":"source-a","matchedNodeIds":["n1"],"nodeIds":["n1","n2"],"edgeIds":["e1"],"boundaryEdgeIds":[],"evidenceIds":["ev1"],"nodes":[{"id":"n1","sourceId":"source-a","kind":"FILE","label":"App.tsx"},{"id":"n2","sourceId":"source-a","kind":"CALLABLE","label":"run"}],"edges":[{"id":"e1","sourceId":"source-a","fromNodeId":"n1","toNodeId":"n2","kind":"CALLS"}],"evidence":[{"id":"ev1","sourceId":"source-a","nodeId":"n1","edgeId":"e1"}],"complete":true,"stopReason":"TERMINAL_NODE"}],"nodes":[{"id":"n1","sourceId":"source-a","kind":"FILE","label":"App.tsx"},{"id":"n2","sourceId":"source-a","kind":"CALLABLE","label":"run"}],"edges":[{"id":"e1","sourceId":"source-a","fromNodeId":"n1","toNodeId":"n2","kind":"CALLS"}],"verifiedPaths":[],"evidence":[{"id":"ev1","sourceId":"source-a","nodeId":"n1","edgeId":"e1"}],"unresolved":[],"external":[],"coverage":{"searchedSourceCount":2,"matchedSourceCount":1,"matchedNodeCount":1,"flowPathCount":1,"nodeCount":2,"edgeCount":1,"evidenceCount":1,"truncated":false,"continuationAvailable":false},"diagnostics":[{"code":"RESULT_LIMIT_REACHED","severity":"INFO","message":"slice limited"}]}
                 """);
 
         final ResponseEntity<byte[]> result = this.controller.query(new JarvisKnowledgeQueryRequest("App.tsx", "AUTO"), this.headers, this.request).join();
@@ -88,7 +88,9 @@ class ForgeAiInfrastructureJarvisControllerTest {
         assertThat(body.matchedNodes().get(0).get("sourceId").asText()).isEqualTo("source-a");
         assertThat(body.flowPaths()).hasSize(1);
         assertThat(body.flowPaths().get(0).get("flowId").asText()).isEqualTo("flow-1");
-        assertThat(body.nodes()).hasSize(1);
+        assertThat(body.flowPaths().get(0).get("nodeIds").get(0).asText()).isEqualTo("n1");
+        assertThat(body.flowPaths().get(0).get("edgeIds").get(0).asText()).isEqualTo("e1");
+        assertThat(body.nodes()).hasSize(2);
         assertThat(body.edges()).hasSize(1);
         assertThat(body.evidence()).hasSize(1);
         assertThat(body.diagnostics()).hasSize(1);

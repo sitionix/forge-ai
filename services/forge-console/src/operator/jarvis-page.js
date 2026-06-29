@@ -291,8 +291,8 @@ export class JarvisPage {
       ${this.renderMatchedSources(matchedSources)}
       <h3>Matched Nodes</h3>
       ${this.renderMatchedNodes(matchedNodes)}
-      <h3>Flow Paths</h3>
-      ${this.renderFlowPaths(flowPaths)}
+      <h3>Flow Paths (${flowPaths.length})</h3>
+      ${this.renderFlowPaths(flowPaths, response.diagnostics || [], matchedNodes)}
       <h3>Evidence</h3>
       ${this.renderEvidence(evidence)}
     `;
@@ -342,16 +342,22 @@ export class JarvisPage {
     `;
   }
 
-  renderFlowPaths(items) {
+  renderFlowPaths(items, diagnostics = [], matchedNodes = []) {
     if (items.length === 0) {
-      return '<div class="empty-state">No flow paths.</div>';
+      const diagnostic = matchedNodes.length > 0
+        ? diagnostics.find((item) => ['NO_CALLS_PATH', 'RESULT_LIMIT_REACHED'].includes(item.code))
+        : null;
+      return `<div class="empty-state">${escapeHtml(diagnostic?.message || 'No flow paths.')}</div>`;
     }
     return `
       <div class="jarvis-context-list">
         ${items.map((item) => {
           const nodes = item.nodes || [];
           const edges = item.edges || [];
-          const labels = nodes.map((node) => node.label || node.name || node.id || '-').join(' -> ');
+          const labelsById = new Map(nodes.map((node) => [node.id || node.nodeId, node.label || node.name || node.id || node.nodeId || '-']));
+          const orderedNodeIds = item.nodeIds?.length ? item.nodeIds : nodes.map((node) => node.id || node.nodeId || '-');
+          const labels = orderedNodeIds.map((nodeId) => labelsById.get(nodeId) || nodeId || '-').join(' -> ');
+          const edgeCount = item.edgeIds?.length ?? edges.length;
           return `
             <article class="detail-card">
               <div class="detail-card-head">
@@ -362,7 +368,7 @@ export class JarvisPage {
                 ${pill(item.complete === false ? 'partial' : 'complete', item.complete === false ? 'FAILED' : 'READY_TO_START')}
               </div>
               <p class="detail-meta">${escapeHtml(labels || '-')}</p>
-              <p class="detail-meta">${escapeHtml(`${nodes.length} nodes / ${edges.length} edges / ${item.stopReason || 'TERMINAL_NODE'}`)}</p>
+              <p class="detail-meta">${escapeHtml(`${orderedNodeIds.length} nodes / ${edgeCount} edges / ${item.stopReason || 'TERMINAL_NODE'}`)}</p>
             </article>
           `;
         }).join('')}

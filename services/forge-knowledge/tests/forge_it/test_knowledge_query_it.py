@@ -39,6 +39,9 @@ def test_knowledge_query_searches_all_current_graph_sources_without_source_id(tm
         assert edge["fromNodeId"] in node_ids
         assert edge["toNodeId"] in node_ids
     for flow in body["flowPaths"]:
+        assert flow["sourceId"]
+        assert flow["nodeIds"]
+        assert len(flow["edgeIds"]) == max(0, len(flow["nodeIds"]) - 1)
         flow_node_ids = {node["id"] for node in flow["nodes"]}
         for edge in flow["edges"]:
             assert edge["fromNodeId"] in flow_node_ids
@@ -55,6 +58,195 @@ def test_knowledge_query_searches_all_current_graph_sources_without_source_id(tm
     assert no_candidates_body["matchedNodes"] == []
     assert no_candidates_body["flowPaths"] == []
     assert any(diagnostic["code"] == "NO_GRAPH_CANDIDATES" for diagnostic in no_candidates_body["diagnostics"])
+
+
+def test_knowledge_query_integration_extracts_linear_calls_path(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_flow_graph(
+        app_config.store_path,
+        "flow-linear",
+        [
+            ("controller-create", "Controller.create", "CALLABLE"),
+            ("usecase-execute", "UseCase.execute", "CALLABLE"),
+            ("repository-save", "Repository.save", "CALLABLE"),
+        ],
+        [
+            {"id": "edge-controller-usecase", "from": "controller-create", "to": "usecase-execute"},
+            {"id": "edge-usecase-repository", "from": "usecase-execute", "to": "repository-save"},
+        ],
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/knowledge/query", json={"query": "UseCase.execute", "intent": "AUTO"})
+
+    assert response.status_code == 200
+    body = response.json()
+    flow = body["flowPaths"][0]
+    assert flow["nodeIds"] == ["controller-create", "usecase-execute", "repository-save"]
+    assert flow["edgeIds"] == ["edge-controller-usecase", "edge-usecase-repository"]
+    assert flow["matchedNodeIds"] == ["usecase-execute"]
+    assert flow["complete"] is True
+    assert flow["stopReason"] == "TERMINAL_NODE"
+    assert flow["evidenceIds"]
+
+
+def test_knowledge_query_integration_bounds_adjacency_around_matched_node(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    nodes = [
+        ("anchor-execute", "Anchor.execute", "CALLABLE"),
+        ("terminal-save", "Terminal.save", "CALLABLE"),
+    ]
+    edges = [{"id": "zzz-anchor-terminal", "from": "anchor-execute", "to": "terminal-save"}]
+    for index in range(2100):
+        nodes.extend(
+            [
+                (f"noise-from-{index}", f"NoiseFrom{index}", "CALLABLE"),
+                (f"noise-to-{index}", f"NoiseTo{index}", "CALLABLE"),
+            ]
+        )
+        edges.append({"id": f"aaa-noise-{index:04d}", "from": f"noise-from-{index}", "to": f"noise-to-{index}"})
+    seed_flow_graph(app_config.store_path, "flow-large-source", nodes, edges)
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/knowledge/query", json={"query": "Anchor.execute", "intent": "AUTO"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["coverage"]["flowPathCount"] == 1
+    flow = body["flowPaths"][0]
+    assert flow["nodeIds"] == ["anchor-execute", "terminal-save"]
+    assert flow["edgeIds"] == ["zzz-anchor-terminal"]
+    assert not any(diagnostic["code"] == "RESULT_LIMIT_REACHED" for diagnostic in body["diagnostics"])
+
+
+def test_knowledge_query_integration_extracts_multiple_entrypoints(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_flow_graph(
+        app_config.store_path,
+        "flow-entrypoints",
+        [
+            ("controller-a", "ControllerA.create", "CALLABLE"),
+            ("controller-b", "ControllerB.create", "CALLABLE"),
+            ("usecase-execute", "UseCase.execute", "CALLABLE"),
+            ("repository-save", "Repository.save", "CALLABLE"),
+        ],
+        [
+            {"id": "edge-a-usecase", "from": "controller-a", "to": "usecase-execute"},
+            {"id": "edge-b-usecase", "from": "controller-b", "to": "usecase-execute"},
+            {"id": "edge-usecase-save", "from": "usecase-execute", "to": "repository-save"},
+        ],
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/knowledge/query", json={"query": "UseCase.execute"})
+
+    body = response.json()
+    assert sorted(flow["nodeIds"] for flow in body["flowPaths"]) == [
+        ["controller-a", "usecase-execute", "repository-save"],
+        ["controller-b", "usecase-execute", "repository-save"],
+    ]
+
+
+def test_knowledge_query_integration_extracts_downstream_branches(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_flow_graph(
+        app_config.store_path,
+        "flow-branches",
+        [
+            ("controller-create", "Controller.create", "CALLABLE"),
+            ("usecase-execute", "UseCase.execute", "CALLABLE"),
+            ("repository-save", "Repository.save", "CALLABLE"),
+            ("event-publish", "EventPublisher.publish", "CALLABLE"),
+        ],
+        [
+            {"id": "edge-controller-usecase", "from": "controller-create", "to": "usecase-execute"},
+            {"id": "edge-usecase-save", "from": "usecase-execute", "to": "repository-save"},
+            {"id": "edge-usecase-publish", "from": "usecase-execute", "to": "event-publish"},
+        ],
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/knowledge/query", json={"query": "UseCase.execute"})
+
+    body = response.json()
+    assert sorted(flow["nodeIds"] for flow in body["flowPaths"]) == [
+        ["controller-create", "usecase-execute", "event-publish"],
+        ["controller-create", "usecase-execute", "repository-save"],
+    ]
+    assert "MAIN_FLOW" not in json.dumps(body)
+    assert "PERSISTENCE" not in json.dumps(body)
+
+
+def test_knowledge_query_integration_detects_calls_cycle(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_flow_graph(
+        app_config.store_path,
+        "flow-cycle",
+        [("a", "Alpha", "CALLABLE"), ("b", "Beta", "CALLABLE"), ("c", "Gamma", "CALLABLE")],
+        [
+            {"id": "edge-a-b", "from": "a", "to": "b"},
+            {"id": "edge-b-c", "from": "b", "to": "c"},
+            {"id": "edge-c-a", "from": "c", "to": "a"},
+        ],
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/knowledge/query", json={"query": "Alpha"})
+
+    body = response.json()
+    assert any(flow["stopReason"] == "CYCLE_DETECTED" and flow["complete"] is False for flow in body["flowPaths"])
+    assert any(diagnostic["code"] == "CYCLE_DETECTED" for diagnostic in body["diagnostics"])
+
+
+def test_knowledge_query_integration_preserves_external_and_unresolved_boundaries(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_flow_graph(
+        app_config.store_path,
+        "flow-boundaries",
+        [
+            ("controller-create", "Controller.create", "CALLABLE"),
+            ("external-http", "HttpClient.post", "EXTERNAL"),
+        ],
+        [
+            {"id": "edge-external", "from": "controller-create", "to": "external-http", "resolution": "EXTERNAL_TARGET"},
+            {"id": "edge-unresolved", "from": "controller-create", "to": None, "resolution": "UNRESOLVED"},
+        ],
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/knowledge/query", json={"query": "Controller.create"})
+
+    body = response.json()
+    stop_reasons = {flow["stopReason"] for flow in body["flowPaths"]}
+    assert {"EXTERNAL_NODE", "UNRESOLVED_EDGE"} <= stop_reasons
+    unresolved_flow = next(flow for flow in body["flowPaths"] if flow["stopReason"] == "UNRESOLVED_EDGE")
+    assert unresolved_flow["boundaryEdgeIds"] == ["edge-unresolved"]
+    assert unresolved_flow["edgeIds"] == []
+
+
+def test_knowledge_query_integration_searches_all_sources_for_flow_paths(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    for source_id in ("source-one", "source-two"):
+        seed_flow_graph(
+            app_config.store_path,
+            source_id,
+            [
+                (f"{source_id}-controller", "Controller.create", "CALLABLE"),
+                (f"{source_id}-usecase", "SharedUseCase.execute", "CALLABLE"),
+                (f"{source_id}-repo", "Repository.save", "CALLABLE"),
+            ],
+            [
+                {"id": f"{source_id}-edge-1", "from": f"{source_id}-controller", "to": f"{source_id}-usecase"},
+                {"id": f"{source_id}-edge-2", "from": f"{source_id}-usecase", "to": f"{source_id}-repo"},
+            ],
+        )
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/knowledge/query", json={"query": "SharedUseCase.execute"})
+
+    body = response.json()
+    assert {flow["sourceId"] for flow in body["flowPaths"]} == {"source-one", "source-two"}
+    assert body["coverage"]["searchedSourceCount"] == 2
 
 
 def seed_query_graph(db_path):
@@ -183,3 +375,112 @@ def seed_query_graph(db_path):
                 """,
                 (source_id, snapshot_id, now),
             )
+
+
+def seed_flow_graph(db_path, source_id, node_rows, edge_rows):
+    now = datetime.now(timezone.utc).isoformat()
+    snapshot_id = f"snapshot:{source_id}"
+    job_id = f"job:{source_id}"
+    file_id = 50000 + sum((index + 1) * ord(char) for index, char in enumerate(source_id))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at)
+            VALUES (?, ?, 'test', '.', 1, '[]', '{}', ?)
+            """,
+            (source_id, source_id.replace("-", " ").title(), now),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO files(id, source_id, source_path, absolute_path, relative_path, extension, language, flow_domain, size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at)
+            VALUES (?, ?, '.', '.', ?, '.java', 'java', 'CODE', 100, ?, ?, 20, 'utf-8:replace', ?)
+            """,
+            (file_id, source_id, f"src/{source_id}/Flow.java", f"hash-{source_id}", now, now),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_files(file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status, analyzed_at, symbol_count, relation_count, diagnostics_json, engine_version, flow_domain)
+            VALUES (?, ?, ?, ?, 'fixture', '1', 'ANALYZED', ?, ?, ?, '[]', 'GRAPH_V1', 'CODE')
+            """,
+            (file_id, source_id, f"src/{source_id}/Flow.java", f"hash-{source_id}", now, len(node_rows), len(edge_rows)),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO graph_snapshots(snapshot_id, source_id, job_id, state, created_at, published_at, manifest_json, content_identity)
+            VALUES (?, ?, ?, 'PUBLISHED', ?, ?, '{}', ?)
+            """,
+            (snapshot_id, source_id, job_id, now, now, f"{source_id}:CODE:flow-revision"),
+        )
+        for index, (node_id, label, kind) in enumerate(node_rows, start=1):
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_graph_nodes(
+                    id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, stable_key, node_kind, language, name,
+                    qualified_name, display_name, parent_node_id, line_start, line_end, confidence, status, metadata_json,
+                    created_at, fact_origin, flow_domain
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'java', ?, ?, ?, NULL, ?, ?, 0.95, 'TRUSTED', '{}', ?, 'STATIC', 'CODE')
+                """,
+                (
+                    node_id,
+                    snapshot_id,
+                    job_id,
+                    source_id,
+                    file_id,
+                    file_id,
+                    f"{source_id}|{node_id}",
+                    kind,
+                    label,
+                    f"example.{label}",
+                    label,
+                    index,
+                    index,
+                    now,
+                ),
+            )
+        for index, edge in enumerate(edge_rows, start=1):
+            edge_id = edge["id"]
+            evidence_id = f"ev-{edge_id}"
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_graph_evidence(
+                    id, snapshot_id, job_id, source_id, analysis_file_id, content_hash, evidence_kind, excerpt_hash,
+                    line_start, line_end, metadata_json, created_at, fact_origin, flow_domain
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 'EDGE', ?, ?, ?, '{}', ?, 'STATIC', 'CODE')
+                """,
+                (evidence_id, snapshot_id, job_id, source_id, file_id, f"hash-{source_id}", f"excerpt-{edge_id}", index, index, now),
+            )
+            unresolved = None if edge.get("to") else json.dumps({"name": "unresolvedTarget"})
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_graph_edges(
+                    id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id, to_node_id, edge_type,
+                    resolution_status, confidence, evidence_id, unresolved_target_json, metadata_json, status,
+                    created_at, fact_origin, flow_domain
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CALLS', ?, 0.9, ?, ?, '{}', 'TRUSTED', ?, 'STATIC', 'CODE')
+                """,
+                (
+                    edge_id,
+                    snapshot_id,
+                    job_id,
+                    source_id,
+                    file_id,
+                    file_id,
+                    edge["from"],
+                    edge.get("to"),
+                    edge.get("resolution") or ("RESOLVED" if edge.get("to") else "UNRESOLVED"),
+                    evidence_id,
+                    unresolved,
+                    now,
+                ),
+            )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO graph_current_snapshots(source_id, snapshot_id, published_at)
+            VALUES (?, ?, ?)
+            """,
+            (source_id, snapshot_id, now),
+        )

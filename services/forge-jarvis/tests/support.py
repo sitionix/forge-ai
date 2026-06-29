@@ -197,6 +197,11 @@ def knowledge_query_bundle(
             {
                 "flowId": "flow-1",
                 "sourceId": "forge-ai",
+                "matchedNodeIds": ["node-jarvis-gateway"],
+                "nodeIds": ["node-jarvis-gateway"],
+                "edgeIds": [],
+                "boundaryEdgeIds": [],
+                "evidenceIds": [],
                 "nodes": [{"id": "node-jarvis-gateway", "sourceId": "forge-ai", "label": "JarvisGateway"}],
                 "edges": [],
                 "evidence": [],
