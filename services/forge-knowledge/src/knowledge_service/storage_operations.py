@@ -279,6 +279,9 @@ class StorageOperations:
             "analysis_graph_evidence",
             "analysis_graph_claims",
             "analysis_graph_diagnostics",
+            "semantic_index_state",
+            "semantic_documents",
+            "semantic_vectors",
         ]
         return {table: self._count(conn, table) for table in tables if self._table_exists(conn, table)}
 

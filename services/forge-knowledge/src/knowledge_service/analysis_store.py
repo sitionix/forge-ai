@@ -15,6 +15,7 @@ from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.observability import observed_connect
 from knowledge_service.overview_projection import ensure_overview_schema, read_overview, rebuild_overview, refresh_overview_for_sources
+from knowledge_service.semantic_index import SemanticIndexStore, ensure_semantic_index_schema
 from knowledge_service.source_catalog import SourceMetadata
 
 
@@ -372,6 +373,7 @@ class AnalysisStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_snapshot_page ON analysis_graph_edges(source_id, flow_domain, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_flow_created ON analysis_graph_edges(source_id, flow_domain, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_diagnostics_source_code ON analysis_graph_diagnostics(source_id, severity, code)")
+            ensure_semantic_index_schema(conn)
             ensure_overview_schema(conn)
             self._current_resolution_has_coverage_tables = self._table_exists(conn, "files") and self._table_exists(conn, "knowledge_source_overview")
             self._migration_stage("after_canonical_schema")
@@ -382,6 +384,8 @@ class AnalysisStore:
             self._reconcile_graph_diagnostics_schema(conn)
             self._backfill_legacy_graph_snapshots(conn)
             self._reconcile_orphan_job_files(conn)
+            ensure_semantic_index_schema(conn)
+            SemanticIndexStore.reconcile_missing_states_conn(conn)
             ensure_overview_schema(conn)
             rebuild_overview(conn)
 
@@ -4283,7 +4287,42 @@ class AnalysisStore:
             """,
             (source_id, snapshot_id, published_at),
         )
+        self._mark_semantic_index_pending_for_snapshot(conn, snapshot_id, source_id, row["job_id"])
         self._retain_graph_snapshots(conn, source_id)
+
+    def _mark_semantic_index_pending_for_snapshot(self, conn: sqlite3.Connection, snapshot_id: str, source_id: str, job_id: str) -> None:
+        try:
+            SemanticIndexStore.mark_current_graph_pending_conn(conn, source_id)
+        except Exception as exc:  # pragma: no cover - defensive isolation for lifecycle sidecar updates.
+            self._record_semantic_index_state_diagnostic(conn, snapshot_id, source_id, job_id, exc)
+
+    def _record_semantic_index_state_diagnostic(
+        self,
+        conn: sqlite3.Connection,
+        snapshot_id: str,
+        source_id: str,
+        job_id: str,
+        error: Exception,
+    ) -> None:
+        metadata = {"snapshotId": snapshot_id, "errorType": type(error).__name__}
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_diagnostics(
+                id, snapshot_id, job_id, source_id, severity, stage, code, message, metadata_json, created_at,
+                fact_origin, flow_domain
+            )
+            VALUES (?, ?, ?, ?, 'WARN', 'SEMANTIC_INDEX_STATE', 'SEMANTIC_INDEX_STATE_UPDATE_FAILED', ?, ?, ?, 'SYSTEM', 'ALL')
+            """,
+            (
+                f"semantic-index-state:{snapshot_id}",
+                snapshot_id,
+                job_id,
+                source_id,
+                "Semantic index state update failed after graph publication.",
+                json.dumps(metadata, separators=(",", ":")),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
 
     def _ensure_default_graph_snapshot_metrics(self, conn: sqlite3.Connection, snapshot_id: str, source_id: str) -> None:
         query = self._graph_query(conn, "manifest", snapshot_id, source_id, None, None, None, None, "show", True, True)
