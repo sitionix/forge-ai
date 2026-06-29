@@ -31,6 +31,7 @@ from knowledge_service.inventory_refresh import AsyncInventoryScheduler, Invento
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.java_parser_adapter import JavaParserAdapter
 from knowledge_service.overview_projection import refresh_overview_for_sources
+from knowledge_service.semantic_index import SemanticIndexStore
 from knowledge_service.source_config import load_source_config
 from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer
 from knowledge_service.structural_model import StructuralFileMetadata
@@ -2599,6 +2600,189 @@ def test_analysis_api_exposes_failed_file_diagnostics_and_progress(tmp_path, mon
     assert {item["code"] for item in files["json"]["files"][0]["diagnostics"]} >= {"ANALYSIS_AI_INVALID_JSON", "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"}
 
 
+def test_semantic_index_new_db_migration_reports_missing_without_graph_facts(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    AnalysisStore(db_path).init()
+
+    with sqlite3.connect(db_path) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                """
+            ).fetchall()
+        }
+    status = SemanticIndexStore(db_path).status_for_source("edge-gateway").to_dict()
+
+    assert {"semantic_index_state", "semantic_documents", "semantic_vectors"} <= tables
+    assert status["status"] == "MISSING"
+    assert status["totalNodeCount"] == 0
+    assert status["indexedNodeCount"] == 0
+    assert status["progressPercent"] == 0.0
+    assert status["ready"] is False
+
+
+def test_existing_analyzed_source_without_semantic_state_reports_pending(tmp_path, monkeypatch):
+    store, _, _ = build_inventory(tmp_path)
+    cfg = app_config(tmp_path)
+    monkeypatch.setattr(main, "app_config", cfg)
+    monkeypatch.setattr(main, "store", store)
+    wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("DELETE FROM semantic_index_state")
+
+    service = get_json("/api/v1/knowledge/overview")["json"]["sources"][0]
+    semantic = service["semanticIndex"]
+
+    assert semantic["status"] == "PENDING"
+    assert semantic["graphRevision"]
+    assert semantic["totalNodeCount"] > 0
+    assert semantic["indexedNodeCount"] == 0
+    assert semantic["progressPercent"] == 0.0
+    assert semantic["ready"] is False
+
+
+def test_successful_analysis_completion_marks_semantic_index_pending(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    cfg = app_config(tmp_path)
+
+    wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    state = SemanticIndexStore(store.db_path).get_state("edge-gateway")
+
+    assert state["status"] == "PENDING"
+    assert state["graph_revision"]
+    assert state["total_node_count"] > 0
+    assert state["indexed_node_count"] == 0
+
+
+def test_reanalysis_after_ready_marks_semantic_index_stale(tmp_path):
+    store, config, service_root = build_inventory(tmp_path)
+    cfg = app_config(tmp_path)
+    runner = SupervisorHarness(store, cfg)
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    semantic_store = SemanticIndexStore(store.db_path)
+    initial = semantic_store.get_state("edge-gateway")
+    semantic_store.mark_source_ready(
+        "edge-gateway",
+        initial["graph_revision"],
+        initial["total_node_count"],
+        initial["total_node_count"],
+        embedding_model="test-embedding",
+        embedding_dimension=8,
+    )
+    (service_root / "src/main/java/example/ObjectHandler.java").write_text(
+        "public class ObjectHandler {\n  @PostMapping\n  public void update() {\n  }\n}\n",
+        encoding="utf-8",
+    )
+    InventoryBuilder(load_source_config(config), store).build([], [])
+
+    wait_job(store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer())["jobId"])
+    state = semantic_store.get_state("edge-gateway")
+
+    assert state["status"] == "STALE"
+    assert state["graph_revision"] != initial["graph_revision"]
+    assert state["indexed_node_count"] == 0
+
+
+def test_failed_or_stopped_analysis_does_not_mark_semantic_pending(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    analysis_store = AnalysisStore(store.db_path)
+    for terminal_status in ("FAILED", "STOPPED"):
+        job_id = f"job-{terminal_status.lower()}"
+        analysis_store.create_job(
+            {
+                "jobId": job_id,
+                "status": "RUNNING",
+                "startedAt": "now",
+                "sourceCount": 1,
+                "fileCount": 1,
+                "processedFileCount": 0,
+                "failedFileCount": 0,
+                "currentSourceId": "edge-gateway",
+                "sourceIds": ["edge-gateway"],
+            }
+        )
+        analysis_store.update_job(job_id, {"status": terminal_status, "completedAt": "now"})
+
+    assert SemanticIndexStore(store.db_path).get_state("edge-gateway") is None
+    assert SemanticIndexStore(store.db_path).status_for_source("edge-gateway").status.value == "MISSING"
+
+
+def test_semantic_index_ready_progress_reports_100_percent(tmp_path, monkeypatch):
+    store, _, _ = build_inventory(tmp_path)
+    cfg = app_config(tmp_path)
+    monkeypatch.setattr(main, "app_config", cfg)
+    monkeypatch.setattr(main, "store", store)
+    wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    semantic_store = SemanticIndexStore(store.db_path)
+    state = semantic_store.get_state("edge-gateway")
+    semantic_store.mark_source_ready(
+        "edge-gateway",
+        state["graph_revision"],
+        state["total_node_count"],
+        state["total_node_count"],
+        embedding_model="test-embedding",
+        embedding_dimension=8,
+    )
+
+    semantic = get_json("/api/v1/knowledge/overview")["json"]["sources"][0]["semanticIndex"]
+
+    assert semantic["status"] == "READY"
+    assert semantic["ready"] is True
+    assert semantic["indexedNodeCount"] == semantic["totalNodeCount"]
+    assert semantic["progressPercent"] == 100.0
+
+
+def test_semantic_index_partial_progress_reports_below_100_percent(tmp_path, monkeypatch):
+    store, _, _ = build_inventory(tmp_path)
+    cfg = app_config(tmp_path)
+    monkeypatch.setattr(main, "app_config", cfg)
+    monkeypatch.setattr(main, "store", store)
+    wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    semantic_store = SemanticIndexStore(store.db_path)
+    state = semantic_store.get_state("edge-gateway")
+    semantic_store.mark_source_building(
+        "edge-gateway",
+        state["graph_revision"],
+        state["total_node_count"],
+        indexed_node_count=1,
+        build_id="build-1",
+    )
+
+    semantic = get_json("/api/v1/knowledge/overview")["json"]["sources"][0]["semanticIndex"]
+
+    assert semantic["status"] == "BUILDING"
+    assert semantic["indexedNodeCount"] == 1
+    assert 0.0 < semantic["progressPercent"] < 100.0
+    assert semantic["ready"] is False
+
+
+def test_knowledge_query_works_with_missing_pending_and_stale_semantic_index(tmp_path, monkeypatch):
+    store, _, _ = build_inventory(tmp_path)
+    cfg = app_config(tmp_path)
+    monkeypatch.setattr(main, "app_config", cfg)
+    monkeypatch.setattr(main, "store", store)
+
+    missing = post_json("/api/v1/knowledge/query", {"query": "ObjectHandler"})
+    assert missing["status"] == 200
+    assert missing["json"]["status"] != "QUERY_FAILED"
+
+    wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    pending = post_json("/api/v1/knowledge/query", {"query": "ObjectHandler"})
+    assert pending["status"] == 200
+    assert pending["json"]["status"] in {"OK", "AMBIGUOUS"}
+
+    semantic_store = SemanticIndexStore(store.db_path)
+    state = semantic_store.get_state("edge-gateway")
+    semantic_store.mark_source_stale("edge-gateway", f"{state['graph_revision']}:manual-stale", state["total_node_count"])
+    stale = post_json("/api/v1/knowledge/query", {"query": "ObjectHandler"})
+    assert stale["status"] == 200
+    assert stale["json"]["status"] in {"OK", "AMBIGUOUS"}
+
+
 def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, monkeypatch):
     store, _, _ = build_inventory(tmp_path)
     cfg = app_config(tmp_path)
@@ -2612,7 +2796,18 @@ def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, m
     assert result["status"] == 200
     assert service["sourceId"] == "edge-gateway"
     assert service["displayName"] == "Edge Gateway"
-    assert set(service) == {"sourceId", "displayName", "group", "rootExists", "inventory", "analysis", "activeJob", "updatedAt", "version"}
+    assert set(service) == {
+        "sourceId",
+        "displayName",
+        "group",
+        "rootExists",
+        "inventory",
+        "analysis",
+        "semanticIndex",
+        "activeJob",
+        "updatedAt",
+        "version",
+    }
     assert service["inventory"]["fileCount"] == 1
     assert set(service["inventory"]) == {"status", "fileCount", "skippedCount"}
     assert service["analysis"]["totalFiles"] == 1
@@ -2638,6 +2833,29 @@ def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, m
         "activeJobFailedFileCount",
         "activeJobCurrentRelativePath",
     }
+    assert set(service["semanticIndex"]) == {
+        "status",
+        "graphRevision",
+        "builderVersion",
+        "totalNodeCount",
+        "indexedNodeCount",
+        "progressPercent",
+        "ready",
+        "stale",
+        "embeddingModel",
+        "embeddingDimension",
+        "updatedAt",
+        "startedAt",
+        "completedAt",
+        "lastBuildId",
+        "lastError",
+    }
+    assert service["semanticIndex"]["status"] == "PENDING"
+    assert service["semanticIndex"]["graphRevision"]
+    assert service["semanticIndex"]["totalNodeCount"] > 0
+    assert service["semanticIndex"]["indexedNodeCount"] == 0
+    assert service["semanticIndex"]["progressPercent"] == 0.0
+    assert service["semanticIndex"]["ready"] is False
 
 
 def test_services_status_is_stable_after_store_restart(tmp_path, monkeypatch):
@@ -2900,7 +3118,7 @@ def test_services_status_size_does_not_grow_with_diagnostics(tmp_path, monkeypat
     encoded = json.dumps(result["json"])
 
     assert result["status"] == 200
-    assert len(encoded) < 1000
+    assert len(encoded) < 1200
     for key in ("diagnostics", "examples", "message", "rawPreview", "details"):
         assert key not in encoded
 

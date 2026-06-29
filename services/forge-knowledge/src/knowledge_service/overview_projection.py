@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from knowledge_service.observability import observed_connect
+from knowledge_service.semantic_index import SemanticIndexStore
 
 
 def ensure_overview_schema(conn: sqlite3.Connection) -> None:
@@ -90,9 +91,10 @@ def read_overview(db_path: Path) -> Dict[str, Any]:
             ORDER BY source_id
             """
         ).fetchall()
+        semantic_statuses = SemanticIndexStore.statuses_for_sources_conn(conn, [row["source_id"] for row in rows])
     max_version = max((int(row["version"] or 0) for row in rows), default=0)
     updated_at = max((row["updated_at"] for row in rows if row["updated_at"]), default=None)
-    sources = [_overview_source(row) for row in rows]
+    sources = [_overview_source(row, semantic_statuses.get(row["source_id"])) for row in rows]
     active = next((source["activeJob"] for source in sources if source["activeJob"] is not None), None)
     return {
         "version": max_version,
@@ -257,7 +259,7 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
 
 
-def _overview_source(row: sqlite3.Row) -> Dict[str, Any]:
+def _overview_source(row: sqlite3.Row, semantic_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     active_job = None
     if row["active_job_id"]:
         active_job = {
@@ -296,6 +298,24 @@ def _overview_source(row: sqlite3.Row) -> Dict[str, Any]:
             "activeJobProcessedFileCount": row["active_job_processed_files"],
             "activeJobFailedFileCount": row["active_job_failed_files"],
             "activeJobCurrentRelativePath": row["active_job_current_relative_path"],
+        },
+        "semanticIndex": semantic_index
+        or {
+            "status": "MISSING",
+            "graphRevision": None,
+            "builderVersion": 1,
+            "totalNodeCount": 0,
+            "indexedNodeCount": 0,
+            "progressPercent": 0.0,
+            "ready": False,
+            "stale": False,
+            "embeddingModel": None,
+            "embeddingDimension": None,
+            "updatedAt": None,
+            "startedAt": None,
+            "completedAt": None,
+            "lastBuildId": None,
+            "lastError": None,
         },
         "activeJob": active_job,
         "updatedAt": row["updated_at"],
