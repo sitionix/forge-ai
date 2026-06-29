@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-import re
 import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from knowledge_service.knowledge_search import (
+    DeterministicCodeSearchEngine,
+    QueryNormalizer,
+    SearchConfig,
+    SearchDocument,
+)
 from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryCoverage,
     KnowledgeQueryDiagnostic,
@@ -17,13 +22,11 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryStatus,
 )
 
-
-TOKEN_PATTERN = re.compile(r"[\w.$:/\\-]+", re.UNICODE)
-
-
 @dataclass(frozen=True)
 class KnowledgeQueryPolicy:
+    max_search_documents: int = 5000
     max_search_candidates: int = 100
+    max_candidates_per_provider: int = 100
     max_matched_nodes: int = 5
     graph_slice_depth: int = 2
     max_traversal_nodes: int = 80
@@ -31,6 +34,11 @@ class KnowledgeQueryPolicy:
     max_edges_per_traversal: int = 2000
     max_execution_ms: int = 250
     max_evidence_refs: int = 25
+    min_lexical_score: float = 0.28
+    min_fuzzy_score: float = 0.58
+    fuzzy_max_edit_distance: int = 3
+    enable_fuzzy_search: bool = True
+    enable_search_diagnostics: bool = True
 
 
 @dataclass(frozen=True)
@@ -99,8 +107,10 @@ class SourceScopeResolver:
 
 
 class UnifiedAnchorSearcher:
-    def __init__(self, graph_store: Any) -> None:
+    def __init__(self, graph_store: Any, search_engine: DeterministicCodeSearchEngine | None = None) -> None:
         self.graph_store = graph_store
+        self.search_engine = search_engine or DeterministicCodeSearchEngine()
+        self.normalizer = QueryNormalizer()
 
     def search(
         self,
@@ -108,22 +118,39 @@ class UnifiedAnchorSearcher:
         eligible_sources: Sequence[QuerySource],
         policy: KnowledgeQueryPolicy,
     ) -> tuple[List[KnowledgeQueryMatchedNode], List[KnowledgeQueryDiagnostic], bool]:
-        tokens = self._tokens(query)
-        if not tokens or not eligible_sources:
+        search_query = self.normalizer.normalize(query)
+        if not search_query.tokens or not eligible_sources:
             return [], [], False
-        raw_candidates = self.graph_store.query_anchor_candidates(tokens, [source.source_id for source in eligible_sources], policy.max_search_candidates)
-        matched_nodes: List[KnowledgeQueryMatchedNode] = []
-        seen: set[tuple[str, str, str]] = set()
-        for candidate in raw_candidates:
-            matched_node = self._matched_node(candidate, tokens)
-            key = (matched_node.sourceId, matched_node.snapshotId or "", matched_node.nodeId)
-            if key in seen:
-                continue
-            seen.add(key)
-            matched_nodes.append(matched_node)
-        matched_nodes.sort(key=lambda item: (-item.score, item.sourceId, item.label.lower(), item.nodeId))
+        raw_documents, document_truncated = self._load_search_documents(search_query.tokens, eligible_sources, policy)
+        documents = [SearchDocument.from_graph_node(candidate) for candidate in raw_documents if candidate.get("sourceId") or candidate.get("source_id")]
+        result = self.search_engine.search(query, documents, self._search_config(policy))
+        matched_nodes = [
+            KnowledgeQueryMatchedNode(**candidate.document.to_matched_node_dict(candidate.score, candidate.reasons))
+            for candidate in result.candidates
+        ]
         truncated = len(matched_nodes) > policy.max_matched_nodes
         diagnostics: List[KnowledgeQueryDiagnostic] = []
+        if policy.enable_search_diagnostics and (document_truncated or result.candidate_limit_reached):
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="SEARCH_CANDIDATE_LIMIT_REACHED",
+                    message="Search reached an internal candidate safety limit before ranking completed.",
+                    severity="INFO",
+                    metadata={
+                        "maxSearchDocuments": policy.max_search_documents,
+                        "maxCandidatesPerProvider": policy.max_candidates_per_provider,
+                        "maxSearchCandidates": policy.max_search_candidates,
+                    },
+                )
+            )
+        if policy.enable_search_diagnostics and documents and not matched_nodes:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="LOW_CONFIDENCE_MATCHES",
+                    message="Search inspected current graph facts, but deterministic matches did not clear ranking thresholds.",
+                    severity="INFO",
+                )
+            )
         if truncated:
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
@@ -135,76 +162,32 @@ class UnifiedAnchorSearcher:
             )
         return matched_nodes[: policy.max_matched_nodes], diagnostics, truncated
 
-    def _tokens(self, query: str) -> List[str]:
-        seen: set[str] = set()
-        tokens: List[str] = []
-        for match in TOKEN_PATTERN.findall(query):
-            token = match.strip(" .,:;!?()[]{}'\"")
-            if len(token) < 2:
-                continue
-            lowered = token.lower()
-            if lowered in seen:
-                continue
-            seen.add(lowered)
-            tokens.append(token)
-        return tokens
+    def _load_search_documents(
+        self,
+        tokens: Sequence[str],
+        eligible_sources: Sequence[QuerySource],
+        policy: KnowledgeQueryPolicy,
+    ) -> tuple[List[Dict[str, Any]], bool]:
+        source_ids = [source.source_id for source in eligible_sources]
+        requested_limit = max(1, int(policy.max_search_documents or 1)) + 1
+        if hasattr(self.graph_store, "query_search_documents"):
+            raw_documents = list(self.graph_store.query_search_documents(source_ids, requested_limit))
+        else:
+            raw_documents = list(self.graph_store.query_anchor_candidates(list(tokens), source_ids, requested_limit))
+        truncated = len(raw_documents) > policy.max_search_documents
+        if truncated:
+            raw_documents = raw_documents[: policy.max_search_documents]
+        return raw_documents, truncated
 
-    def _matched_node(self, candidate: Dict[str, Any], tokens: Sequence[str]) -> KnowledgeQueryMatchedNode:
-        reasons: set[str] = set()
-        score = 0.0
-        field_values = {
-            "ID_MATCH": [candidate.get("id"), candidate.get("nodeId")],
-            "STABLE_KEY_MATCH": [candidate.get("stableKey")],
-            "KIND_MATCH": [candidate.get("kind"), candidate.get("nodeKind")],
-            "NAME_MATCH": [candidate.get("name"), candidate.get("label"), candidate.get("displayName")],
-            "QUALIFIED_NAME_MATCH": [candidate.get("qualifiedName")],
-            "PATH_MATCH": [candidate.get("relativePath")],
-            "SUMMARY_MATCH": [candidate.get("summary")],
-            "METADATA_MATCH": [candidate.get("metadataText")],
-        }
-        weights = {
-            "NAME_MATCH": 0.95,
-            "QUALIFIED_NAME_MATCH": 0.9,
-            "STABLE_KEY_MATCH": 0.88,
-            "ID_MATCH": 0.82,
-            "PATH_MATCH": 0.72,
-            "KIND_MATCH": 0.55,
-            "SUMMARY_MATCH": 0.52,
-            "METADATA_MATCH": 0.45,
-        }
-        for token in tokens:
-            lowered = token.lower()
-            for reason, values in field_values.items():
-                for value in values:
-                    text = str(value or "").lower()
-                    if not text:
-                        continue
-                    if text == lowered:
-                        score = max(score, weights[reason])
-                        reasons.add(reason)
-                    elif lowered in text:
-                        score = max(score, max(weights[reason] - 0.08, 0.1))
-                        reasons.add(reason)
-        confidence = float(candidate.get("confidence") or 0.0)
-        degree = float(candidate.get("degree") or 0.0)
-        score = min(1.0, score + min(confidence, 1.0) * 0.03 + min(degree, 10.0) * 0.002)
-        if not reasons:
-            reasons.add("LEXICAL_MATCH")
-            score = max(score, 0.25)
-        return KnowledgeQueryMatchedNode(
-            sourceId=str(candidate.get("sourceId") or ""),
-            nodeId=str(candidate.get("id") or candidate.get("nodeId") or ""),
-            stableKey=str(candidate.get("stableKey") or candidate.get("id") or ""),
-            kind=str(candidate.get("kind") or candidate.get("nodeKind") or ""),
-            label=str(candidate.get("label") or candidate.get("displayName") or candidate.get("name") or candidate.get("id") or ""),
-            score=round(score, 4),
-            matchReasons=sorted(reasons),
-            snapshotId=str(candidate.get("snapshotId") or "") or None,
-            graphRevision=str(candidate.get("graphRevision") or "") or None,
-            relativePath=candidate.get("relativePath"),
-            qualifiedName=candidate.get("qualifiedName"),
+    def _search_config(self, policy: KnowledgeQueryPolicy) -> SearchConfig:
+        return SearchConfig(
+            max_candidates_per_provider=policy.max_candidates_per_provider,
+            max_total_candidates=policy.max_search_candidates,
+            min_lexical_score=policy.min_lexical_score,
+            min_fuzzy_score=policy.min_fuzzy_score,
+            fuzzy_max_edit_distance=policy.fuzzy_max_edit_distance,
+            enable_fuzzy_search=policy.enable_fuzzy_search,
         )
-
 
 class GraphSliceQueryService:
     def __init__(self, graph_store: Any) -> None:

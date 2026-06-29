@@ -1421,6 +1421,97 @@ class AnalysisStore:
             for row in rows
         ]
 
+    def query_search_documents(self, source_ids: List[str], limit: int) -> List[Dict[str, Any]]:
+        self.init()
+        if not source_ids:
+            return []
+        safe_limit = max(1, min(int(limit or 100), 10000))
+        source_placeholders = ",".join("?" for _ in source_ids)
+        with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
+            rows = conn.execute(
+                f"""
+                WITH claim AS (
+                    SELECT snapshot_id, source_id, node_id, group_concat(summary, ' ') AS summary
+                    FROM analysis_graph_claims
+                    WHERE status IN ('TRUSTED', 'DERIVED', 'CANDIDATE')
+                    GROUP BY snapshot_id, source_id, node_id
+                ),
+                out_degree AS (
+                    SELECT snapshot_id, source_id, from_node_id AS node_id, COUNT(*) AS count
+                    FROM analysis_graph_edges
+                    GROUP BY snapshot_id, source_id, from_node_id
+                ),
+                in_degree AS (
+                    SELECT snapshot_id, source_id, to_node_id AS node_id, COUNT(*) AS count
+                    FROM analysis_graph_edges
+                    WHERE to_node_id IS NOT NULL
+                    GROUP BY snapshot_id, source_id, to_node_id
+                ),
+                entry AS (
+                    SELECT snapshot_id, source_id, node_id, 1 AS entrypoint
+                    FROM analysis_graph_claims
+                    WHERE claim_kind = 'ENTRYPOINT_HINT'
+                      AND status IN ('TRUSTED', 'DERIVED')
+                    GROUP BY snapshot_id, source_id, node_id
+                )
+                SELECT n.*,
+                       current.snapshot_id AS current_snapshot_id,
+                       snapshots.content_identity AS graph_revision,
+                       sources.display_name AS source_display_name,
+                       af.relative_path,
+                       claim.summary,
+                       COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
+                       COALESCE(entry.entrypoint, 0) AS entrypoint
+                FROM analysis_graph_nodes n
+                JOIN graph_current_snapshots current
+                  ON current.source_id = n.source_id
+                 AND current.snapshot_id = n.snapshot_id
+                JOIN graph_snapshots snapshots
+                  ON snapshots.source_id = n.source_id
+                 AND snapshots.snapshot_id = n.snapshot_id
+                 AND snapshots.state IN ('PUBLISHED', 'RETIRED')
+                LEFT JOIN sources ON sources.source_id = n.source_id
+                LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
+                LEFT JOIN claim
+                  ON claim.snapshot_id = n.snapshot_id
+                 AND claim.source_id = n.source_id
+                 AND claim.node_id = n.id
+                LEFT JOIN out_degree
+                  ON out_degree.snapshot_id = n.snapshot_id
+                 AND out_degree.source_id = n.source_id
+                 AND out_degree.node_id = n.id
+                LEFT JOIN in_degree
+                  ON in_degree.snapshot_id = n.snapshot_id
+                 AND in_degree.source_id = n.source_id
+                 AND in_degree.node_id = n.id
+                LEFT JOIN entry
+                  ON entry.snapshot_id = n.snapshot_id
+                 AND entry.source_id = n.source_id
+                 AND entry.node_id = n.id
+                WHERE n.source_id IN ({source_placeholders})
+                ORDER BY n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
+                LIMIT ?
+                """,
+                [*source_ids, safe_limit],
+            ).fetchall()
+        documents: List[Dict[str, Any]] = []
+        for row in rows:
+            row_dict = self._row_dict(row)
+            projected = self._graph_snapshot_node_projection(row_dict)
+            projected.update(
+                {
+                    "snapshotId": row["snapshot_id"],
+                    "graphRevision": row["graph_revision"],
+                    "sourceDisplayName": row["source_display_name"] or row["source_id"],
+                    "displayName": row["display_name"],
+                    "summary": row["summary"],
+                    "metadataText": row["metadata_json"],
+                    "degree": int(row["graph_degree"] or 0),
+                }
+            )
+            documents.append(projected)
+        return documents
+
     def query_anchor_candidates(self, tokens: List[str], source_ids: List[str], limit: int) -> List[Dict[str, Any]]:
         self.init()
         if not tokens or not source_ids:

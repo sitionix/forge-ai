@@ -197,7 +197,7 @@ def test_baseline_search_finds_by_node_name_stable_key_and_qualified_name():
 def test_flow_path_extraction_uses_calls_edges_from_graph_slice():
     store = FakeGraphStore(candidates=[candidate(id="controller-create", name="Controller.create", label="Controller.create")])
 
-    response = service(store).query(KnowledgeQueryRequest(query="Controller.create"))
+    response = service(store).query(KnowledgeQueryRequest(query="Controller create"))
 
     assert response.flowPaths
     flow = response.flowPaths[0]
@@ -301,7 +301,7 @@ def test_flow_path_extractor_stops_on_external_node():
     edges = [graph_edge("calls-external", "controller-create", "external-http", resolutionStatus="EXTERNAL_TARGET", external=True)]
     store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[candidate(id="controller-create", name="Controller.create", label="Controller.create")])
 
-    response = service(store).query(KnowledgeQueryRequest(query="Controller.create"))
+    response = service(store).query(KnowledgeQueryRequest(query="Controller create"))
 
     flow = response.flowPaths[0]
     assert flow.nodeIds == ["controller-create", "external-http"]
@@ -315,7 +315,7 @@ def test_flow_path_extractor_stops_on_unresolved_edge():
     edges = [graph_edge("calls-missing", "controller-create", None, resolutionStatus="UNRESOLVED", unresolvedTarget={"name": "missing"})]
     store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[candidate(id="controller-create", name="Controller.create", label="Controller.create")])
 
-    response = service(store).query(KnowledgeQueryRequest(query="Controller.create"))
+    response = service(store).query(KnowledgeQueryRequest(query="Controller create"))
 
     flow = response.flowPaths[0]
     assert flow.nodeIds == ["controller-create"]
@@ -369,8 +369,24 @@ def test_guardrail_reports_truncated_flow_result():
         ]
     )
 
-    response = service(store).query(KnowledgeQueryRequest(query="Controller.create"))
+    response = service(store).query(KnowledgeQueryRequest(query="Controller create"))
 
     assert response.coverage.truncated is True
     assert response.coverage.continuationAvailable is True
     assert any(diagnostic.code == "RESULT_LIMIT_REACHED" for diagnostic in response.diagnostics)
+
+
+def test_search_candidate_limit_reports_diagnostic():
+    store = FakeGraphStore(
+        candidates=[
+            candidate(id="controller-create", name="Controller.create", label="Controller.create"),
+            candidate(id="node-extra", name="Controller.createExtra", label="Controller.createExtra"),
+            candidate(id="node-more", name="Controller.createMore", label="Controller.createMore"),
+        ]
+    )
+
+    response = service(store, KnowledgeQueryPolicy(max_search_documents=1, max_matched_nodes=2, max_flow_paths=2)).query(
+        KnowledgeQueryRequest(query="Controller.create")
+    )
+
+    assert any(diagnostic.code == "SEARCH_CANDIDATE_LIMIT_REACHED" for diagnostic in response.diagnostics)
