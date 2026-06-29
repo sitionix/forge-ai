@@ -885,6 +885,8 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].sourceId").value("source-a"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].nodeId").value("node-a"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].flowId").value("flow-1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].nodeIds[0]").value("node-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].edgeIds[0]").value("edge-a"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].nodes[0].sourceId").value("source-a"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].edges[0].sourceId").value("source-a"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.nodes[0].sourceId").value("source-a"))

@@ -173,6 +173,8 @@ def test_query_response_preserves_factual_bundle(tmp_path) -> None:
     assert body["matchedSources"][0]["sourceId"] == "forge-ai"
     assert body["matchedNodes"][0]["label"] == "JarvisGateway"
     assert body["flowPaths"][0]["flowId"] == "flow-1"
+    assert body["flowPaths"][0]["nodeIds"] == ["node-jarvis-gateway"]
+    assert body["flowPaths"][0]["edgeIds"] == []
     assert body["nodes"][0]["sourceId"] == "forge-ai"
     assert "answer" not in body
 

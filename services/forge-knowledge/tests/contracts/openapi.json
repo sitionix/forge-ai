@@ -209,10 +209,24 @@
       },
       "KnowledgeQueryFlowPath": {
         "properties": {
+          "boundaryEdgeIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Boundaryedgeids",
+            "type": "array"
+          },
           "complete": {
             "default": true,
             "title": "Complete",
             "type": "boolean"
+          },
+          "edgeIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Edgeids",
+            "type": "array"
           },
           "edges": {
             "items": {
@@ -228,9 +242,30 @@
             "title": "Evidence",
             "type": "array"
           },
+          "evidenceIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidenceids",
+            "type": "array"
+          },
           "flowId": {
             "title": "Flowid",
             "type": "string"
+          },
+          "matchedNodeIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matchednodeids",
+            "type": "array"
+          },
+          "nodeIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Nodeids",
+            "type": "array"
           },
           "nodes": {
             "items": {
