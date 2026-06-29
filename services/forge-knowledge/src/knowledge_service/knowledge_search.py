@@ -383,6 +383,7 @@ class SearchCandidate:
     score: float
     confidence: str
     priority: int
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -400,6 +401,7 @@ class SearchRunResult:
     candidates: List[MergedCandidate]
     candidate_limit_reached: bool = False
     low_confidence_matches: bool = False
+    diagnostics: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class CandidateProvider:
@@ -800,6 +802,7 @@ class DeterministicCodeSearchEngine:
         self,
         normalizer: QueryNormalizer | None = None,
         providers: Sequence[CandidateProvider] | None = None,
+        extra_broad_providers: Sequence[CandidateProvider] | None = None,
         ranker: SearchRanker | None = None,
     ) -> None:
         self.normalizer = normalizer or QueryNormalizer()
@@ -815,6 +818,8 @@ class DeterministicCodeSearchEngine:
         if providers is not None:
             self.precise_providers = tuple(providers)
             self.broad_providers = ()
+        elif extra_broad_providers is not None:
+            self.broad_providers = (*self.broad_providers, *tuple(extra_broad_providers))
         self.ranker = ranker or SearchRanker()
 
     def search(self, raw_query: str, documents: Sequence[SearchDocument], config: SearchConfig) -> SearchRunResult:
@@ -823,14 +828,17 @@ class DeterministicCodeSearchEngine:
             return SearchRunResult(candidates=[])
 
         all_candidates: List[SearchCandidate] = []
+        diagnostics: List[Dict[str, Any]] = []
         candidate_limit_reached = False
         precise_candidates = self._run_providers(self.precise_providers, query, documents, config)
         all_candidates.extend(precise_candidates.candidates)
+        diagnostics.extend(precise_candidates.diagnostics)
         candidate_limit_reached = candidate_limit_reached or precise_candidates.limit_reached
 
         if not self._has_definitive_precise_match(query, precise_candidates.candidates):
             broad_candidates = self._run_providers(self.broad_providers, query, documents, config)
             all_candidates.extend(broad_candidates.candidates)
+            diagnostics.extend(broad_candidates.diagnostics)
             candidate_limit_reached = candidate_limit_reached or broad_candidates.limit_reached
 
         ranked = self.ranker.rank(all_candidates, config.max_total_candidates) if all_candidates else []
@@ -839,6 +847,7 @@ class DeterministicCodeSearchEngine:
             candidates=ranked,
             candidate_limit_reached=candidate_limit_reached,
             low_confidence_matches=low_confidence_matches,
+            diagnostics=diagnostics,
         )
 
     def _run_providers(
@@ -849,16 +858,20 @@ class DeterministicCodeSearchEngine:
         config: SearchConfig,
     ) -> "_ProviderRun":
         results: List[SearchCandidate] = []
+        results_diagnostics: List[Dict[str, Any]] = []
         limit_reached = False
         provider_limit = max(1, config.max_candidates_per_provider)
         for provider in providers:
             candidates = provider.search(query, documents, config)
+            diagnostics = getattr(provider, "last_diagnostics", [])
+            if diagnostics:
+                results_diagnostics.extend([dict(item) for item in diagnostics])
             candidates.sort(key=lambda candidate: (-candidate.score, candidate.priority, candidate.document.source_id, candidate.document.node_id, candidate.reason))
             if len(candidates) > provider_limit:
                 limit_reached = True
                 candidates = candidates[:provider_limit]
             results.extend(candidates)
-        return _ProviderRun(candidates=results, limit_reached=limit_reached)
+        return _ProviderRun(candidates=results, limit_reached=limit_reached, diagnostics=results_diagnostics)
 
     def _has_definitive_precise_match(self, query: SearchQuery, candidates: Sequence[SearchCandidate]) -> bool:
         if query.profile in {SearchQueryProfile.HUMAN_TEXT_LIKE, SearchQueryProfile.MIXED}:
@@ -870,3 +883,4 @@ class DeterministicCodeSearchEngine:
 class _ProviderRun:
     candidates: List[SearchCandidate]
     limit_reached: bool = False
+    diagnostics: List[Dict[str, Any]] = field(default_factory=list)

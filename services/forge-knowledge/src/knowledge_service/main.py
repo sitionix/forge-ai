@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
@@ -31,6 +32,9 @@ from knowledge_service.observability import (
     sanitize_correlation_id,
 )
 from knowledge_service.overview_projection import read_overview
+from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
+from knowledge_service.semantic_schema import SemanticIndexBuildRequest, SemanticIndexBuildResponse
+from knowledge_service.embedding_provider import OllamaEmbeddingProvider
 from knowledge_service.service_catalog_provider import ServiceYamlCatalogProvider
 from knowledge_service.source_config import load_source_config
 from knowledge_service.storage_operations import StorageOperations
@@ -62,6 +66,8 @@ def create_app(
             await deps.analysis_supervisor.shutdown()
 
     app = FastAPI(title="Knowledge Service", version="0.1.0", lifespan=lifespan)
+    app.state.semantic_build_jobs = {}
+    app.state.semantic_build_lock = threading.Lock()
     if settings is not None and dependencies is not None:
         app.state.forge_settings = settings
         app.state.app_config = AppConfig.from_forge_settings(settings)
@@ -204,9 +210,9 @@ def create_app(
 
     @app.post("/api/v1/knowledge/query", response_model=KnowledgeQueryResponse)
     async def knowledge_query(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-        _, deps = _state(request)
+        config, deps = _state(request)
         try:
-            return build_knowledge_query_service(deps.graph_store).query(body)
+            return build_knowledge_query_service(deps.graph_store, config).query(body)
         except Exception:
             return KnowledgeQueryResponse(
                 queryId="query-failed",
@@ -220,6 +226,58 @@ def create_app(
                     )
                 ],
             )
+
+    @app.post("/api/v1/knowledge/semantic/index/build", response_model=SemanticIndexBuildResponse)
+    async def semantic_index_build(request: Request, body: SemanticIndexBuildRequest) -> SemanticIndexBuildResponse:
+        config, deps = _state(request)
+        jobs, lock = _semantic_job_state(request.app)
+        job_id = f"semantic-build-{uuid.uuid4()}"
+        if not config.semantic_enabled:
+            response = {
+                "jobId": job_id,
+                "status": "COMPLETED",
+                "sourceIds": [],
+                "diagnostics": [{"code": "SEMANTIC_DISABLED", "message": "Semantic indexing is disabled.", "severity": "INFO"}],
+                "results": [],
+            }
+            jobs[job_id] = response
+            return SemanticIndexBuildResponse(**response)
+        if not lock.acquire(blocking=False):
+            response = {
+                "jobId": job_id,
+                "status": "RUNNING",
+                "sourceIds": body.sourceIds,
+                "diagnostics": [
+                    {"code": "SEMANTIC_BUILD_ALREADY_RUNNING", "message": "A semantic index build is already running.", "severity": "INFO"}
+                ],
+                "results": [],
+            }
+            jobs[job_id] = response
+            return SemanticIndexBuildResponse(**response)
+        jobs[job_id] = {"jobId": job_id, "status": "QUEUED", "sourceIds": body.sourceIds, "diagnostics": [], "results": []}
+        if body.async_:
+            thread = threading.Thread(
+                target=_run_semantic_build_job,
+                args=(jobs, lock, job_id, config, deps.inventory_store.db_path, body.sourceIds, body.force),
+                name="knowledge-semantic-index-build",
+                daemon=True,
+            )
+            thread.start()
+            return SemanticIndexBuildResponse(**jobs[job_id])
+        try:
+            result = _semantic_index_builder(config, deps.inventory_store.db_path).build(body.sourceIds, force=body.force, build_id=job_id).to_dict()
+            jobs[job_id] = result
+            return SemanticIndexBuildResponse(**result)
+        finally:
+            lock.release()
+
+    @app.get("/api/v1/knowledge/semantic/index/jobs/{job_id}", response_model=SemanticIndexBuildResponse)
+    async def semantic_index_job(request: Request, job_id: str) -> SemanticIndexBuildResponse:
+        jobs, _ = _semantic_job_state(request.app)
+        job = jobs.get(job_id)
+        if job is None:
+            raise KnowledgeError("SEMANTIC_BUILD_JOB_NOT_FOUND", "Semantic build job not found")
+        return SemanticIndexBuildResponse(**job)
 
     @app.post("/api/v1/knowledge/analysis/build")
     async def analysis_build(request: Request, body: AnalysisBuildRequest) -> Dict[str, Any]:
@@ -578,6 +636,51 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
             storage_operations=StorageOperations(store.db_path),
         )
     raise RuntimeError("Knowledge app dependencies are not initialized")
+
+
+def _semantic_job_state(app: FastAPI):
+    if not hasattr(app.state, "semantic_build_jobs"):
+        app.state.semantic_build_jobs = {}
+    if not hasattr(app.state, "semantic_build_lock"):
+        app.state.semantic_build_lock = threading.Lock()
+    return app.state.semantic_build_jobs, app.state.semantic_build_lock
+
+
+def _semantic_index_builder(config: AppConfig, db_path) -> SemanticIndexBuilder:
+    provider = OllamaEmbeddingProvider(
+        config.semantic_ollama_base_url,
+        config.semantic_embedding_model,
+        config.semantic_request_timeout_seconds,
+    )
+    return SemanticIndexBuilder(
+        db_path,
+        provider,
+        config=SemanticBuildConfig(
+            enabled=config.semantic_enabled,
+            embedding_model=config.semantic_embedding_model,
+            batch_size=config.semantic_batch_size,
+            max_document_chars=config.semantic_max_document_chars,
+            max_edges_per_document=config.semantic_max_edges_per_document,
+            max_documents_per_build=config.semantic_max_documents_per_build,
+        ),
+    )
+
+
+def _run_semantic_build_job(jobs, lock: threading.Lock, job_id: str, config: AppConfig, db_path, source_ids, force: bool) -> None:
+    try:
+        jobs[job_id] = {**jobs[job_id], "status": "RUNNING"}
+        result = _semantic_index_builder(config, db_path).build(source_ids, force=force, build_id=job_id).to_dict()
+        jobs[job_id] = result
+    except Exception:
+        jobs[job_id] = {
+            "jobId": job_id,
+            "status": "FAILED",
+            "sourceIds": list(source_ids or []),
+            "diagnostics": [{"code": "SEMANTIC_BUILD_FAILED", "message": "Semantic index build failed.", "severity": "WARN"}],
+            "results": [],
+        }
+    finally:
+        lock.release()
 
 
 def _unknown_freshness() -> Dict[str, Any]:

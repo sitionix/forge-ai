@@ -13,6 +13,7 @@ from knowledge_service.observability import observed_connect
 
 
 SEMANTIC_BUILDER_VERSION = 1
+SEMANTIC_ELIGIBLE_NODE_KINDS = ("FILE", "TYPE", "CALLABLE", "EXTERNAL")
 SQLITE_SEMANTIC_BUSY_TIMEOUT_MS = 5000
 
 
@@ -158,6 +159,12 @@ def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_semantic_vectors_source_revision ON semantic_vectors(source_id, graph_revision, embedding_model)"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_vectors_node ON semantic_vectors(source_id, node_id)")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_semantic_documents_unique_revision
+        ON semantic_documents(source_id, node_id, graph_revision, builder_version)
+        """
+    )
 
 
 class SemanticIndexStore:
@@ -600,6 +607,7 @@ class SemanticIndexStore:
                 WHERE source_id = ?
                   AND snapshot_id = ?
                   AND status IN ('TRUSTED', 'DERIVED')
+                  AND node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
                 """,
                 (source_id, snapshot_id),
             ).fetchone()["count"]
