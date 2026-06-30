@@ -763,7 +763,7 @@ export class KnowledgeGraphPage {
             <strong>${escapeHtml(status.processedFileCount ?? 0)} / ${escapeHtml(status.fileCount ?? 0)} files</strong>
             <span>${escapeHtml(percent)}%</span>
           </div>
-          <div class="knowledge-progress-track"><span style="width:${percent}%"></span></div>
+          <div class="knowledge-progress-track"><span class="knowledge-progress-fill knowledge-progress-fill--facts" style="width:${percent}%"></span></div>
           ${status.currentFile ? `<div class="knowledge-current-file">${escapeHtml(status.currentFile)}</div>` : ''}
         </div>
         <div class="knowledge-graph-progress-extra">

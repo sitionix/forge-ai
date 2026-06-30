@@ -70,13 +70,17 @@ class SemanticIndexStatusView:
         return self.status == SemanticIndexStatus.STALE
 
     def to_dict(self) -> dict[str, Any]:
+        indexed_node_count = max(0, min(self.indexed_node_count, self.total_node_count))
         return {
             "status": self.status.value,
             "graphRevision": self.graph_revision,
             "builderVersion": self.builder_version,
             "totalNodeCount": self.total_node_count,
-            "indexedNodeCount": max(0, min(self.indexed_node_count, self.total_node_count)),
+            "indexedNodeCount": indexed_node_count,
             "progressPercent": self.progress_percent,
+            "totalFactCount": self.total_node_count,
+            "indexedFactCount": indexed_node_count,
+            "percentOfFacts": self.progress_percent,
             "ready": self.ready,
             "stale": self.stale,
             "embeddingModel": self.embedding_model,
@@ -528,9 +532,16 @@ class SemanticIndexStore:
         if state["graph_revision"] != graph.graph_revision:
             effective_status = SemanticIndexStatus.STALE
         total = graph.total_node_count
-        indexed = int(state["indexed_node_count"] or 0)
-        if effective_status in {SemanticIndexStatus.PENDING, SemanticIndexStatus.STALE}:
-            indexed = 0
+        indexed = cls._indexed_current_fact_count_conn(
+            conn,
+            source_id,
+            graph,
+            builder_version=int(state["builder_version"] or SEMANTIC_BUILDER_VERSION),
+            embedding_model=state["embedding_model"],
+            current_revision_only=(state["graph_revision"] == graph.graph_revision),
+        )
+        if effective_status == SemanticIndexStatus.BUILDING:
+            indexed = max(indexed, int(state["indexed_node_count"] or 0))
         return SemanticIndexStatusView(
             source_id=source_id,
             status=effective_status,
@@ -550,6 +561,53 @@ class SemanticIndexStore:
     @classmethod
     def statuses_for_sources_conn(cls, conn: sqlite3.Connection, source_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
         return {source_id: cls.status_for_source_conn(conn, source_id).to_dict() for source_id in source_ids}
+
+    @classmethod
+    def _indexed_current_fact_count_conn(
+        cls,
+        conn: sqlite3.Connection,
+        source_id: str,
+        graph: SemanticGraphInfo,
+        *,
+        builder_version: int,
+        embedding_model: Optional[str],
+        current_revision_only: bool,
+    ) -> int:
+        if (
+            not source_id
+            or not graph.snapshot_id
+            or graph.total_node_count <= 0
+            or not all(_table_exists(conn, table) for table in ("analysis_graph_nodes", "semantic_documents", "semantic_vectors"))
+        ):
+            return 0
+        revision_clause = "AND d.graph_revision = ?" if current_revision_only else ""
+        params: list[Any] = [builder_version]
+        if current_revision_only:
+            params.append(graph.graph_revision)
+        params.extend([embedding_model, embedding_model, source_id, graph.snapshot_id])
+        row = conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT n.id) AS count
+            FROM analysis_graph_nodes n
+            JOIN semantic_documents d
+              ON d.source_id = n.source_id
+             AND d.node_id = n.id
+             AND d.builder_version = ?
+             AND d.status = 'READY'
+             {revision_clause}
+            JOIN semantic_vectors v
+              ON v.document_id = d.document_id
+             AND v.source_id = d.source_id
+             AND v.node_id = d.node_id
+             AND (? IS NULL OR v.embedding_model = ?)
+            WHERE n.source_id = ?
+              AND n.snapshot_id = ?
+              AND n.status IN ('TRUSTED', 'DERIVED')
+              AND n.node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
+            """,
+            params,
+        ).fetchone()
+        return int(row["count"] or 0) if row is not None else 0
 
     @classmethod
     def reconcile_missing_states_conn(cls, conn: sqlite3.Connection, source_ids: Optional[Iterable[str]] = None) -> int:

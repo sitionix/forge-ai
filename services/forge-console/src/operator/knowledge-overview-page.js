@@ -300,46 +300,54 @@ export class KnowledgeOverviewPage {
 
 export function normalizeKnowledgeOverviewPayload(payload) {
   if (Array.isArray(payload?.services)) {
-    return payload;
+    return {
+      ...payload,
+      services: payload.services.map((source) => normalizeKnowledgeOverviewSource(source))
+    };
   }
   const sources = Array.isArray(payload?.sources) ? payload.sources : [];
-  const services = sources.map((source) => {
-    const inventory = source.inventory || {};
-    const analysis = source.analysis || {};
-    return {
-      sourceId: source.sourceId,
-      label: source.displayName || source.label || source.sourceId,
-      group: source.group || null,
-      rootExists: source.rootExists,
-      tags: source.tags || [],
-      inventory: {
-        status: inventory.status,
-        eligibleFileCount: inventory.fileCount ?? inventory.eligibleFileCount ?? 0,
-        skippedCount: inventory.skippedCount ?? 0
-      },
-      analysis: {
-        status: analysis.status,
-        inventoryFileCount: analysis.totalFiles ?? analysis.inventoryFileCount ?? 0,
-        analyzedFileCount: analysis.succeededFiles ?? analysis.analyzedFileCount ?? 0,
-        processedFileCount: analysis.processedFiles ?? analysis.processedFileCount ?? 0,
-        failedFileCount: analysis.failedFiles ?? analysis.failedFileCount ?? 0,
-        skippedTooLargeFileCount: analysis.skippedFiles ?? analysis.skippedTooLargeFileCount ?? 0,
-        pendingFileCount: analysis.pendingFiles ?? analysis.pendingFileCount ?? 0,
-        percent: analysis.percent ?? 0,
-        activeJobId: analysis.activeJobId,
-        activeJobMode: analysis.activeJobMode,
-        activeJobSelectedFileCount: analysis.activeJobSelectedFileCount,
-        activeJobProcessedFileCount: analysis.activeJobProcessedFileCount,
-        activeJobFailedFileCount: analysis.activeJobFailedFileCount,
-        activeJobCurrentRelativePath: analysis.activeJobCurrentRelativePath
-      }
-    };
-  });
+  const services = sources.map((source) => normalizeKnowledgeOverviewSource(source));
   return {
     version: payload?.version ?? 0,
     updatedAt: payload?.updatedAt ?? null,
     services,
     activeJob: payload?.activeJob || null
+  };
+}
+
+function normalizeKnowledgeOverviewSource(source) {
+  const inventory = source.inventory || {};
+  const analysis = source.analysis || {};
+  return {
+    sourceId: source.sourceId,
+    label: source.displayName || source.label || source.sourceId,
+    group: source.group || null,
+    rootExists: source.rootExists,
+    tags: source.tags || [],
+    inventory: {
+      status: inventory.status,
+      eligibleFileCount: inventory.fileCount ?? inventory.eligibleFileCount ?? 0,
+      skippedCount: inventory.skippedCount ?? 0
+    },
+    analysis: {
+      status: analysis.status,
+      inventoryFileCount: analysis.totalFiles ?? analysis.inventoryFileCount ?? 0,
+      analyzedFileCount: analysis.succeededFiles ?? analysis.analyzedFileCount ?? 0,
+      processedFileCount: analysis.processedFiles ?? analysis.processedFileCount ?? 0,
+      failedFileCount: analysis.failedFiles ?? analysis.failedFileCount ?? 0,
+      skippedTooLargeFileCount: analysis.skippedFiles ?? analysis.skippedTooLargeFileCount ?? 0,
+      pendingFileCount: analysis.pendingFiles ?? analysis.pendingFileCount ?? 0,
+      percent: analysis.percent ?? 0,
+      semanticPercent: analysis.semanticPercent ?? 0,
+      activeJobId: analysis.activeJobId,
+      activeJobMode: analysis.activeJobMode,
+      activeJobSelectedFileCount: analysis.activeJobSelectedFileCount,
+      activeJobProcessedFileCount: analysis.activeJobProcessedFileCount,
+      activeJobFailedFileCount: analysis.activeJobFailedFileCount,
+      activeJobCurrentRelativePath: analysis.activeJobCurrentRelativePath
+    },
+    facts: source.facts || {},
+    factsProgress: source.factsProgress || null
   };
 }
 
@@ -599,6 +607,10 @@ function renderKnowledgeAnalysisProgress(analysis) {
   }
   const metrics = knowledgeAnalysisMetrics(analysis);
   const status = String(analysis.status || '').toUpperCase();
+  const factsPercent = Math.max(0, Math.min(100, metrics.percent));
+  const semanticWidth = Math.min(factsPercent, clampPercent(analysis.semanticPercent));
+  const progressStyle = `--facts-percent:${escapeHtml(formatPercent(factsPercent))}%; --semantic-overlay-percent:${escapeHtml(formatPercent(semanticWidth))}%`;
+  const progressTitle = ` title="${escapeHtml(`Facts ${formatPercent(factsPercent)}%, semantic ${formatPercent(semanticWidth)}%`)}"`;
   return `
     <div class="knowledge-progress">
       <div class="knowledge-service-state">
@@ -608,9 +620,7 @@ function renderKnowledgeAnalysisProgress(analysis) {
         <strong>${escapeHtml(metrics.processed)} / ${escapeHtml(metrics.total)}</strong>
         <span>${escapeHtml(metrics.percent)}%</span>
       </div>
-      <div class="knowledge-progress-track">
-        <span style="width:${Math.max(0, Math.min(100, metrics.percent))}%"></span>
-      </div>
+      <div class="knowledge-progress-track knowledge-progress-track--composite" style="${progressStyle}"${progressTitle}></div>
       <small>
         pending ${escapeHtml(metrics.pending)}
         failed ${escapeHtml(metrics.failed)}
@@ -634,6 +644,20 @@ function knowledgeAnalysisMetrics(analysis) {
   const explicitPercent = Number(analysis?.percent);
   const percent = Number.isFinite(explicitPercent) ? explicitPercent : (total > 0 ? Math.round((processed / total) * 1000) / 10 : 0);
   return { total, analyzed, failed, skipped, processed, pending, percent };
+}
+
+function clampPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, number));
+}
+
+function formatPercent(value) {
+  const clamped = clampPercent(value);
+  const rounded = Math.round(clamped * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
 }
 
 function knowledgeGraphUrl(params = {}) {

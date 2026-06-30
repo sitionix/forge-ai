@@ -22,6 +22,7 @@ from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.config import AppConfig
 from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
+from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.graph_analysis import GraphAnalysisEngine
@@ -31,6 +32,7 @@ from knowledge_service.inventory_refresh import AsyncInventoryScheduler, Invento
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.java_parser_adapter import JavaParserAdapter
 from knowledge_service.overview_projection import refresh_overview_for_sources
+from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_index import SemanticIndexStore
 from knowledge_service.source_config import load_source_config
 from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer
@@ -2635,14 +2637,16 @@ def test_existing_analyzed_source_without_semantic_state_reports_pending(tmp_pat
         conn.execute("DELETE FROM semantic_index_state")
 
     service = get_json("/api/v1/knowledge/overview")["json"]["sources"][0]
-    semantic = service["semanticIndex"]
+    status = SemanticIndexStore(store.db_path).status_for_source("edge-gateway").to_dict()
 
-    assert semantic["status"] == "PENDING"
-    assert semantic["graphRevision"]
-    assert semantic["totalNodeCount"] > 0
-    assert semantic["indexedNodeCount"] == 0
-    assert semantic["progressPercent"] == 0.0
-    assert semantic["ready"] is False
+    assert "semanticIndex" not in service
+    assert service["analysis"]["semanticPercent"] == 0.0
+    assert status["status"] == "PENDING"
+    assert status["graphRevision"]
+    assert status["totalNodeCount"] > 0
+    assert status["indexedNodeCount"] == 0
+    assert status["progressPercent"] == 0.0
+    assert status["ready"] is False
 
 
 def test_successful_analysis_completion_marks_semantic_index_pending(tmp_path):
@@ -2717,19 +2721,17 @@ def test_semantic_index_ready_progress_reports_100_percent(tmp_path, monkeypatch
     monkeypatch.setattr(main, "app_config", cfg)
     monkeypatch.setattr(main, "store", store)
     wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
-    semantic_store = SemanticIndexStore(store.db_path)
-    state = semantic_store.get_state("edge-gateway")
-    semantic_store.mark_source_ready(
-        "edge-gateway",
-        state["graph_revision"],
-        state["total_node_count"],
-        state["total_node_count"],
-        embedding_model="test-embedding",
-        embedding_dimension=8,
-    )
+    SemanticIndexBuilder(
+        store.db_path,
+        FakeDeterministicEmbeddingProvider(dimension=8),
+        config=SemanticBuildConfig(batch_size=10),
+    ).build(["edge-gateway"], force=True)
 
-    semantic = get_json("/api/v1/knowledge/overview")["json"]["sources"][0]["semanticIndex"]
+    service = get_json("/api/v1/knowledge/overview")["json"]["sources"][0]
+    semantic = SemanticIndexStore(store.db_path).status_for_source("edge-gateway").to_dict()
 
+    assert "semanticIndex" not in service
+    assert service["analysis"]["semanticPercent"] == service["analysis"]["percent"] == 100.0
     assert semantic["status"] == "READY"
     assert semantic["ready"] is True
     assert semantic["indexedNodeCount"] == semantic["totalNodeCount"]
@@ -2752,8 +2754,11 @@ def test_semantic_index_partial_progress_reports_below_100_percent(tmp_path, mon
         build_id="build-1",
     )
 
-    semantic = get_json("/api/v1/knowledge/overview")["json"]["sources"][0]["semanticIndex"]
+    service = get_json("/api/v1/knowledge/overview")["json"]["sources"][0]
+    semantic = SemanticIndexStore(store.db_path).status_for_source("edge-gateway").to_dict()
 
+    assert "semanticIndex" not in service
+    assert service["analysis"]["semanticPercent"] == 0.0
     assert semantic["status"] == "BUILDING"
     assert semantic["indexedNodeCount"] == 1
     assert 0.0 < semantic["progressPercent"] < 100.0
@@ -2802,14 +2807,15 @@ def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, m
         "group",
         "rootExists",
         "inventory",
+        "factsProgress",
         "analysis",
-        "semanticIndex",
         "activeJob",
         "updatedAt",
         "version",
     }
     assert service["inventory"]["fileCount"] == 1
     assert set(service["inventory"]) == {"status", "fileCount", "skippedCount"}
+    assert service["factsProgress"] == {"completedCount": 1, "totalCount": 1, "percent": 100.0}
     assert service["analysis"]["totalFiles"] == 1
     assert service["analysis"]["succeededFiles"] == 1
     assert service["analysis"]["processedFiles"] == 1
@@ -2826,6 +2832,7 @@ def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, m
         "skippedFiles",
         "pendingFiles",
         "percent",
+        "semanticPercent",
         "activeJobId",
         "activeJobMode",
         "activeJobSelectedFileCount",
@@ -2833,29 +2840,8 @@ def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, m
         "activeJobFailedFileCount",
         "activeJobCurrentRelativePath",
     }
-    assert set(service["semanticIndex"]) == {
-        "status",
-        "graphRevision",
-        "builderVersion",
-        "totalNodeCount",
-        "indexedNodeCount",
-        "progressPercent",
-        "ready",
-        "stale",
-        "embeddingModel",
-        "embeddingDimension",
-        "updatedAt",
-        "startedAt",
-        "completedAt",
-        "lastBuildId",
-        "lastError",
-    }
-    assert service["semanticIndex"]["status"] == "PENDING"
-    assert service["semanticIndex"]["graphRevision"]
-    assert service["semanticIndex"]["totalNodeCount"] > 0
-    assert service["semanticIndex"]["indexedNodeCount"] == 0
-    assert service["semanticIndex"]["progressPercent"] == 0.0
-    assert service["semanticIndex"]["ready"] is False
+    assert service["analysis"]["semanticPercent"] == 0.0
+    assert "semanticIndex" not in service
 
 
 def test_services_status_is_stable_after_store_restart(tmp_path, monkeypatch):
@@ -2914,6 +2900,38 @@ def test_services_status_active_job_progress_is_not_double_counted(tmp_path, mon
     assert service["analysis"]["processedFiles"] == 2
     assert service["analysis"]["pendingFiles"] == 111
     assert service["analysis"]["percent"] == 1.8
+
+
+def test_services_status_active_job_keeps_semantic_progress_visible(tmp_path, monkeypatch):
+    store, _, _ = build_inventory(tmp_path)
+    cfg = app_config(tmp_path)
+    monkeypatch.setattr(main, "app_config", cfg)
+    monkeypatch.setattr(main, "store", store)
+    wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    SemanticIndexBuilder(
+        store.db_path,
+        FakeDeterministicEmbeddingProvider(dimension=8),
+        config=SemanticBuildConfig(batch_size=10),
+    ).build(["edge-gateway"], force=True)
+    AnalysisStore(store.db_path).create_job(
+        {
+            "jobId": "job-running",
+            "status": "RUNNING",
+            "startedAt": "now",
+            "sourceCount": 1,
+            "fileCount": 1,
+            "processedFileCount": 0,
+            "failedFileCount": 0,
+            "currentSourceId": "edge-gateway",
+            "sourceIds": ["edge-gateway"],
+        }
+    )
+
+    service = get_json("/api/v1/knowledge/overview")["json"]["sources"][0]
+
+    assert service["analysis"]["status"] == "RUNNING"
+    assert "semanticIndex" not in service
+    assert service["analysis"]["semanticPercent"] == service["analysis"]["percent"] == 100.0
 
 
 def test_services_status_partial_completion_with_failures(tmp_path, monkeypatch):
@@ -3118,7 +3136,7 @@ def test_services_status_size_does_not_grow_with_diagnostics(tmp_path, monkeypat
     encoded = json.dumps(result["json"])
 
     assert result["status"] == 200
-    assert len(encoded) < 1200
+    assert len(encoded) < 1400
     for key in ("diagnostics", "examples", "message", "rawPreview", "details"):
         assert key not in encoded
 

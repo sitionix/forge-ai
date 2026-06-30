@@ -74,7 +74,10 @@ class AnalysisSettings(BaseModel):
 
 class SemanticSettings(BaseModel):
     enabled: bool = True
-    auto_build_enabled: bool = False
+    auto_build_enabled: bool = True
+    auto_build_interval_seconds: float = Field(default=60.0, ge=0.1)
+    failed_retry_backoff_seconds: float = Field(default=300.0, ge=0.0)
+    building_stale_after_seconds: float = Field(default=300.0, ge=1.0)
     provider: str = "ollama"
     embedding_model: str = Field(default="embeddinggemma", min_length=1)
     ollama_base_url: AnyHttpUrl = "http://127.0.0.1:11434"
@@ -155,7 +158,10 @@ class AppConfig(BaseModel):
     analysis_max_attempts_per_file: int = 3
     analysis_repair_attempts_per_file: int = 1
     semantic_enabled: bool = True
-    semantic_auto_build_enabled: bool = False
+    semantic_auto_build_enabled: bool = True
+    semantic_auto_build_interval_seconds: float = 60.0
+    semantic_failed_retry_backoff_seconds: float = 300.0
+    semantic_building_stale_after_seconds: float = 300.0
     semantic_provider: str = "ollama"
     semantic_embedding_model: str = "embeddinggemma"
     semantic_ollama_base_url: str = "http://127.0.0.1:11434"
@@ -239,6 +245,9 @@ class AppConfig(BaseModel):
             analysis_repair_attempts_per_file=analysis.repair_attempts_per_file,
             semantic_enabled=semantic.enabled,
             semantic_auto_build_enabled=semantic.auto_build_enabled,
+            semantic_auto_build_interval_seconds=semantic.auto_build_interval_seconds,
+            semantic_failed_retry_backoff_seconds=semantic.failed_retry_backoff_seconds,
+            semantic_building_stale_after_seconds=semantic.building_stale_after_seconds,
             semantic_provider=semantic.provider,
             semantic_embedding_model=semantic.embedding_model,
             semantic_ollama_base_url=str(semantic.ollama_base_url).rstrip("/"),
@@ -449,7 +458,16 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                 },
                 "semantic": {
                     "enabled": _bool(semantic.get("enabled", True)),
-                    "auto_build_enabled": _bool(semantic.get("auto-build-enabled", semantic.get("auto_build_enabled", False))),
+                    "auto_build_enabled": _bool(semantic.get("auto-build-enabled", semantic.get("auto_build_enabled", True))),
+                    "auto_build_interval_seconds": float(
+                        semantic.get("auto-build-interval-seconds") or semantic.get("auto_build_interval_seconds") or 60.0
+                    ),
+                    "failed_retry_backoff_seconds": float(
+                        semantic.get("failed-retry-backoff-seconds") or semantic.get("failed_retry_backoff_seconds") or 300.0
+                    ),
+                    "building_stale_after_seconds": float(
+                        semantic.get("building-stale-after-seconds") or semantic.get("building_stale_after_seconds") or 300.0
+                    ),
                     "provider": str(semantic.get("provider") or "ollama"),
                     "embedding_model": str(semantic.get("embedding-model") or semantic.get("embedding_model") or "embeddinggemma"),
                     "ollama_base_url": str(
@@ -519,6 +537,9 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
     semantic_env_map: Dict[str, Tuple[str, Callable[[str], object]]] = {
         "KNOWLEDGE_SEMANTIC_ENABLED": ("enabled", lambda value: value.lower() != "false"),
         "KNOWLEDGE_SEMANTIC_AUTO_BUILD_ENABLED": ("auto_build_enabled", lambda value: value.lower() != "false"),
+        "KNOWLEDGE_SEMANTIC_AUTO_BUILD_INTERVAL_SECONDS": ("auto_build_interval_seconds", float),
+        "KNOWLEDGE_SEMANTIC_FAILED_RETRY_BACKOFF_SECONDS": ("failed_retry_backoff_seconds", float),
+        "KNOWLEDGE_SEMANTIC_BUILDING_STALE_AFTER_SECONDS": ("building_stale_after_seconds", float),
         "KNOWLEDGE_SEMANTIC_PROVIDER": ("provider", str),
         "KNOWLEDGE_SEMANTIC_EMBEDDING_MODEL": ("embedding_model", str),
         "KNOWLEDGE_SEMANTIC_OLLAMA_BASE_URL": ("ollama_base_url", str),

@@ -97,10 +97,24 @@ class OllamaEmbeddingProvider:
         except httpx.TimeoutException as exc:
             raise EmbeddingProviderError("SEMANTIC_PROVIDER_UNAVAILABLE", "Semantic embedding request timed out.") from exc
         except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            response_preview = exc.response.text[:200]
+            if status_code == 404 and _is_ollama_missing_model_response(response_preview, self.model):
+                raise EmbeddingProviderError(
+                    "SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE",
+                    f"Embedding model is not available in local Ollama: {self.model}. Pull or configure an installed embedding model.",
+                    details={"statusCode": status_code, "model": self.model},
+                ) from exc
+            if status_code == 404:
+                raise EmbeddingProviderError(
+                    "SEMANTIC_PROVIDER_UNAVAILABLE",
+                    "Semantic embedding provider endpoint returned HTTP 404 for /api/embed. Check Ollama version and embedding endpoint support.",
+                    details={"statusCode": status_code, "endpoint": "/api/embed"},
+                ) from exc
             raise EmbeddingProviderError(
                 "SEMANTIC_PROVIDER_UNAVAILABLE",
-                f"Semantic embedding provider returned HTTP {exc.response.status_code}.",
-                details={"statusCode": exc.response.status_code, "preview": exc.response.text[:200]},
+                f"Semantic embedding provider returned HTTP {status_code}.",
+                details={"statusCode": status_code},
             ) from exc
         except httpx.HTTPError as exc:
             raise EmbeddingProviderError("SEMANTIC_PROVIDER_UNAVAILABLE", "Semantic embedding provider transport failed.") from exc
@@ -177,3 +191,9 @@ def _tokens(text: str) -> tuple[str, ...]:
             seen.add(compact)
             tokens.append(compact)
     return tuple(tokens)
+
+
+def _is_ollama_missing_model_response(response_text: str, model: str) -> bool:
+    lowered = str(response_text or "").lower()
+    model_lower = str(model or "").lower()
+    return "not found" in lowered and "pull" in lowered and (not model_lower or model_lower in lowered)

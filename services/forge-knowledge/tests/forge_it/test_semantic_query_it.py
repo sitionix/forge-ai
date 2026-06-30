@@ -98,10 +98,9 @@ def test_service_overview_reports_semantic_ready_after_build(tmp_path):
 
     overview = read_overview(app_config.store_path)
 
-    semantic = next(source["semanticIndex"] for source in overview["sources"] if source["sourceId"] == "forge-semantic-test")
-    assert semantic["status"] == "READY"
-    assert semantic["progressPercent"] == 100.0
-    assert semantic["indexedNodeCount"] == semantic["totalNodeCount"]
+    source = next(source for source in overview["sources"] if source["sourceId"] == "forge-semantic-test")
+    assert "semanticIndex" not in source
+    assert source["analysis"]["semanticPercent"] == source["analysis"]["percent"]
 
 
 def fake_semantic_provider():

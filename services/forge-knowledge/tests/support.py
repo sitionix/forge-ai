@@ -146,7 +146,15 @@ class FailingAnalysisProvider:
         )
 
 
-def write_runtime_config(tmp_path: Path, *, max_file_size_bytes: int = 500000) -> Path:
+def write_runtime_config(
+    tmp_path: Path,
+    *,
+    max_file_size_bytes: int = 500000,
+    semantic_auto_build_enabled: bool = False,
+    semantic_auto_build_interval_seconds: float = 60.0,
+    semantic_failed_retry_backoff_seconds: float = 300.0,
+    semantic_building_stale_after_seconds: float = 300.0,
+) -> Path:
     config_dir = tmp_path / "config"
     runtime_dir = tmp_path / "var"
     workspace = tmp_path / "workspace"
@@ -249,6 +257,12 @@ forge:
           concurrency: 1
           max-attempts-per-file: 1
           repair-attempts-per-file: 0
+        semantic:
+          enabled: true
+          auto-build-enabled: {str(semantic_auto_build_enabled).lower()}
+          auto-build-interval-seconds: {semantic_auto_build_interval_seconds}
+          failed-retry-backoff-seconds: {semantic_failed_retry_backoff_seconds}
+          building-stale-after-seconds: {semantic_building_stale_after_seconds}
 """.lstrip(),
         encoding="utf-8",
     )

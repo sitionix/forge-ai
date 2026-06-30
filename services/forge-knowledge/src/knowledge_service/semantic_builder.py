@@ -344,7 +344,7 @@ class SemanticIndexBuilder:
             results.append(result)
             diagnostics.extend(result.diagnostics)
         status = "COMPLETED" if all(result.status in {"READY", "SKIPPED"} for result in results) else "FAILED"
-        return SemanticBuildRunResult(build_id=build_id, status=status, source_ids=selected, diagnostics=diagnostics, results=results)
+        return SemanticBuildRunResult(build_id=build_id, status=status, source_ids=selected, diagnostics=_dedupe_diagnostics(diagnostics), results=results)
 
     def _build_source(self, source_id: str, *, force: bool, build_id: str) -> SemanticSourceBuildResult:
         graph = self._graph_info(source_id)
@@ -353,8 +353,9 @@ class SemanticIndexBuilder:
         if not force:
             status = self._status_for_source(source_id)
             if status.status == SemanticIndexStatus.READY and status.graph_revision == graph.graph_revision:
-                return SemanticSourceBuildResult(source_id, "SKIPPED", graph.graph_revision, status.total_node_count, status.indexed_node_count)
-            if status.status not in {SemanticIndexStatus.PENDING, SemanticIndexStatus.STALE, SemanticIndexStatus.FAILED, SemanticIndexStatus.MISSING}:
+                if status.ready:
+                    return SemanticSourceBuildResult(source_id, "SKIPPED", graph.graph_revision, status.total_node_count, status.indexed_node_count)
+            elif status.status not in {SemanticIndexStatus.PENDING, SemanticIndexStatus.STALE, SemanticIndexStatus.FAILED, SemanticIndexStatus.MISSING}:
                 return SemanticSourceBuildResult(source_id, "SKIPPED", graph.graph_revision, status.total_node_count, status.indexed_node_count)
         documents = self._build_documents(source_id, graph)
         total = len(documents)
@@ -381,7 +382,7 @@ class SemanticIndexBuilder:
             return self._mark_failed(source_id, graph, build_id, exc.message, [exc.diagnostic()])
         except Exception as exc:
             diagnostic = {"code": "SEMANTIC_BUILD_FAILED", "message": "Semantic index build failed.", "severity": "WARN"}
-            return self._mark_failed(source_id, graph, build_id, str(exc), [diagnostic])
+            return self._mark_failed(source_id, graph, build_id, "Semantic index build failed.", [diagnostic])
 
     def _select_source_ids(self, source_ids: Optional[Sequence[str]], *, force: bool) -> list[str]:
         explicit = sorted({str(source_id) for source_id in (source_ids or []) if str(source_id)})
@@ -659,3 +660,23 @@ def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _dedupe_diagnostics(diagnostics: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for diagnostic in diagnostics:
+        item = dict(diagnostic or {})
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+        key = (
+            str(item.get("code") or ""),
+            str(item.get("message") or ""),
+            str(item.get("severity") or ""),
+            str(item.get("sourceId") or ""),
+            json.dumps(metadata, sort_keys=True, separators=(",", ":")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
