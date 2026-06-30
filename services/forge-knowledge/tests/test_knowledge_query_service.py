@@ -1,5 +1,6 @@
 import pytest
 
+from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import (
     EvidenceBundleBuilder,
@@ -9,7 +10,10 @@ from knowledge_service.knowledge_query_service import (
     KnowledgeQueryService,
     SourceScopeResolver,
     UnifiedAnchorSearcher,
+    build_knowledge_query_service,
 )
+from knowledge_service.semantic_index import SemanticIndexStatus, SemanticIndexStore
+from semantic_test_support import seed_semantic_graph
 
 
 class FakeGraphStore:
@@ -399,3 +403,34 @@ def test_search_candidate_limit_reports_diagnostic():
     )
 
     assert any(diagnostic.code == "SEARCH_CANDIDATE_LIMIT_REACHED" for diagnostic in response.diagnostics)
+
+
+def test_query_uses_deterministic_search_when_semantic_index_failed(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_semantic_graph(db_path, source_id="source-a")
+    state = SemanticIndexStore(db_path).status_for_source("source-a")
+    SemanticIndexStore(db_path).mark_source_failed(
+        "source-a",
+        state.graph_revision,
+        state.total_node_count,
+        error="Embedding model is not available in local Ollama: embeddinggemma. Pull or configure an installed embedding model.",
+        diagnostics=[
+            {
+                "code": "SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE",
+                "message": "Embedding model is not available in local Ollama: embeddinggemma. Pull or configure an installed embedding model.",
+                "severity": "WARN",
+            }
+        ],
+    )
+    store = FakeGraphStore(candidates=[candidate(id="controller-create", sourceId="source-a", snapshotId="snap-a")])
+    store.db_path = db_path
+
+    response = build_knowledge_query_service(
+        store,
+        embedding_provider=FakeDeterministicEmbeddingProvider(model="embeddinggemma"),
+    ).query(KnowledgeQueryRequest(query="Controller create flow"))
+
+    assert SemanticIndexStore(db_path).status_for_source("source-a").status == SemanticIndexStatus.FAILED
+    assert response.status == "OK"
+    assert response.matchedNodes
+    assert any(diagnostic.code == "SEMANTIC_INDEX_FAILED" for diagnostic in response.diagnostics)

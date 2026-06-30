@@ -1,8 +1,14 @@
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KnowledgeOverviewPage, deriveKnowledgeSourceAction } from '../src/operator/knowledge-overview-page.js';
 
-function statusPayload(processed = 1, status = 'PARTIAL', analysisOverrides: Record<string, unknown> = {}) {
+function statusPayload(
+  processed = 1,
+  status = 'PARTIAL',
+  analysisOverrides: Record<string, unknown> = {},
+  sourceOverrides: Record<string, unknown> = {}
+) {
   const total = Number(analysisOverrides.inventoryFileCount ?? analysisOverrides.totalFiles ?? 10);
   const failed = Number(analysisOverrides.failedFileCount ?? 0);
   const skipped = Number(analysisOverrides.skippedTooLargeFileCount ?? 0);
@@ -27,10 +33,17 @@ function statusPayload(processed = 1, status = 'PARTIAL', analysisOverrides: Rec
           skippedTooLargeFileCount: skipped,
           pendingFileCount: pending,
           percent: total > 0 ? Math.round((processed / total) * 1000) / 10 : 0,
+          semanticPercent: 0,
           activeJobId,
           ...analysisOverrides
         },
-        facts: { symbolCount: 11, relationCount: 12 }
+        facts: { symbolCount: 11, relationCount: 12 },
+        factsProgress: {
+          completedCount: processed,
+          totalCount: total,
+          percent: total > 0 ? Math.round((processed / total) * 1000) / 10 : 0
+        },
+        ...sourceOverrides
       }
     ],
     activeJob: ['QUEUED', 'RUNNING', 'STOP_REQUESTED'].includes(status)
@@ -92,6 +105,16 @@ function clickAction(dom: JSDOM, action?: string) {
   expect(button).toBeTruthy();
   button?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   return button as HTMLButtonElement;
+}
+
+function expectCompositeProgress(track: HTMLElement, factsPercent: string, semanticOverlayPercent: string) {
+  expect(track).toBeTruthy();
+  expect(track.classList.contains('knowledge-progress-track--composite')).toBe(true);
+  expect(track.style.getPropertyValue('--facts-percent').trim()).toBe(factsPercent);
+  expect(track.style.getPropertyValue('--semantic-overlay-percent').trim()).toBe(semanticOverlayPercent);
+  expect(track.querySelector('.knowledge-progress-bar')).toBeNull();
+  expect(track.querySelector('.knowledge-semantic-overlay')).toBeNull();
+  expect(track.querySelector('.knowledge-progress-fill--semantic')).toBeNull();
 }
 
 describe('Knowledge overview modular ownership', () => {
@@ -209,6 +232,201 @@ describe('Knowledge overview modular ownership', () => {
     await page.load({ manual: true });
     expect(http.calls).toEqual(['/knowledge/overview']);
     expect(http.calls.some((path) => /analysis\/graph|analysis\/files|analysis\/diagnostics|symbols|relations|source/i.test(path))).toBe(false);
+    expect(http.calls.some((path) => /semantic\/index\/build|\/api\/v1\/knowledge|^https?:\/\//i.test(path))).toBe(false);
+  });
+
+  it('keeps the main source row counters and adds semantic progress as an overlay in the existing bar', async () => {
+    const dom = createOverviewDom();
+    const http = createHttp(() => statusPayload(4, 'PARTIAL', { semanticPercent: 36 }));
+    const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
+
+    await page.load({ manual: true });
+
+    const row = dom.window.document.querySelector('[data-source-row="ntfssox"]') as HTMLElement;
+    const track = row.querySelector('.knowledge-progress-track') as HTMLElement;
+    expect(row.querySelectorAll('.knowledge-progress-track')).toHaveLength(1);
+    expectCompositeProgress(track, '40%', '36%');
+    expect(row.textContent).toContain('PARTIAL');
+    expect(row.textContent).toContain('4 / 10');
+    expect(row.textContent).toContain('40%');
+    expect(row.textContent).toContain('pending 6');
+    expect(row.textContent).toContain('failed 0');
+    expect(row.textContent).not.toContain('Facts Partial');
+    expect(row.textContent).not.toContain('Semantic Building');
+    expect(row.querySelector('.knowledge-progress-warning')).toBeNull();
+    page.dispose();
+  });
+
+  it('renders backend analysis percent and backend semantic percent as separate widths', async () => {
+    const scenarios = [
+      { factsPercent: 10, semanticPercent: 0, expectedWidth: '0%' },
+      { factsPercent: 10, semanticPercent: 3, expectedWidth: '3%' },
+      { factsPercent: 10, semanticPercent: 10, expectedWidth: '10%' },
+      { factsPercent: 50, semanticPercent: 5, expectedWidth: '5%' },
+      { factsPercent: 50, semanticPercent: 25, expectedWidth: '25%' },
+      { factsPercent: 70, semanticPercent: 30, expectedWidth: '30%' },
+      { factsPercent: 80, semanticPercent: 20, expectedWidth: '20%' },
+      { factsPercent: 90, semanticPercent: 9, expectedWidth: '9%' },
+      { factsPercent: 32.7, semanticPercent: 32.7, expectedWidth: '32.7%' },
+      { factsPercent: 90, semanticPercent: 90, expectedWidth: '90%' }
+    ];
+
+    for (const scenario of scenarios) {
+      const dom = createOverviewDom();
+      const http = createHttp(() => statusPayload(3, scenario.factsPercent >= 100 ? 'COMPLETED' : 'PARTIAL', {
+        inventoryFileCount: 100,
+        percent: scenario.factsPercent,
+        semanticPercent: scenario.semanticPercent
+      }));
+      const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
+
+      await page.load({ manual: true });
+
+      const track = dom.window.document.querySelector('.knowledge-progress-track') as HTMLElement;
+      expectCompositeProgress(track, `${scenario.factsPercent}%`, scenario.expectedWidth);
+      expect(Number.parseFloat(track.style.getPropertyValue('--semantic-overlay-percent'))).toBeLessThanOrEqual(
+        Number.parseFloat(track.style.getPropertyValue('--facts-percent'))
+      );
+      if (scenario.semanticPercent !== scenario.factsPercent) {
+        expect(track.style.getPropertyValue('--semantic-overlay-percent')).not.toBe(track.style.getPropertyValue('--facts-percent'));
+      }
+      page.dispose();
+    }
+  });
+
+  it('does not require a semanticIndex object to render green progress', async () => {
+    const dom = createOverviewDom();
+    const http = createHttp(() => statusPayload(5, 'PARTIAL', {
+      inventoryFileCount: 100,
+      percent: 50,
+      semanticPercent: 25
+    }));
+    const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
+
+    await page.load({ manual: true });
+
+    const track = dom.window.document.querySelector('.knowledge-progress-track') as HTMLElement;
+    expectCompositeProgress(track, '50%', '25%');
+    expect((page.lastGoodStatus?.services?.[0] as Record<string, unknown>).semanticIndex).toBeUndefined();
+    page.dispose();
+  });
+
+  it('keeps green semantic overlay visible during active analysis when backend reports indexed facts', async () => {
+    const dom = createOverviewDom();
+    const http = createHttp(() => statusPayload(2, 'RUNNING', { inventoryFileCount: 100, percent: 20, semanticPercent: 5 }));
+    const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
+
+    await page.load({ manual: true });
+
+    const row = dom.window.document.querySelector('[data-source-row="ntfssox"]') as HTMLElement;
+    const track = row.querySelector('.knowledge-progress-track') as HTMLElement;
+    expect(row.textContent).toContain('RUNNING');
+    expectCompositeProgress(track, '20%', '5%');
+    page.dispose();
+  });
+
+  it('clamps green semantic overlay width to the blue facts progress width', async () => {
+    const dom = createOverviewDom();
+    const http = createHttp(() => statusPayload(3, 'PARTIAL', { semanticPercent: 90 }));
+    const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
+
+    await page.load({ manual: true });
+
+    const track = dom.window.document.querySelector('.knowledge-progress-track') as HTMLElement;
+    expectCompositeProgress(track, '30%', '30%');
+    page.dispose();
+  });
+
+  it('renders semantic progress as one overwrite gradient instead of a thin stripe', () => {
+    const css = readFileSync('src/operator/operator-ui.css', 'utf8');
+    const trackRule = css.match(/\.knowledge-progress-track\s*\{(?<body>[^}]+)\}/)?.groups?.body || '';
+    const compositeRule = css.match(/\.knowledge-progress-track--composite\s*\{(?<body>[\s\S]*?)\n\}/)?.groups?.body || '';
+
+    expect(css).not.toMatch(/\.knowledge-progress-track > span\s*\{/);
+    expect(css).not.toMatch(/\.knowledge-progress-fill--semantic/);
+    expect(css).not.toMatch(/knowledge-semantic-overlay/);
+    expect(css).not.toMatch(/(^|\n)\s*height:\s*3px/);
+    expect(css).not.toMatch(/(^|\n)\s*bottom:\s*1px/);
+    expect(trackRule).toContain('position: relative');
+    expect(trackRule).toContain('height: 8px');
+    expect(compositeRule).toContain('linear-gradient');
+    expect(compositeRule).toContain('to right');
+    expect(compositeRule).toContain('rgba(34, 197, 94');
+    expect(compositeRule).toContain('var(--semantic-overlay-percent)');
+    expect(compositeRule).toContain('rgba(44, 123, 229');
+    expect(compositeRule).toContain('var(--facts-percent)');
+  });
+
+  it('keeps semantic overlay safe when semantic percent is missing or zero', async () => {
+    const missingDom = createOverviewDom();
+    const missingHttp = createHttp(() => statusPayload(5, 'PARTIAL'));
+    const missingPage = new KnowledgeOverviewPage({ document: missingDom.window.document, window: missingDom.window, http: missingHttp });
+
+    await missingPage.load({ manual: true });
+
+    const missingTrack = missingDom.window.document.querySelector('.knowledge-progress-track') as HTMLElement;
+    expectCompositeProgress(missingTrack, '50%', '0%');
+    missingPage.dispose();
+
+    const zeroDom = createOverviewDom();
+    const zeroHttp = createHttp(() => statusPayload(5, 'PARTIAL', { semanticPercent: 0 }));
+    const zeroPage = new KnowledgeOverviewPage({ document: zeroDom.window.document, window: zeroDom.window, http: zeroHttp });
+
+    await zeroPage.load({ manual: true });
+
+    const zeroTrack = zeroDom.window.document.querySelector('.knowledge-progress-track') as HTMLElement;
+    expectCompositeProgress(zeroTrack, '50%', '0%');
+    zeroPage.dispose();
+  });
+
+  it('does not render raw semantic details from stale payloads', async () => {
+    const dom = createOverviewDom();
+    const http = createHttp(() => statusPayload(10, 'COMPLETED', {}, {
+      semanticIndex: {
+        status: 'FAILED',
+        totalNodeCount: 10,
+        indexedNodeCount: 0,
+        progressPercent: 0,
+        totalFactCount: 10,
+        indexedFactCount: 0,
+        percentOfFacts: 0,
+        overlayPercent: 0,
+        lastError: 'Traceback /home/example/forge-ai/provider.py Semantic embedding provider returned HTTP 404.'
+      }
+    }));
+    const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
+
+    await page.load({ manual: true });
+
+    const row = dom.window.document.querySelector('[data-source-row="ntfssox"]') as HTMLElement;
+    const text = row.textContent || '';
+    expect(text).toContain('COMPLETED');
+    expect(text).toContain('pending 0');
+    expect(text).toContain('failed 0');
+    expect(text).not.toContain('Semantic Failed');
+    expect(text).not.toContain('Traceback');
+    expect(text).not.toContain('/home/example');
+    expect(text).not.toContain('Semantic search indexing failed');
+    expect(row.querySelector('.knowledge-progress-warning')).toBeNull();
+    expect(row.querySelector('pre')).toBeNull();
+    page.dispose();
+  });
+
+  it('does not expose manual semantic build controls or call the semantic build endpoint', async () => {
+    const dom = createOverviewDom();
+    const http = createHttp(() => statusPayload(10, 'COMPLETED', { semanticPercent: 0 }));
+    const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
+
+    page.mount();
+    await page.currentPromise;
+    await flushAsync();
+
+    const buttonText = Array.from(dom.window.document.querySelectorAll('button')).map((button) => button.textContent || '').join(' ');
+    expect(buttonText).not.toMatch(/\b(Rebuild|Build) semantic\b/i);
+    expect(dom.window.document.querySelector('[data-knowledge-action*="semantic"]')).toBeNull();
+    expect(http.post).not.toHaveBeenCalled();
+    expect(http.calls.some((path) => /semantic\/index\/build|\/api\/v1\/knowledge|^https?:\/\//i.test(path))).toBe(false);
+    page.dispose();
   });
 
   it('UI-KNOW-REG-05 sends one final analysis build POST for Analyze', async () => {

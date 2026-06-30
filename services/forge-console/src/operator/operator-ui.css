@@ -2105,6 +2105,9 @@ body.sidebar-collapsed .sidebar-link {
 }
 
 .knowledge-progress-track {
+  --facts-percent: 0%;
+  --semantic-overlay-percent: 0%;
+  position: relative;
   height: 8px;
   margin: 6px 0;
   overflow: hidden;
@@ -2112,11 +2115,47 @@ body.sidebar-collapsed .sidebar-link {
   background: rgba(27, 36, 31, 0.12);
 }
 
-.knowledge-progress-track span {
+.knowledge-progress-track--composite {
+  background:
+    linear-gradient(
+      to right,
+      rgba(34, 197, 94, 0.86) 0%,
+      rgba(34, 197, 94, 0.86) var(--semantic-overlay-percent),
+      rgba(44, 123, 229, 0.82) var(--semantic-overlay-percent),
+      rgba(44, 123, 229, 0.82) var(--facts-percent),
+      rgba(27, 36, 31, 0.12) var(--facts-percent),
+      rgba(27, 36, 31, 0.12) 100%
+    );
+}
+
+.knowledge-progress-fill {
+  position: absolute;
+  left: 0;
   display: block;
-  height: 100%;
   border-radius: inherit;
+  pointer-events: none;
+}
+
+.knowledge-progress-fill--facts {
+  top: 0;
+  z-index: 0;
+  height: 100%;
   background: rgba(44, 123, 229, 0.82);
+}
+
+.knowledge-semantic-state.failed {
+  color: #92400e;
+  font-weight: 800;
+}
+
+.knowledge-semantic-state.ready {
+  color: #166534;
+  font-weight: 800;
+}
+
+.knowledge-semantic-state.building {
+  color: #1d4ed8;
+  font-weight: 800;
 }
 
 .knowledge-current-file {

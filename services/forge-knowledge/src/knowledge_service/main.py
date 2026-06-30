@@ -34,6 +34,7 @@ from knowledge_service.observability import (
 from knowledge_service.overview_projection import read_overview
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_schema import SemanticIndexBuildRequest, SemanticIndexBuildResponse
+from knowledge_service.semantic_worker import SemanticBuildCoordinator, SemanticIndexBackgroundWorker
 from knowledge_service.embedding_provider import OllamaEmbeddingProvider
 from knowledge_service.service_catalog_provider import ServiceYamlCatalogProvider
 from knowledge_service.source_config import load_source_config
@@ -57,11 +58,15 @@ def create_app(
         app.state.forge_settings = forge_settings
         app.state.app_config = app_config
         app.state.knowledge_dependencies = deps
+        app.state.semantic_build_coordinator = _semantic_build_coordinator(app, app_config, deps.inventory_store.db_path)
+        app.state.semantic_worker = _semantic_background_worker(app, app_config, deps.inventory_store.db_path)
         await deps.analysis_supervisor.start_lifespan()
         await deps.inventory_scheduler.start()
+        app.state.semantic_worker.start()
         try:
             yield
         finally:
+            app.state.semantic_worker.stop(app_config.analysis_shutdown_grace_seconds)
             await deps.inventory_scheduler.stop()
             await deps.analysis_supervisor.shutdown()
 
@@ -150,6 +155,7 @@ def create_app(
                 "completedAt": analysis.get("lastCompletedAt"),
             },
             "freshness": freshness,
+            "semantic": _semantic_status(request.app, config),
         }
         if source_config is None:
             base["catalog"] = {"configured": False}
@@ -230,7 +236,8 @@ def create_app(
     @app.post("/api/v1/knowledge/semantic/index/build", response_model=SemanticIndexBuildResponse)
     async def semantic_index_build(request: Request, body: SemanticIndexBuildRequest) -> SemanticIndexBuildResponse:
         config, deps = _state(request)
-        jobs, lock = _semantic_job_state(request.app)
+        jobs, _ = _semantic_job_state(request.app)
+        coordinator = _semantic_build_coordinator(request.app, config, deps.inventory_store.db_path)
         job_id = f"semantic-build-{uuid.uuid4()}"
         if not config.semantic_enabled:
             response = {
@@ -242,7 +249,7 @@ def create_app(
             }
             jobs[job_id] = response
             return SemanticIndexBuildResponse(**response)
-        if not lock.acquire(blocking=False):
+        if not coordinator.acquire(blocking=False):
             response = {
                 "jobId": job_id,
                 "status": "RUNNING",
@@ -258,18 +265,18 @@ def create_app(
         if body.async_:
             thread = threading.Thread(
                 target=_run_semantic_build_job,
-                args=(jobs, lock, job_id, config, deps.inventory_store.db_path, body.sourceIds, body.force),
+                args=(jobs, coordinator, job_id, body.sourceIds, body.force),
                 name="knowledge-semantic-index-build",
                 daemon=True,
             )
             thread.start()
             return SemanticIndexBuildResponse(**jobs[job_id])
         try:
-            result = _semantic_index_builder(config, deps.inventory_store.db_path).build(body.sourceIds, force=body.force, build_id=job_id).to_dict()
+            result = coordinator.build_locked(body.sourceIds, force=body.force, build_id=job_id).to_dict()
             jobs[job_id] = result
             return SemanticIndexBuildResponse(**result)
         finally:
-            lock.release()
+            coordinator.release()
 
     @app.get("/api/v1/knowledge/semantic/index/jobs/{job_id}", response_model=SemanticIndexBuildResponse)
     async def semantic_index_job(request: Request, job_id: str) -> SemanticIndexBuildResponse:
@@ -666,10 +673,40 @@ def _semantic_index_builder(config: AppConfig, db_path) -> SemanticIndexBuilder:
     )
 
 
-def _run_semantic_build_job(jobs, lock: threading.Lock, job_id: str, config: AppConfig, db_path, source_ids, force: bool) -> None:
+def _semantic_build_coordinator(app: FastAPI, config: AppConfig, db_path) -> SemanticBuildCoordinator:
+    existing = getattr(app.state, "semantic_build_coordinator", None)
+    if isinstance(existing, SemanticBuildCoordinator) and existing.db_path == db_path:
+        return existing
+    _, lock = _semantic_job_state(app)
+    factory = getattr(app.state, "semantic_builder_factory", None)
+    if factory is None:
+        factory = lambda: _semantic_index_builder(config, db_path)
+    coordinator = SemanticBuildCoordinator(db_path, lock, factory)
+    app.state.semantic_build_coordinator = coordinator
+    return coordinator
+
+
+def _semantic_background_worker(app: FastAPI, config: AppConfig, db_path) -> SemanticIndexBackgroundWorker:
+    existing = getattr(app.state, "semantic_worker", None)
+    if isinstance(existing, SemanticIndexBackgroundWorker) and existing.db_path == db_path:
+        return existing
+    coordinator = _semantic_build_coordinator(app, config, db_path)
+    worker = SemanticIndexBackgroundWorker(
+        db_path,
+        coordinator,
+        enabled=config.semantic_enabled and config.semantic_auto_build_enabled,
+        interval_seconds=config.semantic_auto_build_interval_seconds,
+        failed_retry_backoff_seconds=config.semantic_failed_retry_backoff_seconds,
+        building_stale_after_seconds=config.semantic_building_stale_after_seconds,
+    )
+    app.state.semantic_worker = worker
+    return worker
+
+
+def _run_semantic_build_job(jobs, coordinator: SemanticBuildCoordinator, job_id: str, source_ids, force: bool) -> None:
     try:
         jobs[job_id] = {**jobs[job_id], "status": "RUNNING"}
-        result = _semantic_index_builder(config, db_path).build(source_ids, force=force, build_id=job_id).to_dict()
+        result = coordinator.build_locked(source_ids, force=force, build_id=job_id).to_dict()
         jobs[job_id] = result
     except Exception:
         jobs[job_id] = {
@@ -680,7 +717,20 @@ def _run_semantic_build_job(jobs, lock: threading.Lock, job_id: str, config: App
             "results": [],
         }
     finally:
-        lock.release()
+        coordinator.release()
+
+
+def _semantic_status(app: FastAPI, config: AppConfig) -> Dict[str, Any]:
+    worker = getattr(app.state, "semantic_worker", None)
+    worker_status = worker.status() if isinstance(worker, SemanticIndexBackgroundWorker) else {}
+    return {
+        "enabled": config.semantic_enabled,
+        "autoBuildEnabled": config.semantic_auto_build_enabled,
+        "autoWorkerConfigured": isinstance(worker, SemanticIndexBackgroundWorker),
+        "autoWorkerRunning": bool(worker_status.get("running")),
+        "embeddingModel": config.semantic_embedding_model,
+        "worker": worker_status,
+    }
 
 
 def _unknown_freshness() -> Dict[str, Any]:

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from knowledge_service.observability import observed_connect
-from knowledge_service.semantic_index import SemanticIndexStore
+from knowledge_service.semantic_index import SEMANTIC_BUILDER_VERSION, SemanticIndexStore
 
 
 def ensure_overview_schema(conn: sqlite3.Connection) -> None:
@@ -91,10 +91,10 @@ def read_overview(db_path: Path) -> Dict[str, Any]:
             ORDER BY source_id
             """
         ).fetchall()
-        semantic_statuses = SemanticIndexStore.statuses_for_sources_conn(conn, [row["source_id"] for row in rows])
+        semantic_percents = {row["source_id"]: _semantic_percent_for_overview_conn(conn, row) for row in rows}
     max_version = max((int(row["version"] or 0) for row in rows), default=0)
     updated_at = max((row["updated_at"] for row in rows if row["updated_at"]), default=None)
-    sources = [_overview_source(row, semantic_statuses.get(row["source_id"])) for row in rows]
+    sources = [_overview_source(row, semantic_percents.get(row["source_id"], 0.0)) for row in rows]
     active = next((source["activeJob"] for source in sources if source["activeJob"] is not None), None)
     return {
         "version": max_version,
@@ -259,7 +259,7 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
 
 
-def _overview_source(row: sqlite3.Row, semantic_index: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _overview_source(row: sqlite3.Row, semantic_percent: float = 0.0) -> Dict[str, Any]:
     active_job = None
     if row["active_job_id"]:
         active_job = {
@@ -272,6 +272,7 @@ def _overview_source(row: sqlite3.Row, semantic_index: Optional[Dict[str, Any]] 
             "failedFileCount": row["active_job_failed_files"],
             "currentRelativePath": row["active_job_current_relative_path"],
         }
+    facts_progress = _facts_progress_for_overview(row)
     return {
         "sourceId": row["source_id"],
         "displayName": row["display_name"],
@@ -282,6 +283,7 @@ def _overview_source(row: sqlite3.Row, semantic_index: Optional[Dict[str, Any]] 
             "fileCount": row["inventory_file_count"],
             "skippedCount": row["skipped_file_count"],
         },
+        "factsProgress": facts_progress,
         "analysis": {
             "status": row["analysis_state"],
             "totalFiles": row["analysis_total_files"],
@@ -292,6 +294,7 @@ def _overview_source(row: sqlite3.Row, semantic_index: Optional[Dict[str, Any]] 
             "skippedFiles": row["analysis_skipped_files"],
             "pendingFiles": row["analysis_pending_files"],
             "percent": row["completion_percent"],
+            "semanticPercent": _clamp_percent(semantic_percent),
             "activeJobId": row["active_job_id"],
             "activeJobMode": row["active_job_mode"],
             "activeJobSelectedFileCount": row["active_job_total_files"],
@@ -299,25 +302,85 @@ def _overview_source(row: sqlite3.Row, semantic_index: Optional[Dict[str, Any]] 
             "activeJobFailedFileCount": row["active_job_failed_files"],
             "activeJobCurrentRelativePath": row["active_job_current_relative_path"],
         },
-        "semanticIndex": semantic_index
-        or {
-            "status": "MISSING",
-            "graphRevision": None,
-            "builderVersion": 1,
-            "totalNodeCount": 0,
-            "indexedNodeCount": 0,
-            "progressPercent": 0.0,
-            "ready": False,
-            "stale": False,
-            "embeddingModel": None,
-            "embeddingDimension": None,
-            "updatedAt": None,
-            "startedAt": None,
-            "completedAt": None,
-            "lastBuildId": None,
-            "lastError": None,
-        },
         "activeJob": active_job,
         "updatedAt": row["updated_at"],
         "version": row["version"],
     }
+
+
+def _facts_progress_for_overview(row: sqlite3.Row) -> Dict[str, Any]:
+    total = _int_value(row, "analysis_total_files")
+    completed = _int_value(row, "analysis_processed_files")
+    percent = _clamp_percent(float(row["completion_percent"] or 0.0))
+    return {
+        "completedCount": completed,
+        "totalCount": total,
+        "percent": percent,
+    }
+
+
+def _semantic_percent_for_overview_conn(conn: sqlite3.Connection, row: sqlite3.Row) -> float:
+    source_id = row["source_id"]
+    total = _int_value(row, "analysis_total_files")
+    processed = _int_value(row, "analysis_processed_files")
+    if total <= 0 or processed <= 0:
+        return 0.0
+    if not all(_table_exists(conn, table) for table in ("analysis_graph_nodes", "semantic_documents", "semantic_vectors")):
+        return 0.0
+    graph = SemanticIndexStore.current_graph_info_conn(conn, source_id)
+    if not graph.snapshot_id or not graph.graph_revision:
+        return 0.0
+    state = SemanticIndexStore.get_state_conn(conn, source_id)
+    builder_version = int(state["builder_version"] or SEMANTIC_BUILDER_VERSION) if state is not None else SEMANTIC_BUILDER_VERSION
+    embedding_model = state["embedding_model"] if state is not None else None
+    model_clause = "AND v.embedding_model = ?" if embedding_model else ""
+    params: list[Any] = [
+        graph.graph_revision,
+        builder_version,
+    ]
+    if embedding_model:
+        params.append(embedding_model)
+    params.extend([source_id, graph.snapshot_id])
+    result = conn.execute(
+        f"""
+        SELECT COUNT(DISTINCT COALESCE(n.analysis_file_id, n.inventory_file_id)) AS count
+        FROM analysis_graph_nodes n
+        JOIN semantic_documents d
+          ON d.source_id = n.source_id
+         AND d.node_id = n.id
+         AND d.graph_revision = ?
+         AND d.builder_version = ?
+         AND d.status = 'READY'
+        JOIN semantic_vectors v
+          ON v.document_id = d.document_id
+         AND v.source_id = d.source_id
+         AND v.node_id = d.node_id
+         AND v.graph_revision = d.graph_revision
+         {model_clause}
+        WHERE n.source_id = ?
+          AND n.snapshot_id = ?
+          AND n.status IN ('TRUSTED', 'DERIVED')
+          AND n.node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
+          AND COALESCE(n.analysis_file_id, n.inventory_file_id) IS NOT NULL
+        """,
+        params,
+    ).fetchone()
+    indexed_files = int(result["count"] or 0) if result is not None else 0
+    indexed_files = max(0, min(indexed_files, processed, total))
+    return round((indexed_files / total) * 100.0, 1)
+
+
+def _clamp_percent(value: float) -> float:
+    return max(0.0, min(100.0, round(float(value or 0.0), 3)))
+
+
+def _first_numeric(values: Dict[str, Any], *keys: str) -> float:
+    for key in keys:
+        value = values.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
