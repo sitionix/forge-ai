@@ -34,7 +34,7 @@ class StructuralAnalysisEngine:
 
     def parse(self, row: Dict[str, Any], lines: List[str]) -> StructuralParseResult:
         language = self._language(row)
-        flow_domain = self.flow_domain(row["relative_path"])
+        flow_domain = self._flow_domain(row)
         metadata = StructuralFileMetadata(
             source_id=row["source_id"],
             inventory_file_id=int(row["id"]),
@@ -74,8 +74,10 @@ class StructuralAnalysisEngine:
             )
 
     def _language(self, row: Dict[str, Any]) -> str:
+        configured = str(row.get("language") or "").strip().lower()
+        if configured and configured != "unknown":
+            return configured
         extension = str(row["extension"] or "").lower()
-        path = str(row["relative_path"] or "").lower()
         if extension == ".java":
             return "java"
         if extension in {".yml", ".yaml"}:
@@ -86,26 +88,24 @@ class StructuralAnalysisEngine:
             return "json"
         if extension in {".md", ".adoc"}:
             return "markdown"
-        if path.endswith("pom.xml"):
-            return "xml"
         return extension.lstrip(".") or "unknown"
+
+    def _flow_domain(self, row: Dict[str, Any]) -> str:
+        configured = str(row.get("flow_domain") or "").strip().upper()
+        if configured and configured != "UNKNOWN":
+            return configured
+        return self.flow_domain(row["relative_path"])
 
     def flow_domain(self, relative_path: str) -> str:
         path = str(relative_path or "").lower()
         if "/test/" in f"/{path}" or path.startswith("test/") or path.endswith("test.java"):
             return "TEST"
         if path.endswith((".yaml", ".yml", ".properties", ".toml", ".ini")):
-            if "workflow" in path or "/.github/" in f"/{path}":
-                return "WORKFLOW"
             return "CONFIG"
         if path.endswith((".md", ".adoc", ".txt")):
             return "DOC"
         if path.endswith((".json", ".csv", ".xml")):
-            if "pom.xml" in path or "build.gradle" in path:
-                return "BUILD"
             return "DATA"
-        if "pom.xml" in path or "build.gradle" in path:
-            return "BUILD"
         return "CODE"
 
 

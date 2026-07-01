@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -23,6 +23,10 @@ from knowledge_service.snippet_extractor import SnippetExtractor
 from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer, StructuralAnalysisEngine
 
 
+GENERIC_CONFIG_ANALYSIS_MODE = "GENERIC_TEXT_CONFIG_ENRICHMENT"
+GENERIC_TEXT_ENRICHMENT_FLOW_DOMAINS = {"WORKFLOW", "CONFIG", "BUILD"}
+
+
 class AnalysisProvider(Protocol):
     name: str
     version: str
@@ -36,11 +40,6 @@ class AnalysisProvider(Protocol):
 
 
 class AnalysisSupervisor:
-    REPAIR_PROMPT = (
-        "Your previous response was invalid JSON or did not match the schema. "
-        "Return the same analysis as one valid JSON object matching the schema. "
-        "No markdown. No prose."
-    )
     RETRYABLE_AI_CODES = {
         "ANALYSIS_AI_BAD_RESPONSE",
         "ANALYSIS_AI_INVALID_JSON",
@@ -142,7 +141,7 @@ class AnalysisSupervisor:
             if selected_rows is None:
                 self.analysis_store.create_job(job)
             else:
-                flow_domain_by_file_id = {int(row["id"]): self.structural_engine.flow_domain(row["relative_path"]) for row in selected_rows}
+                flow_domain_by_file_id = {int(row["id"]): self._row_flow_domain(row) for row in selected_rows}
                 self.analysis_store.create_job_with_pending_files(
                     job,
                     selected_rows,
@@ -292,7 +291,7 @@ class AnalysisSupervisor:
             rows = [row for row in rows if row["id"] not in unchanged_ids]
         if request.maxFiles is not None:
             rows = rows[: max(0, request.maxFiles)]
-        flow_domain_by_file_id = {int(row["id"]): self.structural_engine.flow_domain(row["relative_path"]) for row in rows}
+        flow_domain_by_file_id = {int(row["id"]): self._row_flow_domain(row) for row in rows}
         if not job_files_precreated:
             self.analysis_store.create_job_files(job_id, rows, flow_domain_by_file_id, GRAPH_ENGINE_VERSION)
         if self._stop_requested(job_id):
@@ -331,7 +330,7 @@ class AnalysisSupervisor:
                         int(row["id"]),
                         "SKIPPED_UNCHANGED",
                         analysis_file_id=int(row["id"]),
-                        flow_domain=flow_domain_by_file_id.get(int(row["id"]), self.structural_engine.flow_domain(row["relative_path"])),
+                        flow_domain=flow_domain_by_file_id.get(int(row["id"]), self._row_flow_domain(row)),
                         engine_version=GRAPH_ENGINE_VERSION,
                         completed=True,
                     )
@@ -361,7 +360,7 @@ class AnalysisSupervisor:
                     },
                 )
                 self._log("file_started", jobId=job_id, sourceId=row["source_id"], relativePath=row["relative_path"], processed=processed, failed=failed)
-                flow_domain = flow_domain_by_file_id.get(int(row["id"]), self.structural_engine.flow_domain(row["relative_path"]))
+                flow_domain = flow_domain_by_file_id.get(int(row["id"]), self._row_flow_domain(row))
                 self.analysis_store.update_job_file(
                     job_id,
                     int(row["id"]),
@@ -422,7 +421,8 @@ class AnalysisSupervisor:
                         "last_error_message": None,
                         "last_raw_response_preview": None,
                     }
-                    skip_llm_reason = self._skip_llm_enrichment_reason(structural_result, row_data)
+                    generic_config_eligible = self._is_generic_config_enrichment_eligible(structural_result, row_data, content)
+                    skip_llm_reason = self._skip_llm_enrichment_reason(structural_result, row_data, content, generic_config_eligible)
                     if len(content) > self.config.analysis_max_file_chars:
                         retry_diagnostics.append(
                             {
@@ -438,11 +438,32 @@ class AnalysisSupervisor:
                         try:
                             result, retry_diagnostics, attempt_state = await self._analyze_with_retry(
                                 analyzer,
-                                self._payload(row_data, metadata, content, structural_result, static_graph),
+                                self._payload(
+                                    row_data,
+                                    metadata,
+                                    content,
+                                    structural_result,
+                                    static_graph,
+                                    generic_config_eligible=generic_config_eligible,
+                                    lines=lines,
+                                ),
                                 len(lines),
                             )
                             enrichment_result = self._graph_result(result)
+                            if generic_config_eligible:
+                                retry_diagnostics.append(
+                                    {
+                                        "code": "ANALYSIS_AI_GENERIC_CONFIG_ENRICHED",
+                                        "message": "Generic text/config LLM enrichment completed for parser-unsupported file.",
+                                        "sourceId": row["source_id"],
+                                        "relativePath": row["relative_path"],
+                                        "stage": "LLM_ENRICHMENT",
+                                        "severity": "INFO",
+                                    }
+                                )
                         except Exception as exc:
+                            if generic_config_eligible:
+                                raise exc
                             attempt_state = self._attempt_state(exc)
                             diag = self._diagnostic(row, exc, getattr(exc, "details", {}).get("attempt"))
                             diag["message"] = f"{diag['message']}; static parser facts were stored."
@@ -615,8 +636,18 @@ class AnalysisSupervisor:
             errorCode="ANALYSIS_JOB_STOPPED",
         )
 
-    def _payload(self, row, metadata: Dict[str, Any], content: str, structural_result, static_graph: GraphAnalysisResult) -> Dict[str, Any]:
-        return {
+    def _payload(
+        self,
+        row,
+        metadata: Dict[str, Any],
+        content: str,
+        structural_result,
+        static_graph: GraphAnalysisResult,
+        *,
+        generic_config_eligible: bool = False,
+        lines: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        payload = {
             "sourceId": row["source_id"],
             "serviceLabel": row["display_name"],
             "group": row["group_name"],
@@ -630,30 +661,106 @@ class AnalysisSupervisor:
             "flowDomain": structural_result.file.flow_domain,
             "metadata": {k: v for k, v in metadata.items() if k != "absoluteRoot"},
             "staticAnchors": self._static_anchor_payload(static_graph),
-            "content": content,
         }
+        if generic_config_eligible:
+            file_anchor = next((node for node in static_graph.nodes if node.nodeKind == "FILE"), None)
+            payload.update(
+                {
+                    "analysisMode": GENERIC_CONFIG_ANALYSIS_MODE,
+                    "fileType": self._generic_config_file_type(row, structural_result),
+                    "genericConfigEnrichment": {
+                        "anchorStableKey": file_anchor.localId if file_anchor else structural_result.file_stable_key,
+                        "requiredClaimKind": "RESPONSIBILITY",
+                        "requiredFactOrigin": "LLM",
+                        "requiredEvidence": "Use one or more exact source line ranges from contentLines.",
+                        "outputSchemaVersion": "knowledge.graph.enrichment.v1",
+                    },
+                    "contentCharCount": len(content),
+                    "contentLines": [{"line": index, "text": line} for index, line in enumerate(lines or content.splitlines(), start=1)],
+                }
+            )
+        else:
+            payload["content"] = content
+        return payload
 
-    def _skip_llm_enrichment_reason(self, structural_result, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        unsupported = any(self._diagnostic_code(item) == "STRUCTURAL_PARSER_NOT_AVAILABLE" for item in structural_result.diagnostics or [])
-        if not unsupported:
-            return None
+    def _skip_llm_enrichment_reason(
+        self,
+        structural_result,
+        row: Dict[str, Any],
+        content: str,
+        generic_config_eligible: bool,
+    ) -> Optional[Dict[str, Any]]:
+        if not str(content or "").strip():
+            return {
+                "code": "ANALYSIS_AI_SKIPPED_EMPTY_FILE",
+                "message": "LLM enrichment skipped because the file is empty; static file facts were stored.",
+                "sourceId": row["source_id"],
+                "relativePath": row["relative_path"],
+                "stage": "LLM_ENRICHMENT",
+                "severity": "INFO",
+            }
+        if self._structural_parser_unavailable(structural_result) and not generic_config_eligible:
+            flow_domain = str(row.get("flow_domain") or "").strip().upper() or "UNKNOWN"
+            return {
+                "code": "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE",
+                "message": (
+                    "LLM enrichment skipped because the structural parser is unavailable and "
+                    f"file category '{flow_domain}' is not eligible for generic text/config enrichment; LLM was not called."
+                ),
+                "sourceId": row["source_id"],
+                "relativePath": row["relative_path"],
+                "stage": "LLM_ENRICHMENT",
+                "severity": "WARN",
+                "flowDomain": flow_domain,
+            }
+        return None
+
+    def _is_generic_config_enrichment_eligible(self, structural_result, row: Dict[str, Any], content: str) -> bool:
+        if not self._structural_parser_unavailable(structural_result):
+            return False
+        if not str(content or "").strip():
+            return False
+        if len(content) > self.config.analysis_max_file_chars:
+            return False
+        decode_policy = str(row.get("decode_policy") or structural_result.file.decode_policy or "")
+        if decode_policy and decode_policy != "utf-8:replace":
+            return False
+        flow_domain = str(row.get("flow_domain") or "").strip().upper()
+        if not flow_domain or flow_domain == "UNKNOWN":
+            return False
+        return flow_domain in GENERIC_TEXT_ENRICHMENT_FLOW_DOMAINS
+
+    def _structural_parser_unavailable(self, structural_result) -> bool:
+        return any(self._diagnostic_code(item) == "STRUCTURAL_PARSER_NOT_AVAILABLE" for item in structural_result.diagnostics or [])
+
+    def _generic_config_file_type(self, row: Dict[str, Any], structural_result) -> str:
         extension = str(row.get("extension") or "").lower()
         flow_domain = str(structural_result.file.flow_domain or "").upper()
-        if extension not in {".yml", ".yaml", ".json", ".toml", ".properties", ".env"} and flow_domain not in {"WORKFLOW", "CONFIG", "BUILD"}:
-            return None
-        return {
-            "code": "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE",
-            "message": "LLM enrichment skipped for unsupported structured/config file; static file facts were stored.",
-            "sourceId": row["source_id"],
-            "relativePath": row["relative_path"],
-            "stage": "LLM_ENRICHMENT",
-            "severity": "WARN",
-        }
+        language = str(structural_result.file.language or row.get("language") or "").lower()
+        format_label = language or extension.lstrip(".") or "text"
+        domain_label = flow_domain.lower() if flow_domain else "unknown"
+        return f"{domain_label}-{format_label}"
 
     def _diagnostic_code(self, diagnostic: Any) -> Optional[str]:
         if isinstance(diagnostic, dict):
             return diagnostic.get("code")
         return getattr(diagnostic, "code", None)
+
+    def _row_flow_domain(self, row: Any) -> str:
+        configured = str(self._row_value(row, "flow_domain") or "").strip().upper()
+        if configured and configured != "UNKNOWN":
+            return configured
+        return self.structural_engine.flow_domain(row["relative_path"])
+
+    def _row_value(self, row: Any, key: str) -> Any:
+        if isinstance(row, dict):
+            return row.get(key)
+        try:
+            if key in row.keys():
+                return row[key]
+        except AttributeError:
+            return None
+        return None
 
     async def _analyze_with_retry(self, analyzer: AnalysisProvider, payload: Dict[str, Any], line_count: int):
         attempts = max(1, self.config.analysis_max_attempts_per_file)
@@ -668,21 +775,25 @@ class AnalysisSupervisor:
                 and last_error.code in {"ANALYSIS_AI_INVALID_JSON", "ANALYSIS_AI_SCHEMA_INVALID", "ANALYSIS_AI_EMPTY_RESPONSE", "ANALYSIS_AI_BAD_RESPONSE"}
                 and repair_used < repair_attempts
             ):
-                repair_prompt = self.REPAIR_PROMPT
+                repair_prompt = self._repair_prompt(payload, last_error, attempt, attempts)
                 repair_used += 1
             try:
                 pending = analyzer.analyze(payload, line_count, repair_prompt)
                 result = await pending if inspect.isawaitable(pending) else pending
                 if attempt > 1:
-                    diagnostics.append(
-                        {
-                            "code": "ANALYSIS_AI_RETRY_SUCCEEDED",
-                            "message": f"AI analysis succeeded after {attempt} attempts.",
-                            "sourceId": payload.get("sourceId"),
-                            "relativePath": payload.get("relativePath"),
-                            "attempts": attempt,
+                    retry_success = {
+                        "code": "ANALYSIS_AI_RETRY_SUCCEEDED",
+                        "message": f"AI analysis succeeded after {attempt} attempts.",
+                        "sourceId": payload.get("sourceId"),
+                        "relativePath": payload.get("relativePath"),
+                        "attempts": attempt,
+                    }
+                    if last_error is not None:
+                        retry_success["metadata"] = {
+                            "previousErrorSummary": self._error_summary(last_error),
+                            "previousErrorDetails": self._bounded_error_details(self._error_details(last_error))[:5],
                         }
-                    )
+                    diagnostics.append(retry_success)
                 return (
                     result,
                     diagnostics,
@@ -699,23 +810,168 @@ class AnalysisSupervisor:
                 exc.details.setdefault("last_attempt_at", self._now())
                 if exc.details.get("raw_preview") is not None:
                     exc.details["raw_preview"] = self._raw_preview(exc.details.get("raw_preview"))
+                if exc.details.get("error_details") is not None:
+                    exc.details["error_details"] = self._bounded_error_details(self._error_details(exc))
                 last_error = exc
                 if exc.code not in self.RETRYABLE_AI_CODES or attempt >= attempts:
                     if attempt >= attempts and exc.code in self.RETRYABLE_AI_CODES:
                         exc.details["max_attempts_exceeded"] = True
                     exc.details["diagnostics"] = [*diagnostics, self._attempt_diagnostic(payload, exc, attempt)]
                     raise
-                diagnostics.append(
-                    {
-                        "code": exc.code,
-                        "message": f"{exc.message}; retrying analysis attempt {attempt + 1} of {attempts}.",
-                        "sourceId": payload.get("sourceId"),
-                        "relativePath": payload.get("relativePath"),
-                        "attempt": attempt,
-                        "rawPreview": exc.details.get("raw_preview"),
-                    }
-                )
+                retry_diagnostic = {
+                    "code": exc.code,
+                    "message": f"{exc.message}; retrying analysis attempt {attempt + 1} of {attempts}.",
+                    "sourceId": payload.get("sourceId"),
+                    "relativePath": payload.get("relativePath"),
+                    "attempt": attempt,
+                    "rawPreview": exc.details.get("raw_preview"),
+                }
+                metadata = self._error_metadata(exc)
+                if metadata:
+                    retry_diagnostic["metadata"] = metadata
+                diagnostics.append(retry_diagnostic)
         raise KnowledgeError("ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED", "AI analysis exceeded maximum attempts")
+
+    def _repair_prompt(self, payload: Dict[str, Any], last_error: KnowledgeError, attempt: int, attempts: int) -> str:
+        details = self._bounded_error_details(self._error_details(last_error))
+        lines = [
+            "Your previous response was invalid.",
+            f"You are repairing attempt {attempt} of {attempts} for this same file.",
+            "Exact errors to correct:",
+        ]
+        if details:
+            lines.extend(f"- {self._format_error_detail(detail)}" for detail in details[:10])
+        else:
+            lines.append(f"- {last_error.code}: {last_error.message}")
+        preview = self._error_preview(last_error)
+        if preview:
+            lines.extend(["Bounded invalid response preview:", preview])
+        lines.extend(
+            [
+                "Return ONLY corrected JSON matching the requested schema.",
+                "No markdown.",
+                "No prose.",
+                "No comments.",
+                "Keep claims grounded in the provided contentLines and source evidence.",
+            ]
+        )
+        if payload.get("analysisMode") == GENERIC_CONFIG_ANALYSIS_MODE:
+            lines.append("For generic text/config enrichment, use claimKind RESPONSIBILITY and evidence line ranges from contentLines.")
+        return "\n".join(lines)
+
+    def _format_error_detail(self, detail: Dict[str, Any]) -> str:
+        error_type = str(detail.get("errorType") or "ERROR")
+        if error_type == "JSON_PARSE_ERROR":
+            position = detail.get("charPosition")
+            position_text = f" char {position}" if position is not None else ""
+            truncated = detail.get("responseTruncated")
+            truncated_text = f" responseTruncated={truncated}." if truncated is not None else ""
+            return (
+                f"JSON parse error at line {detail.get('line')} column {detail.get('column')}{position_text}: "
+                f"{detail.get('message')}.{truncated_text}"
+            )
+        if error_type == "SCHEMA_VALIDATION_ERROR":
+            path = detail.get("jsonPath") or "$"
+            missing = detail.get("missingRequiredField")
+            if missing:
+                return f"{path} is missing required field {missing}. Expected: {detail.get('expected')}."
+            text = f"{path}"
+            if detail.get("field"):
+                text += f" ({detail.get('field')})"
+            if "actual" in detail:
+                text += f" = {self._json_for_prompt(detail.get('actual'))}"
+            if detail.get("expected"):
+                text += f" is invalid. Expected: {detail.get('expected')}."
+            allowed = detail.get("allowedValues") or []
+            if allowed:
+                text += f" Allowed values: {self._json_for_prompt(allowed)}."
+            if detail.get("message"):
+                text += f" {detail.get('message')}"
+            return text
+        if error_type == "GRAPH_VALIDATION_ERROR":
+            text = f"{detail.get('jsonPath') or detail.get('graphEntityId') or '$'}: {detail.get('reason') or detail.get('message')}"
+            allowed = detail.get("allowedValues") or []
+            if allowed:
+                text += f" Allowed values: {self._json_for_prompt(allowed)}."
+            return text
+        return f"{error_type}: {detail.get('message') or detail}"
+
+    def _json_for_prompt(self, value: Any, limit: int = 240) -> str:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+        if len(text) > limit:
+            return text[:limit].rstrip() + "..."
+        return text
+
+    def _error_details(self, exc: Exception) -> List[Dict[str, Any]]:
+        details = getattr(exc, "details", {}) or {}
+        raw_details = (
+            details.get("error_details")
+            or details.get("errorDetails")
+            or details.get("validation_errors")
+            or details.get("validationErrors")
+            or []
+        )
+        if isinstance(raw_details, dict):
+            raw_details = [raw_details]
+        return [dict(item) for item in raw_details if isinstance(item, dict)]
+
+    def _bounded_error_details(self, details: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        bounded: List[Dict[str, Any]] = []
+        for detail in details[:25]:
+            item = dict(detail)
+            for key in ("rawPreview", "actual", "message", "reason"):
+                if key in item and isinstance(item[key], str):
+                    item[key] = self._raw_preview(item[key])
+            bounded.append(item)
+        return bounded
+
+    def _error_preview(self, exc: Exception) -> Optional[str]:
+        for detail in self._error_details(exc):
+            preview = detail.get("rawPreview")
+            if preview:
+                return self._raw_preview(preview)
+        return self._raw_preview((getattr(exc, "details", {}) or {}).get("raw_preview"))
+
+    def _error_summary(self, exc: Exception) -> str:
+        details = self._bounded_error_details(self._error_details(exc))
+        if details:
+            summary = "; ".join(self._format_error_detail(detail) for detail in details[:3])
+            if len(details) > 3:
+                summary = f"{summary}; and {len(details) - 3} more error(s)"
+            return self._raw_preview(summary) or summary
+        return f"{getattr(exc, 'code', 'ANALYSIS_FILE_FAILED')}: {getattr(exc, 'message', str(exc))}"
+
+    def _error_metadata(self, exc: Exception) -> Dict[str, Any]:
+        details = self._bounded_error_details(self._error_details(exc))
+        metadata: Dict[str, Any] = {}
+        if details:
+            metadata["errorDetails"] = details
+            metadata["errorSummary"] = self._error_summary(exc)
+            first = details[0]
+            for key in (
+                "errorType",
+                "message",
+                "line",
+                "column",
+                "charPosition",
+                "responseTruncated",
+                "jsonPath",
+                "field",
+                "actual",
+                "expected",
+                "allowedValues",
+                "missingRequiredField",
+                "reason",
+                "graphEntityId",
+            ):
+                if first.get(key) is not None:
+                    metadata[key] = first.get(key)
+            if first.get("rawPreview"):
+                metadata["errorPreview"] = self._raw_preview(first.get("rawPreview"))
+        raw_preview = self._raw_preview((getattr(exc, "details", {}) or {}).get("raw_preview"))
+        if raw_preview:
+            metadata.setdefault("rawPreview", raw_preview)
+        return metadata
 
     def _graph_result(self, result: GraphAnalysisResult | AnalysisResult) -> GraphAnalysisResult:
         if isinstance(result, GraphAnalysisResult):
@@ -802,7 +1058,7 @@ class AnalysisSupervisor:
             "analyzer_name": analyzer.name,
             "analyzer_version": analyzer.version,
             "engine_version": GRAPH_ENGINE_VERSION,
-            "flow_domain": flow_domain or self.structural_engine.flow_domain(row["relative_path"]),
+            "flow_domain": flow_domain or self._row_flow_domain(row),
             "status": status,
             "analyzed_at": datetime.now(timezone.utc).isoformat(),
             "symbol_count": symbol_count,
@@ -834,6 +1090,7 @@ class AnalysisSupervisor:
         if details.get("severity"):
             diagnostic["severity"] = details["severity"]
         metadata = {key: details[key] for key in ("exceptionType", "sqliteMessage", "table", "operation") if key in details}
+        metadata.update(self._error_metadata(exc))
         if not metadata and code == "ANALYSIS_FILE_FAILED":
             metadata = {"exceptionType": type(exc).__name__, "rootCause": str(exc)[:MAX_RAW_PREVIEW_CHARS]}
         if metadata:
@@ -868,6 +1125,9 @@ class AnalysisSupervisor:
         raw_preview = self._raw_preview(exc.details.get("raw_preview"))
         if raw_preview:
             diagnostic["rawPreview"] = raw_preview
+        metadata = self._error_metadata(exc)
+        if metadata:
+            diagnostic["metadata"] = metadata
         return diagnostic
 
     def _raw_preview(self, value: Any) -> Optional[str]:
