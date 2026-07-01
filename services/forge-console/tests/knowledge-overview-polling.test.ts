@@ -464,13 +464,13 @@ describe('Knowledge overview modular ownership', () => {
   it('UI-KNOW-REG-06 shows Analyze progress and resumes polling', async () => {
     vi.useFakeTimers();
     const dom = createOverviewDom();
-    const snapshots = [
+    const payloads = [
       statusPayload(1, 'PARTIAL'),
       statusPayload(2, 'RUNNING'),
       statusPayload(5, 'RUNNING')
     ];
     const http = {
-      get: vi.fn(() => Promise.resolve(snapshots.shift() || statusPayload(5, 'RUNNING'))),
+      get: vi.fn(() => Promise.resolve(payloads.shift() || statusPayload(5, 'RUNNING'))),
       post: vi.fn(() => Promise.resolve({ accepted: true }))
     };
     const page = new KnowledgeOverviewPage({
@@ -533,12 +533,12 @@ describe('Knowledge overview modular ownership', () => {
 
   it('UI-KNOW-ACTION-01 not analyzed shows Analyze', async () => {
     const dom = createOverviewDom();
-    const snapshots = [
+    const payloads = [
       statusPayload(0, 'NOT_ANALYZED'),
       statusPayload(1, 'RUNNING')
     ];
     const http = {
-      get: vi.fn(() => Promise.resolve(snapshots.shift() || statusPayload(1, 'RUNNING'))),
+      get: vi.fn(() => Promise.resolve(payloads.shift() || statusPayload(1, 'RUNNING'))),
       post: vi.fn(() => Promise.resolve({ accepted: true }))
     };
     const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
@@ -640,12 +640,12 @@ describe('Knowledge overview modular ownership', () => {
 
   it('UI-KNOW-ACTION-05 Retry Failed sends retry endpoint', async () => {
     const dom = createOverviewDom();
-    const snapshots = [
+    const payloads = [
       statusPayload(10, 'PARTIAL', { analyzedFileCount: 8, failedFileCount: 2, pendingFileCount: 0 }),
       statusPayload(1, 'RUNNING', { inventoryFileCount: 2, activeJobId: 'retry-job' })
     ];
     const http = {
-      get: vi.fn(() => Promise.resolve(snapshots.shift() || statusPayload(1, 'RUNNING', { inventoryFileCount: 2, activeJobId: 'retry-job' }))),
+      get: vi.fn(() => Promise.resolve(payloads.shift() || statusPayload(1, 'RUNNING', { inventoryFileCount: 2, activeJobId: 'retry-job' }))),
       post: vi.fn((_path: string, _body?: unknown) => Promise.resolve({ jobId: 'retry-job', selection: 'FAILED_ONLY', selectedFileCount: 2 }))
     };
     const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });

@@ -1,7 +1,10 @@
 import sqlite3
-from typing import Optional
+from pathlib import Path
+from typing import Dict, Optional, Tuple
 
+from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.embedding_provider import EmbeddingProviderError, FakeDeterministicEmbeddingProvider
+from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.overview_projection import read_overview, refresh_overview_for_sources
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_index import (
@@ -36,6 +39,253 @@ class MissingModelEmbeddingProvider:
             "Embedding model is not available in local Ollama: embeddinggemma. Pull or configure an installed embedding model.",
             details={"statusCode": 404, "model": "embeddinggemma"},
         )
+
+
+def _force_analysis_store_reinit(db_path: Path) -> None:
+    AnalysisStore._initialized_paths.discard(str(db_path.resolve()))
+    AnalysisStore(db_path).init()
+
+
+def _current_graph_revision(conn: sqlite3.Connection, source_id: str) -> str:
+    return SemanticIndexStore.compute_graph_revision_conn(conn, source_id)
+
+
+def _current_semantic_integrity_counts(conn: sqlite3.Connection, source_id: str) -> Dict[str, int]:
+    computed_revision = _current_graph_revision(conn, source_id)
+    return {
+        "current_state_identity_missing_with_facts": int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM analysis_graph_state state
+                WHERE state.source_id = ?
+                  AND (state.content_identity IS NULL OR state.content_identity = '')
+                  AND EXISTS (
+                      SELECT 1
+                      FROM analysis_graph_nodes n
+                      WHERE n.source_id = state.source_id
+                  )
+                """,
+                (source_id,),
+            ).fetchone()[0]
+            or 0
+        ),
+        "semantic_docs_not_matching_computed": int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM semantic_documents
+                WHERE source_id = ?
+                  AND graph_id != ?
+                """,
+                (source_id, computed_revision),
+            ).fetchone()[0]
+            or 0
+        ),
+        "orphan_semantic_vectors": int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM semantic_vectors v
+                LEFT JOIN semantic_documents d
+                  ON d.document_id = v.document_id
+                WHERE d.document_id IS NULL
+                """
+            ).fetchone()[0]
+            or 0
+        ),
+        "orphan_semantic_documents": int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM semantic_documents d
+                LEFT JOIN analysis_graph_nodes n
+                  ON n.source_id = d.source_id
+                 AND n.id = d.node_id
+                WHERE d.source_id = ?
+                  AND n.id IS NULL
+                """,
+                (source_id,),
+            ).fetchone()[0]
+            or 0
+        ),
+    }
+
+
+def _seed_inventory_membership_lifecycle(
+    db_path: Path,
+    *,
+    inventory_relative_path: Optional[str],
+    inventory_content_hash: Optional[str],
+    analysis_relative_path: str = "x.java",
+    analysis_content_hash: str = "h1",
+) -> None:
+    source_id = "A"
+    analysis_file_id = 1001
+    inventory_file_id = 2001
+    node_id = "node-x"
+    evidence_id = "evidence-x"
+    edge_id = "edge-x"
+    claim_id = "claim-x"
+    diagnostic_id = "diagnostic-x"
+    document_id = "doc-x"
+    now = "2026-07-01T00:00:00+00:00"
+    InventoryStore(db_path).init()
+    AnalysisStore(db_path).init()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at)
+            VALUES (?, 'Source A', 'test', '.', 1, '[]', '{}', ?)
+            """,
+            (source_id, now),
+        )
+        if inventory_relative_path is not None and inventory_content_hash is not None:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO files(
+                    id, source_id, source_path, absolute_path, relative_path, extension, language, flow_domain,
+                    size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at
+                )
+                VALUES (?, ?, '.', '.', ?, '.java', 'java', 'CODE', 10, ?, ?, 1, 'utf-8:replace', ?)
+                """,
+                (inventory_file_id, source_id, inventory_relative_path, inventory_content_hash, now, now),
+            )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_files(
+                file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status,
+                analyzed_at, symbol_count, relation_count, diagnostics_json, engine_version, flow_domain
+            )
+            VALUES (?, ?, ?, ?, 'fixture-analyzer', '1', 'ANALYZED', ?, 1, 1, '[]', 'GRAPH_V1', 'CODE')
+            """,
+            (analysis_file_id, source_id, analysis_relative_path, analysis_content_hash, now),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_nodes(
+                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                stable_key, node_kind, language, name, qualified_name, display_name, parent_node_id,
+                line_start, line_end, confidence, status, metadata_json, created_at, updated_at, fact_origin, flow_domain
+            )
+            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, ?, 'CALLABLE', 'java', 'handle', 'A.handle', 'handle', NULL,
+                    1, 1, 0.9, 'TRUSTED', '{}', ?, ?, 'AI', 'CODE')
+            """,
+            (
+                node_id,
+                source_id,
+                analysis_file_id,
+                analysis_file_id,
+                analysis_file_id,
+                analysis_relative_path,
+                analysis_content_hash,
+                f"{source_id}|{analysis_relative_path}|CALLABLE|handle",
+                now,
+                now,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_evidence(
+                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                line_start, line_end, excerpt, excerpt_hash, evidence_kind, metadata_json, created_at, updated_at, fact_origin, flow_domain
+            )
+            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, 1, 1, 'class X {}', 'excerpt-hash', 'CLAIM', '{}', ?, ?, 'AI', 'CODE')
+            """,
+            (evidence_id, source_id, analysis_file_id, analysis_file_id, analysis_file_id, analysis_relative_path, analysis_content_hash, now, now),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_edges(
+                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                from_node_id, to_node_id, edge_type, edge_kind, resolution_status, confidence, evidence_id,
+                evidence_ids_json, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
+            )
+            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, ?, NULL, 'CALLS', 'STRUCTURAL', 'UNRESOLVED', 0.8, ?,
+                    ?, NULL, '{}', 'TRUSTED', ?, ?, 'AI', 'CODE')
+            """,
+            (
+                edge_id,
+                source_id,
+                analysis_file_id,
+                analysis_file_id,
+                analysis_file_id,
+                analysis_relative_path,
+                analysis_content_hash,
+                node_id,
+                evidence_id,
+                f'["{evidence_id}"]',
+                now,
+                now,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_claims(
+                id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
+                evidence_ids_json, metadata_json, rejection_reason, created_at, updated_at, fact_origin, flow_domain
+            )
+            VALUES (?, 'job-x', ?, ?, 'RESPONSIBILITY', 'Handles x.', 0.9, 'TRUSTED', ?, '{}', NULL, ?, ?, 'AI', 'CODE')
+            """,
+            (claim_id, source_id, node_id, f'["{evidence_id}"]', now, now),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_diagnostics(
+                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                severity, stage, code, diagnostic_code, message, candidate_id, line_start, line_end,
+                metadata_json, created_at, fact_origin, flow_domain
+            )
+            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, 'INFO', 'ANALYSIS', 'DIAG', 'DIAG', 'diagnostic',
+                    NULL, 1, 1, '{}', ?, 'AI', 'CODE')
+            """,
+            (diagnostic_id, source_id, analysis_file_id, analysis_file_id, analysis_file_id, analysis_relative_path, analysis_content_hash, now),
+        )
+        graph_id = SemanticIndexStore.compute_graph_revision_conn(conn, source_id)
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_state(
+                source_id, graph_id, content_identity, node_count, edge_count, claim_count, evidence_count, updated_at
+            )
+            VALUES (?, ?, ?, 1, 1, 1, 1, ?)
+            """,
+            (source_id, graph_id, graph_id, now),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO semantic_documents(
+                document_id, source_id, node_id, node_kind, graph_id, document_type, builder_version,
+                text_hash, text, claim_ids_json, evidence_ids_json, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, 'CALLABLE', ?, 'node', ?, 'text-hash', 'semantic text', ?, ?, 'READY', ?, ?)
+            """,
+            (document_id, source_id, node_id, graph_id, SEMANTIC_BUILDER_VERSION, f'["{claim_id}"]', f'["{evidence_id}"]', now, now),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO semantic_vectors(
+                document_id, source_id, node_id, graph_id, embedding_model, embedding_dimension,
+                vector_blob, vector_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, 'fake-deterministic', 2, NULL, '[0.0, 1.0]', ?, ?)
+            """,
+            (document_id, source_id, node_id, graph_id, now, now),
+        )
+
+
+def _lifecycle_counts(conn: sqlite3.Connection) -> Dict[str, int]:
+    return {
+        "analysis_files": int(conn.execute("SELECT COUNT(*) FROM analysis_files WHERE source_id = 'A'").fetchone()[0]),
+        "nodes": int(conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = 'A'").fetchone()[0]),
+        "edges": int(conn.execute("SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = 'A'").fetchone()[0]),
+        "claims": int(conn.execute("SELECT COUNT(*) FROM analysis_graph_claims WHERE source_id = 'A'").fetchone()[0]),
+        "evidence": int(conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence WHERE source_id = 'A'").fetchone()[0]),
+        "diagnostics": int(conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics WHERE source_id = 'A'").fetchone()[0]),
+        "semantic_documents": int(conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = 'A'").fetchone()[0]),
+        "semantic_vectors": int(conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = 'A'").fetchone()[0]),
+    }
 
 
 def test_semantic_index_status_model_supports_all_states():
@@ -201,14 +451,14 @@ def test_semantic_index_builder_pending_to_ready_creates_docs_and_vectors(tmp_pa
     with sqlite3.connect(db_path) as conn:
         assert (
             conn.execute(
-                "SELECT COUNT(*) FROM semantic_documents WHERE source_id = ? AND graph_revision = ?",
+                "SELECT COUNT(*) FROM semantic_documents WHERE source_id = ? AND graph_id = ?",
                 ("semantic-source", state.graph_revision),
             ).fetchone()[0]
             == state.total_node_count
         )
         assert (
             conn.execute(
-                "SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ? AND graph_revision = ?",
+                "SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ? AND graph_id = ?",
                 ("semantic-source", state.graph_revision),
             ).fetchone()[0]
             == state.indexed_node_count
@@ -220,14 +470,14 @@ def test_semantic_index_builder_pending_to_ready_creates_docs_and_vectors(tmp_pa
 
 def test_semantic_index_builder_stale_to_ready_for_new_revision(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
-    seed_semantic_graph(db_path, snapshot_suffix="old")
+    seed_semantic_graph(db_path, graph_suffix="old")
     builder = SemanticIndexBuilder(db_path, FakeDeterministicEmbeddingProvider(dimension=8), config=SemanticBuildConfig())
     builder.build(["semantic-source"], force=True)
     old_state = SemanticIndexStore(db_path).status_for_source("semantic-source")
 
     seed_semantic_graph(
         db_path,
-        snapshot_suffix="new",
+        graph_suffix="new",
         nodes=[
             {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
             {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
@@ -244,16 +494,16 @@ def test_semantic_index_builder_stale_to_ready_for_new_revision(tmp_path):
     assert new_state.total_node_count == 2
 
 
-def test_semantic_index_status_carries_matching_old_revision_vectors_for_current_facts(tmp_path):
+def test_semantic_index_status_invalidates_old_revision_vectors_after_file_identity_change(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
-    seed_semantic_graph(db_path, snapshot_suffix="old")
+    seed_semantic_graph(db_path, graph_suffix="old")
     builder = SemanticIndexBuilder(db_path, FakeDeterministicEmbeddingProvider(dimension=8), config=SemanticBuildConfig())
     builder.build(["semantic-source"], force=True)
     old_state = SemanticIndexStore(db_path).status_for_source("semantic-source")
 
     seed_semantic_graph(
         db_path,
-        snapshot_suffix="new",
+        graph_suffix="new",
         nodes=[
             {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
             {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
@@ -263,31 +513,32 @@ def test_semantic_index_status_carries_matching_old_revision_vectors_for_current
     stale_state = SemanticIndexStore(db_path).status_for_source("semantic-source")
     with sqlite3.connect(db_path) as conn:
         old_vector_count = conn.execute(
-            "SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ? AND graph_revision = ?",
+            "SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ? AND graph_id = ?",
             ("semantic-source", old_state.graph_revision),
         ).fetchone()[0]
         current_vector_count = conn.execute(
-            "SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ? AND graph_revision = ?",
+            "SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ? AND graph_id = ?",
             ("semantic-source", stale_state.graph_revision),
         ).fetchone()[0]
 
-    assert old_vector_count == old_state.indexed_node_count == 1
+    assert old_state.indexed_node_count == 1
+    assert old_vector_count == 0
     assert current_vector_count == 0
     assert stale_state.status == SemanticIndexStatus.STALE
-    assert stale_state.indexed_node_count == 1
+    assert stale_state.indexed_node_count == 0
     assert stale_state.total_node_count == 2
-    assert stale_state.progress_percent == 50.0
+    assert stale_state.progress_percent == 0.0
 
 
 def test_semantic_index_status_ignores_unrelated_old_revision_vectors(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
-    seed_semantic_graph(db_path, snapshot_suffix="old")
+    seed_semantic_graph(db_path, graph_suffix="old")
     builder = SemanticIndexBuilder(db_path, FakeDeterministicEmbeddingProvider(dimension=8), config=SemanticBuildConfig())
     builder.build(["semantic-source"], force=True)
 
     seed_semantic_graph(
         db_path,
-        snapshot_suffix="new",
+        graph_suffix="new",
         nodes=[
             {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
         ],
@@ -356,6 +607,463 @@ def test_overview_active_analysis_does_not_hide_indexed_semantic_progress(tmp_pa
     assert source["analysis"]["status"] == "RUNNING"
     assert source["factsProgress"]["percent"] == 20.0
     assert source["analysis"]["semanticPercent"] == 5.0
+
+
+def test_stale_analysis_cleanup_removes_deleted_file_semantic_rows(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _overview_progress_fixture(tmp_path, inventory_total=10, facts_available=10, indexed_facts=3, semantic_node_count=3)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM files WHERE id = 90001")
+
+    AnalysisStore(db_path).cleanup_stale_files(["semantic-source"])
+
+    with sqlite3.connect(db_path) as conn:
+        assert _semantic_counts(conn) == (2, 2)
+        assert conn.execute("SELECT COUNT(*) FROM analysis_files WHERE file_id = 90001").fetchone()[0] == 0
+    source = read_overview(db_path)["sources"][0]
+    assert source["analysis"]["totalFiles"] == 9
+    assert source["analysis"]["processedFiles"] == 9
+    assert source["analysis"]["semanticPercent"] == 22.2
+
+
+def test_stale_analysis_cleanup_removes_changed_file_semantic_rows(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _overview_progress_fixture(tmp_path, inventory_total=10, facts_available=10, indexed_facts=3, semantic_node_count=3)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE files SET content_hash = 'changed-hash' WHERE id = 90001")
+
+    AnalysisStore(db_path).cleanup_stale_files(["semantic-source"])
+
+    with sqlite3.connect(db_path) as conn:
+        assert _semantic_counts(conn) == (2, 2)
+        assert conn.execute("SELECT COUNT(*) FROM analysis_files WHERE file_id = 90001").fetchone()[0] == 0
+    source = read_overview(db_path)["sources"][0]
+    assert source["analysis"]["totalFiles"] == 10
+    assert source["analysis"]["processedFiles"] == 9
+    assert source["analysis"]["semanticPercent"] == 20.0
+
+
+def test_stale_analysis_cleanup_preserves_unchanged_file_semantic_rows(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    before = _overview_progress_fixture(tmp_path, inventory_total=10, facts_available=10, indexed_facts=3, semantic_node_count=3)
+
+    AnalysisStore(db_path).cleanup_stale_files(["semantic-source"])
+
+    with sqlite3.connect(db_path) as conn:
+        assert _semantic_counts(conn) == (3, 3)
+    after = read_overview(db_path)
+    assert after["sources"][0]["analysis"]["semanticPercent"] == before["sources"][0]["analysis"]["semanticPercent"] == 30.0
+
+
+def test_inventory_membership_cleanup_preserves_unchanged_identity(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _seed_inventory_membership_lifecycle(db_path, inventory_relative_path="x.java", inventory_content_hash="h1")
+
+    AnalysisStore(db_path).cleanup_stale_files(["A"])
+
+    with sqlite3.connect(db_path) as conn:
+        assert _lifecycle_counts(conn) == {
+            "analysis_files": 1,
+            "nodes": 1,
+            "edges": 1,
+            "claims": 1,
+            "evidence": 1,
+            "diagnostics": 1,
+            "semantic_documents": 1,
+            "semantic_vectors": 1,
+        }
+
+
+def test_inventory_membership_cleanup_deletes_changed_hash_facts(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _seed_inventory_membership_lifecycle(db_path, inventory_relative_path="x.java", inventory_content_hash="h2")
+
+    AnalysisStore(db_path).cleanup_stale_files(["A"])
+
+    with sqlite3.connect(db_path) as conn:
+        assert _lifecycle_counts(conn) == {
+            "analysis_files": 0,
+            "nodes": 0,
+            "edges": 0,
+            "claims": 0,
+            "evidence": 0,
+            "diagnostics": 0,
+            "semantic_documents": 0,
+            "semantic_vectors": 0,
+        }
+        assert conn.execute("SELECT COUNT(*) FROM files WHERE source_id = 'A' AND relative_path = 'x.java' AND content_hash = 'h2'").fetchone()[0] == 1
+    state = AnalysisStore(db_path).current_analysis_state(["A"])
+    assert state["totalFiles"] == 1
+    assert state["pendingFiles"] == 1
+    assert state["succeededFiles"] == 0
+
+
+def test_inventory_membership_cleanup_deletes_removed_file_facts(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _seed_inventory_membership_lifecycle(db_path, inventory_relative_path=None, inventory_content_hash=None)
+
+    AnalysisStore(db_path).cleanup_stale_files(["A"])
+
+    with sqlite3.connect(db_path) as conn:
+        assert _lifecycle_counts(conn) == {
+            "analysis_files": 0,
+            "nodes": 0,
+            "edges": 0,
+            "claims": 0,
+            "evidence": 0,
+            "diagnostics": 0,
+            "semantic_documents": 0,
+            "semantic_vectors": 0,
+        }
+    state = AnalysisStore(db_path).current_analysis_state(["A"])
+    assert state["totalFiles"] == 0
+    assert state["pendingFiles"] == 0
+
+
+def test_inventory_membership_cleanup_does_not_preserve_by_bare_hash(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _seed_inventory_membership_lifecycle(
+        db_path,
+        inventory_relative_path="new.java",
+        inventory_content_hash="h1",
+        analysis_relative_path="old.java",
+        analysis_content_hash="h1",
+    )
+
+    AnalysisStore(db_path).cleanup_stale_files(["A"])
+
+    with sqlite3.connect(db_path) as conn:
+        assert _lifecycle_counts(conn) == {
+            "analysis_files": 0,
+            "nodes": 0,
+            "edges": 0,
+            "claims": 0,
+            "evidence": 0,
+            "diagnostics": 0,
+            "semantic_documents": 0,
+            "semantic_vectors": 0,
+        }
+        assert conn.execute("SELECT COUNT(*) FROM files WHERE source_id = 'A' AND relative_path = 'new.java' AND content_hash = 'h1'").fetchone()[0] == 1
+    state = AnalysisStore(db_path).current_analysis_state(["A"])
+    assert state["totalFiles"] == 1
+    assert state["pendingFiles"] == 1
+
+
+def test_deleting_current_graph_node_cascades_semantic_cache(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _overview_progress_fixture(tmp_path, inventory_total=3, facts_available=3, indexed_facts=3, semantic_node_count=3)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            """
+            DELETE FROM analysis_graph_nodes
+            WHERE source_id = 'semantic-source'
+              AND id = 'node-001'
+            """
+        )
+
+        assert conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = 'semantic-source'").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = 'semantic-source'").fetchone()[0] == 2
+
+
+def test_deleting_analysis_file_cascades_current_graph_and_semantic_cache(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _overview_progress_fixture(tmp_path, inventory_total=3, facts_available=3, indexed_facts=3, semantic_node_count=3)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("DELETE FROM analysis_files WHERE file_id = 90001")
+
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = 'semantic-source'").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = 'semantic-source'").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = 'semantic-source'").fetchone()[0] == 2
+
+
+def test_init_drops_legacy_graph_storage_and_creates_current_state_schema(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE graph_old_parent(id TEXT PRIMARY KEY, source_id TEXT);
+            CREATE TABLE graph_old_current(
+                id TEXT PRIMARY KEY,
+                parent_id TEXT REFERENCES graph_old_parent(id) ON DELETE RESTRICT
+            );
+            CREATE TABLE graph_old_metrics(
+                id TEXT PRIMARY KEY,
+                parent_id TEXT REFERENCES graph_old_parent(id) ON DELETE CASCADE
+            );
+            CREATE TABLE analysis_graph_nodes(id TEXT, obsolete_graph_ref TEXT, source_id TEXT, PRIMARY KEY(obsolete_graph_ref, id));
+            CREATE TABLE semantic_documents(document_id TEXT PRIMARY KEY, source_id TEXT, node_id TEXT, graph_marker TEXT);
+            """
+        )
+
+    AnalysisStore(db_path).init()
+
+    with sqlite3.connect(db_path) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        }
+        assert not any(name.startswith("graph_") for name in tables)
+        assert "analysis_graph_state" in tables
+        for table in ("analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_claims", "analysis_graph_evidence"):
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            assert {"id", "source_id"}.issubset(columns)
+
+
+def test_init_preserves_valid_current_state_semantic_cache(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    source_id = "semantic-source"
+    seed_semantic_graph(db_path)
+    SemanticIndexBuilder(db_path, FakeDeterministicEmbeddingProvider(dimension=8), config=SemanticBuildConfig()).build([source_id], force=True)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        computed_revision = _current_graph_revision(conn, source_id)
+        assert conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert (
+            conn.execute("SELECT DISTINCT graph_id FROM semantic_documents WHERE source_id = ?", (source_id,)).fetchone()[
+                "graph_id"
+            ]
+            == computed_revision
+        )
+
+    _force_analysis_store_reinit(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        computed_revision = _current_graph_revision(conn, source_id)
+        state_row = conn.execute("SELECT graph_id, content_identity FROM analysis_graph_state WHERE source_id = ?", (source_id,)).fetchone()
+        assert state_row["graph_id"] == computed_revision
+        assert state_row["content_identity"] == computed_revision
+        assert conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT DISTINCT graph_id FROM semantic_documents WHERE source_id = ?", (source_id,)).fetchone()[
+            "graph_id"
+        ] == computed_revision
+        state = SemanticIndexStore.status_for_source_conn(conn, source_id)
+        assert state.status == SemanticIndexStatus.READY
+        assert state.indexed_node_count == 1
+        assert _current_semantic_integrity_counts(conn, source_id) == {
+            "current_state_identity_missing_with_facts": 0,
+            "semantic_docs_not_matching_computed": 0,
+            "orphan_semantic_vectors": 0,
+            "orphan_semantic_documents": 0,
+        }
+
+
+def test_init_purges_stale_semantic_docs_for_old_graph_id(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    source_id = "semantic-source"
+    seed_semantic_graph(db_path)
+    SemanticIndexBuilder(db_path, FakeDeterministicEmbeddingProvider(dimension=8), config=SemanticBuildConfig()).build([source_id], force=True)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        computed_revision = _current_graph_revision(conn, source_id)
+        now = "2026-06-30T00:00:00+00:00"
+        conn.execute(
+            """
+            INSERT INTO semantic_documents(
+                document_id, source_id, node_id, node_kind, document_type, graph_id, builder_version,
+                text_hash, text, claim_ids_json, evidence_ids_json, status, created_at, updated_at
+            )
+            VALUES (
+                'stale-doc', ?, 'node-query', 'CALLABLE', 'node', 'old-revision', ?,
+                'stale-hash', 'stale text', '[]', '[]', 'READY', ?, ?
+            )
+            """,
+            (source_id, SEMANTIC_BUILDER_VERSION, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO semantic_vectors(
+                document_id, source_id, node_id, graph_id, embedding_model, embedding_dimension,
+                vector_blob, vector_json, created_at, updated_at
+            )
+            VALUES ('stale-doc', ?, 'node-query', 'old-revision', 'fake-deterministic', 8, NULL, '[0.0]', ?, ?)
+            """,
+            (source_id, now, now),
+        )
+        assert conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = ?", (source_id,)).fetchone()[0] == 2
+
+    _force_analysis_store_reinit(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        computed_revision = _current_graph_revision(conn, source_id)
+        assert conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE graph_id = 'old-revision'").fetchone()[0] == 0
+        assert conn.execute("SELECT DISTINCT graph_id FROM semantic_documents WHERE source_id = ?", (source_id,)).fetchone()[
+            "graph_id"
+        ] == computed_revision
+        assert _current_semantic_integrity_counts(conn, source_id) == {
+            "current_state_identity_missing_with_facts": 0,
+            "semantic_docs_not_matching_computed": 0,
+            "orphan_semantic_vectors": 0,
+            "orphan_semantic_documents": 0,
+        }
+
+
+def test_init_purges_semantic_docs_when_current_graph_has_no_facts(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    source_id = "empty-source"
+    AnalysisStore(db_path).init()
+    now = "2026-06-30T00:00:00+00:00"
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO semantic_documents(
+                document_id, source_id, node_id, node_kind, document_type, graph_id, builder_version,
+                text_hash, text, claim_ids_json, evidence_ids_json, status, created_at, updated_at
+            )
+            VALUES (
+                'empty-doc', ?, 'missing-node', 'CALLABLE', 'node', 'old-revision', ?,
+                'empty-hash', 'stale text', '[]', '[]', 'READY', ?, ?
+            )
+            """,
+            (source_id, SEMANTIC_BUILDER_VERSION, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO semantic_vectors(
+                document_id, source_id, node_id, graph_id, embedding_model, embedding_dimension,
+                vector_blob, vector_json, created_at, updated_at
+            )
+            VALUES ('empty-doc', ?, 'missing-node', 'old-revision', 'fake-deterministic', 8, NULL, '[0.0]', ?, ?)
+            """,
+            (source_id, now, now),
+        )
+
+    _force_analysis_store_reinit(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = ?", (source_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ?", (source_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_state WHERE source_id = ?", (source_id,)).fetchone()[0] == 0
+
+
+def test_init_preserves_graph_facts_when_inventory_numeric_id_changes(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    source_id = "semantic-source"
+    seed_semantic_graph(
+        db_path,
+        nodes=[
+            {
+                "id": "node-query",
+                "kind": "CALLABLE",
+                "name": "SemanticFixture.handle",
+                "qualified": "fixture.SemanticFixture.handle",
+                "path": "src/semantic_fixture.py",
+            }
+        ],
+    )
+    SemanticIndexBuilder(db_path, FakeDeterministicEmbeddingProvider(dimension=8), config=SemanticBuildConfig()).build([source_id], force=True)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        file_row = conn.execute(
+            """
+            SELECT f.*
+            FROM files f
+            WHERE f.source_id = ?
+            LIMIT 1
+            """,
+            (source_id,),
+        ).fetchone()
+        assert file_row is not None
+        original_analysis_file_id = int(file_row["id"])
+        replacement_inventory_id = original_analysis_file_id + 100000
+        conn.execute("UPDATE files SET id = ? WHERE id = ?", (replacement_inventory_id, original_analysis_file_id))
+
+    AnalysisStore._initialized_paths.discard(str(db_path.resolve()))
+    AnalysisStore(db_path).init()
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        node = conn.execute("SELECT analysis_file_id, inventory_file_id, file_id FROM analysis_graph_nodes WHERE source_id = ?", (source_id,)).fetchone()
+        assert int(node["analysis_file_id"]) == original_analysis_file_id
+        assert int(node["inventory_file_id"]) == original_analysis_file_id
+        assert int(node["file_id"]) == original_analysis_file_id
+        assert (
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM analysis_graph_nodes n
+                WHERE n.source_id = ?
+                  AND EXISTS (
+                      SELECT 1
+                      FROM analysis_files af
+                      WHERE af.source_id = n.source_id
+                        AND af.relative_path = n.relative_path
+                        AND af.content_hash = n.content_hash
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM files f
+                      WHERE f.source_id = n.source_id
+                        AND f.relative_path = n.relative_path
+                        AND f.content_hash = n.content_hash
+                  )
+                """,
+                (source_id,),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_overview_semantic_percent_uses_identity_when_numeric_ids_differ(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _overview_progress_fixture(tmp_path, inventory_total=10, facts_available=10, indexed_facts=3, semantic_node_count=3)
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            """
+            UPDATE analysis_graph_nodes
+            SET inventory_file_id = 999001,
+                analysis_file_id = 999001
+            WHERE source_id = 'semantic-source'
+              AND id = 'node-001'
+            """
+        )
+        graph = SemanticIndexStore.current_graph_info_conn(conn, "semantic-source")
+        conn.execute("UPDATE semantic_documents SET graph_id = ? WHERE source_id = ?", (graph.graph_revision, "semantic-source"))
+        conn.execute("UPDATE semantic_vectors SET graph_id = ? WHERE source_id = ?", (graph.graph_revision, "semantic-source"))
+        SemanticIndexStore.mark_source_ready_conn(
+            conn,
+            "semantic-source",
+            graph.graph_revision,
+            3,
+            3,
+            embedding_model="fake-deterministic-embedding",
+            embedding_dimension=8,
+        )
+        refresh_overview_for_sources(conn, ["semantic-source"])
+
+    source = read_overview(db_path)["sources"][0]
+    assert source["analysis"]["totalFiles"] == 10
+    assert source["analysis"]["semanticPercent"] == 30.0
+
+
+def test_semantic_cleanup_has_no_source_specific_runtime_hardcode():
+    source_text = "\n".join(path.read_text(encoding="utf-8") for path in Path("src/knowledge_service").glob("*.py"))
+
+    assert "wagssox" not in source_text
+    assert "bffssox" not in source_text
+
+
+def test_runtime_logic_has_no_old_new_file_id_lifecycle_terms():
+    source_text = "\n".join(path.read_text(encoding="utf-8") for path in Path("src/knowledge_service").glob("*.py"))
+
+    for forbidden in ("old_file_id", "new_file_id", "oldFileId", "newFileId"):
+        assert forbidden not in source_text
 
 
 def test_semantic_index_builder_provider_failure_marks_failed_and_graph_unchanged(tmp_path):
@@ -485,21 +1193,40 @@ def _overview_progress_fixture(
             if index <= node_total:
                 conn.execute(
                     """
-                    UPDATE analysis_graph_nodes
-                    SET inventory_file_id = ?,
-                        analysis_file_id = ?,
-                        stable_key = ?
-                    WHERE source_id = ?
-                      AND id = ?
+                    INSERT OR REPLACE INTO analysis_graph_nodes(
+                        id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path,
+                        content_hash, stable_key, node_kind, language, name, qualified_name, display_name,
+                        parent_node_id, line_start, line_end, confidence, status, metadata_json, created_at,
+                        updated_at, fact_origin, flow_domain
+                    )
+                    VALUES (?, 'semantic-progress-fixture', ?, ?, ?, ?, ?, ?, ?, 'CALLABLE', 'python', ?, ?, ?, NULL, ?, ?, 0.96, 'TRUSTED', '{}', 'now', 'now', 'STATIC', 'CODE')
                     """,
                     (
-                        file_id,
-                        file_id,
-                        f"{source_id}|{relative_path}|CALLABLE|Service{index}.handle",
-                        source_id,
                         f"node-{index:03d}",
+                        source_id,
+                        file_id,
+                        file_id,
+                        file_id,
+                        relative_path,
+                        content_hash,
+                        f"{source_id}|{relative_path}|CALLABLE|Service{index}.handle",
+                        f"Service{index}.handle",
+                        f"fixture.Service{index}.handle",
+                        f"Service{index}.handle",
+                        index,
+                        index,
                     ),
                 )
+        graph_id = SemanticIndexStore.compute_graph_revision_conn(conn, source_id)
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_state(
+                source_id, graph_id, content_identity, node_count, edge_count, claim_count, evidence_count, updated_at
+            )
+            VALUES (?, ?, ?, ?, 0, 0, 0, 'now')
+            """,
+            (source_id, graph_id, graph_id, node_total),
+        )
     builder = SemanticIndexBuilder(db_path, FakeDeterministicEmbeddingProvider(dimension=8), config=SemanticBuildConfig(batch_size=10))
     if indexed_facts > 0:
         builder.build([source_id], force=True)
@@ -569,3 +1296,9 @@ def _overview_progress_fixture(
             )
         refresh_overview_for_sources(conn, [source_id])
     return read_overview(db_path)
+
+
+def _semantic_counts(conn: sqlite3.Connection) -> Tuple[int, int]:
+    documents = conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = 'semantic-source'").fetchone()[0]
+    vectors = conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = 'semantic-source'").fetchone()[0]
+    return int(documents), int(vectors)

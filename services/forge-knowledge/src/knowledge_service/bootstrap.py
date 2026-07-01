@@ -44,10 +44,7 @@ def build_dependencies(
             inventory_build_days=config.retention_inventory_build_days,
             analysis_job_days=config.retention_analysis_job_days,
             analysis_diagnostic_days=config.retention_analysis_diagnostic_days,
-            graph_snapshot_days=config.retention_graph_snapshot_days,
-            graph_tombstone_days=config.retention_graph_tombstone_days,
             keep_completed_jobs=config.retention_keep_completed_jobs,
-            keep_snapshots_per_source=config.retention_keep_snapshots_per_source,
         ),
     )
     storage_operations.startup_maintenance()

@@ -9,13 +9,14 @@ from typing import Any, Dict, List, Optional
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.overview_projection import refresh_overview_for_sources
+from knowledge_service.semantic_index import SemanticIndexStore
 
 
 def seed_semantic_graph(
     db_path: Path,
     *,
     source_id: str = "semantic-source",
-    snapshot_suffix: str = "one",
+    graph_suffix: str = "one",
     nodes: Optional[List[Dict[str, Any]]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     claims: Optional[List[Dict[str, Any]]] = None,
@@ -25,12 +26,11 @@ def seed_semantic_graph(
     InventoryStore(db_path).init()
     AnalysisStore(db_path).init()
     now = datetime.now(timezone.utc).isoformat()
-    snapshot_id = f"semantic:{snapshot_suffix}:{source_id}"
-    job_id = f"semantic-job:{snapshot_suffix}:{source_id}"
-    file_id = 70000 + sum((index + 1) * ord(char) for index, char in enumerate(f"{source_id}:{snapshot_suffix}"))
+    job_id = f"semantic-job:{graph_suffix}:{source_id}"
+    default_node_id = "node-query" if source_id == "semantic-source" else f"{source_id}:node-query"
     node_rows = nodes or [
         {
-            "id": "node-query",
+            "id": default_node_id,
             "kind": "CALLABLE",
             "name": "JarvisQueryService.query",
             "qualified": "jarvis.JarvisQueryService.query",
@@ -40,6 +40,13 @@ def seed_semantic_graph(
         }
     ]
     evidence_rows = evidence_ids or ["ev-node-query"]
+    source_paths = sorted({str(node.get("path") or "src/semantic_fixture.py") for node in node_rows})
+    path_to_file: dict[str, tuple[int, str]] = {}
+    for index, relative_path in enumerate(source_paths, start=1):
+        identity = f"{source_id}:{graph_suffix}:{relative_path}"
+        file_id = 70000 + index + sum((pos + 1) * ord(char) for pos, char in enumerate(identity))
+        path_to_file[relative_path] = (file_id, f"hash-{source_id}-{graph_suffix}-{index}")
+
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
@@ -50,45 +57,60 @@ def seed_semantic_graph(
             """,
             (source_id, source_id.replace("-", " ").title(), now),
         )
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO files(id, source_id, source_path, absolute_path, relative_path, extension, language, flow_domain, size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at)
-            VALUES (?, ?, '.', '.', ?, '.py', 'python', 'CODE', 100, ?, ?, 100, 'utf-8:replace', ?)
-            """,
-            (file_id, source_id, "src/semantic_fixture.py", f"hash-{source_id}-{snapshot_suffix}", now, now),
-        )
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO analysis_files(file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status, analyzed_at, symbol_count, relation_count, diagnostics_json, engine_version, flow_domain)
-            VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', ?, ?, ?, '[]', 'GRAPH_V1', 'CODE')
-            """,
-            (file_id, source_id, "src/semantic_fixture.py", f"hash-{source_id}-{snapshot_suffix}", now, len(node_rows), len(edges or [])),
-        )
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO graph_snapshots(snapshot_id, source_id, job_id, state, created_at, published_at, manifest_json, content_identity)
-            VALUES (?, ?, ?, 'PUBLISHED', ?, ?, '{}', ?)
-            """,
-            (snapshot_id, source_id, job_id, now, now, f"{source_id}:semantic-test:{snapshot_suffix}"),
-        )
+        for relative_path, (file_id, content_hash) in path_to_file.items():
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO files(
+                    id, source_id, source_path, absolute_path, relative_path, extension, language, flow_domain,
+                    size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at
+                )
+                VALUES (?, ?, '.', '.', ?, '.py', 'python', 'CODE', 100, ?, ?, 100, 'utf-8:replace', ?)
+                """,
+                (file_id, source_id, relative_path, content_hash, now, now),
+            )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_files(
+                    file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status,
+                    analyzed_at, symbol_count, relation_count, diagnostics_json, engine_version, flow_domain
+                )
+                VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', ?, ?, ?, '[]', 'GRAPH_V1', 'CODE')
+                """,
+                (file_id, source_id, relative_path, content_hash, now, len(node_rows), len(edges or [])),
+            )
+
+        for table in (
+            "semantic_documents",
+            "analysis_graph_claims",
+            "analysis_graph_edges",
+            "analysis_graph_evidence",
+            "analysis_graph_diagnostics",
+            "analysis_graph_nodes",
+            "analysis_graph_state",
+        ):
+            conn.execute(f"DELETE FROM {table} WHERE source_id = ?", (source_id,))
+
         for index, node in enumerate(node_rows, start=1):
-            relative_path = node.get("path") or "src/semantic_fixture.py"
+            relative_path = str(node.get("path") or "src/semantic_fixture.py")
+            file_id, content_hash = path_to_file[relative_path]
             conn.execute(
                 """
                 INSERT OR REPLACE INTO analysis_graph_nodes(
-                    id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, stable_key, node_kind, language, name,
-                    qualified_name, display_name, parent_node_id, line_start, line_end, confidence, status, metadata_json,
-                    created_at, fact_origin, flow_domain
+                    id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                    stable_key, node_kind, language, name, qualified_name, display_name, parent_node_id,
+                    line_start, line_end, confidence, status, metadata_json, created_at, updated_at, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'fixture', ?, ?, ?, ?, ?, ?, 0.96, ?, '{}', ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fixture', ?, ?, ?, ?, ?, ?, 0.96, ?, '{}', ?, ?, 'STATIC', 'CODE')
                 """,
                 (
                     node["id"],
-                    snapshot_id,
                     job_id,
                     source_id,
                     file_id,
                     file_id,
+                    file_id,
+                    relative_path,
+                    content_hash,
                     f"{source_id}|{relative_path}|{node['kind']}|{node['name']}",
                     node["kind"],
                     node["name"],
@@ -99,31 +121,50 @@ def seed_semantic_graph(
                     node.get("line_end", index),
                     node.get("status", "TRUSTED"),
                     now,
+                    now,
                 ),
             )
+
+        first_path = source_paths[0]
+        first_file_id, first_hash = path_to_file[first_path]
         for index, evidence_id in enumerate(evidence_rows, start=1):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO analysis_graph_evidence(
-                    id, snapshot_id, job_id, source_id, analysis_file_id, content_hash, evidence_kind, excerpt_hash,
-                    line_start, line_end, metadata_json, created_at, fact_origin, flow_domain
+                    id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                    line_start, line_end, excerpt, excerpt_hash, evidence_kind, metadata_json, created_at, updated_at, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 'CLAIM', ?, ?, ?, '{}', ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CLAIM', '{}', ?, ?, 'STATIC', 'CODE')
                 """,
-                (evidence_id, snapshot_id, job_id, source_id, file_id, f"hash-{evidence_id}", f"excerpt-{evidence_id}", index, index, now),
+                (
+                    evidence_id,
+                    job_id,
+                    source_id,
+                    first_file_id,
+                    first_file_id,
+                    first_file_id,
+                    first_path,
+                    first_hash,
+                    index,
+                    index,
+                    f"excerpt-{evidence_id}",
+                    f"excerpt-{evidence_id}",
+                    now,
+                    now,
+                ),
             )
+
         for claim in claims or []:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO analysis_graph_claims(
-                    id, snapshot_id, job_id, source_id, node_id, claim_kind, summary, confidence,
-                    status, evidence_ids_json, metadata_json, rejection_reason, created_at, fact_origin, flow_domain
+                    id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
+                    evidence_ids_json, metadata_json, rejection_reason, created_at, updated_at, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0.9, ?, ?, '{}', ?, ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, 0.9, ?, ?, '{}', ?, ?, ?, 'STATIC', 'CODE')
                 """,
                 (
                     claim["id"],
-                    snapshot_id,
                     job_id,
                     source_id,
                     claim["node_id"],
@@ -133,54 +174,101 @@ def seed_semantic_graph(
                     json.dumps(claim.get("evidence_ids", [])),
                     claim.get("rejection_reason"),
                     now,
-                ),
-            )
-        for index, edge in enumerate(edges or [], start=1):
-            evidence_id = edge.get("evidence_id") or f"ev-{edge['id']}"
-            if evidence_id not in evidence_rows:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO analysis_graph_evidence(
-                        id, snapshot_id, job_id, source_id, analysis_file_id, content_hash, evidence_kind, excerpt_hash,
-                        line_start, line_end, metadata_json, created_at, fact_origin, flow_domain
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, 'EDGE', ?, ?, ?, '{}', ?, 'STATIC', 'CODE')
-                    """,
-                    (evidence_id, snapshot_id, job_id, source_id, file_id, f"hash-{evidence_id}", f"excerpt-{evidence_id}", index, index, now),
-                )
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO analysis_graph_edges(
-                    id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id, to_node_id, edge_type,
-                    resolution_status, confidence, evidence_id, unresolved_target_json, metadata_json, status,
-                    created_at, fact_origin, flow_domain
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.91, ?, ?, '{}', ?, ?, 'STATIC', 'CODE')
-                """,
-                (
-                    edge["id"],
-                    snapshot_id,
-                    job_id,
-                    source_id,
-                    file_id,
-                    file_id,
-                    edge["from"],
-                    edge.get("to"),
-                    edge.get("type", "CALLS"),
-                    edge.get("resolution", "RESOLVED" if edge.get("to") else "UNRESOLVED"),
-                    evidence_id,
-                    json.dumps(edge.get("unresolved")) if edge.get("unresolved") else None,
-                    edge.get("status", "TRUSTED"),
                     now,
                 ),
             )
+
+        known_evidence = set(evidence_rows)
+        for index, edge in enumerate(edges or [], start=1):
+            evidence_id = edge.get("evidence_id") or f"ev-{edge['id']}"
+            if evidence_id not in known_evidence:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO analysis_graph_evidence(
+                        id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                        line_start, line_end, excerpt, excerpt_hash, evidence_kind, metadata_json, created_at, updated_at, fact_origin, flow_domain
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EDGE', '{}', ?, ?, 'STATIC', 'CODE')
+                    """,
+                    (
+                        evidence_id,
+                        job_id,
+                        source_id,
+                        first_file_id,
+                        first_file_id,
+                        first_file_id,
+                        first_path,
+                        first_hash,
+                        index,
+                        index,
+                        f"excerpt-{evidence_id}",
+                        f"excerpt-{evidence_id}",
+                        now,
+                        now,
+                    ),
+                )
+                known_evidence.add(evidence_id)
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO analysis_graph_edges(
+                    id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                    from_node_id, to_node_id, edge_type, edge_kind, resolution_status, confidence, evidence_id,
+                    evidence_ids_json, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.91, ?, ?, ?, '{}', ?, ?, ?, 'STATIC', 'CODE')
+                """,
+                (
+                    edge["id"],
+                    job_id,
+                    source_id,
+                    first_file_id,
+                    first_file_id,
+                    first_file_id,
+                    first_path,
+                    first_hash,
+                    edge["from"],
+                    edge.get("to"),
+                    edge.get("type", "CALLS"),
+                    edge.get("kind") or edge.get("type", "CALLS"),
+                    edge.get("resolution", "RESOLVED" if edge.get("to") else "UNRESOLVED"),
+                    evidence_id,
+                    json.dumps([evidence_id]),
+                    json.dumps(edge.get("unresolved")) if edge.get("unresolved") else None,
+                    edge.get("status", "TRUSTED"),
+                    now,
+                    now,
+                ),
+            )
+
+        graph_id = SemanticIndexStore.compute_graph_revision_conn(conn, source_id)
+        counts = conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = ?) AS node_count,
+              (SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = ?) AS edge_count,
+              (SELECT COUNT(*) FROM analysis_graph_claims WHERE source_id = ?) AS claim_count,
+              (SELECT COUNT(*) FROM analysis_graph_evidence WHERE source_id = ?) AS evidence_count
+            """,
+            (source_id, source_id, source_id, source_id),
+        ).fetchone()
         conn.execute(
             """
-            INSERT OR REPLACE INTO graph_current_snapshots(source_id, snapshot_id, published_at)
-            VALUES (?, ?, ?)
+            INSERT OR REPLACE INTO analysis_graph_state(
+                source_id, graph_id, content_identity, node_count, edge_count, claim_count, evidence_count, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (source_id, snapshot_id, now),
+            (
+                source_id,
+                graph_id,
+                graph_id,
+                int(counts["node_count"] or 0),
+                int(counts["edge_count"] or 0),
+                int(counts["claim_count"] or 0),
+                int(counts["evidence_count"] or 0),
+                now,
+            ),
         )
         if refresh_overview:
             refresh_overview_for_sources(conn, [source_id])
-    return snapshot_id
+    return graph_id

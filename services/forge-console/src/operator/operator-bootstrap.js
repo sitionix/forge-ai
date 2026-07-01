@@ -41,7 +41,7 @@ export function bootstrapOperatorConsole(options = {}) {
   if (pageName === 'knowledge-graph' && mountedPage) {
     windowRef.__forgeKnowledgeGraphRuntime = {
       state: mountedPage.state,
-      loadSnapshot: (query, requestOptions = {}) => mountedPage.client.loadSnapshot(query, { ...requestOptions, window: windowRef }),
+      loadGraphData: (query, requestOptions = {}) => mountedPage.client.loadGraphData(query, { ...requestOptions, window: windowRef }),
       loadSelectedDetails: () => mountedPage.loadSelectedDetails(),
       selectNode: (nodeId) => mountedPage.selectNode(nodeId),
       selectEdge: (edgeId) => mountedPage.selectEdge(edgeId),

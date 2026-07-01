@@ -45,7 +45,7 @@ class KnowledgeQueryPolicy:
 class QuerySource:
     source_id: str
     display_name: str
-    snapshot_id: str
+    graph_id: str
     node_count: int
     edge_count: int
 
@@ -61,16 +61,16 @@ class SourceScopeResolver:
         for source in raw_sources:
             source_id = str(source.get("sourceId") or "")
             display_name = str(source.get("displayName") or source_id or "unknown")
-            snapshot_id = str(source.get("snapshotId") or "")
+            graph_id = str(source.get("graphId") or "")
             node_count = int(source.get("nodeCount") or 0)
             edge_count = int(source.get("edgeCount") or 0)
             if not source_id:
                 continue
-            if not snapshot_id:
+            if not graph_id:
                 diagnostics.append(
                     KnowledgeQueryDiagnostic(
                         code="SOURCE_WITHOUT_CURRENT_GRAPH",
-                        message="Source has no current graph snapshot and was skipped.",
+                        message="Source has no current graph and was skipped.",
                         severity="INFO",
                         sourceId=source_id,
                     )
@@ -80,13 +80,13 @@ class SourceScopeResolver:
                 diagnostics.append(
                     KnowledgeQueryDiagnostic(
                         code="SOURCE_WITHOUT_GRAPH_FACTS",
-                        message="Source has a current graph snapshot but no graph nodes.",
+                        message="Source has a current graph but no graph nodes.",
                         severity="INFO",
                         sourceId=source_id,
                     )
                 )
                 continue
-            eligible.append(QuerySource(source_id=source_id, display_name=display_name, snapshot_id=snapshot_id, node_count=node_count, edge_count=edge_count))
+            eligible.append(QuerySource(source_id=source_id, display_name=display_name, graph_id=graph_id, node_count=node_count, edge_count=edge_count))
         if not raw_sources:
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
@@ -395,10 +395,10 @@ class FlowPathExtractor:
             source_id = matched_node.sourceId
             if not source_id or not matched_node.nodeId:
                 continue
-            key = (source_id, matched_node.snapshotId or "")
+            key = (source_id, matched_node.graphId or "")
             grouped.setdefault(key, set()).add(matched_node.nodeId)
         return [
-            {"sourceId": source_id, "snapshotId": snapshot_id, "nodeIds": sorted(node_ids)} for (source_id, snapshot_id), node_ids in sorted(grouped.items())
+            {"sourceId": source_id, "graphId": graph_id, "nodeIds": sorted(node_ids)} for (source_id, graph_id), node_ids in sorted(grouped.items())
         ]
 
     def _build_adjacency(self, adjacency_bundle: Dict[str, Any]) -> _Adjacency:
@@ -686,47 +686,47 @@ class FlowPathExtractor:
         return selected
 
     def _resolve_matched_key(self, matched_node: KnowledgeQueryMatchedNode, nodes_by_key: Dict[NodeKey, Dict[str, Any]]) -> Optional[NodeKey]:
-        exact_key = (matched_node.sourceId, matched_node.snapshotId or "", matched_node.nodeId)
+        exact_key = (matched_node.sourceId, matched_node.graphId or "", matched_node.nodeId)
         if exact_key in nodes_by_key:
             return exact_key
         candidates = [
             key
             for key in nodes_by_key
-            if key[0] == matched_node.sourceId and key[2] == matched_node.nodeId and (not matched_node.snapshotId or key[1] == matched_node.snapshotId)
+            if key[0] == matched_node.sourceId and key[2] == matched_node.nodeId and (not matched_node.graphId or key[1] == matched_node.graphId)
         ]
         return sorted(candidates)[0] if candidates else None
 
     def _node_key(self, node: Dict[str, Any]) -> Optional[NodeKey]:
         node_id = str(node.get("id") or node.get("nodeId") or "")
         source_id = str(node.get("sourceId") or "")
-        snapshot_id = str(node.get("snapshotId") or node.get("graphRevision") or "")
+        graph_id = str(node.get("graphId") or node.get("graphRevision") or "")
         if not node_id or not source_id:
             return None
-        return (source_id, snapshot_id, node_id)
+        return (source_id, graph_id, node_id)
 
     def _edge_key(self, edge: Dict[str, Any]) -> Optional[EdgeKey]:
         edge_id = str(edge.get("id") or edge.get("edgeId") or edge.get("graphEdgeId") or "")
         source_id = str(edge.get("sourceId") or "")
-        snapshot_id = str(edge.get("snapshotId") or edge.get("graphRevision") or "")
+        graph_id = str(edge.get("graphId") or edge.get("graphRevision") or "")
         if not edge_id or not source_id:
             return None
-        return (source_id, snapshot_id, edge_id)
+        return (source_id, graph_id, edge_id)
 
     def _edge_from_key(self, edge: Dict[str, Any]) -> Optional[NodeKey]:
         node_id = str(edge.get("fromNodeId") or edge.get("from") or "")
         source_id = str(edge.get("sourceId") or "")
-        snapshot_id = str(edge.get("snapshotId") or edge.get("graphRevision") or "")
+        graph_id = str(edge.get("graphId") or edge.get("graphRevision") or "")
         if not node_id or not source_id:
             return None
-        return (source_id, snapshot_id, node_id)
+        return (source_id, graph_id, node_id)
 
     def _edge_to_key(self, edge: Dict[str, Any]) -> Optional[NodeKey]:
         node_id = str(edge.get("toNodeId") or edge.get("to") or "")
         source_id = str(edge.get("sourceId") or "")
-        snapshot_id = str(edge.get("snapshotId") or edge.get("graphRevision") or "")
+        graph_id = str(edge.get("graphId") or edge.get("graphRevision") or "")
         if not node_id or not source_id:
             return None
-        return (source_id, snapshot_id, node_id)
+        return (source_id, graph_id, node_id)
 
     def _edge_type(self, edge: Dict[str, Any]) -> str:
         return str(edge.get("edgeType") or edge.get("relation") or edge.get("kind") or "").upper()
@@ -744,7 +744,7 @@ class FlowPathExtractor:
         return bool(node.get("external")) or str(node.get("nodeKind") or node.get("kind") or "").upper() == "EXTERNAL"
 
     def _fallback_node(self, node_key: NodeKey) -> Dict[str, Any]:
-        return {"id": node_key[2], "sourceId": node_key[0], "snapshotId": node_key[1], "label": node_key[2]}
+        return {"id": node_key[2], "sourceId": node_key[0], "graphId": node_key[1], "label": node_key[2]}
 
     def _empty_adjacency_bundle(self) -> Dict[str, Any]:
         return {"nodes": [], "edges": [], "evidence": [], "unresolved": [], "external": [], "verifiedPaths": [], "truncated": False}
@@ -890,7 +890,7 @@ class KnowledgeQueryService:
         result: List[Dict[str, Any]] = []
         seen: set[str] = set()
         for item in items:
-            key = str(item.get("sourceId") or "") + ":" + str(item.get("snapshotId") or "") + ":" + str(item.get(field) or item)
+            key = str(item.get("sourceId") or "") + ":" + str(item.get("graphId") or "") + ":" + str(item.get(field) or item)
             if key in seen:
                 continue
             seen.add(key)

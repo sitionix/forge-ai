@@ -1,1 +1,1 @@
-{"code":"GRAPH_CURSOR_QUERY_MISMATCH","message":"Graph snapshot cursor query does not match this request."}
+{"code":"GRAPH_CURSOR_QUERY_MISMATCH","message":"Graph cursor query does not match this request."}

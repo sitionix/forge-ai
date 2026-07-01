@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-import { createKnowledgeGraphClient, graphSnapshotQuery } from '../src/operator/knowledge-graph-client.js';
+import { createKnowledgeGraphClient, graphQuery } from '../src/operator/knowledge-graph-client.js';
 import { KnowledgeGraphPage, knowledgeGraphNodeRadius } from '../src/operator/knowledge-graph-page.js';
 import { KnowledgeOverviewPage } from '../src/operator/knowledge-overview-page.js';
 
@@ -65,7 +65,7 @@ function graphView(revision = 'rev-a') {
   return {
     sourceId: 'forge-ai',
     sourceName: 'Forge AI',
-    snapshotId: 'snapshot-a',
+    graphId: 'graph-a',
     graphRevision: revision,
     queryFingerprint: `fingerprint-${revision}`,
     selectionPolicy: 'RELATIONSHIP_AWARE',
@@ -91,7 +91,7 @@ function contractMetadataPayload(graphAvailable = true) {
     sourceId: 'app-afesox-contracts',
     sourceName: 'API Contracts',
     source: { sourceId: 'app-afesox-contracts', displayName: 'API Contracts', group: 'api', path: 'contracts/openapi.yaml', rootExists: true },
-    snapshotId: graphAvailable ? 'contracts-snapshot' : null,
+    graphId: graphAvailable ? 'contracts-graph' : null,
     graphRevision: graphAvailable ? 'contracts-rev' : null
   };
 }
@@ -101,7 +101,7 @@ function contractGraphView(revision = 'contracts-rev', overrides: Record<string,
     ...graphView(revision),
     sourceId: 'app-afesox-contracts',
     sourceName: 'API Contracts',
-    snapshotId: 'contracts-snapshot',
+    graphId: 'contracts-graph',
     graphRevision: revision,
     queryFingerprint: `contracts-${revision}`,
     nodes: [node('contract-node')],
@@ -238,7 +238,7 @@ function metadataPayload(processed = 7, status = 'COMPLETED', graphAvailable = t
     inventory: { status: 'READY', fileCount: 10, skippedCount: 0 },
     analysis: { status, totalFiles: 10, processedFiles: processed, failedFiles: 0, pendingFiles: 10 - processed, percent: processed * 10 },
     graphAvailable,
-    snapshotId: graphAvailable ? 'snapshot-a' : null,
+    graphId: graphAvailable ? 'graph-a' : null,
     graphRevision: graphAvailable ? 'rev-a' : null,
     lastAnalyzedAt: '2026-06-23T10:00:00.000Z',
     lastGraphPublishedAt: graphAvailable ? '2026-06-23T10:01:00.000Z' : null,
@@ -319,7 +319,7 @@ function automationGraphData() {
   return {
     sourceId: 'atmssox',
     sourceName: 'Automation Service SOX',
-    snapshotId: 'legacy:atmssox',
+    graphId: 'legacy:atmssox',
     graphRevision: 'atmssox-code-recovered',
     nodes,
     edges,
@@ -377,7 +377,7 @@ describe('Knowledge graph modular contract', () => {
     };
     const client = createKnowledgeGraphClient({ http, config: { graphNodePageSize: 2, graphEdgePageSize: 2 } });
     const query = new URLSearchParams({ sourceId: 'forge-ai', flowDomain: 'CODE', depth: '2' });
-    const data = await client.loadSnapshot(query);
+    const data = await client.loadGraphData(query);
     await client.loadNodeDetail('n1', query, data.graphRevision);
     await client.loadEdgeDetail('e1', query, data.graphRevision);
 
@@ -394,7 +394,7 @@ describe('Knowledge graph modular contract', () => {
       resolveSlow = resolve;
     });
     const client = {
-      loadSnapshot: vi.fn()
+      loadGraphData: vi.fn()
         .mockReturnValueOnce(slow)
         .mockResolvedValueOnce({
           ...manifest('rev-fast'),
@@ -508,7 +508,7 @@ describe('Knowledge graph modular contract', () => {
     ['mode', 'direction', 'depth', 'density', 'labels', 'max', 'rootGraphNodeId'].forEach((param) => {
       expect(viewUrl.searchParams.has(param)).toBe(false);
     });
-    expect(graphSnapshotQuery(new URLSearchParams({
+    expect(graphQuery(new URLSearchParams({
       sourceId: 'forge-ai',
       flowDomain: 'CODE',
       direction: 'INBOUND',
@@ -581,7 +581,7 @@ describe('Knowledge graph modular contract', () => {
     expect(viewUrl.searchParams.get('sourceId')).toBe('app-afesox-contracts');
     expect(viewUrl.searchParams.has('graphRevision')).toBe(false);
     expect(viewUrl.searchParams.has('cursor')).toBe(false);
-    expect(dom.window.document.getElementById('knowledgeGraphError')?.textContent).not.toContain('GRAPH_SNAPSHOT_STALE');
+    expect(dom.window.document.getElementById('knowledgeGraphError')?.textContent).not.toContain('GRAPH_REVISION_STALE');
     page.dispose();
   });
 
@@ -638,7 +638,7 @@ describe('Knowledge graph modular contract', () => {
         if (path.includes('/knowledge/analysis/graph/view')) {
           viewCalls += 1;
           if (viewCalls === 1) {
-            return Promise.reject(Object.assign(new Error('GRAPH_SNAPSHOT_STALE'), { code: 'GRAPH_SNAPSHOT_STALE', status: 409 }));
+            return Promise.reject(Object.assign(new Error('GRAPH_REVISION_STALE'), { code: 'GRAPH_REVISION_STALE', status: 409 }));
           }
           return Promise.resolve(contractGraphView('contracts-retry'));
         }
@@ -650,7 +650,7 @@ describe('Knowledge graph modular contract', () => {
     page.mount();
     await flushAsync();
     expect(dom.window.document.getElementById('knowledgeGraphSourceTitle')?.textContent).toBe('API Contracts');
-    expect(dom.window.document.getElementById('knowledgeGraphError')?.textContent).toContain('GRAPH_SNAPSHOT_STALE');
+    expect(dom.window.document.getElementById('knowledgeGraphError')?.textContent).toContain('GRAPH_REVISION_STALE');
 
     dom.window.document.getElementById('refreshKnowledgeGraph')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await flushAsync();
@@ -698,8 +698,8 @@ describe('Knowledge graph modular contract', () => {
         if (path.includes('/knowledge/analysis/graph/metadata')) {
           return Promise.resolve({
             ...contractMetadataPayload(false),
-            currentSnapshotId: null,
-            currentSnapshotState: null,
+            currentGraphId: null,
+            currentGraphState: null,
             currentGraphNodeCount: 0,
             currentGraphEdgeCount: 0,
             representedFileCount: 0,
@@ -709,7 +709,7 @@ describe('Knowledge graph modular contract', () => {
         }
         if (path.includes('/knowledge/analysis/graph/view')) {
           return Promise.resolve(contractGraphView('contracts-empty', {
-            snapshotId: null,
+            graphId: null,
             nodes: [],
             edges: [],
             totalMatchingNodeCount: 0,
@@ -738,8 +738,8 @@ describe('Knowledge graph modular contract', () => {
         if (path.includes('/knowledge/analysis/graph/metadata')) {
           return Promise.resolve({
             ...contractMetadataPayload(true),
-            currentSnapshotId: 'contracts-snapshot',
-            currentSnapshotState: 'PUBLISHED',
+            currentGraphId: 'contracts-graph',
+            currentGraphState: 'PUBLISHED',
             currentGraphNodeCount: 12,
             currentGraphEdgeCount: 8,
             representedFileCount: 10,
@@ -777,8 +777,8 @@ describe('Knowledge graph modular contract', () => {
         if (path.includes('/knowledge/analysis/graph/metadata')) {
           return Promise.resolve({
             ...contractMetadataPayload(true),
-            currentSnapshotId: 'contracts-partial',
-            currentSnapshotState: 'PUBLISHED',
+            currentGraphId: 'contracts-partial',
+            currentGraphState: 'PUBLISHED',
             currentGraphNodeCount: 4,
             currentGraphEdgeCount: 0,
             representedFileCount: 4,
@@ -789,7 +789,7 @@ describe('Knowledge graph modular contract', () => {
         }
         if (path.includes('/knowledge/analysis/graph/view')) {
           return Promise.resolve(contractGraphView('contracts-degraded-empty', {
-            snapshotId: 'contracts-partial',
+            graphId: 'contracts-partial',
             nodes: [],
             edges: [],
             totalMatchingNodeCount: 0,
@@ -818,8 +818,8 @@ describe('Knowledge graph modular contract', () => {
         if (path.includes('/knowledge/analysis/graph/metadata')) {
           return Promise.resolve({
             ...contractMetadataPayload(true),
-            currentSnapshotId: 'contracts-partial',
-            currentSnapshotState: 'PUBLISHED',
+            currentGraphId: 'contracts-partial',
+            currentGraphState: 'PUBLISHED',
             currentGraphNodeCount: 4,
             currentGraphEdgeCount: 0,
             representedFileCount: 4,
@@ -830,7 +830,7 @@ describe('Knowledge graph modular contract', () => {
         }
         if (path.includes('/knowledge/analysis/graph/view')) {
           return Promise.resolve(contractGraphView('contracts-degraded-empty', {
-            snapshotId: 'contracts-partial',
+            graphId: 'contracts-partial',
             nodes: [],
             edges: [],
             totalMatchingNodeCount: 0,
@@ -909,7 +909,7 @@ describe('Knowledge graph modular contract', () => {
     const initial = deferred<unknown>();
     let abortCount = 0;
     const client = {
-      loadSnapshot: vi.fn((_query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
+      loadGraphData: vi.fn((_query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
         options.signal?.addEventListener('abort', () => {
           abortCount += 1;
           initial.reject(abortError());
@@ -930,12 +930,12 @@ describe('Knowledge graph modular contract', () => {
     try {
       page.mount();
       await flushFakeTimers(2);
-      expect(client.loadSnapshot).toHaveBeenCalledTimes(1);
+      expect(client.loadGraphData).toHaveBeenCalledTimes(1);
 
       await vi.advanceTimersByTimeAsync(31);
       await flushFakeTimers(2);
 
-      expect(client.loadSnapshot).toHaveBeenCalledTimes(1);
+      expect(client.loadGraphData).toHaveBeenCalledTimes(1);
       expect(abortCount).toBe(0);
 
       initial.resolve(graphData('rev-initial'));
@@ -953,7 +953,7 @@ describe('Knowledge graph modular contract', () => {
     vi.useFakeTimers();
     const dom = graphDomWithFakeTimers();
     const client = {
-      loadSnapshot: vi.fn()
+      loadGraphData: vi.fn()
         .mockResolvedValueOnce(graphData('rev-initial'))
         .mockResolvedValueOnce(graphData('rev-polled')),
       loadNodeDetail: vi.fn(),
@@ -970,13 +970,13 @@ describe('Knowledge graph modular contract', () => {
     try {
       page.mount();
       await flushFakeTimers(8);
-      expect(client.loadSnapshot).toHaveBeenCalledTimes(1);
+      expect(client.loadGraphData).toHaveBeenCalledTimes(1);
       expect(page.pollTimer).toBeTruthy();
 
       await vi.advanceTimersByTimeAsync(30);
       await flushFakeTimers(8);
 
-      expect(client.loadSnapshot).toHaveBeenCalledTimes(2);
+      expect(client.loadGraphData).toHaveBeenCalledTimes(2);
       expect(page.state.data?.graphRevision).toBe('rev-polled');
     } finally {
       page.dispose();
@@ -990,12 +990,12 @@ describe('Knowledge graph modular contract', () => {
     const slowPoll = deferred<unknown>();
     let abortCount = 0;
     const client = {
-      loadSnapshot: vi.fn((_query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
+      loadGraphData: vi.fn((_query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
         options.signal?.addEventListener('abort', () => {
           abortCount += 1;
           slowPoll.reject(abortError());
         });
-        if (client.loadSnapshot.mock.calls.length === 1) {
+        if (client.loadGraphData.mock.calls.length === 1) {
           return Promise.resolve(graphData('rev-initial'));
         }
         return slowPoll.promise;
@@ -1016,13 +1016,13 @@ describe('Knowledge graph modular contract', () => {
       await flushFakeTimers(8);
       await vi.advanceTimersByTimeAsync(30);
       await flushFakeTimers(2);
-      expect(client.loadSnapshot).toHaveBeenCalledTimes(2);
+      expect(client.loadGraphData).toHaveBeenCalledTimes(2);
 
       page.schedulePolling();
       await vi.advanceTimersByTimeAsync(30);
       await flushFakeTimers(2);
 
-      expect(client.loadSnapshot).toHaveBeenCalledTimes(2);
+      expect(client.loadGraphData).toHaveBeenCalledTimes(2);
       expect(abortCount).toBe(0);
 
       slowPoll.resolve(graphData('rev-polled'));
@@ -1042,12 +1042,12 @@ describe('Knowledge graph modular contract', () => {
     const queries: string[] = [];
     const signals: AbortSignal[] = [];
     const client = {
-      loadSnapshot: vi.fn((query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
+      loadGraphData: vi.fn((query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
         queries.push(query.toString());
         if (options.signal) {
           signals.push(options.signal);
         }
-        if (client.loadSnapshot.mock.calls.length === 1) {
+        if (client.loadGraphData.mock.calls.length === 1) {
           options.signal?.addEventListener('abort', () => oldRequest.reject(abortError()));
           return oldRequest.promise;
         }
@@ -1099,7 +1099,7 @@ describe('Knowledge graph modular contract', () => {
     let abortCount = 0;
     const queries: string[] = [];
     const client = {
-      loadSnapshot: vi.fn((query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
+      loadGraphData: vi.fn((query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
         queries.push(query.toString());
         options.signal?.addEventListener('abort', () => {
           abortCount += 1;
@@ -1117,8 +1117,8 @@ describe('Knowledge graph modular contract', () => {
         ...metadataPayload(387, 'COMPLETED', true),
         sourceId: 'atmssox',
         sourceName: 'Automation Service SOX',
-        currentSnapshotId: 'legacy:atmssox',
-        currentPointerSnapshotId: '661e40ad-f31e-4912-a00e-71af9d074f2d:atmssox',
+        currentGraphId: 'legacy:atmssox',
+        currentPointerGraphId: '661e40ad-f31e-4912-a00e-71af9d074f2d:atmssox',
         currentGraphNodeCount: 6983,
         currentGraphEdgeCount: 29955,
         representedFileCount: 387,
@@ -1135,7 +1135,7 @@ describe('Knowledge graph modular contract', () => {
       await vi.advanceTimersByTimeAsync(31);
       await flushFakeTimers(2);
 
-      expect(client.loadSnapshot).toHaveBeenCalledTimes(1);
+      expect(client.loadGraphData).toHaveBeenCalledTimes(1);
       expect(abortCount).toBe(0);
       expect(Object.fromEntries(new URLSearchParams(queries[0]).entries())).toMatchObject({
         sourceId: 'atmssox',
@@ -1164,11 +1164,11 @@ describe('Knowledge graph modular contract', () => {
     const slowPoll = deferred<unknown>();
     const signals: AbortSignal[] = [];
     const client = {
-      loadSnapshot: vi.fn((_query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
+      loadGraphData: vi.fn((_query: URLSearchParams, options: { signal?: AbortSignal } = {}) => {
         if (options.signal) {
           signals.push(options.signal);
         }
-        if (client.loadSnapshot.mock.calls.length === 1) {
+        if (client.loadGraphData.mock.calls.length === 1) {
           return Promise.resolve(graphData('rev-initial'));
         }
         options.signal?.addEventListener('abort', () => slowPoll.reject(abortError()));
@@ -1192,7 +1192,7 @@ describe('Knowledge graph modular contract', () => {
 
       await vi.advanceTimersByTimeAsync(30);
       await flushFakeTimers(2);
-      expect(client.loadSnapshot).toHaveBeenCalledTimes(2);
+      expect(client.loadGraphData).toHaveBeenCalledTimes(2);
 
       page.dispose();
       expect(signals[1]?.aborted).toBe(true);
@@ -1207,7 +1207,7 @@ describe('Knowledge graph modular contract', () => {
       });
       await flushFakeTimers(4);
 
-      expect(client.loadSnapshot).toHaveBeenCalledTimes(2);
+      expect(client.loadGraphData).toHaveBeenCalledTimes(2);
       expect((page.state.nodes as Array<{ id: string }>).map((item) => item.id)).not.toContain('after-dispose');
     } finally {
       page.dispose();
@@ -1265,7 +1265,7 @@ describe('Knowledge graph modular contract', () => {
       document: dom.window.document,
       window: dom.window,
       http,
-      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+      client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
     });
 
     await page.loadMetadata({ manual: true });
@@ -1291,7 +1291,7 @@ describe('Knowledge graph modular contract', () => {
       document: dom.window.document,
       window: dom.window,
       http,
-      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+      client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
     });
 
     await page.loadMetadata({ manual: true });
@@ -1318,7 +1318,7 @@ describe('Knowledge graph modular contract', () => {
         document: dom.window.document,
         window: dom.window,
         http: { get: vi.fn(() => Promise.resolve(metadata)) },
-        client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+        client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
       });
       await page.loadMetadata({ manual: true });
       expect(graphProgress(dom).fill.style.width).toBe(width);
@@ -1372,7 +1372,7 @@ describe('Knowledge graph modular contract', () => {
       document: dom.window.document,
       window: dom.window,
       http,
-      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+      client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
     });
 
     const requestA = page.loadMetadata({ manual: true });
@@ -1396,7 +1396,7 @@ describe('Knowledge graph modular contract', () => {
       document: dom.window.document,
       window: dom.window,
       http: { get: vi.fn(() => Promise.resolve({ status: 'COMPLETED', processedFileCount: 1, fileCount: 2 })) },
-      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+      client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
     });
 
     await page.loadMetadata({ manual: true });
@@ -1467,7 +1467,7 @@ describe('Knowledge graph modular contract', () => {
       resolveSlowGraph = resolve;
     });
     const client = {
-      loadSnapshot: vi.fn()
+      loadGraphData: vi.fn()
         .mockReturnValueOnce(slowGraph)
         .mockResolvedValueOnce({
           ...manifest('rev-fast'),
@@ -1512,7 +1512,7 @@ describe('Knowledge graph modular contract', () => {
       document: pendingDom.window.document,
       window: pendingDom.window,
       http: { get: vi.fn(() => pendingMetadata) },
-      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+      client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
     });
     const request = disposedPage.loadMetadata({ manual: true });
     disposedPage.dispose();
@@ -1527,7 +1527,7 @@ describe('Knowledge graph modular contract', () => {
     const pending = new Promise((resolve) => {
       resolvePending = resolve;
     });
-    const client = { loadSnapshot: vi.fn(() => pending), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() };
+    const client = { loadGraphData: vi.fn(() => pending), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() };
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client });
     const request = page.loadGraph({ manual: true });
 
@@ -1543,7 +1543,7 @@ describe('Knowledge graph modular contract', () => {
       document: dom.window.document,
       window: dom.window,
       http: {},
-      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+      client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
     });
     const data = largeGraphData(340);
     page.state.data = data;
@@ -1573,7 +1573,7 @@ describe('Knowledge graph modular contract', () => {
       document: graph.window.document,
       window: graph.window,
       http: {},
-      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+      client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
     });
     const data = largeGraphData(360);
     graphPage.state.data = data;
@@ -1605,7 +1605,7 @@ describe('Knowledge graph modular contract', () => {
       document: dom.window.document,
       window: dom.window,
       http: {},
-      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+      client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
     });
     const sourceA = largeGraphData(340, 'source-a', 'rev-source-a');
     const sourceB = {
@@ -1642,7 +1642,7 @@ describe('Knowledge graph modular contract', () => {
       document: dom.window.document,
       window: dom.window,
       http: {},
-      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() },
+      client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() },
       runtimeConfig: { graphAsyncLayoutTicksPerFrame: 2 }
     });
     const data = largeGraphData(420);
@@ -1666,7 +1666,7 @@ describe('Knowledge graph modular contract', () => {
       document: dom.window.document,
       window: dom.window,
       http: {},
-      client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
+      client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() }
     });
     const data = largeGraphData(180);
     page.state.data = data;
@@ -1756,7 +1756,7 @@ describe('Knowledge graph modular contract', () => {
       resolveDetail = resolve;
     });
     const client = {
-      loadSnapshot: vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second),
+      loadGraphData: vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second),
       loadNodeDetail: vi.fn(() => detail),
       loadEdgeDetail: vi.fn()
     };
@@ -1777,7 +1777,7 @@ describe('Knowledge graph modular contract', () => {
 
   it('UI-GRAPH-PARITY-01 restores main graph visual classes and constants', async () => {
     const dom = graphDom();
-    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
 
     page.renderPage(graphData());
     await flushAsync(2);
@@ -1794,7 +1794,7 @@ describe('Knowledge graph modular contract', () => {
 
   it('UI-GRAPH-DETAIL-UX-09 graph visual parity preserved', async () => {
     const dom = graphDom();
-    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
     const css = await readFile('src/operator/operator-ui.css', 'utf8');
 
     page.renderPage(graphData());
@@ -1813,7 +1813,7 @@ describe('Knowledge graph modular contract', () => {
 
   it('UI-GRAPH-PARITY-02 wheel zoom changes the graph transform', async () => {
     const dom = graphDom();
-    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
     page.renderPage(graphData());
     await flushAsync(2);
     page.state.transform.k = 1;
@@ -1831,7 +1831,7 @@ describe('Knowledge graph modular contract', () => {
 
   it('UI-GRAPH-PARITY-03 drag pan changes the graph transform without data reload', async () => {
     const dom = graphDom();
-    const client = { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() };
+    const client = { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() };
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client });
     page.renderPage(graphData());
     await flushAsync(2);
@@ -1846,13 +1846,13 @@ describe('Knowledge graph modular contract', () => {
     expect(page.state.transform.x).toBe(before.x + 40);
     expect(page.state.transform.y).toBe(before.y + 28);
     expect(page.metrics.panEventCount).toBeGreaterThan(0);
-    expect(client.loadSnapshot).not.toHaveBeenCalled();
+    expect(client.loadGraphData).not.toHaveBeenCalled();
   });
 
   it('UI-GRAPH-PARITY-04 fit, panel, full, and focus controls keep graph usable', async () => {
     const dom = graphDom();
     const client = {
-      loadSnapshot: vi.fn().mockResolvedValue(graphData('rev-full')),
+      loadGraphData: vi.fn().mockResolvedValue(graphData('rev-full')),
       loadNodeDetail: vi.fn().mockResolvedValue({ item: { id: 'n1', relations: { incoming: { totalCount: 0, items: [] }, outgoing: { totalCount: 0, items: [] } } } }),
       loadEdgeDetail: vi.fn()
     };
@@ -1887,7 +1887,7 @@ describe('Knowledge graph modular contract', () => {
     dom.window.document.getElementById('showKnowledgeGraphFull')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await flushAsync();
     expect((dom.window.document.getElementById('knowledgeGraphMode') as HTMLSelectElement).value).toBe('full');
-    expect(client.loadSnapshot).toHaveBeenCalled();
+    expect(client.loadGraphData).toHaveBeenCalled();
     expect(page.state.transform.k).toBeGreaterThan(0);
     expect(page.state.transform.k).not.toBe(Number.NaN);
     expect(previousFit).toBeGreaterThan(0);
@@ -1896,7 +1896,7 @@ describe('Knowledge graph modular contract', () => {
 
   it('UI-GRAPH-PARITY-01 keeps SVG renderer and exact radius constants', () => {
     const dom = graphDom();
-    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadSnapshot: vi.fn() } });
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadGraphData: vi.fn() } });
     expect(dom.window.document.getElementById('knowledgeGraphSvg')).toBeTruthy();
     expect(knowledgeGraphNodeRadius({ id: 'n', nodeKind: 'CALLABLE' }, {})).toBe(19);
     expect(knowledgeGraphNodeRadius({ id: 'n', nodeKind: 'TYPE' }, {})).toBe(22);

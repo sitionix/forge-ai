@@ -32,14 +32,14 @@ def test_reanalysis_stale_state_is_auto_built_for_new_revision(tmp_path):
     _, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     provider = FakeDeterministicEmbeddingProvider(dimension=16)
     worker = _worker(app_config.store_path, provider)
-    seed_semantic_graph(app_config.store_path, snapshot_suffix="old")
+    seed_semantic_graph(app_config.store_path, graph_suffix="old")
     worker.run_once()
     store = SemanticIndexStore(app_config.store_path)
     old_revision = store.status_for_source("semantic-source").graph_revision
 
     seed_semantic_graph(
         app_config.store_path,
-        snapshot_suffix="new",
+        graph_suffix="new",
         nodes=[
             {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
             {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},

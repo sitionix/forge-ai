@@ -14,6 +14,7 @@ from knowledge_service.observability import observed_connect
 from knowledge_service.semantic_index import (
     SEMANTIC_BUILDER_VERSION,
     SEMANTIC_ELIGIBLE_NODE_KINDS,
+    SEMANTIC_INVENTORY_MEMBERSHIP_NODE_FILTER_SQL,
     SQLITE_SEMANTIC_BUSY_TIMEOUT_MS,
     SemanticGraphInfo,
     SemanticIndexStatus,
@@ -44,7 +45,7 @@ class SemanticDocument:
     node_id: str
     node_kind: str
     document_type: str
-    graph_revision: str
+    graph_id: str
     builder_version: int
     text_hash: str
     text: str
@@ -110,22 +111,22 @@ class SemanticDocumentBuilder:
         graph_info: Optional[SemanticGraphInfo] = None,
     ) -> list[SemanticDocument]:
         graph = graph_info or SemanticIndexStore.current_graph_info_conn(conn, source_id)
-        if not graph.snapshot_id or not graph.graph_revision:
+        if not graph.graph_id or not graph.graph_revision:
             return []
-        nodes = self._load_nodes(conn, source_id, graph.snapshot_id)
+        nodes = self._load_nodes(conn, source_id)
         if not nodes:
             return []
-        evidence_ids = self._load_evidence_ids(conn, source_id, graph.snapshot_id)
-        claims_by_node = self._load_trusted_responsibility_claims(conn, source_id, graph.snapshot_id, evidence_ids)
-        edges_by_node = self._load_edge_facts(conn, source_id, graph.snapshot_id)
+        evidence_ids = self._load_evidence_ids(conn, source_id)
+        claims_by_node = self._load_trusted_responsibility_claims(conn, source_id, evidence_ids)
+        edges_by_node = self._load_edge_facts(conn, source_id)
         return [
-            self._build_node_document(node, claims_by_node.get(str(node["id"]), ()), edges_by_node, graph.graph_revision)
+            self._build_node_document(node, claims_by_node.get(str(node["id"]), ()), edges_by_node, graph.graph_id)
             for node in nodes
         ]
 
-    def _load_nodes(self, conn: sqlite3.Connection, source_id: str, snapshot_id: str) -> list[sqlite3.Row]:
+    def _load_nodes(self, conn: sqlite3.Connection, source_id: str) -> list[sqlite3.Row]:
         return conn.execute(
-            """
+            f"""
             SELECT n.*,
                    af.relative_path AS relative_path,
                    parent.name AS parent_name,
@@ -137,18 +138,17 @@ class SemanticDocumentBuilder:
              AND af.source_id = n.source_id
             LEFT JOIN analysis_graph_nodes parent
               ON parent.source_id = n.source_id
-             AND parent.snapshot_id = n.snapshot_id
              AND parent.id = n.parent_node_id
             WHERE n.source_id = ?
-              AND n.snapshot_id = ?
               AND n.status IN ('TRUSTED', 'DERIVED')
               AND n.node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
+              {SEMANTIC_INVENTORY_MEMBERSHIP_NODE_FILTER_SQL}
             ORDER BY n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
             """,
-            (source_id, snapshot_id),
+            (source_id,),
         ).fetchall()
 
-    def _load_evidence_ids(self, conn: sqlite3.Connection, source_id: str, snapshot_id: str) -> set[str]:
+    def _load_evidence_ids(self, conn: sqlite3.Connection, source_id: str) -> set[str]:
         return {
             str(row["id"])
             for row in conn.execute(
@@ -156,9 +156,8 @@ class SemanticDocumentBuilder:
                 SELECT id
                 FROM analysis_graph_evidence
                 WHERE source_id = ?
-                  AND snapshot_id = ?
                 """,
-                (source_id, snapshot_id),
+                (source_id,),
             ).fetchall()
         }
 
@@ -166,7 +165,6 @@ class SemanticDocumentBuilder:
         self,
         conn: sqlite3.Connection,
         source_id: str,
-        snapshot_id: str,
         evidence_ids: set[str],
     ) -> dict[str, tuple[dict[str, Any], ...]]:
         rows = conn.execute(
@@ -174,12 +172,11 @@ class SemanticDocumentBuilder:
             SELECT id, node_id, summary, evidence_ids_json
             FROM analysis_graph_claims
             WHERE source_id = ?
-              AND snapshot_id = ?
               AND claim_kind = 'RESPONSIBILITY'
               AND status = 'TRUSTED'
             ORDER BY node_id, id
             """,
-            (source_id, snapshot_id),
+            (source_id,),
         ).fetchall()
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
@@ -192,7 +189,7 @@ class SemanticDocumentBuilder:
             )
         return {node_id: tuple(values) for node_id, values in grouped.items()}
 
-    def _load_edge_facts(self, conn: sqlite3.Connection, source_id: str, snapshot_id: str) -> dict[str, dict[str, list[dict[str, str]]]]:
+    def _load_edge_facts(self, conn: sqlite3.Connection, source_id: str) -> dict[str, dict[str, list[dict[str, str]]]]:
         rows = conn.execute(
             """
             SELECT e.id, e.from_node_id, e.to_node_id, e.edge_type, e.resolution_status, e.unresolved_target_json,
@@ -205,18 +202,15 @@ class SemanticDocumentBuilder:
             FROM analysis_graph_edges e
             LEFT JOIN analysis_graph_nodes from_node
               ON from_node.source_id = e.source_id
-             AND from_node.snapshot_id = e.snapshot_id
              AND from_node.id = e.from_node_id
             LEFT JOIN analysis_graph_nodes to_node
               ON to_node.source_id = e.source_id
-             AND to_node.snapshot_id = e.snapshot_id
              AND to_node.id = e.to_node_id
             WHERE e.source_id = ?
-              AND e.snapshot_id = ?
               AND e.status IN ('TRUSTED', 'DERIVED')
             ORDER BY e.edge_type, e.id
             """,
-            (source_id, snapshot_id),
+            (source_id,),
         ).fetchall()
         grouped: dict[str, dict[str, list[dict[str, str]]]] = {}
         for row in rows:
@@ -243,7 +237,7 @@ class SemanticDocumentBuilder:
         node: sqlite3.Row,
         claims: Sequence[dict[str, Any]],
         edges_by_node: Mapping[str, Mapping[str, Sequence[Mapping[str, str]]]],
-        graph_revision: str,
+        graph_id: str,
     ) -> SemanticDocument:
         node_id = str(node["id"])
         lines = [
@@ -294,14 +288,14 @@ class SemanticDocumentBuilder:
         if len(text) > max_chars:
             text = text[:max_chars].rstrip()
         text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        document_id = _document_id(str(node["source_id"]), node_id, graph_revision, self.config.builder_version)
+        document_id = _document_id(str(node["source_id"]), node_id, graph_id, self.config.builder_version)
         return SemanticDocument(
             document_id=document_id,
             source_id=str(node["source_id"]),
             node_id=node_id,
             node_kind=str(node["node_kind"]),
             document_type=SEMANTIC_DOCUMENT_TYPE,
-            graph_revision=graph_revision,
+            graph_id=graph_id,
             builder_version=self.config.builder_version,
             text_hash=text_hash,
             text=text,
@@ -348,7 +342,7 @@ class SemanticIndexBuilder:
 
     def _build_source(self, source_id: str, *, force: bool, build_id: str) -> SemanticSourceBuildResult:
         graph = self._graph_info(source_id)
-        if not graph.snapshot_id or not graph.graph_revision or graph.total_node_count <= 0:
+        if not graph.graph_id or not graph.graph_revision or graph.total_node_count <= 0:
             return SemanticSourceBuildResult(source_id, "SKIPPED", graph.graph_revision, 0, 0)
         if not force:
             status = self._status_for_source(source_id)
@@ -373,7 +367,7 @@ class SemanticIndexBuilder:
         try:
             vectors = self._embed_documents(source_id, graph, documents, build_id)
             dimension = self._validate_dimensions(vectors)
-            self._replace_documents_and_vectors(source_id, graph.graph_revision, documents, vectors, dimension)
+            self._replace_documents_and_vectors(source_id, graph.graph_id or graph.graph_revision or "", documents, vectors, dimension)
             self._mark_ready(source_id, graph, total, len(vectors), dimension, build_id)
             return SemanticSourceBuildResult(source_id, "READY", graph.graph_revision, total, len(vectors))
         except SemanticBuildError as exc:
@@ -389,9 +383,15 @@ class SemanticIndexBuilder:
         if explicit:
             return explicit
         with self._connect() as conn:
-            if not _table_exists(conn, "graph_current_snapshots"):
+            if not _table_exists(conn, "analysis_graph_nodes"):
                 return []
-            rows = conn.execute("SELECT source_id FROM graph_current_snapshots ORDER BY source_id").fetchall()
+            rows = conn.execute(
+                """
+                SELECT DISTINCT source_id
+                FROM analysis_graph_nodes
+                ORDER BY source_id
+                """,
+            ).fetchall()
             selected: list[str] = []
             for row in rows:
                 source_id = str(row["source_id"])
@@ -462,7 +462,7 @@ class SemanticIndexBuilder:
     def _replace_documents_and_vectors(
         self,
         source_id: str,
-        graph_revision: str,
+        graph_id: str,
         documents: Sequence[SemanticDocument],
         vectors: Sequence[Sequence[float]],
         dimension: int,
@@ -473,16 +473,16 @@ class SemanticIndexBuilder:
                 """
                 DELETE FROM semantic_documents
                 WHERE source_id = ?
-                  AND graph_revision = ?
+                  AND graph_id = ?
                   AND builder_version = ?
                 """,
-                (source_id, graph_revision, self.config.builder_version),
+                (source_id, graph_id, self.config.builder_version),
             )
             for document, vector in zip(documents, vectors):
                 conn.execute(
                     """
                     INSERT INTO semantic_documents(
-                        document_id, source_id, node_id, node_kind, document_type, graph_revision, builder_version,
+                        document_id, source_id, node_id, node_kind, document_type, graph_id, builder_version,
                         text_hash, text, claim_ids_json, evidence_ids_json, status, created_at, updated_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'READY', ?, ?)
@@ -493,7 +493,7 @@ class SemanticIndexBuilder:
                         document.node_id,
                         document.node_kind,
                         document.document_type,
-                        document.graph_revision,
+                        document.graph_id,
                         document.builder_version,
                         document.text_hash,
                         document.text,
@@ -506,7 +506,7 @@ class SemanticIndexBuilder:
                 conn.execute(
                     """
                     INSERT INTO semantic_vectors(
-                        document_id, source_id, node_id, graph_revision, embedding_model, embedding_dimension,
+                        document_id, source_id, node_id, graph_id, embedding_model, embedding_dimension,
                         vector_blob, vector_json, created_at, updated_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
@@ -515,7 +515,7 @@ class SemanticIndexBuilder:
                         document.document_id,
                         document.source_id,
                         document.node_id,
-                        document.graph_revision,
+                        document.graph_id,
                         self.embedding_provider.model,
                         dimension,
                         json.dumps([float(value) for value in vector], separators=(",", ":")),
@@ -596,9 +596,9 @@ class SemanticIndexBuilder:
         return conn
 
 
-def _document_id(source_id: str, node_id: str, graph_revision: str, builder_version: int) -> str:
+def _document_id(source_id: str, node_id: str, graph_id: str, builder_version: int) -> str:
     digest = hashlib.sha256()
-    for value in (source_id, node_id, graph_revision, str(builder_version), SEMANTIC_DOCUMENT_TYPE):
+    for value in (source_id, node_id, graph_id, str(builder_version), SEMANTIC_DOCUMENT_TYPE):
         digest.update(value.encode("utf-8"))
         digest.update(b"\0")
     return f"semantic-doc:{digest.hexdigest()}"

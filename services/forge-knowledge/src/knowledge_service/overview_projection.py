@@ -325,43 +325,56 @@ def _semantic_percent_for_overview_conn(conn: sqlite3.Connection, row: sqlite3.R
     processed = _int_value(row, "analysis_processed_files")
     if total <= 0 or processed <= 0:
         return 0.0
-    if not all(_table_exists(conn, table) for table in ("analysis_graph_nodes", "semantic_documents", "semantic_vectors")):
+    if not all(_table_exists(conn, table) for table in ("files", "analysis_files", "analysis_graph_nodes", "semantic_documents", "semantic_vectors")):
         return 0.0
     graph = SemanticIndexStore.current_graph_info_conn(conn, source_id)
-    if not graph.snapshot_id or not graph.graph_revision:
+    if not graph.graph_id or not graph.graph_revision:
         return 0.0
     state = SemanticIndexStore.get_state_conn(conn, source_id)
     builder_version = int(state["builder_version"] or SEMANTIC_BUILDER_VERSION) if state is not None else SEMANTIC_BUILDER_VERSION
     embedding_model = state["embedding_model"] if state is not None else None
     model_clause = "AND v.embedding_model = ?" if embedding_model else ""
+    revision_clause = (
+        "AND d.graph_id = ?"
+        if state is not None and state["status"] == "READY" and state["graph_revision"] == graph.graph_revision
+        else ""
+    )
     params: list[Any] = [
-        graph.graph_revision,
         builder_version,
     ]
+    if revision_clause:
+        params.append(graph.graph_revision)
     if embedding_model:
         params.append(embedding_model)
-    params.extend([source_id, graph.snapshot_id])
+    params.append(source_id)
     result = conn.execute(
         f"""
-        SELECT COUNT(DISTINCT COALESCE(n.analysis_file_id, n.inventory_file_id)) AS count
+        SELECT COUNT(DISTINCT f.id) AS count
         FROM analysis_graph_nodes n
+        JOIN analysis_files af
+          ON af.source_id = n.source_id
+         AND af.relative_path = n.relative_path
+         AND af.content_hash = n.content_hash
+        JOIN files f
+          ON f.source_id = af.source_id
+         AND f.relative_path = af.relative_path
+         AND f.content_hash = af.content_hash
         JOIN semantic_documents d
-          ON d.source_id = n.source_id
+         ON d.source_id = n.source_id
          AND d.node_id = n.id
-         AND d.graph_revision = ?
          AND d.builder_version = ?
          AND d.status = 'READY'
+         {revision_clause}
         JOIN semantic_vectors v
           ON v.document_id = d.document_id
          AND v.source_id = d.source_id
          AND v.node_id = d.node_id
-         AND v.graph_revision = d.graph_revision
+         AND v.graph_id = d.graph_id
          {model_clause}
         WHERE n.source_id = ?
-          AND n.snapshot_id = ?
           AND n.status IN ('TRUSTED', 'DERIVED')
           AND n.node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
-          AND COALESCE(n.analysis_file_id, n.inventory_file_id) IS NOT NULL
+          AND n.analysis_file_id IS NOT NULL
         """,
         params,
     ).fetchone()

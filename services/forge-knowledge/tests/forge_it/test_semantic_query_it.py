@@ -67,7 +67,7 @@ def test_query_falls_back_when_semantic_not_ready(tmp_path, state):
     provider = fake_semantic_provider()
     if state == "STALE":
         SemanticIndexBuilder(app_config.store_path, provider, config=SemanticBuildConfig()).build(["forge-semantic-test"], force=True)
-        seed_semantic_flow_fixture(app_config.store_path, snapshot_suffix="new", extra_node=True)
+        seed_semantic_flow_fixture(app_config.store_path, graph_suffix="new", extra_node=True)
     elif state == "FAILED":
         graph = SemanticIndexStore(app_config.store_path)
         current = graph.status_for_source("forge-semantic-test")
@@ -112,7 +112,7 @@ def fake_semantic_provider():
     )
 
 
-def seed_semantic_flow_fixture(db_path, *, snapshot_suffix="one", refresh_overview=False, extra_node=False):
+def seed_semantic_flow_fixture(db_path, *, graph_suffix="one", refresh_overview=False, extra_node=False):
     nodes = [
         {
             "id": "jarvis-query-service-query",
@@ -163,7 +163,7 @@ def seed_semantic_flow_fixture(db_path, *, snapshot_suffix="one", refresh_overvi
     seed_semantic_graph(
         db_path,
         source_id="forge-semantic-test",
-        snapshot_suffix=snapshot_suffix,
+        graph_suffix=graph_suffix,
         refresh_overview=refresh_overview,
         nodes=nodes,
         edges=[

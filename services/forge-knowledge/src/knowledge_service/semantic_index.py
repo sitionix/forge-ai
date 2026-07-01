@@ -15,6 +15,22 @@ from knowledge_service.observability import observed_connect
 SEMANTIC_BUILDER_VERSION = 1
 SEMANTIC_ELIGIBLE_NODE_KINDS = ("FILE", "TYPE", "CALLABLE", "EXTERNAL")
 SQLITE_SEMANTIC_BUSY_TIMEOUT_MS = 5000
+SEMANTIC_INVENTORY_MEMBERSHIP_NODE_FILTER_SQL = """
+  AND EXISTS (
+    SELECT 1
+    FROM analysis_files af_current
+    WHERE af_current.source_id = n.source_id
+      AND af_current.relative_path = n.relative_path
+      AND af_current.content_hash = n.content_hash
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM files f_current
+    WHERE f_current.source_id = n.source_id
+      AND f_current.relative_path = n.relative_path
+      AND f_current.content_hash = n.content_hash
+  )
+"""
 
 
 class SemanticIndexStatus(str, Enum):
@@ -29,7 +45,7 @@ class SemanticIndexStatus(str, Enum):
 @dataclass(frozen=True)
 class SemanticGraphInfo:
     source_id: str
-    snapshot_id: Optional[str]
+    graph_id: Optional[str]
     graph_revision: Optional[str]
     total_node_count: int
 
@@ -94,6 +110,16 @@ class SemanticIndexStatusView:
 
 
 def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
+    if _table_exists(conn, "semantic_documents"):
+        columns = _table_columns(conn, "semantic_documents")
+        if "graph_revision" in columns or "graph_id" not in columns:
+            conn.execute("DROP TABLE IF EXISTS semantic_vectors")
+            conn.execute("DROP TABLE IF EXISTS semantic_documents")
+    if _table_exists(conn, "semantic_vectors"):
+        columns = _table_columns(conn, "semantic_vectors")
+        if "graph_revision" in columns or "graph_id" not in columns:
+            conn.execute("DROP TABLE IF EXISTS semantic_vectors")
+            conn.execute("DROP TABLE IF EXISTS semantic_documents")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS semantic_index_state (
@@ -123,8 +149,8 @@ def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
             source_id TEXT NOT NULL,
             node_id TEXT NOT NULL,
             node_kind TEXT NOT NULL,
+            graph_id TEXT NOT NULL,
             document_type TEXT NOT NULL,
-            graph_revision TEXT NOT NULL,
             builder_version INTEGER NOT NULL,
             text_hash TEXT NOT NULL,
             text TEXT NOT NULL,
@@ -132,7 +158,8 @@ def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
             evidence_ids_json TEXT NOT NULL DEFAULT '[]',
             status TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE
         )
         """
     )
@@ -142,7 +169,7 @@ def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
             document_id TEXT PRIMARY KEY,
             source_id TEXT NOT NULL,
             node_id TEXT NOT NULL,
-            graph_revision TEXT NOT NULL,
+            graph_id TEXT NOT NULL,
             embedding_model TEXT NOT NULL,
             embedding_dimension INTEGER NOT NULL,
             vector_blob BLOB,
@@ -155,20 +182,34 @@ def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_index_state_status ON semantic_index_state(status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_index_state_revision ON semantic_index_state(graph_revision)")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_semantic_documents_source_revision ON semantic_documents(source_id, graph_revision, status)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_documents_source_graph ON semantic_documents(source_id, graph_id, status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_documents_node ON semantic_documents(source_id, node_id)")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_semantic_vectors_source_revision ON semantic_vectors(source_id, graph_revision, embedding_model)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_vectors_source_graph ON semantic_vectors(source_id, graph_id, embedding_model)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_vectors_node ON semantic_vectors(source_id, node_id)")
     conn.execute(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_semantic_documents_unique_revision
-        ON semantic_documents(source_id, node_id, graph_revision, builder_version)
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_semantic_documents_unique_graph
+        ON semantic_documents(source_id, node_id, graph_id, builder_version)
         """
     )
+    if _table_exists(conn, "analysis_files") and _table_exists(conn, "analysis_graph_nodes"):
+        conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_analysis_file_delete_current_graph
+            AFTER DELETE ON analysis_files
+            BEGIN
+                DELETE FROM analysis_graph_nodes
+                WHERE source_id = OLD.source_id
+                  AND analysis_file_id = OLD.file_id;
+                DELETE FROM analysis_graph_evidence
+                WHERE source_id = OLD.source_id
+                  AND analysis_file_id = OLD.file_id;
+                DELETE FROM analysis_graph_diagnostics
+                WHERE source_id = OLD.source_id
+                  AND analysis_file_id = OLD.file_id;
+            END
+            """
+        )
 
 
 class SemanticIndexStore:
@@ -575,16 +616,19 @@ class SemanticIndexStore:
     ) -> int:
         if (
             not source_id
-            or not graph.snapshot_id
+            or not graph.graph_id
             or graph.total_node_count <= 0
-            or not all(_table_exists(conn, table) for table in ("analysis_graph_nodes", "semantic_documents", "semantic_vectors"))
+            or not all(
+                _table_exists(conn, table)
+                for table in ("files", "analysis_files", "analysis_graph_nodes", "semantic_documents", "semantic_vectors")
+            )
         ):
             return 0
-        revision_clause = "AND d.graph_revision = ?" if current_revision_only else ""
+        revision_clause = "AND d.graph_id = ?" if current_revision_only else ""
         params: list[Any] = [builder_version]
         if current_revision_only:
-            params.append(graph.graph_revision)
-        params.extend([embedding_model, embedding_model, source_id, graph.snapshot_id])
+            params.append(graph.graph_id)
+        params.extend([embedding_model, embedding_model, source_id])
         row = conn.execute(
             f"""
             SELECT COUNT(DISTINCT n.id) AS count
@@ -599,11 +643,12 @@ class SemanticIndexStore:
               ON v.document_id = d.document_id
              AND v.source_id = d.source_id
              AND v.node_id = d.node_id
+             AND v.graph_id = d.graph_id
              AND (? IS NULL OR v.embedding_model = ?)
             WHERE n.source_id = ?
-              AND n.snapshot_id = ?
               AND n.status IN ('TRUSTED', 'DERIVED')
               AND n.node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
+              {SEMANTIC_INVENTORY_MEMBERSHIP_NODE_FILTER_SQL}
             """,
             params,
         ).fetchone()
@@ -613,17 +658,17 @@ class SemanticIndexStore:
     def reconcile_missing_states_conn(cls, conn: sqlite3.Connection, source_ids: Optional[Iterable[str]] = None) -> int:
         ensure_semantic_index_schema(conn)
         if source_ids is None:
-            if not _table_exists(conn, "graph_current_snapshots"):
+            if not _table_exists(conn, "analysis_graph_nodes"):
                 return 0
             source_ids = [
                 row["source_id"]
                 for row in conn.execute(
                     """
-                    SELECT current.source_id
-                    FROM graph_current_snapshots current
-                    LEFT JOIN semantic_index_state state ON state.source_id = current.source_id
+                    SELECT DISTINCT n.source_id
+                    FROM analysis_graph_nodes n
+                    LEFT JOIN semantic_index_state state ON state.source_id = n.source_id
                     WHERE state.source_id IS NULL
-                    ORDER BY current.source_id
+                    ORDER BY n.source_id
                     """
                 ).fetchall()
             ]
@@ -640,56 +685,44 @@ class SemanticIndexStore:
 
     @classmethod
     def current_graph_info_conn(cls, conn: sqlite3.Connection, source_id: str) -> SemanticGraphInfo:
-        if not all(_table_exists(conn, table) for table in ("graph_current_snapshots", "graph_snapshots", "analysis_graph_nodes")):
-            return SemanticGraphInfo(source_id=source_id, snapshot_id=None, graph_revision=None, total_node_count=0)
-        snapshot = conn.execute(
-            """
-            SELECT current.snapshot_id
-            FROM graph_current_snapshots current
-            JOIN graph_snapshots snapshot
-              ON snapshot.source_id = current.source_id
-             AND snapshot.snapshot_id = current.snapshot_id
-             AND snapshot.state IN ('PUBLISHED', 'RETIRED')
-            WHERE current.source_id = ?
-            """,
-            (source_id,),
-        ).fetchone()
-        if snapshot is None:
-            return SemanticGraphInfo(source_id=source_id, snapshot_id=None, graph_revision=None, total_node_count=0)
-        snapshot_id = snapshot["snapshot_id"]
+        if not all(_table_exists(conn, table) for table in ("files", "analysis_files", "analysis_graph_nodes")):
+            return SemanticGraphInfo(source_id=source_id, graph_id=None, graph_revision=None, total_node_count=0)
         total = int(
             conn.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS count
-                FROM analysis_graph_nodes
-                WHERE source_id = ?
-                  AND snapshot_id = ?
-                  AND status IN ('TRUSTED', 'DERIVED')
-                  AND node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
+                FROM analysis_graph_nodes n
+                WHERE n.source_id = ?
+                  AND n.status IN ('TRUSTED', 'DERIVED')
+                  AND n.node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
+                  {SEMANTIC_INVENTORY_MEMBERSHIP_NODE_FILTER_SQL}
                 """,
-                (source_id, snapshot_id),
+                (source_id,),
             ).fetchone()["count"]
             or 0
         )
         if total <= 0:
-            return SemanticGraphInfo(source_id=source_id, snapshot_id=snapshot_id, graph_revision=None, total_node_count=0)
-        revision = cls.compute_graph_revision_conn(conn, source_id, snapshot_id)
-        return SemanticGraphInfo(source_id=source_id, snapshot_id=snapshot_id, graph_revision=revision, total_node_count=total)
+            return SemanticGraphInfo(source_id=source_id, graph_id=None, graph_revision=None, total_node_count=0)
+        state = None
+        if _table_exists(conn, "analysis_graph_state"):
+            state = conn.execute("SELECT graph_id, content_identity FROM analysis_graph_state WHERE source_id = ?", (source_id,)).fetchone()
+        revision = str(state["content_identity"] or state["graph_id"]) if state is not None and (state["content_identity"] or state["graph_id"]) else cls.compute_graph_revision_conn(conn, source_id)
+        return SemanticGraphInfo(source_id=source_id, graph_id=revision, graph_revision=revision, total_node_count=total)
 
     @classmethod
-    def compute_graph_revision_conn(cls, conn: sqlite3.Connection, source_id: str, snapshot_id: str) -> str:
+    def compute_graph_revision_conn(cls, conn: sqlite3.Connection, source_id: str) -> str:
         digest = hashlib.sha256()
-        digest.update(b"semantic-index-graph-revision-v1\n")
+        digest.update(b"semantic-index-current-graph-v1\n")
         digest.update(source_id.encode("utf-8"))
         digest.update(b"\n")
         for table_name, sql in _REVISION_QUERIES:
             digest.update(table_name.encode("utf-8"))
             digest.update(b"\n")
-            rows = _stable_rows(conn, sql, (source_id, snapshot_id))
+            rows = _stable_rows(conn, sql, (source_id,))
             for row in rows:
                 digest.update(json.dumps(row, sort_keys=True, separators=(",", ":")).encode("utf-8"))
                 digest.update(b"\n")
-        return f"{source_id}:semantic-graph:{digest.hexdigest()}"
+        return f"{source_id}:current-graph:{digest.hexdigest()}"
 
     @staticmethod
     def progress_percent(indexed_node_count: int, total_node_count: int) -> float:
@@ -800,20 +833,20 @@ _REVISION_QUERIES: tuple[tuple[str, str], ...] = (
         "nodes",
         """
         SELECT id, stable_key, node_kind, language, name, qualified_name, display_name,
-               parent_node_id, line_start, line_end, confidence, status, metadata_json,
+               parent_node_id, relative_path, content_hash, line_start, line_end, confidence, status, metadata_json,
                fact_origin, flow_domain
         FROM analysis_graph_nodes
-        WHERE source_id = ? AND snapshot_id = ?
+        WHERE source_id = ?
         ORDER BY id
         """,
     ),
     (
         "evidence",
         """
-        SELECT id, content_hash, line_start, line_end, excerpt_hash, evidence_kind,
+        SELECT id, relative_path, content_hash, line_start, line_end, excerpt_hash, evidence_kind,
                metadata_json, fact_origin, flow_domain
         FROM analysis_graph_evidence
-        WHERE source_id = ? AND snapshot_id = ?
+        WHERE source_id = ?
         ORDER BY id
         """,
     ),
@@ -823,18 +856,18 @@ _REVISION_QUERIES: tuple[tuple[str, str], ...] = (
         SELECT id, node_id, claim_kind, summary, confidence, status, evidence_ids_json,
                metadata_json, rejection_reason, fact_origin, flow_domain
         FROM analysis_graph_claims
-        WHERE source_id = ? AND snapshot_id = ?
+        WHERE source_id = ?
         ORDER BY id
         """,
     ),
     (
         "edges",
         """
-        SELECT id, from_node_id, to_node_id, edge_type, resolution_status, confidence,
-               evidence_id, unresolved_target_json, metadata_json, status, fact_origin,
+        SELECT id, from_node_id, to_node_id, edge_type, edge_kind, resolution_status, confidence,
+               evidence_id, evidence_ids_json, unresolved_target_json, metadata_json, status, fact_origin,
                flow_domain
         FROM analysis_graph_edges
-        WHERE source_id = ? AND snapshot_id = ?
+        WHERE source_id = ?
         ORDER BY id
         """,
     ),
@@ -888,3 +921,7 @@ def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}

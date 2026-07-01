@@ -778,7 +778,11 @@ class AnalysisSupervisor:
         attempt_state: Optional[Dict[str, Any]] = None,
         flow_domain: Optional[str] = None,
     ) -> None:
-        self.analysis_store.mark_file(row["id"], self._state(row, analyzer, status, 0, 0, diagnostics, attempt_state, flow_domain=flow_domain))
+        state = self._state(row, analyzer, status, 0, 0, diagnostics, attempt_state, flow_domain=flow_domain)
+        if status == "FAILED":
+            self.analysis_store.mark_file_failed_attempt(row["id"], state)
+            return
+        self.analysis_store.mark_file(row["id"], state)
 
     def _state(
         self,

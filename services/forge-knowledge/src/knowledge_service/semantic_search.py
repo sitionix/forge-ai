@@ -103,20 +103,20 @@ class SemanticVectorStore:
         clauses: list[str] = []
         params: list[Any] = []
         for source_id, graph_revision in sorted(source_revisions.items()):
-            clauses.append("(v.source_id = ? AND v.graph_revision = ?)")
+            clauses.append("(v.source_id = ? AND v.graph_id = ?)")
             params.extend([source_id, graph_revision])
         if not clauses:
             return []
         with self._connect() as conn:
             return conn.execute(
                 f"""
-                SELECT v.document_id, v.source_id, v.node_id, v.graph_revision, v.embedding_dimension, v.vector_json
+                SELECT v.document_id, v.source_id, v.node_id, v.graph_id, v.embedding_dimension, v.vector_json
                 FROM semantic_vectors v
                 JOIN semantic_documents d
                   ON d.document_id = v.document_id
                  AND d.source_id = v.source_id
                  AND d.node_id = v.node_id
-                 AND d.graph_revision = v.graph_revision
+                 AND d.graph_id = v.graph_id
                 WHERE v.embedding_model = ?
                   AND d.status = 'READY'
                   AND ({' OR '.join(clauses)})

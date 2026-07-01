@@ -1,6 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-import { createKnowledgeGraphClient, graphDataFromView, graphLoadLimits, graphSnapshotQuery, graphViewQuery } from '../src/operator/knowledge-graph-client.js';
+import { createKnowledgeGraphClient, graphDataFromView, graphLoadLimits, graphQuery, graphViewQuery } from '../src/operator/knowledge-graph-client.js';
 import { KnowledgeGraphPage, knowledgeGraphNodeRadius } from '../src/operator/knowledge-graph-page.js';
 
 function manifest(totalNodeCount = 300, totalEdgeCount = 0, revision = 'rev-a') {
@@ -156,7 +156,7 @@ function graphViewPayload(count: number, total = 300, revision = `rev-${count ||
   return {
     sourceId: 'forge-ai',
     sourceName: 'Forge AI',
-    snapshotId: 'snapshot-a',
+    graphId: 'graph-a',
     graphRevision: revision,
     queryFingerprint: `fingerprint-${revision}`,
     selectionPolicy: 'RELATIONSHIP_AWARE',
@@ -184,7 +184,7 @@ function graphDetailRequests(requests: string[]) {
 function nodeDetailFixture(id = 'node-00000') {
   return {
     graphRevision: 'rev-a',
-    snapshotId: 'snapshot-a',
+    graphId: 'graph-a',
     item: {
       id,
       label: 'Detail Node',
@@ -295,7 +295,7 @@ describe('Knowledge graph filters and max limit', () => {
   it('UI-GRAPH-FILTER-02 Max changes reset and reload graph', async () => {
     const dom = graphDom();
     const client = {
-      loadSnapshot: vi.fn((query: URLSearchParams) => Promise.resolve({
+      loadGraphData: vi.fn((query: URLSearchParams) => Promise.resolve({
         ...manifest(Number(query.get('maxNodes') || 300), 0, `rev-${query.get('maxNodes') || 'all'}`),
         nodes: Array.from({ length: Number(query.get('maxNodes') || 5) || 5 }, (_, index) => node(index)),
         edges: [],
@@ -316,7 +316,7 @@ describe('Knowledge graph filters and max limit', () => {
     selectValue(dom, 'knowledgeGraphMaxNodes', '200');
     await flushAsync();
 
-    const maxValues = client.loadSnapshot.mock.calls.map(([query]) => query.get('maxNodes'));
+    const maxValues = client.loadGraphData.mock.calls.map(([query]) => query.get('maxNodes'));
     expect(maxValues).toEqual(['80', '20', '80', '200']);
     expect(page.state.selectedNodeId).toBeNull();
     expect(page.state.data.nodes).toHaveLength(200);
@@ -326,7 +326,7 @@ describe('Knowledge graph filters and max limit', () => {
 
   it('UI-GRAPH-FILTER-03 full filter matrix is classified against final APIs', () => {
     const dom = graphDom('http://127.0.0.1/operator/knowledge-graph.html?sourceId=forge-ai&flowDomain=WORKFLOW&includeExternal=hide&unresolved=hide&isolated=show&maxNodes=200&search=GraphFixture&direction=INBOUND&depth=4&density=spacious&labels=all');
-    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
     page.initializeControls();
 
     const { query } = page.queryParams();
@@ -345,7 +345,7 @@ describe('Knowledge graph filters and max limit', () => {
   });
 
   it('UI-GRAPH-FILTER-04 no obsolete params are sent to final graph requests', () => {
-    const apiQuery = graphSnapshotQuery(new URLSearchParams({
+    const apiQuery = graphQuery(new URLSearchParams({
       sourceId: 'forge-ai',
       flowDomain: 'CODE',
       includeExternal: 'collapsed',
@@ -405,17 +405,17 @@ describe('Knowledge graph filters and max limit', () => {
 
   it('UI-GRAPH-FILTER-06 client-only display options do not hit API', async () => {
     const dom = graphDom();
-    const client = { loadSnapshot: vi.fn().mockResolvedValue({ ...manifest(2, 1), nodes: [node(0), node(1)], edges: [{ ...edge(0), from: 'node-00000', to: 'node-00001' }], meta: { returnedNodeCount: 2, returnedEdgeCount: 1 } }), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() };
+    const client = { loadGraphData: vi.fn().mockResolvedValue({ ...manifest(2, 1), nodes: [node(0), node(1)], edges: [{ ...edge(0), from: 'node-00000', to: 'node-00001' }], meta: { returnedNodeCount: 2, returnedEdgeCount: 1 } }), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() };
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: { get: vi.fn(() => Promise.resolve(metadataPayload())) }, client, runtimeConfig: { graphPollIntervalMs: 60000 } });
     page.mount();
     await flushAsync();
-    const callsBefore = client.loadSnapshot.mock.calls.length;
+    const callsBefore = client.loadGraphData.mock.calls.length;
 
     selectValue(dom, 'knowledgeGraphDensity', 'spacious');
     selectValue(dom, 'knowledgeGraphLabelsMode', 'all');
     await flushAsync();
 
-    expect(client.loadSnapshot).toHaveBeenCalledTimes(callsBefore);
+    expect(client.loadGraphData).toHaveBeenCalledTimes(callsBefore);
     expect(page.state.density).toBe('spacious');
     expect(page.state.labelsMode).toBe('all');
     expect(page.state.nodes.length).toBe(2);
@@ -429,7 +429,7 @@ describe('Knowledge graph filters and max limit', () => {
       resolveA = resolve;
     });
     const client = {
-      loadSnapshot: vi.fn()
+      loadGraphData: vi.fn()
         .mockReturnValueOnce(requestA)
         .mockResolvedValueOnce({ ...manifest(1, 0, 'rev-b'), nodes: [node(200)], edges: [], meta: { returnedNodeCount: 1, returnedEdgeCount: 0 } }),
       loadNodeDetail: vi.fn(),
@@ -456,7 +456,7 @@ describe('Knowledge graph filters and max limit', () => {
 
   it('UI-GRAPH-FILTER-08 visual parity with main is retained', () => {
     const dom = graphDom();
-    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
     page.renderPage({ ...manifest(2, 1), nodes: [node(0), node(1)], edges: [{ ...edge(0), from: 'node-00000', to: 'node-00001' }], meta: { returnedNodeCount: 2, returnedEdgeCount: 1 } });
 
     expect(knowledgeGraphNodeRadius({ id: 'n', nodeKind: 'CALLABLE' }, {})).toBe(19);
@@ -478,7 +478,7 @@ describe('Knowledge graph filters and max limit', () => {
       })
     };
     const client = createKnowledgeGraphClient({ http, config: { graphNodePageSize: 80, graphEdgePageSize: 80 } });
-    await client.loadSnapshot(new URLSearchParams({ sourceId: 'forge-ai', flowDomain: 'CODE', maxNodes: '80' }));
+    await client.loadGraphData(new URLSearchParams({ sourceId: 'forge-ai', flowDomain: 'CODE', maxNodes: '80' }));
 
     expect(requests.some((path) => /\/analysis\/symbols|\/analysis\/relations|\/analysis\/graph\/slice|\/analysis\/graph($|\?)/.test(path))).toBe(false);
   });
@@ -591,7 +591,7 @@ describe('Knowledge graph filters and max limit', () => {
   it('UI-GRAPH-FILTER-RT-03 every visible filter is API, client-only, or disabled obsolete', async () => {
     const dom = graphDom();
     const client = {
-      loadSnapshot: vi.fn((query: URLSearchParams) => {
+      loadGraphData: vi.fn((query: URLSearchParams) => {
         const max = Number(query.get('maxNodes') || '80') || 300;
         return Promise.resolve(graphPageData(Math.min(max, 300), 300, `rev-${query.toString()}`));
       }),
@@ -601,13 +601,13 @@ describe('Knowledge graph filters and max limit', () => {
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: { get: vi.fn(() => Promise.resolve(metadataPayload())) }, client, runtimeConfig: { graphPollIntervalMs: 60000 } });
     page.mount();
     await flushAsync();
-    const callsBeforeDisplay = client.loadSnapshot.mock.calls.length;
+    const callsBeforeDisplay = client.loadGraphData.mock.calls.length;
 
     selectValue(dom, 'knowledgeGraphDensity', 'spacious');
     selectValue(dom, 'knowledgeGraphLabelsMode', 'all');
     selectValue(dom, 'knowledgeGraphMode', 'full');
     await flushAsync();
-    expect(client.loadSnapshot).toHaveBeenCalledTimes(callsBeforeDisplay);
+    expect(client.loadGraphData).toHaveBeenCalledTimes(callsBeforeDisplay);
     expect((dom.window.document.getElementById('knowledgeGraphDirection') as HTMLSelectElement).disabled).toBe(true);
     expect((dom.window.document.getElementById('knowledgeGraphDepth') as HTMLSelectElement).disabled).toBe(true);
 
@@ -626,7 +626,7 @@ describe('Knowledge graph filters and max limit', () => {
     input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
     await flushAsync();
 
-    const lastQuery = client.loadSnapshot.mock.calls.at(-1)?.[0] as URLSearchParams;
+    const lastQuery = client.loadGraphData.mock.calls.at(-1)?.[0] as URLSearchParams;
     expect(Object.fromEntries(lastQuery.entries())).toMatchObject({
       flowDomain: 'WORKFLOW',
       includeExternal: 'hide',
@@ -667,7 +667,7 @@ describe('Knowledge graph filters and max limit', () => {
 
   it('UI-GRAPH-FILTER-RT-05 visual parity survives Max/filter runtime fixes', () => {
     const dom = graphDom();
-    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
     page.renderPage({
       ...manifest(40, 39),
       nodes: Array.from({ length: 40 }, (_, index) => node(index)),
@@ -818,21 +818,21 @@ describe('Knowledge graph filters and max limit', () => {
   it('UI-GRAPH-VIEW-04 client-only controls stay local and obsolete controls remain disabled', async () => {
     const dom = graphDom();
     const client = {
-      loadSnapshot: vi.fn().mockResolvedValue(graphPageData(20, 320, 'rev-a')),
+      loadGraphData: vi.fn().mockResolvedValue(graphPageData(20, 320, 'rev-a')),
       loadNodeDetail: vi.fn(),
       loadEdgeDetail: vi.fn()
     };
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: { get: vi.fn(() => Promise.resolve(metadataPayload())) }, client, runtimeConfig: { graphPollIntervalMs: 60000 } });
     page.mount();
     await flushAsync();
-    const callsBefore = client.loadSnapshot.mock.calls.length;
+    const callsBefore = client.loadGraphData.mock.calls.length;
 
     selectValue(dom, 'knowledgeGraphDensity', 'normal');
     selectValue(dom, 'knowledgeGraphLabelsMode', 'none');
     selectValue(dom, 'knowledgeGraphMode', 'full');
     await flushAsync();
 
-    expect(client.loadSnapshot).toHaveBeenCalledTimes(callsBefore);
+    expect(client.loadGraphData).toHaveBeenCalledTimes(callsBefore);
     expect(page.state.density).toBe('normal');
     expect(page.state.labelsMode).toBe('none');
     expect((dom.window.document.getElementById('knowledgeGraphDirection') as HTMLSelectElement).disabled).toBe(true);
@@ -842,7 +842,7 @@ describe('Knowledge graph filters and max limit', () => {
 
   it('UI-GRAPH-VIEW-05 visual parity remains main-compatible with view data', () => {
     const dom = graphDom();
-    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadSnapshot: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
+    const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
     const data = graphDataFromView(graphViewPayload(40, 320, 'rev-view', 39));
     page.renderPage(data);
 
@@ -960,7 +960,7 @@ describe('Knowledge graph filters and max limit', () => {
     const technicalNodeId = 'analysis-graph-node:1234567890abcdef';
     const technicalDetail = {
       graphRevision: 'graphRevision-secret-hash',
-      snapshotId: 'snapshot-secret-hash',
+      graphId: 'graph-secret-hash',
       queryFingerprint: 'fingerprint-secret-hash',
       item: {
         id: technicalNodeId,
@@ -983,9 +983,9 @@ describe('Knowledge graph filters and max limit', () => {
       }
     };
     const client = {
-      loadSnapshot: vi.fn().mockResolvedValue({
+      loadGraphData: vi.fn().mockResolvedValue({
         ...manifest(1, 0, 'graphRevision-secret-hash'),
-        snapshotId: 'snapshot-secret-hash',
+        graphId: 'graph-secret-hash',
         queryFingerprint: 'fingerprint-secret-hash',
         nodes: [node(0, { id: technicalNodeId, label: 'SiteUpdatedEventMapper', name: 'SiteUpdatedEventMapper', nodeKind: 'TYPE', flowDomain: 'CODE' })],
         edges: [],
@@ -1008,7 +1008,7 @@ describe('Knowledge graph filters and max limit', () => {
     expect(visibleText).toContain('SiteUpdatedEventMapper');
     expect(visibleText).toContain('Maps SiteUpdatedPayload to SiteUpdatedEvent.');
     expect(visibleText).toContain('SiteUpdatedEventMapper.java');
-    ['analysis-graph-node:', 'graphRevision-secret-hash', 'snapshot-secret-hash', 'fingerprint-secret-hash', 'claim-hash-secret', 'evidence-hash-secret', 'edge-hash-secret', 'source-internal-id', 'excerpt-hash-secret'].forEach((value) => {
+    ['analysis-graph-node:', 'graphRevision-secret-hash', 'graph-secret-hash', 'fingerprint-secret-hash', 'claim-hash-secret', 'evidence-hash-secret', 'edge-hash-secret', 'source-internal-id', 'excerpt-hash-secret'].forEach((value) => {
       expect(visibleText).not.toContain(value);
     });
     page.dispose();
@@ -1120,7 +1120,7 @@ describe('Knowledge graph filters and max limit', () => {
     const dom = graphDom();
     const emptyDetail = {
       graphRevision: 'rev-a',
-      snapshotId: 'snapshot-a',
+      graphId: 'graph-a',
       item: {
         id: 'node-00000',
         label: 'Empty Detail',
@@ -1253,7 +1253,7 @@ describe('Knowledge graph filters and max limit', () => {
       resolveNodeA = resolve;
     });
     const client = {
-      loadSnapshot: vi.fn().mockResolvedValue({
+      loadGraphData: vi.fn().mockResolvedValue({
         ...manifest(2, 0, 'rev-a'),
         nodes: [node(0), node(1)],
         edges: [],
@@ -1301,7 +1301,7 @@ describe('Knowledge graph filters and max limit', () => {
   it('UI-GRAPH-NODE-DETAILS-06 detail error shown in right panel without breaking graph', async () => {
     const cases = [
       { status: 404, code: 'GRAPH_NODE_NOT_FOUND' },
-      { status: 410, code: 'GRAPH_SNAPSHOT_EXPIRED' },
+      { status: 409, code: 'GRAPH_REVISION_STALE' },
       { status: 400, code: 'GRAPH_ITEM_SCOPE_MISMATCH' },
       { status: 500, code: 'GRAPH_BACKEND_FAILED' }
     ];
@@ -1309,7 +1309,7 @@ describe('Knowledge graph filters and max limit', () => {
       const dom = graphDom();
       const error = Object.assign(new Error(item.code), item);
       const client = {
-        loadSnapshot: vi.fn().mockResolvedValue({
+        loadGraphData: vi.fn().mockResolvedValue({
           ...manifest(2, 1, 'rev-a'),
           nodes: [node(0), node(1)],
           edges: [{ ...edge(0), from: 'node-00000', to: 'node-00001' }],
@@ -1337,7 +1337,7 @@ describe('Knowledge graph filters and max limit', () => {
   it('UI-GRAPH-NODE-DETAILS-08 Center button still works', async () => {
     const dom = graphDom();
     const client = {
-      loadSnapshot: vi.fn().mockResolvedValue({
+      loadGraphData: vi.fn().mockResolvedValue({
         ...manifest(2, 1, 'rev-a'),
         nodes: [node(0), node(1)],
         edges: [{ ...edge(0), from: 'node-00000', to: 'node-00001' }],

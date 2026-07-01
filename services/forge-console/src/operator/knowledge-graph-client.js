@@ -6,7 +6,7 @@ export function createKnowledgeGraphClient(options) {
   const edgePageSize = Number(config.graphEdgePageSize) || 1000;
 
   async function loadManifest(query, requestOptions = {}) {
-    const manifestQuery = graphSnapshotQuery(query);
+    const manifestQuery = graphQuery(query);
     const response = await http.get(`/knowledge/analysis/graph/manifest?${manifestQuery.toString()}`, {
       signal: requestOptions.signal,
       includeResponse: true,
@@ -30,7 +30,7 @@ export function createKnowledgeGraphClient(options) {
     return manifest;
   }
 
-  async function loadSnapshot(query, requestOptions = {}) {
+  async function loadGraphData(query, requestOptions = {}) {
     metrics.dataFetchCount = (metrics.dataFetchCount || 0) + 1;
     const view = await loadGraphView(query, requestOptions);
     return graphDataFromView(view, metrics);
@@ -51,8 +51,8 @@ export function createKnowledgeGraphClient(options) {
       }
       const page = await loadGraphPage(kind, baseQuery, graphRevision, cursor, requestOptions, remaining);
       if (page.graphRevision !== graphRevision) {
-        const error = new Error('GRAPH_SNAPSHOT_STALE');
-        error.code = 'GRAPH_SNAPSHOT_STALE';
+        const error = new Error('GRAPH_REVISION_STALE');
+        error.code = 'GRAPH_REVISION_STALE';
         throw error;
       }
       if (kind === 'nodes') {
@@ -68,12 +68,12 @@ export function createKnowledgeGraphClient(options) {
       }
     } while (cursor && (limit <= 0 || loaded < limit));
     if (limit <= 0 && total > 0 && loaded < total) {
-      throw new Error(`Graph ${kind} snapshot ended early: ${loaded} / ${total}`);
+      throw new Error(`Graph ${kind} page ended early: ${loaded} / ${total}`);
     }
   }
 
   async function loadGraphPage(kind, baseQuery, graphRevision, cursor, requestOptions = {}, remainingLimit = 0) {
-    const pageQuery = graphSnapshotQuery(baseQuery);
+    const pageQuery = graphQuery(baseQuery);
     pageQuery.set('graphRevision', graphRevision);
     const configuredPageSize = kind === 'nodes' ? nodePageSize : edgePageSize;
     const boundedPageSize = remainingLimit > 0 ? Math.min(configuredPageSize, remainingLimit) : configuredPageSize;
@@ -112,7 +112,7 @@ export function createKnowledgeGraphClient(options) {
 
   return {
     loadManifest,
-    loadSnapshot,
+    loadGraphData,
     loadGraphView,
     loadGraphPage,
     loadNodeDetail,
@@ -120,7 +120,7 @@ export function createKnowledgeGraphClient(options) {
   };
 }
 
-export function graphSnapshotQuery(query) {
+export function graphQuery(query) {
   const pageQuery = new URLSearchParams(query);
   const external = String(pageQuery.get('includeExternal') || 'show').toLowerCase();
   pageQuery.set('includeExternal', external === 'hide' ? 'hide' : 'show');
@@ -145,7 +145,7 @@ export function graphSnapshotQuery(query) {
 }
 
 export function graphViewQuery(query) {
-  const viewQuery = graphSnapshotQuery(query);
+  const viewQuery = graphQuery(query);
   const maxNodes = boundedPositiveInteger(query.get('maxNodes'));
   if (maxNodes > 0) {
     viewQuery.set('maxNodes', String(maxNodes));
@@ -181,7 +181,7 @@ export function graphDataFromView(view, metrics = {}) {
   return {
     sourceId: view.sourceId,
     sourceName: view.sourceName,
-    snapshotId: view.snapshotId,
+    graphId: view.graphId,
     graphRevision: view.graphRevision,
     queryFingerprint: view.queryFingerprint,
     selectionPolicy: view.selectionPolicy || 'RELATIONSHIP_AWARE',
@@ -225,8 +225,8 @@ export function graphDataFromView(view, metrics = {}) {
   };
 }
 
-export function isKnowledgeGraphExpiredSnapshotError(error) {
-  return error?.status === 410 || error?.code === 'GRAPH_SNAPSHOT_EXPIRED' || error?.message === 'GRAPH_SNAPSHOT_EXPIRED';
+export function isKnowledgeGraphRevisionStaleError(error) {
+  return error?.status === 409 || error?.code === 'GRAPH_REVISION_STALE' || error?.message === 'GRAPH_REVISION_STALE';
 }
 
 export function createGraphStore() {
