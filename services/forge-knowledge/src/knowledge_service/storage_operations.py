@@ -15,10 +15,7 @@ class RetentionPolicy:
     inventory_build_days: int = 30
     analysis_job_days: int = 30
     analysis_diagnostic_days: int = 30
-    graph_snapshot_days: int = 30
-    graph_tombstone_days: int = 7
     keep_completed_jobs: int = 50
-    keep_snapshots_per_source: int = 5
 
 
 @dataclass
@@ -102,9 +99,6 @@ class StorageOperations:
         inventory_cutoff = self._iso(now - timedelta(days=self.policy.inventory_build_days))
         job_cutoff = self._iso(now - timedelta(days=self.policy.analysis_job_days))
         diagnostics_cutoff = self._iso(now - timedelta(days=self.policy.analysis_diagnostic_days))
-        snapshot_cutoff = self._iso(now - timedelta(days=self.policy.graph_snapshot_days))
-        tombstone_cutoff = self._iso(now - timedelta(days=self.policy.graph_tombstone_days))
-
         if self._table_exists(conn, "inventory_builds"):
             latest = self._ids(conn, "SELECT id FROM inventory_builds ORDER BY id DESC LIMIT 1")
             counts["inventory_builds"] = self._delete(
@@ -118,10 +112,8 @@ class StorageOperations:
                 """
                 DELETE FROM analysis_graph_diagnostics
                 WHERE created_at < ?
-                  AND snapshot_id NOT IN (SELECT snapshot_id FROM graph_current_snapshots)
-                  AND snapshot_id NOT IN (SELECT snapshot_id FROM graph_snapshot_tombstones WHERE expired_at >= ?)
                 """,
-                [diagnostics_cutoff, self._now()],
+                [diagnostics_cutoff],
             )
         if self._table_exists(conn, "analysis_jobs"):
             protected_jobs = set(
@@ -174,65 +166,6 @@ class StorageOperations:
                 orphan_chunks,
             )
         counts["orphaned_runtime_rows"] = self._delete_orphaned_runtime_rows(conn)
-        counts.update(self._retain_graph_snapshots(conn, snapshot_cutoff, tombstone_cutoff))
-        return counts
-
-    def _retain_graph_snapshots(self, conn: sqlite3.Connection, snapshot_cutoff: str, tombstone_cutoff: str) -> Dict[str, int]:
-        counts = {
-            "graph_snapshots": 0,
-            "graph_tombstones": 0,
-            "graph_evidence_claims_diagnostics": 0,
-        }
-        if not self._table_exists(conn, "graph_snapshots"):
-            return counts
-        protected = set(self._ids(conn, "SELECT snapshot_id FROM graph_current_snapshots")) if self._table_exists(conn, "graph_current_snapshots") else set()
-        if self._table_exists(conn, "graph_snapshot_tombstones"):
-            protected.update(self._ids(conn, "SELECT snapshot_id FROM graph_snapshot_tombstones WHERE expired_at >= ?", [self._now()]))
-            counts["graph_tombstones"] = self._delete(
-                conn,
-                "DELETE FROM graph_snapshot_tombstones WHERE expired_at < ?",
-                [tombstone_cutoff],
-            )
-        for source_id in self._ids(conn, "SELECT DISTINCT source_id FROM graph_snapshots"):
-            protected.update(
-                self._ids(
-                    conn,
-                    """
-                    SELECT snapshot_id
-                    FROM graph_snapshots
-                    WHERE source_id = ?
-                    ORDER BY COALESCE(published_at, created_at) DESC
-                    LIMIT ?
-                    """,
-                    [source_id, self.policy.keep_snapshots_per_source],
-                )
-            )
-        candidates = self._ids(
-            conn,
-            """
-            SELECT snapshot_id
-            FROM graph_snapshots
-            WHERE COALESCE(published_at, created_at) < ?
-              AND state NOT IN ('BUILDING')
-            """,
-            [snapshot_cutoff],
-        )
-        delete_ids = [snapshot_id for snapshot_id in candidates if snapshot_id not in protected]
-        for table in ("analysis_graph_claims", "analysis_graph_edges", "analysis_graph_diagnostics", "analysis_graph_evidence"):
-            if self._table_exists(conn, table):
-                counts["graph_evidence_claims_diagnostics"] += self._delete(
-                    conn,
-                    f"DELETE FROM {table} WHERE snapshot_id IN ({self._placeholders(delete_ids)})",
-                    delete_ids,
-                )
-        for table in ("graph_snapshot_metrics", "analysis_graph_nodes"):
-            if self._table_exists(conn, table):
-                self._delete(conn, f"DELETE FROM {table} WHERE snapshot_id IN ({self._placeholders(delete_ids)})", delete_ids)
-        counts["graph_snapshots"] = self._delete(
-            conn,
-            "DELETE FROM graph_snapshots WHERE snapshot_id IN (%s)" % self._placeholders(delete_ids),
-            delete_ids,
-        )
         return counts
 
     def _delete_orphaned_runtime_rows(self, conn: sqlite3.Connection) -> int:
@@ -242,8 +175,13 @@ class StorageOperations:
                 conn,
                 """
                 DELETE FROM analysis_files
-                WHERE file_id NOT IN (SELECT id FROM files)
-                  AND status NOT IN ('PENDING')
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM files
+                    WHERE files.source_id = analysis_files.source_id
+                      AND files.relative_path = analysis_files.relative_path
+                      AND files.content_hash = analysis_files.content_hash
+                )
                 """,
                 [],
             )
@@ -271,9 +209,7 @@ class StorageOperations:
             "analysis_jobs",
             "analysis_job_files",
             "analysis_files",
-            "graph_snapshots",
-            "graph_current_snapshots",
-            "graph_snapshot_tombstones",
+            "analysis_graph_state",
             "analysis_graph_nodes",
             "analysis_graph_edges",
             "analysis_graph_evidence",

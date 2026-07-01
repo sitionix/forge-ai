@@ -197,7 +197,7 @@ class SearchDocument:
     file_name: str = ""
     file_stem: str = ""
     endpoint_path: str = ""
-    snapshot_id: Optional[str] = None
+    graph_id: Optional[str] = None
     graph_revision: Optional[str] = None
     summary: str = ""
     metadata_text: str = ""
@@ -281,7 +281,7 @@ class SearchDocument:
             file_name=file_name,
             file_stem=file_stem,
             endpoint_path=endpoint_path,
-            snapshot_id=str(row.get("snapshotId") or row.get("snapshot_id") or "") or None,
+            graph_id=str(row.get("graphId") or row.get("graph_id") or "") or None,
             graph_revision=str(row.get("graphRevision") or row.get("graph_revision") or "") or None,
             summary=summary,
             metadata_text=metadata_text,
@@ -308,7 +308,7 @@ class SearchDocument:
             "label": self.label or self.name or self.node_id,
             "score": round(score, 4),
             "matchReasons": list(reasons),
-            "snapshotId": self.snapshot_id,
+            "graphId": self.graph_id,
             "graphRevision": self.graph_revision,
             "relativePath": self.relative_path or None,
             "qualifiedName": self.qualified_name or None,

@@ -100,14 +100,14 @@ def test_semantic_worker_builds_pending_source_after_analysis_is_complete(tmp_pa
 
 def test_semantic_worker_run_once_picks_stale_and_builds_new_revision(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
-    seed_semantic_graph(db_path, snapshot_suffix="old")
+    seed_semantic_graph(db_path, graph_suffix="old")
     provider = CountingEmbeddingProvider()
     worker = _worker(db_path, provider)
     worker.run_once()
     old_revision = SemanticIndexStore(db_path).status_for_source("semantic-source").graph_revision
     seed_semantic_graph(
         db_path,
-        snapshot_suffix="new",
+        graph_suffix="new",
         nodes=[
             {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
             {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
@@ -125,14 +125,14 @@ def test_semantic_worker_run_once_picks_stale_and_builds_new_revision(tmp_path):
 
 def test_semantic_worker_builds_stale_source_with_active_analysis(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
-    seed_semantic_graph(db_path, snapshot_suffix="old")
+    seed_semantic_graph(db_path, graph_suffix="old")
     provider = CountingEmbeddingProvider()
     worker = _worker(db_path, provider)
     worker.run_once()
     old_revision = SemanticIndexStore(db_path).status_for_source("semantic-source").graph_revision
     seed_semantic_graph(
         db_path,
-        snapshot_suffix="new",
+        graph_suffix="new",
         nodes=[
             {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
             {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},

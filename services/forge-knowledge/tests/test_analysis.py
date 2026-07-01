@@ -31,9 +31,12 @@ from knowledge_service.inventory_builder import InventoryBuilder
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.java_parser_adapter import JavaParserAdapter
+from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
+from knowledge_service.knowledge_query_service import build_knowledge_query_service
 from knowledge_service.overview_projection import refresh_overview_for_sources
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_index import SemanticIndexStore
+from knowledge_service.snippet_extractor import SnippetExtractor
 from knowledge_service.source_config import load_source_config
 from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer
 from knowledge_service.structural_model import StructuralFileMetadata
@@ -488,11 +491,11 @@ indexing:
 
 def current_graph_nodes(store, source_id="edge-gateway", flow_domain="CODE", page_size=100):
     analysis_store = AnalysisStore(store.db_path)
-    manifest = analysis_store.graph_snapshot_manifest(source_id, flow_domain)
+    manifest = analysis_store.graph_manifest(source_id, flow_domain)
     nodes = []
     cursor = None
-    while manifest["snapshotId"]:
-        page = analysis_store.graph_snapshot_nodes(manifest["graphRevision"], cursor, page_size, source_id, flow_domain)
+    while manifest["graphId"]:
+        page = analysis_store.graph_nodes(manifest["graphRevision"], cursor, page_size, source_id, flow_domain)
         nodes.extend(page["items"])
         if page["complete"]:
             break
@@ -502,11 +505,11 @@ def current_graph_nodes(store, source_id="edge-gateway", flow_domain="CODE", pag
 
 def current_graph_edges(store, source_id="edge-gateway", flow_domain="CODE", page_size=100):
     analysis_store = AnalysisStore(store.db_path)
-    manifest = analysis_store.graph_snapshot_manifest(source_id, flow_domain)
+    manifest = analysis_store.graph_manifest(source_id, flow_domain)
     edges = []
     cursor = None
-    while manifest["snapshotId"]:
-        page = analysis_store.graph_snapshot_edges(manifest["graphRevision"], cursor, page_size, source_id, flow_domain)
+    while manifest["graphId"]:
+        page = analysis_store.graph_edges(manifest["graphRevision"], cursor, page_size, source_id, flow_domain)
         edges.extend(page["items"])
         if page["complete"]:
             break
@@ -517,7 +520,49 @@ def current_graph_edges(store, source_id="edge-gateway", flow_domain="CODE", pag
 def current_graph_node_detail_by_name(store, name, source_id="edge-gateway", flow_domain="CODE", include_evidence=False):
     manifest, nodes = current_graph_nodes(store, source_id, flow_domain)
     node = next(item for item in nodes if item["name"] == name)
-    return AnalysisStore(store.db_path).graph_snapshot_node_detail(manifest["graphRevision"], node["id"], source_id, include_evidence)["item"]
+    return AnalysisStore(store.db_path).graph_node_detail(manifest["graphRevision"], node["id"], source_id, include_evidence)["item"]
+
+
+def current_graph_fact_counts(db_path, source_id="edge-gateway"):
+    with sqlite3.connect(db_path) as conn:
+        return {
+            "nodes": conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = ?", (source_id,)).fetchone()[0],
+            "edges": conn.execute("SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = ?", (source_id,)).fetchone()[0],
+            "claims": conn.execute("SELECT COUNT(*) FROM analysis_graph_claims WHERE source_id = ?", (source_id,)).fetchone()[0],
+            "evidence": conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence WHERE source_id = ?", (source_id,)).fetchone()[0],
+            "diagnostics": conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics WHERE source_id = ?", (source_id,)).fetchone()[0],
+        }
+
+
+def semantic_cache_counts(db_path, source_id="edge-gateway"):
+    with sqlite3.connect(db_path) as conn:
+        return {
+            "semantic_documents": conn.execute("SELECT COUNT(*) FROM semantic_documents WHERE source_id = ?", (source_id,)).fetchone()[0],
+            "semantic_vectors": conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = ?", (source_id,)).fetchone()[0],
+        }
+
+
+def build_semantic_cache(db_path, source_id="edge-gateway"):
+    return SemanticIndexBuilder(
+        db_path,
+        FakeDeterministicEmbeddingProvider(dimension=8),
+        config=SemanticBuildConfig(batch_size=10),
+    ).build([source_id], force=True)
+
+
+def job_file_diagnostics(db_path, job_id, relative_path="src/main/java/example/ObjectHandler.java"):
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT status, diagnostics_json
+            FROM analysis_job_files
+            WHERE job_id = ?
+              AND relative_path = ?
+            """,
+            (job_id, relative_path),
+        ).fetchone()
+    assert row is not None
+    return row[0], json.loads(row[1] or "[]")
 
 
 def build_inventory_with_file_count(tmp_path, file_count):
@@ -668,19 +713,20 @@ def test_analysis_store_migrates_old_integer_graph_diagnostics_schema(tmp_path):
         conn.row_factory = sqlite3.Row
         columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(analysis_graph_diagnostics)").fetchall()}
         assert str(columns["id"]["type"]).upper() == "TEXT"
-        assert columns["snapshot_id"]["pk"] == 1
-        assert columns["id"]["pk"] == 2
+        assert columns["id"]["pk"] == 1
+        assert "diagnostic_code" in columns
+        assert {"source_id", "analysis_file_id", "file_id", "relative_path", "content_hash"}.issubset(columns)
         conn.execute("""
             INSERT INTO analysis_graph_diagnostics(
-                id, snapshot_id, job_id, source_id, severity, stage, code, message, metadata_json, created_at
+                id, job_id, source_id, severity, stage, code, diagnostic_code, message, metadata_json, created_at
             )
-            VALUES ('diagnostic:text-id', 'legacy:edge-gateway', 'job-1', 'edge-gateway', 'WARN', 'STRUCTURAL_PARSE',
-                    'STRUCTURAL_PARSER_NOT_AVAILABLE', 'No parser.', '{}', 'now')
+            VALUES ('diagnostic:text-id', 'job-1', 'edge-gateway', 'WARN', 'STRUCTURAL_PARSE',
+                    'STRUCTURAL_PARSER_NOT_AVAILABLE', 'STRUCTURAL_PARSER_NOT_AVAILABLE', 'No parser.', '{}', 'now')
         """)
         assert conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics").fetchone()[0] == 2
-        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics WHERE code = 'OLD_DIAGNOSTIC'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics WHERE code = 'OLD_DIAGNOSTIC'").fetchone()[0] == 0
         assert conn.execute("SELECT 1 FROM analysis_schema_migrations WHERE version = 4").fetchone()
 
     AnalysisStore(db_path).init()
@@ -721,6 +767,7 @@ def test_graph_persistence_failure_is_reported_as_graph_store_error(tmp_path):
         "evidence": [],
         "diagnostics": [],
     }
+    bad_graph["nodes"].append(dict(bad_graph["nodes"][0], stable_key="edge-gateway|bad.yml|FILE|duplicate"))
 
     with pytest.raises(KnowledgeError) as raised:
         store.replace_file_graph_analysis(
@@ -746,7 +793,9 @@ def test_graph_persistence_failure_is_reported_as_graph_store_error(tmp_path):
     assert raised.value.details["stage"] == "GRAPH_STORE"
     assert raised.value.details["table"] == "analysis_graph_nodes"
     assert raised.value.details["operation"] == "insert_nodes"
-    assert "NOT NULL" in raised.value.details["sqliteMessage"]
+    assert "UNIQUE constraint failed: analysis_graph_nodes" in raised.value.details["sqliteMessage"]
+    with sqlite3.connect(store.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0] == 0
 
 
 def test_analysis_store_init_is_safe_for_parallel_graph_requests(tmp_path):
@@ -854,7 +903,7 @@ def test_graph_store_accepts_shared_evidence_ranges_and_replaces_file_twice(tmp_
     assert counts["analysis_graph_evidence"] == len(second_graph["evidence"])
 
 
-def test_graph_snapshots_publish_atomically_and_keep_previous_snapshot_immutable(tmp_path):
+def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_replace(tmp_path):
     store = AnalysisStore(tmp_path / "knowledge.sqlite")
     store.init()
     content = "class EmailVerificationLinkClientImpl { void createLink() { helper(); } void helper() {} }\n"
@@ -884,10 +933,10 @@ def test_graph_snapshots_publish_atomically_and_keep_previous_snapshot_immutable
         }
     )
     store.replace_file_graph_analysis(1, state, first)
-    assert store.graph_snapshot_manifest("edge-gateway", "CODE")["totalNodeCount"] == 0
+    assert store.graph_manifest("edge-gateway", "CODE")["totalNodeCount"] == len(first["nodes"])
     store.update_job("job-1", {"status": "COMPLETED", "completedAt": "done"})
-    first_manifest = store.graph_snapshot_manifest("edge-gateway", "CODE")
-    assert first_manifest["snapshotId"] == "job-1:edge-gateway"
+    first_manifest = store.graph_manifest("edge-gateway", "CODE")
+    assert first_manifest["graphId"]
     assert first_manifest["totalNodeCount"] == len(first["nodes"])
 
     failed = json.loads(json.dumps(base_graph))
@@ -914,9 +963,7 @@ def test_graph_snapshots_publish_atomically_and_keep_previous_snapshot_immutable
     )
     store.replace_file_graph_analysis(1, state, failed)
     store.update_job("job-2", {"status": "FAILED", "completedAt": "failed"})
-    assert store.graph_snapshot_manifest("edge-gateway", "CODE")["snapshotId"] == first_manifest["snapshotId"]
-    with sqlite3.connect(store.db_path) as conn:
-        assert conn.execute("SELECT state FROM graph_snapshots WHERE snapshot_id = 'job-2:edge-gateway'").fetchone()[0] == "FAILED"
+    assert store.graph_manifest("edge-gateway", "CODE")["graphId"] == first_manifest["graphId"]
 
     third = json.loads(json.dumps(base_graph))
     third["nodes"] = third["nodes"][:-1]
@@ -943,15 +990,14 @@ def test_graph_snapshots_publish_atomically_and_keep_previous_snapshot_immutable
     )
     with pytest.raises(KnowledgeError):
         store.replace_file_graph_analysis(1, state, third)
-    third_manifest = store.graph_snapshot_manifest("edge-gateway", "CODE")
-    assert third_manifest["snapshotId"] == first_manifest["snapshotId"]
+    third_manifest = store.graph_manifest("edge-gateway", "CODE")
+    assert third_manifest["graphId"] == first_manifest["graphId"]
     assert third_manifest["totalNodeCount"] == len(first["nodes"])
     with sqlite3.connect(store.db_path) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE snapshot_id = 'job-1:edge-gateway'").fetchone()[0] == len(first["nodes"])
-        assert conn.execute("SELECT state FROM graph_snapshots WHERE snapshot_id = 'job-2:edge-gateway'").fetchone()[0] == "FAILED"
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = 'edge-gateway'").fetchone()[0] == len(first["nodes"])
 
 
-def test_graph_snapshot_migration_rebuilds_old_primary_key_tables(tmp_path):
+def test_graph_storage_migration_rebuilds_incompatible_primary_key_tables(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -994,27 +1040,13 @@ def test_graph_snapshot_migration_rebuilds_old_primary_key_tables(tmp_path):
 
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        pk = {row["name"]: row["pk"] for row in conn.execute("PRAGMA table_info(analysis_graph_nodes)").fetchall() if row["pk"]}
-        assert pk == {"snapshot_id": 1, "id": 2}
-        assert (
-            conn.execute("SELECT snapshot_id FROM graph_current_snapshots WHERE source_id = 'edge-gateway'").fetchone()["snapshot_id"] == "legacy:edge-gateway"
-        )
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute(
-            """
-            INSERT INTO graph_snapshots(snapshot_id, source_id, job_id, state, created_at, published_at, manifest_json)
-            VALUES ('job-new:edge-gateway', 'edge-gateway', 'job-new', 'BUILDING', 'now', NULL, '{}')
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO analysis_graph_nodes(
-                id, snapshot_id, job_id, source_id, stable_key, node_kind, name, confidence, status, metadata_json, created_at, fact_origin, flow_domain
-            )
-            VALUES ('shared-node', 'job-new:edge-gateway', 'job-new', 'edge-gateway', 'new:node', 'TYPE', 'NewNode', 0.9, 'TRUSTED', '{}', 'now', 'STATIC', 'CODE')
-            """
-        )
-        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE id = 'shared-node'").fetchone()[0] == 2
+        columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(analysis_graph_nodes)").fetchall()}
+        pk = {name: row["pk"] for name, row in columns.items() if row["pk"]}
+        assert pk == {"id": 1}
+        assert {"source_id", "analysis_file_id", "file_id", "relative_path", "content_hash"}.issubset(columns)
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+        assert not any(name.startswith("graph_") for name in tables)
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0] == 0
 
 
 def test_graph_store_retries_transient_sqlite_lock(monkeypatch, tmp_path):
@@ -1065,10 +1097,7 @@ def test_duplicate_evidence_id_is_reported_as_graph_store_error_without_partial_
     assert raised.value.details["stage"] == "GRAPH_STORE"
     assert raised.value.details["table"] == "analysis_graph_evidence"
     assert raised.value.details["operation"] == "insert_evidence"
-    assert (
-        "UNIQUE constraint failed: analysis_graph_evidence.source_id, analysis_graph_evidence.snapshot_id, analysis_graph_evidence.id"
-        in raised.value.details["sqliteMessage"]
-    )
+    assert "UNIQUE constraint failed: analysis_graph_evidence" in raised.value.details["sqliteMessage"]
     with sqlite3.connect(store.db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence").fetchone()[0] == 0
@@ -1390,6 +1419,113 @@ def test_static_fallback_analysis_with_unchanged_hash_is_not_retried_without_for
     assert analyzed["total"] == 1
 
 
+def test_failed_retry_preserves_existing_graph_semantic_cache_and_query_results(tmp_path, monkeypatch):
+    store, _, _ = build_inventory(tmp_path)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    build_semantic_cache(store.db_path)
+    before_graph = current_graph_fact_counts(store.db_path)
+    before_semantic = semantic_cache_counts(store.db_path)
+    assert before_graph["nodes"] > 0
+    assert before_graph["edges"] > 0
+    assert before_graph["claims"] > 0
+    assert before_graph["evidence"] > 0
+    assert before_semantic["semantic_documents"] > 0
+    assert before_semantic["semantic_vectors"] > 0
+
+    def fail_to_graph(self, structural_result):
+        raise RuntimeError("static materializer failed")
+
+    monkeypatch.setattr(StaticGraphMaterializer, "to_graph", fail_to_graph)
+    failed = wait_job(store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer())["jobId"])
+    status, diagnostics = job_file_diagnostics(store.db_path, failed["jobId"])
+
+    assert failed["failedFiles"] == 1
+    assert status == "FAILED"
+    assert {diagnostic["code"] for diagnostic in diagnostics} >= {"ANALYSIS_FILE_FAILED"}
+    assert current_graph_fact_counts(store.db_path) == before_graph
+    assert semantic_cache_counts(store.db_path) == before_semantic
+    with sqlite3.connect(store.db_path) as conn:
+        row = conn.execute("SELECT status FROM analysis_files WHERE source_id = 'edge-gateway'").fetchone()
+    assert row[0] == "ANALYZED"
+
+    query_service = build_knowledge_query_service(
+        AnalysisStore(store.db_path),
+        app_config(tmp_path),
+        embedding_provider=FakeDeterministicEmbeddingProvider(dimension=8),
+    )
+    response = query_service.query(KnowledgeQueryRequest(query="ObjectHandler create"))
+
+    assert response.status == "OK"
+    assert response.matchedNodes
+
+
+def test_failed_unreadable_file_preserves_existing_graph_facts(tmp_path, monkeypatch):
+    store, _, _ = build_inventory(tmp_path)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    build_semantic_cache(store.db_path)
+    before_graph = current_graph_fact_counts(store.db_path)
+    before_semantic = semantic_cache_counts(store.db_path)
+
+    monkeypatch.setattr(SnippetExtractor, "read_lines", lambda self, absolute_path, source_path: None)
+    failed = wait_job(store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer())["jobId"])
+    status, diagnostics = job_file_diagnostics(store.db_path, failed["jobId"])
+
+    assert failed["failedFiles"] == 1
+    assert status == "FAILED"
+    assert {diagnostic["code"] for diagnostic in diagnostics} == {"FILE_UNREADABLE"}
+    assert current_graph_fact_counts(store.db_path) == before_graph
+    assert semantic_cache_counts(store.db_path) == before_semantic
+    with sqlite3.connect(store.db_path) as conn:
+        row = conn.execute("SELECT status FROM analysis_files WHERE source_id = 'edge-gateway'").fetchone()
+    assert row[0] == "ANALYZED"
+
+
+def test_failed_exception_path_preserves_existing_graph_facts(tmp_path, monkeypatch):
+    store, _, _ = build_inventory(tmp_path)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    build_semantic_cache(store.db_path)
+    before_graph = current_graph_fact_counts(store.db_path)
+    before_semantic = semantic_cache_counts(store.db_path)
+
+    def fail_to_graph(self, structural_result):
+        raise RuntimeError("graph materialization failed")
+
+    monkeypatch.setattr(StaticGraphMaterializer, "to_graph", fail_to_graph)
+    failed = wait_job(store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer())["jobId"])
+    status, diagnostics = job_file_diagnostics(store.db_path, failed["jobId"])
+
+    assert failed["failedFiles"] == 1
+    assert status == "FAILED"
+    assert {diagnostic["code"] for diagnostic in diagnostics} >= {"ANALYSIS_FILE_FAILED"}
+    assert current_graph_fact_counts(store.db_path) == before_graph
+    assert semantic_cache_counts(store.db_path) == before_semantic
+
+
+def test_failed_first_time_analysis_records_failure_without_graph_facts(tmp_path, monkeypatch):
+    store, _, _ = build_inventory(tmp_path)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+
+    def fail_to_graph(self, structural_result):
+        raise RuntimeError("graph materialization failed")
+
+    monkeypatch.setattr(StaticGraphMaterializer, "to_graph", fail_to_graph)
+    failed = wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    status, diagnostics = job_file_diagnostics(store.db_path, failed["jobId"])
+
+    assert failed["failedFiles"] == 1
+    assert status == "FAILED"
+    assert {diagnostic["code"] for diagnostic in diagnostics} >= {"ANALYSIS_FILE_FAILED"}
+    assert current_graph_fact_counts(store.db_path) == {"nodes": 0, "edges": 0, "claims": 0, "evidence": 0, "diagnostics": 0}
+    assert semantic_cache_counts(store.db_path) == {"semantic_documents": 0, "semantic_vectors": 0}
+    with sqlite3.connect(store.db_path) as conn:
+        row = conn.execute("SELECT status FROM analysis_files WHERE source_id = 'edge-gateway'").fetchone()
+    assert row[0] == "FAILED"
+    assert len(AnalysisStore(store.db_path).current_failed_inventory_rows(["edge-gateway"])) == 1
+
+
 def test_unchanged_file_lookup_batches_large_inventory(tmp_path):
     extra_files = {
         f"src/main/java/example/Generated{i:03d}Handler.java": "public class GeneratedHandler {\n  public void create() {\n  }\n\n}\n" for i in range(405)
@@ -1523,6 +1659,66 @@ def test_changed_file_reanalyzed_and_previous_analysis_removed(tmp_path):
     assert "create" not in {node["name"] for node in second_nodes}
 
 
+def test_changed_hash_cleanup_deletes_old_graph_and_semantic_facts(tmp_path):
+    store, config, service = build_inventory(tmp_path)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+    wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+    build_semantic_cache(store.db_path)
+    assert current_graph_fact_counts(store.db_path)["nodes"] > 0
+    assert semantic_cache_counts(store.db_path)["semantic_documents"] > 0
+
+    (service / "src/main/java/example/ObjectHandler.java").write_text("public class ObjectHandler { void changed() {} }\n", encoding="utf-8")
+    InventoryBuilder(load_source_config(config), store).build([], [])
+    AnalysisStore(store.db_path).cleanup_stale_files(["edge-gateway"])
+
+    assert current_graph_fact_counts(store.db_path) == {"nodes": 0, "edges": 0, "claims": 0, "evidence": 0, "diagnostics": 0}
+    assert semantic_cache_counts(store.db_path) == {"semantic_documents": 0, "semantic_vectors": 0}
+    state = AnalysisStore(store.db_path).current_analysis_state(["edge-gateway"])
+    assert state["pendingFiles"] == 1
+    assert state["succeededFiles"] == 0
+
+
+def test_successful_reanalysis_replaces_graph_facts_and_marks_semantic_pending(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    rows, _ = store.search_rows([], [])
+    file_row = rows[0]
+    analysis_store = AnalysisStore(store.db_path)
+    content = Path(file_row["absolute_path"]).read_text(encoding="utf-8")
+    first = materialize_graph_for_test(
+        responsibility_graph_result(file_claim=True),
+        content=content,
+        file_id=int(file_row["id"]),
+        relative_path=file_row["relative_path"],
+    )
+    state = graph_state_for_test(content, file_row["relative_path"])
+    state["source_id"] = file_row["source_id"]
+    state["content_hash"] = file_row["content_hash"]
+    state["symbol_count"] = len(first["nodes"])
+    state["relation_count"] = len(first["edges"])
+    analysis_store.replace_file_graph_analysis(int(file_row["id"]), state, first)
+    build_semantic_cache(store.db_path)
+    before_semantic = semantic_cache_counts(store.db_path)
+    assert before_semantic["semantic_documents"] > 0
+
+    second = materialize_graph_for_test(
+        responsibility_graph_result(method_claim=False, type_claim=False, file_claim=False),
+        content=content,
+        file_id=int(file_row["id"]),
+        relative_path=file_row["relative_path"],
+    )
+    state["symbol_count"] = len(second["nodes"])
+    state["relation_count"] = len(second["edges"])
+    analysis_store.replace_file_graph_analysis(int(file_row["id"]), state, second)
+
+    after_graph = current_graph_fact_counts(store.db_path)
+    assert after_graph["nodes"] == len(second["nodes"])
+    assert after_graph["edges"] == len(second["edges"])
+    assert after_graph["claims"] == 0
+    assert semantic_cache_counts(store.db_path) == {"semantic_documents": 0, "semantic_vectors": 0}
+    semantic_state = SemanticIndexStore(store.db_path).status_for_source("edge-gateway")
+    assert semantic_state.status.value in {"PENDING", "STALE"}
+
+
 def test_freshness_up_to_date_after_completed_scan_with_unchanged_files(tmp_path):
     store, config, _ = build_inventory(tmp_path)
     runner = SupervisorHarness(store, app_config(tmp_path))
@@ -1605,12 +1801,12 @@ def test_inventory_refresh_removes_analysis_for_deleted_files(tmp_path):
 
     result = InventoryRefreshService(app_config(tmp_path), store).build([], [])
     files = AnalysisStore(store.db_path).files(None, None, None, 10, 0)
-    graph_manifest = AnalysisStore(store.db_path).graph_snapshot_manifest("edge-gateway", "CODE")
+    graph_manifest = AnalysisStore(store.db_path).graph_manifest("edge-gateway", "CODE")
 
     assert result["fileCount"] == 0
     assert files["total"] == 0
-    assert graph_manifest["totalNodeCount"] == 3
-    assert graph_manifest["totalEdgeCount"] == 3
+    assert graph_manifest["totalNodeCount"] == 0
+    assert graph_manifest["totalEdgeCount"] == 0
 
 
 def test_inventory_refresh_makes_new_files_available_for_next_analysis(tmp_path):
@@ -1770,9 +1966,10 @@ def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
         (3, "reset_analysis_cache_for_graph_v1_cutover"),
         (4, "reconcile_graph_diagnostics_schema"),
         (5, "add_analysis_job_mode"),
-        (6, "add_immutable_graph_snapshots"),
+        (6, "remove_legacy_graph_lifecycle"),
+        (7, "current_state_graph_storage"),
     ]
-    assert migration_count == 6
+    assert migration_count == 7
 
 
 def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path):
@@ -2082,8 +2279,8 @@ def test_final_graph_detail_returns_claims_and_evidence(tmp_path):
     _, edges = current_graph_edges(store)
     handler = next(item for item in nodes if item["name"] == "ObjectHandler")
     contains = next(item for item in edges if item["edgeType"] == "CONTAINS")
-    node_detail = analysis_store.graph_snapshot_node_detail(manifest["graphRevision"], handler["id"], "edge-gateway", True)
-    edge_detail = analysis_store.graph_snapshot_edge_detail(manifest["graphRevision"], contains["id"], "edge-gateway", True)
+    node_detail = analysis_store.graph_node_detail(manifest["graphRevision"], handler["id"], "edge-gateway", True)
+    edge_detail = analysis_store.graph_edge_detail(manifest["graphRevision"], contains["id"], "edge-gateway", True)
 
     assert any(claim["claimKind"] == "ROLE" and claim["summary"] == "HTTP_HANDLER" for claim in node_detail["item"]["claims"])
     assert edge_detail["item"]["evidence"]
@@ -2322,7 +2519,7 @@ def test_no_source_file_mutation(tmp_path):
 
 
 def test_no_production_domain_hardcoded_synonyms():
-    src = Path("services/forge-knowledge/src/knowledge_service")
+    src = Path(__file__).resolve().parents[1] / "src" / "knowledge_service"
     banned = ["_AUTH_QUERY", "site creation", "авторизація"]
     combined = "\n".join(path.read_text(encoding="utf-8") for path in src.rglob("*.py"))
 
@@ -2369,7 +2566,7 @@ def insert_isolated_graph_nodes(db_path, count=5):
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         base = conn.execute("""
-            SELECT snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, language, flow_domain
+            SELECT job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash, language, flow_domain
             FROM analysis_graph_nodes
             WHERE source_id = 'edge-gateway'
             LIMIT 1
@@ -2379,13 +2576,12 @@ def insert_isolated_graph_nodes(db_path, count=5):
             conn.execute(
                 """
                 INSERT INTO analysis_graph_nodes(
-                    id, job_id, source_id, inventory_file_id, analysis_file_id, stable_key,
-                    snapshot_id,
+                    id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash, stable_key,
                     node_kind, language, name, qualified_name, display_name, parent_node_id,
                     line_start, line_end, confidence, status, metadata_json, created_at,
-                    fact_origin, flow_domain
+                    updated_at, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     f"test-isolated-node-{index}",
@@ -2393,8 +2589,10 @@ def insert_isolated_graph_nodes(db_path, count=5):
                     base["source_id"],
                     base["inventory_file_id"],
                     base["analysis_file_id"],
+                    base["file_id"],
+                    base["relative_path"],
+                    base["content_hash"],
                     f"edge-gateway|isolated|{index}",
-                    base["snapshot_id"],
                     "CALLABLE",
                     base["language"],
                     f"isolated{index}",
@@ -2405,6 +2603,7 @@ def insert_isolated_graph_nodes(db_path, count=5):
                     1.0,
                     "TRUSTED",
                     json.dumps({"testFixture": True}),
+                    "now",
                     "now",
                     "STATIC",
                     base["flow_domain"] or "CODE",
@@ -2426,12 +2625,11 @@ def insert_unresolved_graph_edge(db_path):
         conn.execute(
             """
             INSERT INTO analysis_graph_edges(
-                id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id,
-                snapshot_id,
-                to_node_id, edge_type, resolution_status, confidence, evidence_id,
-                unresolved_target_json, metadata_json, status, created_at, fact_origin, flow_domain
+                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                from_node_id, to_node_id, edge_type, edge_kind, resolution_status, confidence, evidence_id,
+                evidence_ids_json, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, '[]', ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 "test-unresolved-edge-without-endpoint",
@@ -2439,8 +2637,11 @@ def insert_unresolved_graph_edge(db_path):
                 from_node["source_id"],
                 from_node["inventory_file_id"],
                 from_node["analysis_file_id"],
+                from_node["file_id"],
+                from_node["relative_path"],
+                from_node["content_hash"],
                 from_node["id"],
-                from_node["snapshot_id"],
+                "CALLS",
                 "CALLS",
                 "UNRESOLVED",
                 1.0,
@@ -2453,6 +2654,7 @@ def insert_unresolved_graph_edge(db_path):
                     }
                 ),
                 "TRUSTED",
+                "now",
                 "now",
                 "STATIC",
                 from_node["flow_domain"] or "CODE",
@@ -2985,7 +3187,7 @@ def test_services_status_does_not_report_outdated_for_persisted_analysis_cache(t
 
 def test_inventory_refresh_keeps_unchanged_files_without_reopening_content(tmp_path, monkeypatch):
     store, config, _ = build_inventory(tmp_path)
-    before = store.snapshot_files(["edge-gateway"])[0]
+    before = store.stored_files(["edge-gateway"])[0]
 
     def fail_read_bytes(_path):
         raise AssertionError("unchanged inventory file was reopened")
@@ -2994,7 +3196,7 @@ def test_inventory_refresh_keeps_unchanged_files_without_reopening_content(tmp_p
 
     InventoryBuilder(load_source_config(config), store).build([], [])
 
-    after = store.snapshot_files(["edge-gateway"])[0]
+    after = store.stored_files(["edge-gateway"])[0]
     assert after["id"] == before["id"]
     assert after["contentHash"] == before["contentHash"]
 
@@ -3020,7 +3222,7 @@ def test_inventory_refresh_processes_changed_file_with_one_stream(tmp_path, monk
 
     InventoryBuilder(load_source_config(config), store).build([], [])
 
-    after = store.snapshot_files(["edge-gateway"])[0]
+    after = store.stored_files(["edge-gateway"])[0]
     assert after["relativePath"] == "src/main/java/example/ObjectHandler.java"
     assert after["contentHash"] == hashlib.sha256(changed_content.encode("utf-8")).hexdigest()
     assert len(opened) == 1
@@ -3123,9 +3325,10 @@ def test_services_status_size_does_not_grow_with_diagnostics(tmp_path, monkeypat
         conn.executemany(
             """
                 INSERT INTO analysis_graph_diagnostics(
-                    id, snapshot_id, job_id, source_id, severity, stage, code, message, metadata_json, created_at
+                    id, job_id, source_id, severity, stage, code, diagnostic_code, message, metadata_json, created_at
                 )
-                VALUES (?, 'job-1:edge-gateway', 'job-1', 'edge-gateway', 'ERROR', 'LLM_ENRICHMENT', 'ANALYSIS_AI_INVALID_JSON', ?, '{}', 'now')
+                VALUES (?, 'job-1', 'edge-gateway', 'ERROR', 'LLM_ENRICHMENT', 'ANALYSIS_AI_INVALID_JSON',
+                        'ANALYSIS_AI_INVALID_JSON', ?, '{}', 'now')
                 """,
             [(f"diag-{index}", "x" * 1000) for index in range(10000)],
         )

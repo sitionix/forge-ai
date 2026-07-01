@@ -1,6 +1,6 @@
 {
   "sourceId": "forge-ai",
-  "snapshotId": "snapshot-a",
+  "graphId": "graph-a",
   "graphRevision": "rev-a",
   "queryFingerprint": "fingerprint-view-a",
   "selectionPolicy": "RELATIONSHIP_AWARE",

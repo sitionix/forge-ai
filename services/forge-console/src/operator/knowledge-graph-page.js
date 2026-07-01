@@ -299,7 +299,7 @@ export class KnowledgeGraphPage {
     }
     try {
       const result = await this.requestCoordinator.run('knowledge-graph', ({ signal }) => {
-        return this.client.loadSnapshot(query, {
+        return this.client.loadGraphData(query, {
           signal,
           forceRefresh: Boolean(options.forceRefresh),
           window: this.window
@@ -1961,9 +1961,9 @@ function metadataFromGraphMetadata(metadata, query) {
       diagnosticsCount,
       currentFile: metadata?.currentFile || analysis.currentFile || null,
       progressPercent: progressPercent(processed, total),
-      currentSnapshotId: metadata?.currentSnapshotId || metadata?.snapshotId || null,
-      currentPointerSnapshotId: metadata?.currentPointerSnapshotId || null,
-      currentSnapshotState: metadata?.currentSnapshotState || null,
+      currentGraphId: metadata?.currentGraphId || metadata?.graphId || null,
+      currentPointerGraphId: metadata?.currentPointerGraphId || null,
+      currentGraphState: metadata?.currentGraphState || null,
       currentGraphNodeCount: nonNegativeNumber(metadata?.currentGraphNodeCount),
       currentGraphEdgeCount: nonNegativeNumber(metadata?.currentGraphEdgeCount),
       representedFileCount,
@@ -2104,7 +2104,7 @@ function readableEdgeEndpoint(value, fallback) {
 }
 
 function looksTechnicalIdentifier(value) {
-  return /^(analysis-graph-|node-|edge-|claim-|evidence-|ev-|snapshot-|fingerprint-|[0-9a-f]{8}-[0-9a-f-]{13,}|[0-9a-f]{16,})/i.test(String(value || '').trim());
+  return /^(analysis-graph-|node-|edge-|claim-|evidence-|ev-|graph-|fingerprint-|[0-9a-f]{8}-[0-9a-f-]{13,}|[0-9a-f]{16,})/i.test(String(value || '').trim());
 }
 
 function formatLineRange(start, end) {

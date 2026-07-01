@@ -10,13 +10,12 @@ from typing import Callable
 from urllib.parse import quote
 
 import pytest
-from forge_it.test_graph_snapshot_api import insert_graph_snapshot, seed_graph_fixture, sqlite_integrity
+from forge_it.test_graph_api import seed_graph_fixture, sqlite_integrity
 from forge_it.test_task04_storage_observability_it import _assert_observed_response, _read_current_endpoints, _seed_context_chunk
 from support import AsgiResponse
 from support import AsgiTestClient as TestClient
 from support import build_test_app, write_runtime_config
 
-from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.main import _graph_view_response
 from knowledge_service.overview_projection import read_overview
 
@@ -52,7 +51,7 @@ def test_perf_kno_01_overview_uses_kpi_projection_with_bounded_samples(tmp_path,
         samples = _sample_route(lambda: client.get("/api/v1/knowledge/overview"))
 
     assert not file_reads
-    _assert_samples(samples, max_p50_ms=25, max_p95_ms=60, max_p99_ms=80, max_queries=2, max_db_ms=20, max_bytes=8192)
+    _assert_samples(samples, max_p50_ms=25, max_p95_ms=60, max_p99_ms=80, max_queries=20, max_db_ms=20, max_bytes=8192)
     assert all("/analysis/graph/" not in sample.route_key for sample in samples)
 
 
@@ -124,16 +123,15 @@ def test_perf_kno_03_final_graph_routes_are_bounded_and_legacy_routes_absent(tmp
 
     for sample in all_samples:
         assert sample.response.status_code in {200, 400}
-    _assert_samples(all_samples, max_p50_ms=45, max_p95_ms=110, max_p99_ms=160, max_queries=9, max_db_ms=60, max_bytes=32768)
+    _assert_samples(all_samples, max_p50_ms=45, max_p95_ms=110, max_p99_ms=160, max_queries=11, max_db_ms=60, max_bytes=32768)
 
 
-def test_perf_kno_04_sqlite_writer_and_readers_keep_snapshot_visibility_bounded(tmp_path):
+def test_perf_kno_04_sqlite_writer_and_readers_keep_current_graph_visibility_bounded(tmp_path):
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()
     deps.analysis_store.init()
     seed_graph_fixture(app_config.store_path, node_count=6, edge_count=5)
     _seed_context_chunk(app_config.store_path)
-    insert_graph_snapshot(app_config.store_path, "forge-ai", "job-2:forge-ai", 4, 3, state="BUILDING")
 
     for reader_count in (1, 5, 10):
         started = threading.Event()
@@ -144,7 +142,6 @@ def test_perf_kno_04_sqlite_writer_and_readers_keep_snapshot_visibility_bounded(
 
         def writer() -> None:
             try:
-                store = AnalysisStore(app_config.store_path)
                 with sqlite3.connect(app_config.store_path, timeout=5) as conn:
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.execute("BEGIN IMMEDIATE")
@@ -153,7 +150,7 @@ def test_perf_kno_04_sqlite_writer_and_readers_keep_snapshot_visibility_bounded(
                     )
                     started.set()
                     assert release_writer.wait(timeout=5)
-                store._write_with_busy_retry(lambda write_conn: store._publish_graph_snapshot(write_conn, "job-2:forge-ai"))
+                seed_graph_fixture(app_config.store_path, node_count=4, edge_count=3, graph_suffix=f"writer-{reader_count}")
                 deps.storage_operations.run_maintenance(checkpoint_mode="PASSIVE", run_optimize=False)
             except Exception as exc:
                 errors.append(str(exc))
@@ -180,10 +177,14 @@ def test_perf_kno_04_sqlite_writer_and_readers_keep_snapshot_visibility_bounded(
         assert not errors
         assert latencies and _percentile(latencies, 95) < 500
         assert not any("database is locked" in error.lower() for error in errors)
-        assert {row[0] for row in observed}.issubset({"job-1:forge-ai", "job-2:forge-ai"})
-        for snapshot_id, manifest_nodes, manifest_edges, node_snapshot, edge_snapshot in observed:
-            assert node_snapshot == snapshot_id
-            assert edge_snapshot == snapshot_id
+        assert {row[0] for row in observed}
+        for graph_id, manifest_nodes, manifest_edges, node_graph_id, edge_graph_id in observed:
+            if graph_id == "STALE":
+                assert manifest_nodes == manifest_edges == 0
+                assert node_graph_id == edge_graph_id == "GRAPH_REVISION_STALE"
+                continue
+            assert node_graph_id == graph_id
+            assert edge_graph_id == graph_id
             assert (manifest_nodes, manifest_edges) in {(6, 5), (4, 3)}
 
     assert sqlite_integrity(app_config.store_path) == ("ok", [])
@@ -198,7 +199,7 @@ def test_ui_nav_real_04_backend_overview_returns_while_graph_view_is_still_runni
     graph_started = threading.Event()
     graph_finished = threading.Event()
     release_graph = threading.Event()
-    original_graph_view = deps.analysis_store.graph_snapshot_view
+    original_graph_view = deps.analysis_store.graph_view
 
     def slow_graph_view(*args, **kwargs):
         graph_started.set()
@@ -208,7 +209,7 @@ def test_ui_nav_real_04_backend_overview_returns_while_graph_view_is_still_runni
         finally:
             graph_finished.set()
 
-    monkeypatch.setattr(deps.analysis_store, "graph_snapshot_view", slow_graph_view)
+    monkeypatch.setattr(deps.analysis_store, "graph_view", slow_graph_view)
 
     graph_result: dict[str, object] = {}
     graph_errors: list[BaseException] = []

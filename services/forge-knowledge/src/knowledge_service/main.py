@@ -87,8 +87,6 @@ def create_app(
             status = 200
         elif exc.code.endswith("_NOT_FOUND") or exc.code == "SERVICE_CATALOG_NOT_FOUND":
             status = 404
-        elif exc.code == "GRAPH_SNAPSHOT_EXPIRED":
-            status = 410
         elif exc.code in {
             "GRAPH_CURSOR_SOURCE_MISMATCH",
             "GRAPH_CURSOR_RESOURCE_MISMATCH",
@@ -101,8 +99,7 @@ def create_app(
             "ANALYSIS_JOB_ALREADY_RUNNING",
             "INVENTORY_BUILD_ALREADY_RUNNING",
             "INVENTORY_BUILD_BLOCKED_BY_ANALYSIS",
-            "GRAPH_SNAPSHOT_STALE",
-            "GRAPH_SNAPSHOT_SOURCE_MISMATCH",
+            "GRAPH_REVISION_STALE",
             "GRAPH_ITEM_SCOPE_MISMATCH",
         }:
             status = 409
@@ -367,7 +364,7 @@ def create_app(
         sourceId: Optional[str] = None,
     ) -> Dict[str, Any]:
         _, deps = _state(request)
-        return deps.analysis_store.graph_snapshot_metadata(sourceId)
+        return deps.analysis_store.graph_metadata(sourceId)
 
     @app.get("/api/v1/knowledge/analysis/graph/manifest")
     async def analysis_graph_manifest(
@@ -383,7 +380,7 @@ def create_app(
         search: Optional[str] = None,
     ) -> Response:
         _, deps = _state(request)
-        manifest = deps.analysis_store.graph_snapshot_manifest(
+        manifest = deps.analysis_store.graph_manifest(
             sourceId,
             flowDomain,
             fact_origin=factOrigin,
@@ -464,7 +461,7 @@ def create_app(
         search: Optional[str] = None,
     ) -> JSONResponse:
         _, deps = _state(request)
-        page = deps.analysis_store.graph_snapshot_nodes(
+        page = deps.analysis_store.graph_nodes(
             graphRevision,
             cursor,
             pageSize,
@@ -500,7 +497,7 @@ def create_app(
         search: Optional[str] = None,
     ) -> JSONResponse:
         _, deps = _state(request)
-        page = deps.analysis_store.graph_snapshot_edges(
+        page = deps.analysis_store.graph_edges(
             graphRevision,
             cursor,
             pageSize,
@@ -529,7 +526,7 @@ def create_app(
         includeEvidence: bool = False,
     ) -> JSONResponse:
         _, deps = _state(request)
-        detail = deps.analysis_store.graph_snapshot_node_detail(graphRevision, node_id, sourceId, includeEvidence)
+        detail = deps.analysis_store.graph_node_detail(graphRevision, node_id, sourceId, includeEvidence)
         return JSONResponse(
             content=detail,
             headers={
@@ -547,7 +544,7 @@ def create_app(
         includeEvidence: bool = False,
     ) -> JSONResponse:
         _, deps = _state(request)
-        detail = deps.analysis_store.graph_snapshot_edge_detail(graphRevision, edge_id, sourceId, includeEvidence)
+        detail = deps.analysis_store.graph_edge_detail(graphRevision, edge_id, sourceId, includeEvidence)
         return JSONResponse(
             content=detail,
             headers={
@@ -572,7 +569,7 @@ def _graph_view_response(
     search: Optional[str],
     max_nodes: int,
 ) -> JSONResponse:
-    view = analysis_store.graph_snapshot_view(
+    view = analysis_store.graph_view(
         source_id,
         flow_domain,
         fact_origin=fact_origin,

@@ -148,8 +148,8 @@ public final class InfrastructureProxyEndpoint {
         return nexusGet("/api/v1/infrastructure/knowledge/analysis/graph/nodes", HttpStatus.BAD_REQUEST, "responseProxyGraphCursorInvalid.json");
     }
 
-    public static Endpoint<Object, Object> nexusKnowledgeGraphSnapshotExpired() {
-        return nexusGet("/api/v1/infrastructure/knowledge/analysis/graph/nodes", HttpStatus.GONE, "responseProxyGraphSnapshotExpired.json");
+    public static Endpoint<Object, Object> nexusKnowledgeGraphRevisionStale() {
+        return nexusGet("/api/v1/infrastructure/knowledge/analysis/graph/nodes", HttpStatus.GONE, "responseProxyGraphRevisionStale.json");
     }
 
     public static Endpoint<Object, Object> nexusJarvisStatus() {
@@ -386,8 +386,8 @@ public final class InfrastructureProxyEndpoint {
         return upstreamGet("/api/v1/knowledge/analysis/graph/nodes", HttpStatus.BAD_REQUEST, "responseProxyGraphCursorInvalid.json");
     }
 
-    public static Endpoint<Object, Object> upstreamKnowledgeGraphSnapshotExpired() {
-        return upstreamGet("/api/v1/knowledge/analysis/graph/nodes", HttpStatus.GONE, "responseProxyGraphSnapshotExpired.json");
+    public static Endpoint<Object, Object> upstreamKnowledgeGraphRevisionStale() {
+        return upstreamGet("/api/v1/knowledge/analysis/graph/nodes", HttpStatus.GONE, "responseProxyGraphRevisionStale.json");
     }
 
     public static Endpoint<Object, Object> upstreamJarvisStatus() {

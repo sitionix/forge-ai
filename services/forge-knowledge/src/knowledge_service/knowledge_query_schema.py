@@ -56,7 +56,7 @@ class KnowledgeQueryMatchedNode(BaseModel):
     label: str
     score: float
     matchReasons: List[str] = Field(default_factory=list)
-    snapshotId: Optional[str] = None
+    graphId: Optional[str] = None
     graphRevision: Optional[str] = None
     relativePath: Optional[str] = None
     qualifiedName: Optional[str] = None

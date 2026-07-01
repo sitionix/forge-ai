@@ -220,7 +220,6 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphMetadata())
                 .withQueryParameters(InfrastructureProxyQuery.graphMetadataSource())
                 .header("X-Correlation-Id", "corr-raw-json")
-                .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("GRAPH_SNAPSHOT_METRICS_MISSING"))))
                 .assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphManifest()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphView()).header("X-Correlation-Id", "corr-raw-json").assertDefault();
@@ -402,11 +401,11 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseBody("responseProxyGraphNodeNotFound.json"))
                 .create();
         this.testManager.wiremock()
-                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphSnapshotExpired())
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphRevisionStale())
                 .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphExpiredRevision())
                 .applyDefault(context -> context
                         .responseStatus(HttpStatus.GONE.value())
-                        .responseBody("responseProxyGraphSnapshotExpired.json"))
+                        .responseBody("responseProxyGraphRevisionStale.json"))
                 .create();
         this.testManager.wiremock()
                 .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryTimeout())
@@ -460,7 +459,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .withQueryParameters(InfrastructureProxyQuery.graphMissingDetail())
                 .header("X-Correlation-Id", "corr-upstream-404")
                 .assertDefault();
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphSnapshotExpired())
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphRevisionStale())
                 .withQueryParameters(InfrastructureProxyQuery.graphExpiredRevision())
                 .header("X-Correlation-Id", "corr-upstream-410")
                 .assertDefault();
@@ -793,11 +792,11 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseBody("responseProxyGraphCursorInvalid.json"))
                 .create();
         this.testManager.wiremock()
-                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphSnapshotExpired())
+                .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphRevisionStale())
                 .urlWithQueryParam(InfrastructureProxyQuery.upstreamGraphExpiredRevision())
                 .applyDefault(context -> context
                         .responseStatus(HttpStatus.GONE.value())
-                        .responseBody("responseProxyGraphSnapshotExpired.json"))
+                        .responseBody("responseProxyGraphRevisionStale.json"))
                 .create();
         this.testManager.wiremock()
                 .createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeGraphMissingNode())
@@ -857,7 +856,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .withQueryParameters(InfrastructureProxyQuery.graphCursorInvalid())
                 .header("X-Correlation-Id", "corr-graph-parity")
                 .assertDefault();
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphSnapshotExpired())
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphRevisionStale())
                 .withQueryParameters(InfrastructureProxyQuery.graphExpiredRevision())
                 .header("X-Correlation-Id", "corr-graph-parity")
                 .assertDefault();

@@ -25,25 +25,31 @@ ANALYSIS_SCHEMA_MIGRATIONS = (
     (3, "reset_analysis_cache_for_graph_v1_cutover"),
     (4, "reconcile_graph_diagnostics_schema"),
     (5, "add_analysis_job_mode"),
-    (6, "add_immutable_graph_snapshots"),
+    (6, "remove_legacy_graph_lifecycle"),
+    (7, "current_state_graph_storage"),
 )
 SQLITE_WRITE_BUSY_TIMEOUT_MS = 5000
 SQLITE_STATUS_BUSY_TIMEOUT_MS = 500
 GRAPH_STORE_LOCK_RETRY_DELAYS_SECONDS = (0.05, 0.15, 0.3)
 SERVICE_DIAGNOSTIC_ROW_LIMIT = 1000
-GRAPH_CONTRACT_VERSION = "GRAPH_SNAPSHOT_V2"
+GRAPH_CONTRACT_VERSION = "GRAPH_CURRENT_V1"
 GRAPH_SORT_VERSION = "ID_ASC_V1"
 GRAPH_CURSOR_SIGNATURE_CONTEXT = "knowledge-graph-cursor-v1"
 GRAPH_NODE_DETAIL_RELATION_LIMIT = 25
-PARTIAL_SNAPSHOT_NOT_PROMOTED_CODE = "PARTIAL_SNAPSHOT_NOT_PROMOTED"
-GRAPH_COVERAGE_RECOVERY_REASON = "CURRENT_POINTER_DEGRADED_RECOVERED_TO_BETTER_SAME_SOURCE_SNAPSHOT"
+PARTIAL_GRAPH_NOT_PROMOTED_CODE = "PARTIAL_GRAPH_NOT_PROMOTED"
+GRAPH_COVERAGE_RECOVERY_REASON = "CURRENT_GRAPH_DEGRADED_RECOVERED"
 GRAPH_COVERAGE_PARTIAL_REASON = "CURRENT_GRAPH_COVERAGE_PARTIAL"
 
 
+def _chunks(values: List[int], size: int):
+    for offset in range(0, len(values), max(1, size)):
+        yield values[offset : offset + max(1, size)]
+
+
 @dataclass(frozen=True)
-class GraphSnapshotQuery:
+class GraphQuery:
     source_id: str
-    snapshot_id: str
+    graph_id: str
     resource: str
     flow_domain: str
     fact_origin: str
@@ -64,7 +70,7 @@ class GraphSnapshotQuery:
         return {
             "contractVersion": self.contract_version,
             "sortVersion": self.sort_version,
-            "snapshotId": self.snapshot_id,
+            "graphId": self.graph_id,
             "sourceId": self.source_id,
             "resource": self.resource,
             "flowDomain": self.flow_domain,
@@ -126,54 +132,17 @@ class AnalysisStore:
             self._ensure_column(conn, "analysis_jobs", "last_progress_at", "TEXT")
             self._ensure_column(conn, "analysis_jobs", "engine_version", "TEXT")
             self._ensure_column(conn, "analysis_jobs", "mode", "TEXT NOT NULL DEFAULT 'FULL'")
+            self._drop_rejected_graph_storage(conn)
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS graph_snapshots (
-                    snapshot_id TEXT PRIMARY KEY,
-                    source_id TEXT NOT NULL,
-                    job_id TEXT NOT NULL,
-                    state TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    published_at TEXT,
-                    manifest_json TEXT NOT NULL DEFAULT '{}',
-                    content_identity TEXT,
-                    UNIQUE(source_id, snapshot_id)
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS graph_current_snapshots (
+                CREATE TABLE IF NOT EXISTS analysis_graph_state (
                     source_id TEXT PRIMARY KEY,
-                    snapshot_id TEXT NOT NULL,
-                    published_at TEXT NOT NULL,
-                    FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE RESTRICT
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS graph_snapshot_metrics (
-                    snapshot_id TEXT NOT NULL,
-                    query_fingerprint TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    flow_domain TEXT NOT NULL,
-                    fact_origin TEXT NOT NULL,
-                    node_kind TEXT NOT NULL,
-                    edge_type TEXT NOT NULL,
-                    include_external TEXT NOT NULL,
-                    include_unresolved INTEGER NOT NULL,
-                    include_isolated INTEGER NOT NULL,
-                    total_node_count INTEGER NOT NULL,
-                    total_edge_count INTEGER NOT NULL,
-                    node_type_counts_json TEXT NOT NULL,
-                    edge_type_counts_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    PRIMARY KEY(snapshot_id, query_fingerprint),
-                    FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS graph_snapshot_tombstones (
-                    snapshot_id TEXT PRIMARY KEY,
-                    source_id TEXT NOT NULL,
-                    expired_at TEXT NOT NULL,
-                    reason TEXT NOT NULL
+                    graph_id TEXT NOT NULL,
+                    content_identity TEXT NOT NULL,
+                    node_count INTEGER NOT NULL DEFAULT 0,
+                    edge_count INTEGER NOT NULL DEFAULT 0,
+                    claim_count INTEGER NOT NULL DEFAULT 0,
+                    evidence_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
                 )
             """)
             conn.execute("""
@@ -228,16 +197,18 @@ class AnalysisStore:
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS analysis_graph_nodes (
-                    id TEXT NOT NULL,
-                    snapshot_id TEXT NOT NULL,
+                    id TEXT PRIMARY KEY,
                     job_id TEXT NOT NULL,
                     source_id TEXT NOT NULL,
-                    inventory_file_id INTEGER,
-                    analysis_file_id INTEGER,
+                    inventory_file_id INTEGER NOT NULL,
+                    analysis_file_id INTEGER NOT NULL,
+                    file_id INTEGER NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
                     stable_key TEXT NOT NULL,
                     node_kind TEXT NOT NULL,
                     language TEXT,
-                    name TEXT NOT NULL,
+                    name TEXT,
                     qualified_name TEXT,
                     display_name TEXT,
                     parent_node_id TEXT,
@@ -247,39 +218,38 @@ class AnalysisStore:
                     status TEXT NOT NULL,
                     metadata_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
                     fact_origin TEXT,
                     flow_domain TEXT,
-                    PRIMARY KEY(snapshot_id, id),
-                    UNIQUE(source_id, snapshot_id, id),
-                    FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE
+                    FOREIGN KEY(analysis_file_id) REFERENCES analysis_files(file_id) ON DELETE CASCADE
                 )
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS analysis_graph_evidence (
-                    id TEXT NOT NULL,
-                    snapshot_id TEXT NOT NULL,
+                    id TEXT PRIMARY KEY,
                     job_id TEXT NOT NULL,
                     source_id TEXT NOT NULL,
-                    inventory_file_id INTEGER,
-                    analysis_file_id INTEGER,
+                    inventory_file_id INTEGER NOT NULL,
+                    analysis_file_id INTEGER NOT NULL,
+                    file_id INTEGER NOT NULL,
+                    relative_path TEXT NOT NULL,
                     content_hash TEXT NOT NULL,
-                    line_start INTEGER NOT NULL,
-                    line_end INTEGER NOT NULL,
+                    line_start INTEGER,
+                    line_end INTEGER,
+                    excerpt TEXT,
                     excerpt_hash TEXT NOT NULL,
                     evidence_kind TEXT NOT NULL,
                     metadata_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
                     fact_origin TEXT,
                     flow_domain TEXT,
-                    PRIMARY KEY(snapshot_id, id),
-                    UNIQUE(source_id, snapshot_id, id),
-                    FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE
+                    FOREIGN KEY(analysis_file_id) REFERENCES analysis_files(file_id) ON DELETE CASCADE
                 )
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS analysis_graph_claims (
-                    id TEXT NOT NULL,
-                    snapshot_id TEXT NOT NULL,
+                    id TEXT PRIMARY KEY,
                     job_id TEXT NOT NULL,
                     source_id TEXT NOT NULL,
                     node_id TEXT NOT NULL,
@@ -291,99 +261,80 @@ class AnalysisStore:
                     metadata_json TEXT NOT NULL,
                     rejection_reason TEXT,
                     created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
                     fact_origin TEXT,
                     flow_domain TEXT,
-                    PRIMARY KEY(snapshot_id, id),
-                    UNIQUE(source_id, snapshot_id, id),
-                    FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE,
-                    FOREIGN KEY(source_id, snapshot_id, node_id) REFERENCES analysis_graph_nodes(source_id, snapshot_id, id) ON DELETE CASCADE
+                    FOREIGN KEY(node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE
                 )
             """)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS analysis_graph_edges (
-                    id TEXT NOT NULL,
-                    snapshot_id TEXT NOT NULL,
+                    id TEXT PRIMARY KEY,
                     job_id TEXT NOT NULL,
                     source_id TEXT NOT NULL,
-                    inventory_file_id INTEGER,
-                    analysis_file_id INTEGER,
+                    inventory_file_id INTEGER NOT NULL,
+                    analysis_file_id INTEGER NOT NULL,
+                    file_id INTEGER NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
                     from_node_id TEXT NOT NULL,
                     to_node_id TEXT,
                     edge_type TEXT NOT NULL,
+                    edge_kind TEXT,
                     resolution_status TEXT NOT NULL,
                     confidence REAL NOT NULL,
                     evidence_id TEXT,
+                    evidence_ids_json TEXT NOT NULL DEFAULT '[]',
                     unresolved_target_json TEXT,
                     metadata_json TEXT NOT NULL,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
                     fact_origin TEXT,
                     flow_domain TEXT,
-                    PRIMARY KEY(snapshot_id, id),
-                    UNIQUE(source_id, snapshot_id, id),
-                    FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE,
-                    FOREIGN KEY(source_id, snapshot_id, from_node_id) REFERENCES analysis_graph_nodes(source_id, snapshot_id, id) ON DELETE CASCADE,
-                    FOREIGN KEY(source_id, snapshot_id, to_node_id) REFERENCES analysis_graph_nodes(source_id, snapshot_id, id) ON DELETE CASCADE,
-                    FOREIGN KEY(source_id, snapshot_id, evidence_id) REFERENCES analysis_graph_evidence(source_id, snapshot_id, id) ON DELETE SET NULL
+                    FOREIGN KEY(analysis_file_id) REFERENCES analysis_files(file_id) ON DELETE CASCADE,
+                    FOREIGN KEY(from_node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE,
+                    FOREIGN KEY(to_node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE,
+                    FOREIGN KEY(evidence_id) REFERENCES analysis_graph_evidence(id) ON DELETE SET NULL
                 )
             """)
-            for table in (
-                "analysis_graph_nodes",
-                "analysis_graph_evidence",
-                "analysis_graph_claims",
-                "analysis_graph_edges",
-            ):
-                self._ensure_column(conn, table, "snapshot_id", "TEXT")
             self._create_analysis_graph_diagnostics_table(conn)
-            self._ensure_column(conn, "analysis_graph_diagnostics", "snapshot_id", "TEXT")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_files_status ON analysis_files(source_id, status)")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_analysis_files_current ON analysis_files(file_id, content_hash, analyzer_name, analyzer_version, engine_version, status)"
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_files_path ON analysis_files(source_id, relative_path)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_state_source ON analysis_graph_state(source_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_source ON analysis_graph_nodes(source_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_graph_snapshots_source_state ON graph_snapshots(source_id, state, published_at)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_graph_snapshot_metrics_lookup ON graph_snapshot_metrics(snapshot_id, query_fingerprint)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_graph_snapshot_tombstones_source ON graph_snapshot_tombstones(source_id, expired_at)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_snapshot ON analysis_graph_nodes(snapshot_id, source_id, flow_domain, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_source_kind ON analysis_graph_nodes(source_id, node_kind)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_file ON analysis_graph_nodes(analysis_file_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_snapshot_page ON analysis_graph_nodes(source_id, flow_domain, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_source_flow_created ON analysis_graph_nodes(source_id, flow_domain, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_claims_node_kind ON analysis_graph_claims(node_id, claim_kind)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source ON analysis_graph_edges(source_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_snapshot ON analysis_graph_edges(snapshot_id, source_id, flow_domain, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_type ON analysis_graph_edges(source_id, edge_type)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_nodes ON analysis_graph_edges(from_node_id, to_node_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_snapshot_page ON analysis_graph_edges(source_id, flow_domain, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_flow_created ON analysis_graph_edges(source_id, flow_domain, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_diagnostics_source_code ON analysis_graph_diagnostics(source_id, severity, code)")
-            self._ensure_graph_snapshot_schema(conn)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_source ON analysis_graph_nodes(source_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_snapshot ON analysis_graph_nodes(snapshot_id, source_id, flow_domain, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_source_kind ON analysis_graph_nodes(source_id, node_kind)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_file ON analysis_graph_nodes(analysis_file_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_snapshot_page ON analysis_graph_nodes(source_id, flow_domain, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_nodes_source_flow_created ON analysis_graph_nodes(source_id, flow_domain, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_claims_node_kind ON analysis_graph_claims(node_id, claim_kind)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source ON analysis_graph_edges(source_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_snapshot ON analysis_graph_edges(snapshot_id, source_id, flow_domain, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_type ON analysis_graph_edges(source_id, edge_type)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_nodes ON analysis_graph_edges(from_node_id, to_node_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_snapshot_page ON analysis_graph_edges(source_id, flow_domain, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_flow_created ON analysis_graph_edges(source_id, flow_domain, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_graph_diagnostics_source_code ON analysis_graph_diagnostics(source_id, severity, code)")
             ensure_semantic_index_schema(conn)
             ensure_overview_schema(conn)
             self._current_resolution_has_coverage_tables = self._table_exists(conn, "files") and self._table_exists(conn, "knowledge_source_overview")
             self._migration_stage("after_canonical_schema")
-            self._migrate_legacy_symbol_relation_tables(conn)
             self._migration_stage("after_pointer_mutation")
             self._drop_legacy_fact_tables(conn)
             self._run_schema_migrations(conn)
             self._reconcile_graph_diagnostics_schema(conn)
-            self._backfill_legacy_graph_snapshots(conn)
             self._reconcile_orphan_job_files(conn)
+            self._reconcile_graph_runtime_inventory_membership(conn)
             ensure_semantic_index_schema(conn)
             SemanticIndexStore.reconcile_missing_states_conn(conn)
             ensure_overview_schema(conn)
@@ -462,11 +413,6 @@ class AnalysisStore:
                 (*self._job_params(current)[1:], job_id),
             )
             new_status = current.get("status")
-            if old_status != new_status:
-                if new_status == "COMPLETED":
-                    self._publish_job_graph_snapshots(conn, job_id)
-                elif new_status in {"FAILED", "STOPPED"}:
-                    self._finalize_unpublished_job_graph_snapshots(conn, job_id, "CANCELLED" if new_status == "STOPPED" else "FAILED")
             refresh_overview_for_sources(conn, self._overview_sources_for_job(conn, job_id, current.get("sourceIds") or []))
 
         self._write_with_busy_retry(write)
@@ -775,19 +721,6 @@ class AnalysisStore:
                     ),
                 )
                 refresh_overview_for_sources(conn, self._overview_sources_for_job(conn, row["job_id"], json.loads(row["source_ids_json"] or "[]")))
-            conn.execute(
-                """
-                UPDATE graph_snapshots
-                SET state = 'FAILED'
-                WHERE state = 'BUILDING'
-                  AND job_id IN (
-                      SELECT job_id
-                      FROM analysis_jobs
-                      WHERE status IN ('FAILED', 'STOPPED')
-                  )
-                """
-            )
-
         self._write_with_busy_retry(write)
 
     def status(self) -> Dict[str, Any]:
@@ -795,8 +728,8 @@ class AnalysisStore:
         active = self.active_job(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS)
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             latest = conn.execute("SELECT * FROM analysis_jobs WHERE status = 'COMPLETED' ORDER BY completed_at DESC LIMIT 1").fetchone()
-            counts = conn.execute("SELECT COUNT(*) AS symbols FROM analysis_graph_nodes n WHERE " + self._current_graph_node_clause("n")).fetchone()
-            relations = conn.execute("SELECT COUNT(*) AS relations FROM analysis_graph_edges e WHERE " + self._current_graph_edge_clause("e")).fetchone()
+            counts = conn.execute("SELECT COUNT(*) AS symbols FROM analysis_graph_nodes n WHERE " + self._inventory_membership_graph_node_clause("n")).fetchone()
+            relations = conn.execute("SELECT COUNT(*) AS relations FROM analysis_graph_edges e WHERE " + self._inventory_membership_graph_edge_clause("e")).fetchone()
             current_failures = self._current_failure_summary(conn, None)
             analysis_state = self._current_analysis_state(conn, None)
         if not latest and not active:
@@ -1037,8 +970,17 @@ class AnalysisStore:
         with self._connect() as conn:
             row = conn.execute(
                 f"""
-                SELECT file_id FROM analysis_files
-                WHERE file_id = ? AND content_hash = ? AND analyzer_name = ? AND analyzer_version = ? AND status = 'ANALYZED'
+                SELECT af.file_id
+                FROM files f
+                JOIN analysis_files af
+                  ON af.source_id = f.source_id
+                 AND af.relative_path = f.relative_path
+                 AND af.content_hash = f.content_hash
+                WHERE f.id = ?
+                  AND f.content_hash = ?
+                  AND af.analyzer_name = ?
+                  AND af.analyzer_version = ?
+                  AND af.status = 'ANALYZED'
                   {engine_clause}
             """,
                 params,
@@ -1060,26 +1002,31 @@ class AnalysisStore:
                     engine_clause = "AND COALESCE(engine_version, '') = COALESCE(?, '')"
                     params.append(engine_version)
                 for row in batch:
-                    clauses.append("(file_id = ? AND content_hash = ?)")
-                    params.extend([row["id"], row["content_hash"]])
+                    clauses.append("(f.id = ? AND f.source_id = ? AND f.relative_path = ? AND f.content_hash = ?)")
+                    params.extend([row["id"], row["source_id"], row["relative_path"], row["content_hash"]])
                 matches = conn.execute(
                     f"""
-                    SELECT file_id FROM analysis_files
-                    WHERE analyzer_name = ?
-                      AND analyzer_version = ?
+                    SELECT f.id
+                    FROM files f
+                    JOIN analysis_files af
+                      ON af.source_id = f.source_id
+                     AND af.relative_path = f.relative_path
+                     AND af.content_hash = f.content_hash
+                    WHERE af.analyzer_name = ?
+                      AND af.analyzer_version = ?
                       {engine_clause}
-                      AND status = 'ANALYZED'
+                      AND af.status = 'ANALYZED'
                       AND ({" OR ".join(clauses)})
                 """,
                     params,
                 ).fetchall()
-                result.update(row["file_id"] for row in matches)
+                result.update(row["id"] for row in matches)
         return result
 
     def replace_file_analysis(
         self, file_id: int, state: Dict[str, Any], symbols: List[Dict[str, Any]], roles: List[Dict[str, Any]], relations: List[Dict[str, Any]]
     ) -> None:
-        raise KnowledgeError("GRAPH_LEGACY_WRITE_REMOVED", "Legacy graph writes have been removed; use snapshot graph publication.")
+        raise KnowledgeError("GRAPH_LEGACY_WRITE_REMOVED", "Legacy symbol/relation writes have been removed; use current graph analysis.")
 
     def replace_file_graph_analysis(self, file_id: int, state: Dict[str, Any], graph: Dict[str, List[Dict[str, Any]]]) -> None:
         self.init()
@@ -1118,31 +1065,33 @@ class AnalysisStore:
     ) -> None:
         source_id = state["source_id"]
         job_id = self._graph_job_id(graph, state)
-        snapshot_id = self._graph_snapshot_id(job_id, source_id)
         operation = "delete_file_analysis"
         table = "analysis_files"
         try:
-            self._ensure_building_graph_snapshot(conn, snapshot_id, source_id, job_id, created_at)
-            self._delete_file_graph_from_snapshot(conn, file_id, snapshot_id)
+            self._upsert_file(conn, file_id, state)
+            self._delete_file_graph(conn, file_id)
             operation = "insert_nodes"
             table = "analysis_graph_nodes"
             for node in graph.get("nodes") or []:
+                node_file_id = int(node.get("analysis_file_id") or node.get("inventory_file_id") or file_id)
                 conn.execute(
                     """
                         INSERT INTO analysis_graph_nodes(
-                            id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, stable_key, node_kind,
+                            id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash, stable_key, node_kind,
                             language, name, qualified_name, display_name, parent_node_id, line_start, line_end,
-                            confidence, status, metadata_json, created_at, fact_origin, flow_domain
+                            confidence, status, metadata_json, created_at, updated_at, fact_origin, flow_domain
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         node["id"],
-                        snapshot_id,
                         node["job_id"],
                         node["source_id"],
-                        node.get("inventory_file_id"),
-                        node.get("analysis_file_id"),
+                        node.get("inventory_file_id") or node_file_id,
+                        node.get("analysis_file_id") or node_file_id,
+                        node_file_id,
+                        state["relative_path"],
+                        state["content_hash"],
                         node["stable_key"],
                         node["node_kind"],
                         node.get("language"),
@@ -1156,6 +1105,7 @@ class AnalysisStore:
                         node["status"],
                         json.dumps(node.get("metadata") or {}),
                         created_at,
+                        created_at,
                         node.get("fact_origin"),
                         node.get("flow_domain"),
                     ),
@@ -1163,27 +1113,31 @@ class AnalysisStore:
             operation = "insert_evidence"
             table = "analysis_graph_evidence"
             for item in graph.get("evidence") or []:
+                evidence_file_id = int(item.get("analysis_file_id") or item.get("inventory_file_id") or file_id)
                 conn.execute(
                     """
                         INSERT INTO analysis_graph_evidence(
-                            id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, content_hash, line_start,
-                            line_end, excerpt_hash, evidence_kind, metadata_json, created_at, fact_origin, flow_domain
+                            id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash, line_start,
+                            line_end, excerpt, excerpt_hash, evidence_kind, metadata_json, created_at, updated_at, fact_origin, flow_domain
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item["id"],
-                        snapshot_id,
                         item["job_id"],
                         item["source_id"],
-                        item.get("inventory_file_id"),
-                        item.get("analysis_file_id"),
+                        item.get("inventory_file_id") or evidence_file_id,
+                        item.get("analysis_file_id") or evidence_file_id,
+                        evidence_file_id,
+                        state["relative_path"],
                         item["content_hash"],
                         item["line_start"],
                         item["line_end"],
+                        item.get("excerpt"),
                         item["excerpt_hash"],
                         item["evidence_kind"],
                         json.dumps(item.get("metadata") or {}),
+                        created_at,
                         created_at,
                         item.get("fact_origin"),
                         item.get("flow_domain"),
@@ -1195,14 +1149,13 @@ class AnalysisStore:
                 conn.execute(
                     """
                         INSERT INTO analysis_graph_claims(
-                            id, snapshot_id, job_id, source_id, node_id, claim_kind, summary, confidence, status, evidence_ids_json,
-                            metadata_json, rejection_reason, created_at, fact_origin, flow_domain
+                            id, job_id, source_id, node_id, claim_kind, summary, confidence, status, evidence_ids_json,
+                            metadata_json, rejection_reason, created_at, updated_at, fact_origin, flow_domain
                         )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         claim["id"],
-                        snapshot_id,
                         claim["job_id"],
                         claim["source_id"],
                         claim["node_id"],
@@ -1214,6 +1167,7 @@ class AnalysisStore:
                         json.dumps(claim.get("metadata") or {}),
                         claim.get("rejection_reason"),
                         created_at,
+                        created_at,
                         claim.get("fact_origin"),
                         claim.get("flow_domain"),
                     ),
@@ -1221,31 +1175,38 @@ class AnalysisStore:
             operation = "insert_edges"
             table = "analysis_graph_edges"
             for edge in graph.get("edges") or []:
+                edge_file_id = int(edge.get("analysis_file_id") or edge.get("inventory_file_id") or file_id)
+                evidence_ids = [edge["evidence_id"]] if edge.get("evidence_id") else []
                 conn.execute(
                     """
                         INSERT INTO analysis_graph_edges(
-                            id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id, to_node_id,
-                            edge_type, resolution_status, confidence, evidence_id, unresolved_target_json,
-                            metadata_json, status, created_at, fact_origin, flow_domain
+                            id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                            from_node_id, to_node_id, edge_type, edge_kind, resolution_status, confidence, evidence_id, evidence_ids_json,
+                            unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         edge["id"],
-                        snapshot_id,
                         edge["job_id"],
                         edge["source_id"],
-                        edge.get("inventory_file_id"),
-                        edge.get("analysis_file_id"),
+                        edge.get("inventory_file_id") or edge_file_id,
+                        edge.get("analysis_file_id") or edge_file_id,
+                        edge_file_id,
+                        state["relative_path"],
+                        state["content_hash"],
                         edge["from_node_id"],
                         edge.get("to_node_id"),
                         edge["edge_type"],
+                        edge.get("edge_kind") or edge["edge_type"],
                         edge["resolution_status"],
                         edge["confidence"],
                         edge.get("evidence_id"),
+                        json.dumps(evidence_ids),
                         json.dumps(edge.get("unresolved_target")) if edge.get("unresolved_target") is not None else None,
                         json.dumps(edge.get("metadata") or {}),
                         edge["status"],
+                        created_at,
                         created_at,
                         edge.get("fact_origin"),
                         edge.get("flow_domain"),
@@ -1254,23 +1215,28 @@ class AnalysisStore:
             operation = "insert_diagnostics"
             table = "analysis_graph_diagnostics"
             for diagnostic in graph.get("diagnostics") or []:
+                diagnostic_file_id = int(diagnostic.get("analysis_file_id") or diagnostic.get("inventory_file_id") or file_id)
                 conn.execute(
                     """
                         INSERT INTO analysis_graph_diagnostics(
-                            id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, severity, stage, code,
-                            message, candidate_id, line_start, line_end, metadata_json, created_at, fact_origin, flow_domain
+                            id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                            severity, stage, code, diagnostic_code, message, candidate_id, line_start, line_end, metadata_json,
+                            created_at, fact_origin, flow_domain
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         diagnostic["id"],
-                        snapshot_id,
                         diagnostic["job_id"],
                         diagnostic["source_id"],
-                        diagnostic.get("inventory_file_id"),
-                        diagnostic.get("analysis_file_id"),
+                        diagnostic.get("inventory_file_id") or diagnostic_file_id,
+                        diagnostic.get("analysis_file_id") or diagnostic_file_id,
+                        diagnostic_file_id,
+                        state["relative_path"],
+                        state["content_hash"],
                         diagnostic["severity"],
                         diagnostic["stage"],
+                        diagnostic["code"],
                         diagnostic["code"],
                         diagnostic["message"],
                         diagnostic.get("candidate_id"),
@@ -1284,12 +1250,10 @@ class AnalysisStore:
                 )
             operation = "resolve_source_call_edges"
             table = "analysis_graph_edges"
-            self._resolve_source_call_edges(conn, state["source_id"], snapshot_id)
-            operation = "upsert_analysis_file"
-            table = "analysis_files"
-            self._upsert_file(conn, file_id, state)
-            if conn.execute("SELECT 1 FROM analysis_jobs WHERE job_id = ?", (job_id,)).fetchone() is None:
-                self._publish_graph_snapshot(conn, snapshot_id)
+            self._resolve_source_call_edges(conn, state["source_id"])
+            graph_id = self._refresh_graph_state(conn, source_id, created_at)
+            if graph_id:
+                SemanticIndexStore.mark_current_graph_pending_conn(conn, source_id)
             refresh_overview_for_sources(conn, [state["source_id"]])
         except sqlite3.Error as exc:
             raise self._graph_store_error(table, operation, exc) from exc
@@ -1298,15 +1262,50 @@ class AnalysisStore:
         self.init()
 
         def write(conn: sqlite3.Connection) -> None:
-            self._delete_file_analysis(conn, file_id)
+            affected_sources = self._delete_file_analysis(conn, file_id)
+            affected_sources.update(self._delete_analysis_identity(conn, state))
             self._upsert_file(conn, file_id, state)
+            self._mark_semantic_sources_stale(conn, affected_sources)
+            refresh_overview_for_sources(conn, [state["source_id"]])
+
+        self._write_with_busy_retry(write)
+
+    def mark_file_failed_attempt(self, file_id: int, state: Dict[str, Any]) -> None:
+        self.init()
+
+        def write(conn: sqlite3.Connection) -> None:
+            published = self._published_analysis_identity_row(conn, file_id, state)
+            if published is not None:
+                self._update_analysis_file_attempt_metadata(conn, int(published["file_id"]), state)
+                refresh_overview_for_sources(conn, [state["source_id"]])
+                return
+
+            existing_identity = self._analysis_identity_row(conn, file_id, state)
+            if existing_identity is not None:
+                self._update_analysis_file_row(conn, int(existing_identity["file_id"]), state)
+                refresh_overview_for_sources(conn, [state["source_id"]])
+                return
+
+            existing_file = conn.execute("SELECT source_id FROM analysis_files WHERE file_id = ?", (file_id,)).fetchone()
+            if existing_file is None:
+                self._insert_file(conn, file_id, state)
             refresh_overview_for_sources(conn, [state["source_id"]])
 
         self._write_with_busy_retry(write)
 
     def cleanup_stale_files(self, source_ids: Optional[List[str]] = None) -> None:
         self.init()
-        clauses: list[str] = ["f.id IS NULL"]
+        clauses: list[str] = [
+            """
+            NOT EXISTS (
+                SELECT 1
+                FROM files f
+                WHERE f.source_id = af.source_id
+                  AND f.relative_path = af.relative_path
+                  AND f.content_hash = af.content_hash
+            )
+            """
+        ]
         params: list[Any] = []
         if source_ids:
             placeholders = ",".join("?" for _ in source_ids)
@@ -1317,18 +1316,19 @@ class AnalysisStore:
             rows = conn.execute(
                 f"""
                 SELECT af.file_id, af.source_id FROM analysis_files af
-                LEFT JOIN files f ON f.id = af.file_id
                 WHERE {where}
             """,
                 params,
             ).fetchall()
-            self._reattach_current_analysis_files(conn, source_ids)
+            affected_sources: Set[str] = set()
             for row in rows:
                 if conn.execute("SELECT 1 FROM analysis_files WHERE file_id = ?", (row["file_id"],)).fetchone() is None:
                     continue
-                self._delete_file_analysis(conn, row["file_id"])
+                affected_sources.update(self._delete_file_analysis(conn, int(row["file_id"])))
                 conn.execute("DELETE FROM analysis_files WHERE file_id = ?", (row["file_id"],))
-            refresh_overview_for_sources(conn, source_ids or sorted({row["source_id"] for row in rows}))
+            overview_sources = source_ids or sorted({row["source_id"] for row in rows})
+            self._mark_semantic_sources_stale(conn, affected_sources)
+            refresh_overview_for_sources(conn, overview_sources)
 
     def files(self, source_id: Optional[str], status: Optional[str], path_contains: Optional[str], limit: int, offset: int) -> Dict[str, Any]:
         clauses, params = [], []
@@ -1374,42 +1374,25 @@ class AnalysisStore:
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             rows = conn.execute(
                 """
-                WITH node_counts AS (
-                    SELECT source_id, snapshot_id, COUNT(*) AS node_count
-                    FROM analysis_graph_nodes
-                    GROUP BY source_id, snapshot_id
-                ),
-                edge_counts AS (
-                    SELECT source_id, snapshot_id, COUNT(*) AS edge_count
-                    FROM analysis_graph_edges
-                    GROUP BY source_id, snapshot_id
-                ),
-                known_sources AS (
+                WITH known_sources AS (
                     SELECT source_id
                     FROM sources
                     UNION
                     SELECT source_id
-                    FROM graph_current_snapshots
+                    FROM analysis_graph_state
+                    UNION
+                    SELECT source_id
+                    FROM analysis_graph_nodes
                 )
                 SELECT known_sources.source_id,
                        COALESCE(sources.display_name, known_sources.source_id) AS display_name,
-                       current.snapshot_id,
-                       snapshots.content_identity,
-                       COALESCE(node_counts.node_count, 0) AS node_count,
-                       COALESCE(edge_counts.edge_count, 0) AS edge_count
+                       state.graph_id,
+                       state.content_identity,
+                       COALESCE(state.node_count, 0) AS node_count,
+                       COALESCE(state.edge_count, 0) AS edge_count
                 FROM known_sources
                 LEFT JOIN sources ON sources.source_id = known_sources.source_id
-                LEFT JOIN graph_current_snapshots current ON current.source_id = known_sources.source_id
-                LEFT JOIN graph_snapshots snapshots
-                  ON snapshots.source_id = current.source_id
-                 AND snapshots.snapshot_id = current.snapshot_id
-                 AND snapshots.state IN ('PUBLISHED', 'RETIRED')
-                LEFT JOIN node_counts
-                  ON node_counts.source_id = current.source_id
-                 AND node_counts.snapshot_id = current.snapshot_id
-                LEFT JOIN edge_counts
-                  ON edge_counts.source_id = current.source_id
-                 AND edge_counts.snapshot_id = current.snapshot_id
+                LEFT JOIN analysis_graph_state state ON state.source_id = known_sources.source_id
                 ORDER BY known_sources.source_id
                 """
             ).fetchall()
@@ -1417,7 +1400,7 @@ class AnalysisStore:
             {
                 "sourceId": row["source_id"],
                 "displayName": row["display_name"] or row["source_id"],
-                "snapshotId": row["snapshot_id"],
+                "graphId": row["graph_id"],
                 "graphRevision": row["content_identity"],
                 "nodeCount": int(row["node_count"] or 0),
                 "edgeCount": int(row["edge_count"] or 0),
@@ -1435,77 +1418,66 @@ class AnalysisStore:
             rows = conn.execute(
                 f"""
                 WITH claim AS (
-                    SELECT snapshot_id, source_id, node_id, group_concat(summary, ' ') AS summary
+                    SELECT source_id, node_id, group_concat(summary, ' ') AS summary
                     FROM analysis_graph_claims
                     WHERE status IN ('TRUSTED', 'DERIVED', 'CANDIDATE')
-                    GROUP BY snapshot_id, source_id, node_id
+                    GROUP BY source_id, node_id
                 ),
                 out_degree AS (
-                    SELECT snapshot_id, source_id, from_node_id AS node_id, COUNT(*) AS count
+                    SELECT source_id, from_node_id AS node_id, COUNT(*) AS count
                     FROM analysis_graph_edges
-                    GROUP BY snapshot_id, source_id, from_node_id
+                    GROUP BY source_id, from_node_id
                 ),
                 in_degree AS (
-                    SELECT snapshot_id, source_id, to_node_id AS node_id, COUNT(*) AS count
+                    SELECT source_id, to_node_id AS node_id, COUNT(*) AS count
                     FROM analysis_graph_edges
                     WHERE to_node_id IS NOT NULL
-                    GROUP BY snapshot_id, source_id, to_node_id
+                    GROUP BY source_id, to_node_id
                 ),
                 entry AS (
-                    SELECT snapshot_id, source_id, node_id, 1 AS entrypoint
+                    SELECT source_id, node_id, 1 AS entrypoint
                     FROM analysis_graph_claims
                     WHERE claim_kind = 'ENTRYPOINT_HINT'
                       AND status IN ('TRUSTED', 'DERIVED')
-                    GROUP BY snapshot_id, source_id, node_id
+                    GROUP BY source_id, node_id
                 )
                 SELECT n.*,
-                       current.snapshot_id AS current_snapshot_id,
-                       snapshots.content_identity AS graph_revision,
                        sources.display_name AS source_display_name,
                        af.relative_path,
                        claim.summary,
                        COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
                        COALESCE(entry.entrypoint, 0) AS entrypoint
                 FROM analysis_graph_nodes n
-                JOIN graph_current_snapshots current
-                  ON current.source_id = n.source_id
-                 AND current.snapshot_id = n.snapshot_id
-                JOIN graph_snapshots snapshots
-                  ON snapshots.source_id = n.source_id
-                 AND snapshots.snapshot_id = n.snapshot_id
-                 AND snapshots.state IN ('PUBLISHED', 'RETIRED')
                 LEFT JOIN sources ON sources.source_id = n.source_id
                 LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
                 LEFT JOIN claim
-                  ON claim.snapshot_id = n.snapshot_id
-                 AND claim.source_id = n.source_id
+                  ON claim.source_id = n.source_id
                  AND claim.node_id = n.id
                 LEFT JOIN out_degree
-                  ON out_degree.snapshot_id = n.snapshot_id
-                 AND out_degree.source_id = n.source_id
+                  ON out_degree.source_id = n.source_id
                  AND out_degree.node_id = n.id
                 LEFT JOIN in_degree
-                  ON in_degree.snapshot_id = n.snapshot_id
-                 AND in_degree.source_id = n.source_id
+                  ON in_degree.source_id = n.source_id
                  AND in_degree.node_id = n.id
                 LEFT JOIN entry
-                  ON entry.snapshot_id = n.snapshot_id
-                 AND entry.source_id = n.source_id
+                  ON entry.source_id = n.source_id
                  AND entry.node_id = n.id
                 WHERE n.source_id IN ({source_placeholders})
+                  AND {self._inventory_membership_graph_node_clause("n")}
                 ORDER BY n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
                 LIMIT ?
                 """,
                 [*source_ids, safe_limit],
             ).fetchall()
+            revision_by_source = self._graph_identity_by_source(conn, source_ids)
         documents: List[Dict[str, Any]] = []
         for row in rows:
             row_dict = self._row_dict(row)
-            projected = self._graph_snapshot_node_projection(row_dict)
+            projected = self._graph_node_projection(row_dict)
             projected.update(
                 {
-                    "snapshotId": row["snapshot_id"],
-                    "graphRevision": row["graph_revision"],
+                    "graphId": revision_by_source.get(row["source_id"], {}).get("graphId"),
+                    "graphRevision": revision_by_source.get(row["source_id"], {}).get("graphRevision"),
                     "sourceDisplayName": row["source_display_name"] or row["source_id"],
                     "displayName": row["display_name"],
                     "summary": row["summary"],
@@ -1544,78 +1516,67 @@ class AnalysisStore:
             rows = conn.execute(
                 f"""
                 WITH claim AS (
-                    SELECT snapshot_id, source_id, node_id, group_concat(summary, ' ') AS summary
+                    SELECT source_id, node_id, group_concat(summary, ' ') AS summary
                     FROM analysis_graph_claims
                     WHERE status IN ('TRUSTED', 'DERIVED', 'CANDIDATE')
-                    GROUP BY snapshot_id, source_id, node_id
+                    GROUP BY source_id, node_id
                 ),
                 out_degree AS (
-                    SELECT snapshot_id, source_id, from_node_id AS node_id, COUNT(*) AS count
+                    SELECT source_id, from_node_id AS node_id, COUNT(*) AS count
                     FROM analysis_graph_edges
-                    GROUP BY snapshot_id, source_id, from_node_id
+                    GROUP BY source_id, from_node_id
                 ),
                 in_degree AS (
-                    SELECT snapshot_id, source_id, to_node_id AS node_id, COUNT(*) AS count
+                    SELECT source_id, to_node_id AS node_id, COUNT(*) AS count
                     FROM analysis_graph_edges
                     WHERE to_node_id IS NOT NULL
-                    GROUP BY snapshot_id, source_id, to_node_id
+                    GROUP BY source_id, to_node_id
                 ),
                 entry AS (
-                    SELECT snapshot_id, source_id, node_id, 1 AS entrypoint
+                    SELECT source_id, node_id, 1 AS entrypoint
                     FROM analysis_graph_claims
                     WHERE claim_kind = 'ENTRYPOINT_HINT'
                       AND status IN ('TRUSTED', 'DERIVED')
-                    GROUP BY snapshot_id, source_id, node_id
+                    GROUP BY source_id, node_id
                 )
                 SELECT n.*,
-                       current.snapshot_id AS current_snapshot_id,
-                       snapshots.content_identity AS graph_revision,
                        sources.display_name AS source_display_name,
                        af.relative_path,
                        claim.summary,
                        COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
                        COALESCE(entry.entrypoint, 0) AS entrypoint
                 FROM analysis_graph_nodes n
-                JOIN graph_current_snapshots current
-                  ON current.source_id = n.source_id
-                 AND current.snapshot_id = n.snapshot_id
-                JOIN graph_snapshots snapshots
-                  ON snapshots.source_id = n.source_id
-                 AND snapshots.snapshot_id = n.snapshot_id
-                 AND snapshots.state IN ('PUBLISHED', 'RETIRED')
                 LEFT JOIN sources ON sources.source_id = n.source_id
                 LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
                 LEFT JOIN claim
-                  ON claim.snapshot_id = n.snapshot_id
-                 AND claim.source_id = n.source_id
+                  ON claim.source_id = n.source_id
                  AND claim.node_id = n.id
                 LEFT JOIN out_degree
-                  ON out_degree.snapshot_id = n.snapshot_id
-                 AND out_degree.source_id = n.source_id
+                  ON out_degree.source_id = n.source_id
                  AND out_degree.node_id = n.id
                 LEFT JOIN in_degree
-                  ON in_degree.snapshot_id = n.snapshot_id
-                 AND in_degree.source_id = n.source_id
+                  ON in_degree.source_id = n.source_id
                  AND in_degree.node_id = n.id
                 LEFT JOIN entry
-                  ON entry.snapshot_id = n.snapshot_id
-                 AND entry.source_id = n.source_id
+                  ON entry.source_id = n.source_id
                  AND entry.node_id = n.id
                 WHERE n.source_id IN ({source_placeholders})
+                  AND {self._inventory_membership_graph_node_clause("n")}
                   AND ({" OR ".join(token_clauses)})
                 ORDER BY n.confidence DESC, graph_degree DESC, n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
                 LIMIT ?
                 """,
                 [*source_ids, *token_params, safe_limit],
             ).fetchall()
+            revision_by_source = self._graph_identity_by_source(conn, source_ids)
         candidates: List[Dict[str, Any]] = []
         for row in rows:
             row_dict = self._row_dict(row)
-            projected = self._graph_snapshot_node_projection(row_dict)
+            projected = self._graph_node_projection(row_dict)
             projected.update(
                 {
-                    "snapshotId": row["snapshot_id"],
-                    "graphRevision": row["graph_revision"],
+                    "graphId": revision_by_source.get(row["source_id"], {}).get("graphId"),
+                    "graphRevision": revision_by_source.get(row["source_id"], {}).get("graphRevision"),
                     "sourceDisplayName": row["source_display_name"] or row["source_id"],
                     "displayName": row["display_name"],
                     "summary": row["summary"],
@@ -1629,23 +1590,18 @@ class AnalysisStore:
     def query_graph_slice(self, anchors: List[Dict[str, Any]], depth: int) -> Dict[str, List[Dict[str, Any]]]:
         self.init()
         safe_depth = max(1, min(int(depth or 1), 4))
-        grouped: Dict[tuple[str, str], Set[str]] = {}
+        grouped: Dict[str, Set[str]] = {}
         for anchor in anchors:
             source_id = str(anchor.get("sourceId") or "")
             node_id = str(anchor.get("nodeId") or anchor.get("id") or "")
-            snapshot_id = str(anchor.get("snapshotId") or "")
-            if not source_id or not node_id:
-                continue
-            grouped.setdefault((source_id, snapshot_id), set()).add(node_id)
+            if source_id and node_id:
+                grouped.setdefault(source_id, set()).add(node_id)
         nodes: List[Dict[str, Any]] = []
         edges: List[Dict[str, Any]] = []
         evidence: List[Dict[str, Any]] = []
         unresolved: List[Dict[str, Any]] = []
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
-            for (source_id, requested_snapshot_id), anchor_ids in grouped.items():
-                snapshot_id = requested_snapshot_id or self._current_snapshot_id(conn, source_id)
-                if not snapshot_id or not anchor_ids:
-                    continue
+            for source_id, anchor_ids in grouped.items():
                 selected_node_ids = set(anchor_ids)
                 frontier = set(anchor_ids)
                 unresolved_edge_ids: Set[str] = set()
@@ -1659,12 +1615,11 @@ class AnalysisStore:
                         SELECT id, from_node_id, to_node_id, resolution_status
                         FROM analysis_graph_edges
                         WHERE source_id = ?
-                          AND snapshot_id = ?
                           AND (from_node_id IN ({frontier_placeholders}) OR to_node_id IN ({frontier_placeholders}))
                         ORDER BY id
                         LIMIT 500
                         """,
-                        [source_id, snapshot_id, *frontier_list, *frontier_list],
+                        [source_id, *frontier_list, *frontier_list],
                     ).fetchall()
                     next_frontier: Set[str] = set()
                     for edge in relation_rows:
@@ -1677,25 +1632,22 @@ class AnalysisStore:
                                 selected_node_ids.add(node_id)
                                 next_frontier.add(node_id)
                     frontier = next_frontier
-                nodes.extend(self._query_slice_nodes(conn, source_id, snapshot_id, selected_node_ids))
-                slice_edges = self._query_slice_edges(conn, source_id, snapshot_id, selected_node_ids)
+                nodes.extend(self._query_slice_nodes(conn, source_id, selected_node_ids))
+                slice_edges = self._query_slice_edges(conn, source_id, selected_node_ids)
                 edges.extend(slice_edges)
-                unresolved.extend(self._query_unresolved_slice_edges(conn, source_id, snapshot_id, selected_node_ids, unresolved_edge_ids))
-                evidence.extend(self._query_slice_evidence(conn, source_id, snapshot_id, selected_node_ids, {edge["id"] for edge in slice_edges}))
+                unresolved.extend(self._query_unresolved_slice_edges(conn, source_id, selected_node_ids, unresolved_edge_ids))
+                evidence.extend(self._query_slice_evidence(conn, source_id, selected_node_ids, {edge["id"] for edge in slice_edges}))
         nodes = self._dedupe_by_id(nodes, "id")
         edges = self._dedupe_by_id(edges, "id")
         evidence = self._dedupe_by_id(evidence, "id")
+        self._attach_current_graph_identity(conn, nodes)
+        self._attach_current_graph_identity(conn, edges)
+        self._attach_current_graph_identity(conn, evidence)
         unresolved = self._dedupe_by_id(unresolved, "id")
+        self._attach_current_graph_identity(conn, unresolved)
         external = [node for node in nodes if node.get("nodeKind") == "EXTERNAL" or node.get("external")]
         verified_paths = self._verified_paths_from_evidence(evidence)
-        return {
-            "nodes": nodes,
-            "edges": edges,
-            "evidence": evidence,
-            "unresolved": unresolved,
-            "external": external,
-            "verifiedPaths": verified_paths,
-        }
+        return {"nodes": nodes, "edges": edges, "evidence": evidence, "unresolved": unresolved, "external": external, "verifiedPaths": verified_paths}
 
     def load_call_adjacency_for_sources(
         self,
@@ -1706,17 +1658,14 @@ class AnalysisStore:
         self.init()
         safe_max_edges = max(1, min(int(max_edges or 1), 10000))
         safe_max_evidence = max(0, min(int(max_evidence or 0), 500))
-        grouped: Dict[tuple[str, str], Set[str]] = {}
-        source_ids: Set[str] = set()
+        grouped: Dict[str, Set[str]] = {}
         for scope in source_scopes:
             source_id = str(scope.get("sourceId") or "")
-            snapshot_id = str(scope.get("snapshotId") or "")
             if not source_id:
                 continue
-            source_ids.add(source_id)
             anchor_ids = {str(node_id) for node_id in scope.get("nodeIds") or [] if str(node_id)}
-            grouped.setdefault((source_id, snapshot_id), set()).update(anchor_ids)
-        if not source_ids:
+            grouped.setdefault(source_id, set()).update(anchor_ids)
+        if not grouped:
             return {"nodes": [], "edges": [], "evidence": [], "unresolved": [], "external": [], "verifiedPaths": [], "truncated": False}
 
         nodes: List[Dict[str, Any]] = []
@@ -1724,24 +1673,16 @@ class AnalysisStore:
         evidence: List[Dict[str, Any]] = []
         truncated = False
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
-            resolved_grouped: Dict[tuple[str, str], Set[str]] = {}
-            for (source_id, requested_snapshot_id), anchor_ids in grouped.items():
-                snapshot_id = requested_snapshot_id or self._current_snapshot_id(conn, source_id)
-                if snapshot_id:
-                    resolved_grouped.setdefault((source_id, snapshot_id), set()).update(anchor_ids)
-
             remaining_edges = safe_max_edges + 1
-            edge_ids_by_scope: Dict[tuple[str, str], Set[str]] = {}
-            node_ids_by_scope: Dict[tuple[str, str], Set[str]] = {scope: set(anchor_ids) for scope, anchor_ids in resolved_grouped.items()}
-            for (source_id, snapshot_id), anchor_ids in sorted(resolved_grouped.items()):
+            edge_ids_by_source: Dict[str, Set[str]] = {}
+            node_ids_by_source: Dict[str, Set[str]] = {source_id: set(anchor_ids) for source_id, anchor_ids in grouped.items()}
+            for source_id, anchor_ids in sorted(grouped.items()):
                 if remaining_edges <= 0:
                     truncated = True
                     break
-                node_ids = node_ids_by_scope.setdefault((source_id, snapshot_id), set())
+                node_ids = node_ids_by_source.setdefault(source_id, set())
                 frontier = {node_id for node_id in anchor_ids if node_id}
-                scope_edge_ids = edge_ids_by_scope.setdefault((source_id, snapshot_id), set())
-                if not frontier:
-                    continue
+                scope_edge_ids = edge_ids_by_source.setdefault(source_id, set())
                 while frontier and remaining_edges > 0:
                     frontier_list = sorted(frontier)
                     frontier_placeholders = ",".join("?" for _ in frontier_list)
@@ -1755,26 +1696,16 @@ class AnalysisStore:
                                tn.qualified_name AS to_qualified_name,
                                tn.name AS to_name
                         FROM analysis_graph_edges e
-                        LEFT JOIN analysis_graph_nodes fn
-                          ON fn.source_id = e.source_id
-                         AND fn.snapshot_id = e.snapshot_id
-                         AND fn.id = e.from_node_id
-                        LEFT JOIN analysis_graph_nodes tn
-                          ON tn.source_id = e.source_id
-                         AND tn.snapshot_id = e.snapshot_id
-                         AND tn.id = e.to_node_id
+                        LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
                         WHERE e.source_id = ?
-                          AND e.snapshot_id = ?
                           AND e.edge_type = 'CALLS'
                           AND e.status IN ('TRUSTED', 'DERIVED')
-                          AND (
-                            e.from_node_id IN ({frontier_placeholders})
-                            OR e.to_node_id IN ({frontier_placeholders})
-                          )
+                          AND (e.from_node_id IN ({frontier_placeholders}) OR e.to_node_id IN ({frontier_placeholders}))
                         ORDER BY e.id
                         LIMIT ?
                         """,
-                        [source_id, snapshot_id, *frontier_list, *frontier_list, remaining_edges],
+                        [source_id, *frontier_list, *frontier_list, remaining_edges],
                     ).fetchall()
                     if len(edge_rows) >= remaining_edges:
                         truncated = True
@@ -1785,9 +1716,8 @@ class AnalysisStore:
                         edge_id = str(row["id"])
                         if edge_id in scope_edge_ids:
                             continue
-                        item = self._graph_snapshot_edge_projection(self._row_dict(row))
+                        item = self._graph_edge_projection(self._row_dict(row))
                         item["sourceId"] = row["source_id"]
-                        item["snapshotId"] = snapshot_id
                         edges.append(item)
                         scope_edge_ids.add(edge_id)
                         for node_id in (str(row["from_node_id"]), str(row["to_node_id"] or "")):
@@ -1798,19 +1728,18 @@ class AnalysisStore:
                         break
                     frontier = next_frontier
 
-            for (source_id, snapshot_id), node_ids in sorted(node_ids_by_scope.items()):
-                nodes.extend(self._query_slice_nodes(conn, source_id, snapshot_id, node_ids))
+            for source_id, node_ids in sorted(node_ids_by_source.items()):
+                nodes.extend(self._query_slice_nodes(conn, source_id, node_ids))
 
             remaining_evidence = safe_max_evidence
-            for (source_id, snapshot_id), node_ids in sorted(node_ids_by_scope.items()):
+            for source_id, node_ids in sorted(node_ids_by_source.items()):
                 if remaining_evidence <= 0:
                     break
                 scope_evidence = self._query_flow_path_evidence(
                     conn,
                     source_id,
-                    snapshot_id,
                     node_ids,
-                    edge_ids_by_scope.get((source_id, snapshot_id), set()),
+                    edge_ids_by_source.get(source_id, set()),
                     remaining_evidence,
                 )
                 evidence.extend(scope_evidence)
@@ -1819,6 +1748,9 @@ class AnalysisStore:
         nodes = self._dedupe_by_id(nodes, "id")
         edges = self._dedupe_by_id(edges, "id")
         evidence = self._dedupe_by_id(evidence, "id")
+        self._attach_current_graph_identity(conn, nodes)
+        self._attach_current_graph_identity(conn, edges)
+        self._attach_current_graph_identity(conn, evidence)
         unresolved = [
             edge
             for edge in edges
@@ -1826,17 +1758,21 @@ class AnalysisStore:
         ]
         external = [node for node in nodes if node.get("nodeKind") == "EXTERNAL" or node.get("external")]
         verified_paths = self._verified_paths_from_evidence(evidence)
-        return {
-            "nodes": nodes,
-            "edges": edges,
-            "evidence": evidence,
-            "unresolved": unresolved,
-            "external": external,
-            "verifiedPaths": verified_paths,
-            "truncated": truncated,
-        }
+        return {"nodes": nodes, "edges": edges, "evidence": evidence, "unresolved": unresolved, "external": external, "verifiedPaths": verified_paths, "truncated": truncated}
 
-    def _query_slice_nodes(self, conn: sqlite3.Connection, source_id: str, snapshot_id: str, node_ids: Set[str]) -> List[Dict[str, Any]]:
+    def _attach_current_graph_identity(self, conn: sqlite3.Connection, items: List[Dict[str, Any]]) -> None:
+        source_ids = sorted({str(item.get("sourceId") or "") for item in items if item.get("sourceId")})
+        if not source_ids:
+            return
+        identity_by_source = self._graph_identity_by_source(conn, source_ids)
+        for item in items:
+            identity = identity_by_source.get(str(item.get("sourceId") or ""))
+            if not identity:
+                continue
+            item.setdefault("graphId", identity.get("graphId"))
+            item.setdefault("graphRevision", identity.get("graphRevision"))
+
+    def _query_slice_nodes(self, conn: sqlite3.Connection, source_id: str, node_ids: Set[str]) -> List[Dict[str, Any]]:
         if not node_ids:
             return []
         ids = sorted(node_ids)
@@ -1849,37 +1785,30 @@ class AnalysisStore:
             FROM analysis_graph_nodes n
             LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
             LEFT JOIN (
-                SELECT from_node_id AS node_id, COUNT(*) AS count
+                SELECT source_id, from_node_id AS node_id, COUNT(*) AS count
                 FROM analysis_graph_edges
-                WHERE snapshot_id = ?
-                GROUP BY from_node_id
-            ) out_degree ON out_degree.node_id = n.id
+                GROUP BY source_id, from_node_id
+            ) out_degree ON out_degree.source_id = n.source_id AND out_degree.node_id = n.id
             LEFT JOIN (
-                SELECT to_node_id AS node_id, COUNT(*) AS count
+                SELECT source_id, to_node_id AS node_id, COUNT(*) AS count
                 FROM analysis_graph_edges
-                WHERE snapshot_id = ?
-                GROUP BY to_node_id
-            ) in_degree ON in_degree.node_id = n.id
+                WHERE to_node_id IS NOT NULL
+                GROUP BY source_id, to_node_id
+            ) in_degree ON in_degree.source_id = n.source_id AND in_degree.node_id = n.id
             LEFT JOIN analysis_graph_claims entry
-              ON entry.node_id = n.id
-             AND entry.snapshot_id = n.snapshot_id
+              ON entry.source_id = n.source_id
+             AND entry.node_id = n.id
              AND entry.claim_kind = 'ENTRYPOINT_HINT'
              AND entry.status IN ('TRUSTED', 'DERIVED')
             WHERE n.source_id = ?
-              AND n.snapshot_id = ?
               AND n.id IN ({placeholders})
             ORDER BY n.id
             """,
-            [snapshot_id, snapshot_id, source_id, snapshot_id, *ids],
+            [source_id, *ids],
         ).fetchall()
-        result = []
-        for row in rows:
-            item = self._graph_snapshot_node_projection(self._row_dict(row))
-            item["snapshotId"] = snapshot_id
-            result.append(item)
-        return result
+        return [self._graph_node_projection(self._row_dict(row)) for row in rows]
 
-    def _query_slice_edges(self, conn: sqlite3.Connection, source_id: str, snapshot_id: str, node_ids: Set[str]) -> List[Dict[str, Any]]:
+    def _query_slice_edges(self, conn: sqlite3.Connection, source_id: str, node_ids: Set[str]) -> List[Dict[str, Any]]:
         if not node_ids:
             return []
         ids = sorted(node_ids)
@@ -1894,37 +1823,29 @@ class AnalysisStore:
                    tn.qualified_name AS to_qualified_name,
                    tn.name AS to_name
             FROM analysis_graph_edges e
-            LEFT JOIN analysis_graph_nodes fn ON fn.snapshot_id = e.snapshot_id AND fn.id = e.from_node_id
-            LEFT JOIN analysis_graph_nodes tn ON tn.snapshot_id = e.snapshot_id AND tn.id = e.to_node_id
+            LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
             WHERE e.source_id = ?
-              AND e.snapshot_id = ?
               AND e.from_node_id IN ({placeholders})
               AND e.to_node_id IN ({placeholders})
             ORDER BY e.id
             LIMIT 1000
             """,
-            [source_id, snapshot_id, *ids, *ids],
+            [source_id, *ids, *ids],
         ).fetchall()
-        result = []
-        for row in rows:
-            item = self._graph_snapshot_edge_projection(self._row_dict(row))
-            item["sourceId"] = row["source_id"]
-            item["snapshotId"] = snapshot_id
-            result.append(item)
-        return result
+        return [self._graph_edge_projection(self._row_dict(row)) for row in rows]
 
     def _query_unresolved_slice_edges(
         self,
         conn: sqlite3.Connection,
         source_id: str,
-        snapshot_id: str,
         node_ids: Set[str],
         unresolved_edge_ids: Set[str],
     ) -> List[Dict[str, Any]]:
         if not node_ids and not unresolved_edge_ids:
             return []
-        clauses: List[str] = ["e.source_id = ?", "e.snapshot_id = ?"]
-        params: List[Any] = [source_id, snapshot_id]
+        clauses: List[str] = ["e.source_id = ?"]
+        params: List[Any] = [source_id]
         disjunctions: List[str] = []
         if node_ids:
             ids = sorted(node_ids)
@@ -1947,27 +1868,20 @@ class AnalysisStore:
                    tn.qualified_name AS to_qualified_name,
                    tn.name AS to_name
             FROM analysis_graph_edges e
-            LEFT JOIN analysis_graph_nodes fn ON fn.snapshot_id = e.snapshot_id AND fn.id = e.from_node_id
-            LEFT JOIN analysis_graph_nodes tn ON tn.snapshot_id = e.snapshot_id AND tn.id = e.to_node_id
+            LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
             WHERE {" AND ".join(clauses)}
             ORDER BY e.id
             LIMIT 200
             """,
             params,
         ).fetchall()
-        result = []
-        for row in rows:
-            item = self._graph_snapshot_edge_projection(self._row_dict(row))
-            item["sourceId"] = row["source_id"]
-            item["snapshotId"] = snapshot_id
-            result.append(item)
-        return result
+        return [self._graph_edge_projection(self._row_dict(row)) for row in rows]
 
     def _query_slice_evidence(
         self,
         conn: sqlite3.Connection,
         source_id: str,
-        snapshot_id: str,
         node_ids: Set[str],
         edge_ids: Set[str],
     ) -> List[Dict[str, Any]]:
@@ -1981,17 +1895,15 @@ class AnalysisStore:
                        ev.evidence_kind, ev.excerpt_hash, ev.metadata_json, ev.fact_origin, ev.flow_domain
                 FROM analysis_graph_edges edge
                 JOIN analysis_graph_evidence ev
-                  ON ev.snapshot_id = edge.snapshot_id
-                 AND ev.source_id = edge.source_id
+                  ON ev.source_id = edge.source_id
                  AND ev.id = edge.evidence_id
                 LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
                 WHERE edge.source_id = ?
-                  AND edge.snapshot_id = ?
                   AND edge.id IN ({placeholders})
                 ORDER BY ev.id
                 LIMIT 200
                 """,
-                [source_id, snapshot_id, *ids],
+                [source_id, *ids],
             ).fetchall()
             result.extend(self._evidence_projection(rows))
         if node_ids:
@@ -2003,8 +1915,7 @@ class AnalysisStore:
                        ev.evidence_kind, ev.excerpt_hash, ev.metadata_json, ev.fact_origin, ev.flow_domain
                 FROM analysis_graph_claims claim
                 JOIN analysis_graph_evidence ev
-                  ON ev.snapshot_id = claim.snapshot_id
-                 AND ev.source_id = claim.source_id
+                  ON ev.source_id = claim.source_id
                  AND EXISTS (
                     SELECT 1
                     FROM json_each(claim.evidence_ids_json)
@@ -2012,12 +1923,11 @@ class AnalysisStore:
                  )
                 LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
                 WHERE claim.source_id = ?
-                  AND claim.snapshot_id = ?
                   AND claim.node_id IN ({placeholders})
                 ORDER BY ev.id
                 LIMIT 200
                 """,
-                [source_id, snapshot_id, *ids],
+                [source_id, *ids],
             ).fetchall()
             result.extend(self._evidence_projection(rows))
         return result
@@ -2026,7 +1936,6 @@ class AnalysisStore:
         self,
         conn: sqlite3.Connection,
         source_id: str,
-        snapshot_id: str,
         node_ids: Set[str],
         edge_ids: Set[str],
         limit: int,
@@ -2044,17 +1953,15 @@ class AnalysisStore:
                        edge.id AS edge_id, NULL AS node_id
                 FROM analysis_graph_edges edge
                 JOIN analysis_graph_evidence ev
-                  ON ev.snapshot_id = edge.snapshot_id
-                 AND ev.source_id = edge.source_id
+                  ON ev.source_id = edge.source_id
                  AND ev.id = edge.evidence_id
                 LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
                 WHERE edge.source_id = ?
-                  AND edge.snapshot_id = ?
                   AND edge.id IN ({placeholders})
                 ORDER BY ev.id
                 LIMIT ?
                 """,
-                [source_id, snapshot_id, *ids, limit],
+                [source_id, *ids, limit],
             ).fetchall()
             result.extend(self._linked_evidence_projection(rows))
         remaining = limit - len(result)
@@ -2068,8 +1975,7 @@ class AnalysisStore:
                        NULL AS edge_id, claim.node_id AS node_id
                 FROM analysis_graph_claims claim
                 JOIN analysis_graph_evidence ev
-                  ON ev.snapshot_id = claim.snapshot_id
-                 AND ev.source_id = claim.source_id
+                  ON ev.source_id = claim.source_id
                  AND EXISTS (
                     SELECT 1
                     FROM json_each(claim.evidence_ids_json)
@@ -2077,12 +1983,11 @@ class AnalysisStore:
                  )
                 LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
                 WHERE claim.source_id = ?
-                  AND claim.snapshot_id = ?
                   AND claim.node_id IN ({placeholders})
                 ORDER BY ev.id
                 LIMIT ?
                 """,
-                [source_id, snapshot_id, *ids, remaining],
+                [source_id, *ids, remaining],
             ).fetchall()
             result.extend(self._linked_evidence_projection(rows))
         return result
@@ -2130,7 +2035,7 @@ class AnalysisStore:
         result: List[Dict[str, Any]] = []
         seen: Set[str] = set()
         for item in items:
-            key = str(item.get("sourceId") or "") + ":" + str(item.get("snapshotId") or "") + ":" + str(item.get(field) or "")
+            key = str(item.get("sourceId") or "") + ":" + str(item.get(field) or "")
             if key in seen:
                 continue
             seen.add(key)
@@ -2158,56 +2063,32 @@ class AnalysisStore:
             )
         return paths
 
-    def graph_snapshot_metadata(self, source_id: Optional[str]) -> Dict[str, Any]:
+    def graph_metadata(self, source_id: Optional[str]) -> Dict[str, Any]:
         self.init()
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
-            source_row = None
-            has_sources = self._table_exists(conn, "sources")
-            if source_id and has_sources:
-                source_row = conn.execute(
-                    """
-                    SELECT source_id, display_name, group_name, path, root_exists, last_seen_at
-                    FROM sources
-                    WHERE source_id = ?
-                    """,
-                    (source_id,),
-                ).fetchone()
-            elif has_sources:
-                source_row = conn.execute(
-                    """
-                    SELECT source_id, display_name, group_name, path, root_exists, last_seen_at
-                    FROM sources
-                    ORDER BY source_id
-                    LIMIT 1
-                    """
-                ).fetchone()
+            source_row = self._selected_graph_source_row(conn, source_id)
             selected_source_id = str(source_row["source_id"]) if source_row else source_id
-            overview_row = None
-            if selected_source_id:
-                overview_row = conn.execute(
-                    """
-                    SELECT *
-                    FROM knowledge_source_overview
-                    WHERE source_id = ?
-                    """,
-                    (selected_source_id,),
-                ).fetchone()
-            current = self._current_snapshot_row(conn, selected_source_id) if selected_source_id else None
-            diagnostics = None
-            if selected_source_id:
-                diagnostics = conn.execute(
+            overview_row = (
+                conn.execute("SELECT * FROM knowledge_source_overview WHERE source_id = ?", (selected_source_id,)).fetchone()
+                if selected_source_id and self._table_exists(conn, "knowledge_source_overview")
+                else None
+            )
+            graph_state = self._current_graph_state(conn, selected_source_id) if selected_source_id else None
+            diagnostics = (
+                conn.execute(
                     """
                     SELECT COUNT(*) AS total,
                            SUM(CASE WHEN severity = 'ERROR' THEN 1 ELSE 0 END) AS errors,
                            SUM(CASE WHEN severity = 'WARN' THEN 1 ELSE 0 END) AS warnings
                     FROM analysis_graph_diagnostics
                     WHERE source_id = ?
-                      AND (? IS NULL OR snapshot_id = ?)
                     """,
-                    (selected_source_id, current["snapshot_id"] if current else None, current["snapshot_id"] if current else None),
+                    (selected_source_id,),
                 ).fetchone()
+                if selected_source_id
+                else None
+            )
             analysis_state = self._current_analysis_state(conn, [selected_source_id] if selected_source_id else None)
-            coverage = self._current_graph_coverage_metadata(conn, selected_source_id, current, overview_row)
         source_name = source_row["display_name"] if source_row else selected_source_id
         inventory = {
             "status": overview_row["inventory_status"] if overview_row else ("READY" if source_row and source_row["root_exists"] else "UNKNOWN"),
@@ -2234,21 +2115,17 @@ class AnalysisStore:
             },
             "analysis": analysis,
             "inventory": inventory,
-            "graphAvailable": current is not None,
-            "snapshotId": current["snapshot_id"] if current else None,
-            "graphRevision": current["content_identity"] if current else None,
-            "currentSnapshotId": coverage["currentSnapshotId"],
-            "currentPointerSnapshotId": coverage["currentPointerSnapshotId"],
-            "currentSnapshotState": coverage["currentSnapshotState"],
-            "currentGraphNodeCount": coverage["currentGraphNodeCount"],
-            "currentGraphEdgeCount": coverage["currentGraphEdgeCount"],
-            "representedFileCount": coverage["representedFileCount"],
-            "expectedAnalyzedFileCount": coverage["expectedAnalyzedFileCount"],
-            "coverageStatus": coverage["coverageStatus"],
-            "degradedReason": coverage["degradedReason"],
-            "promotionReason": coverage["promotionReason"],
+            "graphAvailable": graph_state is not None,
+            "graphId": graph_state["graph_id"] if graph_state else None,
+            "graphRevision": graph_state["content_identity"] if graph_state else None,
+            "currentGraphNodeCount": int(graph_state["node_count"] or 0) if graph_state else 0,
+            "currentGraphEdgeCount": int(graph_state["edge_count"] or 0) if graph_state else 0,
+            "representedFileCount": self._represented_file_count_from_state(graph_state),
+            "expectedAnalyzedFileCount": int(analysis_state.get("completedFiles", 0)),
+            "coverageStatus": "READY" if graph_state else "NO_GRAPH",
+            "degradedReason": None,
             "lastAnalyzedAt": overview_row["updated_at"] if overview_row else None,
-            "lastGraphPublishedAt": current["published_at"] if current else None,
+            "lastGraphUpdatedAt": graph_state["updated_at"] if graph_state else None,
             "diagnostics": {
                 "total": int(diagnostics["total"] or 0) if diagnostics else 0,
                 "errors": int(diagnostics["errors"] or 0) if diagnostics else 0,
@@ -2256,7 +2133,7 @@ class AnalysisStore:
             },
         }
 
-    def graph_snapshot_manifest(
+    def graph_manifest(
         self,
         source_id: Optional[str],
         flow_domain: Optional[str],
@@ -2272,24 +2149,17 @@ class AnalysisStore:
     ) -> Dict[str, Any]:
         self.init()
         with self._connect() as conn:
-            snapshot_id = self._current_snapshot_id(conn, source_id)
-            if snapshot_id is None:
-                revision = f"{source_id or 'all'}:{flow_domain or 'ALL'}:graph-empty"
+            selected_source_id = self._selected_graph_source_id(conn, source_id)
+            graph_state = self._current_graph_state(conn, selected_source_id) if selected_source_id else None
+            if graph_state is None:
+                revision = self._empty_graph_revision(selected_source_id, flow_domain)
                 return {
                     "graphRevision": revision,
-                    "snapshotId": None,
-                    "sourceId": source_id,
-                    "sourceName": source_id,
+                    "graphId": None,
+                    "sourceId": selected_source_id,
+                    "sourceName": selected_source_id,
                     "flowDomain": flow_domain,
-                    "filters": {
-                        "factOrigin": fact_origin,
-                        "nodeKind": node_kind,
-                        "edgeType": edge_type,
-                        "includeExternal": include_external,
-                        "includeUnresolved": include_unresolved,
-                        "includeIsolated": include_isolated,
-                        "search": self._normalize_graph_search(search),
-                    },
+                    "filters": self._raw_graph_filters(fact_origin, node_kind, edge_type, include_external, include_unresolved, include_isolated, search),
                     "totalNodeCount": 0,
                     "totalEdgeCount": 0,
                     "connectedComponentCount": None,
@@ -2299,15 +2169,14 @@ class AnalysisStore:
                     "edgeTypeCounts": {},
                     "defaultNodePageSize": default_node_page_size,
                     "defaultEdgePageSize": default_edge_page_size,
-                    "etag": self._graph_snapshot_etag(revision),
+                    "etag": self._graph_etag(revision),
                     "generatedAt": datetime.now(timezone.utc).isoformat(),
                     "status": {},
                 }
             query = self._graph_query(
-                conn,
                 "manifest",
-                snapshot_id,
-                source_id,
+                str(graph_state["graph_id"]),
+                selected_source_id,
                 flow_domain,
                 fact_origin,
                 node_kind,
@@ -2317,103 +2186,31 @@ class AnalysisStore:
                 include_isolated,
                 search,
             )
-            metric = self._graph_metric_or_backfill(conn, query)
-            revision = self._graph_snapshot_revision(query)
+            metric = self._graph_metric_live(conn, query)
+            revision = self._graph_revision(query)
             return {
                 "graphRevision": revision,
-                "snapshotId": snapshot_id,
+                "graphId": query.graph_id,
                 "sourceId": query.source_id,
                 "sourceName": query.source_id,
                 "flowDomain": None if query.flow_domain == "ALL" else query.flow_domain,
                 "filters": self._graph_query_filters(query),
                 "queryFingerprint": query.fingerprint,
-                "totalNodeCount": int(metric["total_node_count"] or 0),
-                "totalEdgeCount": int(metric["total_edge_count"] or 0),
+                "totalNodeCount": metric["total_node_count"],
+                "totalEdgeCount": metric["total_edge_count"],
                 "connectedComponentCount": None,
                 "largestComponentNodeCount": None,
                 "largestComponentEdgeCount": None,
-                "nodeTypeCounts": self._json_dict(metric["node_type_counts_json"]),
-                "edgeTypeCounts": self._json_dict(metric["edge_type_counts_json"]),
+                "nodeTypeCounts": metric["node_type_counts"],
+                "edgeTypeCounts": metric["edge_type_counts"],
                 "defaultNodePageSize": default_node_page_size,
                 "defaultEdgePageSize": default_edge_page_size,
-                "etag": self._graph_snapshot_etag(revision),
+                "etag": self._graph_etag(revision),
                 "generatedAt": metric["created_at"],
                 "status": {},
             }
 
-    def _graph_metric(self, conn: sqlite3.Connection, query: GraphSnapshotQuery) -> Optional[sqlite3.Row]:
-        return conn.execute(
-            """
-            SELECT *
-            FROM graph_snapshot_metrics
-            WHERE snapshot_id = ?
-              AND query_fingerprint = ?
-            """,
-            (query.snapshot_id, query.fingerprint),
-        ).fetchone()
-
-    def _graph_metric_or_backfill(self, conn: sqlite3.Connection, query: GraphSnapshotQuery) -> sqlite3.Row:
-        metric = self._graph_metric(conn, query)
-        if metric is not None:
-            return metric
-        self._assert_snapshot_readable(conn, query.snapshot_id, query.source_id)
-        self._insert_graph_snapshot_metric(conn, query, datetime.now(timezone.utc).isoformat())
-        repaired = self._graph_metric(conn, query)
-        if repaired is None:
-            raise KnowledgeError("GRAPH_SNAPSHOT_METRICS_MISSING", "Graph snapshot metrics are missing for this query.")
-        return repaired
-
-    def _graph_query_filters(self, query: GraphSnapshotQuery) -> Dict[str, Any]:
-        return {
-            "factOrigin": None if query.fact_origin == "ALL" else query.fact_origin,
-            "nodeKind": None if query.node_kind == "ALL" else query.node_kind,
-            "edgeType": None if query.edge_type == "ALL" else query.edge_type,
-            "includeExternal": query.include_external,
-            "includeUnresolved": query.include_unresolved,
-            "includeIsolated": query.include_isolated,
-            "search": query.search or None,
-        }
-
-    def _graph_query(
-        self,
-        conn: sqlite3.Connection,
-        resource: str,
-        snapshot_id: str,
-        source_id: Optional[str],
-        flow_domain: Optional[str],
-        fact_origin: Optional[str],
-        node_kind: Optional[str],
-        edge_type: Optional[str],
-        include_external: str,
-        include_unresolved: bool,
-        include_isolated: bool,
-        search: Optional[str] = None,
-    ) -> GraphSnapshotQuery:
-        resource_normalized = str(resource or "").lower()
-        if resource_normalized not in {"manifest", "nodes", "edges", "view"}:
-            raise KnowledgeError("GRAPH_FILTER_INVALID", "Graph resource is not supported.")
-        source = source_id
-        if not source:
-            row = conn.execute("SELECT source_id FROM graph_snapshots WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
-            source = row["source_id"] if row else "all"
-        include_external_normalized = str(include_external or "show").strip().lower()
-        if include_external_normalized not in {"show", "hide"}:
-            raise KnowledgeError("GRAPH_FILTER_INVALID", "includeExternal must be 'show' or 'hide'.")
-        return GraphSnapshotQuery(
-            source_id=str(source),
-            snapshot_id=snapshot_id,
-            resource=resource_normalized,
-            flow_domain=self._normalize_graph_dimension(flow_domain),
-            fact_origin=self._normalize_graph_dimension(fact_origin),
-            node_kind=self._normalize_graph_dimension(node_kind),
-            edge_type=self._normalize_graph_dimension(edge_type),
-            include_external=include_external_normalized,
-            include_unresolved=bool(include_unresolved),
-            include_isolated=bool(include_isolated),
-            search=self._normalize_graph_search(search),
-        )
-
-    def graph_snapshot_view(
+    def graph_view(
         self,
         source_id: Optional[str],
         flow_domain: Optional[str],
@@ -2429,15 +2226,14 @@ class AnalysisStore:
         self.init()
         safe_max_nodes = max(0, min(int(max_nodes or 0), 5000))
         with self._connect() as conn:
-            snapshot_id = self._current_snapshot_id(conn, source_id)
-            if snapshot_id is None:
-                revision = f"{source_id or 'all'}:{flow_domain or 'ALL'}:graph-empty"
-                return self._empty_graph_snapshot_view(source_id, flow_domain, revision, safe_max_nodes)
+            selected_source_id = self._selected_graph_source_id(conn, source_id)
+            graph_state = self._current_graph_state(conn, selected_source_id) if selected_source_id else None
+            if graph_state is None:
+                return self._empty_graph_view(selected_source_id, flow_domain, self._empty_graph_revision(selected_source_id, flow_domain), safe_max_nodes)
             query = self._graph_query(
-                conn,
                 "view",
-                snapshot_id,
-                source_id,
+                str(graph_state["graph_id"]),
+                selected_source_id,
                 flow_domain,
                 fact_origin,
                 node_kind,
@@ -2447,23 +2243,22 @@ class AnalysisStore:
                 include_isolated,
                 search,
             )
-            metric = self._graph_metric_or_backfill(conn, query)
-            revision = self._graph_snapshot_revision(query)
-            total_nodes = int(metric["total_node_count"] or 0)
-            total_edges = int(metric["total_edge_count"] or 0)
+            metric = self._graph_metric_live(conn, query)
+            revision = self._graph_revision(query)
+            total_nodes = metric["total_node_count"]
+            total_edges = metric["total_edge_count"]
             node_limit = total_nodes if safe_max_nodes <= 0 else min(safe_max_nodes, total_nodes)
             visible_nodes = self._relationship_aware_graph_view_nodes(conn, query, node_limit)
             visible_ids = [node["id"] for node in visible_nodes]
             visible_edges, visible_internal_edge_count = self._relationship_aware_graph_view_edges(conn, query, visible_ids, max(node_limit * 2, 80))
             boundary_edge_count = self._graph_view_boundary_edge_count(conn, query, visible_ids) if visible_ids else 0
             hidden_edge_count = max(0, total_edges - len(visible_edges))
-            canonical_fingerprint = self._graph_revision_payload(query)["queryFingerprint"]
             return {
                 "sourceId": query.source_id,
                 "sourceName": query.source_id,
-                "snapshotId": query.snapshot_id,
+                "graphId": query.graph_id,
                 "graphRevision": revision,
-                "queryFingerprint": canonical_fingerprint,
+                "queryFingerprint": query.fingerprint,
                 "selectionPolicy": "RELATIONSHIP_AWARE",
                 "maxNodes": safe_max_nodes,
                 "filters": self._graph_query_filters(query),
@@ -2482,107 +2277,7 @@ class AnalysisStore:
                 "status": {},
             }
 
-    def _empty_graph_snapshot_view(self, source_id: Optional[str], flow_domain: Optional[str], revision: str, max_nodes: int) -> Dict[str, Any]:
-        return {
-            "sourceId": source_id,
-            "sourceName": source_id,
-            "snapshotId": None,
-            "graphRevision": revision,
-            "queryFingerprint": None,
-            "selectionPolicy": "RELATIONSHIP_AWARE",
-            "maxNodes": max_nodes,
-            "filters": {"flowDomain": flow_domain},
-            "nodes": [],
-            "edges": [],
-            "totalMatchingNodeCount": 0,
-            "totalMatchingEdgeCount": 0,
-            "visibleNodeCount": 0,
-            "visibleEdgeCount": 0,
-            "hiddenNodeCount": 0,
-            "hiddenEdgeCount": 0,
-            "hiddenBoundaryEdgeCount": 0,
-            "internalEdgeCount": 0,
-            "hasMore": False,
-            "generatedAt": datetime.now(timezone.utc).isoformat(),
-            "status": {},
-        }
-
-    def _normalize_graph_dimension(self, value: Optional[str]) -> str:
-        if value is None or str(value).strip() == "":
-            return "ALL"
-        normalized = str(value).strip().upper()
-        if any(ch in normalized for ch in ("%", "'", '"', ";", "\x00")):
-            raise KnowledgeError("GRAPH_FILTER_INVALID", "Graph filter value is invalid.")
-        return normalized
-
-    def _normalize_graph_search(self, value: Optional[str]) -> str:
-        if value is None:
-            return ""
-        normalized = str(value).strip()
-        if any(ch in normalized for ch in ("%", "'", '"', ";", "\x00")):
-            raise KnowledgeError("GRAPH_FILTER_INVALID", "Graph search value is invalid.")
-        return normalized[:120]
-
-    def _graph_revision_payload(self, query: GraphSnapshotQuery) -> Dict[str, Any]:
-        payload = query.as_payload()
-        payload["resource"] = "manifest"
-        payload["queryFingerprint"] = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-        return payload
-
-    def _graph_payload_matches_query(self, payload: Dict[str, Any], query: GraphSnapshotQuery) -> None:
-        expected = self._graph_revision_payload(query)
-        for key in (
-            "contractVersion",
-            "sortVersion",
-            "snapshotId",
-            "sourceId",
-            "flowDomain",
-            "factOrigin",
-            "nodeKind",
-            "edgeType",
-            "includeExternal",
-            "includeUnresolved",
-            "includeIsolated",
-            "search",
-            "queryFingerprint",
-        ):
-            if payload.get(key) != expected.get(key):
-                if key == "sourceId":
-                    raise KnowledgeError("GRAPH_SNAPSHOT_SOURCE_MISMATCH", "Graph snapshot belongs to another source.")
-                raise KnowledgeError("GRAPH_CURSOR_QUERY_MISMATCH", "Graph request does not match the snapshot query.")
-
-    def _stored_manifest_from_snapshot(self, conn: sqlite3.Connection, snapshot_id: str) -> Optional[Dict[str, Any]]:
-        row = conn.execute("SELECT source_id FROM graph_snapshots WHERE snapshot_id = ? AND state = 'PUBLISHED'", (snapshot_id,)).fetchone()
-        if row is None:
-            return None
-        query = self._graph_query(conn, "manifest", snapshot_id, row["source_id"], None, None, None, None, "show", True, True)
-        metric = self._graph_metric(conn, query)
-        if metric is None:
-            return None
-        revision = self._graph_snapshot_revision(query)
-        return {
-            "graphRevision": revision,
-            "snapshotId": snapshot_id,
-            "sourceId": row["source_id"],
-            "sourceName": self._graph_source_name(conn, row["source_id"]),
-            "flowDomain": None,
-            "filters": self._graph_query_filters(query),
-            "queryFingerprint": query.fingerprint,
-            "totalNodeCount": int(metric["total_node_count"] or 0),
-            "totalEdgeCount": int(metric["total_edge_count"] or 0),
-            "connectedComponentCount": None,
-            "largestComponentNodeCount": None,
-            "largestComponentEdgeCount": None,
-            "nodeTypeCounts": self._json_dict(metric["node_type_counts_json"]),
-            "edgeTypeCounts": self._json_dict(metric["edge_type_counts_json"]),
-            "defaultNodePageSize": 500,
-            "defaultEdgePageSize": 1000,
-            "etag": self._graph_snapshot_etag(revision),
-            "generatedAt": metric["created_at"],
-            "status": self._graph_status_or_empty(conn, row["source_id"]),
-        }
-
-    def graph_snapshot_nodes(
+    def graph_nodes(
         self,
         graph_revision: str,
         cursor: Optional[str],
@@ -2598,35 +2293,23 @@ class AnalysisStore:
     ) -> Dict[str, Any]:
         safe_page_size = max(1, min(int(page_size or 500), 5000))
         with self._connect() as conn:
-            revision_payload = self._decode_graph_snapshot_revision(graph_revision)
-            snapshot_id = str(revision_payload["snapshotId"])
+            payload = self._decode_graph_revision(graph_revision)
             query = self._graph_query(
-                conn,
                 "nodes",
-                snapshot_id,
-                source_id,
+                str(payload["graphId"]),
+                source_id or str(payload["sourceId"]),
                 flow_domain,
                 fact_origin,
                 node_kind,
-                revision_payload.get("edgeType"),
+                payload.get("edgeType"),
                 include_external,
                 include_unresolved,
                 include_isolated,
                 search,
             )
-            self._graph_payload_matches_query(revision_payload, query)
-            self._assert_snapshot_readable(conn, snapshot_id, query.source_id)
-            cursor_value = self._decode_graph_snapshot_cursor(cursor, query, "nodes")
-            where, params = self._graph_snapshot_node_where(
-                snapshot_id,
-                query.source_id,
-                query.flow_domain,
-                query.fact_origin,
-                query.node_kind,
-                query.include_external,
-                query.include_isolated,
-                query.search,
-            )
+            self._assert_graph_query_current(conn, payload, query)
+            cursor_value = self._decode_graph_cursor(cursor, query, "nodes")
+            where, params = self._graph_node_where(query)
             if cursor_value:
                 where = f"{where} AND n.id > ?"
                 params = [*params, cursor_value]
@@ -2638,42 +2321,33 @@ class AnalysisStore:
                 FROM analysis_graph_nodes n
                 LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
                 LEFT JOIN (
-                    SELECT from_node_id AS node_id, COUNT(*) AS count
+                    SELECT source_id, from_node_id AS node_id, COUNT(*) AS count
                     FROM analysis_graph_edges
-                    WHERE snapshot_id = ?
-                    GROUP BY from_node_id
-                ) out_degree ON out_degree.node_id = n.id
+                    GROUP BY source_id, from_node_id
+                ) out_degree ON out_degree.source_id = n.source_id AND out_degree.node_id = n.id
                 LEFT JOIN (
-                    SELECT to_node_id AS node_id, COUNT(*) AS count
+                    SELECT source_id, to_node_id AS node_id, COUNT(*) AS count
                     FROM analysis_graph_edges
-                    WHERE snapshot_id = ?
-                    GROUP BY to_node_id
-                ) in_degree ON in_degree.node_id = n.id
+                    WHERE to_node_id IS NOT NULL
+                    GROUP BY source_id, to_node_id
+                ) in_degree ON in_degree.source_id = n.source_id AND in_degree.node_id = n.id
                 LEFT JOIN analysis_graph_claims entry
-                  ON entry.node_id = n.id
-                 AND entry.snapshot_id = n.snapshot_id
+                  ON entry.source_id = n.source_id
+                 AND entry.node_id = n.id
                  AND entry.claim_kind = 'ENTRYPOINT_HINT'
                  AND entry.status IN ('TRUSTED', 'DERIVED')
                 WHERE {where}
                 ORDER BY n.id
                 LIMIT ?
                 """,
-                [snapshot_id, snapshot_id, *params, safe_page_size + 1],
+                [*params, safe_page_size + 1],
             ).fetchall()
-        items = [self._graph_snapshot_node_projection(self._row_dict(row)) for row in rows[:safe_page_size]]
+        items = [self._graph_node_projection(self._row_dict(row)) for row in rows[:safe_page_size]]
         complete = len(rows) <= safe_page_size
-        next_cursor = None if complete or not items else self._encode_graph_snapshot_cursor(query, "nodes", items[-1]["id"])
-        return {
-            "graphRevision": graph_revision,
-            "snapshotId": query.snapshot_id,
-            "queryFingerprint": query.fingerprint,
-            "items": items,
-            "nextCursor": next_cursor,
-            "complete": complete,
-            "returnedCount": len(items),
-        }
+        next_cursor = None if complete or not items else self._encode_graph_cursor(query, "nodes", items[-1]["id"])
+        return {"graphRevision": graph_revision, "graphId": query.graph_id, "queryFingerprint": query.fingerprint, "items": items, "nextCursor": next_cursor, "complete": complete, "returnedCount": len(items)}
 
-    def graph_snapshot_edges(
+    def graph_edges(
         self,
         graph_revision: str,
         cursor: Optional[str],
@@ -2688,28 +2362,23 @@ class AnalysisStore:
     ) -> Dict[str, Any]:
         safe_page_size = max(1, min(int(page_size or 1000), 5000))
         with self._connect() as conn:
-            revision_payload = self._decode_graph_snapshot_revision(graph_revision)
-            snapshot_id = str(revision_payload["snapshotId"])
+            payload = self._decode_graph_revision(graph_revision)
             query = self._graph_query(
-                conn,
                 "edges",
-                snapshot_id,
-                source_id,
+                str(payload["graphId"]),
+                source_id or str(payload["sourceId"]),
                 flow_domain,
                 fact_origin,
-                revision_payload.get("nodeKind"),
+                payload.get("nodeKind"),
                 edge_type,
                 include_external,
                 include_unresolved,
-                bool(revision_payload.get("includeIsolated", True)),
+                bool(payload.get("includeIsolated", True)),
                 search,
             )
-            self._graph_payload_matches_query(revision_payload, query)
-            self._assert_snapshot_readable(conn, snapshot_id, query.source_id)
-            cursor_value = self._decode_graph_snapshot_cursor(cursor, query, "edges")
-            where, params = self._graph_snapshot_edge_where(
-                snapshot_id, query.source_id, query.flow_domain, query.fact_origin, query.edge_type, query.include_unresolved, query.search
-            )
+            self._assert_graph_query_current(conn, payload, query)
+            cursor_value = self._decode_graph_cursor(cursor, query, "edges")
+            where, params = self._graph_edge_where(query)
             if cursor_value:
                 where = f"{where} AND e.id > ?"
                 params = [*params, cursor_value]
@@ -2723,39 +2392,37 @@ class AnalysisStore:
                        tn.qualified_name AS to_qualified_name,
                        tn.name AS to_name
                 FROM analysis_graph_edges e
-                LEFT JOIN analysis_graph_nodes fn ON fn.snapshot_id = e.snapshot_id AND fn.id = e.from_node_id
-                LEFT JOIN analysis_graph_nodes tn ON tn.snapshot_id = e.snapshot_id AND tn.id = e.to_node_id
+                LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
                 WHERE {where}
                 ORDER BY e.id
                 LIMIT ?
                 """,
                 [*params, safe_page_size + 1],
             ).fetchall()
-        items = [self._graph_snapshot_edge_projection(self._row_dict(row)) for row in rows[:safe_page_size]]
+        items = [self._graph_edge_projection(self._row_dict(row)) for row in rows[:safe_page_size]]
         complete = len(rows) <= safe_page_size
-        next_cursor = None if complete or not items else self._encode_graph_snapshot_cursor(query, "edges", items[-1]["id"])
-        return {
-            "graphRevision": graph_revision,
-            "snapshotId": query.snapshot_id,
-            "queryFingerprint": query.fingerprint,
-            "items": items,
-            "nextCursor": next_cursor,
-            "complete": complete,
-            "returnedCount": len(items),
-        }
+        next_cursor = None if complete or not items else self._encode_graph_cursor(query, "edges", items[-1]["id"])
+        return {"graphRevision": graph_revision, "graphId": query.graph_id, "queryFingerprint": query.fingerprint, "items": items, "nextCursor": next_cursor, "complete": complete, "returnedCount": len(items)}
 
-    def graph_snapshot_node_detail(
-        self,
-        graph_revision: str,
-        node_id: str,
-        source_id: Optional[str],
-        include_evidence: bool = False,
-    ) -> Dict[str, Any]:
+    def graph_node_detail(self, graph_revision: str, node_id: str, source_id: Optional[str], include_evidence: bool = False) -> Dict[str, Any]:
         with self._connect() as conn:
-            revision_payload = self._decode_graph_snapshot_revision(graph_revision)
-            snapshot_id = str(revision_payload["snapshotId"])
-            requested_source = source_id or str(revision_payload["sourceId"])
-            self._assert_snapshot_readable(conn, snapshot_id, requested_source)
+            payload = self._decode_graph_revision(graph_revision)
+            requested_source = source_id or str(payload["sourceId"])
+            query = self._graph_query(
+                "nodes",
+                str(payload["graphId"]),
+                requested_source,
+                payload.get("flowDomain"),
+                payload.get("factOrigin"),
+                payload.get("nodeKind"),
+                payload.get("edgeType"),
+                payload.get("includeExternal", "show"),
+                bool(payload.get("includeUnresolved", True)),
+                bool(payload.get("includeIsolated", True)),
+                payload.get("search"),
+            )
+            self._assert_graph_query_current(conn, payload, query)
             row = conn.execute(
                 """
                 SELECT n.*, af.relative_path,
@@ -2764,71 +2431,34 @@ class AnalysisStore:
                 FROM analysis_graph_nodes n
                 LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
                 LEFT JOIN (
-                    SELECT from_node_id AS node_id, COUNT(*) AS count
+                    SELECT source_id, from_node_id AS node_id, COUNT(*) AS count
                     FROM analysis_graph_edges
-                    WHERE snapshot_id = ?
-                    GROUP BY from_node_id
-                ) out_degree ON out_degree.node_id = n.id
+                    GROUP BY source_id, from_node_id
+                ) out_degree ON out_degree.source_id = n.source_id AND out_degree.node_id = n.id
                 LEFT JOIN (
-                    SELECT to_node_id AS node_id, COUNT(*) AS count
+                    SELECT source_id, to_node_id AS node_id, COUNT(*) AS count
                     FROM analysis_graph_edges
-                    WHERE snapshot_id = ?
-                    GROUP BY to_node_id
-                ) in_degree ON in_degree.node_id = n.id
+                    WHERE to_node_id IS NOT NULL
+                    GROUP BY source_id, to_node_id
+                ) in_degree ON in_degree.source_id = n.source_id AND in_degree.node_id = n.id
                 LEFT JOIN analysis_graph_claims entry
-                  ON entry.node_id = n.id
-                 AND entry.snapshot_id = n.snapshot_id
+                  ON entry.source_id = n.source_id
+                 AND entry.node_id = n.id
                  AND entry.claim_kind = 'ENTRYPOINT_HINT'
                  AND entry.status IN ('TRUSTED', 'DERIVED')
-                WHERE n.snapshot_id = ?
+                WHERE n.source_id = ?
                   AND n.id = ?
                 """,
-                (snapshot_id, snapshot_id, snapshot_id, node_id),
+                (requested_source, node_id),
             ).fetchone()
             if row is None:
-                scoped = conn.execute(
-                    "SELECT source_id, snapshot_id FROM analysis_graph_nodes WHERE id = ? LIMIT 1",
-                    (node_id,),
-                ).fetchone()
-                if scoped is not None:
-                    raise KnowledgeError("GRAPH_ITEM_SCOPE_MISMATCH", "Graph item is outside the requested snapshot or source.")
+                if conn.execute("SELECT 1 FROM analysis_graph_nodes WHERE id = ? LIMIT 1", (node_id,)).fetchone():
+                    raise KnowledgeError("GRAPH_ITEM_SCOPE_MISMATCH", "Graph item is outside the requested source.")
                 raise KnowledgeError("GRAPH_NODE_NOT_FOUND", "Graph node was not found.")
-            if requested_source and row["source_id"] != requested_source:
-                raise KnowledgeError("GRAPH_ITEM_SCOPE_MISMATCH", "Graph item is outside the requested snapshot or source.")
             row_dict = self._row_dict(row)
-            detail = self._graph_snapshot_node_projection(row_dict)
-            detail["snapshotId"] = snapshot_id
+            detail = self._graph_node_projection(row_dict)
             detail["parentNodeId"] = row_dict.get("parent_node_id")
-            claims = conn.execute(
-                """
-                SELECT id, node_id, claim_kind, summary, confidence, status, rejection_reason, evidence_ids_json, metadata_json, fact_origin, flow_domain,
-                       CASE WHEN node_id = ? THEN 1 ELSE 0 END AS selected_node_claim
-                FROM analysis_graph_claims
-                WHERE snapshot_id = ?
-                  AND (
-                    node_id = ?
-                    OR (
-                      claim_kind = 'RESPONSIBILITY'
-                      AND status IN ('TRUSTED', 'LOW_CONFIDENCE')
-                      AND (
-                        node_id = ?
-                        OR node_id IN (
-                          SELECT id
-                          FROM analysis_graph_nodes
-                          WHERE analysis_file_id = ?
-                            AND snapshot_id = ?
-                            AND node_kind = 'FILE'
-                          ORDER BY confidence DESC
-                          LIMIT 1
-                        )
-                      )
-                    )
-                  )
-                ORDER BY selected_node_claim DESC, confidence DESC, id
-                LIMIT 100
-                """,
-                (node_id, snapshot_id, node_id, row_dict.get("parent_node_id"), row_dict.get("analysis_file_id"), snapshot_id),
-            ).fetchall()
+            claims = self._claims_for_node_detail(conn, row_dict)
             detail["claims"] = [
                 {
                     "id": claim["id"],
@@ -2857,22 +2487,28 @@ class AnalysisStore:
                 }
             )
             if include_evidence:
-                detail["evidence"] = self._graph_snapshot_evidence(conn, snapshot_id, node_id=node_id)
-            detail["relations"] = self._graph_snapshot_node_relations(conn, snapshot_id, node_id, requested_source)
-            return {"graphRevision": graph_revision, "snapshotId": snapshot_id, "item": detail}
+                detail["evidence"] = self._graph_evidence(conn, node_id=node_id)
+            detail["relations"] = self._graph_node_relations(conn, node_id, requested_source)
+            return {"graphRevision": graph_revision, "graphId": query.graph_id, "item": detail}
 
-    def graph_snapshot_edge_detail(
-        self,
-        graph_revision: str,
-        edge_id: str,
-        source_id: Optional[str],
-        include_evidence: bool = False,
-    ) -> Dict[str, Any]:
+    def graph_edge_detail(self, graph_revision: str, edge_id: str, source_id: Optional[str], include_evidence: bool = False) -> Dict[str, Any]:
         with self._connect() as conn:
-            revision_payload = self._decode_graph_snapshot_revision(graph_revision)
-            snapshot_id = str(revision_payload["snapshotId"])
-            requested_source = source_id or str(revision_payload["sourceId"])
-            self._assert_snapshot_readable(conn, snapshot_id, requested_source)
+            payload = self._decode_graph_revision(graph_revision)
+            requested_source = source_id or str(payload["sourceId"])
+            query = self._graph_query(
+                "edges",
+                str(payload["graphId"]),
+                requested_source,
+                payload.get("flowDomain"),
+                payload.get("factOrigin"),
+                payload.get("nodeKind"),
+                payload.get("edgeType"),
+                payload.get("includeExternal", "show"),
+                bool(payload.get("includeUnresolved", True)),
+                bool(payload.get("includeIsolated", True)),
+                payload.get("search"),
+            )
+            self._assert_graph_query_current(conn, payload, query)
             row = conn.execute(
                 """
                 SELECT e.*,
@@ -2883,84 +2519,243 @@ class AnalysisStore:
                        tn.qualified_name AS to_qualified_name,
                        tn.name AS to_name
                 FROM analysis_graph_edges e
-                LEFT JOIN analysis_graph_nodes fn ON fn.snapshot_id = e.snapshot_id AND fn.id = e.from_node_id
-                LEFT JOIN analysis_graph_nodes tn ON tn.snapshot_id = e.snapshot_id AND tn.id = e.to_node_id
-                WHERE e.snapshot_id = ?
+                LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                WHERE e.source_id = ?
                   AND e.id = ?
                 """,
-                (snapshot_id, edge_id),
+                (requested_source, edge_id),
             ).fetchone()
             if row is None:
-                scoped = conn.execute(
-                    "SELECT source_id, snapshot_id FROM analysis_graph_edges WHERE id = ? LIMIT 1",
-                    (edge_id,),
-                ).fetchone()
-                if scoped is not None:
-                    raise KnowledgeError("GRAPH_ITEM_SCOPE_MISMATCH", "Graph item is outside the requested snapshot or source.")
+                if conn.execute("SELECT 1 FROM analysis_graph_edges WHERE id = ? LIMIT 1", (edge_id,)).fetchone():
+                    raise KnowledgeError("GRAPH_ITEM_SCOPE_MISMATCH", "Graph item is outside the requested source.")
                 raise KnowledgeError("GRAPH_EDGE_NOT_FOUND", "Graph edge was not found.")
-            if requested_source and row["source_id"] != requested_source:
-                raise KnowledgeError("GRAPH_ITEM_SCOPE_MISMATCH", "Graph item is outside the requested snapshot or source.")
-            detail = self._graph_snapshot_edge_projection(self._row_dict(row))
-            detail["snapshotId"] = snapshot_id
+            detail = self._graph_edge_projection(self._row_dict(row))
             if include_evidence:
-                detail["evidence"] = self._graph_snapshot_evidence(conn, snapshot_id, edge_id=edge_id)
-            return {"graphRevision": graph_revision, "snapshotId": snapshot_id, "item": detail}
+                detail["evidence"] = self._graph_evidence(conn, edge_id=edge_id)
+            return {"graphRevision": graph_revision, "graphId": query.graph_id, "item": detail}
 
-    def _current_graph_node_clause(self, alias: str) -> str:
-        return f"""{alias}.snapshot_id IN (
-            SELECT snapshot_id FROM graph_current_snapshots
-        )"""
+    def _selected_graph_source_row(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Optional[sqlite3.Row]:
+        if source_id and self._table_exists(conn, "sources"):
+            return conn.execute(
+                "SELECT source_id, display_name, group_name, path, root_exists, last_seen_at FROM sources WHERE source_id = ?",
+                (source_id,),
+            ).fetchone()
+        row = conn.execute(
+            """
+            SELECT s.source_id, s.display_name, s.group_name, s.path, s.root_exists, s.last_seen_at
+            FROM sources s
+            JOIN analysis_graph_state state ON state.source_id = s.source_id
+            ORDER BY state.updated_at DESC, s.source_id
+            LIMIT 1
+            """
+        ).fetchone() if self._table_exists(conn, "sources") and self._table_exists(conn, "analysis_graph_state") else None
+        if row is not None:
+            return row
+        if self._table_exists(conn, "sources"):
+            return conn.execute(
+                "SELECT source_id, display_name, group_name, path, root_exists, last_seen_at FROM sources ORDER BY source_id LIMIT 1"
+            ).fetchone()
+        return None
 
-    def _current_graph_edge_clause(self, alias: str) -> str:
-        return f"""{alias}.snapshot_id IN (
-            SELECT snapshot_id FROM graph_current_snapshots
-        ) AND EXISTS (
-            SELECT 1
-            FROM analysis_graph_nodes fn
-            LEFT JOIN analysis_graph_nodes tn ON tn.id = {alias}.to_node_id
-            WHERE fn.id = {alias}.from_node_id
-              AND fn.snapshot_id = {alias}.snapshot_id
-              AND (tn.id IS NULL OR tn.snapshot_id = {alias}.snapshot_id)
-        )"""
+    def _selected_graph_source_id(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Optional[str]:
+        row = self._selected_graph_source_row(conn, source_id)
+        return str(row["source_id"]) if row else source_id
 
-    def _graph_snapshot_node_where(
+    def _current_graph_state(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Optional[sqlite3.Row]:
+        if not source_id or not self._table_exists(conn, "analysis_graph_state"):
+            return None
+        return conn.execute("SELECT * FROM analysis_graph_state WHERE source_id = ?", (source_id,)).fetchone()
+
+    def _represented_file_count_from_state(self, graph_state: Optional[sqlite3.Row]) -> int:
+        return 0 if graph_state is None else int(graph_state["node_count"] or 0)
+
+    def _raw_graph_filters(
         self,
-        snapshot_id: str,
+        fact_origin: Optional[str],
+        node_kind: Optional[str],
+        edge_type: Optional[str],
+        include_external: str,
+        include_unresolved: bool,
+        include_isolated: bool,
+        search: Optional[str],
+    ) -> Dict[str, Any]:
+        return {
+            "factOrigin": fact_origin,
+            "nodeKind": node_kind,
+            "edgeType": edge_type,
+            "includeExternal": include_external,
+            "includeUnresolved": include_unresolved,
+            "includeIsolated": include_isolated,
+            "search": self._normalize_graph_search(search),
+        }
+
+    def _empty_graph_revision(self, source_id: Optional[str], flow_domain: Optional[str]) -> str:
+        return f"{source_id or 'all'}:{flow_domain or 'ALL'}:graph-empty"
+
+    def _inventory_membership_graph_node_clause(self, alias: str = "n") -> str:
+        return f"""
+        EXISTS (
+            SELECT 1
+            FROM analysis_files af_current
+            WHERE af_current.source_id = {alias}.source_id
+              AND af_current.relative_path = {alias}.relative_path
+              AND af_current.content_hash = {alias}.content_hash
+        )
+        AND EXISTS (
+            SELECT 1
+            FROM files f_current
+            WHERE f_current.source_id = {alias}.source_id
+              AND f_current.relative_path = {alias}.relative_path
+              AND f_current.content_hash = {alias}.content_hash
+        )
+        """
+
+    def _inventory_membership_graph_edge_clause(self, alias: str = "e") -> str:
+        return f"""
+        EXISTS (
+            SELECT 1
+            FROM analysis_files af_current
+            WHERE af_current.source_id = {alias}.source_id
+              AND af_current.relative_path = {alias}.relative_path
+              AND af_current.content_hash = {alias}.content_hash
+        )
+        AND EXISTS (
+            SELECT 1
+            FROM files f_current
+            WHERE f_current.source_id = {alias}.source_id
+              AND f_current.relative_path = {alias}.relative_path
+              AND f_current.content_hash = {alias}.content_hash
+        )
+        """
+
+    def _empty_graph_view(self, source_id: Optional[str], flow_domain: Optional[str], revision: str, max_nodes: int) -> Dict[str, Any]:
+        return {
+            "sourceId": source_id,
+            "sourceName": source_id,
+            "graphId": None,
+            "graphRevision": revision,
+            "queryFingerprint": None,
+            "selectionPolicy": "RELATIONSHIP_AWARE",
+            "maxNodes": max_nodes,
+            "filters": {"flowDomain": flow_domain},
+            "nodes": [],
+            "edges": [],
+            "totalMatchingNodeCount": 0,
+            "totalMatchingEdgeCount": 0,
+            "visibleNodeCount": 0,
+            "visibleEdgeCount": 0,
+            "hiddenNodeCount": 0,
+            "hiddenEdgeCount": 0,
+            "hiddenBoundaryEdgeCount": 0,
+            "internalEdgeCount": 0,
+            "hasMore": False,
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "status": {},
+        }
+
+    def _graph_query_filters(self, query: GraphQuery) -> Dict[str, Any]:
+        return {
+            "factOrigin": None if query.fact_origin == "ALL" else query.fact_origin,
+            "nodeKind": None if query.node_kind == "ALL" else query.node_kind,
+            "edgeType": None if query.edge_type == "ALL" else query.edge_type,
+            "includeExternal": query.include_external,
+            "includeUnresolved": query.include_unresolved,
+            "includeIsolated": query.include_isolated,
+            "search": query.search or None,
+        }
+
+    def _normalize_graph_dimension(self, value: Optional[str]) -> str:
+        if value is None:
+            return "ALL"
+        normalized = str(value).strip()
+        return normalized.upper() if normalized else "ALL"
+
+    def _normalize_graph_search(self, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    def _graph_query(
+        self,
+        resource: str,
+        graph_id: str,
         source_id: Optional[str],
         flow_domain: Optional[str],
         fact_origin: Optional[str],
         node_kind: Optional[str],
+        edge_type: Optional[str],
         include_external: str,
+        include_unresolved: bool,
         include_isolated: bool,
-        search: str = "",
-    ) -> tuple[str, List[Any]]:
-        clauses = ["n.snapshot_id = ?"]
-        params: List[Any] = [snapshot_id]
-        if source_id and source_id != "all":
-            clauses.append("n.source_id = ?")
-            params.append(source_id)
-        if flow_domain and flow_domain != "ALL":
+        search: Optional[str] = None,
+    ) -> GraphQuery:
+        resource_normalized = str(resource or "").lower()
+        if resource_normalized not in {"manifest", "nodes", "edges", "view"}:
+            raise KnowledgeError("GRAPH_FILTER_INVALID", "Graph resource is not supported.")
+        include_external_normalized = str(include_external or "show").strip().lower()
+        if include_external_normalized not in {"show", "hide"}:
+            raise KnowledgeError("GRAPH_FILTER_INVALID", "includeExternal must be 'show' or 'hide'.")
+        return GraphQuery(
+            source_id=str(source_id or "all"),
+            graph_id=graph_id,
+            resource=resource_normalized,
+            flow_domain=self._normalize_graph_dimension(flow_domain),
+            fact_origin=self._normalize_graph_dimension(fact_origin),
+            node_kind=self._normalize_graph_dimension(node_kind),
+            edge_type=self._normalize_graph_dimension(edge_type),
+            include_external=include_external_normalized,
+            include_unresolved=bool(include_unresolved),
+            include_isolated=bool(include_isolated),
+            search=self._normalize_graph_search(search),
+        )
+
+    def _graph_metric_live(self, conn: sqlite3.Connection, query: GraphQuery) -> Dict[str, Any]:
+        node_where, node_params = self._graph_node_where(query)
+        edge_where, edge_params = self._graph_edge_where(query)
+        node_count = int(conn.execute(f"SELECT COUNT(*) AS count FROM analysis_graph_nodes n WHERE {node_where}", node_params).fetchone()["count"] or 0)
+        edge_count = int(conn.execute(f"SELECT COUNT(*) AS count FROM analysis_graph_edges e WHERE {edge_where}", edge_params).fetchone()["count"] or 0)
+        node_types = {
+            row["node_kind"] or "UNKNOWN": int(row["count"] or 0)
+            for row in conn.execute(
+                f"SELECT n.node_kind, COUNT(*) AS count FROM analysis_graph_nodes n WHERE {node_where} GROUP BY n.node_kind",
+                node_params,
+            ).fetchall()
+        }
+        edge_types = {
+            row["edge_type"] or "UNKNOWN": int(row["count"] or 0)
+            for row in conn.execute(
+                f"SELECT e.edge_type, COUNT(*) AS count FROM analysis_graph_edges e WHERE {edge_where} GROUP BY e.edge_type",
+                edge_params,
+            ).fetchall()
+        }
+        return {
+            "total_node_count": node_count,
+            "total_edge_count": edge_count,
+            "node_type_counts": node_types,
+            "edge_type_counts": edge_types,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _graph_node_where(self, query: GraphQuery) -> tuple[str, List[Any]]:
+        clauses = ["n.source_id = ?"]
+        params: List[Any] = [query.source_id]
+        if query.flow_domain != "ALL":
             clauses.append("n.flow_domain = ?")
-            params.append(flow_domain.upper())
-        if fact_origin and fact_origin != "ALL":
+            params.append(query.flow_domain.upper())
+        if query.fact_origin != "ALL":
             clauses.append("n.fact_origin = ?")
-            params.append(fact_origin.upper())
-        if node_kind and node_kind != "ALL":
+            params.append(query.fact_origin.upper())
+        if query.node_kind != "ALL":
             clauses.append("n.node_kind = ?")
-            params.append(node_kind.upper())
-        if str(include_external or "show").lower() == "hide":
+            params.append(query.node_kind.upper())
+        if query.include_external == "hide":
             clauses.append("n.node_kind != 'EXTERNAL'")
-        if not include_isolated:
-            clauses.append(
-                """EXISTS (
-                    SELECT 1
-                    FROM analysis_graph_edges ge
-                    WHERE ge.snapshot_id = n.snapshot_id
-                      AND (ge.from_node_id = n.id OR ge.to_node_id = n.id)
-                )"""
-            )
-        if search:
-            pattern = self._graph_search_pattern(search)
+        if not query.include_isolated:
+            clauses.append("EXISTS (SELECT 1 FROM analysis_graph_edges ge WHERE ge.source_id = n.source_id AND (ge.from_node_id = n.id OR ge.to_node_id = n.id))")
+        if query.search:
+            pattern = self._graph_search_pattern(query.search)
             clauses.append(
                 """(
                     n.id LIKE ? ESCAPE '\\'
@@ -2968,53 +2763,36 @@ class AnalysisStore:
                     OR n.qualified_name LIKE ? ESCAPE '\\'
                     OR n.display_name LIKE ? ESCAPE '\\'
                     OR n.node_kind LIKE ? ESCAPE '\\'
-                    OR EXISTS (
-                        SELECT 1
-                        FROM analysis_files sf
-                        WHERE sf.file_id = n.analysis_file_id
-                          AND sf.relative_path LIKE ? ESCAPE '\\'
-                    )
+                    OR n.relative_path LIKE ? ESCAPE '\\'
                 )"""
             )
             params.extend([pattern, pattern, pattern, pattern, pattern, pattern])
         return " AND ".join(clauses), params
 
-    def _graph_snapshot_edge_where(
-        self,
-        snapshot_id: str,
-        source_id: Optional[str],
-        flow_domain: Optional[str],
-        fact_origin: Optional[str],
-        edge_type: Optional[str],
-        include_unresolved: bool,
-        search: str = "",
-    ) -> tuple[str, List[Any]]:
-        clauses = ["e.snapshot_id = ?"]
-        params: List[Any] = [snapshot_id]
-        if source_id and source_id != "all":
-            clauses.append("e.source_id = ?")
-            params.append(source_id)
-        if flow_domain and flow_domain != "ALL":
+    def _graph_edge_where(self, query: GraphQuery) -> tuple[str, List[Any]]:
+        clauses = ["e.source_id = ?"]
+        params: List[Any] = [query.source_id]
+        if query.flow_domain != "ALL":
             clauses.append("e.flow_domain = ?")
-            params.append(flow_domain.upper())
-        if fact_origin and fact_origin != "ALL":
+            params.append(query.flow_domain.upper())
+        if query.fact_origin != "ALL":
             clauses.append("e.fact_origin = ?")
-            params.append(fact_origin.upper())
-        if edge_type and edge_type != "ALL":
+            params.append(query.fact_origin.upper())
+        if query.edge_type != "ALL":
             clauses.append("e.edge_type = ?")
-            params.append(edge_type.upper())
-        if not include_unresolved:
+            params.append(query.edge_type.upper())
+        if not query.include_unresolved:
             clauses.append("e.to_node_id IS NOT NULL")
             clauses.append("e.resolution_status NOT IN ('UNRESOLVED', 'DYNAMIC_TARGET', 'EXTERNAL_TARGET')")
-        if search:
-            pattern = self._graph_search_pattern(search)
+        if query.search:
+            pattern = self._graph_search_pattern(query.search)
             clauses.append(
                 """(
                     e.edge_type LIKE ? ESCAPE '\\'
                     OR EXISTS (
                         SELECT 1
                         FROM analysis_graph_nodes sn
-                        WHERE sn.snapshot_id = e.snapshot_id
+                        WHERE sn.source_id = e.source_id
                           AND sn.id IN (e.from_node_id, e.to_node_id)
                           AND (
                             sn.id LIKE ? ESCAPE '\\'
@@ -3022,12 +2800,7 @@ class AnalysisStore:
                             OR sn.qualified_name LIKE ? ESCAPE '\\'
                             OR sn.display_name LIKE ? ESCAPE '\\'
                             OR sn.node_kind LIKE ? ESCAPE '\\'
-                            OR EXISTS (
-                                SELECT 1
-                                FROM analysis_files sf
-                                WHERE sf.file_id = sn.analysis_file_id
-                                  AND sf.relative_path LIKE ? ESCAPE '\\'
-                            )
+                            OR sn.relative_path LIKE ? ESCAPE '\\'
                           )
                     )
                 )"""
@@ -3035,28 +2808,11 @@ class AnalysisStore:
             params.extend([pattern, pattern, pattern, pattern, pattern, pattern, pattern])
         return " AND ".join(clauses), params
 
-    def _relationship_aware_graph_view_nodes(self, conn: sqlite3.Connection, query: GraphSnapshotQuery, limit: int) -> List[Dict[str, Any]]:
+    def _relationship_aware_graph_view_nodes(self, conn: sqlite3.Connection, query: GraphQuery, limit: int) -> List[Dict[str, Any]]:
         if limit <= 0:
             return []
-        node_where, node_params = self._graph_snapshot_node_where(
-            query.snapshot_id,
-            query.source_id,
-            query.flow_domain,
-            query.fact_origin,
-            query.node_kind,
-            query.include_external,
-            query.include_isolated,
-            query.search,
-        )
-        edge_where, edge_params = self._graph_snapshot_edge_where(
-            query.snapshot_id,
-            query.source_id,
-            query.flow_domain,
-            query.fact_origin,
-            query.edge_type,
-            query.include_unresolved,
-            query.search,
-        )
+        node_where, node_params = self._graph_node_where(query)
+        edge_where, edge_params = self._graph_edge_where(query)
         rows = conn.execute(
             f"""
             WITH candidate_nodes AS (
@@ -3065,8 +2821,8 @@ class AnalysisStore:
                 FROM analysis_graph_nodes n
                 LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
                 LEFT JOIN analysis_graph_claims entry
-                  ON entry.node_id = n.id
-                 AND entry.snapshot_id = n.snapshot_id
+                  ON entry.source_id = n.source_id
+                 AND entry.node_id = n.id
                  AND entry.claim_kind = 'ENTRYPOINT_HINT'
                  AND entry.status IN ('TRUSTED', 'DERIVED')
                 WHERE {node_where}
@@ -3091,108 +2847,22 @@ class AnalysisStore:
             SELECT candidate_nodes.*, COALESCE(node_degree.count, 0) AS graph_degree
             FROM candidate_nodes
             LEFT JOIN node_degree ON node_degree.node_id = candidate_nodes.id
-            ORDER BY
-              CASE WHEN COALESCE(node_degree.count, 0) > 0 THEN 0 ELSE 1 END,
-              candidate_nodes.entrypoint DESC,
-              COALESCE(node_degree.count, 0) DESC,
-              CASE candidate_nodes.node_kind
-                WHEN 'FILE' THEN 0
-                WHEN 'TYPE' THEN 1
-                WHEN 'CALLABLE' THEN 2
-                WHEN 'FIELD' THEN 3
-                WHEN 'EXTERNAL' THEN 4
-                ELSE 5
-              END,
-              lower(COALESCE(candidate_nodes.relative_path, '')),
-              lower(COALESCE(candidate_nodes.display_name, candidate_nodes.qualified_name, candidate_nodes.name, candidate_nodes.id)),
-              candidate_nodes.id
+            ORDER BY CASE WHEN COALESCE(node_degree.count, 0) > 0 THEN 0 ELSE 1 END,
+                     candidate_nodes.entrypoint DESC,
+                     COALESCE(node_degree.count, 0) DESC,
+                     lower(COALESCE(candidate_nodes.relative_path, '')),
+                     lower(COALESCE(candidate_nodes.display_name, candidate_nodes.qualified_name, candidate_nodes.name, candidate_nodes.id)),
+                     candidate_nodes.id
+            LIMIT ?
             """,
-            [*node_params, *edge_params],
+            [*node_params, *edge_params, limit],
         ).fetchall()
-        if not rows:
-            return []
-        if len(rows) <= limit:
-            return [self._graph_snapshot_node_projection(self._row_dict(row)) for row in rows]
-        rank = {str(row["id"]): index for index, row in enumerate(rows)}
-        candidate_ids = set(rank)
-        edge_rows = conn.execute(
-            f"""
-            WITH candidate_nodes AS (
-                SELECT n.id
-                FROM analysis_graph_nodes n
-                LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
-                WHERE {node_where}
-            )
-            SELECT e.from_node_id, e.to_node_id
-            FROM analysis_graph_edges e
-            JOIN candidate_nodes fn ON fn.id = e.from_node_id
-            JOIN candidate_nodes tn ON tn.id = e.to_node_id
-            WHERE {edge_where}
-              AND e.to_node_id IS NOT NULL
-            ORDER BY
-              CASE e.edge_type
-                WHEN 'DECLARES' THEN 0
-                WHEN 'CALLS' THEN 1
-                WHEN 'USES' THEN 2
-                WHEN 'IMPLEMENTS' THEN 3
-                WHEN 'EXTENDS' THEN 4
-                ELSE 5
-              END,
-              e.id
-            """,
-            [*node_params, *edge_params],
-        ).fetchall()
-        adjacency: Dict[str, List[str]] = {node_id: [] for node_id in candidate_ids}
-        for edge in edge_rows:
-            source = str(edge["from_node_id"])
-            target = str(edge["to_node_id"])
-            if source in candidate_ids and target in candidate_ids:
-                adjacency[source].append(target)
-                adjacency[target].append(source)
-        for node_id, neighbors in adjacency.items():
-            seen: Set[str] = set()
-            ordered: List[str] = []
-            for neighbor in sorted(neighbors, key=lambda item: rank.get(item, len(rank))):
-                if neighbor not in seen:
-                    seen.add(neighbor)
-                    ordered.append(neighbor)
-            adjacency[node_id] = ordered
+        return [self._graph_node_projection(self._row_dict(row)) for row in rows]
 
-        selected: List[sqlite3.Row] = []
-        selected_ids: Set[str] = set()
-
-        def add_node(node_id: str) -> None:
-            if len(selected) >= limit or node_id in selected_ids:
-                return
-            selected_ids.add(node_id)
-            selected.append(rows[rank[node_id]])
-
-        for row in rows:
-            if len(selected) >= limit:
-                break
-            seed_id = str(row["id"])
-            add_node(seed_id)
-            for neighbor_id in adjacency.get(seed_id, []):
-                add_node(neighbor_id)
-                if len(selected) >= limit:
-                    break
-
-        return [self._graph_snapshot_node_projection(self._row_dict(row)) for row in selected]
-
-    def _relationship_aware_graph_view_edges(
-        self, conn: sqlite3.Connection, query: GraphSnapshotQuery, visible_node_ids: List[str], max_edges: int
-    ) -> tuple[List[Dict[str, Any]], int]:
+    def _relationship_aware_graph_view_edges(self, conn: sqlite3.Connection, query: GraphQuery, visible_node_ids: List[str], max_edges: int) -> tuple[List[Dict[str, Any]], int]:
         if not visible_node_ids:
             return [], 0
-        edge_where, edge_params = self._graph_snapshot_edge_where(
-            query.snapshot_id,
-            query.source_id,
-            query.flow_domain,
-            query.fact_origin,
-            query.edge_type,
-            query.include_unresolved,
-            query.search,
-        )
+        edge_where, edge_params = self._graph_edge_where(query)
         placeholders = ",".join("?" for _ in visible_node_ids)
         internal_count = int(
             conn.execute(
@@ -3220,38 +2890,22 @@ class AnalysisStore:
                    tn.qualified_name AS to_qualified_name,
                    tn.name AS to_name
             FROM analysis_graph_edges e
-            LEFT JOIN analysis_graph_nodes fn ON fn.snapshot_id = e.snapshot_id AND fn.id = e.from_node_id
-            LEFT JOIN analysis_graph_nodes tn ON tn.snapshot_id = e.snapshot_id AND tn.id = e.to_node_id
+            LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
             WHERE {edge_where}
               AND e.from_node_id IN ({placeholders})
               AND e.to_node_id IN ({placeholders})
-            ORDER BY
-              CASE e.edge_type
-                WHEN 'DECLARES' THEN 0
-                WHEN 'CALLS' THEN 1
-                WHEN 'REFERENCES' THEN 2
-                WHEN 'IMPORTS' THEN 3
-                ELSE 4
-              END,
-              e.id
+            ORDER BY e.edge_type, e.id
             LIMIT ?
             """,
             [*edge_params, *visible_node_ids, *visible_node_ids, edge_limit],
         ).fetchall()
-        return [self._graph_snapshot_edge_projection(self._row_dict(row)) for row in rows], internal_count
+        return [self._graph_edge_projection(self._row_dict(row)) for row in rows], internal_count
 
-    def _graph_view_boundary_edge_count(self, conn: sqlite3.Connection, query: GraphSnapshotQuery, visible_node_ids: List[str]) -> int:
+    def _graph_view_boundary_edge_count(self, conn: sqlite3.Connection, query: GraphQuery, visible_node_ids: List[str]) -> int:
         if not visible_node_ids:
             return 0
-        edge_where, edge_params = self._graph_snapshot_edge_where(
-            query.snapshot_id,
-            query.source_id,
-            query.flow_domain,
-            query.fact_origin,
-            query.edge_type,
-            query.include_unresolved,
-            query.search,
-        )
+        edge_where, edge_params = self._graph_edge_where(query)
         placeholders = ",".join("?" for _ in visible_node_ids)
         return int(
             conn.execute(
@@ -3273,84 +2927,109 @@ class AnalysisStore:
         escaped = str(value).replace("\\", "\\\\").replace("_", "\\_")
         return f"%{escaped}%"
 
-    def _graph_snapshot_revision(self, query: GraphSnapshotQuery) -> str:
+    def _graph_revision(self, query: GraphQuery) -> str:
         payload = self._graph_revision_payload(query)
         token = base64.urlsafe_b64encode(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).decode("ascii").rstrip("=")
-        return f"{query.source_id}:{query.flow_domain}:graph-snapshot:{token}"
+        return f"{query.source_id}:{query.flow_domain}:graph:{token}"
 
-    def _graph_snapshot_etag(self, graph_revision: str) -> str:
-        return f'"{base64.urlsafe_b64encode(graph_revision.encode("utf-8")).decode("ascii").rstrip("=")}"'
+    def _graph_revision_payload(self, query: GraphQuery) -> Dict[str, Any]:
+        payload = query.as_payload()
+        payload["queryFingerprint"] = query.fingerprint
+        return payload
 
-    def _decode_graph_snapshot_revision(self, graph_revision: str) -> Dict[str, Any]:
+    def _decode_graph_revision(self, graph_revision: str) -> Dict[str, Any]:
         if not graph_revision:
-            raise KnowledgeError("GRAPH_SNAPSHOT_REVISION_REQUIRED", "graphRevision is required.")
+            raise KnowledgeError("GRAPH_REVISION_REQUIRED", "graphRevision is required.")
         token = graph_revision.rsplit(":", 1)[-1]
         try:
             padded = token + ("=" * (-len(token) % 4))
             payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
         except (ValueError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
-            raise KnowledgeError("GRAPH_SNAPSHOT_STALE", "Graph snapshot revision is stale.")
-        if not isinstance(payload, dict) or payload.get("contractVersion") != GRAPH_CONTRACT_VERSION or not payload.get("snapshotId"):
-            raise KnowledgeError("GRAPH_SNAPSHOT_STALE", "Graph snapshot revision is stale.")
+            raise KnowledgeError("GRAPH_REVISION_STALE", "Graph revision is stale.")
+        if not isinstance(payload, dict) or payload.get("contractVersion") != GRAPH_CONTRACT_VERSION or not payload.get("graphId"):
+            raise KnowledgeError("GRAPH_REVISION_STALE", "Graph revision is stale.")
         return payload
 
-    def _snapshot_id_from_graph_revision(self, graph_revision: str) -> str:
-        return str(self._decode_graph_snapshot_revision(graph_revision)["snapshotId"])
+    def _graph_etag(self, graph_revision: str) -> str:
+        return f'"{base64.urlsafe_b64encode(graph_revision.encode("utf-8")).decode("ascii").rstrip("=")}"'
 
-    def _graph_revision_has_snapshot_token(self, graph_revision: str) -> bool:
+    def _assert_graph_query_current(self, conn: sqlite3.Connection, payload: Dict[str, Any], query: GraphQuery) -> None:
+        expected = self._graph_revision_payload(query)
+        keys = (
+            "contractVersion",
+            "sortVersion",
+            "graphId",
+            "sourceId",
+            "flowDomain",
+            "factOrigin",
+            "nodeKind",
+            "edgeType",
+            "includeExternal",
+            "includeUnresolved",
+            "includeIsolated",
+            "search",
+        )
+        if any(payload.get(key) != expected.get(key) for key in keys):
+            raise KnowledgeError("GRAPH_REVISION_STALE", "Graph revision is stale.")
+        state = self._current_graph_state(conn, query.source_id)
+        if state is None or state["graph_id"] != query.graph_id:
+            raise KnowledgeError("GRAPH_REVISION_STALE", "Graph revision is stale.")
+
+    def _encode_graph_cursor(self, query: GraphQuery, page_kind: str, last_id: str) -> str:
+        payload = {
+            "contractVersion": GRAPH_CONTRACT_VERSION,
+            "graphId": query.graph_id,
+            "sourceId": query.source_id,
+            "resource": page_kind,
+            "queryFingerprint": query.fingerprint,
+            "sortVersion": query.sort_version,
+            "last": {"id": last_id},
+        }
+        payload["signature"] = self._graph_cursor_signature(payload)
+        return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("ascii").rstrip("=")
+
+    def _graph_cursor_signature(self, payload: Dict[str, Any]) -> str:
+        body = {key: value for key, value in payload.items() if key != "signature"}
+        encoded = json.dumps(body, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(f"{GRAPH_CURSOR_SIGNATURE_CONTEXT}:{encoded}".encode("utf-8")).hexdigest()
+
+    def _decode_graph_cursor(self, cursor: Optional[str], query: GraphQuery, page_kind: str) -> Optional[str]:
+        if not cursor:
+            return None
         try:
-            self._decode_graph_snapshot_revision(graph_revision)
-        except KnowledgeError:
-            return False
-        return True
+            padded = cursor + ("=" * (-len(cursor) % 4))
+            payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            raise KnowledgeError("GRAPH_CURSOR_INVALID", "Graph cursor is invalid.")
+        if not isinstance(payload, dict) or payload.get("contractVersion") != GRAPH_CONTRACT_VERSION:
+            raise KnowledgeError("GRAPH_CURSOR_INVALID", "Graph cursor is invalid.")
+        if payload.get("signature") != self._graph_cursor_signature(payload):
+            raise KnowledgeError("GRAPH_CURSOR_INVALID", "Graph cursor is invalid.")
+        if payload.get("resource") != page_kind:
+            raise KnowledgeError("GRAPH_CURSOR_RESOURCE_MISMATCH", "Graph cursor resource does not match this request.")
+        if payload.get("sourceId") != query.source_id or payload.get("graphId") != query.graph_id:
+            raise KnowledgeError("GRAPH_CURSOR_QUERY_MISMATCH", "Graph cursor query does not match this request.")
+        if payload.get("queryFingerprint") != query.fingerprint or payload.get("sortVersion") != query.sort_version:
+            raise KnowledgeError("GRAPH_CURSOR_QUERY_MISMATCH", "Graph cursor query does not match this request.")
+        last = payload.get("last")
+        if not isinstance(last, dict) or not last.get("id"):
+            raise KnowledgeError("GRAPH_CURSOR_INVALID", "Graph cursor is invalid.")
+        return str(last["id"])
 
-    def _graph_snapshot_exists(self, conn: sqlite3.Connection, snapshot_id: str) -> bool:
-        row = conn.execute(
-            "SELECT 1 FROM graph_snapshots WHERE snapshot_id = ? AND state IN ('PUBLISHED', 'RETIRED')",
-            (snapshot_id,),
-        ).fetchone()
-        return row is not None
-
-    def _assert_snapshot_readable(self, conn: sqlite3.Connection, snapshot_id: str, source_id: Optional[str]) -> sqlite3.Row:
-        row = conn.execute(
-            "SELECT snapshot_id, source_id, state FROM graph_snapshots WHERE snapshot_id = ?",
-            (snapshot_id,),
-        ).fetchone()
-        if row is None:
-            tombstone = conn.execute("SELECT source_id FROM graph_snapshot_tombstones WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
-            if tombstone is not None:
-                if source_id and tombstone["source_id"] != source_id:
-                    raise KnowledgeError("GRAPH_SNAPSHOT_SOURCE_MISMATCH", "Graph snapshot belongs to another source.")
-                raise KnowledgeError("GRAPH_SNAPSHOT_EXPIRED", "Graph snapshot is no longer retained.", snapshotId=snapshot_id)
-            raise KnowledgeError("GRAPH_SNAPSHOT_NOT_FOUND", "Graph snapshot was not found.", snapshotId=snapshot_id)
-        if source_id and row["source_id"] != source_id:
-            raise KnowledgeError("GRAPH_SNAPSHOT_SOURCE_MISMATCH", "Graph snapshot belongs to another source.", snapshotId=snapshot_id)
-        if row["state"] not in {"PUBLISHED", "RETIRED"}:
-            raise KnowledgeError("GRAPH_SNAPSHOT_NOT_FOUND", "Graph snapshot was not found.", snapshotId=snapshot_id)
-        return row
-
-    def _graph_snapshot_evidence(
-        self,
-        conn: sqlite3.Connection,
-        snapshot_id: str,
-        node_id: Optional[str] = None,
-        edge_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+    def _graph_evidence(self, conn: sqlite3.Connection, node_id: Optional[str] = None, edge_id: Optional[str] = None) -> List[Dict[str, Any]]:
         if edge_id:
             rows = conn.execute(
                 """
                 SELECT ev.id, ev.source_id, ev.analysis_file_id, af.relative_path, ev.line_start, ev.line_end,
                        ev.evidence_kind, ev.excerpt_hash, ev.metadata_json, ev.fact_origin, ev.flow_domain
                 FROM analysis_graph_edges edge
-                JOIN analysis_graph_evidence ev
-                  ON ev.snapshot_id = edge.snapshot_id
-                 AND ev.id = edge.evidence_id
+                JOIN analysis_graph_evidence ev ON ev.source_id = edge.source_id AND ev.id = edge.evidence_id
                 LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
-                WHERE edge.snapshot_id = ? AND edge.id = ?
+                WHERE edge.id = ?
                 ORDER BY ev.id
                 LIMIT 100
                 """,
-                (snapshot_id, edge_id),
+                (edge_id,),
             ).fetchall()
         elif node_id:
             rows = conn.execute(
@@ -3359,45 +3038,20 @@ class AnalysisStore:
                        ev.evidence_kind, ev.excerpt_hash, ev.metadata_json, ev.fact_origin, ev.flow_domain
                 FROM analysis_graph_claims claim
                 JOIN analysis_graph_evidence ev
-                  ON ev.snapshot_id = claim.snapshot_id
-                 AND EXISTS (
-                    SELECT 1
-                    FROM json_each(claim.evidence_ids_json)
-                    WHERE value = ev.id
-                 )
+                  ON ev.source_id = claim.source_id
+                 AND EXISTS (SELECT 1 FROM json_each(claim.evidence_ids_json) WHERE value = ev.id)
                 LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
-                WHERE claim.snapshot_id = ? AND claim.node_id = ?
+                WHERE claim.node_id = ?
                 ORDER BY ev.id
                 LIMIT 100
                 """,
-                (snapshot_id, node_id),
+                (node_id,),
             ).fetchall()
         else:
             rows = []
-        return [
-            {
-                "id": row["id"],
-                "sourceId": row["source_id"],
-                "relativePath": row["relative_path"],
-                "lineStart": row["line_start"],
-                "lineEnd": row["line_end"],
-                "evidenceKind": row["evidence_kind"],
-                "excerptHash": row["excerpt_hash"],
-                "factOrigin": row["fact_origin"],
-                "flowDomain": row["flow_domain"],
-                "metadata": self._json_dict(row["metadata_json"]),
-            }
-            for row in rows
-        ]
+        return self._evidence_projection(rows)
 
-    def _graph_snapshot_node_relations(
-        self,
-        conn: sqlite3.Connection,
-        snapshot_id: str,
-        node_id: str,
-        source_id: str,
-        limit: int = GRAPH_NODE_DETAIL_RELATION_LIMIT,
-    ) -> Dict[str, Any]:
+    def _graph_node_relations(self, conn: sqlite3.Connection, node_id: str, source_id: str, limit: int = GRAPH_NODE_DETAIL_RELATION_LIMIT) -> Dict[str, Any]:
         def rows_for(direction: str) -> List[sqlite3.Row]:
             column = "e.from_node_id" if direction == "outgoing" else "e.to_node_id"
             return conn.execute(
@@ -3417,26 +3071,16 @@ class AnalysisStore:
                        tn.node_kind AS target_node_kind,
                        COUNT(*) OVER() AS total_count
                 FROM analysis_graph_edges e
-                JOIN analysis_graph_nodes fn
-                  ON fn.snapshot_id = e.snapshot_id
-                 AND fn.source_id = e.source_id
-                 AND fn.id = e.from_node_id
-                LEFT JOIN analysis_graph_nodes tn
-                  ON tn.snapshot_id = e.snapshot_id
-                 AND tn.source_id = e.source_id
-                 AND tn.id = e.to_node_id
-                LEFT JOIN analysis_graph_evidence ev
-                  ON ev.snapshot_id = e.snapshot_id
-                 AND ev.source_id = e.source_id
-                 AND ev.id = e.evidence_id
+                JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                LEFT JOIN analysis_graph_evidence ev ON ev.source_id = e.source_id AND ev.id = e.evidence_id
                 LEFT JOIN analysis_files ev_af ON ev_af.file_id = ev.analysis_file_id
-                WHERE e.snapshot_id = ?
-                  AND e.source_id = ?
+                WHERE e.source_id = ?
                   AND {column} = ?
                 ORDER BY e.edge_type, e.id
                 LIMIT ?
                 """,
-                (snapshot_id, source_id, node_id, limit),
+                (source_id, node_id, limit),
             ).fetchall()
 
         def unresolved_target_name(row: sqlite3.Row) -> Optional[str]:
@@ -3450,16 +3094,10 @@ class AnalysisStore:
                 return value.get("name") or value.get("qualifiedName") or value.get("displayName") or value.get("symbol")
             return str(value)
 
-        def line_value(metadata: Dict[str, Any], *keys: str) -> Optional[Any]:
-            for key in keys:
-                if metadata.get(key) is not None:
-                    return metadata.get(key)
-            return None
-
         def item_from(row: sqlite3.Row) -> Dict[str, Any]:
             metadata = self._json_dict(row["metadata_json"])
-            line_start = row["evidence_line_start"] or line_value(metadata, "lineStart", "callsiteLineStart", "sourceLineStart")
-            line_end = row["evidence_line_end"] or line_value(metadata, "lineEnd", "callsiteLineEnd", "sourceLineEnd") or line_start
+            line_start = row["evidence_line_start"] or metadata.get("lineStart") or metadata.get("callsiteLineStart") or metadata.get("sourceLineStart")
+            line_end = row["evidence_line_end"] or metadata.get("lineEnd") or metadata.get("callsiteLineEnd") or metadata.get("sourceLineEnd") or line_start
             source_path = row["evidence_relative_path"] or metadata.get("relativePath") or metadata.get("sourcePath") or metadata.get("file")
             return {
                 "edgeId": row["id"],
@@ -3469,11 +3107,7 @@ class AnalysisStore:
                 "sourceName": row["source_display_name"] or row["source_qualified_name"] or row["source_name"] or row["from_node_id"],
                 "sourceKind": row["source_node_kind"],
                 "targetNodeId": row["to_node_id"],
-                "targetName": row["target_display_name"]
-                or row["target_qualified_name"]
-                or row["target_name"]
-                or unresolved_target_name(row)
-                or row["to_node_id"],
+                "targetName": row["target_display_name"] or row["target_qualified_name"] or row["target_name"] or unresolved_target_name(row) or row["to_node_id"],
                 "targetKind": row["target_node_kind"],
                 "sourcePath": source_path,
                 "lineStart": line_start,
@@ -3485,68 +3119,42 @@ class AnalysisStore:
             }
 
         def group(rows: List[sqlite3.Row]) -> Dict[str, Any]:
-            return {
-                "totalCount": int(rows[0]["total_count"]) if rows else 0,
-                "items": [item_from(row) for row in rows],
-            }
+            return {"totalCount": int(rows[0]["total_count"]) if rows else 0, "items": [item_from(row) for row in rows]}
 
-        outgoing = rows_for("outgoing")
-        incoming = rows_for("incoming")
-        return {
-            "incoming": group(incoming),
-            "outgoing": group(outgoing),
-        }
+        return {"incoming": group(rows_for("incoming")), "outgoing": group(rows_for("outgoing"))}
 
-    def _assert_graph_snapshot_revision(self, requested: str, current: str) -> None:
-        if not requested:
-            raise KnowledgeError("GRAPH_SNAPSHOT_REVISION_REQUIRED", "graphRevision is required.")
-        if requested != current:
-            raise KnowledgeError("GRAPH_SNAPSHOT_STALE", "Graph snapshot revision is stale.", requested=requested, current=current)
+    def _claims_for_node_detail(self, conn: sqlite3.Connection, row: Dict[str, Any]) -> List[sqlite3.Row]:
+        return conn.execute(
+            """
+            SELECT id, node_id, claim_kind, summary, confidence, status, rejection_reason, evidence_ids_json, metadata_json, fact_origin, flow_domain,
+                   CASE WHEN node_id = ? THEN 1 ELSE 0 END AS selected_node_claim
+            FROM analysis_graph_claims
+            WHERE source_id = ?
+              AND (
+                node_id = ?
+                OR (
+                  claim_kind = 'RESPONSIBILITY'
+                  AND status IN ('TRUSTED', 'LOW_CONFIDENCE')
+                  AND (
+                    node_id = ?
+                    OR node_id IN (
+                      SELECT id
+                      FROM analysis_graph_nodes
+                      WHERE analysis_file_id = ?
+                        AND node_kind = 'FILE'
+                      ORDER BY confidence DESC
+                      LIMIT 1
+                    )
+                  )
+                )
+              )
+            ORDER BY selected_node_claim DESC, confidence DESC, id
+            LIMIT 100
+            """,
+            (row["id"], row["source_id"], row["id"], row.get("parent_node_id"), row.get("analysis_file_id")),
+        ).fetchall()
 
-    def _encode_graph_snapshot_cursor(self, query: GraphSnapshotQuery, page_kind: str, last_id: str) -> str:
-        payload = {
-            "contractVersion": GRAPH_CONTRACT_VERSION,
-            "snapshotId": query.snapshot_id,
-            "sourceId": query.source_id,
-            "resource": page_kind,
-            "queryFingerprint": query.fingerprint,
-            "sortVersion": query.sort_version,
-            "last": {"id": last_id},
-        }
-        payload["signature"] = self._graph_cursor_signature(payload)
-        return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("ascii").rstrip("=")
-
-    def _graph_cursor_signature(self, payload: Dict[str, Any]) -> str:
-        body = {key: value for key, value in payload.items() if key != "signature"}
-        encoded = json.dumps(body, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(f"{GRAPH_CURSOR_SIGNATURE_CONTEXT}:{encoded}".encode("utf-8")).hexdigest()
-
-    def _decode_graph_snapshot_cursor(self, cursor: Optional[str], query: GraphSnapshotQuery, page_kind: str) -> Optional[str]:
-        if not cursor:
-            return None
-        try:
-            padded = cursor + ("=" * (-len(cursor) % 4))
-            payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
-        except (ValueError, TypeError, json.JSONDecodeError):
-            raise KnowledgeError("GRAPH_CURSOR_INVALID", "Graph snapshot cursor is invalid.")
-        if not isinstance(payload, dict) or payload.get("contractVersion") != GRAPH_CONTRACT_VERSION:
-            raise KnowledgeError("GRAPH_CURSOR_INVALID", "Graph snapshot cursor is invalid.")
-        if payload.get("signature") != self._graph_cursor_signature(payload):
-            raise KnowledgeError("GRAPH_CURSOR_INVALID", "Graph snapshot cursor is invalid.")
-        if payload.get("resource") != page_kind:
-            raise KnowledgeError("GRAPH_CURSOR_RESOURCE_MISMATCH", "Graph snapshot cursor resource does not match this request.")
-        if payload.get("sourceId") != query.source_id:
-            raise KnowledgeError("GRAPH_CURSOR_SOURCE_MISMATCH", "Graph snapshot cursor source does not match this request.")
-        if payload.get("snapshotId") != query.snapshot_id:
-            raise KnowledgeError("GRAPH_CURSOR_QUERY_MISMATCH", "Graph snapshot cursor snapshot does not match this request.")
-        if payload.get("queryFingerprint") != query.fingerprint or payload.get("sortVersion") != query.sort_version:
-            raise KnowledgeError("GRAPH_CURSOR_QUERY_MISMATCH", "Graph snapshot cursor query does not match this request.")
-        last = payload.get("last")
-        if not isinstance(last, dict) or not last.get("id"):
-            raise KnowledgeError("GRAPH_CURSOR_INVALID", "Graph snapshot cursor is invalid.")
-        return str(last["id"])
-
-    def _graph_snapshot_node_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
+    def _graph_node_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
         metadata = self._json_dict(row.get("metadata_json"))
         return {
             "id": row["id"],
@@ -3570,22 +3178,10 @@ class AnalysisStore:
             "external": row.get("node_kind") == "EXTERNAL",
             "summaryAvailable": bool(metadata.get("responsibility") or metadata.get("claimSummary")),
             "importance": metadata.get("displayScore") or metadata.get("flowScore") or row.get("confidence"),
-            "metadata": {
-                key: value
-                for key, value in metadata.items()
-                if key
-                in {
-                    "callTargetCategory",
-                    "sliceDefaultVisibility",
-                    "sourceKind",
-                    "displayScore",
-                    "flowScore",
-                    "unresolvedReason",
-                }
-            },
+            "metadata": {key: value for key, value in metadata.items() if key in {"callTargetCategory", "sliceDefaultVisibility", "sourceKind", "displayScore", "flowScore", "unresolvedReason"}},
         }
 
-    def _graph_snapshot_edge_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
+    def _graph_edge_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
         metadata = self._json_dict(row.get("metadata_json"))
         unresolved_target = None
         if row.get("unresolved_target_json"):
@@ -3614,69 +3210,7 @@ class AnalysisStore:
             "factOrigin": row.get("fact_origin"),
             "status": row.get("status"),
             "unresolvedTarget": unresolved_target,
-            "metadata": {
-                key: value
-                for key, value in metadata.items()
-                if key
-                in {
-                    "callKind",
-                    "callTargetCategory",
-                    "displayScore",
-                    "flowScore",
-                    "methodName",
-                    "receiverText",
-                    "receiverTypeHint",
-                    "sliceDefaultVisibility",
-                    "unresolvedReason",
-                }
-            },
-        }
-
-    def _fact_claim_rows(self, conn: sqlite3.Connection, snapshot_id: str, node_id: str) -> List[Dict[str, Any]]:
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM analysis_graph_claims
-            WHERE snapshot_id = ?
-              AND node_id = ?
-            ORDER BY claim_kind = 'RESPONSIBILITY' DESC, status = 'TRUSTED' DESC, confidence DESC
-        """,
-            (snapshot_id, node_id),
-        ).fetchall()
-        return [self._row_dict(row) for row in rows]
-
-    def _fact_summary(self, conn: sqlite3.Connection, row: Dict[str, Any]) -> Dict[str, Any]:
-        direct = self._responsibility_claim(conn, row["snapshot_id"], row["id"])
-        if direct:
-            return self._summary_from_claim(direct, "DIRECT")
-        parent_id = row.get("parent_node_id")
-        if parent_id:
-            parent = self._responsibility_claim(conn, row["snapshot_id"], parent_id)
-            if parent:
-                return self._summary_from_claim(parent, "PARENT_FALLBACK")
-        file_row = conn.execute(
-            """
-            SELECT id
-            FROM analysis_graph_nodes
-            WHERE analysis_file_id = ?
-              AND snapshot_id = ?
-              AND node_kind = 'FILE'
-            ORDER BY confidence DESC
-            LIMIT 1
-        """,
-            (row.get("analysis_file_id"), row["snapshot_id"]),
-        ).fetchone()
-        if file_row:
-            file_claim = self._responsibility_claim(conn, row["snapshot_id"], file_row["id"])
-            if file_claim:
-                return self._summary_from_claim(file_claim, "FILE_FALLBACK")
-        return {
-            "summary": None,
-            "summarySource": "NONE",
-            "summaryClaimId": None,
-            "summaryClaimNodeId": None,
-            "summaryConfidence": None,
-            "summaryEvidenceCount": 0,
+            "metadata": {key: value for key, value in metadata.items() if key in {"callKind", "callTargetCategory", "displayScore", "flowScore", "methodName", "receiverText", "receiverTypeHint", "sliceDefaultVisibility", "unresolvedReason"}},
         }
 
     def _fact_summary_from_claim_rows(self, claims: List[Dict[str, Any]], row: Dict[str, Any]) -> Dict[str, Any]:
@@ -3699,30 +3233,7 @@ class AnalysisStore:
         file_claim = next((claim for claim in candidates if claim.get("node_id") not in {row["id"], row.get("parent_node_id")}), None)
         if file_claim:
             return self._summary_from_claim(file_claim, "FILE_FALLBACK")
-        return {
-            "summary": None,
-            "summarySource": "NONE",
-            "summaryClaimId": None,
-            "summaryClaimNodeId": None,
-            "summaryConfidence": None,
-            "summaryEvidenceCount": 0,
-        }
-
-    def _responsibility_claim(self, conn: sqlite3.Connection, snapshot_id: str, node_id: str) -> Optional[Dict[str, Any]]:
-        row = conn.execute(
-            """
-            SELECT *
-            FROM analysis_graph_claims
-            WHERE snapshot_id = ?
-              AND node_id = ?
-              AND claim_kind = 'RESPONSIBILITY'
-              AND status IN ('TRUSTED', 'LOW_CONFIDENCE')
-            ORDER BY status = 'TRUSTED' DESC, confidence DESC
-            LIMIT 1
-        """,
-            (snapshot_id, node_id),
-        ).fetchone()
-        return self._row_dict(row) if row else None
+        return {"summary": None, "summarySource": "NONE", "summaryClaimId": None, "summaryClaimNodeId": None, "summaryConfidence": None, "summaryEvidenceCount": 0}
 
     def _summary_from_claim(self, claim: Dict[str, Any], source: str) -> Dict[str, Any]:
         return {
@@ -3773,9 +3284,9 @@ class AnalysisStore:
         """,
             params,
         ).fetchone()
-        graph_node_clauses = [self._current_graph_node_clause("n")]
-        graph_edge_clauses = [self._current_graph_edge_clause("e")]
-        graph_params = []
+        graph_node_clauses = [self._inventory_membership_graph_node_clause("n")]
+        graph_edge_clauses = [self._inventory_membership_graph_edge_clause("e")]
+        graph_params: List[Any] = []
         if source_id:
             graph_node_clauses.append("n.source_id = ?")
             graph_edge_clauses.append("e.source_id = ?")
@@ -3956,1044 +3467,453 @@ class AnalysisStore:
                     return str(row["job_id"])
         return str(state.get("job_id") or "direct")
 
-    def _graph_snapshot_id(self, job_id: str, source_id: str) -> str:
-        return f"{job_id}:{source_id}"
-
-    def _ensure_building_graph_snapshot(self, conn: sqlite3.Connection, snapshot_id: str, source_id: str, job_id: str, created_at: str) -> None:
-        conn.execute(
-            """
-            INSERT INTO graph_snapshots(snapshot_id, source_id, job_id, state, created_at, manifest_json)
-            VALUES (?, ?, ?, 'BUILDING', ?, '{}')
-            ON CONFLICT(snapshot_id) DO UPDATE SET state = CASE
-                WHEN graph_snapshots.state = 'BUILDING' THEN 'BUILDING'
-                ELSE graph_snapshots.state
-            END
-            """,
-            (snapshot_id, source_id, job_id, created_at),
-        )
-
-    def _publish_job_graph_snapshots(self, conn: sqlite3.Connection, job_id: str) -> None:
+    def _graph_identity_by_source(self, conn: sqlite3.Connection, source_ids: List[str]) -> Dict[str, Dict[str, Optional[str]]]:
+        if not source_ids or not self._table_exists(conn, "analysis_graph_state"):
+            return {}
+        placeholders = ",".join("?" for _ in source_ids)
         rows = conn.execute(
-            """
-            SELECT snapshot_id
-            FROM graph_snapshots
-            WHERE job_id = ?
-              AND state = 'BUILDING'
-            ORDER BY source_id
+            f"""
+            SELECT source_id, graph_id, content_identity
+            FROM analysis_graph_state
+            WHERE source_id IN ({placeholders})
             """,
-            (job_id,),
+            source_ids,
         ).fetchall()
-        for row in rows:
-            self._publish_graph_snapshot(conn, row["snapshot_id"])
+        return {
+            str(row["source_id"]): {
+                "graphId": row["graph_id"],
+                "graphRevision": row["content_identity"],
+            }
+            for row in rows
+        }
 
-    def _finalize_unpublished_job_graph_snapshots(self, conn: sqlite3.Connection, job_id: str, state: str) -> None:
-        conn.execute(
-            """
-            UPDATE graph_snapshots
-            SET state = ?
-            WHERE job_id = ?
-              AND state = 'BUILDING'
-            """,
-            (state, job_id),
-        )
-
-    def _expected_analyzed_file_count(
-        self,
-        conn: sqlite3.Connection,
-        source_id: Optional[str],
-        overview_row: Optional[sqlite3.Row] = None,
-    ) -> int:
-        if not source_id:
-            return 0
-        if overview_row is not None:
-            return int(overview_row["analysis_succeeded_files"] or 0) + int(overview_row["analysis_partial_files"] or 0)
-        if self._table_exists(conn, "knowledge_source_overview"):
-            row = conn.execute(
+    def _reconcile_graph_runtime_inventory_membership(self, conn: sqlite3.Connection) -> None:
+        if not self._table_exists(conn, "analysis_graph_nodes"):
+            return
+        source_ids = {
+            str(row["source_id"])
+            for row in conn.execute(
                 """
-                SELECT analysis_succeeded_files, analysis_partial_files
-                FROM knowledge_source_overview
+                SELECT source_id FROM analysis_graph_nodes WHERE source_id IS NOT NULL
+                UNION
+                SELECT source_id FROM analysis_graph_edges WHERE source_id IS NOT NULL
+                UNION
+                SELECT source_id FROM analysis_graph_claims WHERE source_id IS NOT NULL
+                UNION
+                SELECT source_id FROM analysis_graph_evidence WHERE source_id IS NOT NULL
+                UNION
+                SELECT source_id FROM analysis_graph_state WHERE source_id IS NOT NULL
+                UNION
+                SELECT source_id FROM semantic_documents WHERE source_id IS NOT NULL
+                """
+            ).fetchall()
+            if row["source_id"]
+        }
+        affected_sources = self._delete_graph_rows_without_inventory_membership(conn)
+        affected_sources.update(self._purge_stale_semantic_documents(conn))
+        source_ids.update(affected_sources)
+        now = datetime.now(timezone.utc).isoformat()
+        for source_id in sorted(source_ids):
+            self._refresh_graph_state(conn, source_id, now)
+        self._mark_semantic_sources_stale_lightweight(conn, affected_sources)
+
+    def _mark_semantic_sources_stale_lightweight(self, conn: sqlite3.Connection, source_ids: Set[str]) -> None:
+        if not source_ids or not self._table_exists(conn, "semantic_index_state"):
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        for source_id in sorted(source_ids):
+            conn.execute(
+                """
+                UPDATE semantic_index_state
+                SET status = 'STALE',
+                    indexed_node_count = 0,
+                    embedding_model = NULL,
+                    embedding_dimension = NULL,
+                    updated_at = ?,
+                    started_at = NULL
                 WHERE source_id = ?
                 """,
-                (source_id,),
-            ).fetchone()
-            if row is not None:
-                return int(row["analysis_succeeded_files"] or 0) + int(row["analysis_partial_files"] or 0)
-        if self._table_exists(conn, "files"):
-            current_files = int(conn.execute("SELECT COUNT(*) AS count FROM files WHERE source_id = ?", (source_id,)).fetchone()["count"] or 0)
-            if current_files > 0:
-                row = conn.execute(
-                    """
-                    SELECT COUNT(*) AS count
-                    FROM files f
-                    JOIN analysis_files af
-                      ON af.source_id = f.source_id
-                     AND af.relative_path = f.relative_path
-                     AND af.content_hash = f.content_hash
-                    WHERE f.source_id = ?
-                      AND af.status IN ('ANALYZED', 'PARTIAL')
-                    """,
-                    (source_id,),
-                ).fetchone()
-                return int(row["count"] or 0)
-        row = conn.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM analysis_files
-            WHERE source_id = ?
-              AND status IN ('ANALYZED', 'PARTIAL')
-            """,
-            (source_id,),
-        ).fetchone()
-        return int(row["count"] or 0)
-
-    def _graph_snapshot_represented_file_count(self, conn: sqlite3.Connection, source_id: str, snapshot_id: str) -> int:
-        row = conn.execute(
-            """
-            SELECT COUNT(DISTINCT file_id) AS count
-            FROM (
-                SELECT COALESCE(analysis_file_id, inventory_file_id) AS file_id
-                FROM analysis_graph_nodes
-                WHERE source_id = ? AND snapshot_id = ? AND COALESCE(analysis_file_id, inventory_file_id) IS NOT NULL
-                UNION
-                SELECT COALESCE(analysis_file_id, inventory_file_id) AS file_id
-                FROM analysis_graph_edges
-                WHERE source_id = ? AND snapshot_id = ? AND COALESCE(analysis_file_id, inventory_file_id) IS NOT NULL
-                UNION
-                SELECT COALESCE(analysis_file_id, inventory_file_id) AS file_id
-                FROM analysis_graph_evidence
-                WHERE source_id = ? AND snapshot_id = ? AND COALESCE(analysis_file_id, inventory_file_id) IS NOT NULL
-                UNION
-                SELECT COALESCE(analysis_file_id, inventory_file_id) AS file_id
-                FROM analysis_graph_diagnostics
-                WHERE source_id = ? AND snapshot_id = ? AND COALESCE(analysis_file_id, inventory_file_id) IS NOT NULL
+                (now, source_id),
             )
-            """,
-            (source_id, snapshot_id, source_id, snapshot_id, source_id, snapshot_id, source_id, snapshot_id),
-        ).fetchone()
-        return int(row["count"] or 0)
 
-    def _graph_snapshot_job_file_count(self, conn: sqlite3.Connection, source_id: str, job_id: Optional[str]) -> int:
-        if not job_id:
-            return 0
-        row = conn.execute(
+    def _purge_stale_semantic_documents(self, conn: sqlite3.Connection) -> Set[str]:
+        if not all(self._table_exists(conn, table) for table in ("semantic_documents", "analysis_graph_nodes", "analysis_graph_state")):
+            return set()
+        stale_rows = conn.execute(
             """
-            SELECT COUNT(DISTINCT COALESCE(analysis_file_id, inventory_file_id)) AS count
-            FROM analysis_job_files
-            WHERE source_id = ?
-              AND job_id = ?
-              AND COALESCE(analysis_file_id, inventory_file_id) IS NOT NULL
-            """,
-            (source_id, job_id),
-        ).fetchone()
-        return int(row["count"] or 0)
-
-    def _graph_snapshot_coverage(
-        self,
-        conn: sqlite3.Connection,
-        source_id: Optional[str],
-        snapshot_id: Optional[str],
-        expected_analyzed: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        expected = self._expected_analyzed_file_count(conn, source_id) if expected_analyzed is None else int(expected_analyzed or 0)
-        empty = {
-            "currentSnapshotId": snapshot_id,
-            "currentSnapshotState": None,
-            "currentGraphNodeCount": 0,
-            "currentGraphEdgeCount": 0,
-            "representedFileCount": 0,
-            "promotionCoverageFileCount": 0,
-            "expectedAnalyzedFileCount": expected,
-            "coverageStatus": "NO_GRAPH",
-            "promotionReason": None,
-        }
-        if not source_id or not snapshot_id:
-            return empty
-        snapshot = conn.execute(
+            SELECT DISTINCT d.source_id
+            FROM semantic_documents d
+            LEFT JOIN analysis_graph_nodes n
+              ON n.source_id = d.source_id
+             AND n.id = d.node_id
+            LEFT JOIN analysis_graph_state state
+              ON state.source_id = d.source_id
+            WHERE n.id IS NULL
+               OR state.graph_id IS NULL
+               OR d.graph_id != state.graph_id
             """
-            SELECT snapshot_id, source_id, job_id, state
-            FROM graph_snapshots
-            WHERE source_id = ?
-              AND snapshot_id = ?
-            """,
-            (source_id, snapshot_id),
-        ).fetchone()
-        if snapshot is None:
-            return empty
-        counts = conn.execute(
-            """
-            SELECT
-              (SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = ? AND snapshot_id = ?) AS node_count,
-              (SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = ? AND snapshot_id = ?) AS edge_count
-            """,
-            (source_id, snapshot_id, source_id, snapshot_id),
-        ).fetchone()
-        represented = self._graph_snapshot_represented_file_count(conn, source_id, snapshot_id)
-        job_files = self._graph_snapshot_job_file_count(conn, source_id, snapshot["job_id"])
-        promotion_coverage = max(represented, job_files)
-        node_count = int(counts["node_count"] or 0)
-        edge_count = int(counts["edge_count"] or 0)
-        if expected <= 0:
-            coverage_status = "UNKNOWN" if node_count > 0 or edge_count > 0 else "NO_GRAPH"
-            promotion_reason = "COVERAGE_UNKNOWN_ALLOWED" if coverage_status == "UNKNOWN" else None
-        elif promotion_coverage >= expected:
-            coverage_status = "COMPLETE"
-            promotion_reason = "SOURCE_WIDE_GRAPH_COVERAGE" if represented >= expected else "SOURCE_WIDE_JOB_COVERAGE"
-        elif node_count > 0 or edge_count > 0 or represented > 0:
-            coverage_status = "PARTIAL"
-            promotion_reason = None
-        else:
-            coverage_status = "NO_GRAPH"
-            promotion_reason = None
-        return {
-            "currentSnapshotId": snapshot_id,
-            "currentSnapshotState": snapshot["state"],
-            "currentGraphNodeCount": node_count,
-            "currentGraphEdgeCount": edge_count,
-            "representedFileCount": represented,
-            "promotionCoverageFileCount": promotion_coverage,
-            "expectedAnalyzedFileCount": expected,
-            "coverageStatus": coverage_status,
-            "promotionReason": promotion_reason,
-        }
-
-    def _snapshot_promotion_assessment(self, conn: sqlite3.Connection, source_id: str, snapshot_id: str) -> Dict[str, Any]:
-        coverage = self._graph_snapshot_coverage(conn, source_id, snapshot_id)
-        if coverage["coverageStatus"] in {"COMPLETE", "UNKNOWN"}:
-            return {**coverage, "promotable": True}
-        return {
-            **coverage,
-            "promotable": False,
-            "promotionReason": PARTIAL_SNAPSHOT_NOT_PROMOTED_CODE,
-            "degradedReason": GRAPH_COVERAGE_PARTIAL_REASON,
-        }
-
-    def _record_snapshot_not_promoted_diagnostic(
-        self,
-        conn: sqlite3.Connection,
-        snapshot_id: str,
-        source_id: str,
-        job_id: str,
-        assessment: Dict[str, Any],
-    ) -> None:
-        message = (
-            "Graph snapshot was not promoted because it does not cover the current analyzed file set "
-            f"({assessment['promotionCoverageFileCount']} represented, {assessment['expectedAnalyzedFileCount']} expected)."
-        )
-        metadata = {
-            "snapshotId": snapshot_id,
-            "representedFileCount": assessment["representedFileCount"],
-            "promotionCoverageFileCount": assessment["promotionCoverageFileCount"],
-            "expectedAnalyzedFileCount": assessment["expectedAnalyzedFileCount"],
-            "coverageStatus": assessment["coverageStatus"],
-        }
+        ).fetchall()
+        source_ids = {str(row["source_id"]) for row in stale_rows if row["source_id"]}
+        if not source_ids:
+            return set()
         conn.execute(
             """
-            INSERT OR REPLACE INTO analysis_graph_diagnostics(
-                id, snapshot_id, job_id, source_id, severity, stage, code, message, metadata_json, created_at,
-                fact_origin, flow_domain
+            DELETE FROM semantic_documents
+            WHERE document_id IN (
+                SELECT d.document_id
+                FROM semantic_documents d
+                LEFT JOIN analysis_graph_nodes n
+                  ON n.source_id = d.source_id
+                 AND n.id = d.node_id
+                LEFT JOIN analysis_graph_state state
+                  ON state.source_id = d.source_id
+                WHERE n.id IS NULL
+                   OR state.graph_id IS NULL
+                   OR d.graph_id != state.graph_id
             )
-            VALUES (?, ?, ?, ?, 'WARN', 'SNAPSHOT_PROMOTION', ?, ?, ?, ?, 'SYSTEM', 'ALL')
-            """,
-            (
-                f"promotion:{PARTIAL_SNAPSHOT_NOT_PROMOTED_CODE}",
-                snapshot_id,
-                job_id,
-                source_id,
-                PARTIAL_SNAPSHOT_NOT_PROMOTED_CODE,
-                message,
-                json.dumps(metadata, separators=(",", ":")),
-                datetime.now(timezone.utc).isoformat(),
-            ),
+            """
         )
-
-    def _store_graph_snapshot_as_history(self, conn: sqlite3.Connection, snapshot_id: str, source_id: str) -> None:
-        self._rebuild_graph_snapshot_metrics(conn, snapshot_id, source_id)
-        published_at = datetime.now(timezone.utc).isoformat()
-        manifest = self._stored_graph_manifest(conn, snapshot_id, source_id, published_at)
-        conn.execute(
-            """
-            UPDATE graph_snapshots
-            SET state = 'RETIRED',
-                published_at = ?,
-                manifest_json = ?,
-                content_identity = ?
-            WHERE snapshot_id = ?
-            """,
-            (published_at, json.dumps(manifest, separators=(",", ":")), manifest["graphRevision"], snapshot_id),
-        )
-
-    def _publish_graph_snapshot(self, conn: sqlite3.Connection, snapshot_id: str) -> None:
-        row = conn.execute("SELECT * FROM graph_snapshots WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
-        if row is None:
-            return
-        current = conn.execute(
-            """
-            SELECT current.snapshot_id, snapshot.published_at
-            FROM graph_current_snapshots current
-            JOIN graph_snapshots snapshot
-              ON snapshot.source_id = current.source_id
-             AND snapshot.snapshot_id = current.snapshot_id
-             AND snapshot.state IN ('PUBLISHED', 'RETIRED')
-            WHERE current.source_id = ?
-            """,
-            (row["source_id"],),
-        ).fetchone()
-        if row["state"] == "PUBLISHED":
-            if current is None or current["snapshot_id"] == snapshot_id:
-                self._ensure_default_graph_snapshot_metrics(conn, snapshot_id, row["source_id"])
-                return
-            if current["published_at"] and row["published_at"] and current["published_at"] > row["published_at"]:
-                raise KnowledgeError("GRAPH_SNAPSHOT_STALE", "A newer graph snapshot is already current.")
-        if row["state"] != "BUILDING":
-            raise KnowledgeError("GRAPH_SNAPSHOT_NOT_PUBLISHABLE", "Graph snapshot is not eligible for publication.")
-        if current is not None and current["published_at"] and row["created_at"] and current["published_at"] > row["created_at"]:
-            raise KnowledgeError("GRAPH_SNAPSHOT_STALE", "A newer graph snapshot is already current.")
-        source_id = row["source_id"]
-        self._validate_graph_snapshot_for_publication(conn, snapshot_id, source_id)
-        assessment = self._snapshot_promotion_assessment(conn, source_id, snapshot_id)
-        if not assessment["promotable"]:
-            self._record_snapshot_not_promoted_diagnostic(conn, snapshot_id, source_id, row["job_id"], assessment)
-            self._store_graph_snapshot_as_history(conn, snapshot_id, source_id)
-            return
-        self._rebuild_graph_snapshot_metrics(conn, snapshot_id, source_id)
-        published_at = datetime.now(timezone.utc).isoformat()
-        manifest = self._stored_graph_manifest(conn, snapshot_id, source_id, published_at)
-        conn.execute(
-            """
-            UPDATE graph_snapshots
-            SET state = 'RETIRED'
-            WHERE source_id = ?
-              AND state = 'PUBLISHED'
-              AND snapshot_id != ?
-            """,
-            (source_id, snapshot_id),
-        )
-        conn.execute(
-            """
-            UPDATE graph_snapshots
-            SET state = 'PUBLISHED',
-                published_at = ?,
-                manifest_json = ?,
-                content_identity = ?
-            WHERE snapshot_id = ?
-            """,
-            (published_at, json.dumps(manifest, separators=(",", ":")), manifest["graphRevision"], snapshot_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO graph_current_snapshots(source_id, snapshot_id, published_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(source_id) DO UPDATE SET snapshot_id = excluded.snapshot_id, published_at = excluded.published_at
-            """,
-            (source_id, snapshot_id, published_at),
-        )
-        self._mark_semantic_index_pending_for_snapshot(conn, snapshot_id, source_id, row["job_id"])
-        self._retain_graph_snapshots(conn, source_id)
-
-    def _mark_semantic_index_pending_for_snapshot(self, conn: sqlite3.Connection, snapshot_id: str, source_id: str, job_id: str) -> None:
-        try:
-            SemanticIndexStore.mark_current_graph_pending_conn(conn, source_id)
-        except Exception as exc:  # pragma: no cover - defensive isolation for lifecycle sidecar updates.
-            self._record_semantic_index_state_diagnostic(conn, snapshot_id, source_id, job_id, exc)
-
-    def _record_semantic_index_state_diagnostic(
-        self,
-        conn: sqlite3.Connection,
-        snapshot_id: str,
-        source_id: str,
-        job_id: str,
-        error: Exception,
-    ) -> None:
-        metadata = {"snapshotId": snapshot_id, "errorType": type(error).__name__}
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO analysis_graph_diagnostics(
-                id, snapshot_id, job_id, source_id, severity, stage, code, message, metadata_json, created_at,
-                fact_origin, flow_domain
-            )
-            VALUES (?, ?, ?, ?, 'WARN', 'SEMANTIC_INDEX_STATE', 'SEMANTIC_INDEX_STATE_UPDATE_FAILED', ?, ?, ?, 'SYSTEM', 'ALL')
-            """,
-            (
-                f"semantic-index-state:{snapshot_id}",
-                snapshot_id,
-                job_id,
-                source_id,
-                "Semantic index state update failed after graph publication.",
-                json.dumps(metadata, separators=(",", ":")),
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-
-    def _ensure_default_graph_snapshot_metrics(self, conn: sqlite3.Connection, snapshot_id: str, source_id: str) -> None:
-        query = self._graph_query(conn, "manifest", snapshot_id, source_id, None, None, None, None, "show", True, True)
-        if self._graph_metric(conn, query) is None:
-            self._rebuild_graph_snapshot_metrics(conn, snapshot_id, source_id)
-
-    def _validate_graph_snapshot_for_publication(self, conn: sqlite3.Connection, snapshot_id: str, source_id: str) -> None:
-        node_count = int(conn.execute("SELECT COUNT(*) AS count FROM analysis_graph_nodes WHERE snapshot_id = ?", (snapshot_id,)).fetchone()["count"] or 0)
-        edge_count = int(conn.execute("SELECT COUNT(*) AS count FROM analysis_graph_edges WHERE snapshot_id = ?", (snapshot_id,)).fetchone()["count"] or 0)
-        if node_count <= 0:
-            raise KnowledgeError("GRAPH_SNAPSHOT_VALIDATION_FAILED", "Graph snapshot must contain at least one node.")
-        wrong_source = conn.execute(
-            """
-            SELECT 1
-            FROM (
-                SELECT source_id FROM analysis_graph_nodes WHERE snapshot_id = ?
-                UNION ALL
-                SELECT source_id FROM analysis_graph_edges WHERE snapshot_id = ?
-                UNION ALL
-                SELECT source_id FROM analysis_graph_evidence WHERE snapshot_id = ?
-                UNION ALL
-                SELECT source_id FROM analysis_graph_claims WHERE snapshot_id = ?
-                UNION ALL
-                SELECT source_id FROM analysis_graph_diagnostics WHERE snapshot_id = ?
-            )
-            WHERE source_id != ?
-            LIMIT 1
-            """,
-            (snapshot_id, snapshot_id, snapshot_id, snapshot_id, snapshot_id, source_id),
-        ).fetchone()
-        if wrong_source is not None:
-            raise KnowledgeError("GRAPH_SNAPSHOT_VALIDATION_FAILED", "Graph snapshot contains rows for a different source.")
-        missing_endpoint = conn.execute(
-            """
-            SELECT 1
-            FROM analysis_graph_edges edge
-            LEFT JOIN analysis_graph_nodes source_node
-              ON source_node.snapshot_id = edge.snapshot_id
-             AND source_node.id = edge.from_node_id
-            LEFT JOIN analysis_graph_nodes target_node
-              ON target_node.snapshot_id = edge.snapshot_id
-             AND target_node.id = edge.to_node_id
-            WHERE edge.snapshot_id = ?
-              AND (source_node.id IS NULL OR (edge.to_node_id IS NOT NULL AND target_node.id IS NULL))
-            LIMIT 1
-            """,
-            (snapshot_id,),
-        ).fetchone()
-        if missing_endpoint is not None:
-            raise KnowledgeError("GRAPH_SNAPSHOT_VALIDATION_FAILED", "Graph snapshot contains an edge with a missing endpoint.")
-        missing_claim_node = conn.execute(
-            """
-            SELECT 1
-            FROM analysis_graph_claims claim
-            LEFT JOIN analysis_graph_nodes node
-              ON node.snapshot_id = claim.snapshot_id
-             AND node.id = claim.node_id
-            WHERE claim.snapshot_id = ?
-              AND node.id IS NULL
-            LIMIT 1
-            """,
-            (snapshot_id,),
-        ).fetchone()
-        if missing_claim_node is not None:
-            raise KnowledgeError("GRAPH_SNAPSHOT_VALIDATION_FAILED", "Graph snapshot contains a claim for a missing node.")
-        if edge_count < 0:
-            raise KnowledgeError("GRAPH_SNAPSHOT_VALIDATION_FAILED", "Graph snapshot edge count is invalid.")
-
-    def _rebuild_graph_snapshot_metrics(self, conn: sqlite3.Connection, snapshot_id: str, source_id: str) -> None:
-        conn.execute("DELETE FROM graph_snapshot_metrics WHERE snapshot_id = ?", (snapshot_id,))
-        now = datetime.now(timezone.utc).isoformat()
-        values = self._graph_metric_dimensions(conn, snapshot_id)
-        for flow_domain in values["flow_domain"]:
-            for fact_origin in values["fact_origin"]:
-                for node_kind in values["node_kind"]:
-                    for edge_type in values["edge_type"]:
-                        for include_external in ("show", "hide"):
-                            for include_unresolved in (True, False):
-                                for include_isolated in (True, False):
-                                    query = GraphSnapshotQuery(
-                                        source_id=source_id,
-                                        snapshot_id=snapshot_id,
-                                        resource="manifest",
-                                        flow_domain=flow_domain,
-                                        fact_origin=fact_origin,
-                                        node_kind=node_kind,
-                                        edge_type=edge_type,
-                                        include_external=include_external,
-                                        include_unresolved=include_unresolved,
-                                        include_isolated=include_isolated,
-                                    )
-                                    self._insert_graph_snapshot_metric(conn, query, now)
-
-    def _graph_metric_dimensions(self, conn: sqlite3.Connection, snapshot_id: str) -> Dict[str, List[str]]:
-        def values(table: str, column: str) -> List[str]:
-            rows = conn.execute(
-                f"SELECT DISTINCT {column} AS value FROM {table} WHERE snapshot_id = ? AND {column} IS NOT NULL ORDER BY {column}",
-                (snapshot_id,),
-            ).fetchall()
-            return ["ALL", *[str(row["value"]).upper() for row in rows if row["value"]]]
-
-        flow_values = sorted(set(values("analysis_graph_nodes", "flow_domain") + values("analysis_graph_edges", "flow_domain")))
-        fact_values = sorted(set(values("analysis_graph_nodes", "fact_origin") + values("analysis_graph_edges", "fact_origin")))
-        return {
-            "flow_domain": flow_values or ["ALL"],
-            "fact_origin": fact_values or ["ALL"],
-            "node_kind": values("analysis_graph_nodes", "node_kind"),
-            "edge_type": values("analysis_graph_edges", "edge_type"),
-        }
-
-    def _insert_graph_snapshot_metric(self, conn: sqlite3.Connection, query: GraphSnapshotQuery, created_at: str) -> None:
-        node_where, node_params = self._graph_snapshot_node_where(
-            query.snapshot_id,
-            query.source_id,
-            query.flow_domain,
-            query.fact_origin,
-            query.node_kind,
-            query.include_external,
-            query.include_isolated,
-            query.search,
-        )
-        edge_where, edge_params = self._graph_snapshot_edge_where(
-            query.snapshot_id,
-            query.source_id,
-            query.flow_domain,
-            query.fact_origin,
-            query.edge_type,
-            query.include_unresolved,
-            query.search,
-        )
-        node_count = int(conn.execute(f"SELECT COUNT(*) AS count FROM analysis_graph_nodes n WHERE {node_where}", node_params).fetchone()["count"] or 0)
-        edge_count = int(conn.execute(f"SELECT COUNT(*) AS count FROM analysis_graph_edges e WHERE {edge_where}", edge_params).fetchone()["count"] or 0)
-        node_types = {
-            row["node_kind"] or "UNKNOWN": int(row["count"] or 0)
-            for row in conn.execute(
-                f"SELECT n.node_kind, COUNT(*) AS count FROM analysis_graph_nodes n WHERE {node_where} GROUP BY n.node_kind",
-                node_params,
-            ).fetchall()
-        }
-        edge_types = {
-            row["edge_type"] or "UNKNOWN": int(row["count"] or 0)
-            for row in conn.execute(
-                f"SELECT e.edge_type, COUNT(*) AS count FROM analysis_graph_edges e WHERE {edge_where} GROUP BY e.edge_type",
-                edge_params,
-            ).fetchall()
-        }
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO graph_snapshot_metrics(
-                snapshot_id, query_fingerprint, source_id, flow_domain, fact_origin, node_kind, edge_type,
-                include_external, include_unresolved, include_isolated, total_node_count, total_edge_count,
-                node_type_counts_json, edge_type_counts_json, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                query.snapshot_id,
-                query.fingerprint,
-                query.source_id,
-                query.flow_domain,
-                query.fact_origin,
-                query.node_kind,
-                query.edge_type,
-                query.include_external,
-                1 if query.include_unresolved else 0,
-                1 if query.include_isolated else 0,
-                node_count,
-                edge_count,
-                json.dumps(node_types, separators=(",", ":")),
-                json.dumps(edge_types, separators=(",", ":")),
-                created_at,
-            ),
-        )
-
-    def _stored_graph_manifest(self, conn: sqlite3.Connection, snapshot_id: str, source_id: str, generated_at: str) -> Dict[str, Any]:
-        query = self._graph_query(conn, "manifest", snapshot_id, source_id, None, None, None, None, "show", True, True)
-        metric = self._graph_metric(conn, query)
-        if metric is None:
-            raise KnowledgeError("GRAPH_SNAPSHOT_METRICS_MISSING", "Graph snapshot metrics are missing for this query.")
-        revision = self._graph_snapshot_revision(query)
-        return {
-            "graphRevision": revision,
-            "snapshotId": snapshot_id,
-            "sourceId": source_id,
-            "sourceName": self._graph_source_name(conn, source_id),
-            "flowDomain": None,
-            "filters": self._graph_query_filters(query),
-            "queryFingerprint": query.fingerprint,
-            "totalNodeCount": int(metric["total_node_count"] or 0),
-            "totalEdgeCount": int(metric["total_edge_count"] or 0),
-            "connectedComponentCount": None,
-            "largestComponentNodeCount": None,
-            "largestComponentEdgeCount": None,
-            "nodeTypeCounts": self._json_dict(metric["node_type_counts_json"]),
-            "edgeTypeCounts": self._json_dict(metric["edge_type_counts_json"]),
-            "defaultNodePageSize": 500,
-            "defaultEdgePageSize": 1000,
-            "etag": self._graph_snapshot_etag(revision),
-            "generatedAt": generated_at,
-            "status": self._graph_status_or_empty(conn, source_id),
-        }
-
-    def _current_snapshot_id(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Optional[str]:
-        row = self._current_snapshot_row(conn, source_id)
-        return row["snapshot_id"] if row else None
-
-    def _current_resolution_expected_sql(self, conn: sqlite3.Connection) -> str:
-        if self._current_resolution_has_coverage_tables is None:
-            self._current_resolution_has_coverage_tables = self._table_exists(conn, "files") and self._table_exists(conn, "knowledge_source_overview")
-        if not self._current_resolution_has_coverage_tables:
-            return "0 AS expected_analyzed_file_count"
-        return """
-                       COALESCE(
-                         (SELECT overview.analysis_succeeded_files + overview.analysis_partial_files
-                          FROM knowledge_source_overview overview
-                          WHERE overview.source_id = current.source_id),
-                         CASE
-                           WHEN (SELECT COUNT(*) FROM files f WHERE f.source_id = current.source_id) > 0 THEN
-                             (SELECT COUNT(*)
-                              FROM files f
-                              JOIN analysis_files af
-                                ON af.source_id = f.source_id
-                               AND af.relative_path = f.relative_path
-                               AND af.content_hash = f.content_hash
-                              WHERE f.source_id = current.source_id
-                                AND af.status IN ('ANALYZED', 'PARTIAL'))
-                           ELSE
-                             (SELECT COUNT(*)
-                              FROM analysis_files af
-                              WHERE af.source_id = current.source_id
-                                AND af.status IN ('ANALYZED', 'PARTIAL'))
-                         END
-                       ) AS expected_analyzed_file_count
-            """
-
-    def _current_snapshot_row(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Optional[sqlite3.Row]:
-        expected_sql = self._current_resolution_expected_sql(conn)
-        if not source_id:
-            row = conn.execute(
-                f"""
-                SELECT current.snapshot_id, current.snapshot_id AS pointer_snapshot_id, current.published_at AS pointer_published_at,
-                       snapshot.published_at, snapshot.content_identity, snapshot.source_id, snapshot.state,
-                       {expected_sql}
-                FROM graph_current_snapshots current
-                JOIN graph_snapshots snapshot
-                  ON snapshot.source_id = current.source_id
-                 AND snapshot.snapshot_id = current.snapshot_id
-                 AND snapshot.state IN ('PUBLISHED', 'RETIRED')
-                ORDER BY current.published_at DESC
-                LIMIT 1
+        if self._table_exists(conn, "semantic_vectors"):
+            conn.execute(
                 """
-            ).fetchone()
-            return self._resolve_current_snapshot_row(conn, row["source_id"], row) if row else None
-        row = conn.execute(
-            f"""
-            SELECT current.snapshot_id, current.snapshot_id AS pointer_snapshot_id, current.published_at AS pointer_published_at,
-                   snapshot.published_at, snapshot.content_identity, snapshot.source_id, snapshot.state,
-                   {expected_sql}
-            FROM graph_current_snapshots current
-            JOIN graph_snapshots snapshot
-              ON snapshot.source_id = current.source_id
-             AND snapshot.snapshot_id = current.snapshot_id
-             AND snapshot.state IN ('PUBLISHED', 'RETIRED')
-            WHERE current.source_id = ?
-            """,
-            (source_id,),
-        ).fetchone()
-        return self._resolve_current_snapshot_row(conn, source_id, row) if row else None
-
-    def _resolve_current_snapshot_row(
-        self,
-        conn: sqlite3.Connection,
-        source_id: str,
-        pointer_row: sqlite3.Row,
-    ) -> Dict[str, Any]:
-        pointer = dict(pointer_row)
-        pointer["recovery_reason"] = None
-        pointer["promotion_reason"] = None
-        expected = int(pointer.get("expected_analyzed_file_count") or 0)
-        if expected <= 1:
-            return pointer
-        pointer_coverage = self._graph_snapshot_coverage(conn, source_id, pointer["snapshot_id"], expected)
-        if pointer_coverage["promotionCoverageFileCount"] >= expected:
-            pointer["promotion_reason"] = pointer_coverage["promotionReason"]
-            return pointer
-        recovered = self._best_same_source_recovery_snapshot_row(
-            conn,
-            source_id,
-            expected,
-            pointer["snapshot_id"],
-            pointer_coverage["promotionCoverageFileCount"],
+                DELETE FROM semantic_vectors
+                WHERE document_id NOT IN (SELECT document_id FROM semantic_documents)
+                """
         )
-        if recovered is None:
-            pointer["promotion_reason"] = PARTIAL_SNAPSHOT_NOT_PROMOTED_CODE
-            return pointer
-        recovered_row = dict(recovered["row"])
-        recovered_row["pointer_snapshot_id"] = pointer["snapshot_id"]
-        recovered_row["pointer_published_at"] = pointer["pointer_published_at"]
-        recovered_row["recovery_reason"] = GRAPH_COVERAGE_RECOVERY_REASON
-        recovered_row["promotion_reason"] = "RECOVERED_SAME_SOURCE_READABLE_SNAPSHOT"
-        return recovered_row
+        return source_ids
 
-    def _best_same_source_recovery_snapshot_row(
-        self,
-        conn: sqlite3.Connection,
-        source_id: str,
-        expected: int,
-        current_snapshot_id: str,
-        current_coverage: int,
-    ) -> Optional[Dict[str, Any]]:
-        candidates = []
-        for row in conn.execute(
+    def _delete_graph_rows_without_inventory_membership(self, conn: sqlite3.Connection) -> Set[str]:
+        if not all(self._table_exists(conn, table) for table in ("analysis_graph_nodes", "analysis_files", "files")):
+            return set()
+        if not {"id", "source_id", "relative_path", "content_hash"}.issubset(self._table_columns(conn, "files")):
+            return set()
+        if not {"file_id", "source_id", "relative_path", "content_hash"}.issubset(self._table_columns(conn, "analysis_files")):
+            return set()
+        invalid_nodes = conn.execute(
             """
-            SELECT snapshot_id, snapshot_id AS pointer_snapshot_id, published_at AS pointer_published_at,
-                   published_at, content_identity, source_id, state, created_at
-            FROM graph_snapshots
-            WHERE source_id = ?
-              AND state IN ('PUBLISHED', 'RETIRED')
-              AND snapshot_id != ?
-            ORDER BY published_at DESC, created_at DESC
-            """,
-            (source_id, current_snapshot_id),
-        ).fetchall():
-            coverage = self._graph_snapshot_coverage(conn, source_id, row["snapshot_id"], expected)
-            if coverage["promotionCoverageFileCount"] < expected:
-                continue
-            if coverage["promotionCoverageFileCount"] <= current_coverage:
-                continue
-            candidates.append(
-                (
-                    coverage["promotionCoverageFileCount"],
-                    coverage["currentGraphNodeCount"] + coverage["currentGraphEdgeCount"],
-                    row["published_at"] or row["created_at"] or "",
-                    row,
-                    coverage,
+            SELECT n.source_id, n.id
+            FROM analysis_graph_nodes n
+            WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM analysis_files af
+                    WHERE af.source_id = n.source_id
+                      AND af.relative_path = n.relative_path
+                      AND af.content_hash = n.content_hash
                 )
+               OR NOT EXISTS (
+                    SELECT 1
+                    FROM files f
+                    WHERE f.source_id = n.source_id
+                      AND f.relative_path = n.relative_path
+                      AND f.content_hash = n.content_hash
+                )
+            """
+        ).fetchall()
+        affected_sources = {str(row["source_id"]) for row in invalid_nodes if row["source_id"]}
+        node_ids = [str(row["id"]) for row in invalid_nodes if row["id"]]
+        for batch in _chunks(node_ids, 400):
+            placeholders = ",".join("?" for _ in batch)
+            self._delete_semantic_documents_for_nodes(conn, batch)
+            conn.execute(
+                f"DELETE FROM analysis_graph_edges WHERE from_node_id IN ({placeholders}) OR to_node_id IN ({placeholders})",
+                [*batch, *batch],
             )
-        if not candidates:
-            return None
-        candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-        return {"row": candidates[0][3], "coverage": candidates[0][4]}
+            conn.execute(f"DELETE FROM analysis_graph_claims WHERE node_id IN ({placeholders})", batch)
+            conn.execute(f"DELETE FROM analysis_graph_nodes WHERE id IN ({placeholders})", batch)
+        for table in ("analysis_graph_edges", "analysis_graph_evidence", "analysis_graph_diagnostics"):
+            if not self._table_exists(conn, table):
+                continue
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT row.source_id
+                FROM {table} row
+                WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM analysis_files af
+                        WHERE af.source_id = row.source_id
+                          AND af.relative_path = row.relative_path
+                          AND af.content_hash = row.content_hash
+                    )
+                   OR NOT EXISTS (
+                        SELECT 1
+                        FROM files f
+                        WHERE f.source_id = row.source_id
+                          AND f.relative_path = row.relative_path
+                          AND f.content_hash = row.content_hash
+                    )
+                """
+            ).fetchall()
+            affected_sources.update(str(row["source_id"]) for row in rows if row["source_id"])
+            conn.execute(
+                f"""
+                DELETE FROM {table}
+                WHERE id IN (
+                    SELECT row.id
+                    FROM {table} row
+                    WHERE NOT EXISTS (
+                            SELECT 1
+                            FROM analysis_files af
+                            WHERE af.source_id = row.source_id
+                              AND af.relative_path = row.relative_path
+                              AND af.content_hash = row.content_hash
+                        )
+                       OR NOT EXISTS (
+                            SELECT 1
+                            FROM files f
+                            WHERE f.source_id = row.source_id
+                              AND f.relative_path = row.relative_path
+                              AND f.content_hash = row.content_hash
+                        )
+                )
+                """
+            )
+        orphan_edges = conn.execute(
+            """
+            SELECT DISTINCT edge.source_id
+            FROM analysis_graph_edges edge
+            LEFT JOIN analysis_graph_nodes from_node
+              ON from_node.source_id = edge.source_id
+             AND from_node.id = edge.from_node_id
+            LEFT JOIN analysis_graph_nodes to_node
+              ON to_node.source_id = edge.source_id
+             AND to_node.id = edge.to_node_id
+            WHERE from_node.id IS NULL
+               OR (edge.to_node_id IS NOT NULL AND to_node.id IS NULL)
+            """
+        ).fetchall()
+        affected_sources.update(str(row["source_id"]) for row in orphan_edges if row["source_id"])
+        conn.execute(
+            """
+            DELETE FROM analysis_graph_edges
+            WHERE id IN (
+                SELECT edge.id
+                FROM analysis_graph_edges edge
+                LEFT JOIN analysis_graph_nodes from_node
+                  ON from_node.source_id = edge.source_id
+                 AND from_node.id = edge.from_node_id
+                LEFT JOIN analysis_graph_nodes to_node
+                  ON to_node.source_id = edge.source_id
+                 AND to_node.id = edge.to_node_id
+                WHERE from_node.id IS NULL
+                   OR (edge.to_node_id IS NOT NULL AND to_node.id IS NULL)
+            )
+            """
+        )
+        return affected_sources
 
-    def _current_graph_coverage_metadata(
-        self,
-        conn: sqlite3.Connection,
-        source_id: Optional[str],
-        current: Optional[Dict[str, Any]],
-        overview_row: Optional[sqlite3.Row] = None,
-    ) -> Dict[str, Any]:
-        expected = self._expected_analyzed_file_count(conn, source_id, overview_row)
-        if current is None:
-            return {
-                "currentSnapshotId": None,
-                "currentPointerSnapshotId": None,
-                "currentSnapshotState": None,
-                "currentGraphNodeCount": 0,
-                "currentGraphEdgeCount": 0,
-                "representedFileCount": 0,
-                "expectedAnalyzedFileCount": expected,
-                "coverageStatus": "NO_GRAPH",
-                "degradedReason": None,
-                "promotionReason": None,
-            }
-        coverage = self._graph_snapshot_coverage(conn, source_id, current["snapshot_id"], expected)
-        coverage_status = coverage["coverageStatus"]
-        degraded_reason = current.get("recovery_reason")
-        if coverage_status == "PARTIAL":
-            coverage_status = "DEGRADED"
-            degraded_reason = degraded_reason or GRAPH_COVERAGE_PARTIAL_REASON
-        return {
-            "currentSnapshotId": current["snapshot_id"],
-            "currentPointerSnapshotId": current.get("pointer_snapshot_id") or current["snapshot_id"],
-            "currentSnapshotState": coverage["currentSnapshotState"] or current.get("state"),
-            "currentGraphNodeCount": coverage["currentGraphNodeCount"],
-            "currentGraphEdgeCount": coverage["currentGraphEdgeCount"],
-            "representedFileCount": coverage["representedFileCount"],
-            "expectedAnalyzedFileCount": coverage["expectedAnalyzedFileCount"],
-            "coverageStatus": coverage_status,
-            "degradedReason": degraded_reason,
-            "promotionReason": current.get("promotion_reason") or coverage["promotionReason"],
-        }
-
-    def _snapshot_id_from_revision(self, graph_revision: str) -> Optional[str]:
-        marker = ":graph-snapshot:"
-        if marker not in graph_revision:
-            return None
-        return graph_revision.split(marker, 1)[1]
-
-    def _delete_file_graph_from_snapshot(self, conn: sqlite3.Connection, file_id: int, snapshot_id: str) -> None:
+    def _delete_file_graph(self, conn: sqlite3.Connection, file_id: int) -> Set[str]:
         graph_node_ids = [
             row["id"]
             for row in conn.execute(
-                "SELECT id FROM analysis_graph_nodes WHERE snapshot_id = ? AND (analysis_file_id = ? OR inventory_file_id = ?)",
-                (snapshot_id, file_id, file_id),
+                "SELECT id FROM analysis_graph_nodes WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?",
+                (file_id, file_id, file_id),
             ).fetchall()
         ]
-        if graph_node_ids:
-            placeholders = ",".join("?" for _ in graph_node_ids)
-            conn.execute(f"DELETE FROM analysis_graph_claims WHERE snapshot_id = ? AND node_id IN ({placeholders})", [snapshot_id, *graph_node_ids])
-            conn.execute(
-                f"DELETE FROM analysis_graph_edges WHERE snapshot_id = ? AND (from_node_id IN ({placeholders}) OR to_node_id IN ({placeholders}))",
-                [snapshot_id, *graph_node_ids, *graph_node_ids],
-            )
-        conn.execute(
-            "DELETE FROM analysis_graph_nodes WHERE snapshot_id = ? AND (analysis_file_id = ? OR inventory_file_id = ?)", (snapshot_id, file_id, file_id)
-        )
-        conn.execute(
-            "DELETE FROM analysis_graph_evidence WHERE snapshot_id = ? AND (analysis_file_id = ? OR inventory_file_id = ?)", (snapshot_id, file_id, file_id)
-        )
-        conn.execute(
-            "DELETE FROM analysis_graph_diagnostics WHERE snapshot_id = ? AND (analysis_file_id = ? OR inventory_file_id = ?)",
-            (snapshot_id, file_id, file_id),
-        )
-
-    def _retain_graph_snapshots(self, conn: sqlite3.Connection, source_id: str, keep_published: int = 3) -> None:
-        current = self._current_snapshot_id(conn, source_id)
-        published = [
-            row["snapshot_id"]
+        source_ids = {
+            str(row["source_id"])
             for row in conn.execute(
                 """
-                SELECT snapshot_id
-                FROM graph_snapshots
-                WHERE source_id = ?
-                  AND state IN ('PUBLISHED', 'RETIRED')
-                ORDER BY published_at DESC, created_at DESC
+                SELECT source_id FROM analysis_graph_nodes WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?
+                UNION
+                SELECT source_id FROM analysis_graph_edges WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?
+                UNION
+                SELECT source_id FROM analysis_graph_evidence WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?
+                UNION
+                SELECT source_id FROM analysis_graph_diagnostics WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?
                 """,
-                (source_id,),
+                (file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id),
             ).fetchall()
-        ]
-        keep = set(published[: max(1, keep_published)])
-        if current:
-            keep.add(current)
-        rows = (
+            if row["source_id"]
+        }
+        if graph_node_ids:
+            self._delete_semantic_documents_for_nodes(conn, graph_node_ids)
+            placeholders = ",".join("?" for _ in graph_node_ids)
             conn.execute(
-                """
-            SELECT snapshot_id
-            FROM graph_snapshots
-            WHERE source_id = ?
-              AND snapshot_id NOT IN (%s)
-            """
-                % ",".join("?" for _ in keep),
-                [source_id, *keep],
-            ).fetchall()
-            if keep
-            else conn.execute("SELECT snapshot_id FROM graph_snapshots WHERE source_id = ?", (source_id,)).fetchall()
-        )
-        for row in rows:
-            snapshot_id = row["snapshot_id"]
-            conn.execute(
-                """
-                INSERT INTO graph_snapshot_tombstones(snapshot_id, source_id, expired_at, reason)
-                VALUES (?, ?, ?, 'RETENTION')
-                ON CONFLICT(snapshot_id) DO UPDATE SET expired_at = excluded.expired_at, reason = excluded.reason
-                """,
-                (snapshot_id, source_id, datetime.now(timezone.utc).isoformat()),
+                f"DELETE FROM analysis_graph_edges WHERE from_node_id IN ({placeholders}) OR to_node_id IN ({placeholders})",
+                [*graph_node_ids, *graph_node_ids],
             )
-            conn.execute("DELETE FROM graph_current_snapshots WHERE snapshot_id = ?", (snapshot_id,))
-            self._delete_graph_snapshot_rows(conn, snapshot_id)
-            conn.execute("DELETE FROM graph_snapshots WHERE snapshot_id = ?", (snapshot_id,))
+            conn.execute(f"DELETE FROM analysis_graph_claims WHERE node_id IN ({placeholders})", graph_node_ids)
+        conn.execute("DELETE FROM analysis_graph_nodes WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?", (file_id, file_id, file_id))
+        conn.execute(
+            "DELETE FROM analysis_graph_edges WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?",
+            (file_id, file_id, file_id),
+        )
+        conn.execute(
+            "DELETE FROM analysis_graph_evidence WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?",
+            (file_id, file_id, file_id),
+        )
+        conn.execute(
+            "DELETE FROM analysis_graph_diagnostics WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?",
+            (file_id, file_id, file_id),
+        )
+        return source_ids
 
-    def _delete_graph_snapshot_rows(self, conn: sqlite3.Connection, snapshot_id: str) -> None:
-        for table in (
-            "graph_snapshot_metrics",
-            "analysis_graph_claims",
-            "analysis_graph_edges",
-            "analysis_graph_evidence",
-            "analysis_graph_diagnostics",
-            "analysis_graph_nodes",
-        ):
-            conn.execute(f"DELETE FROM {table} WHERE snapshot_id = ?", (snapshot_id,))
+    def _delete_semantic_documents_for_nodes(self, conn: sqlite3.Connection, node_ids: List[str]) -> None:
+        if not node_ids or not self._table_exists(conn, "semantic_documents"):
+            return
+        placeholders = ",".join("?" for _ in node_ids)
+        conn.execute(
+            f"""
+            DELETE FROM semantic_documents
+            WHERE node_id IN ({placeholders})
+            """,
+            node_ids,
+        )
 
-    def _backfill_legacy_graph_snapshots(self, conn: sqlite3.Connection) -> None:
+    def _refresh_graph_state(self, conn: sqlite3.Connection, source_id: str, updated_at: Optional[str] = None) -> Optional[str]:
+        updated_at = updated_at or datetime.now(timezone.utc).isoformat()
+        counts = conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = ?) AS node_count,
+              (SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = ?) AS edge_count,
+              (SELECT COUNT(*) FROM analysis_graph_claims WHERE source_id = ?) AS claim_count,
+              (SELECT COUNT(*) FROM analysis_graph_evidence WHERE source_id = ?) AS evidence_count
+            """,
+            (source_id, source_id, source_id, source_id),
+        ).fetchone()
+        node_count = int(counts["node_count"] or 0)
+        edge_count = int(counts["edge_count"] or 0)
+        claim_count = int(counts["claim_count"] or 0)
+        evidence_count = int(counts["evidence_count"] or 0)
+        if node_count <= 0:
+            conn.execute("DELETE FROM analysis_graph_state WHERE source_id = ?", (source_id,))
+            return None
+        content_identity = SemanticIndexStore.compute_graph_revision_conn(conn, source_id)
+        graph_id = content_identity
+        conn.execute(
+            """
+            INSERT INTO analysis_graph_state(
+                source_id, graph_id, content_identity, node_count, edge_count, claim_count, evidence_count, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_id) DO UPDATE SET
+                graph_id = excluded.graph_id,
+                content_identity = excluded.content_identity,
+                node_count = excluded.node_count,
+                edge_count = excluded.edge_count,
+                claim_count = excluded.claim_count,
+                evidence_count = excluded.evidence_count,
+                updated_at = excluded.updated_at
+            """,
+            (source_id, graph_id, content_identity, node_count, edge_count, claim_count, evidence_count, updated_at),
+        )
+        return graph_id
+
+    def _delete_analysis_identity(self, conn: sqlite3.Connection, state: Dict[str, Any]) -> Set[str]:
         rows = conn.execute(
             """
-            SELECT source_id
-            FROM analysis_graph_nodes
-            WHERE snapshot_id IS NULL
-            GROUP BY source_id
-            """
+            SELECT file_id
+            FROM analysis_files
+            WHERE source_id = ?
+              AND relative_path = ?
+              AND content_hash = ?
+            """,
+            (state["source_id"], state["relative_path"], state["content_hash"]),
         ).fetchall()
-        now = datetime.now(timezone.utc).isoformat()
+        affected_sources: Set[str] = set()
         for row in rows:
-            source_id = row["source_id"]
-            snapshot_id = self._graph_snapshot_id("legacy", source_id)
-            self._ensure_building_graph_snapshot(conn, snapshot_id, source_id, "legacy", now)
-            for table in ("analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_evidence", "analysis_graph_claims", "analysis_graph_diagnostics"):
-                conn.execute(f"UPDATE {table} SET snapshot_id = ? WHERE source_id = ? AND snapshot_id IS NULL", (snapshot_id, source_id))
-            self._publish_graph_snapshot(conn, snapshot_id)
-        pending_legacy_rows = conn.execute(
-            """
-            SELECT snapshot_id
-            FROM graph_snapshots
-            WHERE job_id = 'legacy'
-              AND state = 'BUILDING'
-            """
-        ).fetchall()
-        for row in pending_legacy_rows:
-            node_count = int(
-                conn.execute(
-                    "SELECT COUNT(*) AS count FROM analysis_graph_nodes WHERE snapshot_id = ?",
-                    (row["snapshot_id"],),
-                ).fetchone()["count"]
-                or 0
-            )
-            if node_count > 0:
-                self._publish_graph_snapshot(conn, row["snapshot_id"])
+            file_id = int(row["file_id"])
+            affected_sources.update(self._delete_file_analysis(conn, file_id))
+            conn.execute("DELETE FROM analysis_files WHERE file_id = ?", (file_id,))
+        return affected_sources
 
-    def _migrate_legacy_symbol_relation_tables(self, conn: sqlite3.Connection) -> None:
-        tables = {
-            row["name"]
+    def _delete_file_analysis(self, conn: sqlite3.Connection, file_id: int) -> Set[str]:
+        sources = {
+            str(row["source_id"])
             for row in conn.execute(
                 """
-                SELECT name
-                FROM sqlite_master
-                WHERE type = 'table'
-                  AND name IN ('analysis_symbols', 'analysis_symbol_roles', 'analysis_relations')
-                """
-            ).fetchall()
-        }
-        if "analysis_symbols" not in tables:
-            return
-        now = datetime.now(timezone.utc).isoformat()
-        sources = conn.execute("SELECT DISTINCT source_id FROM analysis_symbols WHERE source_id IS NOT NULL ORDER BY source_id").fetchall()
-        for source in sources:
-            source_id = source["source_id"]
-            snapshot_id = self._graph_snapshot_id("legacy-symbols", source_id)
-            if conn.execute("SELECT 1 FROM graph_snapshots WHERE snapshot_id = ? AND state IN ('PUBLISHED', 'RETIRED')", (snapshot_id,)).fetchone():
-                continue
-            self._ensure_building_graph_snapshot(conn, snapshot_id, source_id, "legacy-symbols", now)
-            symbols = conn.execute(
-                """
-                SELECT *
-                FROM analysis_symbols
-                WHERE source_id = ?
-                ORDER BY symbol_id
+                SELECT source_id FROM analysis_files WHERE file_id = ?
+                UNION
+                SELECT source_id FROM analysis_graph_nodes WHERE analysis_file_id = ? OR inventory_file_id = ?
+                UNION
+                SELECT source_id FROM analysis_graph_edges WHERE analysis_file_id = ? OR inventory_file_id = ?
+                UNION
+                SELECT source_id FROM analysis_graph_evidence WHERE analysis_file_id = ? OR inventory_file_id = ?
+                UNION
+                SELECT source_id FROM analysis_graph_diagnostics WHERE analysis_file_id = ? OR inventory_file_id = ?
                 """,
-                (source_id,),
+                (file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id, file_id),
             ).fetchall()
-            for symbol in symbols:
-                metadata = self._json_dict(symbol["metadata_json"])
-                node_kind = self._node_kind_from_source_kind(symbol["kind"])
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO analysis_graph_nodes(
-                        id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, stable_key,
-                        node_kind, language, name, qualified_name, display_name, parent_node_id, line_start, line_end,
-                        confidence, status, metadata_json, created_at, fact_origin, flow_domain
-                    )
-                    VALUES (?, ?, 'legacy-symbols', ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1.0, 'TRUSTED', ?, ?, 'MIGRATED', ?)
-                    """,
-                    (
-                        symbol["symbol_id"],
-                        snapshot_id,
-                        source_id,
-                        symbol["file_id"],
-                        symbol["file_id"],
-                        f"legacy:{source_id}:{symbol['symbol_id']}",
-                        node_kind,
-                        metadata.get("language"),
-                        symbol["name"],
-                        metadata.get("qualifiedName") or symbol["name"],
-                        symbol["name"],
-                        symbol["line_start"],
-                        symbol["line_end"],
-                        json.dumps({**metadata, "sourceKind": symbol["kind"]}, separators=(",", ":")),
-                        now,
-                        metadata.get("flowDomain") or "CODE",
-                    ),
+            if row["source_id"]
+        }
+        for source_id in sorted(sources):
+            self._delete_file_graph(conn, file_id)
+            self._refresh_graph_state(conn, source_id, datetime.now(timezone.utc).isoformat())
+        self._delete_semantic_index_for_file_ids(conn, [file_id])
+        return sources
+
+    def _delete_semantic_index_for_file_ids(self, conn: sqlite3.Connection, file_ids: List[int]) -> Set[str]:
+        file_ids = sorted({int(file_id) for file_id in file_ids if file_id is not None})
+        if not file_ids or not all(
+            self._table_exists(conn, table)
+            for table in ("analysis_graph_nodes", "semantic_documents", "semantic_vectors")
+        ):
+            return set()
+        affected_sources: Set[str] = set()
+        for batch in _chunks(file_ids, 400):
+            placeholders = ",".join("?" for _ in batch)
+            source_rows = conn.execute(
+                f"""
+                SELECT DISTINCT d.source_id
+                FROM semantic_documents d
+                JOIN analysis_graph_nodes n
+                  ON n.source_id = d.source_id
+                 AND n.id = d.node_id
+                WHERE COALESCE(n.analysis_file_id, n.inventory_file_id, n.file_id) IN ({placeholders})
+                """,
+                [*batch],
+            ).fetchall()
+            affected_sources.update(str(row["source_id"]) for row in source_rows if row["source_id"])
+            conn.execute(
+                f"""
+                DELETE FROM semantic_vectors
+                WHERE document_id IN (
+                    SELECT d.document_id
+                    FROM semantic_documents d
+                    JOIN analysis_graph_nodes n
+                      ON n.source_id = d.source_id
+                     AND n.id = d.node_id
+                    WHERE COALESCE(n.analysis_file_id, n.inventory_file_id, n.file_id) IN ({placeholders})
                 )
-            if "analysis_symbol_roles" in tables:
-                roles = conn.execute(
-                    """
-                    SELECT role.*
-                    FROM analysis_symbol_roles role
-                    JOIN analysis_symbols symbol ON symbol.symbol_id = role.symbol_id
-                    WHERE symbol.source_id = ?
-                    ORDER BY role.symbol_id, role.role
-                    """,
-                    (source_id,),
-                ).fetchall()
-                for role in roles:
-                    conn.execute(
-                        """
-                        INSERT OR IGNORE INTO analysis_graph_claims(
-                            id, snapshot_id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
-                            evidence_ids_json, metadata_json, rejection_reason, created_at, fact_origin, flow_domain
-                        )
-                        VALUES (?, ?, 'legacy-symbols', ?, ?, 'ROLE', ?, ?, 'TRUSTED', '[]', ?, NULL, ?, 'MIGRATED', 'CODE')
-                        """,
-                        (
-                            f"legacy-role:{role['symbol_id']}:{role['role']}",
-                            snapshot_id,
-                            source_id,
-                            role["symbol_id"],
-                            role["role"],
-                            role["confidence"],
-                            json.dumps(
-                                {
-                                    "classifier": role["classifier"],
-                                    "classifierVersion": role["classifier_version"],
-                                    "legacyEvidence": self._json_list(role["evidence_json"]),
-                                },
-                                separators=(",", ":"),
-                            ),
-                            now,
-                        ),
-                    )
-            if "analysis_relations" in tables:
-                relations = conn.execute(
-                    """
-                    SELECT relation.*
-                    FROM analysis_relations relation
-                    JOIN analysis_symbols source_symbol ON source_symbol.symbol_id = relation.from_symbol_id
-                    JOIN analysis_symbols target_symbol ON target_symbol.symbol_id = relation.to_symbol_id
-                    WHERE relation.source_id = ?
-                      AND source_symbol.source_id = relation.source_id
-                      AND target_symbol.source_id = relation.source_id
-                    ORDER BY relation.relation_id
-                    """,
-                    (source_id,),
-                ).fetchall()
-                for relation in relations:
-                    conn.execute(
-                        """
-                        INSERT OR IGNORE INTO analysis_graph_edges(
-                            id, snapshot_id, job_id, source_id, inventory_file_id, analysis_file_id, from_node_id,
-                            to_node_id, edge_type, resolution_status, confidence, evidence_id, unresolved_target_json,
-                            metadata_json, status, created_at, fact_origin, flow_domain
-                        )
-                        VALUES (?, ?, 'legacy-symbols', ?, NULL, NULL, ?, ?, ?, 'RESOLVED', ?, NULL, NULL, ?, 'TRUSTED', ?, 'MIGRATED', ?)
-                        """,
-                        (
-                            relation["relation_id"],
-                            snapshot_id,
-                            source_id,
-                            relation["from_symbol_id"],
-                            relation["to_symbol_id"],
-                            relation["relation"],
-                            relation["confidence"],
-                            json.dumps(
-                                {
-                                    **self._json_dict(relation["metadata_json"]),
-                                    "legacyEvidence": self._json_list(relation["evidence_json"]),
-                                },
-                                separators=(",", ":"),
-                            ),
-                            now,
-                            self._json_dict(relation["metadata_json"]).get("flowDomain") or "CODE",
-                        ),
-                    )
-            self._migration_stage("after_legacy_copy")
-            self._migration_stage("before_current_activation")
-            self._publish_graph_snapshot(conn, snapshot_id)
+                """,
+                [*batch],
+            )
+            conn.execute(
+                f"""
+                DELETE FROM semantic_documents
+                WHERE document_id IN (
+                    SELECT d.document_id
+                    FROM semantic_documents d
+                    JOIN analysis_graph_nodes n
+                      ON n.source_id = d.source_id
+                     AND n.id = d.node_id
+                    WHERE COALESCE(n.analysis_file_id, n.inventory_file_id, n.file_id) IN ({placeholders})
+                )
+                """,
+                [*batch],
+            )
+        return affected_sources
 
-    def _delete_file_analysis(self, conn: sqlite3.Connection, file_id: int) -> None:
-        # Graph facts are immutable snapshot-owned rows. They are removed only by
-        # snapshot retention/cascade, never by current-file state cleanup.
-        return
+    def _mark_semantic_sources_stale(self, conn: sqlite3.Connection, source_ids: Set[str]) -> None:
+        if not source_ids or not self._table_exists(conn, "semantic_index_state"):
+            return
+        for source_id in sorted(source_ids):
+            graph = SemanticIndexStore.current_graph_info_conn(conn, source_id)
+            if graph.graph_revision and graph.total_node_count > 0:
+                SemanticIndexStore.mark_source_stale_conn(conn, source_id, graph.graph_revision, graph.total_node_count)
 
-    def _resolve_source_call_edges(self, conn: sqlite3.Connection, source_id: str, snapshot_id: str) -> None:
+    def _resolve_source_call_edges(self, conn: sqlite3.Connection, source_id: str) -> None:
         rows = conn.execute(
             """
             SELECT id, metadata_json
             FROM analysis_graph_edges
             WHERE source_id = ?
-              AND snapshot_id = ?
               AND edge_type = 'CALLS'
               AND to_node_id IS NULL
               AND resolution_status IN ('UNRESOLVED', 'MULTIPLE_CANDIDATES')
         """,
-            (source_id, snapshot_id),
+            (source_id,),
         ).fetchall()
         if not rows:
             return
@@ -5002,11 +3922,10 @@ class AnalysisStore:
             SELECT id, name, qualified_name
             FROM analysis_graph_nodes
             WHERE source_id = ?
-              AND snapshot_id = ?
               AND node_kind = 'TYPE'
               AND status = 'TRUSTED'
         """,
-            (source_id, snapshot_id),
+            (source_id,),
         ).fetchall()
         types_by_simple: Dict[str, List[sqlite3.Row]] = {}
         types_by_qualified: Dict[str, List[sqlite3.Row]] = {}
@@ -5023,10 +3942,10 @@ class AnalysisStore:
             type_candidates = types_by_qualified.get(str(type_hint), []) or types_by_simple.get(str(type_hint).rsplit(".", 1)[-1], [])
             if len(type_candidates) != 1:
                 if len(type_candidates) > 1:
-                    self._mark_call_edge_multiple(conn, snapshot_id, edge["id"], metadata, len(type_candidates))
+                    self._mark_call_edge_multiple(conn, edge["id"], metadata, len(type_candidates))
                 continue
             callable_candidates = self._callable_candidates_for_type(
-                conn, snapshot_id, type_candidates[0]["id"], str(method_name), metadata.get("argumentCount")
+                conn, type_candidates[0]["id"], str(method_name), metadata.get("argumentCount")
             )
             if len(callable_candidates) == 1:
                 metadata["resolutionStatus"] = "RESOLVED"
@@ -5039,28 +3958,26 @@ class AnalysisStore:
                         resolution_status = 'RESOLVED',
                         unresolved_target_json = NULL,
                         metadata_json = ?
-                    WHERE snapshot_id = ?
-                      AND id = ?
+                    WHERE id = ?
                 """,
-                    (callable_candidates[0]["id"], json.dumps(metadata), snapshot_id, edge["id"]),
+                    (callable_candidates[0]["id"], json.dumps(metadata), edge["id"]),
                 )
             elif len(callable_candidates) > 1:
-                self._mark_call_edge_multiple(conn, snapshot_id, edge["id"], metadata, len(callable_candidates))
+                self._mark_call_edge_multiple(conn, edge["id"], metadata, len(callable_candidates))
 
     def _callable_candidates_for_type(
-        self, conn: sqlite3.Connection, snapshot_id: str, type_node_id: str, method_name: str, argument_count: Optional[int]
+        self, conn: sqlite3.Connection, type_node_id: str, method_name: str, argument_count: Optional[int]
     ) -> List[sqlite3.Row]:
         rows = conn.execute(
             """
             SELECT id, metadata_json
             FROM analysis_graph_nodes
             WHERE parent_node_id = ?
-              AND snapshot_id = ?
               AND node_kind = 'CALLABLE'
               AND name = ?
               AND status = 'TRUSTED'
         """,
-            (type_node_id, snapshot_id, method_name),
+            (type_node_id, method_name),
         ).fetchall()
         if argument_count is None:
             return rows
@@ -5072,7 +3989,7 @@ class AnalysisStore:
                 matching.append(row)
         return matching or rows
 
-    def _mark_call_edge_multiple(self, conn: sqlite3.Connection, snapshot_id: str, edge_id: str, metadata: Dict[str, Any], candidate_count: int) -> None:
+    def _mark_call_edge_multiple(self, conn: sqlite3.Connection, edge_id: str, metadata: Dict[str, Any], candidate_count: int) -> None:
         metadata["resolutionStatus"] = "MULTIPLE_CANDIDATES"
         metadata["candidateCount"] = candidate_count
         metadata["candidateKind"] = metadata.get("candidateKind") or "METHOD"
@@ -5082,54 +3999,102 @@ class AnalysisStore:
             UPDATE analysis_graph_edges
             SET resolution_status = 'MULTIPLE_CANDIDATES',
                 metadata_json = ?
-            WHERE snapshot_id = ?
-              AND id = ?
+            WHERE id = ?
         """,
-            (json.dumps(metadata), snapshot_id, edge_id),
+            (json.dumps(metadata), edge_id),
         )
 
-    def _reattach_current_analysis_files(self, conn: sqlite3.Connection, source_ids: Optional[List[str]]) -> None:
-        clauses = ["current.id IS NULL"]
-        params: list[Any] = []
-        if source_ids:
-            placeholders = ",".join("?" for _ in source_ids)
-            clauses.append(f"af.source_id IN ({placeholders})")
-            params.extend(source_ids)
-        where = " AND ".join(clauses)
-        rows = conn.execute(
-            f"""
-            SELECT af.file_id AS old_file_id, f.id AS new_file_id
+    def _published_analysis_identity_row(self, conn: sqlite3.Connection, file_id: int, state: Dict[str, Any]) -> Optional[sqlite3.Row]:
+        return conn.execute(
+            """
+            SELECT af.file_id
             FROM analysis_files af
-            LEFT JOIN files current ON current.id = af.file_id
-            JOIN files f
-              ON f.source_id = af.source_id
-             AND f.relative_path = af.relative_path
-             AND f.content_hash = af.content_hash
-            WHERE {where}
-        """,
-            params,
-        ).fetchall()
-        for row in rows:
-            old_file_id = row["old_file_id"]
-            new_file_id = row["new_file_id"]
-            if old_file_id == new_file_id:
-                continue
-            existing = conn.execute("SELECT 1 FROM analysis_files WHERE file_id = ?", (new_file_id,)).fetchone()
-            if existing:
-                self._delete_file_analysis(conn, old_file_id)
-                conn.execute("DELETE FROM analysis_files WHERE file_id = ?", (old_file_id,))
-                continue
-            conn.execute("UPDATE analysis_files SET file_id = ? WHERE file_id = ?", (new_file_id, old_file_id))
-            # Snapshot graph rows retain their original analysis_file_id for immutable history.
+            WHERE af.source_id = ?
+              AND af.relative_path = ?
+              AND af.content_hash = ?
+              AND af.status IN ('ANALYZED', 'PARTIAL')
+              AND EXISTS (
+                  SELECT 1
+                  FROM files f
+                  WHERE f.source_id = af.source_id
+                    AND f.relative_path = af.relative_path
+                    AND f.content_hash = af.content_hash
+              )
+            ORDER BY CASE WHEN af.file_id = ? THEN 0 ELSE 1 END, af.file_id
+            LIMIT 1
+            """,
+            (state["source_id"], state["relative_path"], state["content_hash"], file_id),
+        ).fetchone()
 
-    def _upsert_file(self, conn: sqlite3.Connection, file_id: int, state: Dict[str, Any]) -> None:
+    def _analysis_identity_row(self, conn: sqlite3.Connection, file_id: int, state: Dict[str, Any]) -> Optional[sqlite3.Row]:
+        return conn.execute(
+            """
+            SELECT file_id
+            FROM analysis_files
+            WHERE source_id = ?
+              AND relative_path = ?
+              AND content_hash = ?
+            ORDER BY CASE WHEN file_id = ? THEN 0 ELSE 1 END, file_id
+            LIMIT 1
+            """,
+            (state["source_id"], state["relative_path"], state["content_hash"], file_id),
+        ).fetchone()
+
+    def _analysis_file_values(self, file_id: int, state: Dict[str, Any]) -> tuple:
+        return (
+            file_id,
+            state["source_id"],
+            state["relative_path"],
+            state["content_hash"],
+            state["analyzer_name"],
+            state["analyzer_version"],
+            state["status"],
+            state.get("analyzed_at"),
+            state["symbol_count"],
+            state["relation_count"],
+            state.get("attempt_count", 0),
+            state.get("last_attempt_at"),
+            state.get("last_error_code"),
+            state.get("last_error_message"),
+            state.get("last_raw_response_preview"),
+            json.dumps(state.get("diagnostics") or []),
+            state.get("engine_version"),
+            state.get("flow_domain"),
+        )
+
+    def _insert_file(self, conn: sqlite3.Connection, file_id: int, state: Dict[str, Any]) -> None:
         conn.execute(
             """
-            INSERT OR REPLACE INTO analysis_files(file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status, analyzed_at, symbol_count, relation_count, attempt_count, last_attempt_at, last_error_code, last_error_message, last_raw_response_preview, diagnostics_json, engine_version, flow_domain)
+            INSERT INTO analysis_files(file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status, analyzed_at, symbol_count, relation_count, attempt_count, last_attempt_at, last_error_code, last_error_message, last_raw_response_preview, diagnostics_json, engine_version, flow_domain)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
+            self._analysis_file_values(file_id, state),
+        )
+
+    def _update_analysis_file_row(self, conn: sqlite3.Connection, file_id: int, state: Dict[str, Any]) -> None:
+        conn.execute(
+            """
+            UPDATE analysis_files
+            SET source_id = ?,
+                relative_path = ?,
+                content_hash = ?,
+                analyzer_name = ?,
+                analyzer_version = ?,
+                status = ?,
+                analyzed_at = ?,
+                symbol_count = ?,
+                relation_count = ?,
+                attempt_count = ?,
+                last_attempt_at = ?,
+                last_error_code = ?,
+                last_error_message = ?,
+                last_raw_response_preview = ?,
+                diagnostics_json = ?,
+                engine_version = ?,
+                flow_domain = ?
+            WHERE file_id = ?
+            """,
             (
-                file_id,
                 state["source_id"],
                 state["relative_path"],
                 state["content_hash"],
@@ -5147,7 +4112,38 @@ class AnalysisStore:
                 json.dumps(state.get("diagnostics") or []),
                 state.get("engine_version"),
                 state.get("flow_domain"),
+                file_id,
             ),
+        )
+
+    def _update_analysis_file_attempt_metadata(self, conn: sqlite3.Connection, file_id: int, state: Dict[str, Any]) -> None:
+        conn.execute(
+            """
+            UPDATE analysis_files
+            SET attempt_count = ?,
+                last_attempt_at = ?,
+                last_error_code = ?,
+                last_error_message = ?,
+                last_raw_response_preview = ?
+            WHERE file_id = ?
+            """,
+            (
+                state.get("attempt_count", 0),
+                state.get("last_attempt_at"),
+                state.get("last_error_code"),
+                state.get("last_error_message"),
+                state.get("last_raw_response_preview"),
+                file_id,
+            ),
+        )
+
+    def _upsert_file(self, conn: sqlite3.Connection, file_id: int, state: Dict[str, Any]) -> None:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_files(file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status, analyzed_at, symbol_count, relation_count, attempt_count, last_attempt_at, last_error_code, last_error_message, last_raw_response_preview, diagnostics_json, engine_version, flow_domain)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            self._analysis_file_values(file_id, state),
         )
 
     def _job_params(self, job: Dict[str, Any]):
@@ -5288,6 +4284,127 @@ class AnalysisStore:
         ):
             conn.execute(f"DROP TABLE IF EXISTS {table}")
 
+    def _table_sql(self, conn: sqlite3.Connection, table: str) -> str:
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
+        return str(row["sql"] or "") if row else ""
+
+    def _table_exists(self, conn: sqlite3.Connection, table: str) -> bool:
+        row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
+        return row is not None
+
+    def _table_columns(self, conn: sqlite3.Connection, table: str) -> Set[str]:
+        if not self._table_exists(conn, table):
+            return set()
+        return {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    def _table_names(self, conn: sqlite3.Connection) -> Set[str]:
+        return {
+            str(row["name"])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        }
+
+    def _drop_tables_child_first(self, conn: sqlite3.Connection, tables: Set[str]) -> None:
+        pending = set(tables)
+        while pending:
+            referenced_by_remaining: Set[str] = set()
+            for table in pending:
+                for row in conn.execute(f'PRAGMA foreign_key_list("{table.replace(chr(34), chr(34) + chr(34))}")').fetchall():
+                    target = str(row["table"])
+                    if target in pending:
+                        referenced_by_remaining.add(target)
+            leaves = sorted(pending - referenced_by_remaining)
+            if not leaves:
+                leaves = sorted(pending)
+            for table in leaves:
+                quoted = table.replace('"', '""')
+                conn.execute(f'DROP TABLE IF EXISTS "{quoted}"')
+                pending.remove(table)
+
+    def _drop_rejected_graph_storage(self, conn: sqlite3.Connection) -> None:
+        required_columns = {
+            "analysis_graph_claims": {"id", "source_id", "node_id", "claim_kind", "summary", "status"},
+            "analysis_graph_edges": {
+                "id",
+                "source_id",
+                "analysis_file_id",
+                "file_id",
+                "relative_path",
+                "content_hash",
+                "from_node_id",
+                "edge_type",
+            },
+            "analysis_graph_evidence": {
+                "id",
+                "source_id",
+                "analysis_file_id",
+                "file_id",
+                "relative_path",
+                "content_hash",
+            },
+            "analysis_graph_diagnostics": {"id", "source_id", "diagnostic_code", "message", "severity"},
+            "analysis_graph_nodes": {
+                "id",
+                "source_id",
+                "analysis_file_id",
+                "file_id",
+                "relative_path",
+                "content_hash",
+                "stable_key",
+                "node_kind",
+            },
+        }
+        fact_tables = (
+            "analysis_graph_claims",
+            "analysis_graph_edges",
+            "analysis_graph_evidence",
+            "analysis_graph_diagnostics",
+            "analysis_graph_nodes",
+        )
+        table_names = self._table_names(conn)
+        rejected_graph_tables = {table for table in table_names if table.startswith("graph_")}
+        needs_reset = bool(rejected_graph_tables)
+        if not needs_reset:
+            needs_reset = any(
+                self._table_exists(conn, table) and not required.issubset(self._table_columns(conn, table))
+                for table, required in required_columns.items()
+            )
+        if not needs_reset:
+            return
+        reset_tables = {
+            table
+            for table in table_names
+            if table.startswith("graph_") or table.startswith("analysis_graph_")
+        }
+        reset_tables.update({
+            "semantic_vectors",
+            "semantic_documents",
+            "semantic_index_state",
+        })
+        self._drop_graph_lifecycle_triggers(conn, reset_tables)
+        self._drop_tables_child_first(conn, {table for table in reset_tables if self._table_exists(conn, table)})
+        if self._table_exists(conn, "analysis_files"):
+            conn.execute("DELETE FROM analysis_files")
+        if self._table_exists(conn, "analysis_job_files"):
+            conn.execute(
+                """
+                UPDATE analysis_job_files
+                SET analysis_file_id = NULL,
+                    status = CASE WHEN status IN ('RUNNING', 'COMPLETED') THEN 'PENDING' ELSE status END,
+                    updated_at = datetime('now')
+                """
+            )
+
+    def _drop_graph_lifecycle_triggers(self, conn: sqlite3.Connection, reset_tables: Set[str]) -> None:
+        rows = conn.execute(
+            "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger'"
+        ).fetchall()
+        for row in rows:
+            name = str(row["name"])
+            table_name = str(row["tbl_name"] or "")
+            sql = str(row["sql"] or "")
+            if table_name in reset_tables or any(table in sql for table in reset_tables):
+                conn.execute(f'DROP TRIGGER IF EXISTS "{name.replace(chr(34), chr(34) + chr(34))}"')
+
     def _run_schema_migrations(self, conn: sqlite3.Connection) -> None:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS analysis_schema_migrations (
@@ -5326,22 +4443,28 @@ class AnalysisStore:
             self._ensure_column(conn, "analysis_jobs", "mode", "TEXT NOT NULL DEFAULT 'FULL'")
             return
         if version == 6:
-            self._ensure_graph_snapshot_schema(conn)
+            self._drop_rejected_graph_storage(conn)
+            return
+        if version == 7:
+            self._drop_rejected_graph_storage(conn)
             return
         raise RuntimeError(f"Unknown analysis schema migration: {version}")
 
     def _create_analysis_graph_diagnostics_table(self, conn: sqlite3.Connection) -> None:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS analysis_graph_diagnostics (
-                id TEXT NOT NULL,
-                snapshot_id TEXT NOT NULL,
+                id TEXT PRIMARY KEY,
                 job_id TEXT NOT NULL,
                 source_id TEXT NOT NULL,
                 inventory_file_id INTEGER,
                 analysis_file_id INTEGER,
+                file_id INTEGER,
+                relative_path TEXT,
+                content_hash TEXT,
                 severity TEXT NOT NULL,
                 stage TEXT NOT NULL,
                 code TEXT NOT NULL,
+                diagnostic_code TEXT,
                 message TEXT NOT NULL,
                 candidate_id TEXT,
                 line_start INTEGER,
@@ -5349,401 +4472,104 @@ class AnalysisStore:
                 metadata_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 fact_origin TEXT,
-                flow_domain TEXT,
-                PRIMARY KEY(snapshot_id, id),
-                UNIQUE(source_id, snapshot_id, id),
-                FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE
+                flow_domain TEXT
             )
         """)
-
-    def _ensure_graph_snapshot_schema(self, conn: sqlite3.Connection) -> None:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS graph_snapshots (
-                snapshot_id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                job_id TEXT NOT NULL,
-                state TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                published_at TEXT,
-                manifest_json TEXT NOT NULL DEFAULT '{}',
-                content_identity TEXT,
-                UNIQUE(source_id, snapshot_id)
-            )
-        """)
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_snapshots_source_snapshot ON graph_snapshots(source_id, snapshot_id)")
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS graph_current_snapshots (
-                source_id TEXT PRIMARY KEY,
-                snapshot_id TEXT NOT NULL,
-                published_at TEXT NOT NULL,
-                FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE RESTRICT
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS graph_snapshot_metrics (
-                snapshot_id TEXT NOT NULL,
-                query_fingerprint TEXT NOT NULL,
-                source_id TEXT NOT NULL,
-                flow_domain TEXT NOT NULL,
-                fact_origin TEXT NOT NULL,
-                node_kind TEXT NOT NULL,
-                edge_type TEXT NOT NULL,
-                include_external TEXT NOT NULL,
-                include_unresolved INTEGER NOT NULL,
-                include_isolated INTEGER NOT NULL,
-                total_node_count INTEGER NOT NULL,
-                total_edge_count INTEGER NOT NULL,
-                node_type_counts_json TEXT NOT NULL,
-                edge_type_counts_json TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                PRIMARY KEY(snapshot_id, query_fingerprint),
-                FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS graph_snapshot_tombstones (
-                snapshot_id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                expired_at TEXT NOT NULL,
-                reason TEXT NOT NULL
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_graph_snapshot_metrics_lookup ON graph_snapshot_metrics(snapshot_id, query_fingerprint)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_graph_snapshot_tombstones_source ON graph_snapshot_tombstones(source_id, expired_at)")
-        self._rebuild_graph_current_snapshots_table_if_needed(conn)
-        self._rebuild_graph_snapshot_metrics_table_if_needed(conn)
-        for table in ("analysis_graph_nodes", "analysis_graph_evidence", "analysis_graph_claims", "analysis_graph_edges", "analysis_graph_diagnostics"):
-            self._ensure_column(conn, table, "snapshot_id", "TEXT")
-        self._ensure_legacy_graph_snapshot_rows(conn)
-        for table in ("analysis_graph_nodes", "analysis_graph_evidence", "analysis_graph_claims", "analysis_graph_edges", "analysis_graph_diagnostics"):
-            self._rebuild_graph_snapshot_table_if_needed(conn, table)
-        self._backfill_legacy_graph_snapshots(conn)
-
-    def _table_sql(self, conn: sqlite3.Connection, table: str) -> str:
-        row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
-        return str(row["sql"] or "") if row else ""
-
-    def _table_exists(self, conn: sqlite3.Connection, table: str) -> bool:
-        row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
-        return row is not None
-
-    def _rebuild_graph_current_snapshots_table_if_needed(self, conn: sqlite3.Connection) -> None:
-        sql = self._table_sql(conn, "graph_current_snapshots")
-        if "FOREIGN KEY(source_id, snapshot_id)" in sql:
-            return
-        suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-        old_table = f"graph_current_snapshots_old_{suffix}"
-        conn.execute(f"ALTER TABLE graph_current_snapshots RENAME TO {old_table}")
-        conn.execute("""
-            CREATE TABLE graph_current_snapshots (
-                source_id TEXT PRIMARY KEY,
-                snapshot_id TEXT NOT NULL,
-                published_at TEXT NOT NULL,
-                FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE RESTRICT
-            )
-        """)
-        old_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({old_table})").fetchall()}
-        if {"source_id", "snapshot_id", "published_at"}.issubset(old_columns):
-            conn.execute(
-                f"""
-                INSERT INTO graph_current_snapshots(source_id, snapshot_id, published_at)
-                SELECT current.source_id, current.snapshot_id, current.published_at
-                FROM {old_table} current
-                JOIN graph_snapshots snapshot
-                  ON snapshot.source_id = current.source_id
-                 AND snapshot.snapshot_id = current.snapshot_id
-                """
-            )
-        conn.execute(f"DROP TABLE {old_table}")
-
-    def _rebuild_graph_snapshot_metrics_table_if_needed(self, conn: sqlite3.Connection) -> None:
-        sql = self._table_sql(conn, "graph_snapshot_metrics")
-        if "FOREIGN KEY(source_id, snapshot_id)" in sql:
-            return
-        suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-        old_table = f"graph_snapshot_metrics_old_{suffix}"
-        conn.execute(f"ALTER TABLE graph_snapshot_metrics RENAME TO {old_table}")
-        conn.execute("""
-            CREATE TABLE graph_snapshot_metrics (
-                snapshot_id TEXT NOT NULL,
-                query_fingerprint TEXT NOT NULL,
-                source_id TEXT NOT NULL,
-                flow_domain TEXT NOT NULL,
-                fact_origin TEXT NOT NULL,
-                node_kind TEXT NOT NULL,
-                edge_type TEXT NOT NULL,
-                include_external TEXT NOT NULL,
-                include_unresolved INTEGER NOT NULL,
-                include_isolated INTEGER NOT NULL,
-                total_node_count INTEGER NOT NULL,
-                total_edge_count INTEGER NOT NULL,
-                node_type_counts_json TEXT NOT NULL,
-                edge_type_counts_json TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                PRIMARY KEY(snapshot_id, query_fingerprint),
-                FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE
-            )
-        """)
-        old_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({old_table})").fetchall()}
-        expected = {
-            "snapshot_id",
-            "query_fingerprint",
-            "source_id",
-            "flow_domain",
-            "fact_origin",
-            "node_kind",
-            "edge_type",
-            "include_external",
-            "include_unresolved",
-            "include_isolated",
-            "total_node_count",
-            "total_edge_count",
-            "node_type_counts_json",
-            "edge_type_counts_json",
-            "created_at",
-        }
-        if expected.issubset(old_columns):
-            conn.execute(
-                f"""
-                INSERT INTO graph_snapshot_metrics(
-                    snapshot_id, query_fingerprint, source_id, flow_domain, fact_origin, node_kind, edge_type,
-                    include_external, include_unresolved, include_isolated, total_node_count, total_edge_count,
-                    node_type_counts_json, edge_type_counts_json, created_at
-                )
-                SELECT metrics.snapshot_id, metrics.query_fingerprint, metrics.source_id, metrics.flow_domain,
-                       metrics.fact_origin, metrics.node_kind, metrics.edge_type, metrics.include_external,
-                       metrics.include_unresolved, metrics.include_isolated, metrics.total_node_count,
-                       metrics.total_edge_count, metrics.node_type_counts_json, metrics.edge_type_counts_json,
-                       metrics.created_at
-                FROM {old_table} metrics
-                JOIN graph_snapshots snapshot
-                  ON snapshot.source_id = metrics.source_id
-                 AND snapshot.snapshot_id = metrics.snapshot_id
-                """
-            )
-        conn.execute(f"DROP TABLE {old_table}")
 
     def _reconcile_graph_diagnostics_schema(self, conn: sqlite3.Connection) -> None:
+        if not self._table_exists(conn, "analysis_graph_diagnostics"):
+            self._create_analysis_graph_diagnostics_table(conn)
+            return
         columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(analysis_graph_diagnostics)").fetchall()}
         id_column = columns.get("id")
-        if id_column is None:
-            self._create_analysis_graph_diagnostics_table(conn)
-            columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(analysis_graph_diagnostics)").fetchall()}
-            id_column = columns.get("id")
         id_type = str(id_column["type"] or "").upper() if id_column else ""
-        if id_type != "TEXT":
-            suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-            old_table = f"analysis_graph_diagnostics_old_{suffix}"
-            conn.execute(f"ALTER TABLE analysis_graph_diagnostics RENAME TO {old_table}")
-            self._create_analysis_graph_diagnostics_table(conn)
-            conn.execute(f"DROP TABLE {old_table}")
-            columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(analysis_graph_diagnostics)").fetchall()}
-        for column, declaration in {
-            "snapshot_id": "TEXT",
-            "candidate_id": "TEXT",
-            "line_start": "INTEGER",
-            "line_end": "INTEGER",
-            "fact_origin": "TEXT",
-            "flow_domain": "TEXT",
-        }.items():
-            if column not in columns:
-                conn.execute(f"ALTER TABLE analysis_graph_diagnostics ADD COLUMN {column} {declaration}")
-                columns[column] = {"name": column}
-        self._ensure_legacy_graph_snapshot_rows(conn)
-        self._rebuild_graph_snapshot_table_if_needed(conn, "analysis_graph_diagnostics")
-
-    def _ensure_legacy_graph_snapshot_rows(self, conn: sqlite3.Connection) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        source_ids: set[str] = set()
-        for table in ("analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_evidence", "analysis_graph_claims", "analysis_graph_diagnostics"):
-            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
-            if exists is None:
-                continue
-            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-            if "source_id" not in columns or "snapshot_id" not in columns:
-                continue
-            rows = conn.execute(f"SELECT DISTINCT source_id FROM {table} WHERE source_id IS NOT NULL AND snapshot_id IS NULL").fetchall()
-            source_ids.update(row["source_id"] for row in rows)
-        for source_id in source_ids:
-            snapshot_id = self._graph_snapshot_id("legacy", source_id)
-            conn.execute(
-                """
-                INSERT INTO graph_snapshots(snapshot_id, source_id, job_id, state, created_at, published_at, manifest_json, content_identity)
-                VALUES (?, ?, 'legacy', 'BUILDING', ?, NULL, '{}', NULL)
-                ON CONFLICT(snapshot_id) DO NOTHING
-                """,
-                (snapshot_id, source_id, now),
-            )
-
-    def _rebuild_graph_snapshot_table_if_needed(self, conn: sqlite3.Connection, table: str) -> None:
-        columns = conn.execute(f"PRAGMA table_info({table})").fetchall()
-        if not columns:
-            return
-        table_sql = self._table_sql(conn, table)
-        pk_columns = {row["name"]: row["pk"] for row in columns if row["pk"]}
-        snapshot_column = next((row for row in columns if row["name"] == "snapshot_id"), None)
-        if (
-            pk_columns.get("snapshot_id") == 1
-            and pk_columns.get("id") == 2
-            and snapshot_column is not None
-            and snapshot_column["notnull"]
-            and "FOREIGN KEY(source_id, snapshot_id)" in table_sql
-            and "_old_" not in table_sql
-        ):
+        required = {
+            "id",
+            "job_id",
+            "source_id",
+            "inventory_file_id",
+            "analysis_file_id",
+            "file_id",
+            "relative_path",
+            "content_hash",
+            "severity",
+            "stage",
+            "code",
+            "diagnostic_code",
+            "message",
+            "candidate_id",
+            "line_start",
+            "line_end",
+            "metadata_json",
+            "created_at",
+            "fact_origin",
+            "flow_domain",
+        }
+        if id_type == "TEXT" and set(columns) == required:
             return
         suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-        old_table = f"{table}_old_{suffix}"
-        conn.execute(f"ALTER TABLE {table} RENAME TO {old_table}")
-        self._create_graph_snapshot_owned_table(conn, table)
-        old_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({old_table})").fetchall()}
-        new_columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-        insert_columns = [column for column in new_columns if column in old_columns or column == "snapshot_id"]
-        select_columns = []
-        for column in insert_columns:
-            if column == "snapshot_id" and "snapshot_id" in old_columns:
-                select_columns.append("COALESCE(snapshot_id, 'legacy:' || source_id)")
-            elif column == "job_id" and "job_id" in old_columns:
-                select_columns.append("COALESCE(job_id, 'legacy')")
-            else:
-                select_columns.append(column)
-        conn.execute(
-            f"""
-            INSERT INTO {table}({", ".join(insert_columns)})
-            SELECT {", ".join(select_columns)}
-            FROM {old_table}
-            """
-        )
-        conn.execute(f"DROP TABLE {old_table}")
+        old_table = f"analysis_graph_diagnostics_old_{suffix}"
+        old_columns = set(columns)
+        conn.execute(f"ALTER TABLE analysis_graph_diagnostics RENAME TO {old_table}")
+        self._create_analysis_graph_diagnostics_table(conn)
+        if "source_id" in old_columns and "code" in old_columns and "message" in old_columns:
+            def expr(column: str, default: str = "NULL") -> str:
+                return column if column in old_columns else default
 
-    def _create_graph_snapshot_owned_table(self, conn: sqlite3.Connection, table: str) -> None:
-        definitions = {
-            "analysis_graph_nodes": """
-                CREATE TABLE analysis_graph_nodes (
-                    id TEXT NOT NULL,
-                    snapshot_id TEXT NOT NULL,
-                    job_id TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    inventory_file_id INTEGER,
-                    analysis_file_id INTEGER,
-                    stable_key TEXT NOT NULL,
-                    node_kind TEXT NOT NULL,
-                    language TEXT,
-                    name TEXT NOT NULL,
-                    qualified_name TEXT,
-                    display_name TEXT,
-                    parent_node_id TEXT,
-                    line_start INTEGER,
-                    line_end INTEGER,
-                    confidence REAL NOT NULL,
-                    status TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    fact_origin TEXT,
-                    flow_domain TEXT,
-                    PRIMARY KEY(snapshot_id, id),
-                    UNIQUE(source_id, snapshot_id, id),
-                    FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE
-                )
-            """,
-            "analysis_graph_evidence": """
-                CREATE TABLE analysis_graph_evidence (
-                    id TEXT NOT NULL,
-                    snapshot_id TEXT NOT NULL,
-                    job_id TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    inventory_file_id INTEGER,
-                    analysis_file_id INTEGER,
-                    content_hash TEXT NOT NULL,
-                    line_start INTEGER NOT NULL,
-                    line_end INTEGER NOT NULL,
-                    excerpt_hash TEXT NOT NULL,
-                    evidence_kind TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    fact_origin TEXT,
-                    flow_domain TEXT,
-                    PRIMARY KEY(snapshot_id, id),
-                    UNIQUE(source_id, snapshot_id, id),
-                    FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE
-                )
-            """,
-            "analysis_graph_claims": """
-                CREATE TABLE analysis_graph_claims (
-                    id TEXT NOT NULL,
-                    snapshot_id TEXT NOT NULL,
-                    job_id TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    node_id TEXT NOT NULL,
-                    claim_kind TEXT NOT NULL,
-                    summary TEXT NOT NULL,
-                    confidence REAL NOT NULL,
-                    status TEXT NOT NULL,
-                    evidence_ids_json TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL,
-                    rejection_reason TEXT,
-                    created_at TEXT NOT NULL,
-                    fact_origin TEXT,
-                    flow_domain TEXT,
-                    PRIMARY KEY(snapshot_id, id),
-                    UNIQUE(source_id, snapshot_id, id),
-                    FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE,
-                    FOREIGN KEY(source_id, snapshot_id, node_id) REFERENCES analysis_graph_nodes(source_id, snapshot_id, id) ON DELETE CASCADE
-                )
-            """,
-            "analysis_graph_edges": """
-                CREATE TABLE analysis_graph_edges (
-                    id TEXT NOT NULL,
-                    snapshot_id TEXT NOT NULL,
-                    job_id TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    inventory_file_id INTEGER,
-                    analysis_file_id INTEGER,
-                    from_node_id TEXT NOT NULL,
-                    to_node_id TEXT,
-                    edge_type TEXT NOT NULL,
-                    resolution_status TEXT NOT NULL,
-                    confidence REAL NOT NULL,
-                    evidence_id TEXT,
-                    unresolved_target_json TEXT,
-                    metadata_json TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    fact_origin TEXT,
-                    flow_domain TEXT,
-                    PRIMARY KEY(snapshot_id, id),
-                    UNIQUE(source_id, snapshot_id, id),
-                    FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE,
-                    FOREIGN KEY(source_id, snapshot_id, from_node_id) REFERENCES analysis_graph_nodes(source_id, snapshot_id, id) ON DELETE CASCADE,
-                    FOREIGN KEY(source_id, snapshot_id, to_node_id) REFERENCES analysis_graph_nodes(source_id, snapshot_id, id) ON DELETE CASCADE,
-                    FOREIGN KEY(source_id, snapshot_id, evidence_id) REFERENCES analysis_graph_evidence(source_id, snapshot_id, id) ON DELETE SET NULL
-                )
-            """,
-            "analysis_graph_diagnostics": """
-                CREATE TABLE analysis_graph_diagnostics (
-                    id TEXT NOT NULL,
-                    snapshot_id TEXT NOT NULL,
-                    job_id TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    inventory_file_id INTEGER,
-                    analysis_file_id INTEGER,
-                    severity TEXT NOT NULL,
-                    stage TEXT NOT NULL,
-                    code TEXT NOT NULL,
-                    message TEXT NOT NULL,
-                    candidate_id TEXT,
-                    line_start INTEGER,
-                    line_end INTEGER,
-                    metadata_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    fact_origin TEXT,
-                    flow_domain TEXT,
-                    PRIMARY KEY(snapshot_id, id),
-                    UNIQUE(source_id, snapshot_id, id),
-                    FOREIGN KEY(source_id, snapshot_id) REFERENCES graph_snapshots(source_id, snapshot_id) ON DELETE CASCADE
-                )
-            """,
-        }
-        conn.execute(definitions[table])
+            now = datetime.now(timezone.utc).isoformat()
+            target_columns = [
+                "id",
+                "job_id",
+                "source_id",
+                "inventory_file_id",
+                "analysis_file_id",
+                "file_id",
+                "relative_path",
+                "content_hash",
+                "severity",
+                "stage",
+                "code",
+                "diagnostic_code",
+                "message",
+                "candidate_id",
+                "line_start",
+                "line_end",
+                "metadata_json",
+                "created_at",
+                "fact_origin",
+                "flow_domain",
+            ]
+            selected = [
+                "CAST(COALESCE(id, 'diagnostic:' || rowid) AS TEXT)" if "id" in old_columns else "'diagnostic:' || rowid",
+                "COALESCE(job_id, 'legacy')" if "job_id" in old_columns else "'legacy'",
+                "source_id",
+                expr("inventory_file_id"),
+                expr("analysis_file_id"),
+                expr("file_id"),
+                expr("relative_path"),
+                expr("content_hash"),
+                "COALESCE(severity, 'WARN')" if "severity" in old_columns else "'WARN'",
+                "COALESCE(stage, 'ANALYSIS')" if "stage" in old_columns else "'ANALYSIS'",
+                "code",
+                "COALESCE(diagnostic_code, code)" if "diagnostic_code" in old_columns else "code",
+                "message",
+                expr("candidate_id"),
+                expr("line_start"),
+                expr("line_end"),
+                "COALESCE(metadata_json, '{}')" if "metadata_json" in old_columns else "'{}'",
+                "COALESCE(created_at, ?)" if "created_at" in old_columns else "?",
+                expr("fact_origin"),
+                expr("flow_domain"),
+            ]
+            conn.execute(
+                f"""
+                INSERT OR IGNORE INTO analysis_graph_diagnostics({", ".join(target_columns)})
+                SELECT {", ".join(selected)}
+                FROM {old_table}
+                """,
+                (now,),
+            )
+        conn.execute(f"DROP TABLE {old_table}")
 
     def _drop_legacy_analysis_job_counter(self, conn: sqlite3.Connection) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(analysis_jobs)").fetchall()}

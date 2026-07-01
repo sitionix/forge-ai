@@ -1,5 +1,5 @@
 export const createKnowledgeGraphClient: any;
-export const graphSnapshotQuery: any;
+export const graphQuery: any;
 export const graphViewQuery: any;
 export const graphLoadLimits: any;
 export const graphDataFromStore: any;

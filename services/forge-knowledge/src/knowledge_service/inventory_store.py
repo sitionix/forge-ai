@@ -368,7 +368,7 @@ class InventoryStore:
             "total": total,
         }
 
-    def snapshot_files(self, source_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def stored_files(self, source_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         self.init()
         clauses: list[str] = []
         params: list[Any] = []

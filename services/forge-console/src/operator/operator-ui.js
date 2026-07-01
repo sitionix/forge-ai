@@ -24,8 +24,8 @@ import { bootstrapOperatorConsole } from './operator-bootstrap.js';
  * }, KNOWLEDGE_SERVICES_STATUS_POLL_MS)
  * async function requestKnowledgeOverview(options = {})
  * requestKnowledgeOverview({
- * applyKnowledgeOverviewSnapshot
- * validateKnowledgeOverviewSnapshot
+ * applyKnowledgeOverviewStatus
+ * validateKnowledgeOverviewStatus
  * lastGoodStatus
  * latestAppliedSeq
  * Status payload unexpectedly returned no services
@@ -105,7 +105,7 @@ import { bootstrapOperatorConsole } from './operator-bootstrap.js';
  * const densityScale = density === 'spacious' ? 1.08 : density === 'normal' ? 0.86 : 0.54
  * const repulsion = density === 'spacious' ? 720 : density === 'normal' ? 480 : 260
  * for (let tick = 0; tick < 190; tick += 1)
- * loadKnowledgeGraphSnapshot
+ * loadKnowledgeGraphData
  * /knowledge/analysis/graph/manifest?
  * /knowledge/analysis/graph/${kind}?
  * Graph truncated for readability.

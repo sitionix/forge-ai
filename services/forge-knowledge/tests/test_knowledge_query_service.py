@@ -29,8 +29,8 @@ class FakeGraphStore:
 
     def query_current_graph_sources(self):
         return [
-            {"sourceId": "source-a", "displayName": "Source A", "snapshotId": "snap-a", "nodeCount": 3, "edgeCount": 2},
-            {"sourceId": "source-b", "displayName": "Source B", "snapshotId": "snap-b", "nodeCount": 1, "edgeCount": 0},
+            {"sourceId": "source-a", "displayName": "Source A", "graphId": "graph-a", "nodeCount": 3, "edgeCount": 2},
+            {"sourceId": "source-b", "displayName": "Source B", "graphId": "graph-b", "nodeCount": 1, "edgeCount": 0},
         ]
 
     def query_anchor_candidates(self, tokens, source_ids, limit):
@@ -46,7 +46,7 @@ class FakeGraphStore:
                 {
                     "id": node["nodeId"],
                     "sourceId": node["sourceId"],
-                    "snapshotId": node.get("snapshotId"),
+                    "graphId": node.get("graphId"),
                     "label": node["label"],
                 }
                 for node in matched_nodes
@@ -62,9 +62,9 @@ class FakeGraphStore:
 
     def load_call_adjacency_for_sources(self, source_scopes, max_edges=2000, max_evidence=25):
         self.adjacency_loads += 1
-        scopes = {(scope["sourceId"], scope.get("snapshotId") or "snap-a") for scope in source_scopes}
-        nodes = [dict(node) for node in self.nodes if (node.get("sourceId"), node.get("snapshotId")) in scopes]
-        edges = [dict(edge) for edge in self.edges if (edge.get("sourceId"), edge.get("snapshotId")) in scopes]
+        scopes = {(scope["sourceId"], scope.get("graphId") or "graph-a") for scope in source_scopes}
+        nodes = [dict(node) for node in self.nodes if (node.get("sourceId"), node.get("graphId")) in scopes]
+        edges = [dict(edge) for edge in self.edges if (edge.get("sourceId"), edge.get("graphId")) in scopes]
         truncated = self.adjacency_truncated or len(edges) > max_edges
         edges = edges[:max_edges]
         evidence = [dict(item) for item in self.evidence[:max_evidence]]
@@ -94,7 +94,7 @@ def candidate(**overrides):
     value = {
         "id": "node-gateway",
         "sourceId": "source-a",
-        "snapshotId": "snap-a",
+        "graphId": "graph-a",
         "stableKey": "src/JarvisGateway.java|CALLABLE|JarvisGateway",
         "kind": "CALLABLE",
         "nodeKind": "CALLABLE",
@@ -114,7 +114,7 @@ def graph_node(node_id, label, **overrides):
     value = {
         "id": node_id,
         "sourceId": "source-a",
-        "snapshotId": "snap-a",
+        "graphId": "graph-a",
         "kind": "CALLABLE",
         "nodeKind": "CALLABLE",
         "label": label,
@@ -128,7 +128,7 @@ def graph_edge(edge_id, source, target=None, **overrides):
     value = {
         "id": edge_id,
         "sourceId": "source-a",
-        "snapshotId": "snap-a",
+        "graphId": "graph-a",
         "fromNodeId": source,
         "toNodeId": target,
         "edgeType": "CALLS",
@@ -422,7 +422,7 @@ def test_query_uses_deterministic_search_when_semantic_index_failed(tmp_path):
             }
         ],
     )
-    store = FakeGraphStore(candidates=[candidate(id="controller-create", sourceId="source-a", snapshotId="snap-a")])
+    store = FakeGraphStore(candidates=[candidate(id="controller-create", sourceId="source-a", graphId="graph-a")])
     store.db_path = db_path
 
     response = build_knowledge_query_service(

@@ -105,7 +105,7 @@ export class KnowledgeOverviewPage {
         if (!result.applied || this.disposed) {
           return null;
         }
-        const status = this.applySnapshot(result.value.payload, result.value.sequence);
+        const status = this.applyStatus(result.value.payload, result.value.sequence);
         this.render(status);
         renderRequestError('knowledgeError', null, {}, this.document);
         this.errorCount = 0;
@@ -143,11 +143,11 @@ export class KnowledgeOverviewPage {
       });
   }
 
-  applySnapshot(status, sequence) {
-    const validation = validateKnowledgeOverviewSnapshot(status, this.lastGoodStatus);
+  applyStatus(status, sequence) {
+    const validation = validateKnowledgeOverviewStatus(status, this.lastGoodStatus);
     if (!validation.valid) {
-      const error = new Error(validation.reason || 'Knowledge status snapshot was invalid');
-      error.code = 'KNOWLEDGE_STATUS_SNAPSHOT_REJECTED';
+      const error = new Error(validation.reason || 'Knowledge status payload was invalid');
+      error.code = 'KNOWLEDGE_STATUS_REJECTED';
       error.endpoint = OVERVIEW_ENDPOINT;
       throw error;
     }
@@ -351,7 +351,7 @@ function normalizeKnowledgeOverviewSource(source) {
   };
 }
 
-export function validateKnowledgeOverviewSnapshot(serviceStatus, previous) {
+export function validateKnowledgeOverviewStatus(serviceStatus, previous) {
   if (!serviceStatus || typeof serviceStatus !== 'object') {
     return { valid: false, reason: 'Malformed status payload' };
   }

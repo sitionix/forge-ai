@@ -327,8 +327,8 @@
             "title": "Score",
             "type": "number"
           },
-          "snapshotId": {
-            "title": "Snapshotid",
+          "graphId": {
+            "title": "Graphid",
             "type": "string"
           },
           "sourceId": {
