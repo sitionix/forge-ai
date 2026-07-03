@@ -513,6 +513,26 @@ def materialize_graph_for_test(result, content=None, file_id=1, relative_path="s
     return GraphAnalysisEngine().materialize(row, "job-1", "test-analyzer", "1", result, content.splitlines())
 
 
+def _materialize_static_java_for_test(content: str, file_id: int, relative_path: str):
+    file_metadata = StructuralFileMetadata(
+        source_id="edge-gateway",
+        inventory_file_id=file_id,
+        relative_path=relative_path,
+        language="java",
+        flow_domain="CODE",
+        content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        line_count=len(content.splitlines()),
+        decode_policy="utf-8:replace",
+    )
+    structural = JavaParserAdapter().parse(content, file_metadata)
+    return materialize_graph_for_test(
+        StaticGraphMaterializer().to_graph(structural),
+        content=content,
+        file_id=file_id,
+        relative_path=relative_path,
+    )
+
+
 def graph_state_for_test(content=None, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java"):
     content = content or "class EmailVerificationLinkClientImpl {}\n"
     return {
@@ -1352,6 +1372,177 @@ class EmailVerificationLinkClientImpl {
 
     assert edge_count > 0
     assert evidence_count == len(evidence_ids)
+
+
+def test_resolver_uses_first_class_arity_for_overloaded_cross_file_calls(tmp_path):
+    controller = """package example;
+
+class Controller {
+  private final TicketMapper mapper;
+
+  TicketDto handle(Ticket ticket) {
+    return mapper.toApi(ticket);
+  }
+}
+
+class Ticket {}
+class TicketDto {}
+"""
+    mapper = """package example;
+
+class TicketMapper {
+  TicketDto toApi() { return new TicketDto(); }
+  TicketDto toApi(Ticket ticket) { return new TicketDto(); }
+}
+
+class Ticket {}
+class TicketDto {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(controller, "src/main/java/example/Controller.java"),
+        _materialize_static_java_for_test(controller, 1, "src/main/java/example/Controller.java"),
+    )
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(mapper, "src/main/java/example/TicketMapper.java"),
+        _materialize_static_java_for_test(mapper, 2, "src/main/java/example/TicketMapper.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        edge = conn.execute(
+            """
+            SELECT e.resolution_status, e.to_node_id, e.argument_count, e.metadata_json,
+                   target.name AS target_name, target.parameter_count, target.metadata_json AS target_metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.edge_type = 'CALLS'
+              AND e.source_id = 'edge-gateway'
+              AND e.argument_count = 1
+              AND json_extract(e.metadata_json, '$.methodName') = 'toApi'
+            """
+        ).fetchone()
+        assert edge is not None
+        assert edge["resolution_status"] == "RESOLVED"
+        assert edge["target_name"] == "toApi"
+        assert edge["parameter_count"] == 1
+        assert json.loads(edge["metadata_json"]).get("argumentCount") is None
+        assert json.loads(edge["target_metadata_json"]).get("parameters") is None
+
+
+def test_resolver_does_not_fake_success_for_same_arity_overloads(tmp_path):
+    controller = """package example;
+
+class Controller {
+  private final TicketMapper mapper;
+
+  TicketDto handle(Ticket ticket) {
+    return mapper.toApi(ticket);
+  }
+}
+
+class Ticket {}
+class TicketDto {}
+"""
+    mapper = """package example;
+
+class TicketMapper {
+  TicketDto toApi(Ticket ticket) { return new TicketDto(); }
+  TicketDto toApi(String ticketId) { return new TicketDto(); }
+}
+
+class Ticket {}
+class TicketDto {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(controller, "src/main/java/example/Controller.java"),
+        _materialize_static_java_for_test(controller, 1, "src/main/java/example/Controller.java"),
+    )
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(mapper, "src/main/java/example/TicketMapper.java"),
+        _materialize_static_java_for_test(mapper, 2, "src/main/java/example/TicketMapper.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        edge = conn.execute(
+            """
+            SELECT resolution_status, to_node_id, argument_count, metadata_json
+            FROM analysis_graph_edges
+            WHERE edge_type = 'CALLS'
+              AND source_id = 'edge-gateway'
+              AND argument_count = 1
+              AND json_extract(metadata_json, '$.methodName') = 'toApi'
+            """
+        ).fetchone()
+        assert edge is not None
+        assert edge["resolution_status"] == "MULTIPLE_CANDIDATES"
+        assert edge["to_node_id"] is None
+        metadata = json.loads(edge["metadata_json"])
+        assert "argumentCount" not in metadata
+        assert "resolverSignals" not in metadata
+
+
+def test_resolver_does_not_fallback_when_first_class_arity_mismatches(tmp_path):
+    controller = """package example;
+
+class Controller {
+  private final TicketMapper mapper;
+
+  TicketDto handle(Ticket ticket) {
+    return mapper.toApi(ticket);
+  }
+}
+
+class Ticket {}
+class TicketDto {}
+"""
+    mapper = """package example;
+
+class TicketMapper {
+  TicketDto toApi() { return new TicketDto(); }
+}
+
+class TicketDto {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(controller, "src/main/java/example/Controller.java"),
+        _materialize_static_java_for_test(controller, 1, "src/main/java/example/Controller.java"),
+    )
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(mapper, "src/main/java/example/TicketMapper.java"),
+        _materialize_static_java_for_test(mapper, 2, "src/main/java/example/TicketMapper.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        edge = conn.execute(
+            """
+            SELECT resolution_status, to_node_id, argument_count, metadata_json
+            FROM analysis_graph_edges
+            WHERE edge_type = 'CALLS'
+              AND source_id = 'edge-gateway'
+              AND argument_count = 1
+              AND json_extract(metadata_json, '$.methodName') = 'toApi'
+            """
+        ).fetchone()
+        assert edge is not None
+        assert edge["resolution_status"] == "UNRESOLVED"
+        assert edge["to_node_id"] is None
+        metadata = json.loads(edge["metadata_json"])
+        assert "argumentCount" not in metadata
+        assert "parameters" not in metadata
 
 
 def build_two_service_inventory(tmp_path):

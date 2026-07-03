@@ -159,7 +159,7 @@ def test_static_graph_materializer_creates_static_nodes_edges_evidence_and_entry
     assert next(edge for edge in call_edges if edge.metadata["methodName"] == "toApi").metadata["callKind"] == "FIELD_RECEIVER"
 
 
-def test_java_parser_uses_parameter_and_local_variable_receiver_type_hints():
+def test_java_parser_keeps_receiver_type_hints_out_of_edge_metadata():
     text = """package example;
 
 class Controller {
@@ -186,13 +186,15 @@ class Ticket {}
     validate = next(edge for edge in call_edges if edge.metadata["methodName"] == "validate")
 
     assert to_api.metadata["callKind"] == "PARAMETER_RECEIVER"
-    assert to_api.metadata["receiverTypeHint"] == "TicketMapper"
     assert to_api.metadata["resolutionStatus"] == "RESOLVED"
     assert to_api.metadata["resolutionReason"] == "PARAMETER_TYPE_HINT"
+    assert to_api.argument_count == 1
+    assert "receiverTypeHint" not in to_api.metadata
     assert validate.metadata["callKind"] == "LOCAL_VARIABLE_RECEIVER"
-    assert validate.metadata["receiverTypeHint"] == "TicketDto"
     assert validate.metadata["resolutionStatus"] == "RESOLVED"
     assert validate.metadata["resolutionReason"] == "LOCAL_VARIABLE_TYPE_HINT"
+    assert validate.argument_count == 0
+    assert "receiverTypeHint" not in validate.metadata
 
 
 def test_static_graph_materializer_creates_entrypoint_hints_for_lifecycle_config_and_tests():

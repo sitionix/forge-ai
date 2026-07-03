@@ -113,6 +113,7 @@ class GraphNodeFact:
     qualified_name: str
     display_name: str
     parent_node_id: Optional[str]
+    parameter_count: Optional[int]
     line_start: Optional[int]
     line_end: Optional[int]
     confidence: float
@@ -135,6 +136,7 @@ class GraphNodeFact:
             "qualified_name": self.qualified_name,
             "display_name": self.display_name,
             "parent_node_id": self.parent_node_id,
+            "parameter_count": self.parameter_count,
             "line_start": self.line_start,
             "line_end": self.line_end,
             "confidence": self.confidence,
@@ -156,8 +158,8 @@ class GraphEdgeFact:
     to_node_id: Optional[str]
     edge_type: GraphEdgeType
     resolution_status: GraphResolutionStatus
+    argument_count: Optional[int]
     confidence: float
-    evidence_id: Optional[str]
     unresolved_target: Optional[Dict[str, Any]]
     metadata: Dict[str, Any]
     status: GraphFactStatus
@@ -175,8 +177,8 @@ class GraphEdgeFact:
             "to_node_id": self.to_node_id,
             "edge_type": self.edge_type.value,
             "resolution_status": self.resolution_status.value,
+            "argument_count": self.argument_count,
             "confidence": self.confidence,
-            "evidence_id": self.evidence_id,
             "unresolved_target": self.unresolved_target,
             "metadata": self.metadata,
             "status": self.status.value,

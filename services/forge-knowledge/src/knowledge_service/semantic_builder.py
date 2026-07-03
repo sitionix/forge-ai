@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from knowledge_service.embedding_provider import EmbeddingProvider, EmbeddingProviderError
+from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.observability import observed_connect
 from knowledge_service.semantic_index import (
     SEMANTIC_BUILDER_VERSION,
@@ -23,7 +24,6 @@ from knowledge_service.semantic_index import (
 
 
 SEMANTIC_DOCUMENT_TYPE = "NODE_CONTEXT"
-_ALLOWED_EDGE_TYPES = {"CALLS", "DECLARES", "IMPORTS", "REFERENCES"}
 
 
 @dataclass(frozen=True)
@@ -124,6 +124,9 @@ class SemanticDocumentBuilder:
         ]
 
     def _load_nodes(self, conn: sqlite3.Connection, source_id: str) -> list[sqlite3.Row]:
+        contract = graph_query_contract()
+        status_sql, status_params = sql_in_clause(contract.statuses_for_current_graph())
+        node_kind_sql, node_kind_params = sql_in_clause(contract.semantic_node_kinds)
         return conn.execute(
             f"""
             SELECT n.*,
@@ -139,12 +142,12 @@ class SemanticDocumentBuilder:
               ON parent.source_id = n.source_id
              AND parent.id = n.parent_node_id
             WHERE n.source_id = ?
-              AND n.status IN ('TRUSTED', 'DERIVED')
-              AND n.node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
+              AND n.status IN ({status_sql})
+              AND n.node_kind IN ({node_kind_sql})
               {SEMANTIC_INVENTORY_MEMBERSHIP_NODE_FILTER_SQL}
             ORDER BY n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
             """,
-            (source_id,),
+            (source_id, *status_params, *node_kind_params),
         ).fetchall()
 
     def _load_evidence_ids(self, conn: sqlite3.Connection, source_id: str) -> set[str]:
@@ -166,17 +169,18 @@ class SemanticDocumentBuilder:
         source_id: str,
         evidence_ids: set[str],
     ) -> dict[str, tuple[dict[str, Any], ...]]:
+        contract = graph_query_contract()
         rows = conn.execute(
             """
             SELECT claim.id, claim.node_id, claim.summary, link.evidence_id
             FROM analysis_graph_claims claim
             JOIN analysis_graph_claim_evidence link ON link.claim_id = claim.id
             WHERE claim.source_id = ?
-              AND claim.claim_kind = 'RESPONSIBILITY'
-              AND claim.status = 'TRUSTED'
+              AND claim.claim_kind = ?
+              AND claim.status = ?
             ORDER BY claim.node_id, claim.id, link.evidence_id
             """,
-            (source_id,),
+            (source_id, contract.responsibility_claim_kind, contract.trusted_status),
         ).fetchall()
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
@@ -193,8 +197,10 @@ class SemanticDocumentBuilder:
         return {node_id: tuple(values) for node_id, values in grouped.items()}
 
     def _load_edge_facts(self, conn: sqlite3.Connection, source_id: str) -> dict[str, dict[str, list[dict[str, str]]]]:
+        contract = graph_query_contract()
+        status_sql, status_params = sql_in_clause(contract.statuses_for_current_graph())
         rows = conn.execute(
-            """
+            f"""
             SELECT e.id, e.from_node_id, e.to_node_id, e.edge_type, e.resolution_status, e.unresolved_target_json,
                    from_node.name AS from_name,
                    from_node.qualified_name AS from_qualified_name,
@@ -210,16 +216,18 @@ class SemanticDocumentBuilder:
               ON to_node.source_id = e.source_id
              AND to_node.id = e.to_node_id
             WHERE e.source_id = ?
-              AND e.status IN ('TRUSTED', 'DERIVED')
+              AND e.status IN ({status_sql})
             ORDER BY e.edge_type, e.id
             """,
-            (source_id,),
+            (source_id, *status_params),
         ).fetchall()
+        allowed_edge_types = set(contract.semantic_edge_types)
+        external_target_status = contract.external_target_status
         grouped: dict[str, dict[str, list[dict[str, str]]]] = {}
         for row in rows:
             edge_type = str(row["edge_type"] or "").upper()
             resolution_status = str(row["resolution_status"] or "").upper()
-            if edge_type not in _ALLOWED_EDGE_TYPES and resolution_status != "EXTERNAL_TARGET":
+            if edge_type not in allowed_edge_types and resolution_status != external_target_status:
                 continue
             from_node_id = str(row["from_node_id"] or "")
             to_node_id = str(row["to_node_id"] or "")

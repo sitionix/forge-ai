@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.observability import observed_connect
 from knowledge_service.semantic_index import SEMANTIC_BUILDER_VERSION, SemanticIndexStore
 
@@ -346,7 +347,12 @@ def _semantic_percent_for_overview_conn(conn: sqlite3.Connection, row: sqlite3.R
         params.append(graph.graph_revision)
     if embedding_model:
         params.append(embedding_model)
+    contract = graph_query_contract()
+    status_sql, status_params = sql_in_clause(contract.statuses_for_current_graph())
+    node_kind_sql, node_kind_params = sql_in_clause(contract.semantic_node_kinds)
     params.append(source_id)
+    params.extend(status_params)
+    params.extend(node_kind_params)
     result = conn.execute(
         f"""
         SELECT COUNT(DISTINCT f.id) AS count
@@ -372,8 +378,8 @@ def _semantic_percent_for_overview_conn(conn: sqlite3.Connection, row: sqlite3.R
          AND v.graph_id = d.graph_id
          {model_clause}
         WHERE n.source_id = ?
-          AND n.status IN ('TRUSTED', 'DERIVED')
-          AND n.node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
+          AND n.status IN ({status_sql})
+          AND n.node_kind IN ({node_kind_sql})
           AND n.analysis_file_id IS NOT NULL
         """,
         params,

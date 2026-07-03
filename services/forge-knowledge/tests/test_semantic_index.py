@@ -786,6 +786,71 @@ def test_deleting_analysis_file_cascades_current_graph_and_semantic_cache(tmp_pa
         assert conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = 'semantic-source'").fetchone()[0] == 2
 
 
+def test_deleting_analysis_file_cascades_graph_children_and_evidence_links(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    source_id = "cascade-source"
+    node_id = f"{source_id}:node-query"
+    seed_semantic_graph(
+        db_path,
+        source_id=source_id,
+        claims=[{"id": "claim-cascade", "node_id": node_id, "summary": "Cascade claim.", "evidence_ids": ["ev-node-query"]}],
+        edges=[{"id": "edge-cascade", "from": node_id, "to": None, "unresolved": {"name": "missing"}}],
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        file_id = conn.execute("SELECT file_id FROM analysis_files WHERE source_id = ?", (source_id,)).fetchone()[0]
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claims WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence WHERE source_id = ?", (source_id,)).fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claim_evidence").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edge_evidence").fetchone()[0] == 1
+
+        conn.execute("DELETE FROM analysis_files WHERE file_id = ?", (file_id,))
+
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = ?", (source_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = ?", (source_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claims WHERE source_id = ?", (source_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence WHERE source_id = ?", (source_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claim_evidence").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edge_evidence").fetchone()[0] == 0
+
+
+def test_deleting_claim_edge_or_evidence_cascades_join_rows(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    source_id = "join-cascade-source"
+    node_id = f"{source_id}:node-query"
+    seed_semantic_graph(
+        db_path,
+        source_id=source_id,
+        claims=[{"id": "claim-cascade", "node_id": node_id, "summary": "Cascade claim.", "evidence_ids": ["ev-node-query"]}],
+        edges=[{"id": "edge-cascade", "from": node_id, "to": None, "unresolved": {"name": "missing"}}],
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("DELETE FROM analysis_graph_claims WHERE id = 'claim-cascade'")
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claim_evidence").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence WHERE id = 'ev-node-query'").fetchone()[0] == 1
+
+        conn.execute("DELETE FROM analysis_graph_edges WHERE id = 'edge-cascade'")
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edge_evidence").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence WHERE id = 'ev-edge-cascade'").fetchone()[0] == 1
+
+    seed_semantic_graph(
+        db_path,
+        source_id=source_id,
+        claims=[{"id": "claim-cascade", "node_id": node_id, "summary": "Cascade claim.", "evidence_ids": ["ev-node-query"]}],
+        edges=[{"id": "edge-cascade", "from": node_id, "to": None, "unresolved": {"name": "missing"}}],
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("DELETE FROM analysis_graph_evidence WHERE id IN ('ev-node-query', 'ev-edge-cascade')")
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claim_evidence").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edge_evidence").fetchone()[0] == 0
+
+
 def test_init_drops_legacy_graph_storage_and_creates_current_state_schema(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     with sqlite3.connect(db_path) as conn:
@@ -1168,6 +1233,7 @@ def _overview_progress_fixture(
     ]
     seed_semantic_graph(db_path, nodes=nodes)
     with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         conn.execute("DELETE FROM analysis_files WHERE source_id = ?", (source_id,))
         conn.execute("DELETE FROM files WHERE source_id = ?", (source_id,))

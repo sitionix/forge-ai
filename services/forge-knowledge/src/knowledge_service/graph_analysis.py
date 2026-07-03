@@ -72,6 +72,7 @@ class GraphAnalysisEngine:
                     "display_name": node.displayName,
                     "parent_node_id": None,
                     "parent_local_id": node.parentLocalId or parent_by_local_id.get(node.localId),
+                    "parameter_count": node.parameter_count,
                     "line_start": node.lineStart,
                     "line_end": node.lineEnd,
                     "confidence": node.confidence,
@@ -173,7 +174,6 @@ class GraphAnalysisEngine:
                 to_node_id or "",
                 edge.edgeType,
             )
-            edge_evidence_id = None
             edge_evidence_ids: List[str] = []
             if edge.evidence:
                 evidence_row = self._evidence(
@@ -192,7 +192,6 @@ class GraphAnalysisEngine:
                     used_ids=used_evidence_ids,
                 )
                 evidence.append(evidence_row)
-                edge_evidence_id = evidence_row["id"]
                 edge_evidence_ids.append(evidence_row["id"])
             edges.append(
                 {
@@ -205,8 +204,8 @@ class GraphAnalysisEngine:
                     "to_node_id": to_node_id,
                     "edge_type": edge.edgeType,
                     "resolution_status": str(metadata.get("resolutionStatus") or ("RESOLVED" if to_node_id else "UNRESOLVED")).upper(),
+                    "argument_count": edge.argument_count,
                     "confidence": edge.confidence,
-                    "evidence_id": edge_evidence_id,
                     "evidence_ids": edge_evidence_ids,
                     "unresolved_target": edge.unresolvedTarget,
                     "metadata": self._allowlisted_metadata(metadata, EDGE_METADATA_ALLOWLIST),

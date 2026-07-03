@@ -9,11 +9,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.observability import observed_connect
 
 
 SEMANTIC_BUILDER_VERSION = 1
-SEMANTIC_ELIGIBLE_NODE_KINDS = ("FILE", "TYPE", "CALLABLE", "EXTERNAL")
 SQLITE_SEMANTIC_BUSY_TIMEOUT_MS = 5000
 SEMANTIC_INVENTORY_MEMBERSHIP_NODE_FILTER_SQL = """
   AND EXISTS (
@@ -110,6 +110,7 @@ class SemanticIndexStatusView:
 
 
 def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
+    conn.execute("DROP TRIGGER IF EXISTS trg_analysis_file_delete_current_graph")
     if _table_exists(conn, "semantic_documents"):
         columns = _table_columns(conn, "semantic_documents")
         legacy_claim_ids = "claim_ids" + "_json"
@@ -194,25 +195,6 @@ def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
         ON semantic_documents(source_id, node_id, graph_id, builder_version)
         """
     )
-    if _table_exists(conn, "analysis_files") and _table_exists(conn, "analysis_graph_nodes"):
-        conn.execute(
-            """
-            CREATE TRIGGER IF NOT EXISTS trg_analysis_file_delete_current_graph
-            AFTER DELETE ON analysis_files
-            BEGIN
-                DELETE FROM analysis_graph_nodes
-                WHERE source_id = OLD.source_id
-                  AND analysis_file_id = OLD.file_id;
-                DELETE FROM analysis_graph_evidence
-                WHERE source_id = OLD.source_id
-                  AND analysis_file_id = OLD.file_id;
-                DELETE FROM analysis_graph_diagnostics
-                WHERE source_id = OLD.source_id
-                  AND analysis_file_id = OLD.file_id;
-            END
-            """
-        )
-
 
 class SemanticIndexStore:
     def __init__(self, db_path: Path):
@@ -630,7 +612,12 @@ class SemanticIndexStore:
         params: list[Any] = [builder_version]
         if current_revision_only:
             params.append(graph.graph_id)
+        contract = graph_query_contract()
+        status_sql, status_params = sql_in_clause(contract.statuses_for_current_graph())
+        node_kind_sql, node_kind_params = sql_in_clause(contract.semantic_node_kinds)
         params.extend([embedding_model, embedding_model, source_id])
+        params.extend(status_params)
+        params.extend(node_kind_params)
         row = conn.execute(
             f"""
             SELECT COUNT(DISTINCT n.id) AS count
@@ -648,8 +635,8 @@ class SemanticIndexStore:
              AND v.graph_id = d.graph_id
              AND (? IS NULL OR v.embedding_model = ?)
             WHERE n.source_id = ?
-              AND n.status IN ('TRUSTED', 'DERIVED')
-              AND n.node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
+              AND n.status IN ({status_sql})
+              AND n.node_kind IN ({node_kind_sql})
               {SEMANTIC_INVENTORY_MEMBERSHIP_NODE_FILTER_SQL}
             """,
             params,
@@ -689,17 +676,20 @@ class SemanticIndexStore:
     def current_graph_info_conn(cls, conn: sqlite3.Connection, source_id: str) -> SemanticGraphInfo:
         if not all(_table_exists(conn, table) for table in ("files", "analysis_files", "analysis_graph_nodes")):
             return SemanticGraphInfo(source_id=source_id, graph_id=None, graph_revision=None, total_node_count=0)
+        contract = graph_query_contract()
+        status_sql, status_params = sql_in_clause(contract.statuses_for_current_graph())
+        node_kind_sql, node_kind_params = sql_in_clause(contract.semantic_node_kinds)
         total = int(
             conn.execute(
                 f"""
                 SELECT COUNT(*) AS count
                 FROM analysis_graph_nodes n
                 WHERE n.source_id = ?
-                  AND n.status IN ('TRUSTED', 'DERIVED')
-                  AND n.node_kind IN ('FILE', 'TYPE', 'CALLABLE', 'EXTERNAL')
+                  AND n.status IN ({status_sql})
+                  AND n.node_kind IN ({node_kind_sql})
                   {SEMANTIC_INVENTORY_MEMBERSHIP_NODE_FILTER_SQL}
                 """,
-                (source_id,),
+                (source_id, *status_params, *node_kind_params),
             ).fetchone()["count"]
             or 0
         )

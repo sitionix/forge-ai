@@ -250,6 +250,7 @@ class GraphNode(BaseModel):
     qualifiedName: Optional[str] = None
     displayName: Optional[str] = None
     parentLocalId: Optional[str] = None
+    parameter_count: Optional[int] = None
     lineStart: Optional[int] = None
     lineEnd: Optional[int] = None
     confidence: float = 1.0
@@ -264,12 +265,19 @@ class GraphNode(BaseModel):
             raise ValueError("Confidence must be between 0 and 1")
         return value
 
+    @validator("parameter_count")
+    def parameter_count_non_negative(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and value < 0:
+            raise ValueError("parameter_count must be non-negative")
+        return value
+
 
 class GraphEdge(BaseModel):
     localId: str
     fromNodeLocalId: str
     toNodeLocalId: Optional[str] = None
     edgeType: str
+    argument_count: Optional[int] = None
     confidence: float
     evidence: List[GraphEvidenceRef] = Field(default_factory=list)
     unresolvedTarget: Optional[Dict[str, Any]] = None
@@ -282,6 +290,12 @@ class GraphEdge(BaseModel):
     def edge_confidence_range(cls, value: float) -> float:
         if value < 0 or value > 1:
             raise ValueError("Confidence must be between 0 and 1")
+        return value
+
+    @validator("argument_count")
+    def argument_count_non_negative(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and value < 0:
+            raise ValueError("argument_count must be non-negative")
         return value
 
 

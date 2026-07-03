@@ -13,9 +13,10 @@ from typing import Any, Dict, List, Optional, Set
 
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_call_intelligence import classify_call_metadata
+from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.observability import observed_connect
 from knowledge_service.overview_projection import ensure_overview_schema, read_overview, rebuild_overview, refresh_overview_for_sources
-from knowledge_service.semantic_index import SemanticIndexStore, ensure_semantic_index_schema
+from knowledge_service.semantic_index import SemanticIndexStatus, SemanticIndexStore, ensure_semantic_index_schema
 from knowledge_service.source_catalog import SourceMetadata
 
 
@@ -268,6 +269,7 @@ class AnalysisStore:
                     qualified_name TEXT,
                     display_name TEXT,
                     parent_node_id TEXT,
+                    parameter_count INTEGER,
                     line_start INTEGER,
                     line_end INTEGER,
                     confidence REAL NOT NULL,
@@ -336,6 +338,7 @@ class AnalysisStore:
                     to_node_id TEXT,
                     edge_type TEXT NOT NULL,
                     resolution_status TEXT NOT NULL,
+                    argument_count INTEGER,
                     confidence REAL NOT NULL,
                     unresolved_target_json TEXT,
                     metadata_json TEXT NOT NULL,
@@ -1137,10 +1140,10 @@ class AnalysisStore:
                     """
                         INSERT INTO analysis_graph_nodes(
                             id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash, stable_key, node_kind,
-                            language, name, qualified_name, display_name, parent_node_id, line_start, line_end,
+                            language, name, qualified_name, display_name, parent_node_id, parameter_count, line_start, line_end,
                             confidence, status, metadata_json, created_at, updated_at, fact_origin, flow_domain
                         )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         node["id"],
@@ -1158,6 +1161,7 @@ class AnalysisStore:
                         node.get("qualified_name"),
                         node.get("display_name"),
                         node.get("parent_node_id"),
+                        node.get("parameter_count"),
                         node.get("line_start"),
                         node.get("line_end"),
                         node["confidence"],
@@ -1247,9 +1251,9 @@ class AnalysisStore:
                         INSERT INTO analysis_graph_edges(
                             id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
                             from_node_id, to_node_id, edge_type, resolution_status, confidence,
-                            unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
+                            argument_count, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         edge["id"],
@@ -1265,6 +1269,7 @@ class AnalysisStore:
                         edge["edge_type"],
                         edge["resolution_status"],
                         edge["confidence"],
+                        edge.get("argument_count"),
                         json.dumps(edge.get("unresolved_target")) if edge.get("unresolved_target") is not None else None,
                         json.dumps(edge.get("metadata") or {}),
                         edge["status"],
@@ -1483,13 +1488,16 @@ class AnalysisStore:
             return []
         safe_limit = max(1, min(int(limit or 100), 10000))
         source_placeholders = ",".join("?" for _ in source_ids)
+        contract = graph_query_contract()
+        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_claim_text())
+        entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             rows = conn.execute(
                 f"""
                 WITH claim AS (
                     SELECT source_id, node_id, group_concat(summary, ' ') AS summary
                     FROM analysis_graph_claims
-                    WHERE status IN ('TRUSTED', 'DERIVED', 'CANDIDATE')
+                    WHERE status IN ({claim_status_sql})
                     GROUP BY source_id, node_id
                 ),
                 out_degree AS (
@@ -1506,8 +1514,8 @@ class AnalysisStore:
                 entry AS (
                     SELECT source_id, node_id, 1 AS entrypoint
                     FROM analysis_graph_claims
-                    WHERE claim_kind = 'ENTRYPOINT_HINT'
-                      AND status IN ('TRUSTED', 'DERIVED')
+                    WHERE claim_kind = ?
+                      AND status IN ({entry_status_sql})
                     GROUP BY source_id, node_id
                 )
                 SELECT n.*,
@@ -1536,7 +1544,7 @@ class AnalysisStore:
                 ORDER BY n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
                 LIMIT ?
                 """,
-                [*source_ids, safe_limit],
+                [*claim_status_params, contract.entrypoint_claim_kind, *entry_status_params, *source_ids, safe_limit],
             ).fetchall()
             revision_by_source = self._graph_identity_by_source(conn, source_ids)
         documents: List[Dict[str, Any]] = []
@@ -1564,6 +1572,9 @@ class AnalysisStore:
             return []
         safe_limit = max(1, min(int(limit or 100), 1000))
         source_placeholders = ",".join("?" for _ in source_ids)
+        contract = graph_query_contract()
+        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_claim_text())
+        entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
         token_clauses: List[str] = []
         token_params: List[Any] = []
         for token in tokens[:12]:
@@ -1588,7 +1599,7 @@ class AnalysisStore:
                 WITH claim AS (
                     SELECT source_id, node_id, group_concat(summary, ' ') AS summary
                     FROM analysis_graph_claims
-                    WHERE status IN ('TRUSTED', 'DERIVED', 'CANDIDATE')
+                    WHERE status IN ({claim_status_sql})
                     GROUP BY source_id, node_id
                 ),
                 out_degree AS (
@@ -1605,8 +1616,8 @@ class AnalysisStore:
                 entry AS (
                     SELECT source_id, node_id, 1 AS entrypoint
                     FROM analysis_graph_claims
-                    WHERE claim_kind = 'ENTRYPOINT_HINT'
-                      AND status IN ('TRUSTED', 'DERIVED')
+                    WHERE claim_kind = ?
+                      AND status IN ({entry_status_sql})
                     GROUP BY source_id, node_id
                 )
                 SELECT n.*,
@@ -1636,7 +1647,14 @@ class AnalysisStore:
                 ORDER BY n.confidence DESC, graph_degree DESC, n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
                 LIMIT ?
                 """,
-                [*source_ids, *token_params, safe_limit],
+                [
+                    *claim_status_params,
+                    contract.entrypoint_claim_kind,
+                    *entry_status_params,
+                    *source_ids,
+                    *token_params,
+                    safe_limit,
+                ],
             ).fetchall()
             revision_by_source = self._graph_identity_by_source(conn, source_ids)
         candidates: List[Dict[str, Any]] = []
@@ -1671,6 +1689,7 @@ class AnalysisStore:
         edges: List[Dict[str, Any]] = []
         evidence: List[Dict[str, Any]] = []
         unresolved: List[Dict[str, Any]] = []
+        unresolved_statuses = set(graph_query_contract().unresolved_resolution_statuses())
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             for source_id, anchor_ids in grouped.items():
                 selected_node_ids = set(anchor_ids)
@@ -1696,7 +1715,7 @@ class AnalysisStore:
                     for edge in relation_rows:
                         from_node_id = str(edge["from_node_id"])
                         to_node_id = str(edge["to_node_id"] or "")
-                        if not to_node_id or edge["resolution_status"] in {"UNRESOLVED", "DYNAMIC_TARGET"}:
+                        if not to_node_id or edge["resolution_status"] in unresolved_statuses:
                             unresolved_edge_ids.add(str(edge["id"]))
                         for node_id in (from_node_id, to_node_id):
                             if node_id and node_id not in selected_node_ids:
@@ -1743,6 +1762,8 @@ class AnalysisStore:
         edges: List[Dict[str, Any]] = []
         evidence: List[Dict[str, Any]] = []
         truncated = False
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             remaining_edges = safe_max_edges + 1
             edge_ids_by_source: Dict[str, Set[str]] = {}
@@ -1770,13 +1791,13 @@ class AnalysisStore:
                         LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
                         LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
                         WHERE e.source_id = ?
-                          AND e.edge_type = 'CALLS'
-                          AND e.status IN ('TRUSTED', 'DERIVED')
+                          AND e.edge_type = ?
+                          AND e.status IN ({current_status_sql})
                           AND (e.from_node_id IN ({frontier_placeholders}) OR e.to_node_id IN ({frontier_placeholders}))
                         ORDER BY e.id
                         LIMIT ?
                         """,
-                        [source_id, *frontier_list, *frontier_list, remaining_edges],
+                        [source_id, contract.calls_edge_type, *current_status_params, *frontier_list, *frontier_list, remaining_edges],
                     ).fetchall()
                     if len(edge_rows) >= remaining_edges:
                         truncated = True
@@ -1822,12 +1843,13 @@ class AnalysisStore:
         self._attach_current_graph_identity(conn, nodes)
         self._attach_current_graph_identity(conn, edges)
         self._attach_current_graph_identity(conn, evidence)
+        unresolved_statuses = {*contract.unresolved_resolution_statuses(), contract.multiple_candidates_status}
         unresolved = [
             edge
             for edge in edges
-            if not edge.get("toNodeId") or str(edge.get("resolutionStatus") or "").upper() in {"UNRESOLVED", "DYNAMIC_TARGET", "MULTIPLE_CANDIDATES"}
+            if not edge.get("toNodeId") or str(edge.get("resolutionStatus") or "").upper() in unresolved_statuses
         ]
-        external = [node for node in nodes if node.get("nodeKind") == "EXTERNAL" or node.get("external")]
+        external = [node for node in nodes if node.get("nodeKind") == contract.external_node_kind or node.get("external")]
         verified_paths = self._verified_paths_from_evidence(evidence)
         return {"nodes": nodes, "edges": edges, "evidence": evidence, "unresolved": unresolved, "external": external, "verifiedPaths": verified_paths, "truncated": truncated}
 
@@ -1848,6 +1870,8 @@ class AnalysisStore:
             return []
         ids = sorted(node_ids)
         placeholders = ",".join("?" for _ in ids)
+        contract = graph_query_contract()
+        entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
         rows = conn.execute(
             f"""
             SELECT n.*, af.relative_path,
@@ -1869,13 +1893,13 @@ class AnalysisStore:
             LEFT JOIN analysis_graph_claims entry
               ON entry.source_id = n.source_id
              AND entry.node_id = n.id
-             AND entry.claim_kind = 'ENTRYPOINT_HINT'
-             AND entry.status IN ('TRUSTED', 'DERIVED')
+             AND entry.claim_kind = ?
+             AND entry.status IN ({entry_status_sql})
             WHERE n.source_id = ?
               AND n.id IN ({placeholders})
             ORDER BY n.id
             """,
-            [source_id, *ids],
+            [contract.entrypoint_claim_kind, *entry_status_params, source_id, *ids],
         ).fetchall()
         return [self._graph_node_projection(self._row_dict(row)) for row in rows]
 
@@ -1921,8 +1945,10 @@ class AnalysisStore:
         if node_ids:
             ids = sorted(node_ids)
             placeholders = ",".join("?" for _ in ids)
-            disjunctions.append(f"(e.from_node_id IN ({placeholders}) AND (e.to_node_id IS NULL OR e.resolution_status IN ('UNRESOLVED', 'DYNAMIC_TARGET')))")
+            unresolved_sql, unresolved_params = sql_in_clause(graph_query_contract().unresolved_resolution_statuses())
+            disjunctions.append(f"(e.from_node_id IN ({placeholders}) AND (e.to_node_id IS NULL OR e.resolution_status IN ({unresolved_sql})))")
             params.extend(ids)
+            params.extend(unresolved_params)
         if unresolved_edge_ids:
             edge_ids = sorted(unresolved_edge_ids)
             placeholders = ",".join("?" for _ in edge_ids)
@@ -2380,6 +2406,8 @@ class AnalysisStore:
             if cursor_value:
                 where = f"{where} AND n.id > ?"
                 params = [*params, cursor_value]
+            contract = graph_query_contract()
+            entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
             rows = conn.execute(
                 f"""
                 SELECT n.*, af.relative_path,
@@ -2401,13 +2429,13 @@ class AnalysisStore:
                 LEFT JOIN analysis_graph_claims entry
                   ON entry.source_id = n.source_id
                  AND entry.node_id = n.id
-                 AND entry.claim_kind = 'ENTRYPOINT_HINT'
-                 AND entry.status IN ('TRUSTED', 'DERIVED')
+                 AND entry.claim_kind = ?
+                 AND entry.status IN ({entry_status_sql})
                 WHERE {where}
                 ORDER BY n.id
                 LIMIT ?
                 """,
-                [*params, safe_page_size + 1],
+                [contract.entrypoint_claim_kind, *entry_status_params, *params, safe_page_size + 1],
             ).fetchall()
         items = [self._graph_node_projection(self._row_dict(row)) for row in rows[:safe_page_size]]
         complete = len(rows) <= safe_page_size
@@ -2490,8 +2518,10 @@ class AnalysisStore:
                 payload.get("search"),
             )
             self._assert_graph_query_current(conn, payload, query)
+            contract = graph_query_contract()
+            entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
             row = conn.execute(
-                """
+                f"""
                 SELECT n.*, af.relative_path,
                        COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
                        CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint
@@ -2511,12 +2541,12 @@ class AnalysisStore:
                 LEFT JOIN analysis_graph_claims entry
                   ON entry.source_id = n.source_id
                  AND entry.node_id = n.id
-                 AND entry.claim_kind = 'ENTRYPOINT_HINT'
-                 AND entry.status IN ('TRUSTED', 'DERIVED')
+                 AND entry.claim_kind = ?
+                 AND entry.status IN ({entry_status_sql})
                 WHERE n.source_id = ?
                   AND n.id = ?
                 """,
-                (requested_source, node_id),
+                (contract.entrypoint_claim_kind, *entry_status_params, requested_source, node_id),
             ).fetchone()
             if row is None:
                 if conn.execute("SELECT 1 FROM analysis_graph_nodes WHERE id = ? LIMIT 1", (node_id,)).fetchone():
@@ -2849,7 +2879,9 @@ class AnalysisStore:
             params.append(query.edge_type.upper())
         if not query.include_unresolved:
             clauses.append("e.to_node_id IS NOT NULL")
-            clauses.append("e.resolution_status NOT IN ('UNRESOLVED', 'DYNAMIC_TARGET', 'EXTERNAL_TARGET')")
+            hidden_status_sql, hidden_status_params = sql_in_clause(graph_query_contract().hidden_unresolved_resolution_statuses())
+            clauses.append(f"e.resolution_status NOT IN ({hidden_status_sql})")
+            params.extend(hidden_status_params)
         if query.search:
             pattern = self._graph_search_pattern(query.search)
             clauses.append(
@@ -2879,6 +2911,8 @@ class AnalysisStore:
             return []
         node_where, node_params = self._graph_node_where(query)
         edge_where, edge_params = self._graph_edge_where(query)
+        contract = graph_query_contract()
+        entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
         rows = conn.execute(
             f"""
             WITH candidate_nodes AS (
@@ -2889,8 +2923,8 @@ class AnalysisStore:
                 LEFT JOIN analysis_graph_claims entry
                   ON entry.source_id = n.source_id
                  AND entry.node_id = n.id
-                 AND entry.claim_kind = 'ENTRYPOINT_HINT'
-                 AND entry.status IN ('TRUSTED', 'DERIVED')
+                 AND entry.claim_kind = ?
+                 AND entry.status IN ({entry_status_sql})
                 WHERE {node_where}
             ),
             filtered_edges AS (
@@ -2921,7 +2955,7 @@ class AnalysisStore:
                      candidate_nodes.id
             LIMIT ?
             """,
-            [*node_params, *edge_params, limit],
+            [contract.entrypoint_claim_kind, *entry_status_params, *node_params, *edge_params, limit],
         ).fetchall()
         return [self._graph_node_projection(self._row_dict(row)) for row in rows]
 
@@ -3192,8 +3226,10 @@ class AnalysisStore:
         return {"incoming": group(rows_for("incoming")), "outgoing": group(rows_for("outgoing"))}
 
     def _claims_for_node_detail(self, conn: sqlite3.Connection, row: Dict[str, Any]) -> List[sqlite3.Row]:
+        contract = graph_query_contract()
+        responsibility_status_sql, responsibility_status_params = sql_in_clause(contract.statuses_for_responsibility_summary())
         return conn.execute(
-            """
+            f"""
             SELECT claim.id, claim.node_id, claim.claim_kind, claim.summary, claim.confidence, claim.status,
                    claim.rejection_reason, claim.metadata_json, claim.fact_origin, claim.flow_domain,
                    COUNT(DISTINCT link.evidence_id) AS evidence_count,
@@ -3204,8 +3240,8 @@ class AnalysisStore:
               AND (
                 claim.node_id = ?
                 OR (
-                  claim.claim_kind = 'RESPONSIBILITY'
-                  AND claim.status IN ('TRUSTED', 'CANDIDATE')
+                  claim.claim_kind = ?
+                  AND claim.status IN ({responsibility_status_sql})
                   AND claim.rejection_reason IS NULL
                   AND (
                     claim.node_id = ?
@@ -3213,7 +3249,7 @@ class AnalysisStore:
                       SELECT id
                       FROM analysis_graph_nodes
                       WHERE analysis_file_id = ?
-                        AND node_kind = 'FILE'
+                        AND node_kind = ?
                       ORDER BY confidence DESC
                       LIMIT 1
                     )
@@ -3224,7 +3260,16 @@ class AnalysisStore:
             ORDER BY selected_node_claim DESC, confidence DESC, id
             LIMIT 100
             """,
-            (row["id"], row["source_id"], row["id"], row.get("parent_node_id"), row.get("analysis_file_id")),
+            (
+                row["id"],
+                row["source_id"],
+                row["id"],
+                contract.responsibility_claim_kind,
+                *responsibility_status_params,
+                row.get("parent_node_id"),
+                row.get("analysis_file_id"),
+                contract.file_node_kind,
+            ),
         ).fetchall()
 
     def _graph_node_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -3364,11 +3409,14 @@ class AnalysisStore:
         edge_count = conn.execute(f"SELECT COUNT(*) AS count FROM analysis_graph_edges e WHERE {' AND '.join(graph_edge_clauses)}", graph_params).fetchone()[
             "count"
         ]
+        trusted_status = graph_query_contract().trusted_status
         trusted_nodes = conn.execute(
-            f"SELECT COUNT(*) AS count FROM analysis_graph_nodes n WHERE {' AND '.join(graph_node_clauses)} AND n.status = 'TRUSTED'", graph_params
+            f"SELECT COUNT(*) AS count FROM analysis_graph_nodes n WHERE {' AND '.join(graph_node_clauses)} AND n.status = ?",
+            [*graph_params, trusted_status],
         ).fetchone()["count"]
         trusted_edges = conn.execute(
-            f"SELECT COUNT(*) AS count FROM analysis_graph_edges e WHERE {' AND '.join(graph_edge_clauses)} AND e.status = 'TRUSTED'", graph_params
+            f"SELECT COUNT(*) AS count FROM analysis_graph_edges e WHERE {' AND '.join(graph_edge_clauses)} AND e.status = ?",
+            [*graph_params, trusted_status],
         ).fetchone()["count"]
         failed = int(file_counts["failed"] or 0)
         failure_summary = self._current_failure_summary(conn, source_id)
@@ -3592,7 +3640,7 @@ class AnalysisStore:
             conn.execute(
                 """
                 UPDATE semantic_index_state
-                SET status = 'STALE',
+                SET status = ?,
                     indexed_node_count = 0,
                     embedding_model = NULL,
                     embedding_dimension = NULL,
@@ -3600,7 +3648,7 @@ class AnalysisStore:
                     started_at = NULL
                 WHERE source_id = ?
                 """,
-                (now, source_id),
+                (SemanticIndexStatus.STALE.value, now, source_id),
             )
 
     def _purge_stale_semantic_documents(self, conn: sqlite3.Connection) -> Set[str]:
@@ -3681,11 +3729,6 @@ class AnalysisStore:
         for batch in _chunks(node_ids, 400):
             placeholders = ",".join("?" for _ in batch)
             self._delete_semantic_documents_for_nodes(conn, batch)
-            conn.execute(
-                f"DELETE FROM analysis_graph_edges WHERE from_node_id IN ({placeholders}) OR to_node_id IN ({placeholders})",
-                [*batch, *batch],
-            )
-            conn.execute(f"DELETE FROM analysis_graph_claims WHERE node_id IN ({placeholders})", batch)
             conn.execute(f"DELETE FROM analysis_graph_nodes WHERE id IN ({placeholders})", batch)
         for table in ("analysis_graph_edges", "analysis_graph_evidence", "analysis_graph_diagnostics"):
             if not self._table_exists(conn, table):
@@ -3794,12 +3837,6 @@ class AnalysisStore:
         }
         if graph_node_ids:
             self._delete_semantic_documents_for_nodes(conn, graph_node_ids)
-            placeholders = ",".join("?" for _ in graph_node_ids)
-            conn.execute(
-                f"DELETE FROM analysis_graph_edges WHERE from_node_id IN ({placeholders}) OR to_node_id IN ({placeholders})",
-                [*graph_node_ids, *graph_node_ids],
-            )
-            conn.execute(f"DELETE FROM analysis_graph_claims WHERE node_id IN ({placeholders})", graph_node_ids)
         conn.execute("DELETE FROM analysis_graph_nodes WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?", (file_id, file_id, file_id))
         conn.execute(
             "DELETE FROM analysis_graph_edges WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?",
@@ -3971,16 +4008,18 @@ class AnalysisStore:
                 SemanticIndexStore.mark_source_stale_conn(conn, source_id, graph.graph_revision, graph.total_node_count)
 
     def _resolve_source_call_edges(self, conn: sqlite3.Connection, source_id: str) -> None:
+        contract = graph_query_contract()
+        pending_status_sql, pending_status_params = sql_in_clause(contract.resolver_pending_statuses())
         rows = conn.execute(
-            """
-            SELECT id, metadata_json, unresolved_target_json
+            f"""
+            SELECT id, metadata_json, unresolved_target_json, argument_count
             FROM analysis_graph_edges
             WHERE source_id = ?
-              AND edge_type = 'CALLS'
+              AND edge_type = ?
               AND to_node_id IS NULL
-              AND resolution_status IN ('UNRESOLVED', 'MULTIPLE_CANDIDATES')
+              AND resolution_status IN ({pending_status_sql})
         """,
-            (source_id,),
+            (source_id, contract.calls_edge_type, *pending_status_params),
         ).fetchall()
         if not rows:
             return
@@ -3989,10 +4028,10 @@ class AnalysisStore:
             SELECT id, name, qualified_name
             FROM analysis_graph_nodes
             WHERE source_id = ?
-              AND node_kind = 'TYPE'
-              AND status = 'TRUSTED'
+              AND node_kind = ?
+              AND status = ?
         """,
-            (source_id,),
+            (source_id, contract.type_node_kind, contract.trusted_status),
         ).fetchall()
         types_by_simple: Dict[str, List[sqlite3.Row]] = {}
         types_by_qualified: Dict[str, List[sqlite3.Row]] = {}
@@ -4013,22 +4052,21 @@ class AnalysisStore:
                     self._mark_call_edge_multiple(conn, edge["id"], metadata, len(type_candidates))
                 continue
             callable_candidates = self._callable_candidates_for_type(
-                conn, type_candidates[0]["id"], str(method_name), metadata.get("argumentCount")
+                conn, type_candidates[0]["id"], str(method_name), edge["argument_count"]
             )
             if len(callable_candidates) == 1:
-                metadata["resolutionStatus"] = "RESOLVED"
-                metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), "RESOLVED", None)
+                metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), contract.resolved_status, None)
                 metadata = self._edge_metadata_for_storage(metadata)
                 conn.execute(
                     """
                     UPDATE analysis_graph_edges
                     SET to_node_id = ?,
-                        resolution_status = 'RESOLVED',
+                        resolution_status = ?,
                         unresolved_target_json = NULL,
                         metadata_json = ?
                     WHERE id = ?
                 """,
-                    (callable_candidates[0]["id"], json.dumps(metadata), edge["id"]),
+                    (callable_candidates[0]["id"], contract.resolved_status, json.dumps(metadata), edge["id"]),
                 )
             elif len(callable_candidates) > 1:
                 self._mark_call_edge_multiple(conn, edge["id"], metadata, len(callable_candidates))
@@ -4036,39 +4074,35 @@ class AnalysisStore:
     def _callable_candidates_for_type(
         self, conn: sqlite3.Connection, type_node_id: str, method_name: str, argument_count: Optional[int]
     ) -> List[sqlite3.Row]:
+        contract = graph_query_contract()
         rows = conn.execute(
             """
-            SELECT id, metadata_json
+            SELECT id, parameter_count
             FROM analysis_graph_nodes
             WHERE parent_node_id = ?
-              AND node_kind = 'CALLABLE'
+              AND node_kind = ?
               AND name = ?
-              AND status = 'TRUSTED'
+              AND status = ?
         """,
-            (type_node_id, method_name),
+            (type_node_id, contract.callable_node_kind, method_name, contract.trusted_status),
         ).fetchall()
         if argument_count is None:
             return rows
-        matching = []
-        for row in rows:
-            metadata = self._json_dict(row["metadata_json"])
-            parameters = metadata.get("parameters") if isinstance(metadata.get("parameters"), list) else []
-            if len(parameters) == int(argument_count):
-                matching.append(row)
-        return matching or rows
+        matching = [row for row in rows if row["parameter_count"] is not None and int(row["parameter_count"]) == int(argument_count)]
+        return matching
 
     def _mark_call_edge_multiple(self, conn: sqlite3.Connection, edge_id: str, metadata: Dict[str, Any], candidate_count: int) -> None:
-        metadata["resolutionStatus"] = "MULTIPLE_CANDIDATES"
-        metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), "MULTIPLE_CANDIDATES", None)
+        contract = graph_query_contract()
+        metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), contract.multiple_candidates_status, None)
         metadata = self._edge_metadata_for_storage(metadata)
         conn.execute(
             """
             UPDATE analysis_graph_edges
-            SET resolution_status = 'MULTIPLE_CANDIDATES',
+            SET resolution_status = ?,
                 metadata_json = ?
             WHERE id = ?
         """,
-            (json.dumps(metadata), edge_id),
+            (contract.multiple_candidates_status, json.dumps(metadata), edge_id),
         )
 
     def _edge_metadata_for_storage(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -4395,6 +4429,7 @@ class AnalysisStore:
                 "content_hash",
                 "from_node_id",
                 "edge_type",
+                "argument_count",
             },
             "analysis_graph_evidence": {
                 "id",
@@ -4414,6 +4449,7 @@ class AnalysisStore:
                 "content_hash",
                 "stable_key",
                 "node_kind",
+                "parameter_count",
             },
         }
         table_names = self._table_names(conn)
@@ -4529,7 +4565,8 @@ class AnalysisStore:
                 metadata_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 fact_origin TEXT,
-                flow_domain TEXT
+                flow_domain TEXT,
+                FOREIGN KEY(analysis_file_id) REFERENCES analysis_files(file_id) ON DELETE CASCADE
             )
         """)
 
