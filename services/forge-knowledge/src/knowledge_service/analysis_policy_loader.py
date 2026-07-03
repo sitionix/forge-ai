@@ -73,7 +73,7 @@ ANALYSIS_KEYS = {
     "unsupported",
 }
 DEFAULT_KEYS = {"maxFileChars", "canonicalSourceView", "defaultPolicy", "defaultGraphProfiles", "evidencePolicy"}
-PROMPT_KEYS = {"file"}
+PROMPT_KEYS = {"file", "responseShape"}
 GRAPH_KEYS = {"nodes", "edges", "claims", "statuses", "origins", "evidenceKinds", "resolutionStatuses"}
 GRAPH_NODE_KEYS = {"identity", "semanticEligible"}
 GRAPH_EDGE_KEYS = {"from", "to", "semanticEligible"}
@@ -252,7 +252,11 @@ def _parse_prompts(data: Mapping[Any, Any], diagnostics: List[AnalysisPolicyDiag
         path = f"$.analysis.prompts.{prompt_id}"
         item = _require_mapping(raw, path, diagnostics)
         _check_allowed_keys(item, path, PROMPT_KEYS, diagnostics)
-        prompts[prompt_id] = PromptDefinition(id=prompt_id, file=_required_str(item, "file", path, diagnostics))
+        prompts[prompt_id] = PromptDefinition(
+            id=prompt_id,
+            file=_required_str(item, "file", path, diagnostics),
+            response_shape=_required_str(item, "responseShape", path, diagnostics),
+        )
     return prompts
 
 

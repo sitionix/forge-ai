@@ -10,12 +10,7 @@ Use only the provided content, metadata, static anchors, and analysis graph cont
 The static anchors are produced by deterministic extraction and are authoritative for existing file structure.
 
 Required response shape:
-{
-  "schemaVersion": "knowledge.graph.enrichment.v1",
-  "claims": [],
-  "semanticEdges": [],
-  "diagnostics": []
-}
+{{GRAPH_RESPONSE_SHAPE}}
 
 Rules:
 - Attach claims only to targetStableKey values from staticAnchors.

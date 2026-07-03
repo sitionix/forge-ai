@@ -9,12 +9,7 @@ No comments.
 Use only the provided content lines, metadata, static anchors, and analysis graph contract.
 
 Required response shape:
-{
-  "schemaVersion": "knowledge.graph.enrichment.v1",
-  "claims": [],
-  "semanticEdges": [],
-  "diagnostics": []
-}
+{{GRAPH_RESPONSE_SHAPE}}
 
 Rules:
 - Attach claims only to targetStableKey values from staticAnchors.

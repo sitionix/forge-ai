@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -215,9 +216,12 @@ class AnalysisPromptRenderer:
         contract = contract or self.provider.resolve_payload(payload)
         prompt_id = _prompt_id(payload) or contract.prompt_id
         template = self._template(prompt_id)
-        return self.render(template, contract)
+        response_shape = self._response_shape(prompt_id)
+        return self.render(template, contract, response_shape)
 
-    def render(self, template: str, contract: AnalysisGraphContract) -> str:
+    def render(self, template: str, contract: AnalysisGraphContract, response_shape: str | None = None) -> str:
+        if response_shape is not None:
+            template = template.replace("{{GRAPH_RESPONSE_SHAPE}}", response_shape)
         block = contract.render_contract_block()
         if "{{ANALYSIS_GRAPH_CONTRACT}}" in template:
             return template.replace("{{ANALYSIS_GRAPH_CONTRACT}}", block)
@@ -244,6 +248,28 @@ class AnalysisPromptRenderer:
                 promptPath=str(path),
             )
         return path.read_text(encoding="utf-8")
+
+    def _response_shape(self, prompt_id: str) -> str:
+        path = self.policy.prompt_response_shape_path(prompt_id)
+        if not path.exists():
+            raise KnowledgeError(
+                "ANALYSIS_POLICY_RESPONSE_SHAPE_FILE_MISSING",
+                f"Analysis policy response shape file does not exist: {path}",
+                promptId=prompt_id,
+                responseShapePath=str(path),
+            )
+        text = path.read_text(encoding="utf-8").strip()
+        try:
+            json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise KnowledgeError(
+                "ANALYSIS_POLICY_RESPONSE_SHAPE_INVALID_JSON",
+                f"Analysis policy response shape file is invalid JSON: {path}",
+                promptId=prompt_id,
+                responseShapePath=str(path),
+                jsonError=str(exc),
+            ) from exc
+        return text
 
 
 def contract_payload(contract: AnalysisGraphContract) -> dict[str, Any]:

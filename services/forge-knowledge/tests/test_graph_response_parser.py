@@ -16,6 +16,12 @@ from knowledge_service.graph_schema import GraphAnalysisResult
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = REPO_ROOT / "config" / "knowledge" / "analysis-policy.yaml"
+RESPONSE_SHAPE_PATH = REPO_ROOT / "config" / "knowledge" / "prompts" / "schemas" / "graph-enrichment-v1-response-shape.json"
+PROMPT_TEMPLATE_PATHS = [
+    REPO_ROOT / "config" / "knowledge" / "prompts" / "code-graph-enrichment.md",
+    REPO_ROOT / "config" / "knowledge" / "prompts" / "text-graph-enrichment.md",
+    REPO_ROOT / "config" / "knowledge" / "prompts" / "document-graph-enrichment.md",
+]
 FORBIDDEN_PROMPT_VALUES = {"UNKNOWN", "DIAGNOSTIC", "RELATED_TO"}
 
 
@@ -38,6 +44,32 @@ def test_prompt_contract_rendering_uses_yaml_for_code_text_and_document():
     assert all(value not in document_prompt for value in FORBIDDEN_PROMPT_VALUES)
 
 
+def test_prompt_response_shape_rendering_uses_shared_json_for_code_text_and_document():
+    policy = load_analysis_policy(POLICY_PATH)
+    renderer = AnalysisPromptRenderer(policy=policy)
+    response_shape = _shared_response_shape()
+
+    code_prompt = _render_prompt(renderer, "src/Foo.java")
+    text_prompt = _render_prompt(renderer, "config.yaml", "service:\n  endpoint: http://example\n")
+    document_prompt = _render_prompt(renderer, "README.md", "# Service\nDocuments service behavior.\n")
+
+    assert response_shape in code_prompt
+    assert response_shape in text_prompt
+    assert response_shape in document_prompt
+    assert "{{GRAPH_RESPONSE_SHAPE}}" not in code_prompt
+    assert "{{GRAPH_RESPONSE_SHAPE}}" not in text_prompt
+    assert "{{GRAPH_RESPONSE_SHAPE}}" not in document_prompt
+
+
+def test_prompt_markdown_uses_response_shape_placeholder_instead_of_duplicated_json():
+    response_shape = _shared_response_shape()
+
+    for path in PROMPT_TEMPLATE_PATHS:
+        text = path.read_text(encoding="utf-8")
+        assert "{{GRAPH_RESPONSE_SHAPE}}" in text
+        assert response_shape not in text
+
+
 def test_prompt_contract_rendering_changes_when_yaml_changes(tmp_path):
     data = copy.deepcopy(yaml.safe_load(POLICY_PATH.read_text(encoding="utf-8")))
     data["analysis"]["graph"]["claims"]["SECURITY_NOTE"] = {
@@ -54,6 +86,55 @@ def test_prompt_contract_rendering_changes_when_yaml_changes(tmp_path):
     prompt = _render_prompt(renderer, "script.py", "print('hello')\n")
 
     assert "SECURITY_NOTE" in prompt
+
+
+def test_prompt_response_shape_rendering_changes_when_shared_json_changes(tmp_path):
+    default_renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+    default_prompt = _render_prompt(default_renderer, "src/Foo.java")
+    prompt_root = tmp_path / "prompts"
+    schema_dir = prompt_root / "schemas"
+    schema_dir.mkdir(parents=True)
+    (prompt_root / "code-graph-enrichment.md").write_text(PROMPT_TEMPLATE_PATHS[0].read_text(encoding="utf-8"), encoding="utf-8")
+    mutated_shape = {
+        "schemaVersion": "knowledge.graph.enrichment.v1",
+        "claims": [],
+        "semanticEdges": [],
+        "diagnostics": [],
+        "fixtureMarker": "changed-response-shape",
+    }
+    (schema_dir / "graph-enrichment-v1-response-shape.json").write_text(json.dumps(mutated_shape, indent=2), encoding="utf-8")
+    data = copy.deepcopy(yaml.safe_load(POLICY_PATH.read_text(encoding="utf-8")))
+    data["analysis"]["promptRoot"] = str(prompt_root)
+    policy_path = tmp_path / "analysis-policy.yaml"
+    policy_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(policy_path))
+
+    mutated_prompt = _render_prompt(renderer, "src/Foo.java")
+
+    assert mutated_prompt != default_prompt
+    assert '"fixtureMarker": "changed-response-shape"' in mutated_prompt
+    assert '"fixtureMarker": "changed-response-shape"' not in default_prompt
+
+
+def test_prompt_renderer_rejects_missing_response_shape_file(tmp_path):
+    data = copy.deepcopy(yaml.safe_load(POLICY_PATH.read_text(encoding="utf-8")))
+    data["analysis"]["prompts"]["code_graph_enrichment"]["responseShape"] = "schemas/missing-response-shape.json"
+    policy_path = tmp_path / "analysis-policy.yaml"
+    policy_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    policy = load_analysis_policy(policy_path)
+    renderer = AnalysisPromptRenderer(policy=policy)
+    contract = renderer.provider.resolve("src/Foo.java", "class Foo {}\n")
+    payload = {
+        "relativePath": "src/Foo.java",
+        "content": "class Foo {}\n",
+        "analysisPolicy": contract_payload(contract),
+    }
+
+    with pytest.raises(KnowledgeError) as exc_info:
+        renderer.render_for_payload(payload)
+
+    assert exc_info.value.code == "ANALYSIS_POLICY_RESPONSE_SHAPE_FILE_MISSING"
+    assert "missing-response-shape.json" in exc_info.value.details["responseShapePath"]
 
 
 def test_graph_contract_provider_empty_relative_path_fails_explicitly():
@@ -406,3 +487,7 @@ def _detail(failure: GraphAnalysisParseFailure, path: str) -> dict[str, Any]:
         if detail.get("jsonPath") == path:
             return detail
     raise AssertionError(f"missing detail for {path}: {failure.error_details}")
+
+
+def _shared_response_shape() -> str:
+    return RESPONSE_SHAPE_PATH.read_text(encoding="utf-8").strip()
