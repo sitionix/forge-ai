@@ -1,0 +1,337 @@
+analysis:
+  schemaVersion: 1
+  promptRoot: config/knowledge/prompts
+
+  defaults:
+    maxFileChars: 120000
+    canonicalSourceView: contentLines
+    defaultPolicy: text_graph_enrichment
+    defaultGraphProfiles: [base_file_graph]
+    evidencePolicy: grounded_material_support
+
+  prompts:
+    code_graph_enrichment:
+      file: code-graph-enrichment.md
+    text_graph_enrichment:
+      file: text-graph-enrichment.md
+    document_graph_enrichment:
+      file: document-graph-enrichment.md
+
+  graph:
+    nodes:
+      FILE:
+        identity: file
+        semanticEligible: true
+      TYPE:
+        identity: file_scoped_qualified_name
+        semanticEligible: true
+      CALLABLE:
+        identity: file_scoped_signature
+        semanticEligible: true
+      FIELD:
+        identity: file_scoped_name
+        semanticEligible: false
+      EXTERNAL:
+        identity: normalized_reference
+        semanticEligible: true
+      MODULE:
+        identity: file_scoped_name
+        semanticEligible: false
+      CONFIG:
+        identity: file_scoped_key_or_region
+        semanticEligible: false
+      DATA:
+        identity: file_scoped_path_or_region
+        semanticEligible: false
+      RESOURCE:
+        identity: file_scoped_name_or_reference
+        semanticEligible: false
+
+    edges:
+      DECLARES:
+        from: [FILE, TYPE, MODULE]
+        to: [TYPE, CALLABLE, FIELD, CONFIG, DATA, RESOURCE]
+        semanticEligible: true
+      IMPORTS:
+        from: [FILE, TYPE]
+        to: [EXTERNAL]
+        semanticEligible: true
+      REFERENCES:
+        from: [FILE, TYPE, CALLABLE, FIELD, CONFIG, DATA, RESOURCE]
+        to: [FILE, TYPE, CALLABLE, EXTERNAL, CONFIG, DATA, RESOURCE]
+        semanticEligible: true
+      CALLS:
+        from: [CALLABLE]
+        to: [CALLABLE, EXTERNAL]
+        semanticEligible: true
+      CONFIGURES:
+        from: [FILE, CONFIG, MODULE]
+        to: [EXTERNAL, MODULE, DATA, RESOURCE, CONFIG]
+        semanticEligible: false
+      DEPENDS_ON:
+        from: [FILE, MODULE, CONFIG, DATA, RESOURCE]
+        to: [FILE, MODULE, EXTERNAL, CONFIG, DATA, RESOURCE]
+        semanticEligible: false
+
+    claims:
+      RESPONSIBILITY:
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: true
+      ENTRYPOINT_HINT:
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: true
+      CONFIG_REFERENCE:
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: false
+      SIDE_EFFECT:
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: false
+      DATA_ACCESS_HINT:
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: false
+      EXTERNAL_BOUNDARY_HINT:
+        evidenceRequired: true
+        materialSupportRequired: true
+        semanticEligible: false
+
+    statuses:
+      TRUSTED:
+        persistGraphFact: true
+        requiresValidEvidence: true
+      CANDIDATE:
+        persistGraphFact: true
+        requiresValidEvidence: true
+      REJECTED:
+        persistGraphFact: false
+        emitDiagnostic: true
+      DERIVED:
+        persistGraphFact: true
+        requiresDerivationTrace: true
+      STALE:
+        persistGraphFact: true
+        queryEligible: false
+
+    origins:
+      STATIC:
+        canBeTrusted: true
+      LLM:
+        canBeTrusted: true
+        requiresValidEvidence: true
+      DERIVED:
+        canBeTrusted: true
+        requiresDerivationTrace: true
+      RESOLVER:
+        canBeTrusted: true
+
+    evidenceKinds:
+      NODE: {}
+      EDGE: {}
+      CLAIM: {}
+
+    resolutionStatuses:
+      RESOLVED: {}
+      UNRESOLVED: {}
+      EXTERNAL_TARGET: {}
+      AMBIGUOUS: {}
+      MULTIPLE_CANDIDATES: {}
+      INTERFACE_TARGET: {}
+      DYNAMIC_TARGET: {}
+
+  semantic:
+    indexedNodeKinds: [FILE, TYPE, CALLABLE, EXTERNAL]
+    indexedClaimKinds: [RESPONSIBILITY, ENTRYPOINT_HINT]
+    indexedEdgeKinds: [DECLARES, IMPORTS, REFERENCES, CALLS]
+    unsupportedSemanticKind: allow_only_when_semanticEligible_false
+
+  formats:
+    java:
+      extensions: [".java"]
+      family: code
+      extractor: java_ast
+      policy: parser_assisted_graph_enrichment
+      prompt: code_graph_enrichment
+      graphProfiles: [base_file_graph, java_code_graph]
+
+    kotlin:
+      extensions: [".kt", ".kts"]
+      family: code
+      extractor: file_anchor
+      policy: text_graph_enrichment
+      prompt: code_graph_enrichment
+      graphProfiles: [base_file_graph, code_text_graph]
+
+    typescript:
+      extensions: [".ts", ".tsx"]
+      family: code
+      extractor: file_anchor
+      policy: text_graph_enrichment
+      prompt: code_graph_enrichment
+      graphProfiles: [base_file_graph, code_text_graph]
+
+    javascript:
+      extensions: [".js", ".jsx", ".mjs", ".cjs"]
+      family: code
+      extractor: file_anchor
+      policy: text_graph_enrichment
+      prompt: code_graph_enrichment
+      graphProfiles: [base_file_graph, code_text_graph]
+
+    python:
+      extensions: [".py"]
+      family: code
+      extractor: file_anchor
+      policy: text_graph_enrichment
+      prompt: code_graph_enrichment
+      graphProfiles: [base_file_graph, code_text_graph]
+
+    yaml:
+      extensions: [".yml", ".yaml"]
+      family: structured_text
+      extractor: structured_text_light
+      policy: text_graph_enrichment
+      prompt: text_graph_enrichment
+      graphProfiles: [base_file_graph, structured_text_graph]
+      artifactClassifiers:
+        - id: automation_like
+          detection:
+            all:
+              - topLevelKeysAny: ["on", "jobs", "runs", "steps"]
+              - recurringKeysAny: ["run", "uses", "shell"]
+          addsGraphProfiles: [automation_text_graph]
+        - id: api_contract_like
+          detection:
+            topLevelKeysAny: ["openapi", "swagger", "paths", "components"]
+          addsGraphProfiles: [api_contract_text_graph]
+
+    xml:
+      extensions: [".xml"]
+      family: structured_text
+      extractor: structured_text_light
+      policy: text_graph_enrichment
+      prompt: text_graph_enrichment
+      graphProfiles: [base_file_graph, structured_text_graph]
+      artifactClassifiers:
+        - id: build_model_like
+          detection:
+            all:
+              - rootElement: "project"
+              - elementNamesAny: ["dependencies", "dependency", "plugins", "plugin", "artifactId"]
+          addsGraphProfiles: [build_text_graph]
+
+    markdown:
+      extensions: [".md", ".markdown", ".adoc", ".rst", ".txt"]
+      family: document
+      extractor: document_heading_light
+      policy: text_graph_enrichment
+      prompt: document_graph_enrichment
+      graphProfiles: [base_file_graph, document_graph]
+
+  policies:
+    parser_assisted_graph_enrichment:
+      sourceView: contentLines
+      extractorMode: required_or_file_anchor_fallback
+      llmMode: enrich_existing_anchors
+      allowLlmCreatedAnchors: false
+      trustLlmCreatedAnchors: false
+      responseSchema: graph_enrichment_v2
+      evidenceRequired: true
+
+    text_graph_enrichment:
+      sourceView: contentLines
+      extractorMode: file_anchor_plus_optional_light_structure
+      llmMode: analyze_text_and_propose_grounded_facts
+      allowLlmCreatedAnchors: false
+      trustLlmCreatedAnchors: false
+      responseSchema: graph_enrichment_v2
+      evidenceRequired: true
+
+    index_only:
+      sourceView: contentLines
+      extractorMode: file_anchor_only
+      llmMode: none
+      responseSchema: none
+      evidenceRequired: false
+
+  graphProfiles:
+    base_file_graph:
+      nodes: [FILE, EXTERNAL]
+      edges: [REFERENCES, DEPENDS_ON, CONFIGURES]
+      claims: [RESPONSIBILITY]
+
+    java_code_graph:
+      nodes: [FILE, TYPE, CALLABLE, FIELD, EXTERNAL]
+      edges: [DECLARES, IMPORTS, REFERENCES, CALLS, DEPENDS_ON]
+      claims: [RESPONSIBILITY, ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
+
+    code_text_graph:
+      nodes: [FILE, EXTERNAL]
+      edges: [REFERENCES, DEPENDS_ON]
+      claims: [RESPONSIBILITY, SIDE_EFFECT]
+
+    structured_text_graph:
+      nodes: [FILE, CONFIG, DATA, EXTERNAL]
+      edges: [CONFIGURES, REFERENCES, DEPENDS_ON]
+      claims: [RESPONSIBILITY, CONFIG_REFERENCE]
+
+    automation_text_graph:
+      nodes: [FILE, CONFIG, EXTERNAL]
+      edges: [CONFIGURES, REFERENCES, DEPENDS_ON]
+      claims: [RESPONSIBILITY, ENTRYPOINT_HINT, SIDE_EFFECT]
+
+    build_text_graph:
+      nodes: [FILE, MODULE, CONFIG, EXTERNAL]
+      edges: [DECLARES, CONFIGURES, DEPENDS_ON, REFERENCES]
+      claims: [RESPONSIBILITY, CONFIG_REFERENCE]
+
+    api_contract_text_graph:
+      nodes: [FILE, DATA, EXTERNAL]
+      edges: [REFERENCES, DEPENDS_ON]
+      claims: [RESPONSIBILITY]
+
+    document_graph:
+      nodes: [FILE, EXTERNAL]
+      edges: [REFERENCES]
+      claims: [RESPONSIBILITY]
+
+  extractors:
+    file_anchor:
+      implementation: file_anchor
+      trust: structural
+      produces:
+        nodes: [FILE]
+
+    java_ast:
+      implementation: java_static_parser
+      trust: structural
+      produces:
+        nodes: [FILE, TYPE, CALLABLE, FIELD, EXTERNAL]
+        edges: [DECLARES, IMPORTS, REFERENCES, CALLS]
+        claims: [ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
+
+    structured_text_light:
+      implementation: structured_text_parser
+      trust: structural_light
+      produces:
+        nodes: [FILE, CONFIG, DATA]
+        edges: [DECLARES]
+
+    document_heading_light:
+      implementation: document_heading_parser
+      trust: structural_light
+      produces:
+        nodes: [FILE]
+
+  unsupported:
+    unknownNodeKind: fail_file
+    unknownEdgeKind: fail_file
+    unknownClaimKind: fail_file
+    unknownStatus: fail_file
+    unknownOrigin: fail_file
+    unknownEvidenceKind: fail_file
+    unsupportedFormat: fail_file
+    unsupportedExtractor: fail_file
