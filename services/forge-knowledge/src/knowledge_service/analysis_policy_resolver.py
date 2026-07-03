@@ -45,6 +45,7 @@ class AnalysisPolicyResolution:
     evidence_kinds: List[str] = field(default_factory=list)
     resolution_statuses: List[str] = field(default_factory=list)
     source_view: Optional[str] = None
+    extractor_mode: Optional[str] = None
     llm_mode: Optional[str] = None
     allow_llm_created_anchors: bool = False
     trust_llm_created_anchors: bool = False
@@ -133,6 +134,7 @@ class AnalysisPolicyResolver:
             evidence_kinds=list(self.policy.graph.evidence_kinds.keys()),
             resolution_statuses=list(self.policy.graph.resolution_statuses.keys()),
             source_view=execution_policy.source_view,
+            extractor_mode=execution_policy.extractor_mode,
             llm_mode=execution_policy.llm_mode,
             allow_llm_created_anchors=execution_policy.allow_llm_created_anchors,
             trust_llm_created_anchors=execution_policy.trust_llm_created_anchors,

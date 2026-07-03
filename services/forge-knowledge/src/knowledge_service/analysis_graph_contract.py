@@ -15,8 +15,17 @@ from knowledge_service.errors import KnowledgeError
 @dataclass(frozen=True)
 class AnalysisGraphContract:
     format_id: Optional[str]
+    family: Optional[str]
+    extractor_id: Optional[str]
     policy_id: Optional[str]
     prompt_id: Optional[str]
+    source_view: Optional[str]
+    extractor_mode: Optional[str]
+    llm_mode: Optional[str]
+    evidence_required: bool
+    allow_llm_created_anchors: bool
+    trust_llm_created_anchors: bool
+    artifact_labels: tuple[str, ...]
     graph_profiles: tuple[str, ...]
     allowed_node_kinds: tuple[str, ...]
     allowed_edge_kinds: tuple[str, ...]
@@ -47,8 +56,17 @@ class AnalysisGraphContract:
         }
         return cls(
             format_id=resolution.format_id,
+            family=resolution.family,
+            extractor_id=resolution.extractor_id,
             policy_id=resolution.policy_id,
             prompt_id=resolution.prompt_id,
+            source_view=resolution.source_view,
+            extractor_mode=resolution.extractor_mode,
+            llm_mode=resolution.llm_mode,
+            evidence_required=resolution.evidence_required,
+            allow_llm_created_anchors=resolution.allow_llm_created_anchors,
+            trust_llm_created_anchors=resolution.trust_llm_created_anchors,
+            artifact_labels=tuple(resolution.artifact_labels),
             graph_profiles=tuple(resolution.effective_graph_profiles),
             allowed_node_kinds=tuple(resolution.allowed_node_kinds),
             allowed_edge_kinds=tuple(resolution.allowed_edge_kinds),
@@ -72,8 +90,17 @@ class AnalysisGraphContract:
             return None
         return cls(
             format_id=_optional_string(raw.get("formatId")),
+            family=_optional_string(raw.get("family")),
+            extractor_id=_optional_string(raw.get("extractorId")),
             policy_id=_optional_string(raw.get("policyId")),
             prompt_id=_optional_string(raw.get("promptId")),
+            source_view=_optional_string(raw.get("sourceView")),
+            extractor_mode=_optional_string(raw.get("extractorMode")),
+            llm_mode=_optional_string(raw.get("llmMode")),
+            evidence_required=bool(raw.get("evidenceRequired")),
+            allow_llm_created_anchors=bool(raw.get("allowLlmCreatedAnchors")),
+            trust_llm_created_anchors=bool(raw.get("trustLlmCreatedAnchors")),
+            artifact_labels=tuple(_string_list(raw.get("artifactLabels"))),
             graph_profiles=tuple(_string_list(raw.get("graphProfiles"))),
             allowed_node_kinds=tuple(_string_list(raw.get("allowedNodeKinds"))),
             allowed_edge_kinds=tuple(_string_list(raw.get("allowedEdgeKinds"))),
@@ -93,8 +120,17 @@ class AnalysisGraphContract:
     def to_prompt_dict(self) -> dict[str, Any]:
         return {
             "formatId": self.format_id,
+            "family": self.family,
+            "extractorId": self.extractor_id,
             "policyId": self.policy_id,
             "promptId": self.prompt_id,
+            "sourceView": self.source_view,
+            "extractorMode": self.extractor_mode,
+            "llmMode": self.llm_mode,
+            "evidenceRequired": self.evidence_required,
+            "allowLlmCreatedAnchors": self.allow_llm_created_anchors,
+            "trustLlmCreatedAnchors": self.trust_llm_created_anchors,
+            "artifactLabels": list(self.artifact_labels),
             "graphProfiles": list(self.graph_profiles),
             "allowedNodeKinds": list(self.allowed_node_kinds),
             "allowedEdgeKinds": list(self.allowed_edge_kinds),
@@ -112,8 +148,8 @@ class AnalysisGraphContract:
             },
             "unsupportedBehavior": dict(self.unsupported_behavior),
             "evidenceRules": {
-                "lineRangesRequired": True,
-                "materialSupportRequired": True,
+                "lineRangesRequired": self.evidence_required,
+                "materialSupportRequired": self.evidence_required,
                 "useProvidedContentOnly": True,
             },
         }
@@ -122,8 +158,11 @@ class AnalysisGraphContract:
         lines = [
             "Analysis graph contract:",
             f"- formatId: {self.format_id or ''}",
+            f"- extractorId: {self.extractor_id or ''}",
             f"- policyId: {self.policy_id or ''}",
             f"- promptId: {self.prompt_id or ''}",
+            f"- sourceView: {self.source_view or ''}",
+            f"- llmMode: {self.llm_mode or ''}",
             f"- graphProfiles: {_join(self.graph_profiles)}",
             f"- allowedNodeKinds: {_join(self.allowed_node_kinds)}",
             f"- allowedEdgeKinds: {_join(self.allowed_edge_kinds)}",
@@ -186,7 +225,10 @@ class GraphContractProvider:
         resolution = AnalysisPolicyResolution(
             supported=True,
             format_id=None,
+            family=None,
+            extractor_id=None,
             policy_id=self.policy.defaults.default_policy,
+            prompt_id=None,
             effective_graph_profiles=list(self.policy.defaults.default_graph_profiles),
             allowed_node_kinds=_profile_kinds(self.policy, self.policy.defaults.default_graph_profiles, "nodes"),
             allowed_edge_kinds=_profile_kinds(self.policy, self.policy.defaults.default_graph_profiles, "edges"),
@@ -198,6 +240,9 @@ class GraphContractProvider:
             origin_kinds=list(self.policy.graph.origins.keys()),
             evidence_kinds=list(self.policy.graph.evidence_kinds.keys()),
             resolution_statuses=list(self.policy.graph.resolution_statuses.keys()),
+            source_view=self.policy.defaults.canonical_source_view,
+            llm_mode=None,
+            evidence_required=self.policy.defaults.evidence_policy == "grounded_material_support",
             unsupported_behavior=dict(self.policy.unsupported),
         )
         return AnalysisGraphContract.from_policy_resolution(self.policy, resolution)

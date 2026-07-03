@@ -5,6 +5,52 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
 
+EXTRACTOR_MODE_REQUIRED_OR_FILE_ANCHOR_FALLBACK = "required_or_file_anchor_fallback"
+EXTRACTOR_MODE_FILE_ANCHOR_PLUS_OPTIONAL_LIGHT_STRUCTURE = "file_anchor_plus_optional_light_structure"
+EXTRACTOR_MODE_FILE_ANCHOR_ONLY = "file_anchor_only"
+
+ALLOWED_EXTRACTOR_MODES = (
+    EXTRACTOR_MODE_REQUIRED_OR_FILE_ANCHOR_FALLBACK,
+    EXTRACTOR_MODE_FILE_ANCHOR_PLUS_OPTIONAL_LIGHT_STRUCTURE,
+    EXTRACTOR_MODE_FILE_ANCHOR_ONLY,
+)
+
+LLM_MODE_ENRICH_EXISTING_ANCHORS = "enrich_existing_anchors"
+LLM_MODE_ANALYZE_TEXT_AND_PROPOSE_GROUNDED_FACTS = "analyze_text_and_propose_grounded_facts"
+LLM_MODE_NONE = "none"
+
+ALLOWED_LLM_MODES = (
+    LLM_MODE_ENRICH_EXISTING_ANCHORS,
+    LLM_MODE_ANALYZE_TEXT_AND_PROPOSE_GROUNDED_FACTS,
+    LLM_MODE_NONE,
+)
+
+EXTRACTOR_MODES_ALLOWING_FILE_ANCHOR_FALLBACK = (
+    EXTRACTOR_MODE_REQUIRED_OR_FILE_ANCHOR_FALLBACK,
+    EXTRACTOR_MODE_FILE_ANCHOR_PLUS_OPTIONAL_LIGHT_STRUCTURE,
+)
+
+LLM_MODES_REQUIRING_PROVIDER = (
+    LLM_MODE_ENRICH_EXISTING_ANCHORS,
+    LLM_MODE_ANALYZE_TEXT_AND_PROPOSE_GROUNDED_FACTS,
+)
+
+
+def policy_allows_extractor_fallback(mode: Optional[str]) -> bool:
+    _require_known_mode(mode, ALLOWED_EXTRACTOR_MODES, "extractorMode")
+    return str(mode) in EXTRACTOR_MODES_ALLOWING_FILE_ANCHOR_FALLBACK
+
+
+def policy_requires_llm(mode: Optional[str]) -> bool:
+    _require_known_mode(mode, ALLOWED_LLM_MODES, "llmMode")
+    return str(mode) in LLM_MODES_REQUIRING_PROVIDER
+
+
+def _require_known_mode(mode: Optional[str], allowed: tuple[str, ...], label: str) -> None:
+    if mode not in allowed:
+        raise ValueError(f"{label} must be one of: {', '.join(allowed)}")
+
+
 @dataclass(frozen=True)
 class AnalysisPolicyDiagnostic:
     path: str

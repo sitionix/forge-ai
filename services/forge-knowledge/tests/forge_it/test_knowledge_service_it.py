@@ -75,6 +75,23 @@ class CountingFailingAnalysisProvider:
         )
 
 
+class CountingDeterministicAnalysisProvider(DeterministicAnalysisProvider):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def analyze(
+        self,
+        payload: Dict[str, object],
+        line_count: int,
+        repair_prompt: Optional[str] = None,
+    ) -> GraphAnalysisResult:
+        self.calls += 1
+        result = super().analyze(payload, line_count, repair_prompt)
+        if isinstance(result, GraphAnalysisResult):
+            return result
+        raise AssertionError("CountingDeterministicAnalysisProvider must return GraphAnalysisResult")
+
+
 class LoopBoundReleaseGate:
     def __init__(self) -> None:
         self._event: Optional[asyncio.Event] = None
@@ -256,7 +273,6 @@ def test_inventory_context_analysis_and_sqlite_persistence(tmp_path):
     assert counts["analysis_files"] == 2
     assert counts["analysis_graph_nodes"] > 0
     assert counts["analysis_graph_evidence"] > 0
-    assert counts["analysis_graph_diagnostics"] > 0
 
     restarted, *_ = build_test_app(write_runtime_config(tmp_path, max_file_size_bytes=500))
     with TestClient(restarted) as client:
@@ -264,8 +280,8 @@ def test_inventory_context_analysis_and_sqlite_persistence(tmp_path):
         assert client.get("/api/v1/knowledge/analysis/status").json()["symbolCount"] == counts["analysis_graph_nodes"]
 
 
-def test_analysis_build_skips_current_analyzed_files_with_diagnostics(tmp_path):
-    provider = CountingFailingAnalysisProvider()
+def test_analysis_build_skips_current_analyzed_files_without_provider_call(tmp_path):
+    provider = CountingDeterministicAnalysisProvider()
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path), provider=provider)
 
     with TestClient(app) as client:
@@ -274,29 +290,32 @@ def test_analysis_build_skips_current_analyzed_files_with_diagnostics(tmp_path):
         first_job = wait_job(client, first_build["jobId"], "COMPLETED")
         assert first_job["status"] == "COMPLETED"
         assert first_job["processedFileCount"] == 2
-        assert provider.calls == 1
+        assert first_job["failedFileCount"] == 0
+        assert provider.calls == 2
 
         second_build = client.post("/api/v1/knowledge/analysis/build", json={"sourceIds": ["forge-ai"], "force": False}).json()
         second_job = wait_job(client, second_build["jobId"], "COMPLETED")
         assert second_job["status"] == "COMPLETED"
         assert second_job["fileCount"] == 0
         assert second_job["processedFileCount"] == 0
-        assert provider.calls == 1
+        assert provider.calls == 2
 
         services = client.get("/api/v1/knowledge/overview").json()
         assert services["sources"][0]["analysis"]["succeededFiles"] == 2
+        assert services["sources"][0]["analysis"]["failedFiles"] == 0
         assert services["sources"][0]["analysis"]["pendingFiles"] == 0
 
     with sqlite3.connect(app_config.store_path) as conn:
         rows = conn.execute("SELECT relative_path, status, last_error_code, diagnostics_json FROM analysis_files ORDER BY relative_path").fetchall()
     assert [row[1] for row in rows] == ["ANALYZED", "ANALYZED"]
+    assert [row[2] for row in rows] == [None, None]
     all_diagnostics = "\n".join(row[3] or "" for row in rows)
-    assert "ANALYSIS_AI_TRANSPORT_ERROR" in all_diagnostics
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" in all_diagnostics
+    assert "ANALYSIS_AI_TRANSPORT_ERROR" not in all_diagnostics
+    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" not in all_diagnostics
 
 
 def test_analysis_build_runs_pending_files_through_provider_after_skipping_current_files(tmp_path):
-    provider = CountingFailingAnalysisProvider()
+    provider = CountingDeterministicAnalysisProvider()
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path), provider=provider)
 
     with TestClient(app) as client:
@@ -310,7 +329,8 @@ def test_analysis_build_runs_pending_files_through_provider_after_skipping_curre
         assert first_job["status"] == "COMPLETED"
         assert first_job["fileCount"] == 1
         assert first_job["processedFileCount"] == 1
-        assert provider.calls == 0
+        assert first_job["failedFileCount"] == 0
+        assert provider.calls == 1
 
         second_build = client.post(
             "/api/v1/knowledge/analysis/build",
@@ -320,7 +340,8 @@ def test_analysis_build_runs_pending_files_through_provider_after_skipping_curre
         assert second_job["status"] == "COMPLETED"
         assert second_job["fileCount"] == 1
         assert second_job["processedFileCount"] == 1
-        assert provider.calls == 1
+        assert second_job["failedFileCount"] == 0
+        assert provider.calls == 2
 
         third_build = client.post(
             "/api/v1/knowledge/analysis/build",
@@ -329,10 +350,11 @@ def test_analysis_build_runs_pending_files_through_provider_after_skipping_curre
         third_job = wait_job(client, third_build["jobId"], "COMPLETED")
         assert third_job["status"] == "COMPLETED"
         assert third_job["fileCount"] == 0
-        assert provider.calls == 1
+        assert provider.calls == 2
 
         services = client.get("/api/v1/knowledge/overview").json()
         assert services["sources"][0]["analysis"]["succeededFiles"] == 2
+        assert services["sources"][0]["analysis"]["failedFiles"] == 0
         assert services["sources"][0]["analysis"]["pendingFiles"] == 0
 
     with sqlite3.connect(app_config.store_path) as conn:
@@ -344,10 +366,10 @@ def test_analysis_build_runs_pending_files_through_provider_after_skipping_curre
             "SELECT status, diagnostics_json FROM analysis_job_files WHERE job_id = ?",
             (second_build["jobId"],),
         ).fetchall()
-    assert [row[0] for row in first_job_files] == ["ANALYZED_WITH_DIAGNOSTICS"]
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" in first_job_files[0][1]
-    assert [row[0] for row in second_job_files] == ["ANALYZED_WITH_DIAGNOSTICS"]
-    assert "ANALYSIS_AI_TRANSPORT_ERROR" in second_job_files[0][1]
+    assert [row[0] for row in first_job_files] == ["ANALYZED"]
+    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" not in (first_job_files[0][1] or "")
+    assert [row[0] for row in second_job_files] == ["ANALYZED"]
+    assert "ANALYSIS_AI_TRANSPORT_ERROR" not in (second_job_files[0][1] or "")
 
 
 def test_analysis_build_is_visible_as_active_job_before_worker_runs(tmp_path):
@@ -391,13 +413,31 @@ def test_failed_file_and_provider_failure_diagnostics_are_persisted(tmp_path):
         build = client.post("/api/v1/knowledge/analysis/build", json={"force": True}).json()
         job = wait_job(client, build["jobId"], "COMPLETED")
         assert job["status"] == "COMPLETED"
+        assert job["failedFileCount"] == 2
         files = client.get("/api/v1/knowledge/analysis/files").json()
-        assert files["files"][0]["diagnostics"]
+        assert files["total"] == 2
+        assert {item["analysisStatus"] for item in files["files"]} == {"FAILED"}
+        assert all(item["diagnostics"] for item in files["files"])
 
     with sqlite3.connect(app_config.store_path) as conn:
         diagnostics = "\n".join(row[0] or "" for row in conn.execute("SELECT diagnostics_json FROM analysis_files").fetchall())
+        graph_counts = {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (
+                "analysis_graph_nodes",
+                "analysis_graph_edges",
+                "analysis_graph_claims",
+                "analysis_graph_evidence",
+            )
+        }
     assert "ANALYSIS_AI_TRANSPORT_ERROR" in diagnostics
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" in diagnostics
+    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" not in diagnostics
+    assert graph_counts == {
+        "analysis_graph_nodes": 0,
+        "analysis_graph_edges": 0,
+        "analysis_graph_claims": 0,
+        "analysis_graph_evidence": 0,
+    }
 
 
 def test_missing_indexed_file_reports_failed_analysis_state(tmp_path):

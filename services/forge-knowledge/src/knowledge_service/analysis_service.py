@@ -9,12 +9,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol, Union
 
-from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
+from knowledge_service.analysis_graph_contract import GraphContractProvider
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
 from knowledge_service.analysis_schema import AnalysisBuildRequest, AnalysisResult, RetryFailedAnalysisRequest
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
+from knowledge_service.analyzer_runtime import AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.config import AppConfig
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_analysis import GraphAnalysisEngine, LegacyAnalysisProjectionAdapter
@@ -22,10 +23,6 @@ from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.snippet_extractor import SnippetExtractor
 from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer, StructuralAnalysisEngine
-
-
-GENERIC_CONFIG_ANALYSIS_MODE = "GENERIC_TEXT_CONFIG_ENRICHMENT"
-GENERIC_TEXT_ENRICHMENT_FLOW_DOMAINS = {"WORKFLOW", "CONFIG", "BUILD"}
 
 
 class AnalysisProvider(Protocol):
@@ -68,6 +65,12 @@ class AnalysisSupervisor:
         self.static_materializer = StaticGraphMaterializer()
         self.anchor_validator = AnchorAwareGraphValidator()
         self.graph_contract_provider = GraphContractProvider()
+        self.analyzer_runtime = AnalyzerRuntime(
+            self.graph_contract_provider.policy,
+            extractor_registry=ExtractorRegistry(self.structural_engine, self.static_materializer),
+            anchor_validator=self.anchor_validator,
+            legacy_adapter=self.legacy_adapter,
+        )
         self._admission_lock: Optional[asyncio.Lock] = None
         self._queue: Optional[asyncio.Queue[tuple[str, AnalysisBuildRequest, AnalysisProvider, Optional[List[Any]], str, bool]]] = None
         self._workers: list[asyncio.Task[None]] = []
@@ -408,96 +411,41 @@ class AnalysisSupervisor:
                         "progress_updated", jobId=job_id, sourceId=row["source_id"], relativePath=row["relative_path"], processed=processed, failed=failed
                     )
                     continue
-                content = "\n".join(lines)
                 try:
                     file_started_at = datetime.now(timezone.utc)
                     row_data = dict(row)
-                    structural_result = self.structural_engine.parse(row_data, lines)
-                    static_graph = self.static_materializer.to_graph(structural_result)
-                    enrichment_result: GraphAnalysisResult | None = None
-                    retry_diagnostics: List[Dict[str, Any]] = []
-                    attempt_state: Dict[str, Any] = {
-                        "attempt_count": 0,
-                        "last_attempt_at": None,
-                        "last_error_code": None,
-                        "last_error_message": None,
-                        "last_raw_response_preview": None,
-                    }
-                    generic_config_eligible = self._is_generic_config_enrichment_eligible(structural_result, row_data, content)
-                    skip_llm_reason = self._skip_llm_enrichment_reason(structural_result, row_data, content, generic_config_eligible)
-                    if len(content) > self.config.analysis_max_file_chars:
-                        retry_diagnostics.append(
-                            {
-                                "code": "ANALYSIS_FILE_TOO_LARGE",
-                                "message": "File exceeds AI analysis size limit; static parser facts were stored without LLM enrichment.",
-                                "sourceId": row["source_id"],
-                                "relativePath": row["relative_path"],
-                            }
-                        )
-                    elif skip_llm_reason is not None:
-                        retry_diagnostics.append(skip_llm_reason)
-                    else:
-                        try:
-                            result, retry_diagnostics, attempt_state = await self._analyze_with_retry(
-                                analyzer,
-                                self._payload(
-                                    row_data,
-                                    metadata,
-                                    content,
-                                    structural_result,
-                                    static_graph,
-                                    generic_config_eligible=generic_config_eligible,
-                                    lines=lines,
-                                ),
-                                len(lines),
-                            )
-                            enrichment_result = self._graph_result(result)
-                            if generic_config_eligible:
-                                retry_diagnostics.append(
-                                    {
-                                        "code": "ANALYSIS_AI_GENERIC_CONFIG_ENRICHED",
-                                        "message": "Generic text/config LLM enrichment completed for parser-unsupported file.",
-                                        "sourceId": row["source_id"],
-                                        "relativePath": row["relative_path"],
-                                        "stage": "LLM_ENRICHMENT",
-                                        "severity": "INFO",
-                                    }
-                                )
-                        except Exception as exc:
-                            if generic_config_eligible:
-                                raise exc
-                            attempt_state = self._attempt_state(exc)
-                            diag = self._diagnostic(row, exc, getattr(exc, "details", {}).get("attempt"))
-                            diag["message"] = f"{diag['message']}; static parser facts were stored."
-                            retry_diagnostics = [*getattr(exc, "details", {}).get("diagnostics", []), diag]
+                    runtime_result = await self.analyzer_runtime.execute(row_data, metadata, lines, analyzer, self._analyze_with_retry)
                     if self._stop_requested(job_id):
                         self._mark_job_stopped(job_id, diagnostics)
                         return
                     elapsed_seconds = self._elapsed_seconds(file_started_at)
+                    graph_result = runtime_result.graph_result
                     if elapsed_seconds > self.config.analysis_per_file_timeout_seconds:
-                        retry_diagnostics.append(
+                        graph_result.diagnostics.append(
                             {
                                 "code": "ANALYSIS_FILE_TIMEOUT",
-                                "message": "File analysis exceeded configured per-file timeout; static parser facts were preserved.",
+                                "message": "File analysis exceeded configured per-file timeout.",
                                 "sourceId": row["source_id"],
                                 "relativePath": row["relative_path"],
                                 "stage": "FILE_ANALYSIS",
+                                "severity": "WARN",
                                 "elapsedSeconds": elapsed_seconds,
                             }
                         )
-                    graph_result = self.anchor_validator.merge(static_graph, enrichment_result, len(lines))
                     graph_diagnostics = self._file_diagnostics_from_graph(graph_result)
-                    for diagnostic in retry_diagnostics:
-                        enriched_diagnostic = dict(diagnostic)
-                        enriched_diagnostic.setdefault("severity", "WARN" if diagnostic.get("code") != "ANALYSIS_FILE_FAILED" else "ERROR")
-                        enriched_diagnostic.setdefault("stage", "LLM_ENRICHMENT")
-                        graph_result.diagnostics.append(enriched_diagnostic)
                     graph = self.graph_engine.materialize(row_data, job_id, analyzer.name, analyzer.version, graph_result, lines)
-                    file_diagnostics = [*retry_diagnostics, *graph_diagnostics]
+                    file_diagnostics = self._merge_file_diagnostics(runtime_result.diagnostics, graph_diagnostics)
                     self.analysis_store.replace_file_graph_analysis(
                         row["id"],
                         self._state(
-                            row, analyzer, "ANALYZED", len(graph["nodes"]), len(graph["edges"]), file_diagnostics, attempt_state, flow_domain=flow_domain
+                            row,
+                            analyzer,
+                            "ANALYZED",
+                            len(graph["nodes"]),
+                            len(graph["edges"]),
+                            file_diagnostics,
+                            runtime_result.attempt_state,
+                            flow_domain=flow_domain,
                         ),
                         graph,
                     )
@@ -507,7 +455,7 @@ class AnalysisSupervisor:
                         int(row["id"]),
                         job_file_status,
                         analysis_file_id=int(row["id"]),
-                        attempt_count=attempt_state.get("attempt_count", 0),
+                        attempt_count=runtime_result.attempt_state.get("attempt_count", 0),
                         diagnostics=file_diagnostics,
                         line_count=len(lines),
                         flow_domain=flow_domain,
@@ -638,124 +586,9 @@ class AnalysisSupervisor:
             errorCode="ANALYSIS_JOB_STOPPED",
         )
 
-    def _payload(
-        self,
-        row,
-        metadata: Dict[str, Any],
-        content: str,
-        structural_result,
-        static_graph: GraphAnalysisResult,
-        *,
-        generic_config_eligible: bool = False,
-        lines: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        graph_contract = self.graph_contract_provider.resolve(str(row["relative_path"]), content)
-        payload = {
-            "sourceId": row["source_id"],
-            "serviceLabel": row["display_name"],
-            "group": row["group_name"],
-            "tags": json.loads(row["tags_json"] or "[]"),
-            "relativePath": row["relative_path"],
-            "extension": row["extension"],
-            "sizeBytes": row["size_bytes"],
-            "contentHash": row["content_hash"],
-            "lineCount": structural_result.file.line_count,
-            "language": structural_result.file.language,
-            "flowDomain": structural_result.file.flow_domain,
-            "metadata": {k: v for k, v in metadata.items() if k != "absoluteRoot"},
-            "staticAnchors": self._static_anchor_payload(static_graph),
-            "analysisPolicy": contract_payload(graph_contract),
-        }
-        if generic_config_eligible:
-            file_anchor = next((node for node in static_graph.nodes if node.nodeKind == "FILE"), None)
-            payload.update(
-                {
-                    "analysisMode": GENERIC_CONFIG_ANALYSIS_MODE,
-                    "fileType": self._generic_config_file_type(row, structural_result),
-                    "genericConfigEnrichment": {
-                        "anchorStableKey": file_anchor.localId if file_anchor else structural_result.file_stable_key,
-                        "allowedClaimKinds": list(graph_contract.allowed_claim_kinds),
-                        "allowedEdgeKinds": list(graph_contract.allowed_edge_kinds),
-                        "requiredFactOrigin": "LLM",
-                        "requiredEvidence": "Use one or more exact source line ranges from contentLines.",
-                        "outputSchemaVersion": "knowledge.graph.enrichment.v1",
-                    },
-                    "contentCharCount": len(content),
-                    "contentLines": [{"line": index, "text": line} for index, line in enumerate(lines or content.splitlines(), start=1)],
-                }
-            )
-        else:
-            payload["content"] = content
-        return payload
-
-    def _skip_llm_enrichment_reason(
-        self,
-        structural_result,
-        row: Dict[str, Any],
-        content: str,
-        generic_config_eligible: bool,
-    ) -> Optional[Dict[str, Any]]:
-        if not str(content or "").strip():
-            return {
-                "code": "ANALYSIS_AI_SKIPPED_EMPTY_FILE",
-                "message": "LLM enrichment skipped because the file is empty; static file facts were stored.",
-                "sourceId": row["source_id"],
-                "relativePath": row["relative_path"],
-                "stage": "LLM_ENRICHMENT",
-                "severity": "INFO",
-            }
-        if self._structural_parser_unavailable(structural_result) and not generic_config_eligible:
-            flow_domain = str(row.get("flow_domain") or "").strip().upper() or "UNKNOWN"
-            return {
-                "code": "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE",
-                "message": (
-                    "LLM enrichment skipped because the structural parser is unavailable and "
-                    f"file category '{flow_domain}' is not eligible for generic text/config enrichment; LLM was not called."
-                ),
-                "sourceId": row["source_id"],
-                "relativePath": row["relative_path"],
-                "stage": "LLM_ENRICHMENT",
-                "severity": "WARN",
-                "flowDomain": flow_domain,
-            }
-        return None
-
-    def _is_generic_config_enrichment_eligible(self, structural_result, row: Dict[str, Any], content: str) -> bool:
-        if not self._structural_parser_unavailable(structural_result):
-            return False
-        if not str(content or "").strip():
-            return False
-        if len(content) > self.config.analysis_max_file_chars:
-            return False
-        decode_policy = str(row.get("decode_policy") or structural_result.file.decode_policy or "")
-        if decode_policy and decode_policy != "utf-8:replace":
-            return False
-        flow_domain = str(row.get("flow_domain") or "").strip().upper()
-        if not flow_domain or flow_domain == "UNKNOWN":
-            return False
-        return flow_domain in GENERIC_TEXT_ENRICHMENT_FLOW_DOMAINS
-
-    def _structural_parser_unavailable(self, structural_result) -> bool:
-        return any(self._diagnostic_code(item) == "STRUCTURAL_PARSER_NOT_AVAILABLE" for item in structural_result.diagnostics or [])
-
-    def _generic_config_file_type(self, row: Dict[str, Any], structural_result) -> str:
-        extension = str(row.get("extension") or "").lower()
-        flow_domain = str(structural_result.file.flow_domain or "").upper()
-        language = str(structural_result.file.language or row.get("language") or "").lower()
-        format_label = language or extension.lstrip(".") or "text"
-        domain_label = flow_domain.lower() if flow_domain else "unknown"
-        return f"{domain_label}-{format_label}"
-
-    def _diagnostic_code(self, diagnostic: Any) -> Optional[str]:
-        if isinstance(diagnostic, dict):
-            return diagnostic.get("code")
-        return getattr(diagnostic, "code", None)
-
     def _row_flow_domain(self, row: Any) -> str:
         configured = str(self._row_value(row, "flow_domain") or "").strip().upper()
-        if configured and configured != "UNKNOWN":
-            return configured
-        return self.structural_engine.flow_domain(row["relative_path"])
+        return configured or "UNKNOWN"
 
     def _row_value(self, row: Any, key: str) -> Any:
         if isinstance(row, dict):
@@ -994,46 +827,6 @@ class AnalysisSupervisor:
             metadata.setdefault("rawPreview", raw_preview)
         return metadata
 
-    def _graph_result(self, result: GraphAnalysisResult | AnalysisResult) -> GraphAnalysisResult:
-        if isinstance(result, GraphAnalysisResult):
-            return result
-        if isinstance(result, AnalysisResult):
-            return self.legacy_adapter.convert(result)
-        raise KnowledgeError("ANALYSIS_AI_SCHEMA_INVALID", "AI analyzer returned an unsupported analysis result")
-
-    def _static_anchor_payload(self, static_graph: GraphAnalysisResult) -> Dict[str, Any]:
-        return {
-            "nodes": [
-                {
-                    "targetStableKey": node.localId,
-                    "nodeKind": node.nodeKind,
-                    "name": node.name,
-                    "qualifiedName": node.qualifiedName,
-                    "lineStart": node.lineStart,
-                    "lineEnd": node.lineEnd,
-                    "parentStableKey": node.parentLocalId,
-                    "metadata": node.metadata,
-                }
-                for node in static_graph.nodes
-            ],
-            "callsites": [
-                {
-                    "callsiteStableKey": edge.localId,
-                    "fromStableKey": edge.fromNodeLocalId,
-                    "toStableKey": edge.toNodeLocalId,
-                    "edgeType": edge.edgeType,
-                    "resolutionStatus": edge.metadata.get("resolutionStatus"),
-                    "lineStart": edge.evidence[0].lineStart if edge.evidence else None,
-                    "lineEnd": edge.evidence[0].lineEnd if edge.evidence else None,
-                    "unresolvedTarget": edge.unresolvedTarget,
-                    "metadata": edge.metadata,
-                }
-                for edge in static_graph.edges
-                if edge.edgeType == "CALLS"
-            ],
-            "diagnostics": static_graph.diagnostics,
-        }
-
     def _file_diagnostics_from_graph(self, graph_result: GraphAnalysisResult) -> List[Dict[str, Any]]:
         result: List[Dict[str, Any]] = []
         for diagnostic in graph_result.diagnostics or []:
@@ -1044,6 +837,17 @@ class AnalysisSupervisor:
                     if key in {"code", "message", "severity", "stage", "sourceId", "relativePath", "attempt", "rawPreview"}
                 }
             )
+        return result
+
+    def _merge_file_diagnostics(self, primary: List[Dict[str, Any]], secondary: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        result = [dict(item) for item in primary]
+        seen = {(item.get("code"), item.get("stage"), item.get("attempt")) for item in result}
+        for item in secondary:
+            key = (item.get("code"), item.get("stage"), item.get("attempt"))
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(dict(item))
         return result
 
     def _mark(

@@ -9,7 +9,7 @@ import httpx
 import pytest
 import yaml
 
-from knowledge_service.analysis_policy import AnalysisPolicyError
+from knowledge_service.analysis_policy import ALLOWED_EXTRACTOR_MODES, ALLOWED_LLM_MODES, AnalysisPolicyError
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analysis_policy_resolver import AnalysisPolicyResolveRequest, resolve_analysis_policy
 
@@ -46,6 +46,53 @@ def test_loads_default_policy_and_validates_references():
         assert set(profile.nodes) <= set(policy.graph.nodes)
         assert set(profile.edges) <= set(policy.graph.edges)
         assert set(profile.claims) <= set(policy.graph.claims)
+
+    assert {execution.extractor_mode for execution in policy.policies.values()} <= set(ALLOWED_EXTRACTOR_MODES)
+    assert {execution.llm_mode for execution in policy.policies.values()} <= set(ALLOWED_LLM_MODES)
+
+
+@pytest.mark.parametrize("mode", ALLOWED_EXTRACTOR_MODES)
+def test_valid_extractor_modes_are_accepted(tmp_path, mode):
+    data = _policy_data()
+    data["analysis"]["policies"]["text_graph_enrichment"]["extractorMode"] = mode
+
+    policy = _load_valid(tmp_path, data)
+
+    assert policy.policies["text_graph_enrichment"].extractor_mode == mode
+
+
+def test_invalid_extractor_mode_fails_with_allowed_values(tmp_path):
+    data = _policy_data()
+    data["analysis"]["policies"]["text_graph_enrichment"]["extractorMode"] = "fallback_disabled"
+
+    error = _load_invalid(tmp_path, data)
+    diagnostic = _diagnostic_for_path(error, "$.analysis.policies.text_graph_enrichment.extractorMode")
+
+    assert diagnostic.reason == "extractorMode is not an allowed runtime mode"
+    assert diagnostic.invalid_value == "fallback_disabled"
+    assert diagnostic.allowed_values == list(ALLOWED_EXTRACTOR_MODES)
+
+
+@pytest.mark.parametrize("mode", ALLOWED_LLM_MODES)
+def test_valid_llm_modes_are_accepted(tmp_path, mode):
+    data = _policy_data()
+    data["analysis"]["policies"]["text_graph_enrichment"]["llmMode"] = mode
+
+    policy = _load_valid(tmp_path, data)
+
+    assert policy.policies["text_graph_enrichment"].llm_mode == mode
+
+
+def test_invalid_llm_mode_fails_with_allowed_values(tmp_path):
+    data = _policy_data()
+    data["analysis"]["policies"]["text_graph_enrichment"]["llmMode"] = "not_none"
+
+    error = _load_invalid(tmp_path, data)
+    diagnostic = _diagnostic_for_path(error, "$.analysis.policies.text_graph_enrichment.llmMode")
+
+    assert diagnostic.reason == "llmMode is not an allowed runtime mode"
+    assert diagnostic.invalid_value == "not_none"
+    assert diagnostic.allowed_values == list(ALLOWED_LLM_MODES)
 
 
 @pytest.mark.parametrize(
@@ -277,8 +324,18 @@ def _load_invalid(tmp_path: Path, data: Dict[str, Any]) -> AnalysisPolicyError:
     return exc.value
 
 
+def _load_valid(tmp_path: Path, data: Dict[str, Any]):
+    path = tmp_path / "analysis-policy.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return load_analysis_policy(path)
+
+
 def _has_reason(error: AnalysisPolicyError, expected: str) -> bool:
     return any(expected in diagnostic.reason for diagnostic in error.diagnostics)
+
+
+def _diagnostic_for_path(error: AnalysisPolicyError, path: str):
+    return next(diagnostic for diagnostic in error.diagnostics if diagnostic.path == path)
 
 
 def _find_forbidden_entries(value: Any, path: str = "$") -> list:

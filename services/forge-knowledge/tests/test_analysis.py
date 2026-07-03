@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 import hashlib
 import asyncio
 import json
@@ -6,6 +8,7 @@ import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,9 +16,14 @@ from pydantic import ValidationError
 
 os.environ.setdefault("KNOWLEDGE_STORE_PATH", "/tmp/forge-ai-knowledge-test-main.sqlite")
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+POLICY_PATH = REPO_ROOT / "config" / "knowledge" / "analysis-policy.yaml"
+
 from knowledge_service import main
-from knowledge_service.analysis_graph_contract import AnalysisPromptRenderer
 from knowledge_service.analysis_client import OllamaAnalysisClient
+from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
+from knowledge_service.analysis_policy_loader import load_analysis_policy
+from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.analysis_response_parser import AiAnalysisResponseParser
 from knowledge_service.analysis_schema import AnalysisBuildRequest, AnalysisResult, RetryFailedAnalysisRequest
 from knowledge_service.analysis_service import AnalysisSupervisor
@@ -76,57 +84,14 @@ class StubAnalyzer:
         return self.result
 
 
-class GenericConfigStubAnalyzer(StubAnalyzer):
-    def __init__(self, summaries=None, fail=False):
-        super().__init__(result=GraphAnalysisResult(), fail=False)
-        self.summaries = summaries or {}
-        self.fail_generic = fail
+class CapturingGraphAnalyzer(StubAnalyzer):
+    def __init__(self, result=None, fail=False):
+        super().__init__(result=result or GraphAnalysisResult(), fail=fail)
         self.payloads = []
 
     def analyze(self, payload, line_count, repair_prompt=None):
-        self.calls += 1
-        if repair_prompt:
-            self.repair_prompts.append(repair_prompt)
         self.payloads.append(payload)
-        if self.fail_generic:
-            raise KnowledgeError("ANALYSIS_AI_TRANSPORT_ERROR", "generic config analyzer failed", raw_preview="transport failed", attempt=self.calls)
-        assert payload.get("analysisMode") == "GENERIC_TEXT_CONFIG_ENRICHMENT"
-        anchor = payload["genericConfigEnrichment"]["anchorStableKey"]
-        relative_path = payload["relativePath"]
-        summary = self.summaries.get(relative_path) or f"Explains the purpose of {relative_path}."
-        line_end = max(1, min(int(line_count or 1), 4))
-        result = GraphAnalysisResult.parse_obj(
-            {
-                "nodes": [],
-                "edges": [],
-                "claims": [
-                    {
-                        "localId": "generic-config-purpose",
-                        "nodeLocalId": anchor,
-                        "claimKind": "RESPONSIBILITY",
-                        "summary": summary,
-                        "evidence": [
-                            {
-                                "lineStart": 1,
-                                "lineEnd": line_end,
-                                "text": "grounded config excerpt",
-                                "metadata": {"evidenceKind": "CLAIM"},
-                            }
-                        ],
-                        "confidence": 0.91,
-                        "metadata": {
-                            "factOrigin": "LLM",
-                            "status": "TRUSTED",
-                            "sourceKind": "GENERIC_CONFIG_ENRICHMENT",
-                            "flowDomain": payload.get("flowDomain"),
-                        },
-                    }
-                ],
-                "diagnostics": [],
-            }
-        )
-        result.validate_lines(line_count)
-        return result
+        return super().analyze(payload, line_count, repair_prompt)
 
 
 class RawGraphResponseAnalyzer(StubAnalyzer):
@@ -170,43 +135,6 @@ def _known_node_kinds(payload):
         for item in anchors.get("nodes") or []
         if isinstance(item, dict) and item.get("targetStableKey") and item.get("nodeKind")
     }
-
-
-def generic_enrichment_response(summary, *, line_start=1, line_end=4, excerpt=None):
-    def build(payload, line_count):
-        anchor = payload["genericConfigEnrichment"]["anchorStableKey"]
-        bounded_line_end = max(1, min(int(line_count or 1), line_end))
-        return json.dumps(
-            {
-                "schemaVersion": "knowledge.graph.enrichment.v1",
-                "claims": [
-                    {
-                        "localId": "generic-config-purpose",
-                        "targetStableKey": anchor,
-                        "claimKind": "RESPONSIBILITY",
-                        "summary": summary,
-                        "confidence": 0.91,
-                        "evidence": [
-                            {
-                                "lineStart": line_start,
-                                "lineEnd": bounded_line_end,
-                                "text": excerpt or "grounded config excerpt",
-                            }
-                        ],
-                        "metadata": {
-                            "factOrigin": "LLM",
-                            "status": "TRUSTED",
-                            "sourceKind": "GENERIC_CONFIG_ENRICHMENT",
-                            "flowDomain": payload.get("flowDomain"),
-                        },
-                    }
-                ],
-                "semanticEdges": [],
-                "diagnostics": [],
-            }
-        )
-
-    return build
 
 
 MALFORMED_ENRICHMENT_JSON = """{
@@ -699,6 +627,70 @@ def override_inventory_classification(store, relative_path, *, flow_domain, lang
     with sqlite3.connect(store.db_path) as conn:
         cursor = conn.execute(f"UPDATE files SET {', '.join(assignments)} WHERE relative_path = ?", params)
         assert cursor.rowcount == 1
+
+
+def runtime_row(relative_path, content, *, flow_domain="UNKNOWN", language=None, file_id=1, root=None):
+    extension = Path(relative_path).suffix.lower()
+    return {
+        "id": file_id,
+        "source_id": "edge-gateway",
+        "source_path": str(root or "/workspace/edge-gateway"),
+        "absolute_path": str((root or Path("/workspace/edge-gateway")) / relative_path),
+        "relative_path": relative_path,
+        "display_name": "Edge Gateway",
+        "group_name": "edge",
+        "tags_json": '["java"]',
+        "extension": extension,
+        "language": language or extension.lstrip(".") or "unknown",
+        "flow_domain": flow_domain,
+        "size_bytes": len(content.encode("utf-8")),
+        "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "decode_policy": "utf-8:replace",
+    }
+
+
+async def run_runtime(relative_path, content, *, policy=None, analyzer=None, registry=None, flow_domain="UNKNOWN", language=None):
+    loaded_policy = policy or load_analysis_policy(POLICY_PATH)
+    runtime = AnalyzerRuntime(loaded_policy, extractor_registry=registry)
+    runtime_analyzer = analyzer or CapturingGraphAnalyzer()
+    row = runtime_row(relative_path, content, flow_domain=flow_domain, language=language)
+    result = await runtime.execute(row, {}, content.splitlines(), runtime_analyzer, runtime_retry)
+    return result, runtime_analyzer
+
+
+async def runtime_retry(analyzer, payload, line_count):
+    result = analyzer.analyze(payload, line_count)
+    return (
+        result,
+        [],
+        {
+            "attempt_count": 1,
+            "last_attempt_at": "now",
+            "last_error_code": None,
+            "last_error_message": None,
+            "last_raw_response_preview": None,
+        },
+    )
+
+
+def payload_top_level_shape():
+    return {
+        "sourceId",
+        "serviceLabel",
+        "group",
+        "tags",
+        "relativePath",
+        "extension",
+        "sizeBytes",
+        "contentHash",
+        "lineCount",
+        "language",
+        "format",
+        "metadata",
+        "contentLines",
+        "staticAnchors",
+        "analysisPolicy",
+    }
 
 
 def current_graph_nodes(store, source_id="edge-gateway", flow_domain="CODE", page_size=100):
@@ -1648,19 +1640,26 @@ def test_non_localhost_ollama_base_url_rejected(tmp_path):
         OllamaAnalysisClient("http://example.com:11434", "model", 1, tmp_path / "missing.md")
 
 
-def test_large_file_skipped(tmp_path):
-    store, _, _ = build_inventory(tmp_path, include_large=True)
-    runner = SupervisorHarness(store, app_config(tmp_path, max_file_chars=150))
+def test_large_llm_required_file_fails_without_partial_graph(tmp_path):
+    large_content = "x" * (load_analysis_policy(POLICY_PATH).defaults.max_file_chars + 1)
+    store, _, _ = build_inventory(
+        tmp_path,
+        extra_files={"src/main/java/example/LargeFile.java": large_content},
+    )
+    runner = SupervisorHarness(store, app_config(tmp_path))
 
     job = runner.start(AnalysisBuildRequest(), StubAnalyzer())
     final = wait_job(store, job["jobId"])
     skipped = AnalysisStore(store.db_path).files(None, "SKIPPED_TOO_LARGE_FOR_AI_ANALYSIS", None, 10, 0)
-    analyzed = AnalysisStore(store.db_path).files(None, "ANALYZED", "LargeFile", 10, 0)
+    failed = AnalysisStore(store.db_path).files(None, "FAILED", "LargeFile", 10, 0)
+    facts = graph_facts_for_path(store.db_path, "src/main/java/example/LargeFile.java")
 
     assert final["status"] == "COMPLETED"
+    assert final["failedFiles"] == 1
     assert skipped["total"] == 0
-    assert analyzed["total"] == 1
-    assert {item["code"] for item in analyzed["files"][0]["diagnostics"]} >= {"ANALYSIS_FILE_TOO_LARGE"}
+    assert failed["total"] == 1
+    assert failed["files"][0]["lastErrorCode"] == "ANALYSIS_FILE_TOO_LARGE"
+    assert len(facts["nodes"]) == 0
 
 
 def test_unchanged_file_not_picked_by_new_job(tmp_path):
@@ -1676,7 +1675,7 @@ def test_unchanged_file_not_picked_by_new_job(tmp_path):
     assert analyzer.calls == 1
 
 
-def test_static_fallback_analysis_with_unchanged_hash_is_not_retried_without_force(tmp_path):
+def test_failed_llm_analysis_with_unchanged_hash_is_retried_without_force(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = SupervisorHarness(store, app_config(tmp_path))
     first = wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer(fail=True))["jobId"])
@@ -1684,13 +1683,15 @@ def test_static_fallback_analysis_with_unchanged_hash_is_not_retried_without_for
 
     second = wait_job(store, runner.start(AnalysisBuildRequest(), retry_analyzer)["jobId"])
     analyzed = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
+    failed = AnalysisStore(store.db_path).files(None, "FAILED", None, 10, 0)
 
-    assert first["failedFiles"] == 0
-    assert second["fileCount"] == 0
-    assert second["processedFiles"] == 0
+    assert first["failedFiles"] == 1
+    assert second["fileCount"] == 1
+    assert second["processedFiles"] == 1
     assert second["failedFiles"] == 0
-    assert retry_analyzer.calls == 0
+    assert retry_analyzer.calls == 1
     assert analyzed["total"] == 1
+    assert failed["total"] == 0
 
 
 def test_failed_retry_preserves_existing_graph_semantic_cache_and_query_results(tmp_path, monkeypatch):
@@ -1707,10 +1708,10 @@ def test_failed_retry_preserves_existing_graph_semantic_cache_and_query_results(
     assert before_semantic["semantic_documents"] > 0
     assert before_semantic["semantic_vectors"] > 0
 
-    def fail_to_graph(self, structural_result):
-        raise RuntimeError("static materializer failed")
+    async def fail_runtime(self, row, metadata, content_lines, analyzer, analyze_with_retry):
+        raise RuntimeError("runtime failed")
 
-    monkeypatch.setattr(StaticGraphMaterializer, "to_graph", fail_to_graph)
+    monkeypatch.setattr(AnalyzerRuntime, "execute", fail_runtime)
     failed = wait_job(store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer())["jobId"])
     status, diagnostics = job_file_diagnostics(store.db_path, failed["jobId"])
 
@@ -1764,10 +1765,10 @@ def test_failed_exception_path_preserves_existing_graph_facts(tmp_path, monkeypa
     before_graph = current_graph_fact_counts(store.db_path)
     before_semantic = semantic_cache_counts(store.db_path)
 
-    def fail_to_graph(self, structural_result):
-        raise RuntimeError("graph materialization failed")
+    async def fail_runtime(self, row, metadata, content_lines, analyzer, analyze_with_retry):
+        raise RuntimeError("runtime failed")
 
-    monkeypatch.setattr(StaticGraphMaterializer, "to_graph", fail_to_graph)
+    monkeypatch.setattr(AnalyzerRuntime, "execute", fail_runtime)
     failed = wait_job(store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer())["jobId"])
     status, diagnostics = job_file_diagnostics(store.db_path, failed["jobId"])
 
@@ -1782,10 +1783,10 @@ def test_failed_first_time_analysis_records_failure_without_graph_facts(tmp_path
     store, _, _ = build_inventory(tmp_path)
     runner = SupervisorHarness(store, app_config(tmp_path))
 
-    def fail_to_graph(self, structural_result):
-        raise RuntimeError("graph materialization failed")
+    async def fail_runtime(self, row, metadata, content_lines, analyzer, analyze_with_retry):
+        raise RuntimeError("runtime failed")
 
-    monkeypatch.setattr(StaticGraphMaterializer, "to_graph", fail_to_graph)
+    monkeypatch.setattr(AnalyzerRuntime, "execute", fail_runtime)
     failed = wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
     status, diagnostics = job_file_diagnostics(store.db_path, failed["jobId"])
 
@@ -2313,15 +2314,13 @@ def test_failed_ai_file_does_not_crash_whole_service(tmp_path):
 
     assert final["status"] == "COMPLETED"
     assert final["processedFiles"] == 1
-    assert final["failedFiles"] == 0
+    assert final["failedFiles"] == 1
     service = AnalysisStore(store.db_path).service_status(None)["sources"][0]
     assert service["analysis"]["processedFiles"] == 1
-    assert service["analysis"]["succeededFiles"] == 1
-    assert service["analysis"]["failedFiles"] == 0
+    assert service["analysis"]["succeededFiles"] == 0
+    assert service["analysis"]["failedFiles"] == 1
     assert service["analysis"]["pendingFiles"] == 0
-    assert "diagnostics" not in service
-    assert "diagnosticsSummary" not in service
-    assert "message" not in json.dumps(service)
+    assert AnalysisStore(store.db_path).files(None, "FAILED", None, 10, 0)["total"] == 1
 
 
 def test_service_status_uses_max_active_progress_without_double_counting(tmp_path):
@@ -2424,9 +2423,9 @@ def test_max_attempts_exceeded_marks_file_failed_with_preview(tmp_path):
     )
     runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "ANALYZED", None, 10, 0)
+    files = AnalysisStore(store.db_path).files(None, "FAILED", None, 10, 0)
 
-    assert final["failedFiles"] == 0
+    assert final["failedFiles"] == 1
     assert files["files"][0]["attemptCount"] == 2
     assert files["files"][0]["lastErrorCode"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"
     assert files["files"][0]["lastRawResponsePreview"] == "{bad again"
@@ -2449,13 +2448,13 @@ def test_timeout_marks_file_failed_and_continues(tmp_path):
     runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
     files = AnalysisStore(store.db_path).files(None, None, None, 10, 0)
-    first = AnalysisStore(store.db_path).files(None, "ANALYZED", "ObjectHandler", 10, 0)
+    first = AnalysisStore(store.db_path).files(None, "FAILED", "ObjectHandler", 10, 0)
 
     assert final["status"] == "COMPLETED"
     assert final["processedFiles"] == 2
-    assert final["failedFiles"] == 0
+    assert final["failedFiles"] == 1
     assert analyzer.calls == 2
-    assert {file["analysisStatus"] for file in files["files"]} == {"ANALYZED"}
+    assert {file["analysisStatus"] for file in files["files"]} == {"ANALYZED", "FAILED"}
     assert first["files"][0]["attemptCount"] == 1
     assert first["files"][0]["lastErrorCode"] == "ANALYSIS_AI_TIMEOUT"
 
@@ -2477,7 +2476,7 @@ def test_transport_error_marks_file_failed_and_continues_after_attempts(tmp_path
     final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
 
     assert final["processedFiles"] == 2
-    assert final["failedFiles"] == 0
+    assert final["failedFiles"] == 1
 
 
 def test_last_progress_at_updates(tmp_path):
@@ -2611,843 +2610,281 @@ def test_runtime_analysis_writes_graph_engine_job_file_flow_and_line_metadata(tm
     assert static_nodes["count"] > 0
 
 
-def test_generic_enrichment_json_parse_error_feedback_is_actionable(tmp_path):
-    relative_path = "fixtures/deploy-on-comment.txt"
-    summary = "Deploys services when a comment asks the workflow to run a Maven build and deploy step."
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={relative_path: REALISTIC_WORKFLOW_YAML},
-        include_patterns=["**/*.txt"],
-    )
-    override_inventory_classification(store, relative_path, flow_domain="WORKFLOW", language="yaml")
-    analyzer = RawGraphResponseAnalyzer(
-        [
-            MALFORMED_ENRICHMENT_JSON,
-            generic_enrichment_response(summary, line_end=14, excerpt="issue_comment deploy Build Deploy"),
-        ]
-    )
-    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
-
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    facts = graph_facts_for_path(store.db_path, relative_path)
-    job_status, job_diagnostics = job_file_diagnostics(store.db_path, final["jobId"], relative_path)
-    prompt = analyzer.repair_prompts[0]
-
-    assert final["status"] == "COMPLETED"
-    assert final["failedFiles"] == 0
-    assert job_status == "ANALYZED_WITH_DIAGNOSTICS"
-    assert analyzer.calls == 2
-    assert "JSON parse error" in prompt
-    assert "line" in prompt
-    assert "column" in prompt
-    assert "Bounded invalid response preview" in prompt
-    assert "Return ONLY corrected JSON" in prompt
-    assert "No markdown" in prompt
-    assert facts["claims"][0]["claim_kind"] == "RESPONSIBILITY"
-    assert facts["claims"][0]["summary"] == summary
-    assert len(facts["evidence"]) >= 1
-    assert {item["code"] for item in job_diagnostics} >= {"ANALYSIS_AI_INVALID_JSON", "ANALYSIS_AI_RETRY_SUCCEEDED"}
-    invalid = next(item for item in job_diagnostics if item["code"] == "ANALYSIS_AI_INVALID_JSON")
-    assert invalid["metadata"]["errorDetails"][0]["errorType"] == "JSON_PARSE_ERROR"
-    assert invalid["metadata"]["line"] >= 1
-    assert invalid["metadata"]["column"] >= 1
-    retry = next(item for item in job_diagnostics if item["code"] == "ANALYSIS_AI_RETRY_SUCCEEDED")
-    assert "JSON parse error" in retry["metadata"]["previousErrorSummary"]
-
-
-def test_generic_enrichment_schema_error_feedback_includes_path_enum_and_missing_field(tmp_path):
-    relative_path = "fixtures/service-action.txt"
-    summary = "Defines a reusable composite action that deploys a service through a shell script input."
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={relative_path: REALISTIC_ACTION_YAML},
-        include_patterns=["**/*.txt"],
-    )
-    override_inventory_classification(store, relative_path, flow_domain="WORKFLOW", language="yaml")
-
-    def invalid_schema(payload, line_count):
-        return json.dumps(
-            {
-                "schemaVersion": "knowledge.graph.enrichment.v1",
-                "claims": [
-                    {
-                        "localId": "generic-config-purpose",
-                        "targetStableKey": payload["genericConfigEnrichment"]["anchorStableKey"],
-                        "claimKind": "PURPOSE",
-                        "summary": "Describes an action purpose without evidence.",
-                        "confidence": 0.8,
-                        "metadata": {"factOrigin": "LLM", "status": "TRUSTED"},
-                    }
-                ],
-                "semanticEdges": [],
-                "diagnostics": [],
-            }
-        )
-
-    analyzer = RawGraphResponseAnalyzer(
-        [
-            invalid_schema,
-            generic_enrichment_response(summary, line_end=10, excerpt="inputs runs using composite steps"),
-        ]
-    )
-    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
-
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    facts = graph_facts_for_path(store.db_path, relative_path)
-    _, job_diagnostics = job_file_diagnostics(store.db_path, final["jobId"], relative_path)
-    prompt = analyzer.repair_prompts[0]
-
-    assert final["status"] == "COMPLETED"
-    assert analyzer.calls == 2
-    assert "$.claims[0].claimKind" in prompt
-    assert '"PURPOSE"' in prompt
-    assert "Allowed values" in prompt
-    assert "RESPONSIBILITY" in prompt
-    assert "$.claims[0].evidence" in prompt
-    assert "missing required field evidence" in prompt
-    schema_diagnostic = next(item for item in job_diagnostics if item["code"] == "ANALYSIS_AI_SCHEMA_INVALID")
-    details = schema_diagnostic["metadata"]["errorDetails"]
-    assert any(item["jsonPath"] == "$.claims[0].claimKind" and item["actual"] == "PURPOSE" for item in details)
-    assert any(item["jsonPath"] == "$.claims[0].evidence" and item["missingRequiredField"] == "evidence" for item in details)
-    assert facts["claims"][0]["claim_kind"] == "RESPONSIBILITY"
-    assert facts["claims"][0]["summary"] == summary
-    assert len(facts["evidence"]) >= 1
-
-
-def test_repeated_invalid_generic_enrichment_fails_with_detailed_diagnostics_and_no_graph(tmp_path):
-    relative_path = "fixtures/deploy-on-comment.txt"
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={relative_path: REALISTIC_WORKFLOW_YAML},
-        include_patterns=["**/*.txt"],
-    )
-    override_inventory_classification(store, relative_path, flow_domain="WORKFLOW", language="yaml")
-    analyzer = RawGraphResponseAnalyzer([MALFORMED_ENRICHMENT_JSON, MALFORMED_ENRICHMENT_JSON, MALFORMED_ENRICHMENT_JSON])
-    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
-
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "FAILED", relative_path, 10, 0)
-    facts = graph_facts_for_path(store.db_path, relative_path)
-    job_status, job_diagnostics = job_file_diagnostics(store.db_path, final["jobId"], relative_path)
-    max_attempts = next(item for item in job_diagnostics if item["code"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED")
-
-    assert final["failedFiles"] == 1
-    assert analyzer.calls == 3
-    assert len(analyzer.repair_prompts) == 2
-    assert files["total"] == 1
-    assert files["files"][0]["lastErrorCode"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"
-    assert job_status == "FAILED"
-    assert len(facts["nodes"]) == 0
-    assert len(facts["claims"]) == 0
-    assert len(facts["evidence"]) == 0
-    assert max_attempts["metadata"]["errorDetails"][0]["errorType"] == "JSON_PARSE_ERROR"
-    assert "JSON parse error" in max_attempts["metadata"]["errorSummary"]
-    assert max_attempts["metadata"]["line"] >= 1
-    assert max_attempts["metadata"]["column"] >= 1
-
-
-def test_live_retry_truncated_json_reproducer_keeps_concrete_diagnostics_without_graph(tmp_path):
-    workflow_path = "fixtures/live-workflow-shape.txt"
-    build_path = "fixtures/live-build-shape.txt"
-    workflow_steps = "\n".join(
-        f"      - name: Deploy service {index}\n        run: ./scripts/deploy-service.sh service-{index}"
-        for index in range(1, 24)
-    )
-    workflow_content = f"""name: Deploy on comment
-on:
-  issue_comment:
-    types: [created]
-jobs:
-  deploy:
-    if: contains(github.event.comment.body, '/deploy')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-{workflow_steps}
-"""
-    partial_enrichment_json = """{
-  "schemaVersion": "knowledge.graph.enrichment.v1",
-  "claims": [
-    {
-      "localId": "config-purpose"""
-    attempts_by_path = {}
-
-    def live_truncated_response(payload, line_count):
-        relative_path = payload["relativePath"]
-        attempts_by_path[relative_path] = attempts_by_path.get(relative_path, 0) + 1
-        if relative_path == workflow_path:
-            return "{\n"
-        if attempts_by_path[relative_path] == 2:
-            return "{\n"
-        return partial_enrichment_json
-
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            workflow_path: workflow_content,
-            build_path: REALISTIC_POM_XML,
-        },
-        include_patterns=["**/*.txt"],
-    )
-    override_inventory_classification(store, workflow_path, flow_domain="WORKFLOW", language="yaml")
-    override_inventory_classification(store, build_path, flow_domain="BUILD", language="xml")
-    analyzer = RawGraphResponseAnalyzer([live_truncated_response] * 6)
-    config = AppConfig(
-        tmp_path,
-        "127.0.0.1",
-        7081,
-        tmp_path / "knowledge-sources.yaml",
-        tmp_path / "knowledge.sqlite",
-        analysis_max_attempts_per_file=3,
-        analysis_repair_attempts_per_file=1,
-        analysis_max_file_chars=60000,
-    )
-    runner = SupervisorHarness(store, config)
-
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-
-    assert final["status"] == "COMPLETED"
-    assert final["failedFiles"] == 2
-    assert analyzer.calls == 6
-    assert len(analyzer.repair_prompts) == 2
-    assert any("JSON parse error at line 2 column 1" in prompt for prompt in analyzer.repair_prompts)
-    assert any("JSON parse error at line 5 column 18" in prompt for prompt in analyzer.repair_prompts)
-    assert all("Bounded invalid response preview" in prompt for prompt in analyzer.repair_prompts)
-    assert all("Return ONLY corrected JSON" in prompt for prompt in analyzer.repair_prompts)
-
-    for relative_path, expected_lines in (
-        (workflow_path, [2, 2, 2]),
-        (build_path, [5, 2, 5]),
-    ):
-        files = AnalysisStore(store.db_path).files(None, "FAILED", relative_path, 10, 0)
-        facts = graph_facts_for_path(store.db_path, relative_path)
-        job_status, job_diagnostics = job_file_diagnostics(store.db_path, final["jobId"], relative_path)
-        invalids = [item for item in job_diagnostics if item["code"] == "ANALYSIS_AI_INVALID_JSON"]
-        max_attempts = next(item for item in job_diagnostics if item["code"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED")
-
-        assert files["total"] == 1
-        assert files["files"][0]["lastErrorCode"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"
-        assert job_status == "FAILED"
-        assert len(facts["nodes"]) == 0
-        assert len(facts["claims"]) == 0
-        assert len(facts["evidence"]) == 0
-        assert [item["metadata"]["line"] for item in invalids] == expected_lines
-        assert len(invalids) == 3
-        for item in invalids:
-            detail = item["metadata"]["errorDetails"][0]
-            assert detail["errorType"] == "JSON_PARSE_ERROR"
-            assert detail["responseTruncated"] is True
-            assert "rawPreview" in detail
-        last_detail = max_attempts["metadata"]["errorDetails"][0]
-        assert last_detail["errorType"] == "JSON_PARSE_ERROR"
-        assert last_detail["responseTruncated"] is True
-        assert "JSON parse error" in max_attempts["metadata"]["errorSummary"]
-
-
-def test_generic_enrichment_payload_uses_content_lines_without_full_content(tmp_path):
-    relative_path = "fixtures/compact-workflow.txt"
-    content = """name: Deploy services
-on:
-  workflow_dispatch:
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy beta
-        run: ./scripts/deploy-service.sh beta
-"""
-    summary = "Deploys services from a workflow dispatch job using the visible deploy-service script step."
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={relative_path: content},
-        include_patterns=["**/*.txt"],
-    )
-    override_inventory_classification(store, relative_path, flow_domain="WORKFLOW", language="yaml")
-    analyzer = GenericConfigStubAnalyzer({relative_path: summary})
-    runner = SupervisorHarness(store, app_config(tmp_path))
-
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    payload = analyzer.payloads[0]
-    facts = graph_facts_for_path(store.db_path, relative_path)
-    evidence = facts["evidence"][0]
-
-    assert final["failedFiles"] == 0
-    assert payload["analysisMode"] == "GENERIC_TEXT_CONFIG_ENRICHMENT"
-    assert "content" not in payload
-    assert payload["contentCharCount"] == len(content.rstrip("\n"))
-    assert payload["contentLines"][0] == {"line": 1, "text": "name: Deploy services"}
-    assert payload["contentLines"][-1] == {"line": 9, "text": "        run: ./scripts/deploy-service.sh beta"}
-    assert payload["lineCount"] == len(content.splitlines())
-    assert facts["claims"][0]["summary"] == summary
-    assert 1 <= evidence["line_start"] <= evidence["line_end"] <= payload["lineCount"]
-
-
-def test_generic_enrichment_prompt_is_compact_and_does_not_duplicate_file_content(tmp_path):
-    relative_path = "fixtures/compact-workflow.txt"
-    content = """name: Deploy services
-on:
-  workflow_dispatch:
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy beta
-        run: ./scripts/deploy-service.sh beta
-"""
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={relative_path: content},
-        include_patterns=["**/*.txt"],
-    )
-    override_inventory_classification(store, relative_path, flow_domain="WORKFLOW", language="yaml")
-    analyzer = GenericConfigStubAnalyzer({relative_path: "Deploys the beta service from a workflow dispatch job."})
-    runner = SupervisorHarness(store, app_config(tmp_path))
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    payload = analyzer.payloads[0]
-
-    client = object.__new__(OllamaAnalysisClient)
-    client.prompt_template = "BASE CODE PROMPT SENTINEL\n"
-    client.prompt_renderer = AnalysisPromptRenderer()
-    client.contract_provider = client.prompt_renderer.provider
-    prompt = client._prompt(payload)
-    duplicated_payload = dict(payload)
-    duplicated_payload["content"] = content
-    duplicated_prompt = client._prompt(duplicated_payload)
-    distinctive_line = "        run: ./scripts/deploy-service.sh beta"
-
-    assert "BASE CODE PROMPT SENTINEL" not in prompt
-    assert "Analysis graph contract" in prompt
-    assert "allowedClaimKinds" in prompt
-    assert "File metadata and content JSON:" in prompt
-    assert '"content":' not in prompt
-    assert '"contentLines"' in prompt
-    assert '"line": 1' in prompt
-    assert prompt.count(distinctive_line) == 1
-    assert len(prompt) < len(duplicated_prompt)
-
 
 @pytest.mark.parametrize(
-    "relative_path,content,flow_domain,language,summary,expected_file_type,excerpt",
+    ("relative_path", "content", "expected_format", "expected_extractor", "expected_policy"),
     [
-        (
-            "fixtures/deploy-comment.txt",
-            REALISTIC_WORKFLOW_YAML,
-            "WORKFLOW",
-            "yaml",
-            "Explains that the workflow deploys when a created issue comment contains /deploy and then builds and deploys.",
-            "workflow-yaml",
-            "issue_comment /deploy mvn Deploy",
-        ),
-        (
-            "fixtures/service-action.txt",
-            REALISTIC_ACTION_YAML,
-            "WORKFLOW",
-            "yaml",
-            "Explains that the reusable composite action requires a service name and runs the deploy service script.",
-            "workflow-yaml",
-            "service-name composite deploy-service.sh",
-        ),
-        (
-            "fixtures/maven-module.txt",
-            REALISTIC_POM_XML,
-            "BUILD",
-            "xml",
-            "Explains that the Maven module builds workspaceaggregationservice-sox with web dependencies and surefire tests.",
-            "build-xml",
-            "artifactId workspaceaggregationservice-sox dependencies build plugins",
-        ),
+        ("src/main/java/example/ObjectHandler.java", "package example;\npublic class ObjectHandler { void create() {} }\n", "java", "java_ast", "parser_assisted_graph_enrichment"),
+        ("config/service.yaml", "name: edge\nsettings:\n  enabled: true\n", "yaml", "structured_text_light", "text_graph_enrichment"),
+        ("models/service.xml", "<project>\n  <artifactId>edge-core</artifactId>\n</project>\n", "xml", "structured_text_light", "text_graph_enrichment"),
+        ("docs/README.md", "# Edge Gateway\n\nHandles routing notes.\n", "markdown", "document_heading_light", "text_graph_enrichment"),
     ],
 )
-def test_realistic_generic_enrichment_fixtures_succeed_after_repair_and_index(
-    tmp_path,
-    relative_path,
-    content,
-    flow_domain,
-    language,
-    summary,
-    expected_file_type,
-    excerpt,
-):
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={relative_path: content},
-        include_patterns=["**/*.txt"],
-    )
-    override_inventory_classification(store, relative_path, flow_domain=flow_domain, language=language)
-    analyzer = RawGraphResponseAnalyzer(
-        [
-            MALFORMED_ENRICHMENT_JSON,
-            generic_enrichment_response(summary, line_end=len(content.splitlines()), excerpt=excerpt),
-        ]
-    )
-    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+def test_analyzer_runtime_builds_unified_payload_shape(relative_path, content, expected_format, expected_extractor, expected_policy):
+    _, analyzer = asyncio.run(run_runtime(relative_path, content))
+    payload = analyzer.payloads[0]
 
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    facts = graph_facts_for_path(store.db_path, relative_path)
-    semantic_result = build_semantic_cache(store.db_path)
-    semantic_texts = semantic_document_texts(store.db_path)
-
-    assert final["status"] == "COMPLETED"
-    assert final["failedFiles"] == 0
-    assert analyzer.calls == 2
-    assert analyzer.payloads[0]["analysisMode"] == "GENERIC_TEXT_CONFIG_ENRICHMENT"
-    assert analyzer.payloads[0]["flowDomain"] == flow_domain
-    assert analyzer.payloads[0]["fileType"] == expected_file_type
-    assert "content" not in analyzer.payloads[0]
-    assert len(analyzer.payloads[0]["contentLines"]) == len(content.splitlines())
-    assert facts["claims"][0]["claim_kind"] == "RESPONSIBILITY"
-    assert facts["claims"][0]["status"] == "TRUSTED"
-    assert facts["claims"][0]["fact_origin"] == "LLM"
-    assert facts["claims"][0]["summary"] == summary
-    assert len(facts["evidence"]) >= 1
-    for evidence in facts["evidence"]:
-        assert 1 <= evidence["line_start"] <= evidence["line_end"] <= len(content.splitlines())
-    assert semantic_result.status == "COMPLETED"
-    assert any(summary in text for text in semantic_texts)
+    assert set(payload) == payload_top_level_shape()
+    assert payload["contentLines"][0]["line"] == 1
+    assert payload["contentLines"][0]["text"] == content.splitlines()[0]
+    assert payload["staticAnchors"]["nodes"]
+    assert payload["analysisPolicy"]["formatId"] == expected_format
+    assert payload["analysisPolicy"]["extractorId"] == expected_extractor
+    assert payload["analysisPolicy"]["policyId"] == expected_policy
+    assert payload["analysisPolicy"]["sourceView"] == "contentLines"
+    assert payload["analysisPolicy"]["llmMode"] != "none"
+    assert "analysisMode" not in payload
+    assert "genericConfigEnrichment" not in payload
+    assert "fileType" not in payload
+    assert "flowDomain" not in payload
+    assert "content" not in payload
 
 
-def test_generic_enrichment_routing_uses_classification_policy_not_path_or_extension(tmp_path):
-    skipped_yaml = "fixtures/not-eligible.yaml"
-    enriched_txt = "fixtures/plain-note.txt"
-    skipped_github = ".github/workflows/not-eligible.yml"
-    summary = "Generic enrichment follows CONFIG classification for a plain text file."
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            skipped_yaml: "name: looks like config\nsetting: true\n",
-            enriched_txt: "plain text setting for a classified config artifact\n",
-            skipped_github: "name: path looks like workflow\non: push\n",
-        },
-        include_patterns=["**/*.yaml", "**/*.txt", "**/*.yml"],
-    )
-    override_inventory_classification(store, skipped_yaml, flow_domain="DOC", language="yaml")
-    override_inventory_classification(store, enriched_txt, flow_domain="CONFIG", language="text")
-    override_inventory_classification(store, skipped_github, flow_domain="UNKNOWN", language="yaml")
-    analyzer = GenericConfigStubAnalyzer({enriched_txt: summary})
-    runner = SupervisorHarness(store, app_config(tmp_path))
+def test_analyzer_runtime_routing_is_yaml_driven_and_unknown_extension_fails():
+    policy = load_analysis_policy(POLICY_PATH)
+    resolver = AnalyzerPolicyRuntimeResolver(policy)
 
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    skipped_yaml_facts = graph_facts_for_path(store.db_path, skipped_yaml)
-    enriched_facts = graph_facts_for_path(store.db_path, enriched_txt)
-    skipped_github_facts = graph_facts_for_path(store.db_path, skipped_github)
+    cases = [
+        ("src/Foo.java", "java_ast", "parser_assisted_graph_enrichment"),
+        ("config/service.yaml", "structured_text_light", "text_graph_enrichment"),
+        ("README.md", "document_heading_light", "text_graph_enrichment"),
+    ]
+    for relative_path, extractor_id, policy_id in cases:
+        context = resolver.resolve(runtime_row(relative_path, "content\n"), {}, ["content"])
+        assert context.policy_resolution.extractor_id == extractor_id
+        assert context.policy_resolution.policy_id == policy_id
 
-    assert final["status"] == "COMPLETED"
+    with pytest.raises(KnowledgeError) as exc:
+        resolver.resolve(runtime_row("archive.unknown", "content\n"), {}, ["content"])
+
+    assert exc.value.code == "UNSUPPORTED_FORMAT"
+    assert exc.value.details["unsupportedBehavior"]["unsupportedFormat"] == "fail_file"
+
+
+@pytest.mark.parametrize("flow_domain", ["WORKFLOW", "CONFIG", "BUILD"])
+def test_legacy_flow_domain_does_not_control_llm_eligibility(flow_domain):
+    _, analyzer = asyncio.run(run_runtime("config/service.yaml", "name: edge\n", flow_domain=flow_domain, language="yaml"))
+    payload = analyzer.payloads[0]
+
     assert analyzer.calls == 1
-    assert analyzer.payloads[0]["relativePath"] == enriched_txt
-    assert analyzer.payloads[0]["flowDomain"] == "CONFIG"
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" in {row["code"] for row in skipped_yaml_facts["diagnostics"]}
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" in {row["code"] for row in skipped_github_facts["diagnostics"]}
-    assert len(skipped_yaml_facts["claims"]) == 0
-    assert len(skipped_github_facts["claims"]) == 0
-    assert enriched_facts["claims"][0]["summary"] == summary
+    assert payload["analysisPolicy"]["extractorId"] == "structured_text_light"
+    assert payload["metadata"]["flowDomain"] == flow_domain
+    assert "flowDomain" not in payload
+    assert "analysisMode" not in payload
+    assert "genericConfigEnrichment" not in payload
 
 
-def test_runtime_analysis_generically_enriches_github_workflow_yaml(tmp_path):
-    relative_path = ".github/workflows/deploy-on-comment.yml"
-    summary = "Deploys services when an authorized pull request comment requests deployment."
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            relative_path: "name: deploy on comment\non:\n  issue_comment:\n    types: [created]\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ./scripts/deploy.sh\n",
-        },
-        include_patterns=["**/*.yml"],
-    )
-    analyzer = GenericConfigStubAnalyzer({relative_path: summary})
-    runner = SupervisorHarness(store, app_config(tmp_path))
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
+def test_parser_unsupported_text_file_is_not_skipped_by_old_logic():
+    _, analyzer = asyncio.run(run_runtime("docs/operations.txt", "Operations note for handoff.\n", flow_domain="DOC", language="text"))
+    payload = analyzer.payloads[0]
 
-    with sqlite3.connect(store.db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        node = conn.execute("""
-            SELECT node_kind, fact_origin, flow_domain
-            FROM analysis_graph_nodes
-            WHERE source_id = 'edge-gateway'
-        """).fetchone()
-        analysis_file = conn.execute("SELECT status, last_error_code FROM analysis_files").fetchone()
-        job_file = conn.execute("SELECT status, flow_domain FROM analysis_job_files").fetchone()
-    facts = graph_facts_for_path(store.db_path, relative_path)
-    diagnostic_codes = {row["code"] for row in facts["diagnostics"]}
-
-    assert final["status"] == "COMPLETED"
-    assert final["failedFiles"] == 0
     assert analyzer.calls == 1
-    assert analyzer.payloads[0]["analysisMode"] == "GENERIC_TEXT_CONFIG_ENRICHMENT"
-    assert analyzer.payloads[0]["fileType"] == "workflow-yaml"
-    assert analyzer.payloads[0]["contentLines"][0] == {"line": 1, "text": "name: deploy on comment"}
-    assert node["node_kind"] == "FILE"
-    assert node["fact_origin"] == "STATIC"
-    assert node["flow_domain"] == "WORKFLOW"
-    assert facts["diagnostics"][0]["id"].startswith("analysis-graph-diagnostic:")
-    assert "STRUCTURAL_PARSER_NOT_AVAILABLE" in diagnostic_codes
-    assert "ANALYSIS_AI_GENERIC_CONFIG_ENRICHED" in diagnostic_codes
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" not in diagnostic_codes
-    assert len(facts["claims"]) == 1
-    assert facts["claims"][0]["claim_kind"] == "RESPONSIBILITY"
-    assert facts["claims"][0]["status"] == "TRUSTED"
-    assert facts["claims"][0]["fact_origin"] == "LLM"
-    assert facts["claims"][0]["summary"] == summary
-    assert len(facts["evidence"]) >= 1
-    assert analysis_file["status"] == "ANALYZED"
-    assert analysis_file["last_error_code"] is None
-    assert job_file["status"] == "ANALYZED_WITH_DIAGNOSTICS"
-    assert job_file["flow_domain"] == "WORKFLOW"
-    _, nodes = current_graph_nodes(store, flow_domain=None)
-    assert nodes[0]["nodeKind"] == "FILE"
-    assert {item["code"] for item in AnalysisStore(store.db_path).diagnostics("edge-gateway", 10, 0)["diagnostics"]} >= {
-        "STRUCTURAL_PARSER_NOT_AVAILABLE",
-        "ANALYSIS_AI_GENERIC_CONFIG_ENRICHED",
-    }
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" not in {
-        item["code"] for item in AnalysisStore(store.db_path).diagnostics("edge-gateway", 10, 0)["diagnostics"]
-    }
+    assert payload["analysisPolicy"]["formatId"] == "markdown"
+    assert payload["analysisPolicy"]["extractorId"] == "document_heading_light"
+    assert "analysisMode" not in payload
 
 
-def test_runtime_analysis_generically_enriches_github_action_yaml(tmp_path):
-    relative_path = ".github/actions/service-deploy-run/action.yml"
-    summary = "Defines a composite GitHub action that deploys a selected service using required inputs."
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            relative_path: "name: service deploy run\ninputs:\n  service:\n    required: true\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: ./scripts/service-deploy.sh \"${{ inputs.service }}\"\n",
-        },
-        include_patterns=["**/*.yml"],
+def test_java_extractor_output_is_used_as_static_anchors():
+    _, analyzer = asyncio.run(
+        run_runtime(
+            "src/main/java/example/ObjectHandler.java",
+            "package example;\npublic class ObjectHandler {\n  public void create() {}\n}\n",
+            language="java",
+        )
     )
-    analyzer = GenericConfigStubAnalyzer({relative_path: summary})
-    runner = SupervisorHarness(store, app_config(tmp_path))
+    anchors = analyzer.payloads[0]["staticAnchors"]["nodes"]
+    kinds = {item["nodeKind"] for item in anchors}
 
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    facts = graph_facts_for_path(store.db_path, relative_path)
-
-    assert final["status"] == "COMPLETED"
-    assert analyzer.calls == 1
-    assert analyzer.payloads[0]["fileType"] == "workflow-yaml"
-    assert facts["claims"][0]["summary"] == summary
-    assert facts["claims"][0]["claim_kind"] == "RESPONSIBILITY"
-    assert len(facts["evidence"]) >= 1
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" not in {row["code"] for row in facts["diagnostics"]}
+    assert "FILE" in kinds
+    assert {"TYPE", "CALLABLE"}.issubset(kinds)
 
 
-def test_runtime_analysis_generically_enriches_maven_pom_xml(tmp_path):
-    relative_path = "api-rest/pom.xml"
-    summary = "Defines the api-rest Maven module, its parent relationship, jar packaging, and REST dependencies."
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            relative_path: """<project>
-  <modelVersion>4.0.0</modelVersion>
-  <parent>
-    <groupId>com.sitionix</groupId>
-    <artifactId>forge-ai</artifactId>
-    <version>1.0.0</version>
-  </parent>
-  <artifactId>api-rest</artifactId>
-  <packaging>jar</packaging>
-  <dependencies>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-web</artifactId>
-    </dependency>
-  </dependencies>
-</project>
-""",
-        },
-        include_patterns=["**/*.xml"],
+def test_file_anchor_fallback_works_only_when_policy_allows_it():
+    policy = load_analysis_policy(POLICY_PATH)
+    registry = ExtractorRegistry()
+    registry._handlers.pop("document_heading_parser")
+
+    _, analyzer = asyncio.run(run_runtime("README.md", "# Title\n", policy=policy, registry=registry))
+    payload = analyzer.payloads[0]
+
+    assert payload["metadata"]["extractorFallbackUsed"] is True
+    assert [item["nodeKind"] for item in payload["staticAnchors"]["nodes"]] == ["FILE"]
+    assert payload["staticAnchors"]["diagnostics"][0]["code"] == "ANALYSIS_UNSUPPORTED_EXTRACTOR_FALLBACK_USED"
+
+
+def test_required_file_anchor_fallback_mode_allows_file_anchor_fallback():
+    policy = load_analysis_policy(POLICY_PATH)
+    registry = ExtractorRegistry()
+    registry._handlers.pop("java_static_parser")
+
+    _, analyzer = asyncio.run(
+        run_runtime(
+            "src/main/java/example/ObjectHandler.java",
+            "package example;\npublic class ObjectHandler {}\n",
+            policy=policy,
+            registry=registry,
+            language="java",
+        )
     )
-    analyzer = GenericConfigStubAnalyzer({relative_path: summary})
-    runner = SupervisorHarness(store, app_config(tmp_path))
+    payload = analyzer.payloads[0]
 
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    facts = graph_facts_for_path(store.db_path, relative_path)
-
-    assert final["status"] == "COMPLETED"
-    assert analyzer.calls == 1
-    assert analyzer.payloads[0]["fileType"] == "build-xml"
-    assert analyzer.payloads[0]["flowDomain"] == "BUILD"
-    assert facts["claims"][0]["summary"] == summary
-    assert facts["claims"][0]["status"] == "TRUSTED"
-    assert len(facts["evidence"]) >= 1
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" not in {row["code"] for row in facts["diagnostics"]}
+    assert payload["analysisPolicy"]["extractorMode"] == "required_or_file_anchor_fallback"
+    assert payload["metadata"]["extractorFallbackUsed"] is True
+    assert [item["nodeKind"] for item in payload["staticAnchors"]["nodes"]] == ["FILE"]
+    assert payload["staticAnchors"]["diagnostics"][0]["code"] == "ANALYSIS_UNSUPPORTED_EXTRACTOR_FALLBACK_USED"
 
 
-def test_generic_config_semantic_index_includes_enriched_claim_text(tmp_path):
-    relative_path = ".github/workflows/deploy-on-comment.yml"
-    summary = "Deploys services when an authorized pull request comment requests deployment."
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            relative_path: "name: deploy on comment\non:\n  issue_comment:\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n",
-        },
-        include_patterns=["**/*.yml"],
+def test_missing_required_extractor_fails_explicitly_before_llm():
+    policy = load_analysis_policy(POLICY_PATH)
+    policies = dict(policy.policies)
+    policies["parser_assisted_graph_enrichment"] = replace(
+        policies["parser_assisted_graph_enrichment"],
+        extractor_mode=EXTRACTOR_MODE_FILE_ANCHOR_ONLY,
     )
-    analyzer = GenericConfigStubAnalyzer({relative_path: summary})
-    runner = SupervisorHarness(store, app_config(tmp_path))
-    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
+    strict_policy = replace(policy, policies=policies)
+    registry = ExtractorRegistry()
+    registry._handlers.pop("java_static_parser")
+    analyzer = CapturingGraphAnalyzer()
 
-    semantic_result = build_semantic_cache(store.db_path)
-    texts = semantic_document_texts(store.db_path)
-    counts = semantic_cache_counts(store.db_path)
-    state = SemanticIndexStore(store.db_path).status_for_source("edge-gateway")
+    with pytest.raises(KnowledgeError) as exc:
+        asyncio.run(
+            run_runtime(
+                "src/main/java/example/ObjectHandler.java",
+                "package example;\npublic class ObjectHandler {}\n",
+                policy=strict_policy,
+                registry=registry,
+                analyzer=analyzer,
+            )
+        )
 
-    assert semantic_result.status == "COMPLETED"
-    assert state.status.value == "READY"
-    assert counts["semantic_documents"] >= 1
-    assert counts["semantic_vectors"] >= 1
-    assert any(summary in text for text in texts)
-
-
-def test_parser_unsupported_non_generic_category_skips_without_analyzer_or_claim(tmp_path):
-    relative_path = "docs/operations.txt"
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            relative_path: "Operations note for on-call handoff.\nKeep this text bounded and readable.\n",
-        },
-        include_patterns=["**/*.txt"],
-    )
-    analyzer = GenericConfigStubAnalyzer({relative_path: "Should not be produced."})
-    runner = SupervisorHarness(store, app_config(tmp_path))
-
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    facts = graph_facts_for_path(store.db_path, relative_path)
-    diagnostic_codes = {row["code"] for row in facts["diagnostics"]}
-    semantic_result = build_semantic_cache(store.db_path)
-    semantic_texts = semantic_document_texts(store.db_path)
-
-    assert final["status"] == "COMPLETED"
-    assert final["failedFiles"] == 0
+    assert exc.value.code == "UNSUPPORTED_EXTRACTOR"
     assert analyzer.calls == 0
-    assert "STRUCTURAL_PARSER_NOT_AVAILABLE" in diagnostic_codes
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" in diagnostic_codes
-    assert "ANALYSIS_AI_GENERIC_CONFIG_ENRICHED" not in diagnostic_codes
-    assert len(facts["nodes"]) == 1
-    assert len(facts["claims"]) == 0
-    assert len(facts["evidence"]) == 0
-    assert semantic_result.status == "COMPLETED"
-    assert all("Should not be produced." not in text for text in semantic_texts)
-    assert all("Responsibility:" not in text for text in semantic_texts)
 
 
-def test_empty_generic_eligible_file_skips_without_analyzer_or_fake_claim(tmp_path):
-    relative_path = "empty-note.txt"
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            relative_path: "   \n\t\n",
-        },
-        include_patterns=["**/*.txt"],
-    )
-    override_inventory_classification(store, relative_path, flow_domain="WORKFLOW", language="text")
-    analyzer = GenericConfigStubAnalyzer({relative_path: "Should not be produced."})
-    runner = SupervisorHarness(store, app_config(tmp_path))
+def test_fake_extractor_mode_with_fallback_substring_fails_closed():
+    policy = load_analysis_policy(POLICY_PATH)
+    policies = dict(policy.policies)
+    policies["text_graph_enrichment"] = replace(policies["text_graph_enrichment"], extractor_mode="fallback_disabled")
+    strict_policy = replace(policy, policies=policies)
+    registry = ExtractorRegistry()
+    registry._handlers.pop("document_heading_parser")
+    analyzer = CapturingGraphAnalyzer()
 
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    facts = graph_facts_for_path(store.db_path, relative_path)
-    diagnostic_codes = {row["code"] for row in facts["diagnostics"]}
-    semantic_result = build_semantic_cache(store.db_path)
-    semantic_texts = semantic_document_texts(store.db_path)
+    with pytest.raises(KnowledgeError) as exc:
+        asyncio.run(run_runtime("README.md", "# Title\n", policy=strict_policy, registry=registry, analyzer=analyzer))
 
-    assert final["status"] == "COMPLETED"
-    assert final["failedFiles"] == 0
+    assert exc.value.code == "ANALYSIS_POLICY_UNSUPPORTED_EXTRACTOR_MODE"
     assert analyzer.calls == 0
-    assert analyzer.payloads == []
-    assert "STRUCTURAL_PARSER_NOT_AVAILABLE" in diagnostic_codes
-    assert "ANALYSIS_AI_SKIPPED_EMPTY_FILE" in diagnostic_codes
-    assert "ANALYSIS_AI_GENERIC_CONFIG_ENRICHED" not in diagnostic_codes
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" not in diagnostic_codes
-    assert len(facts["claims"]) == 0
-    assert len(facts["evidence"]) == 0
-    assert semantic_result.status == "COMPLETED"
-    assert all("Should not be produced." not in text for text in semantic_texts)
-    assert all("Responsibility:" not in text for text in semantic_texts)
 
 
-def test_generic_config_enrichment_uses_classification_not_extension(tmp_path):
-    skipped_path = "docs/looks-like-config.yaml"
-    enriched_path = "docs/ordinary-note.txt"
-    enriched_summary = "Generic enrichment follows CONFIG classification even for a plain text filename."
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            skipped_path: "name: looks like config\nsetting: true\n",
-            enriched_path: "plain text setting for a classified config artifact\n",
-        },
-        include_patterns=["**/*.yaml", "**/*.txt"],
-    )
-    override_inventory_classification(store, skipped_path, flow_domain="DOC", language="yaml")
-    override_inventory_classification(store, enriched_path, flow_domain="CONFIG", language="text")
-    analyzer = GenericConfigStubAnalyzer({enriched_path: enriched_summary})
-    runner = SupervisorHarness(store, app_config(tmp_path))
+def test_fake_llm_mode_fails_closed_before_provider_call():
+    policy = load_analysis_policy(POLICY_PATH)
+    policies = dict(policy.policies)
+    policies["text_graph_enrichment"] = replace(policies["text_graph_enrichment"], llm_mode="not_none")
+    strict_policy = replace(policy, policies=policies)
+    analyzer = CapturingGraphAnalyzer()
 
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    skipped_facts = graph_facts_for_path(store.db_path, skipped_path)
-    enriched_facts = graph_facts_for_path(store.db_path, enriched_path)
+    with pytest.raises(KnowledgeError) as exc:
+        asyncio.run(run_runtime("README.md", "# Title\n", policy=strict_policy, analyzer=analyzer))
 
-    assert final["status"] == "COMPLETED"
-    assert analyzer.calls == 1
-    assert analyzer.payloads[0]["relativePath"] == enriched_path
-    assert analyzer.payloads[0]["flowDomain"] == "CONFIG"
-    assert analyzer.payloads[0]["fileType"] == "config-text"
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" in {row["code"] for row in skipped_facts["diagnostics"]}
-    assert "ANALYSIS_AI_GENERIC_CONFIG_ENRICHED" not in {row["code"] for row in skipped_facts["diagnostics"]}
-    assert len(skipped_facts["claims"]) == 0
-    assert enriched_facts["claims"][0]["summary"] == enriched_summary
-    assert enriched_facts["claims"][0]["status"] == "TRUSTED"
-    assert len(enriched_facts["evidence"]) >= 1
-
-
-def test_generic_config_enrichment_uses_classification_not_filename_or_path(tmp_path):
-    skipped_path = ".github/workflows/demo.yml"
-    enriched_path = "plain/ordinary.txt"
-    enriched_summary = "Generic enrichment follows CONFIG classification for an ordinary path."
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            skipped_path: "name: path looks like workflow\non: push\n",
-            enriched_path: "ordinary text classified as configuration\n",
-        },
-        include_patterns=["**/*.yml", "**/*.txt"],
-    )
-    override_inventory_classification(store, skipped_path, flow_domain="DOC", language="yaml")
-    override_inventory_classification(store, enriched_path, flow_domain="CONFIG", language="text")
-    analyzer = GenericConfigStubAnalyzer({enriched_path: enriched_summary})
-    runner = SupervisorHarness(store, app_config(tmp_path))
-
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    skipped_facts = graph_facts_for_path(store.db_path, skipped_path)
-    enriched_facts = graph_facts_for_path(store.db_path, enriched_path)
-
-    assert final["status"] == "COMPLETED"
-    assert analyzer.calls == 1
-    assert analyzer.payloads[0]["relativePath"] == enriched_path
-    assert analyzer.payloads[0]["flowDomain"] == "CONFIG"
-    assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" in {row["code"] for row in skipped_facts["diagnostics"]}
-    assert "ANALYSIS_AI_GENERIC_CONFIG_ENRICHED" not in {row["code"] for row in skipped_facts["diagnostics"]}
-    assert len(skipped_facts["claims"]) == 0
-    assert enriched_facts["claims"][0]["summary"] == enriched_summary
-    assert enriched_facts["claims"][0]["status"] == "TRUSTED"
-    assert len(enriched_facts["evidence"]) >= 1
-
-
-def test_first_time_generic_config_enrichment_failure_marks_failed_without_graph(tmp_path):
-    relative_path = ".github/workflows/deploy-on-comment.yml"
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            relative_path: "name: deploy on comment\non: push\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n",
-        },
-        include_patterns=["**/*.yml"],
-    )
-    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 1))
-    failing = GenericConfigStubAnalyzer(fail=True)
-
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), failing)["jobId"])
-    files = AnalysisStore(store.db_path).files(None, "FAILED", relative_path, 10, 0)
-    facts = graph_facts_for_path(store.db_path, relative_path)
-
-    assert failing.calls == 1
-    assert final["failedFiles"] == 1
-    assert files["total"] == 1
-    assert files["files"][0]["lastErrorCode"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"
-    assert len(facts["nodes"]) == 0
-    assert len(facts["claims"]) == 0
-    assert len(facts["evidence"]) == 0
-
-
-def test_generic_config_enrichment_failure_preserves_previous_graph_for_same_identity(tmp_path):
-    relative_path = ".github/workflows/deploy-on-comment.yml"
-    old_summary = "Deploys services from the previously successful workflow analysis."
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            relative_path: "name: deploy on comment\non: push\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n",
-        },
-        include_patterns=["**/*.yml"],
-    )
-    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 1))
-    wait_job(store, runner.start(AnalysisBuildRequest(), GenericConfigStubAnalyzer({relative_path: old_summary}))["jobId"])
-    build_semantic_cache(store.db_path)
-    before = current_graph_fact_counts(store.db_path)
-    semantic_before = semantic_cache_counts(store.db_path)
-    semantic_texts_before = semantic_document_texts(store.db_path)
-
-    failing = GenericConfigStubAnalyzer(fail=True)
-    final = wait_job(store, runner.start(AnalysisBuildRequest(force=True), failing)["jobId"])
-    after = current_graph_fact_counts(store.db_path)
-    semantic_after = semantic_cache_counts(store.db_path)
-    semantic_texts_after = semantic_document_texts(store.db_path)
-    analyzed = AnalysisStore(store.db_path).files(None, "ANALYZED", relative_path, 10, 0)
-    job_status, job_diagnostics = job_file_diagnostics(store.db_path, final["jobId"], relative_path)
-    preserved_claims = graph_facts_for_path(store.db_path, relative_path)["claims"]
-
-    assert failing.calls == 1
-    assert final["failedFiles"] == 1
-    assert analyzed["total"] == 1
-    assert analyzed["files"][0]["lastErrorCode"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"
-    assert job_status == "FAILED"
-    assert {item["code"] for item in job_diagnostics} >= {"ANALYSIS_AI_TRANSPORT_ERROR", "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"}
-    assert after == before
-    assert semantic_after == semantic_before
-    assert semantic_texts_after == semantic_texts_before
-    assert [claim["summary"] for claim in preserved_claims] == [old_summary]
-
-
-def test_oversized_generic_config_file_skips_llm_without_enrichment_diagnostic(tmp_path):
-    relative_path = ".github/workflows/too-large.yml"
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files={
-            relative_path: "name: too-large\n" + ("x" * 220),
-        },
-        include_patterns=["**/*.yml"],
-    )
-    analyzer = GenericConfigStubAnalyzer({relative_path: "Should not be used."})
-    runner = SupervisorHarness(store, app_config(tmp_path, max_file_chars=80))
-
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
-    analyzed = AnalysisStore(store.db_path).files(None, "ANALYZED", relative_path, 10, 0)
-    facts = graph_facts_for_path(store.db_path, relative_path)
-    diagnostic_codes = {row["code"] for row in facts["diagnostics"]}
-
-    assert final["status"] == "COMPLETED"
-    assert final["failedFiles"] == 0
+    assert exc.value.code == "ANALYSIS_POLICY_UNSUPPORTED_LLM_MODE"
     assert analyzer.calls == 0
-    assert analyzed["total"] == 1
-    assert "ANALYSIS_FILE_TOO_LARGE" in diagnostic_codes
-    assert "ANALYSIS_AI_GENERIC_CONFIG_ENRICHED" not in diagnostic_codes
-    assert len(facts["claims"]) == 0
 
 
-def test_stsssox_representative_config_files_no_longer_static_only(tmp_path):
-    files = {
-        ".github/workflows/deploy-on-comment.yml": "name: deploy on comment\non:\n  issue_comment:\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n",
-        ".github/actions/service-deploy-run/action.yml": "name: service deploy run\nruns:\n  using: composite\n  steps:\n    - run: ./scripts/service-deploy.sh\n",
-        "api-rest/pom.xml": "<project><modelVersion>4.0.0</modelVersion><artifactId>api-rest</artifactId></project>\n",
-    }
-    summaries = {
-        path: f"Generic enrichment explains {path}."
-        for path in files
-    }
-    store, _, _ = build_inventory(
-        tmp_path,
-        extra_files=files,
-        include_patterns=["**/*.yml", "**/*.xml"],
+class FakeAnalysisStore:
+    def __init__(self):
+        self.replacements = []
+        self.failed_attempts = []
+        self.job_file_updates = []
+        self.job_updates = []
+
+    def cleanup_stale_files(self, source_ids):
+        return None
+
+    def unchanged_file_ids(self, rows, analyzer_name, analyzer_version, engine_version):
+        return set()
+
+    def create_job_files(self, job_id, rows, flow_domain_by_file_id, engine_version):
+        return None
+
+    def stop_requested(self, job_id):
+        return False
+
+    def update_job(self, job_id, patch):
+        self.job_updates.append((job_id, patch))
+
+    def unchanged(self, file_id, content_hash, analyzer_name, analyzer_version, engine_version):
+        return False
+
+    def update_job_file(self, job_id, file_id, status, **kwargs):
+        self.job_file_updates.append((job_id, file_id, status, kwargs))
+
+    def replace_file_graph_analysis(self, file_id, state, graph):
+        self.replacements.append((file_id, state, graph))
+
+    def mark_file_failed_attempt(self, file_id, state):
+        self.failed_attempts.append((file_id, state))
+
+    def mark_file(self, file_id, state):
+        self.failed_attempts.append((file_id, state))
+
+
+class FakeInventoryStore:
+    def __init__(self, db_path, rows):
+        self.db_path = db_path
+        self._rows = rows
+
+    def search_rows(self, source_ids, groups):
+        return self._rows, None
+
+
+def supervisor_runtime_row(tmp_path, relative_path, content):
+    root = tmp_path / "workspace" / "edge-gateway"
+    path = root / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    row = runtime_row(relative_path, content, root=root)
+    row["source_path"] = str(root)
+    row["absolute_path"] = str(path)
+    row["metadata_json"] = json.dumps({"absoluteRoot": str(root)})
+    return row
+
+
+def run_supervisor_with_fake_store(tmp_path, analyzer, row):
+    inventory = FakeInventoryStore(tmp_path / "fake.sqlite", [row])
+    supervisor = AnalysisSupervisor(inventory, app_config(tmp_path))
+    fake_store = FakeAnalysisStore()
+    supervisor.analysis_store = fake_store
+    asyncio.run(
+        supervisor._run(
+            "job-1",
+            AnalysisBuildRequest(force=True),
+            analyzer,
+            selected_rows=[row],
+            mode="FULL",
+            job_files_precreated=True,
+        )
     )
-    analyzer = GenericConfigStubAnalyzer(summaries)
-    runner = SupervisorHarness(store, app_config(tmp_path))
+    return fake_store
 
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
 
-    assert final["status"] == "COMPLETED"
-    assert analyzer.calls == len(files)
-    for relative_path, summary in summaries.items():
-        facts = graph_facts_for_path(store.db_path, relative_path)
-        diagnostic_codes = {row["code"] for row in facts["diagnostics"]}
-        assert len(facts["nodes"]) == 1
-        assert len(facts["claims"]) >= 1
-        assert len(facts["evidence"]) >= 1
-        assert facts["claims"][0]["summary"] == summary
-        assert "ANALYSIS_AI_GENERIC_CONFIG_ENRICHED" in diagnostic_codes
-        assert "ANALYSIS_AI_SKIPPED_UNSUPPORTED_STRUCTURE" not in diagnostic_codes
+def test_persistence_boundary_writes_only_final_graph_and_no_partial_extractor_facts(tmp_path):
+    row = supervisor_runtime_row(tmp_path, "config/service.yaml", "name: edge\n")
+    success_analyzer = CapturingGraphAnalyzer()
+    success_store = run_supervisor_with_fake_store(tmp_path, success_analyzer, row)
+
+    assert len(success_store.replacements) == 1
+    assert success_store.failed_attempts == []
+    assert success_store.replacements[0][2]["nodes"]
+    assert success_analyzer.payloads[0]["staticAnchors"]["nodes"]
+
+    failing_analyzer = CapturingGraphAnalyzer(fail=True)
+    failure_store = run_supervisor_with_fake_store(tmp_path, failing_analyzer, row)
+
+    assert failing_analyzer.payloads[0]["staticAnchors"]["nodes"]
+    assert failure_store.replacements == []
+    assert len(failure_store.failed_attempts) == 1
+    assert failure_store.job_file_updates[-1][2] == "FAILED"
 
 
 def test_runtime_resolves_field_receiver_calls_when_target_type_is_unique(tmp_path):
@@ -4325,8 +3762,8 @@ def test_services_status_does_not_include_diagnostics_payload(tmp_path, monkeypa
     result = get_json("/api/v1/knowledge/overview")
     service = result["json"]["sources"][0]
 
-    assert service["analysis"]["succeededFiles"] == 1
-    assert service["analysis"]["failedFiles"] == 0
+    assert service["analysis"]["succeededFiles"] == 0
+    assert service["analysis"]["failedFiles"] == 1
     assert service["analysis"]["pendingFiles"] == 0
     encoded = json.dumps(result["json"])
     for key in ("diagnostics", "diagnosticsSummary", "examples", "message", "rawPreview", "details"):
@@ -4424,7 +3861,7 @@ def test_services_status_query_failure_returns_error_not_zero_counters(tmp_path,
     assert "sources" not in result["json"]
 
 
-def test_analysis_diagnostics_endpoint_returns_details_separately(tmp_path, monkeypatch):
+def test_failed_analysis_details_are_exposed_on_files_endpoint_not_graph_diagnostics(tmp_path, monkeypatch):
     store, _, _ = build_inventory(tmp_path)
     cfg = app_config_with_retries(tmp_path, 1)
     monkeypatch.setattr(main, "app_config", cfg)
@@ -4436,12 +3873,14 @@ def test_analysis_diagnostics_endpoint_returns_details_separately(tmp_path, monk
     )
     wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), analyzer)["jobId"])
 
-    result = get_json("/api/v1/knowledge/analysis/diagnostics?sourceId=edge-gateway&limit=1")
+    diagnostics = get_json("/api/v1/knowledge/analysis/diagnostics?sourceId=edge-gateway&limit=1")
+    files = get_json("/api/v1/knowledge/analysis/files?status=FAILED&pathContains=ObjectHandler")
 
-    assert result["status"] == 200
-    assert result["json"]["total"] >= 1
-    assert len(result["json"]["diagnostics"]) == 1
-    assert result["json"]["diagnostics"][0]["message"]
+    assert diagnostics["status"] == 200
+    assert diagnostics["json"]["total"] == 0
+    assert files["status"] == 200
+    assert files["json"]["total"] == 1
+    assert files["json"]["files"][0]["lastErrorCode"] == "ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED"
 
 
 def test_overview_missing_projection_returns_error_not_zero_counts(tmp_path, monkeypatch):
