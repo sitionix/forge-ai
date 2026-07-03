@@ -3952,7 +3952,7 @@ class AnalysisStore:
             if len(callable_candidates) == 1:
                 metadata["resolutionStatus"] = "RESOLVED"
                 metadata["resolver"] = "STATIC_TYPE_HINT"
-                metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), None, "RESOLVED", None)
+                metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), "RESOLVED", None)
                 conn.execute(
                     """
                     UPDATE analysis_graph_edges
@@ -3995,7 +3995,7 @@ class AnalysisStore:
         metadata["resolutionStatus"] = "MULTIPLE_CANDIDATES"
         metadata["candidateCount"] = candidate_count
         metadata["candidateKind"] = metadata.get("candidateKind") or "METHOD"
-        metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), None, "MULTIPLE_CANDIDATES", None)
+        metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), "MULTIPLE_CANDIDATES", None)
         conn.execute(
             """
             UPDATE analysis_graph_edges

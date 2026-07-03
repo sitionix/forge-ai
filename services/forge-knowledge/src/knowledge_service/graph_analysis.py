@@ -220,7 +220,6 @@ class GraphAnalysisEngine:
                 metadata = classify_call_metadata(
                     metadata,
                     flow_domain,
-                    row["relative_path"],
                     metadata.get("resolutionStatus") or ("RESOLVED" if to_node_id else "UNRESOLVED"),
                     edge.unresolvedTarget,
                 )

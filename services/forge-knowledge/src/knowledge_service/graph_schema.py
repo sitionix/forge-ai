@@ -5,9 +5,6 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Extra, Field, validator
 
-from knowledge_service.file_classification import FileClassifier
-from knowledge_service.knowledge_defaults import load_knowledge_defaults
-
 
 GRAPH_SCHEMA_VERSION = "knowledge.graph.analysis.v1"
 GRAPH_ANALYSIS_ENGINE_VERSION = "GRAPH_V1"
@@ -146,24 +143,6 @@ class GraphDiagnosticCode(str, Enum):
 
 
 MIN_TRUSTED_CONFIDENCE = 0.5
-_DEFAULT_FILE_CLASSIFIER: Optional[FileClassifier] = None
-
-
-def classify_flow_domain(relative_path: str, extension: Optional[str] = None) -> GraphFlowDomain:
-    flow_domain = _default_file_classifier().classify(relative_path, extension).flow_domain
-    try:
-        return GraphFlowDomain(flow_domain)
-    except ValueError:
-        return GraphFlowDomain.UNKNOWN
-
-
-def _default_file_classifier() -> FileClassifier:
-    global _DEFAULT_FILE_CLASSIFIER
-    if _DEFAULT_FILE_CLASSIFIER is None:
-        defaults = load_knowledge_defaults()
-        knowledge = defaults.get("knowledge") or {}
-        _DEFAULT_FILE_CLASSIFIER = FileClassifier.from_config(knowledge.get("file_classification") or {})
-    return _DEFAULT_FILE_CLASSIFIER
 
 
 class GraphAnalysisFile(BaseModel):

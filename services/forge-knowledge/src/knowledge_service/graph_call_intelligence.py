@@ -135,7 +135,6 @@ EXTERNAL_CLIENT_TYPES = {"Feign", "RestClient", "WebClient"}
 def classify_call_metadata(
     metadata: Dict[str, Any],
     flow_domain: Optional[str],
-    relative_path: Optional[str],
     resolution_status: Optional[str],
     unresolved_target: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -154,7 +153,7 @@ def classify_call_metadata(
         call_kind = _normalized_call_kind(raw_kind, receiver, receiver_type, target_type, raw_text)
     target_category = result.get("callTargetCategory")
     if target_category not in {item.value for item in CallTargetCategory}:
-        target_category = _target_category(flow, status, receiver_type, target_type, method_name, raw_text, relative_path)
+        target_category = _target_category(flow, status, receiver_type, target_type, method_name, raw_text)
     resolution_reason = result.get("resolutionReason")
     if resolution_reason not in {item.value for item in ResolutionReason}:
         resolution_reason = _resolution_reason(status, call_kind, receiver_type, result)
@@ -234,7 +233,6 @@ def _target_category(
     target_type: Optional[str],
     method_name: Optional[str],
     raw_text: Optional[str],
-    relative_path: Optional[str],
 ) -> str:
     type_text = " ".join(str(item or "") for item in (receiver_type, target_type, raw_text))
     if flow == "TEST":
@@ -250,8 +248,6 @@ def _target_category(
     external = _external_category(type_text, method_name)
     if external != CallTargetCategory.UNKNOWN.value:
         return external
-    if relative_path and "/src/test/" in f"/{str(relative_path).lower()}":
-        return CallTargetCategory.INTERNAL_TEST.value
     return CallTargetCategory.UNKNOWN.value
 
 
