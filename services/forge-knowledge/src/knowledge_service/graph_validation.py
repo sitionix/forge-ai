@@ -5,14 +5,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence
 
+from knowledge_service.analysis_graph_contract import AnalysisGraphContract, GraphContractProvider
 from knowledge_service.graph_schema import (
     GRAPH_SCHEMA_VERSION,
-    GraphClaimKind,
     GraphDiagnosticSeverity,
     GraphDiagnosticStage,
-    GraphEdgeType,
-    GraphNodeKind,
-    enum_values,
 )
 
 
@@ -28,7 +25,7 @@ class GraphValidationErrorCode(str, Enum):
     CONFIDENCE_BELOW_THRESHOLD = "CONFIDENCE_BELOW_THRESHOLD"
     LINE_RANGE_INVALID = "LINE_RANGE_INVALID"
     LINE_RANGE_OUTSIDE_FILE = "LINE_RANGE_OUTSIDE_FILE"
-    UNKNOWN_LOCAL_REFERENCE = "UNKNOWN_LOCAL_REFERENCE"
+    UNRESOLVED_LOCAL_REFERENCE = "UNRESOLVED_LOCAL_REFERENCE"
     MISSING_EVIDENCE = "MISSING_EVIDENCE"
     DUPLICATE_LOCAL_ID = "DUPLICATE_LOCAL_ID"
     FILE_IDENTITY_MISMATCH = "FILE_IDENTITY_MISMATCH"
@@ -100,6 +97,9 @@ class GraphValidationError:
 
 
 class GraphRepairPromptBuilder:
+    def __init__(self, contract_provider: GraphContractProvider | None = None):
+        self.contract_provider = contract_provider or GraphContractProvider()
+
     def build(
         self,
         payload: Dict[str, Any],
@@ -108,7 +108,9 @@ class GraphRepairPromptBuilder:
         attempt: int,
         max_attempts: int,
         compact: bool = False,
+        contract: AnalysisGraphContract | None = None,
     ) -> str:
+        effective_contract = contract or self.contract_provider.resolve_payload(payload)
         error_payload = [error.compact_dict() if compact else error.to_dict() for error in errors[:25]]
         repair_context = {
             "schemaVersion": GRAPH_SCHEMA_VERSION,
@@ -120,9 +122,13 @@ class GraphRepairPromptBuilder:
                 "lineCount": payload.get("lineCount"),
             },
             "allowedValues": {
-                "nodeKind": enum_values(GraphNodeKind),
-                "edgeType": enum_values(GraphEdgeType),
-                "claimKind": enum_values(GraphClaimKind),
+                "nodeKind": list(effective_contract.allowed_node_kinds),
+                "edgeType": list(effective_contract.allowed_edge_kinds),
+                "claimKind": list(effective_contract.allowed_claim_kinds),
+                "status": list(effective_contract.allowed_statuses),
+                "factOrigin": list(effective_contract.allowed_origins),
+                "evidenceKind": list(effective_contract.allowed_evidence_kinds),
+                "resolutionStatus": list(effective_contract.allowed_resolution_statuses),
             },
             "validationErrors": error_payload,
             "attempt": attempt,
@@ -135,7 +141,7 @@ class GraphRepairPromptBuilder:
                 "Return JSON only. Do not use markdown or prose outside JSON.",
                 "Preserve valid candidates when possible and fix only the listed validation errors.",
                 "Do not invent new facts. Remove candidates that cannot be fixed using evidence in the provided file.",
-                "Use UNKNOWN if uncertain. Use only the allowed enum values below.",
+                "Use only the allowed graph contract values below.",
                 "Every node, edge, and claim must have valid evidence line ranges inside the analyzed file when required.",
                 "Every local reference must point to an existing localId in the repaired response.",
                 "The repaired response must still match schemaVersion knowledge.graph.analysis.v1 and the exact file identity.",
@@ -161,7 +167,7 @@ def enum_validation_error(
         expected="Allowed graph enum value.",
         actual=actual,
         allowed_values=list(allowed_values),
-        repair_hint=repair_hint or "Replace the value with one of the allowed generic graph enum values. Use UNKNOWN if unsure.",
+        repair_hint=repair_hint or "Replace the value with one of the allowed graph contract values, or remove the unsupported candidate.",
         candidate_id=candidate_id,
     )
 

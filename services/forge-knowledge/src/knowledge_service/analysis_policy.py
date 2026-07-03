@@ -38,6 +38,7 @@ class AnalysisPolicyError(Exception):
 class PromptDefinition:
     id: str
     file: str
+    response_shape: str
 
 
 @dataclass(frozen=True)
@@ -164,6 +165,10 @@ class AnalysisPolicy:
     def prompt_path(self, prompt_id: str) -> Path:
         prompt = self.prompts[prompt_id]
         return (self.prompt_root / prompt.file).resolve()
+
+    def prompt_response_shape_path(self, prompt_id: str) -> Path:
+        prompt = self.prompts[prompt_id]
+        return (self.prompt_root / prompt.response_shape).resolve()
 
 
 def _format_error_message(diagnostics: List[AnalysisPolicyDiagnostic]) -> str:

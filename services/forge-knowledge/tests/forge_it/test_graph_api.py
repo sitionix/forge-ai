@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 from urllib.parse import quote
 
@@ -63,9 +62,7 @@ def test_it_graph_03_manifest_pages_details_and_view_use_graph_id(tmp_path):
         edge_detail = client.get(
             f"/api/v1/knowledge/analysis/graph/edge/{quote(edges[0]['id'])}?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}"
         ).json()
-        view = client.get(
-            f"/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&maxNodes=10"
-        ).json()
+        view = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&maxNodes=10").json()
 
     assert manifest["graphId"]
     assert manifest["totalNodeCount"] == 6

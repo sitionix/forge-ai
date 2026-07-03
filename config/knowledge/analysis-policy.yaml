@@ -12,10 +12,13 @@ analysis:
   prompts:
     code_graph_enrichment:
       file: code-graph-enrichment.md
+      responseShape: schemas/graph-enrichment-v1-response-shape.json
     text_graph_enrichment:
       file: text-graph-enrichment.md
+      responseShape: schemas/graph-enrichment-v1-response-shape.json
     document_graph_enrichment:
       file: document-graph-enrichment.md
+      responseShape: schemas/graph-enrichment-v1-response-shape.json
 
   graph:
     nodes:

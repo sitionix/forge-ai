@@ -25,6 +25,8 @@ def test_loads_default_policy_and_validates_references():
 
     assert policy.source_path == POLICY_PATH
     assert policy.schema_version == 1
+    assert policy.prompts["code_graph_enrichment"].response_shape == "schemas/graph-enrichment-v1-response-shape.json"
+    assert policy.prompt_response_shape_path("code_graph_enrichment").name == "graph-enrichment-v1-response-shape.json"
     assert _find_forbidden_entries(data) == []
     assert set(policy.semantic.indexed_node_kinds) == {"FILE", "TYPE", "CALLABLE", "EXTERNAL"}
 
