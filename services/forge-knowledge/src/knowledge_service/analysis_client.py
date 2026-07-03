@@ -22,7 +22,8 @@ class OllamaAnalysisClient:
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.context_tokens = max(1024, context_tokens)
-        self.prompt_template = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
+        # Prompt templates are selected by analysis-policy.yaml; the legacy prompt path is no longer a fallback.
+        _ = prompt_path
         self.prompt_renderer = AnalysisPromptRenderer()
         self.contract_provider = self.prompt_renderer.provider
         self.parser = GraphAnalysisResponseParser(self.contract_provider)
@@ -87,7 +88,7 @@ class OllamaAnalysisClient:
         contract: AnalysisGraphContract | None = None,
     ) -> str:
         parts = []
-        rendered_prompt = self.prompt_renderer.render_for_payload(payload, self.prompt_template, contract=contract)
+        rendered_prompt = self.prompt_renderer.render_for_payload(payload, contract=contract)
         if rendered_prompt:
             parts.append(rendered_prompt)
         if repair_prompt:

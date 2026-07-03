@@ -5,10 +5,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from knowledge_service.analysis_graph_contract import AnalysisPromptRenderer, GraphContractProvider, contract_payload
 from knowledge_service.analysis_policy_loader import load_analysis_policy
+from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_response_parser import GraphAnalysisParseFailure, GraphAnalysisResponseParser
 from knowledge_service.graph_schema import GraphAnalysisResult
 
@@ -52,6 +54,102 @@ def test_prompt_contract_rendering_changes_when_yaml_changes(tmp_path):
     prompt = _render_prompt(renderer, "script.py", "print('hello')\n")
 
     assert "SECURITY_NOTE" in prompt
+
+
+def test_graph_contract_provider_empty_relative_path_fails_explicitly():
+    provider = GraphContractProvider(policy=load_analysis_policy(POLICY_PATH))
+
+    with pytest.raises(KnowledgeError) as exc_info:
+        provider.resolve("")
+
+    assert exc_info.value.code == "ANALYSIS_POLICY_RELATIVE_PATH_REQUIRED"
+
+
+def test_graph_contract_provider_unsupported_extension_fails_explicitly():
+    provider = GraphContractProvider(policy=load_analysis_policy(POLICY_PATH))
+
+    with pytest.raises(KnowledgeError) as exc_info:
+        provider.resolve("unknown.bin", "opaque bytes")
+
+    assert exc_info.value.code == "UNSUPPORTED_FORMAT"
+    assert exc_info.value.details["relativePath"] == "unknown.bin"
+    assert exc_info.value.details["unsupportedBehavior"]["unsupportedFormat"] == "fail_file"
+
+
+def test_parser_without_relative_path_fails_explicitly_instead_of_default_contract():
+    parser = GraphAnalysisResponseParser(GraphContractProvider(policy=load_analysis_policy(POLICY_PATH)))
+
+    with pytest.raises(KnowledgeError) as exc_info:
+        parser.parse(json.dumps(_graph_payload()), 5)
+
+    assert exc_info.value.code == "ANALYSIS_POLICY_RELATIVE_PATH_REQUIRED"
+
+
+def test_prompt_renderer_rejects_unsupported_path_without_legacy_fallback():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    with pytest.raises(KnowledgeError) as exc_info:
+        renderer.render_for_payload(
+            {"relativePath": "unknown.bin", "content": "opaque bytes"},
+        )
+
+    assert exc_info.value.code == "UNSUPPORTED_FORMAT"
+
+
+def test_prompt_renderer_requires_prompt_id_without_legacy_fallback():
+    policy = load_analysis_policy(POLICY_PATH)
+    renderer = AnalysisPromptRenderer(policy=policy)
+    contract = renderer.provider.resolve("src/Foo.java", "class Foo {}\n")
+    payload = {
+        "relativePath": "src/Foo.java",
+        "content": "class Foo {}\n",
+        "analysisPolicy": contract_payload(contract),
+    }
+    payload["analysisPolicy"].pop("promptId")
+
+    with pytest.raises(KnowledgeError) as exc_info:
+        renderer.render_for_payload(payload)
+
+    assert exc_info.value.code == "ANALYSIS_POLICY_PROMPT_REQUIRED"
+
+
+def test_prompt_renderer_rejects_missing_prompt_file_without_legacy_fallback(tmp_path):
+    data = copy.deepcopy(yaml.safe_load(POLICY_PATH.read_text(encoding="utf-8")))
+    data["analysis"]["prompts"]["code_graph_enrichment"]["file"] = "missing-code-prompt.md"
+    policy_path = tmp_path / "analysis-policy.yaml"
+    policy_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    policy = load_analysis_policy(policy_path)
+    renderer = AnalysisPromptRenderer(policy=policy)
+    contract = renderer.provider.resolve("src/Foo.java", "class Foo {}\n")
+    payload = {
+        "relativePath": "src/Foo.java",
+        "content": "class Foo {}\n",
+        "analysisPolicy": contract_payload(contract),
+    }
+
+    with pytest.raises(KnowledgeError) as exc_info:
+        renderer.render_for_payload(payload)
+
+    assert exc_info.value.code == "ANALYSIS_POLICY_PROMPT_FILE_MISSING"
+    assert "missing-code-prompt.md" in exc_info.value.details["promptPath"]
+
+
+def test_prompt_renderer_rejects_undeclared_prompt_id_without_legacy_fallback():
+    policy = load_analysis_policy(POLICY_PATH)
+    renderer = AnalysisPromptRenderer(policy=policy)
+    contract = renderer.provider.resolve("src/Foo.java", "class Foo {}\n")
+    payload = {
+        "relativePath": "src/Foo.java",
+        "content": "class Foo {}\n",
+        "analysisPolicy": contract_payload(contract),
+    }
+    payload["analysisPolicy"]["promptId"] = "missing_prompt"
+
+    with pytest.raises(KnowledgeError) as exc_info:
+        renderer.render_for_payload(payload)
+
+    assert exc_info.value.code == "ANALYSIS_POLICY_PROMPT_MISSING"
+    assert exc_info.value.details["promptId"] == "missing_prompt"
 
 
 def test_parser_allows_yaml_declared_claim_and_edge_kinds():

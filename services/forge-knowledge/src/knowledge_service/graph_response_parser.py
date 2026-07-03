@@ -234,11 +234,10 @@ class GraphAnalysisResponseParser:
 
     def _contract_for_parsed(self, parsed: dict[str, Any]) -> AnalysisGraphContract:
         file_payload = parsed.get("file")
+        relative_path = ""
         if isinstance(file_payload, dict):
             relative_path = str(file_payload.get("relativePath") or "")
-            if relative_path:
-                return self.contract_provider.resolve(relative_path)
-        return self.contract_provider.default_contract()
+        return self.contract_provider.resolve(relative_path)
 
     def _validation_error_details(self, exc: ValidationError, parsed: Any, contract: AnalysisGraphContract) -> list[dict[str, Any]]:
         details: list[dict[str, Any]] = []

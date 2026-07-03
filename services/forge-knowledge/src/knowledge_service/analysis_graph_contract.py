@@ -8,6 +8,7 @@ from typing import Any, Mapping, Optional
 from knowledge_service.analysis_policy import AnalysisPolicy
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analysis_policy_resolver import AnalysisPolicyResolveRequest, AnalysisPolicyResolution, resolve_analysis_policy
+from knowledge_service.errors import KnowledgeError
 
 
 @dataclass(frozen=True)
@@ -153,13 +154,23 @@ class GraphContractProvider:
 
     def resolve(self, relative_path: str, content: Optional[str] = None) -> AnalysisGraphContract:
         if not relative_path:
-            return self.default_contract()
+            raise KnowledgeError(
+                "ANALYSIS_POLICY_RELATIVE_PATH_REQUIRED",
+                "Analysis policy resolution requires a non-empty relative path.",
+            )
         resolution = resolve_analysis_policy(
             self.policy,
             AnalysisPolicyResolveRequest(relative_path=relative_path, content=content),
         )
         if not resolution.supported:
-            return self.default_contract()
+            raise KnowledgeError(
+                resolution.failure_code or "ANALYSIS_POLICY_RESOLUTION_FAILED",
+                resolution.failure_message or "Analysis policy resolution failed.",
+                relativePath=relative_path,
+                extension=resolution.extension,
+                formatId=resolution.format_id,
+                unsupportedBehavior=dict(resolution.unsupported_behavior),
+            )
         return AnalysisGraphContract.from_policy_resolution(self.policy, resolution)
 
     def resolve_payload(self, payload: Mapping[str, Any]) -> AnalysisGraphContract:
@@ -199,12 +210,11 @@ class AnalysisPromptRenderer:
     def render_for_payload(
         self,
         payload: Mapping[str, Any],
-        fallback_template: str = "",
         contract: AnalysisGraphContract | None = None,
     ) -> str:
         contract = contract or self.provider.resolve_payload(payload)
-        prompt_id = _prompt_id(payload)
-        template = self._template(prompt_id, fallback_template)
+        prompt_id = _prompt_id(payload) or contract.prompt_id
+        template = self._template(prompt_id)
         return self.render(template, contract)
 
     def render(self, template: str, contract: AnalysisGraphContract) -> str:
@@ -213,12 +223,27 @@ class AnalysisPromptRenderer:
             return template.replace("{{ANALYSIS_GRAPH_CONTRACT}}", block)
         return "\n\n".join(part for part in (template.strip(), block) if part)
 
-    def _template(self, prompt_id: Optional[str], fallback_template: str) -> str:
-        if prompt_id and prompt_id in self.policy.prompts:
-            path = self.policy.prompt_path(prompt_id)
-            if path.exists():
-                return path.read_text(encoding="utf-8")
-        return fallback_template
+    def _template(self, prompt_id: Optional[str]) -> str:
+        if not prompt_id:
+            raise KnowledgeError(
+                "ANALYSIS_POLICY_PROMPT_REQUIRED",
+                "Analysis policy prompt id is required for prompt rendering.",
+            )
+        if prompt_id not in self.policy.prompts:
+            raise KnowledgeError(
+                "ANALYSIS_POLICY_PROMPT_MISSING",
+                f"Analysis policy prompt id is not declared: {prompt_id}",
+                promptId=prompt_id,
+            )
+        path = self.policy.prompt_path(prompt_id)
+        if not path.exists():
+            raise KnowledgeError(
+                "ANALYSIS_POLICY_PROMPT_FILE_MISSING",
+                f"Analysis policy prompt file does not exist: {path}",
+                promptId=prompt_id,
+                promptPath=str(path),
+            )
+        return path.read_text(encoding="utf-8")
 
 
 def contract_payload(contract: AnalysisGraphContract) -> dict[str, Any]:
