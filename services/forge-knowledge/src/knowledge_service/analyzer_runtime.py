@@ -17,6 +17,7 @@ from knowledge_service.analysis_schema import AnalysisResult
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_analysis import LegacyAnalysisProjectionAdapter
+from knowledge_service.graph_policy_validator import GraphPolicyValidator
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphNode
 from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer, StructuralAnalysisEngine
 
@@ -217,7 +218,7 @@ class ExtractorRegistry:
 
     def _structured_text_light(self, context: AnalyzerExecutionContext, extractor: ExtractorDefinition) -> ExtractorResult:
         graph = self._file_anchor_graph(context, extractor.id)
-        graph.nodes.extend(self._structured_region_nodes(context, extractor.id))
+        graph.nodes.extend(self._structured_region_nodes(context, extractor))
         return ExtractorResult(graph_result=graph, extractor_id=extractor.id, implementation=extractor.implementation)
 
     def _document_heading_light(self, context: AnalyzerExecutionContext, extractor: ExtractorDefinition) -> ExtractorResult:
@@ -246,7 +247,10 @@ class ExtractorRegistry:
             diagnostics=[],
         )
 
-    def _structured_region_nodes(self, context: AnalyzerExecutionContext, extractor_id: str) -> List[GraphNode]:
+    def _structured_region_nodes(self, context: AnalyzerExecutionContext, extractor: ExtractorDefinition) -> List[GraphNode]:
+        node_kind = self._select_structured_region_node_kind(context, extractor)
+        if node_kind is None:
+            return []
         nodes: List[GraphNode] = []
         seen: set[str] = set()
         for line_number, text in enumerate(context.content_lines, start=1):
@@ -258,7 +262,7 @@ class ExtractorRegistry:
             nodes.append(
                 GraphNode(
                     localId=local_id,
-                    nodeKind="CONFIG",
+                    nodeKind=node_kind,
                     name=label,
                     language=self._language(context),
                     qualifiedName=None,
@@ -268,7 +272,7 @@ class ExtractorRegistry:
                     lineEnd=line_number,
                     confidence=0.72,
                     metadata={
-                        **self._file_metadata(context, extractor_id),
+                        **self._file_metadata(context, extractor.id),
                         "sourceKind": "STRUCTURED_TEXT_REGION",
                         "stableKey": local_id,
                         "structuralRangeSource": "LIGHT_EXTRACTOR",
@@ -278,6 +282,13 @@ class ExtractorRegistry:
             if len(nodes) >= 25:
                 break
         return nodes
+
+    def _select_structured_region_node_kind(self, context: AnalyzerExecutionContext, extractor: ExtractorDefinition) -> Optional[str]:
+        produced = set(extractor.produces.nodes)
+        allowed = set(context.graph_contract.allowed_node_kinds)
+        if "CONFIG" in produced and "CONFIG" in allowed:
+            return "CONFIG"
+        return None
 
     def _structured_label(self, text: str) -> Optional[str]:
         stripped = text.strip()
@@ -361,48 +372,8 @@ class ExtractorRegistry:
         return context.policy_resolution.family or context.policy_resolution.format_id
 
 
-class AnalyzerPayloadBuilder:
-    def build(self, context: AnalyzerExecutionContext, extractor_result: ExtractorResult) -> Dict[str, Any]:
-        row = context.row
-        policy_payload = contract_payload(context.graph_contract)
-        metadata = self._metadata(context, extractor_result)
-        return {
-            "sourceId": row.get("source_id"),
-            "serviceLabel": row.get("display_name"),
-            "group": row.get("group_name"),
-            "tags": _json_list(row.get("tags_json")),
-            "relativePath": row.get("relative_path"),
-            "extension": context.policy_resolution.extension or row.get("extension"),
-            "sizeBytes": row.get("size_bytes"),
-            "contentHash": row.get("content_hash"),
-            "lineCount": context.line_count,
-            "language": self._language(context),
-            "format": context.policy_resolution.format_id,
-            "metadata": metadata,
-            "contentLines": [{"line": index, "text": line} for index, line in enumerate(context.content_lines, start=1)],
-            "staticAnchors": self._static_anchor_payload(extractor_result.graph_result),
-            "analysisPolicy": policy_payload,
-        }
-
-    def _metadata(self, context: AnalyzerExecutionContext, extractor_result: ExtractorResult) -> Dict[str, Any]:
-        metadata = {key: value for key, value in context.metadata.items() if key != "absoluteRoot"}
-        flow_domain = _row_value(context.row, "flow_domain")
-        if flow_domain:
-            metadata["flowDomain"] = str(flow_domain).upper()
-        metadata["extractorId"] = extractor_result.extractor_id
-        metadata["extractorImplementation"] = extractor_result.implementation
-        metadata["extractorFallbackUsed"] = extractor_result.used_fallback
-        if context.policy_resolution.artifact_labels:
-            metadata["artifactLabels"] = list(context.policy_resolution.artifact_labels)
-        return metadata
-
-    def _language(self, context: AnalyzerExecutionContext) -> Optional[str]:
-        language = str(context.row.get("language") or "").strip().lower()
-        if language and language != "unknown":
-            return language
-        return context.policy_resolution.family or context.policy_resolution.format_id
-
-    def _static_anchor_payload(self, static_graph: GraphAnalysisResult) -> Dict[str, Any]:
+class StaticAnchorPayloadBuilder:
+    def build(self, static_graph: GraphAnalysisResult) -> Dict[str, Any]:
         return {
             "nodes": [
                 {
@@ -436,6 +407,51 @@ class AnalyzerPayloadBuilder:
         }
 
 
+class AnalyzerPayloadBuilder:
+    def __init__(self, static_anchor_builder: Optional[StaticAnchorPayloadBuilder] = None) -> None:
+        self.static_anchor_builder = static_anchor_builder or StaticAnchorPayloadBuilder()
+
+    def build(self, context: AnalyzerExecutionContext, extractor_result: ExtractorResult) -> Dict[str, Any]:
+        row = context.row
+        policy_payload = contract_payload(context.graph_contract)
+        metadata = self._metadata(context, extractor_result)
+        return {
+            "sourceId": row.get("source_id"),
+            "serviceLabel": row.get("display_name"),
+            "group": row.get("group_name"),
+            "tags": _json_list(row.get("tags_json")),
+            "relativePath": row.get("relative_path"),
+            "extension": context.policy_resolution.extension or row.get("extension"),
+            "sizeBytes": row.get("size_bytes"),
+            "contentHash": row.get("content_hash"),
+            "lineCount": context.line_count,
+            "language": self._language(context),
+            "format": context.policy_resolution.format_id,
+            "metadata": metadata,
+            "contentLines": [{"line": index, "text": line} for index, line in enumerate(context.content_lines, start=1)],
+            "staticAnchors": self.static_anchor_builder.build(extractor_result.graph_result),
+            "analysisPolicy": policy_payload,
+        }
+
+    def _metadata(self, context: AnalyzerExecutionContext, extractor_result: ExtractorResult) -> Dict[str, Any]:
+        metadata = {key: value for key, value in context.metadata.items() if key != "absoluteRoot"}
+        flow_domain = _row_value(context.row, "flow_domain")
+        if flow_domain:
+            metadata["flowDomain"] = str(flow_domain).upper()
+        metadata["extractorId"] = extractor_result.extractor_id
+        metadata["extractorImplementation"] = extractor_result.implementation
+        metadata["extractorFallbackUsed"] = extractor_result.used_fallback
+        if context.policy_resolution.artifact_labels:
+            metadata["artifactLabels"] = list(context.policy_resolution.artifact_labels)
+        return metadata
+
+    def _language(self, context: AnalyzerExecutionContext) -> Optional[str]:
+        language = str(context.row.get("language") or "").strip().lower()
+        if language and language != "unknown":
+            return language
+        return context.policy_resolution.family or context.policy_resolution.format_id
+
+
 class AnalyzerRuntime:
     def __init__(
         self,
@@ -445,6 +461,7 @@ class AnalyzerRuntime:
         extractor_registry: Optional[ExtractorRegistry] = None,
         payload_builder: Optional[AnalyzerPayloadBuilder] = None,
         anchor_validator: Optional[AnchorAwareGraphValidator] = None,
+        graph_policy_validator: Optional[GraphPolicyValidator] = None,
         legacy_adapter: Optional[LegacyAnalysisProjectionAdapter] = None,
     ) -> None:
         self.policy = policy
@@ -452,6 +469,7 @@ class AnalyzerRuntime:
         self.extractor_registry = extractor_registry or ExtractorRegistry()
         self.payload_builder = payload_builder or AnalyzerPayloadBuilder()
         self.anchor_validator = anchor_validator or AnchorAwareGraphValidator()
+        self.graph_policy_validator = graph_policy_validator or GraphPolicyValidator(policy)
         self.legacy_adapter = legacy_adapter or LegacyAnalysisProjectionAdapter()
 
     async def execute(
@@ -464,6 +482,7 @@ class AnalyzerRuntime:
     ) -> AnalyzerRuntimeResult:
         context = self.policy_resolver.resolve(row, metadata, content_lines)
         extractor_result = self.extractor_registry.extract(self.policy, context)
+        self._validate_extractor_output(extractor_result, context)
         payload = self.payload_builder.build(context, extractor_result)
         attempt_state = self._empty_attempt_state()
         retry_diagnostics: List[Dict[str, Any]] = []
@@ -473,10 +492,22 @@ class AnalyzerRuntime:
             self._enforce_llm_input_limits(context)
             result, retry_diagnostics, attempt_state = await analyze_with_retry(analyzer, payload, context.line_count)
             enrichment_result = self._graph_result(result)
+            self.graph_policy_validator.validate_llm_enrichment(
+                enrichment_result,
+                context.graph_contract,
+                context.line_count,
+                relative_path=str(context.row.get("relative_path") or ""),
+                static_graph=extractor_result.graph_result,
+            )
             llm_called = True
         final_result = self.anchor_validator.merge(extractor_result.graph_result, enrichment_result, context.line_count)
         final_result.diagnostics.extend(self._runtime_diagnostics(retry_diagnostics))
-        self._validate_final_result(final_result, context.line_count)
+        self.graph_policy_validator.validate_final_graph(
+            final_result,
+            context.graph_contract,
+            context.line_count,
+            relative_path=str(context.row.get("relative_path") or ""),
+        )
         return AnalyzerRuntimeResult(
             graph_result=final_result,
             payload=payload,
@@ -529,18 +560,6 @@ class AnalyzerRuntime:
             result.append(item)
         return result
 
-    def _validate_final_result(self, graph_result: GraphAnalysisResult, line_count: int) -> None:
-        try:
-            graph_result.validate_lines(line_count)
-            graph_result.validate_references()
-        except (TypeError, ValueError) as exc:
-            raise KnowledgeError(
-                "ANALYSIS_GRAPH_VALIDATION_FAILED",
-                f"Final graph analysis result is invalid: {exc}",
-                stage="GRAPH_VALIDATION",
-                severity="ERROR",
-            ) from exc
-
     def _empty_attempt_state(self) -> Dict[str, Any]:
         return {
             "attempt_count": 0,
@@ -549,6 +568,36 @@ class AnalyzerRuntime:
             "last_error_message": None,
             "last_raw_response_preview": None,
         }
+
+    def _validate_extractor_output(self, extractor_result: ExtractorResult, context: AnalyzerExecutionContext) -> None:
+        extractor = self._extractor_validation_contract(extractor_result)
+        self.graph_policy_validator.validate_extractor_output(
+            extractor_result.graph_result,
+            context.graph_contract,
+            extractor,
+            context.line_count,
+            relative_path=str(context.row.get("relative_path") or ""),
+            extractor_id=extractor_result.extractor_id,
+            implementation=extractor_result.implementation,
+            used_fallback=extractor_result.used_fallback,
+        )
+
+    def _extractor_validation_contract(self, extractor_result: ExtractorResult) -> ExtractorDefinition:
+        if extractor_result.used_fallback:
+            fallback = self.policy.extractors.get("file_anchor")
+            if fallback is not None:
+                return fallback
+        extractor = self.policy.extractors.get(extractor_result.extractor_id)
+        if extractor is not None:
+            return extractor
+        raise KnowledgeError(
+            "ANALYSIS_EXTRACTOR_OUTPUT_INVALID",
+            "Extractor output cannot be validated because the extractor is not declared.",
+            stage="STATIC_EXTRACTION",
+            severity="ERROR",
+            extractorId=extractor_result.extractor_id,
+            implementation=extractor_result.implementation,
+        )
 
 
 def _row_dict(row: Mapping[str, Any]) -> Dict[str, Any]:

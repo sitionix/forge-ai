@@ -135,6 +135,7 @@ analysis:
       NODE: {}
       EDGE: {}
       CLAIM: {}
+      CALLSITE: {}
 
     resolutionStatuses:
       RESOLVED: {}

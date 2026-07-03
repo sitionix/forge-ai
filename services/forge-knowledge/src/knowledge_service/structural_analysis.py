@@ -77,35 +77,13 @@ class StructuralAnalysisEngine:
         configured = str(row.get("language") or "").strip().lower()
         if configured and configured != "unknown":
             return configured
-        extension = str(row["extension"] or "").lower()
-        if extension == ".java":
-            return "java"
-        if extension in {".yml", ".yaml"}:
-            return "yaml"
-        if extension == ".xml":
-            return "xml"
-        if extension == ".json":
-            return "json"
-        if extension in {".md", ".adoc"}:
-            return "markdown"
-        return extension.lstrip(".") or "unknown"
+        extension = str(row["extension"] or "").lower().lstrip(".")
+        return {"yml": "yaml", "md": "markdown", "adoc": "markdown"}.get(extension, extension or "unknown")
 
     def _flow_domain(self, row: Dict[str, Any]) -> str:
         configured = str(row.get("flow_domain") or "").strip().upper()
         if configured and configured != "UNKNOWN":
             return configured
-        return self.flow_domain(row["relative_path"])
-
-    def flow_domain(self, relative_path: str) -> str:
-        path = str(relative_path or "").lower()
-        if "/test/" in f"/{path}" or path.startswith("test/") or path.endswith("test.java"):
-            return "TEST"
-        if path.endswith((".yaml", ".yml", ".properties", ".toml", ".ini")):
-            return "CONFIG"
-        if path.endswith((".md", ".adoc", ".txt")):
-            return "DOC"
-        if path.endswith((".json", ".csv", ".xml")):
-            return "DATA"
         return "CODE"
 
 
@@ -363,7 +341,6 @@ class StaticGraphMaterializer:
             call_metadata = classify_call_metadata(
                 call_metadata,
                 result.file.flow_domain,
-                result.file.relative_path,
                 callsite.resolution_status,
                 unresolved,
             )

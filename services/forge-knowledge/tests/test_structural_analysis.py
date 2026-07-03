@@ -1,11 +1,13 @@
 import hashlib
 import json
 
+import pytest
+
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.java_parser_adapter import JavaParserAdapter
-from knowledge_service.structural_analysis import StaticGraphMaterializer
+from knowledge_service.structural_analysis import StaticGraphMaterializer, StructuralAnalysisEngine
 from knowledge_service.structural_model import StructuralFileMetadata
 
 
@@ -57,8 +59,56 @@ def metadata(text=JAVA_SAMPLE):
     )
 
 
+def structural_row(relative_path, flow_domain=None):
+    row = {
+        "id": 7,
+        "source_id": "svc",
+        "relative_path": relative_path,
+        "extension": "." + relative_path.rsplit(".", 1)[-1] if "." in relative_path.rsplit("/", 1)[-1] else "",
+        "language": "unknown",
+        "content_hash": "hash-1",
+        "decode_policy": "utf-8:replace",
+    }
+    if flow_domain is not None:
+        row["flow_domain"] = flow_domain
+    return row
+
+
 def parse_sample():
     return JavaParserAdapter().parse(JAVA_SAMPLE, metadata())
+
+
+def test_structural_engine_flow_domain_uses_explicit_row_value():
+    engine = StructuralAnalysisEngine()
+
+    assert engine._flow_domain(structural_row("README.md", flow_domain="DOC")) == "DOC"
+    assert engine._flow_domain(structural_row("src/main/java/Foo.java", flow_domain="test")) == "TEST"
+
+
+def test_structural_engine_flow_domain_defaults_unknown_and_missing_to_code():
+    engine = StructuralAnalysisEngine()
+
+    assert engine._flow_domain(structural_row("config/service.yaml", flow_domain="UNKNOWN")) == "CODE"
+    assert engine._flow_domain(structural_row("README.md")) == "CODE"
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "src/test/java/FooTest.java",
+        "config/service.yaml",
+        "README.md",
+        "data/file.json",
+        ".github/workflows/build.yml",
+        "pom.xml",
+        "build.gradle",
+    ],
+)
+def test_structural_engine_flow_domain_does_not_route_by_path_or_extension(relative_path):
+    engine = StructuralAnalysisEngine()
+
+    assert not hasattr(engine, "flow_domain")
+    assert engine._flow_domain(structural_row(relative_path, flow_domain="UNKNOWN")) == "CODE"
 
 
 def test_java_parser_extracts_package_imports_types_callables_fields_and_annotations():
@@ -209,7 +259,7 @@ def test_anchor_validator_accepts_callable_claim_only_when_evidence_overlaps_met
     claims = {claim.localId: claim for claim in merged.claims}
 
     assert claims["claim-good"].metadata["status"] == "TRUSTED"
-    assert claims["claim-bad"].metadata["status"] == "DEBUG_ONLY"
+    assert claims["claim-bad"].metadata["status"] == "CANDIDATE"
     assert claims["claim-bad"].metadata["qualityIssue"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD"
     assert any(item["code"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD" for item in merged.diagnostics)
 

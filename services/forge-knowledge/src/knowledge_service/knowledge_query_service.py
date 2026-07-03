@@ -146,7 +146,7 @@ class UnifiedAnchorSearcher:
         if policy.enable_search_diagnostics and documents and not matched_nodes:
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
-                    code="LOW_CONFIDENCE_MATCHES",
+                    code="SEARCH_MATCHES_BELOW_THRESHOLD",
                     message="Search inspected current graph facts, but deterministic matches did not clear ranking thresholds.",
                     severity="INFO",
                 )

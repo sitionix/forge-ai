@@ -397,7 +397,6 @@ class AnalysisStore:
         current = self.job(job_id)
         if current is None:
             return
-        old_status = current.get("status")
         current.update(updates)
         self.init()
 
@@ -409,10 +408,9 @@ class AnalysisStore:
                     failed_file_count = ?, current_source_id = ?, current_relative_path = ?, source_ids_json = ?, last_progress_at = ?,
                     symbol_count = ?, relation_count = ?, diagnostics_json = ?, engine_version = ?, mode = ?
                 WHERE job_id = ?
-            """,
+                """,
                 (*self._job_params(current)[1:], job_id),
             )
-            new_status = current.get("status")
             refresh_overview_for_sources(conn, self._overview_sources_for_job(conn, job_id, current.get("sourceIds") or []))
 
         self._write_with_busy_retry(write)
@@ -1064,7 +1062,6 @@ class AnalysisStore:
         created_at: str,
     ) -> None:
         source_id = state["source_id"]
-        job_id = self._graph_job_id(graph, state)
         operation = "delete_file_analysis"
         table = "analysis_files"
         try:
@@ -3134,7 +3131,8 @@ class AnalysisStore:
                 node_id = ?
                 OR (
                   claim_kind = 'RESPONSIBILITY'
-                  AND status IN ('TRUSTED', 'LOW_CONFIDENCE')
+                  AND status IN ('TRUSTED', 'CANDIDATE')
+                  AND rejection_reason IS NULL
                   AND (
                     node_id = ?
                     OR node_id IN (
@@ -3214,7 +3212,11 @@ class AnalysisStore:
         }
 
     def _fact_summary_from_claim_rows(self, claims: List[Dict[str, Any]], row: Dict[str, Any]) -> Dict[str, Any]:
-        candidates = [claim for claim in claims if claim.get("claim_kind") == "RESPONSIBILITY" and claim.get("status") in {"TRUSTED", "LOW_CONFIDENCE"}]
+        candidates = [
+            claim
+            for claim in claims
+            if claim.get("claim_kind") == "RESPONSIBILITY" and claim.get("status") in {"TRUSTED", "CANDIDATE"} and not claim.get("rejection_reason")
+        ]
 
         def pick(node_id: Optional[str]) -> Optional[Dict[str, Any]]:
             if not node_id:
@@ -3950,7 +3952,7 @@ class AnalysisStore:
             if len(callable_candidates) == 1:
                 metadata["resolutionStatus"] = "RESOLVED"
                 metadata["resolver"] = "STATIC_TYPE_HINT"
-                metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), None, "RESOLVED", None)
+                metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), "RESOLVED", None)
                 conn.execute(
                     """
                     UPDATE analysis_graph_edges
@@ -3993,7 +3995,7 @@ class AnalysisStore:
         metadata["resolutionStatus"] = "MULTIPLE_CANDIDATES"
         metadata["candidateCount"] = candidate_count
         metadata["candidateKind"] = metadata.get("candidateKind") or "METHOD"
-        metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), None, "MULTIPLE_CANDIDATES", None)
+        metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), "MULTIPLE_CANDIDATES", None)
         conn.execute(
             """
             UPDATE analysis_graph_edges
@@ -4353,13 +4355,6 @@ class AnalysisStore:
                 "node_kind",
             },
         }
-        fact_tables = (
-            "analysis_graph_claims",
-            "analysis_graph_edges",
-            "analysis_graph_evidence",
-            "analysis_graph_diagnostics",
-            "analysis_graph_nodes",
-        )
         table_names = self._table_names(conn)
         rejected_graph_tables = {table for table in table_names if table.startswith("graph_")}
         needs_reset = bool(rejected_graph_tables)

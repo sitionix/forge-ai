@@ -23,7 +23,7 @@ from knowledge_service import main
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
 from knowledge_service.analysis_policy_loader import load_analysis_policy
-from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry
+from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry, ExtractorResult
 from knowledge_service.analysis_response_parser import AiAnalysisResponseParser
 from knowledge_service.analysis_schema import AnalysisBuildRequest, AnalysisResult, RetryFailedAnalysisRequest
 from knowledge_service.analysis_service import AnalysisSupervisor
@@ -36,7 +36,7 @@ from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.graph_analysis import GraphAnalysisEngine
 from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
-from knowledge_service.graph_schema import GraphAnalysisResult
+from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.inventory_builder import InventoryBuilder
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
@@ -57,7 +57,7 @@ class StubAnalyzer:
     version = "1"
 
     def __init__(self, result=None, fail=False, block_event=None, bad_response_attempts=0, outcomes=None):
-        self.result = result or valid_result()
+        self.result = result or GraphAnalysisResult()
         self.fail = fail
         self.block_event = block_event
         self.bad_response_attempts = bad_response_attempts
@@ -1904,26 +1904,7 @@ def test_changed_file_reanalyzed_and_previous_analysis_removed(tmp_path):
         store,
         runner.start(
             AnalysisBuildRequest(),
-            StubAnalyzer(
-                AnalysisResult.parse_obj(
-                    {
-                        "fileSummary": "Updated.",
-                        "symbols": [
-                            {
-                                "localId": "s3",
-                                "name": "updated",
-                                "kind": "METHOD",
-                                "roles": [{"role": "UTILITY", "confidence": 0.5, "evidence": ["Method exists."]}],
-                                "lineStart": 2,
-                                "lineEnd": 2,
-                                "metadata": {},
-                            }
-                        ],
-                        "relations": [],
-                        "diagnostics": [],
-                    }
-                )
-            ),
+            StubAnalyzer(GraphAnalysisResult()),
         )["jobId"],
     )
     _, second_nodes = current_graph_nodes(store)
@@ -2442,7 +2423,7 @@ def test_timeout_marks_file_failed_and_continues(tmp_path):
     analyzer = StubAnalyzer(
         outcomes=[
             KnowledgeError("ANALYSIS_AI_TIMEOUT", "AI analyzer request timed out", attempt=1),
-            valid_result(),
+            GraphAnalysisResult(),
         ]
     )
     runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 3))
@@ -2469,7 +2450,7 @@ def test_transport_error_marks_file_failed_and_continues_after_attempts(tmp_path
     analyzer = StubAnalyzer(
         outcomes=[
             KnowledgeError("ANALYSIS_AI_TRANSPORT_ERROR", "AI analyzer transport error", attempt=1),
-            valid_result(),
+            GraphAnalysisResult(),
         ]
     )
     runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 1))
@@ -2550,12 +2531,12 @@ def test_final_graph_detail_returns_claims_and_evidence(tmp_path):
     analysis_store = AnalysisStore(store.db_path)
     manifest, nodes = current_graph_nodes(store)
     _, edges = current_graph_edges(store)
-    handler = next(item for item in nodes if item["name"] == "ObjectHandler")
-    contains = next(item for item in edges if item["edgeType"] == "CONTAINS")
+    handler = next(item for item in nodes if item["name"] == "create")
+    declaration = next(item for item in edges if item["edgeType"] == "DECLARES")
     node_detail = analysis_store.graph_node_detail(manifest["graphRevision"], handler["id"], "edge-gateway", True)
-    edge_detail = analysis_store.graph_edge_detail(manifest["graphRevision"], contains["id"], "edge-gateway", True)
+    edge_detail = analysis_store.graph_edge_detail(manifest["graphRevision"], declaration["id"], "edge-gateway", True)
 
-    assert any(claim["claimKind"] == "ROLE" and claim["summary"] == "HTTP_HANDLER" for claim in node_detail["item"]["claims"])
+    assert any(claim["claimKind"] == "ENTRYPOINT_HINT" for claim in node_detail["item"]["claims"])
     assert edge_detail["item"]["evidence"]
 
 
@@ -2688,15 +2669,204 @@ def test_java_extractor_output_is_used_as_static_anchors():
     _, analyzer = asyncio.run(
         run_runtime(
             "src/main/java/example/ObjectHandler.java",
-            "package example;\npublic class ObjectHandler {\n  public void create() {}\n}\n",
+            "package example;\npublic class ObjectHandler {\n  public void create() { helper(); }\n  private void helper() {}\n}\n",
             language="java",
         )
     )
-    anchors = analyzer.payloads[0]["staticAnchors"]["nodes"]
+    static_anchors = analyzer.payloads[0]["staticAnchors"]
+    anchors = static_anchors["nodes"]
     kinds = {item["nodeKind"] for item in anchors}
 
+    assert set(static_anchors) == {"nodes", "callsites", "diagnostics"}
     assert "FILE" in kinds
     assert {"TYPE", "CALLABLE"}.issubset(kinds)
+    assert any(item["edgeType"] == "CALLS" for item in static_anchors["callsites"])
+
+
+def test_structured_text_light_emits_config_regions_only_when_policy_allows_them():
+    _, analyzer = asyncio.run(run_runtime("config/service.yaml", "service:\n  endpoint: http://example\n", language="yaml"))
+    kinds = [item["nodeKind"] for item in analyzer.payloads[0]["staticAnchors"]["nodes"]]
+
+    assert "CONFIG" in kinds
+    assert set(analyzer.payloads[0]["staticAnchors"]) == {"nodes", "callsites", "diagnostics"}
+
+
+def test_structured_text_light_emits_only_file_anchor_when_config_not_allowed():
+    policy = load_analysis_policy(POLICY_PATH)
+    graph_profiles = dict(policy.graph_profiles)
+    graph_profiles["structured_text_graph"] = replace(
+        graph_profiles["structured_text_graph"],
+        nodes=["FILE"],
+        edges=[],
+        claims=[],
+    )
+    policy = replace(policy, graph_profiles=graph_profiles)
+
+    _, analyzer = asyncio.run(run_runtime("config/service.yaml", "service:\n  endpoint: http://example\n", policy=policy, language="yaml"))
+    anchors = analyzer.payloads[0]["staticAnchors"]["nodes"]
+
+    assert [item["nodeKind"] for item in anchors] == ["FILE"]
+
+
+def test_xml_structured_labels_produce_normalized_static_anchors_when_allowed():
+    _, analyzer = asyncio.run(run_runtime("models/service.xml", "<project>\n  <artifactId>edge-core</artifactId>\n</project>\n", language="xml"))
+    static_anchors = analyzer.payloads[0]["staticAnchors"]
+
+    assert set(static_anchors) == {"nodes", "callsites", "diagnostics"}
+    assert any(item["nodeKind"] == "CONFIG" and item["name"] == "project" for item in static_anchors["nodes"])
+
+
+def test_invalid_extractor_output_fails_before_llm():
+    policy = load_analysis_policy(POLICY_PATH)
+    registry = ExtractorRegistry()
+
+    def invalid_structured_output(context, extractor):
+        graph = GraphAnalysisResult(
+            nodes=[
+                GraphNode(
+                    localId="file",
+                    nodeKind="FILE",
+                    name="service.yaml",
+                    lineStart=1,
+                    lineEnd=1,
+                    confidence=1.0,
+                    metadata={"factOrigin": "STATIC"},
+                ),
+                GraphNode(
+                    localId="external",
+                    nodeKind="EXTERNAL",
+                    name="external",
+                    lineStart=1,
+                    lineEnd=1,
+                    confidence=1.0,
+                    metadata={"factOrigin": "STATIC"},
+                ),
+            ]
+        )
+        return ExtractorResult(graph, extractor.id, extractor.implementation)
+
+    registry._handlers["structured_text_parser"] = invalid_structured_output
+    analyzer = CapturingGraphAnalyzer()
+
+    with pytest.raises(KnowledgeError) as exc:
+        asyncio.run(run_runtime("config/service.yaml", "name: edge\n", policy=policy, registry=registry, analyzer=analyzer, language="yaml"))
+
+    assert exc.value.code == "ANALYSIS_EXTRACTOR_OUTPUT_INVALID"
+    assert exc.value.details["stage"] == "STATIC_EXTRACTION"
+    assert analyzer.calls == 0
+    assert analyzer.payloads == []
+
+
+class InvalidFallbackRegistry(ExtractorRegistry):
+    def _java_static_parser(self, context, extractor):
+        raise RuntimeError("forced parser failure")
+
+    def _file_anchor_graph(self, context, extractor_id):
+        graph = super()._file_anchor_graph(context, extractor_id)
+        graph.nodes[0] = graph.nodes[0].copy(update={"nodeKind": "TYPE"})
+        return graph
+
+
+class InvalidMetadataExtractorRegistry(ExtractorRegistry):
+    def _structured_text_light(self, context, extractor):
+        result = super()._structured_text_light(context, extractor)
+        result.graph_result.nodes[0].metadata["factOrigin"] = "BOGUS"
+        return result
+
+
+def _runtime_file_anchor(relative_path: str) -> str:
+    return f"edge-gateway|{relative_path}|FILE"
+
+
+def test_invalid_fallback_output_fails_before_llm():
+    policy = load_analysis_policy(POLICY_PATH)
+    registry = InvalidFallbackRegistry()
+    analyzer = CapturingGraphAnalyzer()
+
+    with pytest.raises(KnowledgeError) as exc:
+        asyncio.run(
+            run_runtime(
+                "src/main/java/example/ObjectHandler.java",
+                "package example;\npublic class ObjectHandler {}\n",
+                policy=policy,
+                registry=registry,
+                analyzer=analyzer,
+                language="java",
+            )
+        )
+
+    assert exc.value.code == "ANALYSIS_EXTRACTOR_OUTPUT_INVALID"
+    assert exc.value.details["extractorFallbackUsed"] is True
+    assert exc.value.details["allowedValues"] == ["FILE"]
+    assert analyzer.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("result", "field", "actual"),
+    [
+        (
+            GraphAnalysisResult(
+                nodes=[
+                    GraphNode(
+                        localId="type1",
+                        nodeKind="TYPE",
+                        name="ReadmeType",
+                        lineStart=1,
+                        lineEnd=1,
+                        confidence=0.8,
+                        metadata={"factOrigin": "LLM"},
+                    )
+                ]
+            ),
+            "nodeKind",
+            "TYPE",
+        ),
+        (
+            GraphAnalysisResult(
+                edges=[
+                    GraphEdge(
+                        localId="call1",
+                        edgeType="CALLS",
+                        fromNodeLocalId=_runtime_file_anchor("README.md"),
+                        confidence=0.8,
+                        evidence=[GraphEvidenceRef(lineStart=1, lineEnd=1)],
+                        metadata={"factOrigin": "LLM"},
+                    )
+                ]
+            ),
+            "edgeType",
+            "CALLS",
+        ),
+        (
+            GraphAnalysisResult(
+                claims=[
+                    GraphClaim(
+                        localId="config-claim",
+                        claimKind="CONFIG_REFERENCE",
+                        nodeLocalId=_runtime_file_anchor("README.md"),
+                        summary="References configuration.",
+                        confidence=0.8,
+                        evidence=[GraphEvidenceRef(lineStart=1, lineEnd=1)],
+                        metadata={"factOrigin": "LLM"},
+                    )
+                ]
+            ),
+            "claimKind",
+            "CONFIG_REFERENCE",
+        ),
+    ],
+)
+def test_invalid_llm_enrichment_fails_before_materialization(result, field, actual):
+    analyzer = CapturingGraphAnalyzer(result)
+
+    with pytest.raises(KnowledgeError) as exc:
+        asyncio.run(run_runtime("README.md", "# Service\n", analyzer=analyzer, language="markdown"))
+
+    assert analyzer.calls == 1
+    assert exc.value.code == "ANALYSIS_GRAPH_POLICY_VALIDATION_FAILED"
+    assert exc.value.details["stage"] == "LLM_ENRICHMENT"
+    assert exc.value.details["field"] == field
+    assert exc.value.details["actual"] == actual
 
 
 def test_file_anchor_fallback_works_only_when_policy_allows_it():
@@ -2850,9 +3020,11 @@ def supervisor_runtime_row(tmp_path, relative_path, content):
     return row
 
 
-def run_supervisor_with_fake_store(tmp_path, analyzer, row):
+def run_supervisor_with_fake_store(tmp_path, analyzer, row, runtime=None):
     inventory = FakeInventoryStore(tmp_path / "fake.sqlite", [row])
     supervisor = AnalysisSupervisor(inventory, app_config(tmp_path))
+    if runtime is not None:
+        supervisor.analyzer_runtime = runtime
     fake_store = FakeAnalysisStore()
     supervisor.analysis_store = fake_store
     asyncio.run(
@@ -2885,6 +3057,197 @@ def test_persistence_boundary_writes_only_final_graph_and_no_partial_extractor_f
     assert failure_store.replacements == []
     assert len(failure_store.failed_attempts) == 1
     assert failure_store.job_file_updates[-1][2] == "FAILED"
+
+
+def test_persistence_boundary_invalid_extractor_does_not_call_llm_or_replace_graph(tmp_path):
+    row = supervisor_runtime_row(tmp_path, "src/main/java/example/ObjectHandler.java", "package example;\npublic class ObjectHandler {}\n")
+    policy = load_analysis_policy(POLICY_PATH)
+    runtime = AnalyzerRuntime(policy, extractor_registry=InvalidFallbackRegistry())
+    analyzer = CapturingGraphAnalyzer()
+
+    failure_store = run_supervisor_with_fake_store(tmp_path, analyzer, row, runtime=runtime)
+
+    assert analyzer.calls == 0
+    assert failure_store.replacements == []
+    assert len(failure_store.failed_attempts) == 1
+    assert failure_store.failed_attempts[0][1]["last_error_code"] == "ANALYSIS_EXTRACTOR_OUTPUT_INVALID"
+    assert failure_store.job_file_updates[-1][2] == "FAILED"
+
+
+def test_persistence_boundary_invalid_extractor_metadata_does_not_call_llm_or_replace_graph(tmp_path):
+    row = supervisor_runtime_row(tmp_path, "config/service.yaml", "name: edge\n")
+    policy = load_analysis_policy(POLICY_PATH)
+    runtime = AnalyzerRuntime(policy, extractor_registry=InvalidMetadataExtractorRegistry())
+    analyzer = CapturingGraphAnalyzer()
+
+    failure_store = run_supervisor_with_fake_store(tmp_path, analyzer, row, runtime=runtime)
+
+    assert analyzer.calls == 0
+    assert failure_store.replacements == []
+    assert len(failure_store.failed_attempts) == 1
+    assert failure_store.failed_attempts[0][1]["last_error_code"] == "ANALYSIS_EXTRACTOR_OUTPUT_INVALID"
+    assert failure_store.job_file_updates[-1][2] == "FAILED"
+
+
+def test_persistence_boundary_invalid_llm_enrichment_does_not_replace_graph(tmp_path):
+    row = supervisor_runtime_row(tmp_path, "config/service.yaml", "name: edge\n")
+    analyzer = CapturingGraphAnalyzer(
+        GraphAnalysisResult(
+            claims=[
+                GraphClaim(
+                    localId="claim-without-evidence",
+                    claimKind="RESPONSIBILITY",
+                    nodeLocalId=_runtime_file_anchor("config/service.yaml"),
+                    summary="Describes the service.",
+                    confidence=0.8,
+                    evidence=[],
+                    metadata={"factOrigin": "LLM"},
+                )
+            ]
+        )
+    )
+
+    failure_store = run_supervisor_with_fake_store(tmp_path, analyzer, row)
+
+    assert analyzer.calls == 1
+    assert failure_store.replacements == []
+    assert len(failure_store.failed_attempts) == 1
+    assert failure_store.failed_attempts[0][1]["last_error_code"] == "ANALYSIS_GRAPH_POLICY_VALIDATION_FAILED"
+    assert failure_store.job_file_updates[-1][2] == "FAILED"
+
+
+def test_persistence_boundary_invalid_llm_metadata_does_not_replace_graph(tmp_path):
+    row = supervisor_runtime_row(tmp_path, "config/service.yaml", "name: edge\n")
+    analyzer = CapturingGraphAnalyzer(
+        GraphAnalysisResult(
+            nodes=[
+                GraphNode(
+                    localId="llm-file",
+                    nodeKind="FILE",
+                    name="service.yaml",
+                    lineStart=1,
+                    lineEnd=1,
+                    confidence=0.8,
+                    metadata={"factOrigin": "BOGUS"},
+                )
+            ]
+        )
+    )
+
+    failure_store = run_supervisor_with_fake_store(tmp_path, analyzer, row)
+
+    assert analyzer.calls == 1
+    assert failure_store.replacements == []
+    assert len(failure_store.failed_attempts) == 1
+    assert failure_store.failed_attempts[0][1]["last_error_code"] == "ANALYSIS_GRAPH_POLICY_VALIDATION_FAILED"
+    assert failure_store.job_file_updates[-1][2] == "FAILED"
+
+
+def test_materialized_graph_fact_statuses_are_declared_by_policy():
+    policy = load_analysis_policy(POLICY_PATH)
+    declared_statuses = set(policy.graph.statuses)
+    row = {
+        "id": 1,
+        "source_id": "edge-gateway",
+        "relative_path": "config/service.yaml",
+        "content_hash": "hash-1",
+    }
+    graph = GraphAnalysisResult(
+        nodes=[
+            GraphNode(localId="file", nodeKind="FILE", name="service.yaml", lineStart=1, lineEnd=1, confidence=1.0),
+            GraphNode(localId="config", nodeKind="CONFIG", name="service", lineStart=1, lineEnd=1, confidence=0.5),
+            GraphNode(localId="data", nodeKind="DATA", name="settings", lineStart=1, lineEnd=1, confidence=0.2),
+        ],
+        edges=[
+            GraphEdge(
+                localId="configures",
+                edgeType="CONFIGURES",
+                fromNodeLocalId="file",
+                toNodeLocalId="config",
+                confidence=0.5,
+                evidence=[GraphEvidenceRef(lineStart=1, lineEnd=1)],
+            )
+        ],
+        claims=[
+            GraphClaim(
+                localId="purpose",
+                claimKind="RESPONSIBILITY",
+                nodeLocalId="file",
+                summary="Describes the service.",
+                confidence=0.2,
+                evidence=[GraphEvidenceRef(lineStart=1, lineEnd=1)],
+            )
+        ],
+    )
+
+    materialized = GraphAnalysisEngine().materialize(row, "job-1", "test", "1", graph, ["name: edge"])
+    statuses = {item["status"] for key in ("nodes", "edges", "claims") for item in materialized[key]}
+
+    assert "TRUSTED" in statuses
+    assert "CANDIDATE" in statuses
+    assert "LOW_CONFIDENCE" not in statuses
+    assert "DEBUG_ONLY" not in statuses
+    assert statuses <= declared_statuses
+
+
+def test_graph_materializer_flow_domain_uses_explicit_metadata_first():
+    engine = GraphAnalysisEngine()
+    row = {
+        "id": 1,
+        "source_id": "edge-gateway",
+        "relative_path": "config/service.yaml",
+        "content_hash": "hash-1",
+        "flow_domain": "BUILD",
+    }
+
+    assert engine._flow_domain(row, {"flowDomain": "WORKFLOW"}) == "WORKFLOW"
+
+
+def test_graph_materializer_flow_domain_defaults_when_metadata_is_unknown():
+    engine = GraphAnalysisEngine()
+    row = {
+        "id": 1,
+        "source_id": "edge-gateway",
+        "relative_path": "config/service.yaml",
+        "content_hash": "hash-1",
+        "flow_domain": "UNKNOWN",
+    }
+
+    assert engine._flow_domain(row, {"flowDomain": "UNKNOWN"}) == "CODE"
+
+
+def test_graph_materializer_flow_domain_uses_row_when_metadata_absent():
+    engine = GraphAnalysisEngine()
+    row = {
+        "id": 1,
+        "source_id": "edge-gateway",
+        "relative_path": "config/service.yaml",
+        "content_hash": "hash-1",
+        "flow_domain": "CONFIG",
+    }
+
+    assert engine._flow_domain(row, {}) == "CONFIG"
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        ".github/workflows/build.yml",
+        "pom.xml",
+        "src/test/java/FooTest.java",
+        "config/service.yaml",
+    ],
+)
+def test_graph_materializer_flow_domain_does_not_route_by_path(relative_path):
+    engine = GraphAnalysisEngine()
+    row = {
+        "id": 1,
+        "source_id": "edge-gateway",
+        "relative_path": relative_path,
+        "content_hash": "hash-1",
+    }
+
+    assert engine._flow_domain(row, {}) == "CODE"
 
 
 def test_runtime_resolves_field_receiver_calls_when_target_type_is_unique(tmp_path):
@@ -2966,7 +3329,7 @@ def test_callable_without_type_claim_uses_file_fallback_with_provenance(tmp_path
     assert selected["summaryClaimNodeId"] != selected["id"]
 
 
-def test_low_confidence_callable_claim_is_debug_only_and_not_trusted(tmp_path):
+def test_low_confidence_callable_claim_maps_to_candidate_status(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = SupervisorHarness(store, app_config(tmp_path))
     wait_job(
@@ -2977,13 +3340,13 @@ def test_low_confidence_callable_claim_is_debug_only_and_not_trusted(tmp_path):
     responsibility = next(claim for claim in selected["claims"] if claim["claimKind"] == "RESPONSIBILITY")
 
     assert selected["status"] == "TRUSTED"
-    assert selected["summarySource"] == "NONE"
-    assert responsibility["status"] == "DEBUG_ONLY"
-    assert responsibility["rejectionReason"] is None or responsibility["rejectionReason"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD"
-    assert selected["summaryConfidence"] is None
+    assert selected["summarySource"] == "DIRECT"
+    assert responsibility["status"] == "CANDIDATE"
+    assert responsibility["rejectionReason"] is None
+    assert selected["summaryConfidence"] == 0.2
 
 
-def test_generic_file_level_callable_summary_is_not_used_as_direct_summary(tmp_path):
+def test_generic_file_level_callable_summary_uses_declared_status(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = SupervisorHarness(store, app_config(tmp_path))
     wait_job(
@@ -3002,10 +3365,10 @@ def test_generic_file_level_callable_summary_is_not_used_as_direct_summary(tmp_p
     selected = current_graph_node_detail_by_name(store, "create", include_evidence=True)
     responsibility = next(claim for claim in selected["claims"] if claim["claimKind"] == "RESPONSIBILITY")
 
-    assert selected["summarySource"] == "NONE"
-    assert selected["claimSummary"] is None
-    assert responsibility["status"] == "DEBUG_ONLY"
-    assert responsibility["rejectionReason"] == "GENERIC_FILE_LEVEL_CALLABLE_SUMMARY"
+    assert selected["summarySource"] == "DIRECT"
+    assert selected["claimSummary"] == "This Java file contains an object handler."
+    assert responsibility["status"] == "TRUSTED"
+    assert responsibility["rejectionReason"] is None
 
 
 def test_no_source_file_mutation(tmp_path):
@@ -3289,7 +3652,7 @@ def test_analysis_api_exposes_failed_file_diagnostics_and_progress(tmp_path, mon
     analyzer = StubAnalyzer(
         outcomes=[
             KnowledgeError("ANALYSIS_AI_INVALID_JSON", "AI analyzer returned invalid JSON", raw_preview="{bad", attempt=1),
-            valid_result(),
+            GraphAnalysisResult(),
         ]
     )
     wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), analyzer)["jobId"])
