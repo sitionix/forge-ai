@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Mapping, Optional, Set, Union
 import yaml
 
 from knowledge_service.analysis_policy import (
+    ALLOWED_EXTRACTOR_MODES,
+    ALLOWED_LLM_MODES,
     AnalysisPolicy,
     AnalysisPolicyDefaults,
     AnalysisPolicyDiagnostic,
@@ -483,8 +485,8 @@ def _parse_policies(data: Mapping[Any, Any], diagnostics: List[AnalysisPolicyDia
         policies[policy_id] = AnalyzerExecutionPolicy(
             id=policy_id,
             source_view=_required_str(item, "sourceView", path, diagnostics),
-            extractor_mode=_required_str(item, "extractorMode", path, diagnostics),
-            llm_mode=_required_str(item, "llmMode", path, diagnostics),
+            extractor_mode=_required_allowed_str(item, "extractorMode", path, diagnostics, allowed_values=ALLOWED_EXTRACTOR_MODES),
+            llm_mode=_required_allowed_str(item, "llmMode", path, diagnostics, allowed_values=ALLOWED_LLM_MODES),
             response_schema=_required_str(item, "responseSchema", path, diagnostics),
             evidence_required=_required_bool(item, "evidenceRequired", path, diagnostics),
             allow_llm_created_anchors=_optional_bool(item, "allowLlmCreatedAnchors", path, diagnostics, default=False),
@@ -779,6 +781,29 @@ def _required_str(data: Mapping[Any, Any], key: str, parent_path: str, diagnosti
     if not isinstance(value, str) or not value.strip():
         diagnostics.append(AnalysisPolicyDiagnostic(path=f"{parent_path}.{key}", reason="value must be a non-empty string", invalid_value=value))
         return ""
+    return value
+
+
+def _required_allowed_str(
+    data: Mapping[Any, Any],
+    key: str,
+    parent_path: str,
+    diagnostics: List[AnalysisPolicyDiagnostic],
+    *,
+    allowed_values: tuple[str, ...],
+) -> str:
+    value = _required_str(data, key, parent_path, diagnostics)
+    if not value:
+        return value
+    if value not in allowed_values:
+        diagnostics.append(
+            AnalysisPolicyDiagnostic(
+                path=f"{parent_path}.{key}",
+                reason=f"{key} is not an allowed runtime mode",
+                invalid_value=value,
+                allowed_values=list(allowed_values),
+            )
+        )
     return value
 
 

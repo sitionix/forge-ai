@@ -21,6 +21,7 @@ POLICY_PATH = REPO_ROOT / "config" / "knowledge" / "analysis-policy.yaml"
 
 from knowledge_service import main
 from knowledge_service.analysis_client import OllamaAnalysisClient
+from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.analysis_response_parser import AiAnalysisResponseParser
@@ -2711,10 +2712,35 @@ def test_file_anchor_fallback_works_only_when_policy_allows_it():
     assert payload["staticAnchors"]["diagnostics"][0]["code"] == "ANALYSIS_UNSUPPORTED_EXTRACTOR_FALLBACK_USED"
 
 
+def test_required_file_anchor_fallback_mode_allows_file_anchor_fallback():
+    policy = load_analysis_policy(POLICY_PATH)
+    registry = ExtractorRegistry()
+    registry._handlers.pop("java_static_parser")
+
+    _, analyzer = asyncio.run(
+        run_runtime(
+            "src/main/java/example/ObjectHandler.java",
+            "package example;\npublic class ObjectHandler {}\n",
+            policy=policy,
+            registry=registry,
+            language="java",
+        )
+    )
+    payload = analyzer.payloads[0]
+
+    assert payload["analysisPolicy"]["extractorMode"] == "required_or_file_anchor_fallback"
+    assert payload["metadata"]["extractorFallbackUsed"] is True
+    assert [item["nodeKind"] for item in payload["staticAnchors"]["nodes"]] == ["FILE"]
+    assert payload["staticAnchors"]["diagnostics"][0]["code"] == "ANALYSIS_UNSUPPORTED_EXTRACTOR_FALLBACK_USED"
+
+
 def test_missing_required_extractor_fails_explicitly_before_llm():
     policy = load_analysis_policy(POLICY_PATH)
     policies = dict(policy.policies)
-    policies["parser_assisted_graph_enrichment"] = replace(policies["parser_assisted_graph_enrichment"], extractor_mode="required")
+    policies["parser_assisted_graph_enrichment"] = replace(
+        policies["parser_assisted_graph_enrichment"],
+        extractor_mode=EXTRACTOR_MODE_FILE_ANCHOR_ONLY,
+    )
     strict_policy = replace(policy, policies=policies)
     registry = ExtractorRegistry()
     registry._handlers.pop("java_static_parser")
@@ -2732,6 +2758,36 @@ def test_missing_required_extractor_fails_explicitly_before_llm():
         )
 
     assert exc.value.code == "UNSUPPORTED_EXTRACTOR"
+    assert analyzer.calls == 0
+
+
+def test_fake_extractor_mode_with_fallback_substring_fails_closed():
+    policy = load_analysis_policy(POLICY_PATH)
+    policies = dict(policy.policies)
+    policies["text_graph_enrichment"] = replace(policies["text_graph_enrichment"], extractor_mode="fallback_disabled")
+    strict_policy = replace(policy, policies=policies)
+    registry = ExtractorRegistry()
+    registry._handlers.pop("document_heading_parser")
+    analyzer = CapturingGraphAnalyzer()
+
+    with pytest.raises(KnowledgeError) as exc:
+        asyncio.run(run_runtime("README.md", "# Title\n", policy=strict_policy, registry=registry, analyzer=analyzer))
+
+    assert exc.value.code == "ANALYSIS_POLICY_UNSUPPORTED_EXTRACTOR_MODE"
+    assert analyzer.calls == 0
+
+
+def test_fake_llm_mode_fails_closed_before_provider_call():
+    policy = load_analysis_policy(POLICY_PATH)
+    policies = dict(policy.policies)
+    policies["text_graph_enrichment"] = replace(policies["text_graph_enrichment"], llm_mode="not_none")
+    strict_policy = replace(policy, policies=policies)
+    analyzer = CapturingGraphAnalyzer()
+
+    with pytest.raises(KnowledgeError) as exc:
+        asyncio.run(run_runtime("README.md", "# Title\n", policy=strict_policy, analyzer=analyzer))
+
+    assert exc.value.code == "ANALYSIS_POLICY_UNSUPPORTED_LLM_MODE"
     assert analyzer.calls == 0
 
 

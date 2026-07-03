@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Protocol, Tuple, Union
 
 from knowledge_service.analysis_graph_contract import AnalysisGraphContract, contract_payload
-from knowledge_service.analysis_policy import AnalysisPolicy, ExtractorDefinition
+from knowledge_service.analysis_policy import (
+    AnalysisPolicy,
+    ExtractorDefinition,
+    policy_allows_extractor_fallback,
+    policy_requires_llm,
+)
 from knowledge_service.analysis_policy_resolver import AnalysisPolicyResolveRequest, AnalysisPolicyResolution, resolve_analysis_policy
 from knowledge_service.analysis_schema import AnalysisResult
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
@@ -334,8 +339,17 @@ class ExtractorRegistry:
         return any(str(item.get("code") or "").startswith("STRUCTURAL_PARSER_") and item.get("severity") == "ERROR" for item in graph.diagnostics or [])
 
     def _allows_file_anchor_fallback(self, context: AnalyzerExecutionContext) -> bool:
-        mode = str(context.policy_resolution.extractor_mode or "").lower()
-        return "fallback" in mode or "optional" in mode
+        try:
+            return policy_allows_extractor_fallback(context.policy_resolution.extractor_mode)
+        except ValueError as exc:
+            raise KnowledgeError(
+                "ANALYSIS_POLICY_UNSUPPORTED_EXTRACTOR_MODE",
+                str(exc),
+                stage="POLICY_RESOLUTION",
+                severity="ERROR",
+                extractorMode=context.policy_resolution.extractor_mode,
+                unsupportedBehavior=dict(context.policy_resolution.unsupported_behavior),
+            ) from exc
 
     def _file_stable_key(self, context: AnalyzerExecutionContext) -> str:
         return "|".join([str(context.row.get("source_id") or ""), str(context.row.get("relative_path") or ""), "FILE"])
@@ -472,7 +486,17 @@ class AnalyzerRuntime:
         )
 
     def _requires_llm(self, context: AnalyzerExecutionContext) -> bool:
-        return str(context.policy_resolution.llm_mode or "").strip().lower() != "none"
+        try:
+            return policy_requires_llm(context.policy_resolution.llm_mode)
+        except ValueError as exc:
+            raise KnowledgeError(
+                "ANALYSIS_POLICY_UNSUPPORTED_LLM_MODE",
+                str(exc),
+                stage="POLICY_RESOLUTION",
+                severity="ERROR",
+                llmMode=context.policy_resolution.llm_mode,
+                unsupportedBehavior=dict(context.policy_resolution.unsupported_behavior),
+            ) from exc
 
     def _enforce_llm_input_limits(self, context: AnalyzerExecutionContext) -> None:
         max_file_chars = int(self.policy.defaults.max_file_chars)
