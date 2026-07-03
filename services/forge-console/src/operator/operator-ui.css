@@ -3051,7 +3051,7 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
   font-size: 11px;
 }
 
-.knowledge-graph-relation-group + .knowledge-graph-relation-group {
+.knowledge-graph-connection-group + .knowledge-graph-connection-group {
   margin-top: 10px;
 }
 

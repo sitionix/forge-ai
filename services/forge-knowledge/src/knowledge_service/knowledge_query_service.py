@@ -667,7 +667,7 @@ class FlowPathExtractor:
         for item in evidence:
             item_source = str(item.get("sourceId") or "")
             item_node = str(item.get("nodeId") or "")
-            item_edge = str(item.get("edgeId") or item.get("graphEdgeId") or "")
+            item_edge = str(item.get("edgeId") or "")
             item_id = str(item.get("id") or item)
             if item_id in seen:
                 continue
@@ -705,7 +705,7 @@ class FlowPathExtractor:
         return (source_id, graph_id, node_id)
 
     def _edge_key(self, edge: Dict[str, Any]) -> Optional[EdgeKey]:
-        edge_id = str(edge.get("id") or edge.get("edgeId") or edge.get("graphEdgeId") or "")
+        edge_id = str(edge.get("id") or edge.get("edgeId") or "")
         source_id = str(edge.get("sourceId") or "")
         graph_id = str(edge.get("graphId") or edge.get("graphRevision") or "")
         if not edge_id or not source_id:
@@ -713,7 +713,7 @@ class FlowPathExtractor:
         return (source_id, graph_id, edge_id)
 
     def _edge_from_key(self, edge: Dict[str, Any]) -> Optional[NodeKey]:
-        node_id = str(edge.get("fromNodeId") or edge.get("from") or "")
+        node_id = str(edge.get("fromNodeId") or "")
         source_id = str(edge.get("sourceId") or "")
         graph_id = str(edge.get("graphId") or edge.get("graphRevision") or "")
         if not node_id or not source_id:
@@ -721,7 +721,7 @@ class FlowPathExtractor:
         return (source_id, graph_id, node_id)
 
     def _edge_to_key(self, edge: Dict[str, Any]) -> Optional[NodeKey]:
-        node_id = str(edge.get("toNodeId") or edge.get("to") or "")
+        node_id = str(edge.get("toNodeId") or "")
         source_id = str(edge.get("sourceId") or "")
         graph_id = str(edge.get("graphId") or edge.get("graphRevision") or "")
         if not node_id or not source_id:
@@ -729,7 +729,7 @@ class FlowPathExtractor:
         return (source_id, graph_id, node_id)
 
     def _edge_type(self, edge: Dict[str, Any]) -> str:
-        return str(edge.get("edgeType") or edge.get("relation") or edge.get("kind") or "").upper()
+        return str(edge.get("edgeType") or "").upper()
 
     def _is_unresolved_edge(self, edge: Dict[str, Any]) -> bool:
         status = str(edge.get("resolutionStatus") or "").upper()
@@ -741,7 +741,7 @@ class FlowPathExtractor:
         return bool(edge.get("external")) or str(edge.get("resolutionStatus") or "").upper() == "EXTERNAL_TARGET"
 
     def _is_external_node(self, node: Dict[str, Any]) -> bool:
-        return bool(node.get("external")) or str(node.get("nodeKind") or node.get("kind") or "").upper() == "EXTERNAL"
+        return bool(node.get("external")) or str(node.get("nodeKind") or "").upper() == "EXTERNAL"
 
     def _fallback_node(self, node_key: NodeKey) -> Dict[str, Any]:
         return {"id": node_key[2], "sourceId": node_key[0], "graphId": node_key[1], "label": node_key[2]}

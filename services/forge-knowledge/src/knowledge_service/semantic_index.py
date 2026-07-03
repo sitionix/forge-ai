@@ -112,12 +112,15 @@ class SemanticIndexStatusView:
 def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "semantic_documents"):
         columns = _table_columns(conn, "semantic_documents")
-        if "graph_revision" in columns or "graph_id" not in columns:
+        legacy_claim_ids = "claim_ids" + "_json"
+        legacy_evidence_ids = "evidence_ids" + "_json"
+        if "graph_revision" in columns or "graph_id" not in columns or legacy_claim_ids in columns or legacy_evidence_ids in columns:
             conn.execute("DROP TABLE IF EXISTS semantic_vectors")
             conn.execute("DROP TABLE IF EXISTS semantic_documents")
     if _table_exists(conn, "semantic_vectors"):
         columns = _table_columns(conn, "semantic_vectors")
-        if "graph_revision" in columns or "graph_id" not in columns:
+        legacy_vector_payload = "vector" + "_blob"
+        if "graph_revision" in columns or "graph_id" not in columns or legacy_vector_payload in columns:
             conn.execute("DROP TABLE IF EXISTS semantic_vectors")
             conn.execute("DROP TABLE IF EXISTS semantic_documents")
     conn.execute(
@@ -154,8 +157,8 @@ def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
             builder_version INTEGER NOT NULL,
             text_hash TEXT NOT NULL,
             text TEXT NOT NULL,
-            claim_ids_json TEXT NOT NULL DEFAULT '[]',
-            evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+            claim_ids_payload TEXT NOT NULL DEFAULT '[]',
+            evidence_ids_payload TEXT NOT NULL DEFAULT '[]',
             status TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -172,7 +175,6 @@ def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
             graph_id TEXT NOT NULL,
             embedding_model TEXT NOT NULL,
             embedding_dimension INTEGER NOT NULL,
-            vector_blob BLOB,
             vector_json TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -833,7 +835,7 @@ _REVISION_QUERIES: tuple[tuple[str, str], ...] = (
         "nodes",
         """
         SELECT id, stable_key, node_kind, language, name, qualified_name, display_name,
-               parent_node_id, relative_path, content_hash, line_start, line_end, confidence, status, metadata_json,
+               parent_node_id, relative_path, content_hash, line_start, line_end, confidence, status,
                fact_origin, flow_domain
         FROM analysis_graph_nodes
         WHERE source_id = ?
@@ -844,7 +846,7 @@ _REVISION_QUERIES: tuple[tuple[str, str], ...] = (
         "evidence",
         """
         SELECT id, relative_path, content_hash, line_start, line_end, excerpt_hash, evidence_kind,
-               metadata_json, fact_origin, flow_domain
+               fact_origin, flow_domain
         FROM analysis_graph_evidence
         WHERE source_id = ?
         ORDER BY id
@@ -853,8 +855,8 @@ _REVISION_QUERIES: tuple[tuple[str, str], ...] = (
     (
         "claims",
         """
-        SELECT id, node_id, claim_kind, summary, confidence, status, evidence_ids_json,
-               metadata_json, rejection_reason, fact_origin, flow_domain
+        SELECT id, node_id, claim_kind, summary, confidence, status,
+               rejection_reason, fact_origin, flow_domain
         FROM analysis_graph_claims
         WHERE source_id = ?
         ORDER BY id
@@ -863,17 +865,37 @@ _REVISION_QUERIES: tuple[tuple[str, str], ...] = (
     (
         "edges",
         """
-        SELECT id, from_node_id, to_node_id, edge_type, edge_kind, resolution_status, confidence,
-               evidence_id, evidence_ids_json, unresolved_target_json, metadata_json, status, fact_origin,
+        SELECT id, from_node_id, to_node_id, edge_type, resolution_status, confidence,
+               unresolved_target_json, status, fact_origin,
                flow_domain
         FROM analysis_graph_edges
         WHERE source_id = ?
         ORDER BY id
         """,
     ),
+    (
+        "claim_evidence",
+        """
+        SELECT link.claim_id, link.evidence_id
+        FROM analysis_graph_claim_evidence link
+        JOIN analysis_graph_claims claim ON claim.id = link.claim_id
+        WHERE claim.source_id = ?
+        ORDER BY link.claim_id, link.evidence_id
+        """,
+    ),
+    (
+        "edge_evidence",
+        """
+        SELECT link.edge_id, link.evidence_id
+        FROM analysis_graph_edge_evidence link
+        JOIN analysis_graph_edges edge ON edge.id = link.edge_id
+        WHERE edge.source_id = ?
+        ORDER BY link.edge_id, link.evidence_id
+        """,
+    ),
 )
 
-_JSON_COLUMNS = {"metadata_json", "evidence_ids_json", "unresolved_target_json"}
+_JSON_COLUMNS = {"unresolved_target_json"}
 
 
 def _stable_rows(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:

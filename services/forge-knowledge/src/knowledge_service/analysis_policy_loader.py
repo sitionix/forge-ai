@@ -386,7 +386,7 @@ def _parse_semantic(data: Mapping[Any, Any], diagnostics: List[AnalysisPolicyDia
     _check_allowed_keys(data, path, SEMANTIC_KEYS, diagnostics)
     return SemanticPolicy(
         indexed_node_kinds=_required_str_list(data, "indexedNodeKinds", path, diagnostics),
-        indexed_edge_kinds=_required_str_list(data, "indexedEdgeKinds", path, diagnostics),
+        indexed_edge_types=_required_str_list(data, "indexedEdgeKinds", path, diagnostics),
         indexed_claim_kinds=_required_str_list(data, "indexedClaimKinds", path, diagnostics),
         unsupported_semantic_kind=_required_str(data, "unsupportedSemanticKind", path, diagnostics),
     )
@@ -625,7 +625,7 @@ def _validate_policy_references(policy: AnalysisPolicy, diagnostics: List[Analys
 
     for index, kind in enumerate(policy.semantic.indexed_node_kinds):
         _validate_semantic_reference(kind, graph.nodes, f"$.analysis.semantic.indexedNodeKinds[{index}]", diagnostics)
-    for index, kind in enumerate(policy.semantic.indexed_edge_kinds):
+    for index, kind in enumerate(policy.semantic.indexed_edge_types):
         _validate_semantic_reference(kind, graph.edges, f"$.analysis.semantic.indexedEdgeKinds[{index}]", diagnostics)
     for index, kind in enumerate(policy.semantic.indexed_claim_kinds):
         _validate_semantic_reference(kind, graph.claims, f"$.analysis.semantic.indexedClaimKinds[{index}]", diagnostics)

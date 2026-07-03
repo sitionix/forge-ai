@@ -155,7 +155,7 @@ def test_static_graph_materializer_creates_static_nodes_edges_evidence_and_entry
     assert entrypoint.nodeLocalId.endswith("|CALLABLE|example.TicketController|get|get(String)")
     assert entrypoint.metadata["httpMethod"] == "GET"
     assert entrypoint.metadata["route"] == "/tickets/{id}"
-    assert all("flowScore" in edge.metadata for edge in call_edges)
+    assert all("flowScore" not in edge.metadata for edge in call_edges)
     assert next(edge for edge in call_edges if edge.metadata["methodName"] == "toApi").metadata["callKind"] == "FIELD_RECEIVER"
 
 

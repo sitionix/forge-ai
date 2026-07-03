@@ -233,7 +233,7 @@ def test_prompt_renderer_rejects_undeclared_prompt_id_without_legacy_fallback():
     assert exc_info.value.details["promptId"] == "missing_prompt"
 
 
-def test_parser_allows_yaml_declared_claim_and_edge_kinds():
+def test_parser_allows_yaml_declared_claim_and_edge_types():
     parser, contract = _parser_and_contract("src/Foo.java")
     payload = _graph_payload()
     payload["claims"][0]["claimKind"] = "SIDE_EFFECT"
@@ -293,7 +293,7 @@ def test_parser_rejects_invalid_claim_kind_with_yaml_allowed_values():
     assert "PURPOSE" not in detail["allowedValues"]
 
 
-def test_parser_rejects_invalid_edge_kind_with_yaml_allowed_values():
+def test_parser_rejects_invalid_edge_type_with_yaml_allowed_values():
     failure = _parse_with_mutation("src/Foo.java", lambda payload: payload["edges"][0].update({"edgeType": "RELATED_TO"}))
 
     detail = _detail(failure, "$.edges[0].edgeType")

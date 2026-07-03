@@ -37,7 +37,7 @@ function statusPayload(
           activeJobId,
           ...analysisOverrides
         },
-        facts: { symbolCount: 11, relationCount: 12 },
+        facts: {},
         factsProgress: {
           completedCount: processed,
           totalCount: total,

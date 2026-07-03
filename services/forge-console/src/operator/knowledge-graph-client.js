@@ -130,9 +130,9 @@ export function graphQuery(query) {
     'mode',
     'maxNodes',
     'maxEdges',
-    'graphNodeId',
-    'graphEdgeId',
-    'rootGraphNodeId',
+    'nodeId',
+    'edgeId',
+    'rootNodeId',
     'stableKey',
     'cursor',
     'pageSize',
@@ -173,7 +173,7 @@ export function graphDataFromView(view, metrics = {}) {
   const store = createGraphStore();
   appendGraphNodes(store, nodes);
   appendGraphEdges(store, view.edges || []);
-  const edges = [...store.edgesById.values()].filter((edge) => edge.from && edge.to && store.nodesById.has(edge.from) && store.nodesById.has(edge.to));
+  const edges = [...store.edgesById.values()].filter((edge) => edge.fromNodeId && edge.toNodeId && store.nodesById.has(edge.fromNodeId) && store.nodesById.has(edge.toNodeId));
   const totalNodeCount = view.totalMatchingNodeCount ?? nodes.length;
   const totalEdgeCount = view.totalMatchingEdgeCount ?? edges.length;
   const hiddenNodeCount = view.hiddenNodeCount ?? Math.max(0, totalNodeCount - nodes.length);
@@ -197,7 +197,7 @@ export function graphDataFromView(view, metrics = {}) {
       sliceNodeCount: nodes.length,
       sliceEdgeCount: edges.length,
       totalNodesAvailable: totalNodeCount,
-      unresolvedCount: edges.filter((edge) => !edge.to).length,
+      unresolvedCount: edges.filter((edge) => !edge.toNodeId).length,
       hiddenNodeCount,
       hiddenEdgeCount,
       hiddenBoundaryEdgeCount: view.hiddenBoundaryEdgeCount || 0,
@@ -250,18 +250,14 @@ export function appendGraphEdges(store, edges) {
     if (!id || store.edgesById.has(id)) {
       return;
     }
-    store.edgesById.set(id, {
-      ...edge,
-      from: edge.fromNodeId || edge.from,
-      to: edge.toNodeId || edge.to
-    });
+    store.edgesById.set(id, { ...edge });
   });
 }
 
 export function graphDataFromStore(store, manifest, metrics = {}, limits = {}) {
   metrics.graphModelBuildCount = (metrics.graphModelBuildCount || 0) + 1;
   const nodes = [...store.nodesById.values()];
-  const edges = [...store.edgesById.values()].filter((edge) => edge.from && edge.to && store.nodesById.has(edge.from) && store.nodesById.has(edge.to));
+  const edges = [...store.edgesById.values()].filter((edge) => edge.fromNodeId && edge.toNodeId && store.nodesById.has(edge.fromNodeId) && store.nodesById.has(edge.toNodeId));
   const totalNodeCount = manifest.totalNodeCount || nodes.length;
   const totalEdgeCount = manifest.totalEdgeCount || store.edgesById.size;
   const skippedByLimitCount = Math.max(0, totalNodeCount - nodes.length) + Math.max(0, totalEdgeCount - store.edgesById.size);
@@ -281,7 +277,7 @@ export function graphDataFromStore(store, manifest, metrics = {}, limits = {}) {
       sliceNodeCount: nodes.length,
       sliceEdgeCount: edges.length,
       totalNodesAvailable: totalNodeCount,
-      unresolvedCount: [...store.edgesById.values()].filter((edge) => !edge.to).length
+      unresolvedCount: [...store.edgesById.values()].filter((edge) => !edge.toNodeId).length
     },
     meta: {
       truncated: skippedByLimitCount > 0,

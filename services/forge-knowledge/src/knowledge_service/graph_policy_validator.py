@@ -244,7 +244,7 @@ class GraphPolicyValidator:
                 stage,
                 f"{path}.edgeType",
                 declared=self.policy.graph.edges,
-                allowed=contract.allowed_edge_kinds,
+                allowed=contract.allowed_edge_types,
                 produced=extractor.produces.edges if extractor is not None else None,
                 issues=issues,
             )
@@ -276,7 +276,7 @@ class GraphPolicyValidator:
                         path=f"{path}.toNodeLocalId",
                     )
                 )
-            if edge.edgeType in self.policy.graph.edges and edge.edgeType in contract.allowed_edge_kinds:
+            if edge.edgeType in self.policy.graph.edges and edge.edgeType in contract.allowed_edge_types:
                 self._validate_edge_endpoint(edge, from_node, to_node, contract, stage, path, issues)
             self._validate_metadata_contract(
                 edge.metadata,

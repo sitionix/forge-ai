@@ -75,7 +75,7 @@ def test_extractor_output_rejects_node_kind_not_listed_in_produces():
     assert exc.value.details["allowedValues"] == ["FILE", "CONFIG", "DATA"]
 
 
-def test_extractor_output_rejects_edge_kind_not_listed_in_produces():
+def test_extractor_output_rejects_edge_type_not_listed_in_produces():
     policy, context = _context("settings.yaml", "service:\n  url: http://example\n")
     graph = _graph(
         nodes=[_file_node(), _node("config", "CONFIG", parent="file")],

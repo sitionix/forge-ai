@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Protocol, Tuple, Union
+from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Protocol, Tuple
 
 from knowledge_service.analysis_graph_contract import AnalysisGraphContract, contract_payload
 from knowledge_service.analysis_policy import (
@@ -13,10 +13,8 @@ from knowledge_service.analysis_policy import (
     policy_requires_llm,
 )
 from knowledge_service.analysis_policy_resolver import AnalysisPolicyResolveRequest, AnalysisPolicyResolution, resolve_analysis_policy
-from knowledge_service.analysis_schema import AnalysisResult
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.graph_analysis import LegacyAnalysisProjectionAdapter
 from knowledge_service.graph_policy_validator import GraphPolicyValidator
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphNode
 from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer, StructuralAnalysisEngine
@@ -31,12 +29,12 @@ class AnalyzerProvider(Protocol):
         payload: Dict[str, Any],
         line_count: int,
         repair_prompt: Optional[str] = None,
-    ) -> Union[GraphAnalysisResult, AnalysisResult, Awaitable[Union[GraphAnalysisResult, AnalysisResult]]]: ...
+    ) -> GraphAnalysisResult | Awaitable[GraphAnalysisResult]: ...
 
 
 AnalyzeWithRetry = Callable[
     [AnalyzerProvider, Dict[str, Any], int],
-    Awaitable[Tuple[Union[GraphAnalysisResult, AnalysisResult], List[Dict[str, Any]], Dict[str, Any]]],
+    Awaitable[Tuple[GraphAnalysisResult, List[Dict[str, Any]], Dict[str, Any]]],
 ]
 
 
@@ -462,7 +460,6 @@ class AnalyzerRuntime:
         payload_builder: Optional[AnalyzerPayloadBuilder] = None,
         anchor_validator: Optional[AnchorAwareGraphValidator] = None,
         graph_policy_validator: Optional[GraphPolicyValidator] = None,
-        legacy_adapter: Optional[LegacyAnalysisProjectionAdapter] = None,
     ) -> None:
         self.policy = policy
         self.policy_resolver = policy_resolver or AnalyzerPolicyRuntimeResolver(policy)
@@ -470,7 +467,6 @@ class AnalyzerRuntime:
         self.payload_builder = payload_builder or AnalyzerPayloadBuilder()
         self.anchor_validator = anchor_validator or AnchorAwareGraphValidator()
         self.graph_policy_validator = graph_policy_validator or GraphPolicyValidator(policy)
-        self.legacy_adapter = legacy_adapter or LegacyAnalysisProjectionAdapter()
 
     async def execute(
         self,
@@ -544,11 +540,9 @@ class AnalyzerRuntime:
             contentCharCount=len(context.content),
         )
 
-    def _graph_result(self, result: Union[GraphAnalysisResult, AnalysisResult]) -> GraphAnalysisResult:
+    def _graph_result(self, result: GraphAnalysisResult) -> GraphAnalysisResult:
         if isinstance(result, GraphAnalysisResult):
             return result
-        if isinstance(result, AnalysisResult):
-            return self.legacy_adapter.convert(result)
         raise KnowledgeError("ANALYSIS_AI_SCHEMA_INVALID", "AI analyzer returned an unsupported analysis result")
 
     def _runtime_diagnostics(self, diagnostics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -313,7 +313,7 @@ class GraphAnalysisResponseParser:
         if path.endswith(".nodeKind"):
             return list(contract.allowed_node_kinds)
         if path.endswith(".edgeType"):
-            return list(contract.allowed_edge_kinds)
+            return list(contract.allowed_edge_types)
         if path.endswith(".claimKind"):
             return list(contract.allowed_claim_kinds)
         if path.endswith(".status"):
@@ -471,11 +471,11 @@ class GraphAnalysisResponseParser:
                         message="edgeType is required.",
                         actual=edge_type,
                         expected="allowed graph edge kind",
-                        allowed_values=list(contract.allowed_edge_kinds),
+                        allowed_values=list(contract.allowed_edge_types),
                         missing_required_field="edgeType",
                     )
                 )
-            elif str(edge_type) not in contract.allowed_edge_kinds:
+            elif str(edge_type) not in contract.allowed_edge_types:
                 details.append(
                     self._schema_error(
                         f"{path}.edgeType",
@@ -483,7 +483,7 @@ class GraphAnalysisResponseParser:
                         message="edgeType is not allowed by the effective analysis graph profiles.",
                         actual=edge_type,
                         expected="allowed graph edge kind",
-                        allowed_values=list(contract.allowed_edge_kinds),
+                        allowed_values=list(contract.allowed_edge_types),
                     )
                 )
             else:
@@ -520,7 +520,7 @@ class GraphAnalysisResponseParser:
             self._validate_metadata_contract(node.metadata, f"{path}.metadata", contract, details)
         for index, edge in enumerate(result.edges):
             path = f"$.edges[{index}]"
-            if edge.edgeType not in contract.allowed_edge_kinds:
+            if edge.edgeType not in contract.allowed_edge_types:
                 details.append(
                     self._schema_error(
                         f"{path}.edgeType",
@@ -528,7 +528,7 @@ class GraphAnalysisResponseParser:
                         message="edgeType is not allowed by the effective analysis graph profiles.",
                         actual=edge.edgeType,
                         expected="allowed graph edge kind",
-                        allowed_values=list(contract.allowed_edge_kinds),
+                        allowed_values=list(contract.allowed_edge_types),
                     )
                 )
             else:

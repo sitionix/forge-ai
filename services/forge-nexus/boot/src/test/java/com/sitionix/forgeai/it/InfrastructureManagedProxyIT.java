@@ -161,8 +161,6 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisCommand()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery()).header("X-Correlation-Id", "corr-allowlist").assertDefault();
 
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusUnsupportedKnowledgeSymbols()).assertDefault();
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusUnsupportedKnowledgeRelations()).assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusUnsupportedKnowledgeGraph()).assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusUnsupportedKnowledgeGraphSlice()).assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusOpenProxyRejected()).assertDefault();

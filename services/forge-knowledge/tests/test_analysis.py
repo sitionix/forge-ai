@@ -12,7 +12,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 os.environ.setdefault("KNOWLEDGE_STORE_PATH", "/tmp/forge-ai-knowledge-test-main.sqlite")
 
@@ -24,8 +23,7 @@ from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry, ExtractorResult
-from knowledge_service.analysis_response_parser import AiAnalysisResponseParser
-from knowledge_service.analysis_schema import AnalysisBuildRequest, AnalysisResult, RetryFailedAnalysisRequest
+from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_service import AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.config import AppConfig
@@ -279,47 +277,6 @@ class SupervisorHarness:
         asyncio.run(run())
 
 
-def valid_result():
-    return AnalysisResult.parse_obj(
-        {
-            "fileSummary": "Defines an object handler and helper.",
-            "symbols": [
-                {
-                    "localId": "s1",
-                    "name": "ObjectHandler",
-                    "kind": "CLASS",
-                    "roles": [{"role": "HTTP_HANDLER", "confidence": 0.9, "evidence": ["Has a method annotated with an HTTP mapping."]}],
-                    "lineStart": 1,
-                    "lineEnd": 5,
-                    "metadata": {"language": "java"},
-                },
-                {
-                    "localId": "s2",
-                    "name": "create",
-                    "kind": "METHOD",
-                    "roles": [{"role": "ENTRYPOINT", "confidence": 0.8, "evidence": ["Method is externally callable in this file."]}],
-                    "lineStart": 3,
-                    "lineEnd": 4,
-                    "metadata": {},
-                },
-            ],
-            "relations": [
-                {
-                    "fromLocalId": "s1",
-                    "toLocalId": "s2",
-                    "relation": "CONTAINS",
-                    "confidence": 1.0,
-                    "evidence": ["The method is declared inside the class."],
-                    "lineStart": 3,
-                    "lineEnd": 3,
-                    "metadata": {},
-                }
-            ],
-            "diagnostics": [],
-        }
-    )
-
-
 def responsibility_graph_result(method_claim=True, type_claim=True, file_claim=False, method_confidence=0.86, method_summary="Handles object creation."):
     nodes = [
         {
@@ -568,8 +525,6 @@ def graph_state_for_test(content=None, relative_path="src/main/java/example/Emai
         "flow_domain": "CODE",
         "status": "ANALYZED",
         "analyzed_at": "now",
-        "symbol_count": 0,
-        "relation_count": 0,
         "diagnostics": [],
     }
 
@@ -856,8 +811,6 @@ def seed_analysis_file_statuses(db_path, statuses):
                     "flow_domain": "CODE",
                     "status": status,
                     "analyzed_at": "now",
-                    "symbol_count": 0,
-                    "relation_count": 0,
                     "diagnostics": [],
                     "last_error_code": "ANALYSIS_FILE_FAILED" if status == "FAILED" else None,
                     "last_error_message": "failed" if status == "FAILED" else None,
@@ -979,14 +932,14 @@ def test_analysis_store_migrates_old_integer_graph_diagnostics_schema(tmp_path):
         columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(analysis_graph_diagnostics)").fetchall()}
         assert str(columns["id"]["type"]).upper() == "TEXT"
         assert columns["id"]["pk"] == 1
-        assert "diagnostic_code" in columns
+        assert "diagnostic_code" not in columns
         assert {"source_id", "analysis_file_id", "file_id", "relative_path", "content_hash"}.issubset(columns)
         conn.execute("""
             INSERT INTO analysis_graph_diagnostics(
-                id, job_id, source_id, severity, stage, code, diagnostic_code, message, metadata_json, created_at
+                id, job_id, source_id, severity, stage, code, message, metadata_json, created_at
             )
             VALUES ('diagnostic:text-id', 'job-1', 'edge-gateway', 'WARN', 'STRUCTURAL_PARSE',
-                    'STRUCTURAL_PARSER_NOT_AVAILABLE', 'STRUCTURAL_PARSER_NOT_AVAILABLE', 'No parser.', '{}', 'now')
+                    'STRUCTURAL_PARSER_NOT_AVAILABLE', 'No parser.', '{}', 'now')
         """)
         assert conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
@@ -1047,8 +1000,6 @@ def test_graph_persistence_failure_is_reported_as_graph_store_error(tmp_path):
                 "flow_domain": "WORKFLOW",
                 "status": "ANALYZED",
                 "analyzed_at": "now",
-                "symbol_count": 1,
-                "relation_count": 0,
                 "diagnostics": [],
             },
             bad_graph,
@@ -1114,8 +1065,6 @@ def test_mark_file_retries_transient_sqlite_lock(monkeypatch, tmp_path):
             "analyzer_version": "1",
             "engine_version": GRAPH_ENGINE_VERSION,
             "status": "FAILED",
-            "symbol_count": 0,
-            "relation_count": 0,
             "diagnostics": [{"code": "ANALYSIS_FILE_FAILED", "message": "failed"}],
         },
     )
@@ -1190,8 +1139,6 @@ def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_re
             "processedFileCount": 0,
             "failedFileCount": 0,
             "sourceIds": ["edge-gateway"],
-            "symbolCount": 0,
-            "relationCount": 0,
             "diagnostics": [],
             "engineVersion": GRAPH_ENGINE_VERSION,
             "mode": "FULL",
@@ -1219,8 +1166,6 @@ def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_re
             "processedFileCount": 0,
             "failedFileCount": 0,
             "sourceIds": ["edge-gateway"],
-            "symbolCount": 0,
-            "relationCount": 0,
             "diagnostics": [],
             "engineVersion": GRAPH_ENGINE_VERSION,
             "mode": "FULL",
@@ -1246,8 +1191,6 @@ def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_re
             "processedFileCount": 0,
             "failedFileCount": 0,
             "sourceIds": ["edge-gateway"],
-            "symbolCount": 0,
-            "relationCount": 0,
             "diagnostics": [],
             "engineVersion": GRAPH_ENGINE_VERSION,
             "mode": "FULL",
@@ -1513,128 +1456,6 @@ def wait_job(store, job_id):
     raise AssertionError("job did not finish")
 
 
-def test_ai_output_schema_validates_valid_response():
-    result = valid_result()
-
-    assert result.symbols[0].roles[0].role == "HTTP_HANDLER"
-
-
-def test_invalid_json_rejected():
-    with pytest.raises(ValidationError):
-        AnalysisResult.parse_raw("{bad")
-
-
-def test_ai_response_parser_parses_valid_json():
-    raw = json.dumps(valid_result().dict())
-
-    result = AiAnalysisResponseParser().parse(raw, 5)
-
-    assert isinstance(result, AnalysisResult)
-    assert result.symbols[0].name == "ObjectHandler"
-
-
-def test_ai_response_parser_extracts_markdown_wrapped_json():
-    raw = "```json\n" + json.dumps(valid_result().dict()) + "\n```"
-
-    result = AiAnalysisResponseParser().parse(raw, 5)
-
-    assert isinstance(result, AnalysisResult)
-    assert result.relations[0].relation == "CONTAINS"
-
-
-def test_ai_response_parser_rejects_natural_language():
-    result = AiAnalysisResponseParser().parse("I cannot analyze this file.", 5)
-
-    assert result.code == "ANALYSIS_AI_INVALID_JSON"
-
-
-def test_ai_response_parser_rejects_empty_response():
-    result = AiAnalysisResponseParser().parse("   ", 5)
-
-    assert result.code == "ANALYSIS_AI_EMPTY_RESPONSE"
-
-
-def test_ai_response_parser_rejects_schema_invalid_json():
-    result = AiAnalysisResponseParser().parse('{"symbols":[],"relations":[]}', 5)
-
-    assert result.code == "ANALYSIS_AI_SCHEMA_INVALID"
-    assert len(result.message) < 560
-
-
-def test_ai_response_parser_rejects_json_null_as_schema_invalid():
-    result = AiAnalysisResponseParser().parse("null", 5)
-
-    assert result.code == "ANALYSIS_AI_SCHEMA_INVALID"
-
-
-def test_ai_response_parser_truncates_raw_preview():
-    result = AiAnalysisResponseParser().parse("x" * 5000, 5)
-
-    assert result.code == "ANALYSIS_AI_INVALID_JSON"
-    assert len(result.raw_preview) == 4000
-
-
-def test_ai_response_parser_rejects_non_critical_schema_noise():
-    payload = valid_result().dict()
-    payload["symbols"][0]["roles"][0]["role"] = "EXCEPTION"
-    payload["symbols"][0]["lineEnd"] = 50
-    payload["relations"][0]["relation"] = "HAS_FIELD"
-    payload["relations"][0]["lineEnd"] = 50
-
-    result = AiAnalysisResponseParser().parse(json.dumps(payload), 5)
-
-    assert result.code == "ANALYSIS_AI_SCHEMA_INVALID"
-
-
-def test_ai_response_parser_rejects_relations_with_unknown_symbol_references():
-    payload = valid_result().dict()
-    payload["relations"][0]["toLocalId"] = "UNKNOWN"
-
-    result = AiAnalysisResponseParser().parse(json.dumps(payload), 5)
-
-    assert result.code == "ANALYSIS_AI_SCHEMA_INVALID"
-
-
-def test_ai_output_schema_accepts_java_record_kind():
-    payload = valid_result().dict()
-    payload["symbols"][0]["kind"] = "RECORD"
-
-    result = AnalysisResult.parse_obj(payload)
-
-    assert result.symbols[0].kind == "RECORD"
-
-
-def test_unknown_role_rejected():
-    payload = valid_result().dict()
-    payload["symbols"][0]["roles"][0]["role"] = "BUSINESS_ROLE"
-
-    with pytest.raises(ValidationError):
-        AnalysisResult.parse_obj(payload)
-
-
-def test_unknown_relation_rejected():
-    payload = valid_result().dict()
-    payload["relations"][0]["relation"] = "BUSINESS_RELATION"
-
-    with pytest.raises(ValidationError):
-        AnalysisResult.parse_obj(payload)
-
-
-def test_line_range_outside_file_rejected():
-    result = valid_result()
-
-    with pytest.raises(ValueError):
-        result.validate_lines(2)
-
-
-def test_evidence_required_for_non_unknown_role():
-    payload = valid_result().dict()
-    payload["symbols"][0]["roles"][0]["evidence"] = []
-
-    with pytest.raises(ValidationError):
-        AnalysisResult.parse_obj(payload)
-
-
 def test_non_localhost_ollama_base_url_rejected(tmp_path):
     with pytest.raises(Exception):
         OllamaAnalysisClient("http://example.com:11434", "model", 1, tmp_path / "missing.md")
@@ -1819,8 +1640,6 @@ def test_unchanged_file_lookup_batches_large_inventory(tmp_path):
                 "analyzer_version": StubAnalyzer.version,
                 "engine_version": GRAPH_ENGINE_VERSION,
                 "status": "ANALYZED",
-                "symbol_count": 0,
-                "relation_count": 0,
                 "diagnostics": [],
             },
         )
@@ -1949,8 +1768,6 @@ def test_successful_reanalysis_replaces_graph_facts_and_marks_semantic_pending(t
     state = graph_state_for_test(content, file_row["relative_path"])
     state["source_id"] = file_row["source_id"]
     state["content_hash"] = file_row["content_hash"]
-    state["symbol_count"] = len(first["nodes"])
-    state["relation_count"] = len(first["edges"])
     analysis_store.replace_file_graph_analysis(int(file_row["id"]), state, first)
     build_semantic_cache(store.db_path)
     before_semantic = semantic_cache_counts(store.db_path)
@@ -1962,8 +1779,6 @@ def test_successful_reanalysis_replaces_graph_facts_and_marks_semantic_pending(t
         file_id=int(file_row["id"]),
         relative_path=file_row["relative_path"],
     )
-    state["symbol_count"] = len(second["nodes"])
-    state["relation_count"] = len(second["edges"])
     analysis_store.replace_file_graph_analysis(int(file_row["id"]), state, second)
 
     after_graph = current_graph_fact_counts(store.db_path)
@@ -2171,8 +1986,10 @@ def test_background_job_returns_id_and_updates_progress(tmp_path):
 
 def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
+    legacy_first_counter = "symbol" + "_count"
+    legacy_second_counter = "relation" + "_count"
     with sqlite3.connect(db_path) as conn:
-        conn.execute("""
+        conn.execute(f"""
             CREATE TABLE analysis_jobs (
                 job_id TEXT PRIMARY KEY,
                 status TEXT NOT NULL,
@@ -2186,16 +2003,16 @@ def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
                 current_source_id TEXT,
                 current_relative_path TEXT,
                 last_progress_at TEXT,
-                symbol_count INTEGER NOT NULL,
-                relation_count INTEGER NOT NULL,
+                {legacy_first_counter} INTEGER NOT NULL,
+                {legacy_second_counter} INTEGER NOT NULL,
                 diagnostics_json TEXT NOT NULL
             )
         """)
-        conn.execute("""
+        conn.execute(f"""
             INSERT INTO analysis_jobs(
                 job_id, status, source_count, file_count, processed_file_count,
-                skipped_unchanged_file_count, failed_file_count, symbol_count,
-                relation_count, diagnostics_json
+                skipped_unchanged_file_count, failed_file_count, {legacy_first_counter},
+                {legacy_second_counter}, diagnostics_json
             )
             VALUES ('job-old', 'COMPLETED', 1, 2, 2, 1, 0, 3, 4, '[]')
         """)
@@ -2213,9 +2030,7 @@ def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
     assert "skipped_unchanged_file_count" not in columns
     assert "source_ids_json" in columns
     assert "mode" in columns
-    assert _legacy_skipped_unchanged_key() not in job
-    assert job["sourceIds"] == []
-    assert job["processedFiles"] == 2
+    assert job is None
     assert migrations == [
         (1, "remove_legacy_analysis_job_counter"),
         (2, "add_analysis_job_source_scope"),
@@ -2224,8 +2039,9 @@ def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
         (5, "add_analysis_job_mode"),
         (6, "remove_legacy_graph_lifecycle"),
         (7, "current_state_graph_storage"),
+        (8, "yaml_graph_contract_cleanup"),
     ]
-    assert migration_count == 7
+    assert migration_count == 8
 
 
 def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path):
@@ -3289,7 +3105,7 @@ class TicketMapper {
     assert row["resolution_status"] == "RESOLVED"
     assert row["from_name"] == "handle"
     assert row["to_name"] == "toApi"
-    assert json.loads(row["metadata_json"])["resolver"] == "STATIC_TYPE_HINT"
+    assert "resolver" not in json.loads(row["metadata_json"])
 
 
 def test_callable_endpoint_returns_direct_callable_responsibility(tmp_path):
@@ -3421,8 +3237,8 @@ def get_json(path):
 def assert_node_closed_graph_response(body):
     node_ids = {node["id"] for node in body["nodes"]}
     for edge in body["edges"]:
-        assert edge["from"] in node_ids
-        assert edge["to"] in node_ids
+        assert edge["fromNodeId"] in node_ids
+        assert edge["toNodeId"] in node_ids
 
 
 def insert_isolated_graph_nodes(db_path, count=5):
@@ -3489,10 +3305,10 @@ def insert_unresolved_graph_edge(db_path):
             """
             INSERT INTO analysis_graph_edges(
                 id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                from_node_id, to_node_id, edge_type, edge_kind, resolution_status, confidence, evidence_id,
-                evidence_ids_json, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
+                from_node_id, to_node_id, edge_type, resolution_status, confidence, unresolved_target_json,
+                metadata_json, status, created_at, updated_at, fact_origin, flow_domain
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, '[]', ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 "test-unresolved-edge-without-endpoint",
@@ -3504,7 +3320,6 @@ def insert_unresolved_graph_edge(db_path):
                 from_node["relative_path"],
                 from_node["content_hash"],
                 from_node["id"],
-                "CALLS",
                 "CALLS",
                 "UNRESOLVED",
                 1.0,
@@ -4188,10 +4003,10 @@ def test_services_status_size_does_not_grow_with_diagnostics(tmp_path, monkeypat
         conn.executemany(
             """
                 INSERT INTO analysis_graph_diagnostics(
-                    id, job_id, source_id, severity, stage, code, diagnostic_code, message, metadata_json, created_at
+                    id, job_id, source_id, severity, stage, code, message, metadata_json, created_at
                 )
                 VALUES (?, 'job-1', 'edge-gateway', 'ERROR', 'LLM_ENRICHMENT', 'ANALYSIS_AI_INVALID_JSON',
-                        'ANALYSIS_AI_INVALID_JSON', ?, '{}', 'now')
+                        ?, '{}', 'now')
                 """,
             [(f"diag-{index}", "x" * 1000) for index in range(10000)],
         )

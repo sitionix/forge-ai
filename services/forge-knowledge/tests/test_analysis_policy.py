@@ -32,7 +32,7 @@ def test_loads_default_policy_and_validates_references():
 
     for kind in policy.semantic.indexed_node_kinds:
         assert policy.graph.nodes[kind].semantic_eligible is True
-    for kind in policy.semantic.indexed_edge_kinds:
+    for kind in policy.semantic.indexed_edge_types:
         assert policy.graph.edges[kind].semantic_eligible is True
     for kind in policy.semantic.indexed_claim_kinds:
         assert policy.graph.claims[kind].semantic_eligible is True

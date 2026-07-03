@@ -35,10 +35,10 @@ class AnalysisPolicyResolution:
     artifact_graph_profiles: List[str] = field(default_factory=list)
     effective_graph_profiles: List[str] = field(default_factory=list)
     allowed_node_kinds: List[str] = field(default_factory=list)
-    allowed_edge_kinds: List[str] = field(default_factory=list)
+    allowed_edge_types: List[str] = field(default_factory=list)
     allowed_claim_kinds: List[str] = field(default_factory=list)
     semantic_node_kinds: List[str] = field(default_factory=list)
-    semantic_edge_kinds: List[str] = field(default_factory=list)
+    semantic_edge_types: List[str] = field(default_factory=list)
     semantic_claim_kinds: List[str] = field(default_factory=list)
     status_kinds: List[str] = field(default_factory=list)
     origin_kinds: List[str] = field(default_factory=list)
@@ -106,7 +106,7 @@ class AnalysisPolicyResolver:
         artifact_labels, artifact_graph_profiles = _resolve_artifacts(format_policy, content)
         effective_graph_profiles = _ordered_union([format_policy.graph_profiles, artifact_graph_profiles])
         allowed_node_kinds = _allowed_kinds(self.policy.graph_profiles, effective_graph_profiles, "nodes")
-        allowed_edge_kinds = _allowed_kinds(self.policy.graph_profiles, effective_graph_profiles, "edges")
+        allowed_edge_types = _allowed_kinds(self.policy.graph_profiles, effective_graph_profiles, "edges")
         allowed_claim_kinds = _allowed_kinds(self.policy.graph_profiles, effective_graph_profiles, "claims")
 
         return AnalysisPolicyResolution(
@@ -124,10 +124,10 @@ class AnalysisPolicyResolver:
             artifact_graph_profiles=artifact_graph_profiles,
             effective_graph_profiles=effective_graph_profiles,
             allowed_node_kinds=allowed_node_kinds,
-            allowed_edge_kinds=allowed_edge_kinds,
+            allowed_edge_types=allowed_edge_types,
             allowed_claim_kinds=allowed_claim_kinds,
             semantic_node_kinds=[kind for kind in self.policy.semantic.indexed_node_kinds if kind in allowed_node_kinds],
-            semantic_edge_kinds=[kind for kind in self.policy.semantic.indexed_edge_kinds if kind in allowed_edge_kinds],
+            semantic_edge_types=[kind for kind in self.policy.semantic.indexed_edge_types if kind in allowed_edge_types],
             semantic_claim_kinds=[kind for kind in self.policy.semantic.indexed_claim_kinds if kind in allowed_claim_kinds],
             status_kinds=list(self.policy.graph.statuses.keys()),
             origin_kinds=list(self.policy.graph.origins.keys()),

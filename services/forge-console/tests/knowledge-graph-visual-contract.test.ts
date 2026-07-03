@@ -24,7 +24,7 @@ function graphData(revision = 'rev-a') {
     ...manifest(revision),
     graphRevision: revision,
     nodes: [node('n1'), { ...node('n2'), nodeKind: 'TYPE' }],
-    edges: [{ id: 'e1', from: 'n1', to: 'n2', edgeType: 'CALLS' }],
+    edges: [{ id: 'e1', fromNodeId: 'n1', toNodeId: 'n2', edgeType: 'CALLS' }],
     meta: { returnedNodeCount: 2, returnedEdgeCount: 1, totalNodeCount: 2, totalEdgeCount: 1 },
     status: { analysisStatus: 'COMPLETED' }
   };
@@ -41,8 +41,8 @@ function largeGraphData(count = 320, sourceId = 'forge-ai', revision = `rev-${so
   }));
   const edges = Array.from({ length: count - 1 }, (_, index) => ({
     id: `${sourceId}-edge-${String(index).padStart(5, '0')}`,
-    from: nodes[index]?.id || '',
-    to: nodes[index + 1]?.id || '',
+    fromNodeId: nodes[index]?.id || '',
+    toNodeId: nodes[index + 1]?.id || '',
     edgeType: index % 2 === 0 ? 'CALLS' : 'USES'
   }));
   return {
@@ -217,7 +217,7 @@ function overviewPayload() {
         percent: 100,
         activeJobId: null
       },
-      facts: { symbolCount: 20, relationCount: 19 }
+      facts: {}
     }],
     activeJob: null
   };
@@ -312,8 +312,8 @@ function automationGraphData() {
   }));
   const edges = Array.from({ length: 133 }, (_, index) => ({
     id: `atmssox-edge-${String(index).padStart(3, '0')}`,
-    from: nodes[index % nodes.length]?.id || '',
-    to: nodes[(index + 1) % nodes.length]?.id || '',
+    fromNodeId: nodes[index % nodes.length]?.id || '',
+    toNodeId: nodes[(index + 1) % nodes.length]?.id || '',
     edgeType: index % 2 === 0 ? 'CALLS' : 'REFERENCES'
   }));
   return {
@@ -1853,7 +1853,7 @@ describe('Knowledge graph modular contract', () => {
     const dom = graphDom();
     const client = {
       loadGraphData: vi.fn().mockResolvedValue(graphData('rev-full')),
-      loadNodeDetail: vi.fn().mockResolvedValue({ item: { id: 'n1', relations: { incoming: { totalCount: 0, items: [] }, outgoing: { totalCount: 0, items: [] } } } }),
+      loadNodeDetail: vi.fn().mockResolvedValue({ item: { id: 'n1', connections: { incoming: { totalCount: 0, items: [] }, outgoing: { totalCount: 0, items: [] } } } }),
       loadEdgeDetail: vi.fn()
     };
     const http = { get: vi.fn(() => Promise.resolve(metadataPayload())) };

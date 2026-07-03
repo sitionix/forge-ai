@@ -583,15 +583,7 @@ function renderKnowledgeInventoryMini(inventory) {
 }
 
 function renderKnowledgeFactsCell(facts) {
-  if (!facts || (facts.symbolCount === undefined && facts.relationCount === undefined)) {
-    return '<div class="knowledge-facts-cell"><strong>Graph</strong><small>open details</small></div>';
-  }
-  return `
-    <div class="knowledge-facts-cell">
-      <strong>symbols ${escapeHtml(facts?.symbolCount ?? 0)}</strong>
-      <small>relations ${escapeHtml(facts?.relationCount ?? 0)}</small>
-    </div>
-  `;
+  return '<div class="knowledge-facts-cell"><strong>Graph</strong><small>open details</small></div>';
 }
 
 function renderKnowledgeAnalysisProgress(analysis) {

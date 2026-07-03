@@ -72,7 +72,7 @@ def test_it_graph_03_manifest_pages_details_and_view_use_graph_id(tmp_path):
     assert node_detail["graphId"] == manifest["graphId"]
     assert edge_detail["graphId"] == manifest["graphId"]
     assert view["graphId"] == manifest["graphId"]
-    assert {edge["from"] for edge in view["edges"]}.issubset({node["id"] for node in view["nodes"]})
+    assert {edge["fromNodeId"] for edge in view["edges"]}.issubset({node["id"] for node in view["nodes"]})
 
 
 def test_it_graph_04_revision_rejects_stale_graph_id_after_replace(tmp_path):

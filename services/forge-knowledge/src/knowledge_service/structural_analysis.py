@@ -329,13 +329,8 @@ class StaticGraphMaterializer:
                     "targetTypeText": callsite.target_type_text,
                     "targetTypeHint": callsite.target_type_text,
                     "callKind": callsite.call_kind,
-                    "rawText": callsite.raw_text,
-                    "rawCallText": callsite.raw_text,
                     "unresolvedReason": callsite.unresolved_reason,
                     "resolutionReason": callsite.resolution_reason,
-                    "resolverSignals": callsite.resolver_signals,
-                    "ownerTypeHint": callsite.owner_type_hint,
-                    "importHint": callsite.import_hint,
                 },
             )
             call_metadata = classify_call_metadata(

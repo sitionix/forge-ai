@@ -677,7 +677,9 @@ def _semantic_build_coordinator(app: FastAPI, config: AppConfig, db_path) -> Sem
     _, lock = _semantic_job_state(app)
     factory = getattr(app.state, "semantic_builder_factory", None)
     if factory is None:
-        factory = lambda: _semantic_index_builder(config, db_path)
+        def factory():
+            return _semantic_index_builder(config, db_path)
+
     coordinator = SemanticBuildCoordinator(db_path, lock, factory)
     app.state.semantic_build_coordinator = coordinator
     return coordinator

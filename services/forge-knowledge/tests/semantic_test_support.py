@@ -72,13 +72,21 @@ def seed_semantic_graph(
                 """
                 INSERT OR REPLACE INTO analysis_files(
                     file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status,
-                    analyzed_at, symbol_count, relation_count, diagnostics_json, engine_version, flow_domain
+                    analyzed_at, diagnostics_json, engine_version, flow_domain
                 )
-                VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', ?, ?, ?, '[]', 'GRAPH_V1', 'CODE')
+                VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', ?, '[]', 'GRAPH_V1', 'CODE')
                 """,
-                (file_id, source_id, relative_path, content_hash, now, len(node_rows), len(edges or [])),
+                (file_id, source_id, relative_path, content_hash, now),
             )
 
+        conn.execute(
+            "DELETE FROM analysis_graph_claim_evidence WHERE claim_id IN (SELECT id FROM analysis_graph_claims WHERE source_id = ?)",
+            (source_id,),
+        )
+        conn.execute(
+            "DELETE FROM analysis_graph_edge_evidence WHERE edge_id IN (SELECT id FROM analysis_graph_edges WHERE source_id = ?)",
+            (source_id,),
+        )
         for table in (
             "semantic_documents",
             "analysis_graph_claims",
@@ -159,9 +167,9 @@ def seed_semantic_graph(
                 """
                 INSERT OR REPLACE INTO analysis_graph_claims(
                     id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
-                    evidence_ids_json, metadata_json, rejection_reason, created_at, updated_at, fact_origin, flow_domain
+                    metadata_json, rejection_reason, created_at, updated_at, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0.9, ?, ?, '{}', ?, ?, ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, 0.9, ?, '{}', ?, ?, ?, 'STATIC', 'CODE')
                 """,
                 (
                     claim["id"],
@@ -171,12 +179,19 @@ def seed_semantic_graph(
                     claim.get("kind", "RESPONSIBILITY"),
                     claim.get("summary", ""),
                     claim.get("status", "TRUSTED"),
-                    json.dumps(claim.get("evidence_ids", [])),
                     claim.get("rejection_reason"),
                     now,
                     now,
                 ),
             )
+            for evidence_id in claim.get("evidence_ids", []):
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO analysis_graph_claim_evidence(claim_id, evidence_id)
+                    VALUES (?, ?)
+                    """,
+                    (claim["id"], evidence_id),
+                )
 
         known_evidence = set(evidence_rows)
         for index, edge in enumerate(edges or [], start=1):
@@ -212,10 +227,10 @@ def seed_semantic_graph(
                 """
                 INSERT OR REPLACE INTO analysis_graph_edges(
                     id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                    from_node_id, to_node_id, edge_type, edge_kind, resolution_status, confidence, evidence_id,
-                    evidence_ids_json, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
+                    from_node_id, to_node_id, edge_type, resolution_status, confidence,
+                    unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.91, ?, ?, ?, '{}', ?, ?, ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.91, ?, '{}', ?, ?, ?, 'STATIC', 'CODE')
                 """,
                 (
                     edge["id"],
@@ -229,15 +244,19 @@ def seed_semantic_graph(
                     edge["from"],
                     edge.get("to"),
                     edge.get("type", "CALLS"),
-                    edge.get("kind") or edge.get("type", "CALLS"),
                     edge.get("resolution", "RESOLVED" if edge.get("to") else "UNRESOLVED"),
-                    evidence_id,
-                    json.dumps([evidence_id]),
                     json.dumps(edge.get("unresolved")) if edge.get("unresolved") else None,
                     edge.get("status", "TRUSTED"),
                     now,
                     now,
                 ),
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO analysis_graph_edge_evidence(edge_id, evidence_id)
+                VALUES (?, ?)
+                """,
+                (edge["id"], evidence_id),
             )
 
         graph_id = SemanticIndexStore.compute_graph_revision_conn(conn, source_id)

@@ -133,7 +133,7 @@ class GraphContract:
 @dataclass(frozen=True)
 class SemanticPolicy:
     indexed_node_kinds: List[str]
-    indexed_edge_kinds: List[str]
+    indexed_edge_types: List[str]
     indexed_claim_kinds: List[str]
     unsupported_semantic_kind: str
 

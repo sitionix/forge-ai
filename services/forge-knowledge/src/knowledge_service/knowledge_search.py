@@ -217,8 +217,8 @@ class SearchDocument:
     @classmethod
     def from_graph_node(cls, row: Dict[str, Any]) -> "SearchDocument":
         source_id = str(row.get("sourceId") or row.get("source_id") or "")
-        node_id = str(row.get("id") or row.get("nodeId") or row.get("graphNodeId") or "")
-        kind = str(row.get("kind") or row.get("nodeKind") or row.get("node_kind") or "")
+        node_id = str(row.get("id") or row.get("nodeId") or "")
+        kind = str(row.get("nodeKind") or row.get("node_kind") or "")
         name = str(row.get("name") or "")
         label = str(row.get("label") or row.get("displayName") or row.get("display_name") or name or node_id)
         stable_key = str(row.get("stableKey") or row.get("stable_key") or node_id)

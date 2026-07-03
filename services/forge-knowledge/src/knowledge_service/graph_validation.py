@@ -123,7 +123,7 @@ class GraphRepairPromptBuilder:
             },
             "allowedValues": {
                 "nodeKind": list(effective_contract.allowed_node_kinds),
-                "edgeType": list(effective_contract.allowed_edge_kinds),
+                "edgeType": list(effective_contract.allowed_edge_types),
                 "claimKind": list(effective_contract.allowed_claim_kinds),
                 "status": list(effective_contract.allowed_statuses),
                 "factOrigin": list(effective_contract.allowed_origins),
