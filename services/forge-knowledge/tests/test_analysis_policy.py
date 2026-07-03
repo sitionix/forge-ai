@@ -96,6 +96,25 @@ def test_invalid_llm_mode_fails_with_allowed_values(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("field", "missing_kind", "declared_path"),
+    [
+        ("nodes", "MISSING_NODE", "nodes"),
+        ("edges", "MISSING_EDGE", "edges"),
+        ("claims", "MISSING_CLAIM", "claims"),
+    ],
+)
+def test_extractor_produces_references_must_be_declared_graph_kinds_with_allowed_values(tmp_path, field, missing_kind, declared_path):
+    data = _policy_data()
+    data["analysis"]["extractors"]["file_anchor"]["produces"].setdefault(field, []).append(missing_kind)
+
+    error = _load_invalid(tmp_path, data)
+    diagnostic = next(item for item in error.diagnostics if item.invalid_value == missing_kind)
+
+    assert f"undeclared {field[:-1]} kind" in diagnostic.reason
+    assert diagnostic.allowed_values == sorted(data["analysis"]["graph"][declared_path].keys())
+
+
+@pytest.mark.parametrize(
     ("relative_path", "format_id", "extractor_id", "policy_id", "prompt_id"),
     [
         ("src/Foo.java", "java", "java_ast", "parser_assisted_graph_enrichment", "code_graph_enrichment"),
@@ -119,9 +138,9 @@ def test_resolves_supported_formats(relative_path, format_id, extractor_id, poli
     assert resolution.source_view == "contentLines"
     assert resolution.evidence_required is True
     assert "FILE" in resolution.allowed_node_kinds
-    assert resolution.status_kinds == ["TRUSTED", "CANDIDATE", "REJECTED", "DERIVED", "STALE"]
+    assert resolution.status_kinds == ["TRUSTED", "LOW_CONFIDENCE", "DEBUG_ONLY", "CANDIDATE", "REJECTED", "DERIVED", "STALE"]
     assert resolution.origin_kinds == ["STATIC", "LLM", "DERIVED", "RESOLVER"]
-    assert resolution.evidence_kinds == ["NODE", "EDGE", "CLAIM"]
+    assert resolution.evidence_kinds == ["NODE", "EDGE", "CLAIM", "CALLSITE"]
 
 
 @pytest.mark.parametrize(

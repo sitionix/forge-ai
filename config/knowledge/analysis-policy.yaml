@@ -106,6 +106,14 @@ analysis:
       TRUSTED:
         persistGraphFact: true
         requiresValidEvidence: true
+      LOW_CONFIDENCE:
+        persistGraphFact: true
+        requiresValidEvidence: true
+        queryEligible: true
+      DEBUG_ONLY:
+        persistGraphFact: true
+        requiresValidEvidence: true
+        queryEligible: false
       CANDIDATE:
         persistGraphFact: true
         requiresValidEvidence: true
@@ -135,6 +143,7 @@ analysis:
       NODE: {}
       EDGE: {}
       CLAIM: {}
+      CALLSITE: {}
 
     resolutionStatuses:
       RESOLVED: {}
