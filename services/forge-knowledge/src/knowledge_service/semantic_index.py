@@ -113,15 +113,12 @@ def ensure_semantic_index_schema(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TRIGGER IF EXISTS trg_analysis_file_delete_current_graph")
     if _table_exists(conn, "semantic_documents"):
         columns = _table_columns(conn, "semantic_documents")
-        legacy_claim_ids = "claim_ids" + "_json"
-        legacy_evidence_ids = "evidence_ids" + "_json"
-        if "graph_revision" in columns or "graph_id" not in columns or legacy_claim_ids in columns or legacy_evidence_ids in columns:
+        if "graph_revision" in columns or "graph_id" not in columns:
             conn.execute("DROP TABLE IF EXISTS semantic_vectors")
             conn.execute("DROP TABLE IF EXISTS semantic_documents")
     if _table_exists(conn, "semantic_vectors"):
         columns = _table_columns(conn, "semantic_vectors")
-        legacy_vector_payload = "vector" + "_blob"
-        if "graph_revision" in columns or "graph_id" not in columns or legacy_vector_payload in columns:
+        if "graph_revision" in columns or "graph_id" not in columns:
             conn.execute("DROP TABLE IF EXISTS semantic_vectors")
             conn.execute("DROP TABLE IF EXISTS semantic_documents")
     conn.execute(
@@ -825,7 +822,7 @@ _REVISION_QUERIES: tuple[tuple[str, str], ...] = (
         "nodes",
         """
         SELECT id, stable_key, node_kind, language, name, qualified_name, display_name,
-               parent_node_id, relative_path, content_hash, line_start, line_end, confidence, status,
+               parent_node_id, parameter_count, relative_path, content_hash, line_start, line_end, confidence, status,
                fact_origin, flow_domain
         FROM analysis_graph_nodes
         WHERE source_id = ?
@@ -855,7 +852,7 @@ _REVISION_QUERIES: tuple[tuple[str, str], ...] = (
     (
         "edges",
         """
-        SELECT id, from_node_id, to_node_id, edge_type, resolution_status, confidence,
+        SELECT id, from_node_id, to_node_id, edge_type, resolution_status, argument_count, confidence,
                unresolved_target_json, status, fact_origin,
                flow_domain
         FROM analysis_graph_edges

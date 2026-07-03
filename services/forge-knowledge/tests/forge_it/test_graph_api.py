@@ -15,9 +15,6 @@ from knowledge_service.inventory_store import InventoryStore
 pytestmark = pytest.mark.forge_it
 
 
-LEGACY_GRAPH_OBJECTS = {"analysis_symbols", "analysis_symbol_roles", "analysis_relations"}
-
-
 def test_it_graph_01_fresh_database_schema_is_current_state_only(tmp_path):
     _, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     deps.inventory_store.init()
@@ -25,16 +22,16 @@ def test_it_graph_01_fresh_database_schema_is_current_state_only(tmp_path):
 
     objects = sqlite_objects(app_config.store_path)
 
-    assert LEGACY_GRAPH_OBJECTS.isdisjoint(objects)
     assert not any(name.startswith("graph_") for name in objects)
     assert {"analysis_graph_state", "analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_claim_evidence", "analysis_graph_edge_evidence"}.issubset(objects)
-    removed_columns = {"symbol_count", "relation_count", "edge_kind", "diagnostic_code", "evidence_id", "evidence_ids_json", "vector_blob"}
     for table in ("analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_claims", "analysis_graph_evidence"):
         columns = table_columns(app_config.store_path, table)
         assert {"id", "source_id"}.issubset(columns)
-        assert removed_columns.isdisjoint(columns)
     assert "parameter_count" in table_columns(app_config.store_path, "analysis_graph_nodes")
     assert "argument_count" in table_columns(app_config.store_path, "analysis_graph_edges")
+    assert "metadata_json" not in table_columns(app_config.store_path, "analysis_graph_nodes")
+    assert "metadata_json" not in table_columns(app_config.store_path, "analysis_graph_evidence")
+    assert "metadata_json" not in table_columns(app_config.store_path, "analysis_graph_claims")
     assert {"document_id", "source_id", "node_id", "graph_id"}.issubset(table_columns(app_config.store_path, "semantic_documents"))
     assert fk_delete_rule(app_config.store_path, "analysis_job_files", "analysis_jobs", "job_id") == "CASCADE"
     assert fk_delete_rule(app_config.store_path, "analysis_graph_nodes", "analysis_files", "analysis_file_id") == "CASCADE"

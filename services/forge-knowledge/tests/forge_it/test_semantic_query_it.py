@@ -136,13 +136,6 @@ def seed_semantic_flow_fixture(db_path, *, graph_suffix="one", refresh_overview=
             "path": "src/knowledge/query_service.py",
         },
         {
-            "id": "knowledge-query-endpoint",
-            "kind": "EXTERNAL",
-            "name": "/api/v1/knowledge/query",
-            "qualified": "/api/v1/knowledge/query",
-            "path": "src/jarvis/knowledge_client.py",
-        },
-        {
             "id": "wiremock-query-params",
             "kind": "TYPE",
             "name": "WireMockQueryParams",
@@ -172,9 +165,10 @@ def seed_semantic_flow_fixture(db_path, *, graph_suffix="one", refresh_overview=
             {
                 "id": "edge-client-endpoint",
                 "from": "jarvis-knowledge-client-query",
-                "to": "knowledge-query-endpoint",
+                "to": None,
                 "type": "CALLS",
                 "resolution": "EXTERNAL_TARGET",
+                "unresolved": {"name": "/api/v1/knowledge/query", "kindHint": "HTTP_ENDPOINT"},
             },
         ],
         claims=[

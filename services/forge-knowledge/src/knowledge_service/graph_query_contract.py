@@ -66,10 +66,6 @@ class GraphQueryContract:
         return self.required_node_kind("CALLABLE")
 
     @property
-    def external_node_kind(self) -> str:
-        return self.required_node_kind("EXTERNAL")
-
-    @property
     def calls_edge_type(self) -> str:
         return self.required_edge_type("CALLS")
 
@@ -136,6 +132,7 @@ class GraphQueryContract:
         return (
             self.unresolved_status,
             self.dynamic_target_status,
+            self.external_target_status,
         )
 
     def hidden_unresolved_resolution_statuses(self) -> tuple[str, ...]:

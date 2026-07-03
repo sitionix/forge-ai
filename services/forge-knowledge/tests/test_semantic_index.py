@@ -168,10 +168,10 @@ def _seed_inventory_membership_lifecycle(
             INSERT OR REPLACE INTO analysis_graph_nodes(
                 id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
                 stable_key, node_kind, language, name, qualified_name, display_name, parent_node_id,
-                line_start, line_end, confidence, status, metadata_json, created_at, updated_at, fact_origin, flow_domain
+                line_start, line_end, confidence, status, created_at, updated_at, fact_origin, flow_domain
             )
             VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, ?, 'CALLABLE', 'java', 'handle', 'A.handle', 'handle', NULL,
-                    1, 1, 0.9, 'TRUSTED', '{}', ?, ?, 'AI', 'CODE')
+                    1, 1, 0.9, 'TRUSTED', ?, ?, 'AI', 'CODE')
             """,
             (
                 node_id,
@@ -190,9 +190,9 @@ def _seed_inventory_membership_lifecycle(
             """
             INSERT OR REPLACE INTO analysis_graph_evidence(
                 id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                line_start, line_end, excerpt, excerpt_hash, evidence_kind, metadata_json, created_at, updated_at, fact_origin, flow_domain
+                line_start, line_end, excerpt, excerpt_hash, evidence_kind, created_at, updated_at, fact_origin, flow_domain
             )
-            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, 1, 1, 'class X {}', 'excerpt-hash', 'CLAIM', '{}', ?, ?, 'AI', 'CODE')
+            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, 1, 1, 'class X {}', 'excerpt-hash', 'CLAIM', ?, ?, 'AI', 'CODE')
             """,
             (evidence_id, source_id, analysis_file_id, analysis_file_id, analysis_file_id, analysis_relative_path, analysis_content_hash, now, now),
         )
@@ -223,9 +223,9 @@ def _seed_inventory_membership_lifecycle(
             """
             INSERT OR REPLACE INTO analysis_graph_claims(
                 id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
-                metadata_json, rejection_reason, created_at, updated_at, fact_origin, flow_domain
+                rejection_reason, created_at, updated_at, fact_origin, flow_domain
             )
-            VALUES (?, 'job-x', ?, ?, 'RESPONSIBILITY', 'Handles x.', 0.9, 'TRUSTED', '{}', NULL, ?, ?, 'AI', 'CODE')
+            VALUES (?, 'job-x', ?, ?, 'RESPONSIBILITY', 'Handles x.', 0.9, 'TRUSTED', NULL, ?, ?, 'AI', 'CODE')
             """,
             (claim_id, source_id, node_id, now, now),
         )
@@ -498,6 +498,37 @@ def test_semantic_index_builder_stale_to_ready_for_new_revision(tmp_path):
     assert new_state.status == SemanticIndexStatus.READY
     assert new_state.graph_revision != old_state.graph_revision
     assert new_state.total_node_count == 2
+
+
+def test_graph_revision_tracks_arity_fields_and_ignores_edge_debug_metadata(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    source_id = "semantic-source"
+    seed_semantic_graph(
+        db_path,
+        source_id=source_id,
+        nodes=[
+            {"id": "caller", "kind": "CALLABLE", "name": "Caller.handle", "qualified": "fixture.Caller.handle"},
+            {"id": "target", "kind": "CALLABLE", "name": "Target.call", "qualified": "fixture.Target.call"},
+        ],
+        edges=[{"id": "call-edge", "from": "caller", "to": "target", "type": "CALLS"}],
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        baseline = _current_graph_revision(conn, source_id)
+        conn.execute("UPDATE analysis_graph_edges SET metadata_json = json_set(metadata_json, '$.debugNote', 'changed') WHERE id = 'call-edge'")
+        assert _current_graph_revision(conn, source_id) == baseline
+
+        conn.execute("UPDATE analysis_graph_nodes SET parameter_count = 1 WHERE id = 'target'")
+        parameter_revision = _current_graph_revision(conn, source_id)
+        assert parameter_revision != baseline
+
+        conn.execute("UPDATE analysis_graph_nodes SET parameter_count = NULL WHERE id = 'target'")
+        reset_revision = _current_graph_revision(conn, source_id)
+        assert reset_revision == baseline
+
+        conn.execute("UPDATE analysis_graph_edges SET argument_count = 1 WHERE id = 'call-edge'")
+        argument_revision = _current_graph_revision(conn, source_id)
+        assert argument_revision != baseline
 
 
 def test_semantic_index_status_invalidates_old_revision_vectors_after_file_identity_change(tmp_path):
@@ -1268,10 +1299,10 @@ def _overview_progress_fixture(
                     INSERT OR REPLACE INTO analysis_graph_nodes(
                         id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path,
                         content_hash, stable_key, node_kind, language, name, qualified_name, display_name,
-                        parent_node_id, line_start, line_end, confidence, status, metadata_json, created_at,
+                        parent_node_id, line_start, line_end, confidence, status, created_at,
                         updated_at, fact_origin, flow_domain
                     )
-                    VALUES (?, 'semantic-progress-fixture', ?, ?, ?, ?, ?, ?, ?, 'CALLABLE', 'python', ?, ?, ?, NULL, ?, ?, 0.96, 'TRUSTED', '{}', 'now', 'now', 'STATIC', 'CODE')
+                    VALUES (?, 'semantic-progress-fixture', ?, ?, ?, ?, ?, ?, ?, 'CALLABLE', 'python', ?, ?, ?, NULL, ?, ?, 0.96, 'TRUSTED', 'now', 'now', 'STATIC', 'CODE')
                     """,
                     (
                         f"node-{index:03d}",

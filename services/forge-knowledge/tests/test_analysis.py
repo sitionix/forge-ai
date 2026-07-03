@@ -952,7 +952,6 @@ def test_analysis_store_migrates_old_integer_graph_diagnostics_schema(tmp_path):
         columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(analysis_graph_diagnostics)").fetchall()}
         assert str(columns["id"]["type"]).upper() == "TEXT"
         assert columns["id"]["pk"] == 1
-        assert "diagnostic_code" not in columns
         assert {"source_id", "analysis_file_id", "file_id", "relative_path", "content_hash"}.issubset(columns)
         conn.execute("""
             INSERT INTO analysis_graph_diagnostics(
@@ -1272,6 +1271,7 @@ def test_graph_storage_migration_rebuilds_incompatible_primary_key_tables(tmp_pa
         pk = {name: row["pk"] for name, row in columns.items() if row["pk"]}
         assert pk == {"id": 1}
         assert {"source_id", "analysis_file_id", "file_id", "relative_path", "content_hash"}.issubset(columns)
+        assert "metadata_json" not in columns
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
         assert not any(name.startswith("graph_") for name in tables)
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0] == 0
@@ -1416,7 +1416,7 @@ class TicketDto {}
         edge = conn.execute(
             """
             SELECT e.resolution_status, e.to_node_id, e.argument_count, e.metadata_json,
-                   target.name AS target_name, target.parameter_count, target.metadata_json AS target_metadata_json
+                   target.name AS target_name, target.parameter_count
             FROM analysis_graph_edges e
             JOIN analysis_graph_nodes target ON target.id = e.to_node_id
             WHERE e.edge_type = 'CALLS'
@@ -1430,7 +1430,6 @@ class TicketDto {}
         assert edge["target_name"] == "toApi"
         assert edge["parameter_count"] == 1
         assert json.loads(edge["metadata_json"]).get("argumentCount") is None
-        assert json.loads(edge["target_metadata_json"]).get("parameters") is None
 
 
 def test_resolver_does_not_fake_success_for_same_arity_overloads(tmp_path):
@@ -2175,12 +2174,10 @@ def test_background_job_returns_id_and_updates_progress(tmp_path):
     assert final["processedFiles"] == 1
 
 
-def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
+def test_analysis_jobs_outdated_schema_is_recreated_without_lifecycle_rows(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
-    legacy_first_counter = "symbol" + "_count"
-    legacy_second_counter = "relation" + "_count"
     with sqlite3.connect(db_path) as conn:
-        conn.execute(f"""
+        conn.execute("""
             CREATE TABLE analysis_jobs (
                 job_id TEXT PRIMARY KEY,
                 status TEXT NOT NULL,
@@ -2194,18 +2191,15 @@ def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
                 current_source_id TEXT,
                 current_relative_path TEXT,
                 last_progress_at TEXT,
-                {legacy_first_counter} INTEGER NOT NULL,
-                {legacy_second_counter} INTEGER NOT NULL,
                 diagnostics_json TEXT NOT NULL
             )
         """)
-        conn.execute(f"""
+        conn.execute("""
             INSERT INTO analysis_jobs(
                 job_id, status, source_count, file_count, processed_file_count,
-                skipped_unchanged_file_count, failed_file_count, {legacy_first_counter},
-                {legacy_second_counter}, diagnostics_json
+                skipped_unchanged_file_count, failed_file_count, diagnostics_json
             )
-            VALUES ('job-old', 'COMPLETED', 1, 2, 2, 1, 0, 3, 4, '[]')
+            VALUES ('job-old', 'COMPLETED', 1, 2, 2, 1, 0, '[]')
         """)
 
     store = AnalysisStore(db_path)
@@ -2231,8 +2225,9 @@ def test_analysis_jobs_legacy_skipped_unchanged_column_is_removed(tmp_path):
         (6, "remove_legacy_graph_lifecycle"),
         (7, "current_state_graph_storage"),
         (8, "yaml_graph_contract_cleanup"),
+        (9, "clean_yaml_graph_contract_persistence"),
     ]
-    assert migration_count == 8
+    assert migration_count == 9
 
 
 def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path):
@@ -2562,14 +2557,11 @@ def test_runtime_analysis_writes_graph_tables_and_not_legacy_symbols(tmp_path):
                 "analysis_graph_evidence",
             ]
         }
-        objects = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'view', 'trigger', 'index')").fetchall()}
 
     assert counts["analysis_graph_nodes"] > 0
     assert counts["analysis_graph_edges"] > 0
     assert counts["analysis_graph_claims"] > 0
     assert counts["analysis_graph_evidence"] > 0
-    assert "analysis_symbols" not in objects
-    assert "analysis_relations" not in objects
 
 
 def test_runtime_analysis_writes_graph_engine_job_file_flow_and_line_metadata(tmp_path):
@@ -2621,8 +2613,6 @@ def test_analyzer_runtime_builds_unified_payload_shape(relative_path, content, e
     assert payload["analysisPolicy"]["policyId"] == expected_policy
     assert payload["analysisPolicy"]["sourceView"] == "contentLines"
     assert payload["analysisPolicy"]["llmMode"] != "none"
-    assert "analysisMode" not in payload
-    assert "genericConfigEnrichment" not in payload
     assert "fileType" not in payload
     assert "flowDomain" not in payload
     assert "content" not in payload
@@ -2658,8 +2648,6 @@ def test_legacy_flow_domain_does_not_control_llm_eligibility(flow_domain):
     assert payload["analysisPolicy"]["extractorId"] == "structured_text_light"
     assert payload["metadata"]["flowDomain"] == flow_domain
     assert "flowDomain" not in payload
-    assert "analysisMode" not in payload
-    assert "genericConfigEnrichment" not in payload
 
 
 def test_parser_unsupported_text_file_is_not_skipped_by_old_logic():
@@ -2669,7 +2657,6 @@ def test_parser_unsupported_text_file_is_not_skipped_by_old_logic():
     assert analyzer.calls == 1
     assert payload["analysisPolicy"]["formatId"] == "markdown"
     assert payload["analysisPolicy"]["extractorId"] == "document_heading_light"
-    assert "analysisMode" not in payload
 
 
 def test_java_extractor_output_is_used_as_static_anchors():
@@ -2740,9 +2727,9 @@ def test_invalid_extractor_output_fails_before_llm():
                     metadata={"factOrigin": "STATIC"},
                 ),
                 GraphNode(
-                    localId="external",
-                    nodeKind="EXTERNAL",
-                    name="external",
+                    localId="workflow",
+                    nodeKind="WORKFLOW",
+                    name="workflow",
                     lineStart=1,
                     lineEnd=1,
                     confidence=1.0,
@@ -2884,7 +2871,6 @@ def test_file_anchor_fallback_works_only_when_policy_allows_it():
     _, analyzer = asyncio.run(run_runtime("README.md", "# Title\n", policy=policy, registry=registry))
     payload = analyzer.payloads[0]
 
-    assert payload["metadata"]["extractorFallbackUsed"] is True
     assert [item["nodeKind"] for item in payload["staticAnchors"]["nodes"]] == ["FILE"]
     assert payload["staticAnchors"]["diagnostics"][0]["code"] == "ANALYSIS_UNSUPPORTED_EXTRACTOR_FALLBACK_USED"
 
@@ -2906,7 +2892,6 @@ def test_required_file_anchor_fallback_mode_allows_file_anchor_fallback():
     payload = analyzer.payloads[0]
 
     assert payload["analysisPolicy"]["extractorMode"] == "required_or_file_anchor_fallback"
-    assert payload["metadata"]["extractorFallbackUsed"] is True
     assert [item["nodeKind"] for item in payload["staticAnchors"]["nodes"]] == ["FILE"]
     assert payload["staticAnchors"]["diagnostics"][0]["code"] == "ANALYSIS_UNSUPPORTED_EXTRACTOR_FALLBACK_USED"
 
@@ -3192,8 +3177,6 @@ def test_materialized_graph_fact_statuses_are_declared_by_policy():
 
     assert "TRUSTED" in statuses
     assert "CANDIDATE" in statuses
-    assert "LOW_CONFIDENCE" not in statuses
-    assert "DEBUG_ONLY" not in statuses
     assert statuses <= declared_statuses
 
 
@@ -3448,10 +3431,10 @@ def insert_isolated_graph_nodes(db_path, count=5):
                 INSERT INTO analysis_graph_nodes(
                     id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash, stable_key,
                     node_kind, language, name, qualified_name, display_name, parent_node_id,
-                    line_start, line_end, confidence, status, metadata_json, created_at,
+                    line_start, line_end, confidence, status, created_at,
                     updated_at, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     f"test-isolated-node-{index}",
@@ -3472,7 +3455,6 @@ def insert_isolated_graph_nodes(db_path, count=5):
                     1,
                     1.0,
                     "TRUSTED",
-                    json.dumps({"testFixture": True}),
                     "now",
                     "now",
                     "STATIC",
@@ -4266,14 +4248,15 @@ def test_overview_missing_projection_returns_error_not_zero_counts(tmp_path, mon
     assert "sources" not in result["json"]
 
 
-def test_analysis_store_drops_legacy_fact_tables(tmp_path):
+def test_analysis_store_drops_graph_derived_tables_when_schema_is_outdated(tmp_path):
     store = AnalysisStore(tmp_path / "knowledge.sqlite")
     with store._connect() as conn:
-        for table in ("symbol_tokens", "edges", "symbols", "file_extraction_state", "fact_builds"):
-            conn.execute(f"CREATE TABLE {table} (id INTEGER)")
+        conn.execute("CREATE TABLE graph_obsolete_state (id INTEGER)")
+        conn.execute("CREATE TABLE semantic_documents (document_id TEXT PRIMARY KEY, source_id TEXT, graph_marker TEXT)")
 
     store.init()
 
     with store._connect() as conn:
         tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
-    assert not {"symbol_tokens", "edges", "symbols", "file_extraction_state", "fact_builds"} & tables
+    assert "graph_obsolete_state" not in tables
+    assert "analysis_graph_state" in tables

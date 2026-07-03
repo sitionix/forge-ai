@@ -141,7 +141,7 @@ class AnchorAwareGraphValidator:
         if rejection_reason:
             status = "CANDIDATE"
             metadata["status"] = status
-            metadata["qualityIssue"] = rejection_reason
+            metadata["rejectionReason"] = rejection_reason
             diagnostics.append(
                 {
                     "severity": "WARN",

@@ -273,7 +273,6 @@ class ExtractorRegistry:
                         **self._file_metadata(context, extractor.id),
                         "sourceKind": "STRUCTURED_TEXT_REGION",
                         "stableKey": local_id,
-                        "structuralRangeSource": "LIGHT_EXTRACTOR",
                     },
                 )
             )
@@ -306,9 +305,7 @@ class ExtractorRegistry:
             "stableKey": self._file_stable_key(context),
             "factOrigin": "STATIC",
             "parser": extractor_id,
-            "extractorId": extractor_id,
             "engineVersion": GRAPH_ENGINE_VERSION,
-            "structuralRangeSource": "EXTRACTOR",
         }
         flow_domain = _row_value(context.row, "flow_domain")
         if flow_domain:
@@ -436,9 +433,6 @@ class AnalyzerPayloadBuilder:
         flow_domain = _row_value(context.row, "flow_domain")
         if flow_domain:
             metadata["flowDomain"] = str(flow_domain).upper()
-        metadata["extractorId"] = extractor_result.extractor_id
-        metadata["extractorImplementation"] = extractor_result.implementation
-        metadata["extractorFallbackUsed"] = extractor_result.used_fallback
         if context.policy_resolution.artifact_labels:
             metadata["artifactLabels"] = list(context.policy_resolution.artifact_labels)
         return metadata

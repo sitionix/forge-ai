@@ -34,9 +34,6 @@ analysis:
       FIELD:
         identity: file_scoped_name
         semanticEligible: false
-      EXTERNAL:
-        identity: normalized_reference
-        semanticEligible: true
       MODULE:
         identity: file_scoped_name
         semanticEligible: false
@@ -57,23 +54,23 @@ analysis:
         semanticEligible: true
       IMPORTS:
         from: [FILE, TYPE]
-        to: [EXTERNAL]
+        to: []
         semanticEligible: true
       REFERENCES:
         from: [FILE, TYPE, CALLABLE, FIELD, CONFIG, DATA, RESOURCE]
-        to: [FILE, TYPE, CALLABLE, EXTERNAL, CONFIG, DATA, RESOURCE]
+        to: [FILE, TYPE, CALLABLE, CONFIG, DATA, RESOURCE]
         semanticEligible: true
       CALLS:
         from: [CALLABLE]
-        to: [CALLABLE, EXTERNAL]
+        to: [CALLABLE]
         semanticEligible: true
       CONFIGURES:
         from: [FILE, CONFIG, MODULE]
-        to: [EXTERNAL, MODULE, DATA, RESOURCE, CONFIG]
+        to: [MODULE, DATA, RESOURCE, CONFIG]
         semanticEligible: false
       DEPENDS_ON:
         from: [FILE, MODULE, CONFIG, DATA, RESOURCE]
-        to: [FILE, MODULE, EXTERNAL, CONFIG, DATA, RESOURCE]
+        to: [FILE, MODULE, CONFIG, DATA, RESOURCE]
         semanticEligible: false
 
     claims:
@@ -147,7 +144,7 @@ analysis:
       DYNAMIC_TARGET: {}
 
   semantic:
-    indexedNodeKinds: [FILE, TYPE, CALLABLE, EXTERNAL]
+    indexedNodeKinds: [FILE, TYPE, CALLABLE]
     indexedClaimKinds: [RESPONSIBILITY, ENTRYPOINT_HINT]
     indexedEdgeKinds: [DECLARES, IMPORTS, REFERENCES, CALLS]
     unsupportedSemanticKind: allow_only_when_semanticEligible_false
@@ -263,42 +260,42 @@ analysis:
 
   graphProfiles:
     base_file_graph:
-      nodes: [FILE, EXTERNAL]
+      nodes: [FILE]
       edges: [REFERENCES, DEPENDS_ON, CONFIGURES]
       claims: [RESPONSIBILITY]
 
     java_code_graph:
-      nodes: [FILE, TYPE, CALLABLE, FIELD, EXTERNAL]
+      nodes: [FILE, TYPE, CALLABLE, FIELD]
       edges: [DECLARES, IMPORTS, REFERENCES, CALLS, DEPENDS_ON]
       claims: [RESPONSIBILITY, ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
 
     code_text_graph:
-      nodes: [FILE, EXTERNAL]
+      nodes: [FILE]
       edges: [REFERENCES, DEPENDS_ON]
       claims: [RESPONSIBILITY, SIDE_EFFECT]
 
     structured_text_graph:
-      nodes: [FILE, CONFIG, DATA, EXTERNAL]
+      nodes: [FILE, CONFIG, DATA]
       edges: [CONFIGURES, REFERENCES, DEPENDS_ON]
       claims: [RESPONSIBILITY, CONFIG_REFERENCE]
 
     automation_text_graph:
-      nodes: [FILE, CONFIG, EXTERNAL]
+      nodes: [FILE, CONFIG]
       edges: [CONFIGURES, REFERENCES, DEPENDS_ON]
       claims: [RESPONSIBILITY, ENTRYPOINT_HINT, SIDE_EFFECT]
 
     build_text_graph:
-      nodes: [FILE, MODULE, CONFIG, EXTERNAL]
+      nodes: [FILE, MODULE, CONFIG]
       edges: [DECLARES, CONFIGURES, DEPENDS_ON, REFERENCES]
       claims: [RESPONSIBILITY, CONFIG_REFERENCE]
 
     api_contract_text_graph:
-      nodes: [FILE, DATA, EXTERNAL]
+      nodes: [FILE, DATA]
       edges: [REFERENCES, DEPENDS_ON]
       claims: [RESPONSIBILITY]
 
     document_graph:
-      nodes: [FILE, EXTERNAL]
+      nodes: [FILE]
       edges: [REFERENCES]
       claims: [RESPONSIBILITY]
 
@@ -313,7 +310,7 @@ analysis:
       implementation: java_static_parser
       trust: structural
       produces:
-        nodes: [FILE, TYPE, CALLABLE, FIELD, EXTERNAL]
+        nodes: [FILE, TYPE, CALLABLE, FIELD]
         edges: [DECLARES, IMPORTS, REFERENCES, CALLS]
         claims: [ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
 

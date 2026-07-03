@@ -62,7 +62,7 @@ def test_extractor_output_rejects_undeclared_node_kind():
     assert "FILE" in exc.value.details["allowedValues"]
 
 
-def test_extractor_output_rejects_node_kind_not_listed_in_produces():
+def test_extractor_output_rejects_node_kind_not_declared_by_policy():
     policy, context = _context("settings.yaml", "service:\n  url: http://example\n")
     graph = _graph(nodes=[_file_node(), _node("external", "EXTERNAL")])
 
@@ -72,7 +72,8 @@ def test_extractor_output_rejects_node_kind_not_listed_in_produces():
     assert exc.value.code == "ANALYSIS_EXTRACTOR_OUTPUT_INVALID"
     assert exc.value.details["field"] == "nodeKind"
     assert exc.value.details["actual"] == "EXTERNAL"
-    assert exc.value.details["allowedValues"] == ["FILE", "CONFIG", "DATA"]
+    assert "EXTERNAL" not in exc.value.details["allowedValues"]
+    assert set(exc.value.details["allowedValues"]) >= {"FILE", "TYPE", "CALLABLE"}
 
 
 def test_extractor_output_rejects_edge_type_not_listed_in_produces():

@@ -239,7 +239,9 @@ def test_parser_allows_yaml_declared_claim_and_edge_types():
     payload["claims"][0]["claimKind"] = "SIDE_EFFECT"
     payload["edges"][0]["edgeType"] = "CALLS"
     payload["edges"][0]["fromNodeLocalId"] = "callable1"
-    payload["edges"][0]["toNodeLocalId"] = "external1"
+    payload["edges"][0]["toNodeLocalId"] = None
+    payload["edges"][0]["unresolvedTarget"] = {"name": "External.call", "kindHint": "CALLABLE"}
+    payload["edges"][0]["metadata"]["resolutionStatus"] = "EXTERNAL_TARGET"
 
     result = parser.parse(json.dumps(payload), 5, contract=contract)
 
@@ -356,7 +358,7 @@ def test_effective_profiles_allow_java_text_and_document_specific_contracts():
     text_payload["edges"][0]["toNodeLocalId"] = "config1"
     assert isinstance(text_parser.parse(json.dumps(text_payload), 5, contract=text_contract), GraphAnalysisResult)
 
-    document_payload = _graph_payload(node_kind="EXTERNAL", edge_type="CALLS", claim_kind="CONFIG_REFERENCE")
+    document_payload = _graph_payload(node_kind="TYPE", edge_type="CALLS", claim_kind="CONFIG_REFERENCE")
     document_payload["nodes"] = [node for node in document_payload["nodes"] if node["nodeKind"] != "CALLABLE"]
     document_payload["edges"][0]["toNodeLocalId"] = "type1"
     document_failure = document_parser.parse(json.dumps(document_payload), 5, contract=document_contract)
@@ -437,13 +439,6 @@ def _graph_payload(node_kind: str = "TYPE", edge_type: str = "DECLARES", claim_k
                 "lineStart": 2,
                 "lineEnd": 4,
                 "confidence": 0.9,
-                "metadata": {"factOrigin": "LLM", "status": "TRUSTED"},
-            },
-            {
-                "localId": "external1",
-                "nodeKind": "EXTERNAL",
-                "name": "External",
-                "confidence": 0.7,
                 "metadata": {"factOrigin": "LLM", "status": "TRUSTED"},
             },
         ],

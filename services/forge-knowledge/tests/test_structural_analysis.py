@@ -145,10 +145,16 @@ def test_static_graph_materializer_creates_static_nodes_edges_evidence_and_entry
 
     node_kinds = {node.nodeKind for node in graph.nodes}
     edge_types = {edge.edgeType for edge in graph.edges}
-    assert {"FILE", "TYPE", "CALLABLE", "FIELD", "EXTERNAL"} <= node_kinds
+    assert {"FILE", "TYPE", "CALLABLE", "FIELD"} <= node_kinds
+    assert "EXTERNAL" not in node_kinds
     assert {"DECLARES", "IMPORTS", "REFERENCES", "CALLS"} <= edge_types
     assert all(node.metadata["factOrigin"] == "STATIC" for node in graph.nodes)
     assert all(edge.evidence for edge in graph.edges)
+    import_edges = [edge for edge in graph.edges if edge.edgeType == "IMPORTS"]
+    assert import_edges
+    assert all(edge.toNodeLocalId is None for edge in import_edges)
+    assert all(edge.metadata["resolutionStatus"] == "EXTERNAL_TARGET" for edge in import_edges)
+    assert all(edge.unresolvedTarget for edge in import_edges)
     call_edges = [edge for edge in graph.edges if edge.edgeType == "CALLS"]
     assert any(edge.metadata["resolutionStatus"] == "RESOLVED" for edge in call_edges)
     entrypoint = next(claim for claim in graph.claims if claim.claimKind == "ENTRYPOINT_HINT")
@@ -262,7 +268,7 @@ def test_anchor_validator_accepts_callable_claim_only_when_evidence_overlaps_met
 
     assert claims["claim-good"].metadata["status"] == "TRUSTED"
     assert claims["claim-bad"].metadata["status"] == "CANDIDATE"
-    assert claims["claim-bad"].metadata["qualityIssue"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD"
+    assert claims["claim-bad"].metadata["rejectionReason"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD"
     assert any(item["code"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD" for item in merged.diagnostics)
 
 

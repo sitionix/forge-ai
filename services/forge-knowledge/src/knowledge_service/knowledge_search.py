@@ -241,7 +241,7 @@ class SearchDocument:
         file_stem = file_name.rsplit(".", 1)[0] if "." in file_name else file_name
 
         endpoint_path = ""
-        for value in (name, label, qualified_name, stable_key, relative_path, metadata_text):
+        for value in (metadata_text, name, label, qualified_name, stable_key, relative_path):
             endpoint_path = first_endpoint_path(value) or ""
             if endpoint_path:
                 break

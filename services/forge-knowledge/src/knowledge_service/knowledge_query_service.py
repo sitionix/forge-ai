@@ -547,13 +547,13 @@ class FlowPathExtractor:
                 return
             for edge_key in outgoing_edges:
                 edge = adjacency.edges_by_key[edge_key]
-                if self._is_external_edge(edge) and self._edge_to_key(edge) is None:
+                if self._is_external_edge(edge):
                     results.append(
                         _TraversalPath(
                             node_keys=node_keys,
                             edge_keys=edge_keys,
                             boundary_edge_keys=(edge_key,),
-                            stop_reason="EXTERNAL_NODE",
+                            stop_reason="EXTERNAL_TARGET",
                             complete=True,
                         )
                     )
@@ -589,17 +589,6 @@ class FlowPathExtractor:
                             boundary_edge_keys=(),
                             stop_reason="CYCLE_DETECTED",
                             complete=False,
-                        )
-                    )
-                    continue
-                if self._is_external_node(adjacency.nodes_by_key[target_key]) or self._is_external_edge(edge):
-                    results.append(
-                        _TraversalPath(
-                            node_keys=(*node_keys, target_key),
-                            edge_keys=(*edge_keys, edge_key),
-                            boundary_edge_keys=(),
-                            stop_reason="EXTERNAL_NODE",
-                            complete=True,
                         )
                     )
                     continue
@@ -739,9 +728,6 @@ class FlowPathExtractor:
 
     def _is_external_edge(self, edge: Dict[str, Any]) -> bool:
         return bool(edge.get("external")) or str(edge.get("resolutionStatus") or "").upper() == "EXTERNAL_TARGET"
-
-    def _is_external_node(self, node: Dict[str, Any]) -> bool:
-        return bool(node.get("external")) or str(node.get("nodeKind") or "").upper() == "EXTERNAL"
 
     def _fallback_node(self, node_key: NodeKey) -> Dict[str, Any]:
         return {"id": node_key[2], "sourceId": node_key[0], "graphId": node_key[1], "label": node_key[2]}

@@ -93,7 +93,7 @@ class GraphPolicyValidator:
             contract,
             line_count,
             stage="LLM_ENRICHMENT",
-            external_nodes=list(static_graph.nodes),
+            known_nodes=list(static_graph.nodes),
         )
         if issues:
             self._raise(
@@ -135,10 +135,10 @@ class GraphPolicyValidator:
         *,
         stage: str,
         extractor: Optional[ExtractorDefinition] = None,
-        external_nodes: Optional[List[GraphNode]] = None,
+        known_nodes: Optional[List[GraphNode]] = None,
     ) -> List[GraphPolicyValidationIssue]:
         issues: List[GraphPolicyValidationIssue] = []
-        nodes_by_id = self._nodes_by_id([*(external_nodes or []), *graph_result.nodes])
+        nodes_by_id = self._nodes_by_id([*(known_nodes or []), *graph_result.nodes])
         result_node_ids = {node.localId for node in graph_result.nodes}
         self._validate_nodes(graph_result.nodes, contract, line_count, stage, extractor, nodes_by_id, result_node_ids, issues)
         self._validate_edges(graph_result.edges, contract, line_count, stage, extractor, nodes_by_id, issues)

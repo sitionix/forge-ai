@@ -128,8 +128,8 @@ class GraphAnalysisEngine:
             rejection_reason = None
             fact_origin = self._fact_origin(metadata) if metadata.get("factOrigin") else node["fact_origin"]
             flow_domain = metadata.get("flowDomain") or node["flow_domain"]
-            if metadata.get("qualityIssue") and status == "CANDIDATE":
-                rejection_reason = str(metadata.get("qualityIssue"))
+            if metadata.get("rejectionReason") and status == "CANDIDATE":
+                rejection_reason = str(metadata.get("rejectionReason"))
             claims.append(
                 {
                     "id": claim_id,

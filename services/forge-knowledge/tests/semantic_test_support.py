@@ -106,9 +106,9 @@ def seed_semantic_graph(
                 INSERT OR REPLACE INTO analysis_graph_nodes(
                     id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
                     stable_key, node_kind, language, name, qualified_name, display_name, parent_node_id,
-                    line_start, line_end, confidence, status, metadata_json, created_at, updated_at, fact_origin, flow_domain
+                    line_start, line_end, confidence, status, created_at, updated_at, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fixture', ?, ?, ?, ?, ?, ?, 0.96, ?, '{}', ?, ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fixture', ?, ?, ?, ?, ?, ?, 0.96, ?, ?, ?, 'STATIC', 'CODE')
                 """,
                 (
                     node["id"],
@@ -140,9 +140,9 @@ def seed_semantic_graph(
                 """
                 INSERT OR REPLACE INTO analysis_graph_evidence(
                     id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                    line_start, line_end, excerpt, excerpt_hash, evidence_kind, metadata_json, created_at, updated_at, fact_origin, flow_domain
+                    line_start, line_end, excerpt, excerpt_hash, evidence_kind, created_at, updated_at, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CLAIM', '{}', ?, ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CLAIM', ?, ?, 'STATIC', 'CODE')
                 """,
                 (
                     evidence_id,
@@ -167,9 +167,9 @@ def seed_semantic_graph(
                 """
                 INSERT OR REPLACE INTO analysis_graph_claims(
                     id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
-                    metadata_json, rejection_reason, created_at, updated_at, fact_origin, flow_domain
+                    rejection_reason, created_at, updated_at, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0.9, ?, '{}', ?, ?, ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, 0.9, ?, ?, ?, ?, 'STATIC', 'CODE')
                 """,
                 (
                     claim["id"],
@@ -201,9 +201,9 @@ def seed_semantic_graph(
                     """
                     INSERT OR REPLACE INTO analysis_graph_evidence(
                         id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                        line_start, line_end, excerpt, excerpt_hash, evidence_kind, metadata_json, created_at, updated_at, fact_origin, flow_domain
+                        line_start, line_end, excerpt, excerpt_hash, evidence_kind, created_at, updated_at, fact_origin, flow_domain
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EDGE', '{}', ?, ?, 'STATIC', 'CODE')
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EDGE', ?, ?, 'STATIC', 'CODE')
                     """,
                     (
                         evidence_id,
