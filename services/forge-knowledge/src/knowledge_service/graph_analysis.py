@@ -10,16 +10,13 @@ from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, Grap
 
 
 TRUSTED_CONFIDENCE_THRESHOLD = 0.70
-LOW_CONFIDENCE_THRESHOLD = 0.40
 
 
 def confidence_status(confidence: Optional[float]) -> str:
     value = 0.0 if confidence is None else float(confidence)
     if value >= TRUSTED_CONFIDENCE_THRESHOLD:
         return "TRUSTED"
-    if value >= LOW_CONFIDENCE_THRESHOLD:
-        return "LOW_CONFIDENCE"
-    return "DEBUG_ONLY"
+    return "CANDIDATE"
 
 
 def source_kind_to_node_kind(kind: Optional[str]) -> str:
@@ -119,7 +116,7 @@ class GraphAnalysisEngine:
             metadata.setdefault("analyzerName", analyzer_name)
             metadata.setdefault("analyzerVersion", analyzer_version)
             fact_origin = self._fact_origin(metadata)
-            flow_domain = self._flow_domain(row["relative_path"], node.nodeKind, metadata)
+            flow_domain = self._flow_domain(row, metadata)
             nodes.append(
                 {
                     "id": node_id,
@@ -190,15 +187,7 @@ class GraphAnalysisEngine:
             rejection_reason = None
             fact_origin = self._fact_origin(metadata) if metadata.get("factOrigin") else node["fact_origin"]
             flow_domain = metadata.get("flowDomain") or node["flow_domain"]
-            if self._generic_callable_responsibility(claim, node):
-                status = "DEBUG_ONLY"
-                rejection_reason = "GENERIC_FILE_LEVEL_CALLABLE_SUMMARY"
-                metadata["qualityIssue"] = rejection_reason
-            if claim.claimKind == "RESPONSIBILITY" and node["node_kind"] == "CALLABLE" and not self._claim_evidence_overlaps_node(claim, node):
-                status = "DEBUG_ONLY"
-                rejection_reason = rejection_reason or "CALLABLE_RESPONSIBILITY_EVIDENCE_OUTSIDE_NODE"
-                metadata["qualityIssue"] = rejection_reason
-            if not rejection_reason and metadata.get("qualityIssue") and status in {"DEBUG_ONLY", "LOW_CONFIDENCE"}:
+            if metadata.get("qualityIssue") and status == "CANDIDATE":
                 rejection_reason = str(metadata.get("qualityIssue"))
             claims.append(
                 {
@@ -226,7 +215,7 @@ class GraphAnalysisEngine:
             from_node = next((item for item in nodes if item["id"] == from_node_id), None)
             metadata = dict(edge.metadata or {})
             fact_origin = self._fact_origin(metadata) if metadata.get("factOrigin") else (from_node or {}).get("fact_origin") or "LLM"
-            flow_domain = metadata.get("flowDomain") or (from_node or {}).get("flow_domain") or self._flow_domain(row["relative_path"], None, metadata)
+            flow_domain = metadata.get("flowDomain") or (from_node or {}).get("flow_domain") or self._flow_domain(row, metadata)
             if edge.edgeType == "CALLS":
                 metadata = classify_call_metadata(
                     metadata,
@@ -288,9 +277,7 @@ class GraphAnalysisEngine:
         for index, diagnostic in enumerate(result.diagnostics or [], start=1):
             diagnostic_metadata = self._diagnostic_metadata(diagnostic)
             diagnostic_fact_origin = str(diagnostic.get("factOrigin") or diagnostic_metadata.get("factOrigin") or "LLM").upper()
-            diagnostic_flow_domain = str(
-                diagnostic.get("flowDomain") or diagnostic_metadata.get("flowDomain") or self._flow_domain(row["relative_path"], None, {})
-            ).upper()
+            diagnostic_flow_domain = str(diagnostic.get("flowDomain") or diagnostic_metadata.get("flowDomain") or self._flow_domain(row, {})).upper()
             diagnostics.append(
                 {
                     "id": self._stable_id(
@@ -396,30 +383,6 @@ class GraphAnalysisEngine:
         end = min(line_end, len(lines))
         return "\n".join(lines[start:end])
 
-    def _generic_callable_responsibility(self, claim: GraphClaim, node: Dict[str, Any]) -> bool:
-        if claim.claimKind != "RESPONSIBILITY" or node["node_kind"] != "CALLABLE":
-            return False
-        summary = claim.summary.strip().lower()
-        generic_prefixes = (
-            "this file ",
-            "this java file ",
-            "the file ",
-            "a java class ",
-            "this class ",
-            "the class ",
-        )
-        return summary.startswith(generic_prefixes)
-
-    def _claim_evidence_overlaps_node(self, claim: GraphClaim, node: Dict[str, Any]) -> bool:
-        node_start = node.get("line_start")
-        node_end = node.get("line_end")
-        if node_start is None or node_end is None or not claim.evidence:
-            return True
-        for item in claim.evidence:
-            if item.lineStart <= node_end and item.lineEnd >= node_start:
-                return True
-        return False
-
     def _fact_origin(self, metadata: Dict[str, Any]) -> str:
         return str(metadata.get("factOrigin") or "LLM").upper()
 
@@ -430,23 +393,14 @@ class GraphAnalysisEngine:
             metadata.update(nested)
         return metadata
 
-    def _flow_domain(self, relative_path: str, node_kind: Optional[str], metadata: Dict[str, Any]) -> str:
+    def _flow_domain(self, row: Dict[str, Any], metadata: Dict[str, Any]) -> str:
         explicit = metadata.get("flowDomain")
-        if explicit:
-            return str(explicit).upper()
-        path = str(relative_path or "").lower()
-        if "/test/" in f"/{path}" or path.startswith("test/") or path.endswith("test.java"):
-            return "TEST"
-        if node_kind == "CONFIG" or path.endswith((".yaml", ".yml", ".properties", ".toml", ".ini")):
-            return "CONFIG"
-        if path.endswith((".md", ".adoc", ".txt")):
-            return "DOC"
-        if path.endswith((".json", ".csv", ".xml")):
-            return "DATA"
-        if "workflow" in path or "/.github/" in f"/{path}":
-            return "WORKFLOW"
-        if "pom.xml" in path or "build.gradle" in path:
-            return "BUILD"
+        explicit_value = str(explicit or "").strip().upper()
+        if explicit_value and explicit_value != "UNKNOWN":
+            return explicit_value
+        row_flow_domain = str(row.get("flow_domain") or "").strip().upper()
+        if row_flow_domain and row_flow_domain != "UNKNOWN":
+            return row_flow_domain
         return "CODE"
 
     def _stable_id(self, *parts: str) -> str:

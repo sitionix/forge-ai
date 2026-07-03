@@ -138,7 +138,7 @@ def test_resolves_supported_formats(relative_path, format_id, extractor_id, poli
     assert resolution.source_view == "contentLines"
     assert resolution.evidence_required is True
     assert "FILE" in resolution.allowed_node_kinds
-    assert resolution.status_kinds == ["TRUSTED", "LOW_CONFIDENCE", "DEBUG_ONLY", "CANDIDATE", "REJECTED", "DERIVED", "STALE"]
+    assert resolution.status_kinds == ["TRUSTED", "CANDIDATE", "REJECTED", "DERIVED", "STALE"]
     assert resolution.origin_kinds == ["STATIC", "LLM", "DERIVED", "RESOLVER"]
     assert resolution.evidence_kinds == ["NODE", "EDGE", "CLAIM", "CALLSITE"]
 

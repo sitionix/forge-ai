@@ -28,10 +28,10 @@ def test_semantic_document_builder_uses_only_trusted_responsibility_claims(tmp_p
                 "evidence_ids": ["ev-node-query"],
             },
             {
-                "id": "claim-debug",
+                "id": "claim-candidate",
                 "node_id": "node-query",
-                "kind": "DEBUG_ONLY",
-                "summary": "Debug-only text must not appear.",
+                "summary": "Candidate text must not appear.",
+                "status": "CANDIDATE",
                 "evidence_ids": ["ev-node-query"],
             },
             {
@@ -59,7 +59,7 @@ def test_semantic_document_builder_uses_only_trusted_responsibility_claims(tmp_p
     document = next(doc for doc in _build_documents(db_path) if doc.node_id == "node-query")
 
     assert "Passes query text to KnowledgeClient.query." in document.text
-    assert "Debug-only text" not in document.text
+    assert "Candidate text" not in document.text
     assert "Rejected text" not in document.text
     assert "Missing evidence text" not in document.text
     assert "Other node trusted summary" not in document.text

@@ -3183,8 +3183,71 @@ def test_materialized_graph_fact_statuses_are_declared_by_policy():
     materialized = GraphAnalysisEngine().materialize(row, "job-1", "test", "1", graph, ["name: edge"])
     statuses = {item["status"] for key in ("nodes", "edges", "claims") for item in materialized[key]}
 
-    assert {"TRUSTED", "LOW_CONFIDENCE", "DEBUG_ONLY"} <= statuses
+    assert "TRUSTED" in statuses
+    assert "CANDIDATE" in statuses
+    assert "LOW_CONFIDENCE" not in statuses
+    assert "DEBUG_ONLY" not in statuses
     assert statuses <= declared_statuses
+
+
+def test_graph_materializer_flow_domain_uses_explicit_metadata_first():
+    engine = GraphAnalysisEngine()
+    row = {
+        "id": 1,
+        "source_id": "edge-gateway",
+        "relative_path": "config/service.yaml",
+        "content_hash": "hash-1",
+        "flow_domain": "BUILD",
+    }
+
+    assert engine._flow_domain(row, {"flowDomain": "WORKFLOW"}) == "WORKFLOW"
+
+
+def test_graph_materializer_flow_domain_defaults_when_metadata_is_unknown():
+    engine = GraphAnalysisEngine()
+    row = {
+        "id": 1,
+        "source_id": "edge-gateway",
+        "relative_path": "config/service.yaml",
+        "content_hash": "hash-1",
+        "flow_domain": "UNKNOWN",
+    }
+
+    assert engine._flow_domain(row, {"flowDomain": "UNKNOWN"}) == "CODE"
+
+
+def test_graph_materializer_flow_domain_uses_row_when_metadata_absent():
+    engine = GraphAnalysisEngine()
+    row = {
+        "id": 1,
+        "source_id": "edge-gateway",
+        "relative_path": "config/service.yaml",
+        "content_hash": "hash-1",
+        "flow_domain": "CONFIG",
+    }
+
+    assert engine._flow_domain(row, {}) == "CONFIG"
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        ".github/workflows/build.yml",
+        "pom.xml",
+        "src/test/java/FooTest.java",
+        "config/service.yaml",
+    ],
+)
+def test_graph_materializer_flow_domain_does_not_route_by_path(relative_path):
+    engine = GraphAnalysisEngine()
+    row = {
+        "id": 1,
+        "source_id": "edge-gateway",
+        "relative_path": relative_path,
+        "content_hash": "hash-1",
+    }
+
+    assert engine._flow_domain(row, {}) == "CODE"
 
 
 def test_runtime_resolves_field_receiver_calls_when_target_type_is_unique(tmp_path):
@@ -3266,7 +3329,7 @@ def test_callable_without_type_claim_uses_file_fallback_with_provenance(tmp_path
     assert selected["summaryClaimNodeId"] != selected["id"]
 
 
-def test_low_confidence_callable_claim_is_debug_only_and_not_trusted(tmp_path):
+def test_low_confidence_callable_claim_maps_to_candidate_status(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = SupervisorHarness(store, app_config(tmp_path))
     wait_job(
@@ -3277,13 +3340,13 @@ def test_low_confidence_callable_claim_is_debug_only_and_not_trusted(tmp_path):
     responsibility = next(claim for claim in selected["claims"] if claim["claimKind"] == "RESPONSIBILITY")
 
     assert selected["status"] == "TRUSTED"
-    assert selected["summarySource"] == "NONE"
-    assert responsibility["status"] == "DEBUG_ONLY"
-    assert responsibility["rejectionReason"] is None or responsibility["rejectionReason"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD"
-    assert selected["summaryConfidence"] is None
+    assert selected["summarySource"] == "DIRECT"
+    assert responsibility["status"] == "CANDIDATE"
+    assert responsibility["rejectionReason"] is None
+    assert selected["summaryConfidence"] == 0.2
 
 
-def test_generic_file_level_callable_summary_is_not_used_as_direct_summary(tmp_path):
+def test_generic_file_level_callable_summary_uses_declared_status(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = SupervisorHarness(store, app_config(tmp_path))
     wait_job(
@@ -3302,10 +3365,10 @@ def test_generic_file_level_callable_summary_is_not_used_as_direct_summary(tmp_p
     selected = current_graph_node_detail_by_name(store, "create", include_evidence=True)
     responsibility = next(claim for claim in selected["claims"] if claim["claimKind"] == "RESPONSIBILITY")
 
-    assert selected["summarySource"] == "NONE"
-    assert selected["claimSummary"] is None
-    assert responsibility["status"] == "DEBUG_ONLY"
-    assert responsibility["rejectionReason"] == "GENERIC_FILE_LEVEL_CALLABLE_SUMMARY"
+    assert selected["summarySource"] == "DIRECT"
+    assert selected["claimSummary"] == "This Java file contains an object handler."
+    assert responsibility["status"] == "TRUSTED"
+    assert responsibility["rejectionReason"] is None
 
 
 def test_no_source_file_mutation(tmp_path):

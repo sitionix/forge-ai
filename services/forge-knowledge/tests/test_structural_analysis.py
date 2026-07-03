@@ -209,7 +209,7 @@ def test_anchor_validator_accepts_callable_claim_only_when_evidence_overlaps_met
     claims = {claim.localId: claim for claim in merged.claims}
 
     assert claims["claim-good"].metadata["status"] == "TRUSTED"
-    assert claims["claim-bad"].metadata["status"] == "DEBUG_ONLY"
+    assert claims["claim-bad"].metadata["status"] == "CANDIDATE"
     assert claims["claim-bad"].metadata["qualityIssue"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD"
     assert any(item["code"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD" for item in merged.diagnostics)
 

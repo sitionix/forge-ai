@@ -128,22 +128,18 @@ class AnchorAwareGraphValidator:
         rejection_reason = None
         if claim.claimKind == "RESPONSIBILITY":
             if node.nodeKind == "CALLABLE" and not self._evidence_overlaps_node(claim, node):
-                status = "DEBUG_ONLY"
                 rejection_reason = "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD"
             elif node.nodeKind == "TYPE" and not self._evidence_overlaps_node(claim, node):
-                status = "DEBUG_ONLY"
                 rejection_reason = "ANALYSIS_GRAPH_TYPE_EVIDENCE_OUTSIDE_TYPE"
             elif node.nodeKind not in {"FILE", "TYPE", "CALLABLE"}:
-                status = "DEBUG_ONLY"
                 rejection_reason = "ANALYSIS_GRAPH_RESPONSIBILITY_UNSUPPORTED_NODE_KIND"
         if not claim.evidence:
-            status = "DEBUG_ONLY"
             rejection_reason = rejection_reason or "ANALYSIS_GRAPH_CLAIM_EVIDENCE_MISSING"
         for item in claim.evidence:
             if item.lineStart < 1 or item.lineEnd < item.lineStart or item.lineEnd > max(line_count, 1):
-                status = "DEBUG_ONLY"
                 rejection_reason = rejection_reason or "ANALYSIS_GRAPH_LINE_RANGE_INVALID"
         if rejection_reason:
+            status = "CANDIDATE"
             metadata["status"] = status
             metadata["qualityIssue"] = rejection_reason
             diagnostics.append(

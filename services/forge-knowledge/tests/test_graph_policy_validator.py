@@ -185,7 +185,7 @@ def test_final_graph_accepts_allowed_metadata_contract_values():
     policy, context = _context("settings.yaml", "service:\n  url: http://example\n", language="yaml")
     graph = _metadata_contract_graph(
         node_metadata={"factOrigin": "STATIC", "status": "TRUSTED"},
-        edge_metadata={"factOrigin": "STATIC", "status": "LOW_CONFIDENCE", "resolutionStatus": "RESOLVED"},
+        edge_metadata={"factOrigin": "STATIC", "status": "CANDIDATE", "resolutionStatus": "RESOLVED"},
         claim_metadata={"factOrigin": "LLM", "status": "CANDIDATE"},
         edge_evidence_metadata={"factOrigin": "STATIC", "evidenceKind": "EDGE"},
         claim_evidence_metadata={"factOrigin": "LLM", "evidenceKind": "CLAIM"},
