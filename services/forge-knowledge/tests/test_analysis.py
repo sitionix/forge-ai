@@ -14,6 +14,7 @@ from pydantic import ValidationError
 os.environ.setdefault("KNOWLEDGE_STORE_PATH", "/tmp/forge-ai-knowledge-test-main.sqlite")
 
 from knowledge_service import main
+from knowledge_service.analysis_graph_contract import AnalysisPromptRenderer
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_response_parser import AiAnalysisResponseParser
 from knowledge_service.analysis_schema import AnalysisBuildRequest, AnalysisResult, RetryFailedAnalysisRequest
@@ -149,7 +150,8 @@ class RawGraphResponseAnalyzer(StubAnalyzer):
             response = response(payload, line_count)
         if isinstance(response, Exception):
             raise response
-        parsed = self.parser.parse(str(response), line_count)
+        contract = self.parser.contract_provider.resolve_payload(payload)
+        parsed = self.parser.parse(str(response), line_count, contract=contract, known_node_kinds=_known_node_kinds(payload))
         if isinstance(parsed, GraphAnalysisResult):
             return parsed
         raise KnowledgeError(
@@ -159,6 +161,15 @@ class RawGraphResponseAnalyzer(StubAnalyzer):
             error_details=parsed.error_details,
             attempt=self.calls,
         )
+
+
+def _known_node_kinds(payload):
+    anchors = payload.get("staticAnchors") or {}
+    return {
+        item["targetStableKey"]: item["nodeKind"]
+        for item in anchors.get("nodes") or []
+        if isinstance(item, dict) and item.get("targetStableKey") and item.get("nodeKind")
+    }
 
 
 def generic_enrichment_response(summary, *, line_start=1, line_end=4, excerpt=None):
@@ -2895,28 +2906,24 @@ jobs:
     payload = analyzer.payloads[0]
 
     client = object.__new__(OllamaAnalysisClient)
-    client.prompt = "BASE CODE PROMPT SENTINEL\n"
+    client.prompt_template = "BASE CODE PROMPT SENTINEL\n"
+    client.prompt_renderer = AnalysisPromptRenderer()
+    client.contract_provider = client.prompt_renderer.provider
     prompt = client._prompt(payload)
     duplicated_payload = dict(payload)
     duplicated_payload["content"] = content
-    old_duplicated_prompt = "\n".join(
-        [
-            client.prompt,
-            client._generic_config_prompt(),
-            "File metadata and content JSON:",
-            json.dumps(duplicated_payload, ensure_ascii=False),
-        ]
-    )
+    duplicated_prompt = client._prompt(duplicated_payload)
     distinctive_line = "        run: ./scripts/deploy-service.sh beta"
 
     assert "BASE CODE PROMPT SENTINEL" not in prompt
-    assert "contentLines is the only file content" in prompt
-    assert "File metadata and numbered content JSON:" in prompt
+    assert "Analysis graph contract" in prompt
+    assert "allowedClaimKinds" in prompt
+    assert "File metadata and content JSON:" in prompt
     assert '"content":' not in prompt
     assert '"contentLines"' in prompt
     assert '"line": 1' in prompt
     assert prompt.count(distinctive_line) == 1
-    assert len(prompt) < len(old_duplicated_prompt)
+    assert len(prompt) < len(duplicated_prompt)
 
 
 @pytest.mark.parametrize(

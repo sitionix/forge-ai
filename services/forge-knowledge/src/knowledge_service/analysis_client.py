@@ -7,12 +7,10 @@ from typing import Any, Dict
 
 import httpx
 
+from knowledge_service.analysis_graph_contract import AnalysisGraphContract, AnalysisPromptRenderer
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
 from knowledge_service.errors import KnowledgeError
-
-
-GENERIC_CONFIG_ANALYSIS_MODE = "GENERIC_TEXT_CONFIG_ENRICHMENT"
 
 
 class OllamaAnalysisClient:
@@ -24,12 +22,15 @@ class OllamaAnalysisClient:
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.context_tokens = max(1024, context_tokens)
-        self.prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
-        self.parser = GraphAnalysisResponseParser()
+        self.prompt_template = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
+        self.prompt_renderer = AnalysisPromptRenderer()
+        self.contract_provider = self.prompt_renderer.provider
+        self.parser = GraphAnalysisResponseParser(self.contract_provider)
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 
     async def analyze(self, payload: Dict[str, Any], line_count: int, repair_prompt: str | None = None) -> GraphAnalysisResult:
-        prompt = self._prompt(payload, repair_prompt)
+        contract = self.contract_provider.resolve_payload(payload)
+        prompt = self._prompt(payload, repair_prompt, contract)
         response_body = ""
         try:
             response = await self._client.post(
@@ -66,7 +67,7 @@ class OllamaAnalysisClient:
         response_text = raw.get("response")
         if not isinstance(response_text, str):
             raise KnowledgeError("ANALYSIS_AI_EMPTY_RESPONSE", "AI analyzer returned no response text", raw_preview="")
-        parsed = self.parser.parse(response_text, line_count)
+        parsed = self.parser.parse(response_text, line_count, contract=contract, known_node_kinds=self._known_node_kinds(payload))
         if isinstance(parsed, GraphAnalysisResult):
             return parsed
         raise KnowledgeError(
@@ -79,69 +80,39 @@ class OllamaAnalysisClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    def _prompt(self, payload: Dict[str, Any], repair_prompt: str | None = None) -> str:
-        generic_config_mode = payload.get("analysisMode") == GENERIC_CONFIG_ANALYSIS_MODE
+    def _prompt(
+        self,
+        payload: Dict[str, Any],
+        repair_prompt: str | None = None,
+        contract: AnalysisGraphContract | None = None,
+    ) -> str:
         parts = []
-        if generic_config_mode:
-            parts.append(self._generic_config_prompt())
-        elif self.prompt:
-            parts.append(self.prompt)
+        rendered_prompt = self.prompt_renderer.render_for_payload(payload, self.prompt_template, contract=contract)
+        if rendered_prompt:
+            parts.append(rendered_prompt)
         if repair_prompt:
             parts.append(repair_prompt)
         parts.extend(
             [
-                "File metadata and numbered content JSON:" if generic_config_mode else "File metadata and content JSON:",
+                "File metadata and content JSON:",
                 json.dumps(payload, ensure_ascii=False),
             ]
         )
         return "\n".join(parts)
 
-    def _generic_config_prompt(self) -> str:
-        return """
-Task: analyze this parser-unsupported text file using only the provided numbered contentLines. contentLines is the only file content.
-
-Output: return exactly one valid JSON object matching this schema. No markdown. No prose. No comments.
-{
-  "schemaVersion": "knowledge.graph.enrichment.v1",
-  "claims": [
-    {
-      "localId": "config-purpose-1",
-      "targetStableKey": "<genericConfigEnrichment.anchorStableKey>",
-      "claimKind": "RESPONSIBILITY",
-      "summary": "<grounded purpose/responsibility sentence>",
-      "confidence": 0.7,
-      "evidence": [{"lineStart": 1, "lineEnd": 3, "text": "<short exact excerpt>"}],
-      "metadata": {
-        "factOrigin": "LLM",
-        "status": "TRUSTED",
-        "sourceKind": "GENERIC_CONFIG_ENRICHMENT"
-      }
-    }
-  ],
-  "semanticEdges": [
-    {
-      "localId": "edge-1",
-      "fromStableKey": "<genericConfigEnrichment.anchorStableKey>",
-      "toStableKey": null,
-      "edgeType": "CONFIGURES",
-      "unresolvedTarget": {"name": "<visible target>", "kindHint": "CONFIG"},
-      "confidence": 0.7,
-      "evidence": [{"lineStart": 1, "lineEnd": 3, "text": "<short exact excerpt>"}],
-      "metadata": {"factOrigin": "LLM", "status": "TRUSTED"}
-    }
-  ],
-  "diagnostics": []
-}
-
-Rules:
-- Attach RESPONSIBILITY claims to genericConfigEnrichment.anchorStableKey, the static FILE anchor, when evidence supports them.
-- Every claim or semantic edge must cite exact line ranges from contentLines with short excerpts.
-- You may add semanticEdges only when the schema supports them and the numbered lines clearly support them. Valid edgeType examples include CONFIGURES, REFERENCES, DEPENDS_ON, READS, WRITES, PUBLISHES, CONSUMES, RELATED_TO.
-- Use flowDomain, language, extension, fileType, staticAnchors, and contentLines as context; do not rely on path-specific assumptions.
-- Identify visible workflow triggers/jobs/steps, build artifacts/dependencies/plugins, or config behavior/settings when present.
-- Do not invent endpoints, classes, functions, flows, targets, or claims without evidence.
-- If unclear, return no claims and add a diagnostic with code ANALYSIS_AI_GENERIC_CONFIG_UNCLEAR.
-""".strip()
+    def _known_node_kinds(self, payload: Dict[str, Any]) -> dict[str, str]:
+        static_anchors = payload.get("staticAnchors")
+        if not isinstance(static_anchors, dict):
+            return {}
+        result: dict[str, str] = {}
+        for item in static_anchors.get("nodes") or []:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("targetStableKey")
+            kind = item.get("nodeKind")
+            if isinstance(key, str) and isinstance(kind, str):
+                result[key] = kind
+        return result
 
     def _require_localhost(self, base_url: str) -> str:
         parsed = urllib.parse.urlparse(base_url)

@@ -6,11 +6,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from knowledge_service.analysis_graph_contract import AnalysisGraphContract, GraphContractProvider
 from knowledge_service.graph_schema import (
-    ALLOWED_GRAPH_CLAIM_KINDS,
-    ALLOWED_GRAPH_EDGE_TYPES,
-    ALLOWED_GRAPH_NODE_KINDS,
-    ALLOWED_RESOLUTION_STATUSES,
     GraphAnalysisResult,
     GraphClaim,
     GraphEdge,
@@ -32,7 +29,16 @@ class GraphAnalysisParseFailure:
 
 
 class GraphAnalysisResponseParser:
-    def parse(self, raw: str, line_count: int) -> GraphAnalysisResult | GraphAnalysisParseFailure:
+    def __init__(self, contract_provider: GraphContractProvider | None = None):
+        self.contract_provider = contract_provider or GraphContractProvider()
+
+    def parse(
+        self,
+        raw: str,
+        line_count: int,
+        contract: AnalysisGraphContract | None = None,
+        known_node_kinds: dict[str, str] | None = None,
+    ) -> GraphAnalysisResult | GraphAnalysisParseFailure:
         if raw is None or not raw.strip():
             return GraphAnalysisParseFailure(
                 "ANALYSIS_AI_EMPTY_RESPONSE",
@@ -80,8 +86,9 @@ class GraphAnalysisResponseParser:
             )
             return GraphAnalysisParseFailure("ANALYSIS_AI_SCHEMA_INVALID", self._details_message("AI analyzer response does not match graph schema", [detail]), self._preview(raw), [detail])
         try:
+            effective_contract = contract or self._contract_for_parsed(parsed)
             if str(parsed.get("schemaVersion") or "").startswith("knowledge.graph.enrichment."):
-                enrichment_errors = self._validate_enrichment_payload(parsed, line_count)
+                enrichment_errors = self._validate_enrichment_payload(parsed, line_count, effective_contract, known_node_kinds or {})
                 if enrichment_errors:
                     return GraphAnalysisParseFailure(
                         "ANALYSIS_AI_SCHEMA_INVALID",
@@ -91,13 +98,29 @@ class GraphAnalysisResponseParser:
                     )
                 result = self._parse_enrichment(parsed)
                 result.validate_lines(line_count)
+                graph_errors = self._validate_result_contract(result, effective_contract, known_node_kinds or {})
+                if graph_errors:
+                    return GraphAnalysisParseFailure(
+                        "ANALYSIS_AI_SCHEMA_INVALID",
+                        self._details_message("AI analyzer response does not match graph schema", graph_errors),
+                        self._preview(raw),
+                        graph_errors,
+                    )
                 return result
             result = GraphAnalysisResult.parse_obj(parsed)
             result.validate_lines(line_count)
             result.validate_references()
+            graph_errors = self._validate_result_contract(result, effective_contract, self._node_kind_map(result))
+            if graph_errors:
+                return GraphAnalysisParseFailure(
+                    "ANALYSIS_AI_SCHEMA_INVALID",
+                    self._details_message("AI analyzer response does not match graph schema", graph_errors),
+                    self._preview(raw),
+                    graph_errors,
+                )
             return result
         except ValidationError as exc:
-            details = self._validation_error_details(exc, parsed)
+            details = self._validation_error_details(exc, parsed, contract or self._contract_for_parsed(parsed))
             return GraphAnalysisParseFailure("ANALYSIS_AI_SCHEMA_INVALID", self._details_message("AI analyzer response does not match graph schema", details), self._preview(raw), details)
         except (ValueError, TypeError) as exc:
             detail = self._graph_validation_error("$", str(exc))
@@ -209,14 +232,22 @@ class GraphAnalysisResponseParser:
             return f"{detail.get('jsonPath') or detail.get('graphEntityId') or '$'}: {detail.get('reason') or detail.get('message')}"
         return str(detail.get("message") or detail)
 
-    def _validation_error_details(self, exc: ValidationError, parsed: Any) -> list[dict[str, Any]]:
+    def _contract_for_parsed(self, parsed: dict[str, Any]) -> AnalysisGraphContract:
+        file_payload = parsed.get("file")
+        if isinstance(file_payload, dict):
+            relative_path = str(file_payload.get("relativePath") or "")
+            if relative_path:
+                return self.contract_provider.resolve(relative_path)
+        return self.contract_provider.default_contract()
+
+    def _validation_error_details(self, exc: ValidationError, parsed: Any, contract: AnalysisGraphContract) -> list[dict[str, Any]]:
         details: list[dict[str, Any]] = []
         for error in exc.errors():
             loc = tuple(error.get("loc") or ())
             path = json_path(loc)
             field = str(loc[-1]) if loc else None
             missing = error.get("type") == "value_error.missing"
-            allowed = self._allowed_values_for_path(path)
+            allowed = self._allowed_values_for_path(path, contract)
             details.append(
                 self._schema_error(
                     path,
@@ -247,17 +278,27 @@ class GraphAnalysisResponseParser:
             "field": field,
             "message": message,
             "actual": self._jsonable(actual),
+            "invalidValue": self._jsonable(actual),
             "expected": expected,
             "allowedValues": list(allowed_values or []),
             "missingRequiredField": missing_required_field,
         }
 
-    def _graph_validation_error(self, path: str, reason: str, *, graph_entity_id: str | None = None, allowed_values: list[str] | None = None) -> dict[str, Any]:
+    def _graph_validation_error(
+        self,
+        path: str,
+        reason: str,
+        *,
+        graph_entity_id: str | None = None,
+        invalid_value: Any = None,
+        allowed_values: list[str] | None = None,
+    ) -> dict[str, Any]:
         return {
             "errorType": "GRAPH_VALIDATION_ERROR",
             "jsonPath": path,
             "graphEntityId": graph_entity_id,
             "reason": reason,
+            "invalidValue": self._jsonable(invalid_value),
             "allowedValues": list(allowed_values or []),
         }
 
@@ -269,15 +310,21 @@ class GraphAnalysisResponseParser:
             return "valid value"
         return str(error.get("msg") or "valid value")
 
-    def _allowed_values_for_path(self, path: str) -> list[str]:
+    def _allowed_values_for_path(self, path: str, contract: AnalysisGraphContract) -> list[str]:
         if path.endswith(".nodeKind"):
-            return sorted(ALLOWED_GRAPH_NODE_KINDS)
+            return list(contract.allowed_node_kinds)
         if path.endswith(".edgeType"):
-            return sorted(ALLOWED_GRAPH_EDGE_TYPES)
+            return list(contract.allowed_edge_kinds)
         if path.endswith(".claimKind"):
-            return sorted(ALLOWED_GRAPH_CLAIM_KINDS)
+            return list(contract.allowed_claim_kinds)
+        if path.endswith(".status"):
+            return list(contract.allowed_statuses)
+        if path.endswith(".factOrigin"):
+            return list(contract.allowed_origins)
+        if path.endswith(".evidenceKind"):
+            return list(contract.allowed_evidence_kinds)
         if path.endswith(".resolutionStatus"):
-            return sorted(ALLOWED_RESOLUTION_STATUSES)
+            return list(contract.allowed_resolution_statuses)
         return []
 
     def _actual_at_path(self, parsed: Any, loc: tuple[Any, ...]) -> Any:
@@ -301,7 +348,13 @@ class GraphAnalysisResponseParser:
         except TypeError:
             return str(value)
 
-    def _validate_enrichment_payload(self, parsed: dict[str, Any], line_count: int) -> list[dict[str, Any]]:
+    def _validate_enrichment_payload(
+        self,
+        parsed: dict[str, Any],
+        line_count: int,
+        contract: AnalysisGraphContract,
+        known_node_kinds: dict[str, str],
+    ) -> list[dict[str, Any]]:
         details: list[dict[str, Any]] = []
         claims = parsed.get("claims")
         if claims is not None and not isinstance(claims, list):
@@ -335,22 +388,23 @@ class GraphAnalysisResponseParser:
                         field="claimKind",
                         message="claimKind is required.",
                         actual=claim_kind,
-                        expected="RESPONSIBILITY",
-                        allowed_values=["RESPONSIBILITY"],
+                        expected="allowed graph claim kind",
+                        allowed_values=list(contract.allowed_claim_kinds),
                         missing_required_field="claimKind",
                     )
                 )
-            elif str(claim_kind).upper() != "RESPONSIBILITY":
+            elif str(claim_kind) not in contract.allowed_claim_kinds:
                 details.append(
                     self._schema_error(
                         f"{path}.claimKind",
                         field="claimKind",
-                        message="claimKind must be RESPONSIBILITY for generic config enrichment.",
+                        message="claimKind is not allowed by the effective analysis graph profiles.",
                         actual=claim_kind,
-                        expected="RESPONSIBILITY",
-                        allowed_values=["RESPONSIBILITY"],
+                        expected="allowed graph claim kind",
+                        allowed_values=list(contract.allowed_claim_kinds),
                     )
                 )
+            self._validate_metadata_contract(item.get("metadata"), f"{path}.metadata", contract, details)
             details.extend(self._validate_required_string(item, path, "summary"))
             evidence = item.get("evidence")
             if not isinstance(evidence, list) or not evidence:
@@ -398,6 +452,7 @@ class GraphAnalysisResponseParser:
                 line_end = evidence_item.get("lineEnd")
                 if isinstance(line_start, int) and isinstance(line_end, int) and (line_start < 1 or line_end < line_start or line_end > max(line_count, 1)):
                     details.append(self._graph_validation_error(evidence_path, "Evidence line range outside file."))
+                self._validate_metadata_contract(evidence_item.get("metadata"), f"{evidence_path}.metadata", contract, details)
         semantic_edges = parsed.get("semanticEdges")
         if semantic_edges is not None and not isinstance(semantic_edges, list):
             details.append(
@@ -409,18 +464,223 @@ class GraphAnalysisResponseParser:
                 details.append(self._schema_error(path, field=None, message="semantic edge must be an object.", actual=type(item).__name__, expected="object"))
                 continue
             edge_type = item.get("edgeType")
-            if edge_type is not None and str(edge_type).upper() not in ALLOWED_GRAPH_EDGE_TYPES:
+            if not edge_type:
                 details.append(
                     self._schema_error(
                         f"{path}.edgeType",
                         field="edgeType",
-                        message="edgeType is not an allowed graph edge type.",
+                        message="edgeType is required.",
                         actual=edge_type,
-                        expected="allowed graph edge type",
-                        allowed_values=sorted(ALLOWED_GRAPH_EDGE_TYPES),
+                        expected="allowed graph edge kind",
+                        allowed_values=list(contract.allowed_edge_kinds),
+                        missing_required_field="edgeType",
                     )
                 )
+            elif str(edge_type) not in contract.allowed_edge_kinds:
+                details.append(
+                    self._schema_error(
+                        f"{path}.edgeType",
+                        field="edgeType",
+                        message="edgeType is not allowed by the effective analysis graph profiles.",
+                        actual=edge_type,
+                        expected="allowed graph edge kind",
+                        allowed_values=list(contract.allowed_edge_kinds),
+                    )
+                )
+            else:
+                from_key = item.get("fromStableKey") or item.get("fromNodeLocalId")
+                to_key = item.get("toStableKey") or item.get("toNodeLocalId")
+                details.extend(self._validate_edge_endpoints(path, str(edge_type), from_key, to_key, known_node_kinds, contract))
+            self._validate_metadata_contract(item.get("metadata"), f"{path}.metadata", contract, details)
+            self._validate_resolution_status(item.get("resolutionStatus"), f"{path}.resolutionStatus", contract, details)
+            for evidence_index, evidence_item in enumerate(item.get("evidence") or []):
+                if isinstance(evidence_item, dict):
+                    self._validate_metadata_contract(evidence_item.get("metadata"), f"{path}.evidence[{evidence_index}].metadata", contract, details)
         return details
+
+    def _validate_result_contract(
+        self,
+        result: GraphAnalysisResult,
+        contract: AnalysisGraphContract,
+        known_node_kinds: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        details: list[dict[str, Any]] = []
+        for index, node in enumerate(result.nodes):
+            path = f"$.nodes[{index}]"
+            if node.nodeKind not in contract.allowed_node_kinds:
+                details.append(
+                    self._schema_error(
+                        f"{path}.nodeKind",
+                        field="nodeKind",
+                        message="nodeKind is not allowed by the effective analysis graph profiles.",
+                        actual=node.nodeKind,
+                        expected="allowed graph node kind",
+                        allowed_values=list(contract.allowed_node_kinds),
+                    )
+                )
+            self._validate_metadata_contract(node.metadata, f"{path}.metadata", contract, details)
+        for index, edge in enumerate(result.edges):
+            path = f"$.edges[{index}]"
+            if edge.edgeType not in contract.allowed_edge_kinds:
+                details.append(
+                    self._schema_error(
+                        f"{path}.edgeType",
+                        field="edgeType",
+                        message="edgeType is not allowed by the effective analysis graph profiles.",
+                        actual=edge.edgeType,
+                        expected="allowed graph edge kind",
+                        allowed_values=list(contract.allowed_edge_kinds),
+                    )
+                )
+            else:
+                details.extend(
+                    self._validate_edge_endpoints(
+                        path,
+                        edge.edgeType,
+                        edge.fromNodeLocalId,
+                        edge.toNodeLocalId,
+                        known_node_kinds,
+                        contract,
+                    )
+                )
+            self._validate_metadata_contract(edge.metadata, f"{path}.metadata", contract, details)
+            for evidence_index, evidence in enumerate(edge.evidence):
+                self._validate_metadata_contract(evidence.metadata, f"{path}.evidence[{evidence_index}].metadata", contract, details)
+        for index, claim in enumerate(result.claims):
+            path = f"$.claims[{index}]"
+            if claim.claimKind not in contract.allowed_claim_kinds:
+                details.append(
+                    self._schema_error(
+                        f"{path}.claimKind",
+                        field="claimKind",
+                        message="claimKind is not allowed by the effective analysis graph profiles.",
+                        actual=claim.claimKind,
+                        expected="allowed graph claim kind",
+                        allowed_values=list(contract.allowed_claim_kinds),
+                    )
+                )
+            self._validate_metadata_contract(claim.metadata, f"{path}.metadata", contract, details)
+            for evidence_index, evidence in enumerate(claim.evidence):
+                self._validate_metadata_contract(evidence.metadata, f"{path}.evidence[{evidence_index}].metadata", contract, details)
+        return details
+
+    def _validate_metadata_contract(
+        self,
+        metadata: Any,
+        path: str,
+        contract: AnalysisGraphContract,
+        details: list[dict[str, Any]],
+    ) -> None:
+        if metadata is None:
+            return
+        if not isinstance(metadata, dict):
+            details.append(self._schema_error(path, field="metadata", message="metadata must be an object.", actual=metadata, expected="object"))
+            return
+        self._validate_status(metadata.get("status"), f"{path}.status", contract, details)
+        self._validate_origin(metadata.get("factOrigin"), f"{path}.factOrigin", contract, details)
+        self._validate_evidence_kind(metadata.get("evidenceKind"), f"{path}.evidenceKind", contract, details)
+        self._validate_resolution_status(metadata.get("resolutionStatus"), f"{path}.resolutionStatus", contract, details)
+
+    def _validate_status(self, value: Any, path: str, contract: AnalysisGraphContract, details: list[dict[str, Any]]) -> None:
+        if value is None:
+            return
+        if str(value) not in contract.allowed_statuses:
+            details.append(
+                self._schema_error(
+                    path,
+                    field="status",
+                    message="status is not declared by the analysis policy.",
+                    actual=value,
+                    expected="allowed graph status",
+                    allowed_values=list(contract.allowed_statuses),
+                )
+            )
+
+    def _validate_origin(self, value: Any, path: str, contract: AnalysisGraphContract, details: list[dict[str, Any]]) -> None:
+        if value is None:
+            return
+        if str(value) not in contract.allowed_origins:
+            details.append(
+                self._schema_error(
+                    path,
+                    field="factOrigin",
+                    message="factOrigin is not declared by the analysis policy.",
+                    actual=value,
+                    expected="allowed graph origin",
+                    allowed_values=list(contract.allowed_origins),
+                )
+            )
+
+    def _validate_evidence_kind(self, value: Any, path: str, contract: AnalysisGraphContract, details: list[dict[str, Any]]) -> None:
+        if value is None:
+            return
+        if str(value) not in contract.allowed_evidence_kinds:
+            details.append(
+                self._schema_error(
+                    path,
+                    field="evidenceKind",
+                    message="evidenceKind is not declared by the analysis policy.",
+                    actual=value,
+                    expected="allowed graph evidence kind",
+                    allowed_values=list(contract.allowed_evidence_kinds),
+                )
+            )
+
+    def _validate_resolution_status(self, value: Any, path: str, contract: AnalysisGraphContract, details: list[dict[str, Any]]) -> None:
+        if value is None:
+            return
+        if str(value) not in contract.allowed_resolution_statuses:
+            details.append(
+                self._schema_error(
+                    path,
+                    field="resolutionStatus",
+                    message="resolutionStatus is not declared by the analysis policy.",
+                    actual=value,
+                    expected="allowed graph resolution status",
+                    allowed_values=list(contract.allowed_resolution_statuses),
+                )
+            )
+
+    def _validate_edge_endpoints(
+        self,
+        path: str,
+        edge_type: str,
+        from_id: Any,
+        to_id: Any,
+        known_node_kinds: dict[str, str],
+        contract: AnalysisGraphContract,
+    ) -> list[dict[str, Any]]:
+        details: list[dict[str, Any]] = []
+        from_kind = known_node_kinds.get(str(from_id)) if from_id is not None else None
+        to_kind = known_node_kinds.get(str(to_id)) if to_id is not None else None
+        allowed_from = list(contract.edge_from_kinds.get(edge_type, ()))
+        allowed_to = list(contract.edge_to_kinds.get(edge_type, ()))
+        if from_kind is not None and allowed_from and from_kind not in allowed_from:
+            details.append(
+                self._schema_error(
+                    f"{path}.fromNodeLocalId",
+                    field="fromNodeLocalId",
+                    message="edge source node kind violates the analysis policy endpoint rule.",
+                    actual=from_kind,
+                    expected=f"{edge_type} source endpoint kind",
+                    allowed_values=allowed_from,
+                )
+            )
+        if to_kind is not None and allowed_to and to_kind not in allowed_to:
+            details.append(
+                self._schema_error(
+                    f"{path}.toNodeLocalId",
+                    field="toNodeLocalId",
+                    message="edge target node kind violates the analysis policy endpoint rule.",
+                    actual=to_kind,
+                    expected=f"{edge_type} target endpoint kind",
+                    allowed_values=allowed_to,
+                )
+            )
+        return details
+
+    def _node_kind_map(self, result: GraphAnalysisResult) -> dict[str, str]:
+        return {node.localId: node.nodeKind for node in result.nodes}
 
     def _validate_required_string(self, item: dict[str, Any], path: str, field_name: str) -> list[dict[str, Any]]:
         value = item.get(field_name)
@@ -456,7 +716,7 @@ class GraphAnalysisResponseParser:
                 GraphClaim(
                     localId=str(item.get("localId") or f"claim{index}"),
                     nodeLocalId=str(item.get("targetStableKey") or item.get("nodeLocalId") or ""),
-                    claimKind=str(item.get("claimKind") or "UNKNOWN"),
+                    claimKind=str(item.get("claimKind") or ""),
                     summary=str(item.get("summary") or ""),
                     evidence=self._evidence_refs(item.get("evidence") or []),
                     confidence=float(item.get("confidence") if item.get("confidence") is not None else 0.0),
@@ -476,7 +736,7 @@ class GraphAnalysisResponseParser:
                     localId=str(item.get("localId") or f"semantic{index}"),
                     fromNodeLocalId=str(item.get("fromStableKey") or item.get("fromNodeLocalId") or ""),
                     toNodeLocalId=item.get("toStableKey") or item.get("toNodeLocalId"),
-                    edgeType=str(item.get("edgeType") or "UNKNOWN"),
+                    edgeType=str(item.get("edgeType") or ""),
                     confidence=float(item.get("confidence") if item.get("confidence") is not None else 0.0),
                     evidence=self._evidence_refs(item.get("evidence") or []),
                     unresolvedTarget=item.get("unresolvedTarget"),

@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol, Union
 
+from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
 from knowledge_service.analysis_schema import AnalysisBuildRequest, AnalysisResult, RetryFailedAnalysisRequest
@@ -66,6 +67,7 @@ class AnalysisSupervisor:
         self.structural_engine = StructuralAnalysisEngine()
         self.static_materializer = StaticGraphMaterializer()
         self.anchor_validator = AnchorAwareGraphValidator()
+        self.graph_contract_provider = GraphContractProvider()
         self._admission_lock: Optional[asyncio.Lock] = None
         self._queue: Optional[asyncio.Queue[tuple[str, AnalysisBuildRequest, AnalysisProvider, Optional[List[Any]], str, bool]]] = None
         self._workers: list[asyncio.Task[None]] = []
@@ -647,6 +649,7 @@ class AnalysisSupervisor:
         generic_config_eligible: bool = False,
         lines: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
+        graph_contract = self.graph_contract_provider.resolve(str(row["relative_path"]), content)
         payload = {
             "sourceId": row["source_id"],
             "serviceLabel": row["display_name"],
@@ -661,6 +664,7 @@ class AnalysisSupervisor:
             "flowDomain": structural_result.file.flow_domain,
             "metadata": {k: v for k, v in metadata.items() if k != "absoluteRoot"},
             "staticAnchors": self._static_anchor_payload(static_graph),
+            "analysisPolicy": contract_payload(graph_contract),
         }
         if generic_config_eligible:
             file_anchor = next((node for node in static_graph.nodes if node.nodeKind == "FILE"), None)
@@ -670,7 +674,8 @@ class AnalysisSupervisor:
                     "fileType": self._generic_config_file_type(row, structural_result),
                     "genericConfigEnrichment": {
                         "anchorStableKey": file_anchor.localId if file_anchor else structural_result.file_stable_key,
-                        "requiredClaimKind": "RESPONSIBILITY",
+                        "allowedClaimKinds": list(graph_contract.allowed_claim_kinds),
+                        "allowedEdgeKinds": list(graph_contract.allowed_edge_kinds),
                         "requiredFactOrigin": "LLM",
                         "requiredEvidence": "Use one or more exact source line ranges from contentLines.",
                         "outputSchemaVersion": "knowledge.graph.enrichment.v1",
@@ -846,6 +851,24 @@ class AnalysisSupervisor:
         preview = self._error_preview(last_error)
         if preview:
             lines.extend(["Bounded invalid response preview:", preview])
+        contract = self.graph_contract_provider.resolve_payload(payload)
+        lines.extend(
+            [
+                "Allowed graph contract values:",
+                self._json_for_prompt(
+                    {
+                        "nodeKind": list(contract.allowed_node_kinds),
+                        "edgeType": list(contract.allowed_edge_kinds),
+                        "claimKind": list(contract.allowed_claim_kinds),
+                        "status": list(contract.allowed_statuses),
+                        "factOrigin": list(contract.allowed_origins),
+                        "evidenceKind": list(contract.allowed_evidence_kinds),
+                        "resolutionStatus": list(contract.allowed_resolution_statuses),
+                    },
+                    limit=1200,
+                ),
+            ]
+        )
         lines.extend(
             [
                 "Return ONLY corrected JSON matching the requested schema.",
@@ -855,8 +878,6 @@ class AnalysisSupervisor:
                 "Keep claims grounded in the provided contentLines and source evidence.",
             ]
         )
-        if payload.get("analysisMode") == GENERIC_CONFIG_ANALYSIS_MODE:
-            lines.append("For generic text/config enrichment, use claimKind RESPONSIBILITY and evidence line ranges from contentLines.")
         return "\n".join(lines)
 
     def _format_error_detail(self, detail: Dict[str, Any]) -> str:

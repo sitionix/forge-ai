@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Extra, Field, validator
 
@@ -145,18 +145,6 @@ class GraphDiagnosticCode(str, Enum):
     CLAIM_EVIDENCE_MISSING = "ANALYSIS_GRAPH_CLAIM_EVIDENCE_MISSING"
 
 
-def enum_values(enum_type: Type[Enum]) -> List[str]:
-    return [item.value for item in enum_type]
-
-
-ALLOWED_NODE_KINDS = set(enum_values(GraphNodeKind))
-ALLOWED_EDGE_TYPES = set(enum_values(GraphEdgeType))
-ALLOWED_RESOLUTION_STATUSES = set(enum_values(GraphResolutionStatus))
-ALLOWED_CLAIM_KINDS = set(enum_values(GraphClaimKind))
-ALLOWED_FACT_STATUSES = set(enum_values(GraphFactStatus))
-ALLOWED_FACT_ORIGINS = set(enum_values(GraphFactOrigin))
-ALLOWED_FLOW_DOMAINS = set(enum_values(GraphFlowDomain))
-
 MIN_TRUSTED_CONFIDENCE = 0.5
 _DEFAULT_FILE_CLASSIFIER: Optional[FileClassifier] = None
 
@@ -265,24 +253,6 @@ class GraphAnalysisResponse(BaseModel):
         return value
 
 
-ALLOWED_GRAPH_NODE_KINDS = ALLOWED_NODE_KINDS
-ALLOWED_GRAPH_EDGE_TYPES = ALLOWED_EDGE_TYPES | {
-    "INJECTS",
-    "MAPS_TO",
-    "USES",
-    "READS_FROM",
-    "WRITES_TO",
-    "REFERENCES_CONTRACT",
-    "REFERENCES_DTO",
-    "RELATED_TO",
-}
-ALLOWED_GRAPH_CLAIM_KINDS = ALLOWED_CLAIM_KINDS | {
-    "CONTRACT",
-    "DIAGNOSTIC",
-    "CONFIG_REFERENCE",
-}
-
-
 class GraphEvidenceRef(BaseModel):
     lineStart: int
     lineEnd: int
@@ -309,13 +279,6 @@ class GraphNode(BaseModel):
     class Config:
         extra = Extra.forbid
 
-    @validator("nodeKind")
-    def allowed_node_kind(cls, value: str) -> str:
-        value = value.upper()
-        if value not in ALLOWED_GRAPH_NODE_KINDS:
-            raise ValueError("Unsupported graph node kind")
-        return value
-
     @validator("confidence")
     def confidence_range(cls, value: float) -> float:
         if value < 0 or value > 1:
@@ -336,13 +299,6 @@ class GraphEdge(BaseModel):
     class Config:
         extra = Extra.forbid
 
-    @validator("edgeType")
-    def allowed_edge_type(cls, value: str) -> str:
-        value = value.upper()
-        if value not in ALLOWED_GRAPH_EDGE_TYPES:
-            raise ValueError("Unsupported graph edge type")
-        return value
-
     @validator("confidence")
     def edge_confidence_range(cls, value: float) -> float:
         if value < 0 or value > 1:
@@ -361,13 +317,6 @@ class GraphClaim(BaseModel):
 
     class Config:
         extra = Extra.forbid
-
-    @validator("claimKind")
-    def allowed_claim_kind(cls, value: str) -> str:
-        value = value.upper()
-        if value not in ALLOWED_GRAPH_CLAIM_KINDS:
-            raise ValueError("Unsupported graph claim kind")
-        return value
 
     @validator("confidence")
     def claim_confidence_range(cls, value: float) -> float:
