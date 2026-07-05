@@ -75,13 +75,17 @@ class AnchorAwareGraphValidator:
                     }
                 )
             metadata = dict(edge.metadata or {})
+            metadata.pop("resolutionStatus", None)
             metadata.setdefault("factOrigin", "LLM")
-            metadata.setdefault("resolutionStatus", "RESOLVED" if to_local_id else "UNRESOLVED")
+            resolution_status = edge.resolutionStatus or ("RESOLVED" if to_local_id else "UNRESOLVED")
+            if edge.toNodeLocalId and to_local_id is None:
+                resolution_status = "UNRESOLVED"
             accepted_edges.append(
                 edge.copy(
                     update={
                         "fromNodeLocalId": from_local_id,
                         "toNodeLocalId": to_local_id,
+                        "resolutionStatus": resolution_status,
                         "metadata": metadata,
                     }
                 )

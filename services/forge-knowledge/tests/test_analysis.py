@@ -460,18 +460,20 @@ def shared_evidence_graph_result():
                     "fromNodeLocalId": "method1",
                     "toNodeLocalId": "method2",
                     "edgeType": "CALLS",
+                    "resolutionStatus": "RESOLVED",
                     "confidence": 1.0,
                     "evidence": [{"lineStart": 4, "lineEnd": 4, "text": "helper(); helper();", "metadata": {"evidenceKind": "CALLSITE"}}],
-                    "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "resolutionStatus": "RESOLVED", "methodName": "helper"},
+                    "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "methodName": "helper"},
                 },
                 {
                     "localId": "same-callsite",
                     "fromNodeLocalId": "method1",
                     "toNodeLocalId": "method2",
                     "edgeType": "CALLS",
+                    "resolutionStatus": "RESOLVED",
                     "confidence": 1.0,
                     "evidence": [{"lineStart": 4, "lineEnd": 4, "text": "helper(); helper();", "metadata": {"evidenceKind": "CALLSITE"}}],
-                    "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "resolutionStatus": "RESOLVED", "methodName": "helper"},
+                    "metadata": {"factOrigin": "STATIC", "flowDomain": "CODE", "methodName": "helper"},
                 },
             ],
             "claims": [
@@ -3178,6 +3180,90 @@ def test_materialized_graph_fact_statuses_are_declared_by_policy():
     assert "TRUSTED" in statuses
     assert "CANDIDATE" in statuses
     assert statuses <= declared_statuses
+
+
+def test_graph_materializer_ignores_metadata_resolution_status():
+    row = {
+        "id": 1,
+        "source_id": "edge-gateway",
+        "relative_path": "src/main/java/example/Foo.java",
+        "content_hash": "hash-1",
+    }
+    graph = GraphAnalysisResult(
+        nodes=[
+            GraphNode(localId="file", nodeKind="FILE", name="Foo.java", lineStart=1, lineEnd=1, confidence=1.0),
+            GraphNode(localId="caller", nodeKind="CALLABLE", name="call", lineStart=1, lineEnd=1, confidence=1.0),
+        ],
+        edges=[
+            GraphEdge(
+                localId="legacy-call",
+                edgeType="CALLS",
+                fromNodeLocalId="caller",
+                toNodeLocalId=None,
+                confidence=0.8,
+                evidence=[GraphEvidenceRef(lineStart=1, lineEnd=1, metadata={"evidenceKind": "CALLSITE"})],
+                unresolvedTarget={"name": "missing", "kindHint": "CALLABLE"},
+                metadata={"factOrigin": "STATIC", "resolutionStatus": "RESOLVED", "methodName": "missing"},
+            )
+        ],
+    )
+
+    materialized = GraphAnalysisEngine().materialize(row, "job-1", "test", "1", graph, ["missing();"])
+
+    assert materialized["edges"][0]["resolution_status"] == "UNRESOLVED"
+    assert materialized["edges"][0]["to_node_id"] is None
+    assert "resolutionStatus" not in materialized["edges"][0]["metadata"]
+
+
+def test_static_graph_edge_resolution_status_is_not_persisted_in_metadata_json(tmp_path):
+    content = """package example;
+
+import java.util.List;
+
+class Foo {
+  void caller() {
+    helper();
+  }
+
+  void helper() {}
+}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(content, "src/main/java/example/Foo.java"),
+        _materialize_static_java_for_test(content, 1, "src/main/java/example/Foo.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        external_nodes = conn.execute(
+            "SELECT COUNT(*) FROM analysis_graph_nodes WHERE node_kind = 'EXTERNAL'"
+        ).fetchone()[0]
+        import_edge = conn.execute(
+            """
+            SELECT resolution_status, to_node_id, unresolved_target_json, metadata_json
+            FROM analysis_graph_edges
+            WHERE edge_type = 'IMPORTS'
+            """
+        ).fetchone()
+        call_edge = conn.execute(
+            """
+            SELECT resolution_status, to_node_id, metadata_json
+            FROM analysis_graph_edges
+            WHERE edge_type = 'CALLS'
+            """
+        ).fetchone()
+
+    assert external_nodes == 0
+    assert import_edge["resolution_status"] == "EXTERNAL_TARGET"
+    assert import_edge["to_node_id"] is None
+    assert json.loads(import_edge["unresolved_target_json"])["qualifiedName"] == "java.util.List"
+    assert "resolutionStatus" not in json.loads(import_edge["metadata_json"])
+    assert call_edge["resolution_status"] == "RESOLVED"
+    assert call_edge["to_node_id"] is not None
+    assert "resolutionStatus" not in json.loads(call_edge["metadata_json"])
 
 
 def test_graph_materializer_flow_domain_uses_explicit_metadata_first():

@@ -389,7 +389,7 @@ class StaticAnchorPayloadBuilder:
                     "fromStableKey": edge.fromNodeLocalId,
                     "toStableKey": edge.toNodeLocalId,
                     "edgeType": edge.edgeType,
-                    "resolutionStatus": edge.metadata.get("resolutionStatus"),
+                    "resolutionStatus": edge.resolutionStatus,
                     "lineStart": edge.evidence[0].lineStart if edge.evidence else None,
                     "lineEnd": edge.evidence[0].lineEnd if edge.evidence else None,
                     "unresolvedTarget": edge.unresolvedTarget,

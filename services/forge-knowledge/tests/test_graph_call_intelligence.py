@@ -13,19 +13,19 @@ def test_classify_call_metadata_contract_has_no_relative_path_input():
 
 def test_explicit_test_flow_domain_may_produce_internal_test_category():
     metadata = classify_call_metadata(
-        {"flowDomain": "TEST", "resolutionStatus": "RESOLVED", "methodName": "helper"},
+        {"flowDomain": "TEST", "methodName": "helper"},
         None,
         "RESOLVED",
     )
 
     assert metadata["callTargetCategory"] == "INTERNAL_TEST"
+    assert "resolutionStatus" not in metadata
 
 
 def test_src_test_path_metadata_alone_cannot_produce_internal_test_category():
     metadata = classify_call_metadata(
         {
             "flowDomain": "CODE",
-            "resolutionStatus": "UNRESOLVED",
             "methodName": "helper",
             "relativePath": "src/test/java/FooTest.java",
         },
@@ -47,7 +47,7 @@ def test_src_test_path_metadata_alone_cannot_produce_internal_test_category():
 )
 def test_non_code_categories_come_from_explicit_flow_domain(flow_domain, expected_category):
     metadata = classify_call_metadata(
-        {"flowDomain": flow_domain, "resolutionStatus": "UNRESOLVED", "methodName": "helper"},
+        {"flowDomain": flow_domain, "methodName": "helper"},
         None,
         "UNRESOLVED",
     )
@@ -68,7 +68,6 @@ def test_path_like_metadata_cannot_produce_workflow_build_or_config_category(pat
     metadata = classify_call_metadata(
         {
             "flowDomain": "CODE",
-            "resolutionStatus": "UNRESOLVED",
             "methodName": "helper",
             "relativePath": path_like_value,
         },

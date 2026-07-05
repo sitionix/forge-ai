@@ -491,7 +491,14 @@ class GraphAnalysisResponseParser:
                 to_key = item.get("toStableKey") or item.get("toNodeLocalId")
                 details.extend(self._validate_edge_endpoints(path, str(edge_type), from_key, to_key, known_node_kinds, contract))
             self._validate_metadata_contract(item.get("metadata"), f"{path}.metadata", contract, details)
-            self._validate_resolution_status(item.get("resolutionStatus"), f"{path}.resolutionStatus", contract, details)
+            self._validate_edge_resolution_status(
+                item.get("resolutionStatus"),
+                item.get("toStableKey") or item.get("toNodeLocalId"),
+                item.get("unresolvedTarget"),
+                path,
+                contract,
+                details,
+            )
             for evidence_index, evidence_item in enumerate(item.get("evidence") or []):
                 if isinstance(evidence_item, dict):
                     self._validate_metadata_contract(evidence_item.get("metadata"), f"{path}.evidence[{evidence_index}].metadata", contract, details)
@@ -542,6 +549,7 @@ class GraphAnalysisResponseParser:
                         contract,
                     )
                 )
+            self._validate_edge_resolution_status(edge.resolutionStatus, edge.toNodeLocalId, edge.unresolvedTarget, path, contract, details)
             self._validate_metadata_contract(edge.metadata, f"{path}.metadata", contract, details)
             for evidence_index, evidence in enumerate(edge.evidence):
                 self._validate_metadata_contract(evidence.metadata, f"{path}.evidence[{evidence_index}].metadata", contract, details)
@@ -578,7 +586,6 @@ class GraphAnalysisResponseParser:
         self._validate_status(metadata.get("status"), f"{path}.status", contract, details)
         self._validate_origin(metadata.get("factOrigin"), f"{path}.factOrigin", contract, details)
         self._validate_evidence_kind(metadata.get("evidenceKind"), f"{path}.evidenceKind", contract, details)
-        self._validate_resolution_status(metadata.get("resolutionStatus"), f"{path}.resolutionStatus", contract, details)
 
     def _validate_status(self, value: Any, path: str, contract: AnalysisGraphContract, details: list[dict[str, Any]]) -> None:
         if value is None:
@@ -640,6 +647,64 @@ class GraphAnalysisResponseParser:
                 )
             )
 
+    def _validate_edge_resolution_status(
+        self,
+        value: Any,
+        to_id: Any,
+        unresolved_target: Any,
+        path: str,
+        contract: AnalysisGraphContract,
+        details: list[dict[str, Any]],
+    ) -> None:
+        if value is None:
+            return
+        status_path = f"{path}.resolutionStatus"
+        status = str(value)
+        if status not in contract.allowed_resolution_statuses:
+            self._validate_resolution_status(value, status_path, contract, details)
+            return
+        resolved_statuses = self._contract_statuses(contract, "RESOLVED")
+        no_target_statuses = self._contract_statuses(
+            contract,
+            "EXTERNAL_TARGET",
+            "DYNAMIC_TARGET",
+            "UNRESOLVED",
+            "MULTIPLE_CANDIDATES",
+        )
+        unresolved_target_required_statuses = self._contract_statuses(contract, "EXTERNAL_TARGET", "DYNAMIC_TARGET")
+        if status in resolved_statuses and not to_id:
+            details.append(
+                self._schema_error(
+                    status_path,
+                    field="resolutionStatus",
+                    message="RESOLVED edge resolution requires toNodeLocalId.",
+                    actual=status,
+                    expected="resolution status consistent with edge target",
+                    allowed_values=list(contract.allowed_resolution_statuses),
+                )
+            )
+        if status in no_target_statuses and to_id:
+            details.append(
+                self._schema_error(
+                    status_path,
+                    field="resolutionStatus",
+                    message=f"{status} edge resolution must not have toNodeLocalId.",
+                    actual=status,
+                    expected="resolution status consistent with edge target",
+                    allowed_values=list(contract.allowed_resolution_statuses),
+                )
+            )
+        if status in unresolved_target_required_statuses and not unresolved_target:
+            details.append(
+                self._schema_error(
+                    f"{path}.unresolvedTarget",
+                    field="unresolvedTarget",
+                    message=f"{status} edge resolution requires unresolvedTarget.",
+                    actual=unresolved_target,
+                    expected="unresolved target details",
+                )
+            )
+
     def _validate_edge_endpoints(
         self,
         path: str,
@@ -674,6 +739,17 @@ class GraphAnalysisResponseParser:
                     actual=to_kind,
                     expected=f"{edge_type} target endpoint kind",
                     allowed_values=allowed_to,
+                )
+            )
+        if to_id is not None and not allowed_to:
+            details.append(
+                self._schema_error(
+                    f"{path}.toNodeLocalId",
+                    field="toNodeLocalId",
+                    message="edge target node is not allowed for this edge type by the analysis policy endpoint rule.",
+                    actual=to_id,
+                    expected=f"{edge_type} target endpoint kind",
+                    allowed_values=[],
                 )
             )
         return details
@@ -727,15 +803,15 @@ class GraphAnalysisResponseParser:
             if not isinstance(item, dict):
                 continue
             metadata = dict(item.get("metadata") or {})
+            metadata.pop("resolutionStatus", None)
             metadata.setdefault("factOrigin", "LLM")
-            if item.get("resolutionStatus"):
-                metadata.setdefault("resolutionStatus", item.get("resolutionStatus"))
             edges.append(
                 GraphEdge(
                     localId=str(item.get("localId") or f"semantic{index}"),
                     fromNodeLocalId=str(item.get("fromStableKey") or item.get("fromNodeLocalId") or ""),
                     toNodeLocalId=item.get("toStableKey") or item.get("toNodeLocalId"),
                     edgeType=str(item.get("edgeType") or ""),
+                    resolutionStatus=item.get("resolutionStatus"),
                     confidence=float(item.get("confidence") if item.get("confidence") is not None else 0.0),
                     evidence=self._evidence_refs(item.get("evidence") or []),
                     unresolvedTarget=item.get("unresolvedTarget"),
@@ -744,6 +820,10 @@ class GraphAnalysisResponseParser:
             )
         diagnostics = parsed.get("diagnostics") or []
         return GraphAnalysisResult(nodes=[], edges=edges, claims=claims, diagnostics=diagnostics)
+
+    def _contract_statuses(self, contract: AnalysisGraphContract, *statuses: str) -> set[str]:
+        allowed = set(contract.allowed_resolution_statuses)
+        return {status for status in statuses if status in allowed}
 
     def _evidence_refs(self, values: list[Any]) -> list[GraphEvidenceRef]:
         refs: list[GraphEvidenceRef] = []

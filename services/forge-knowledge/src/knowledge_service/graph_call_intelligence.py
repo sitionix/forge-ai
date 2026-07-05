@@ -139,8 +139,9 @@ def classify_call_metadata(
     unresolved_target: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     result = dict(metadata or {})
+    result.pop("resolutionStatus", None)
     flow = str(result.get("flowDomain") or flow_domain or "CODE").upper()
-    status = str(result.get("resolutionStatus") or resolution_status or "UNKNOWN").upper()
+    status = str(resolution_status or "UNKNOWN").upper()
     receiver = _blank_to_none(result.get("receiverText"))
     receiver_type = _blank_to_none(result.get("receiverTypeHint"))
     target_type = _blank_to_none(result.get("targetTypeText") or (unresolved_target or {}).get("receiverTypeHint"))

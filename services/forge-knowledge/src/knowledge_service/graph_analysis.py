@@ -157,11 +157,12 @@ class GraphAnalysisEngine:
             metadata = dict(edge.metadata or {})
             fact_origin = self._fact_origin(metadata) if metadata.get("factOrigin") else (from_node or {}).get("fact_origin") or "LLM"
             flow_domain = metadata.get("flowDomain") or (from_node or {}).get("flow_domain") or self._flow_domain(row, metadata)
+            resolution_status = self._resolution_status(edge, to_node_id)
             if edge.edgeType == "CALLS":
                 metadata = classify_call_metadata(
                     metadata,
                     flow_domain,
-                    metadata.get("resolutionStatus") or ("RESOLVED" if to_node_id else "UNRESOLVED"),
+                    resolution_status,
                     edge.unresolvedTarget,
                 )
             edge_id = self._stable_id(
@@ -203,7 +204,7 @@ class GraphAnalysisEngine:
                     "from_node_id": from_node_id,
                     "to_node_id": to_node_id,
                     "edge_type": edge.edgeType,
-                    "resolution_status": str(metadata.get("resolutionStatus") or ("RESOLVED" if to_node_id else "UNRESOLVED")).upper(),
+                    "resolution_status": resolution_status,
                     "argument_count": edge.argument_count,
                     "confidence": edge.confidence,
                     "evidence_ids": edge_evidence_ids,
@@ -324,6 +325,9 @@ class GraphAnalysisEngine:
 
     def _fact_origin(self, metadata: Dict[str, Any]) -> str:
         return str(metadata.get("factOrigin") or "LLM").upper()
+
+    def _resolution_status(self, edge: GraphEdge, to_node_id: Optional[str]) -> str:
+        return str(edge.resolutionStatus or ("RESOLVED" if to_node_id else "UNRESOLVED")).upper()
 
     def _diagnostic_metadata(self, diagnostic: Dict[str, Any]) -> Dict[str, Any]:
         metadata = {key: value for key, value in diagnostic.items() if key not in {"severity", "stage", "code", "message", "factOrigin", "flowDomain"}}

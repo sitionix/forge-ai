@@ -278,6 +278,7 @@ class GraphPolicyValidator:
                 )
             if edge.edgeType in self.policy.graph.edges and edge.edgeType in contract.allowed_edge_types:
                 self._validate_edge_endpoint(edge, from_node, to_node, contract, stage, path, issues)
+            self._validate_edge_resolution_status(edge, contract, stage, path, issues)
             self._validate_metadata_contract(
                 edge.metadata,
                 contract,
@@ -538,17 +539,6 @@ class GraphPolicyValidator:
             stage=stage,
             issues=issues,
         )
-        self._validate_metadata_value(
-            metadata.get("resolutionStatus"),
-            field="metadata.resolutionStatus",
-            path=f"{path}.resolutionStatus",
-            allowed=contract.allowed_resolution_statuses,
-            message="metadata.resolutionStatus is not declared by the analysis policy.",
-            entity_type=entity_type,
-            entity_id=entity_id,
-            stage=stage,
-            issues=issues,
-        )
 
     def _validate_metadata_value(
         self,
@@ -618,6 +608,97 @@ class GraphPolicyValidator:
                     path=f"{path}.toNodeLocalId",
                 )
             )
+        if edge.toNodeLocalId and not allowed_to:
+            issues.append(
+                GraphPolicyValidationIssue(
+                    message="Graph edge target node is not allowed for this edge type by the YAML endpoint rule.",
+                    stage=stage,
+                    entity_type="edge",
+                    entity_id=edge.localId,
+                    field="toNodeLocalId",
+                    actual=edge.toNodeLocalId,
+                    allowed_values=[],
+                    path=f"{path}.toNodeLocalId",
+                )
+            )
+
+    def _validate_edge_resolution_status(
+        self,
+        edge: GraphEdge,
+        contract: AnalysisGraphContract,
+        stage: str,
+        path: str,
+        issues: List[GraphPolicyValidationIssue],
+    ) -> None:
+        value = edge.resolutionStatus
+        if value is None:
+            return
+        allowed_values = tuple(contract.allowed_resolution_statuses)
+        status = str(value)
+        if status not in allowed_values:
+            issues.append(
+                GraphPolicyValidationIssue(
+                    message="resolutionStatus is not declared by the analysis policy.",
+                    stage=stage,
+                    entity_type="edge",
+                    entity_id=edge.localId,
+                    field="resolutionStatus",
+                    actual=value,
+                    allowed_values=list(allowed_values),
+                    path=f"{path}.resolutionStatus",
+                )
+            )
+            return
+
+        resolved_statuses = self._contract_statuses(contract, "RESOLVED")
+        no_target_statuses = self._contract_statuses(
+            contract,
+            "EXTERNAL_TARGET",
+            "DYNAMIC_TARGET",
+            "UNRESOLVED",
+            "MULTIPLE_CANDIDATES",
+        )
+        unresolved_target_required_statuses = self._contract_statuses(contract, "EXTERNAL_TARGET", "DYNAMIC_TARGET")
+        if status in resolved_statuses and not edge.toNodeLocalId:
+            issues.append(
+                GraphPolicyValidationIssue(
+                    message="RESOLVED edge resolution requires toNodeLocalId.",
+                    stage=stage,
+                    entity_type="edge",
+                    entity_id=edge.localId,
+                    field="resolutionStatus",
+                    actual=status,
+                    path=f"{path}.resolutionStatus",
+                )
+            )
+        if status in no_target_statuses and edge.toNodeLocalId:
+            issues.append(
+                GraphPolicyValidationIssue(
+                    message=f"{status} edge resolution must not have toNodeLocalId.",
+                    stage=stage,
+                    entity_type="edge",
+                    entity_id=edge.localId,
+                    field="resolutionStatus",
+                    actual=status,
+                    path=f"{path}.resolutionStatus",
+                )
+            )
+        if status in unresolved_target_required_statuses and not edge.unresolvedTarget:
+            issues.append(
+                GraphPolicyValidationIssue(
+                    message=f"{status} edge resolution requires unresolvedTarget.",
+                    stage=stage,
+                    entity_type="edge",
+                    entity_id=edge.localId,
+                    field="unresolvedTarget",
+                    actual=edge.unresolvedTarget,
+                    path=f"{path}.unresolvedTarget",
+                )
+            )
+
+    def _contract_statuses(self, contract: AnalysisGraphContract, *statuses: str) -> set[str]:
+        allowed = set(contract.allowed_resolution_statuses)
+        return {status for status in statuses if status in allowed}
 
     def _validate_optional_line_range(
         self,

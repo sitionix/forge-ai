@@ -188,6 +188,7 @@ class GraphEdge(BaseModel):
     fromNodeLocalId: str
     toNodeLocalId: Optional[str] = None
     edgeType: str
+    resolutionStatus: Optional[str] = None
     argument_count: Optional[int] = None
     confidence: float
     evidence: List[GraphEvidenceRef] = Field(default_factory=list)
@@ -208,6 +209,15 @@ class GraphEdge(BaseModel):
         if value is not None and value < 0:
             raise ValueError("argument_count must be non-negative")
         return value
+
+    @validator("resolutionStatus")
+    def resolution_status_non_empty(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("resolutionStatus must be a non-empty string")
+        return normalized
 
 
 class GraphClaim(BaseModel):

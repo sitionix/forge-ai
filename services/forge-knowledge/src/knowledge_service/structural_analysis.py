@@ -147,6 +147,7 @@ class StaticGraphMaterializer:
                     fromNodeLocalId=file_local_id,
                     toNodeLocalId=None,
                     edgeType="IMPORTS",
+                    resolutionStatus="EXTERNAL_TARGET",
                     confidence=1.0,
                     evidence=[self._evidence(item.line_start, item.line_end, f"import {item.imported_name}")],
                     unresolvedTarget=unresolved_target,
@@ -155,7 +156,6 @@ class StaticGraphMaterializer:
                         "IMPORT",
                         item.stable_key,
                         {
-                            "resolutionStatus": "EXTERNAL_TARGET",
                             "unresolvedReason": "EXTERNAL_NOT_MODELED",
                             "resolutionReason": "IMPORT_REFERENCE",
                         },
@@ -168,6 +168,7 @@ class StaticGraphMaterializer:
                     fromNodeLocalId=file_local_id,
                     toNodeLocalId=None,
                     edgeType="REFERENCES",
+                    resolutionStatus="EXTERNAL_TARGET",
                     confidence=1.0,
                     evidence=[self._evidence(item.line_start, item.line_end, f"import {item.imported_name}")],
                     unresolvedTarget=unresolved_target,
@@ -176,7 +177,6 @@ class StaticGraphMaterializer:
                         "IMPORT_REFERENCE",
                         item.stable_key,
                         {
-                            "resolutionStatus": "EXTERNAL_TARGET",
                             "unresolvedReason": "EXTERNAL_NOT_MODELED",
                             "resolutionReason": "IMPORT_REFERENCE",
                         },
@@ -214,10 +214,11 @@ class StaticGraphMaterializer:
                     fromNodeLocalId=item.parent_type_local_id or file_local_id,
                     toNodeLocalId=item.local_id,
                     edgeType="DECLARES",
+                    resolutionStatus="RESOLVED",
                     confidence=1.0,
                     evidence=[self._evidence(item.line_start, item.line_end, f"{item.type_kind.lower()} {item.name}")],
                     unresolvedTarget=None,
-                    metadata=self._metadata(result, "DECLARATION", item.stable_key, {"resolutionStatus": "RESOLVED"}),
+                    metadata=self._metadata(result, "DECLARATION", item.stable_key),
                 )
             )
         for item in result.callables:
@@ -256,10 +257,11 @@ class StaticGraphMaterializer:
                     fromNodeLocalId=item.owner_type_local_id or file_local_id,
                     toNodeLocalId=item.local_id,
                     edgeType="DECLARES",
+                    resolutionStatus="RESOLVED",
                     confidence=1.0,
                     evidence=[self._evidence(item.line_start, item.line_end, item.signature)],
                     unresolvedTarget=None,
-                    metadata=self._metadata(result, "DECLARATION", item.stable_key, {"resolutionStatus": "RESOLVED"}),
+                    metadata=self._metadata(result, "DECLARATION", item.stable_key),
                 )
             )
             owner_annotations = self._type_annotations(result, item.owner_type_local_id)
@@ -298,10 +300,11 @@ class StaticGraphMaterializer:
                     fromNodeLocalId=item.owner_type_local_id,
                     toNodeLocalId=item.local_id,
                     edgeType="DECLARES",
+                    resolutionStatus="RESOLVED",
                     confidence=1.0,
                     evidence=[self._evidence(item.line_start, item.line_end, item.name)],
                     unresolvedTarget=None,
-                    metadata=self._metadata(result, "DECLARATION", item.stable_key, {"resolutionStatus": "RESOLVED"}),
+                    metadata=self._metadata(result, "DECLARATION", item.stable_key),
                 )
             )
             claims.extend(self._field_config_claims(result, item.local_id, item.annotations))
@@ -320,7 +323,6 @@ class StaticGraphMaterializer:
                 "CALLSITE",
                 callsite.stable_key,
                 {
-                    "resolutionStatus": callsite.resolution_status,
                     "receiverText": callsite.receiver_text,
                     "methodName": callsite.method_name,
                     "callKind": callsite.call_kind,
@@ -340,6 +342,7 @@ class StaticGraphMaterializer:
                     fromNodeLocalId=callsite.caller_callable_local_id,
                     toNodeLocalId=callsite.target_callable_local_id,
                     edgeType="CALLS",
+                    resolutionStatus="RESOLVED" if callsite.target_callable_local_id else callsite.resolution_status,
                     argument_count=callsite.argument_count,
                     confidence=1.0 if callsite.resolution_status == "RESOLVED" else 0.72,
                     evidence=[self._evidence(callsite.line_start, callsite.line_end, callsite.raw_text, {"evidenceKind": "CALLSITE"})],
