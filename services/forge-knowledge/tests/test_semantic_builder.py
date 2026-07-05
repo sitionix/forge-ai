@@ -17,8 +17,8 @@ def test_semantic_document_builder_uses_only_trusted_responsibility_claims(tmp_p
     seed_semantic_graph(
         db_path,
         nodes=[
-            {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
-            {"id": "node-other", "kind": "CALLABLE", "name": "Other.call", "qualified": "other.Other.call"},
+            {"id": "node-query", "nodeKind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
+            {"id": "node-other", "nodeKind": "CALLABLE", "name": "Other.call", "qualified": "other.Other.call"},
         ],
         claims=[
             {
@@ -86,12 +86,12 @@ def test_semantic_document_builder_orders_text_and_hash_deterministically(tmp_pa
     seed_semantic_graph(
         db_path,
         nodes=[
-            {"id": "b", "kind": "CALLABLE", "name": "Beta.call", "qualified": "example.Beta.call"},
-            {"id": "a", "kind": "CALLABLE", "name": "Alpha.call", "qualified": "example.Alpha.call"},
+            {"id": "b", "nodeKind": "CALLABLE", "name": "Beta.call", "qualified": "example.Beta.call"},
+            {"id": "a", "nodeKind": "CALLABLE", "name": "Alpha.call", "qualified": "example.Alpha.call"},
         ],
         edges=[
-            {"id": "edge-z", "from": "a", "to": "b", "type": "CALLS"},
-            {"id": "edge-a", "from": "b", "to": "a", "type": "CALLS"},
+            {"id": "edge-z", "fromNodeId": "a", "toNodeId": "b", "edgeType": "CALLS"},
+            {"id": "edge-a", "fromNodeId": "b", "toNodeId": "a", "edgeType": "CALLS"},
         ],
         claims=[
             {"id": "claim-a", "node_id": "a", "summary": "Alpha trusted summary.", "evidence_ids": ["ev-node-query"]},
@@ -109,12 +109,12 @@ def test_semantic_document_builder_orders_text_and_hash_deterministically(tmp_pa
 
 def test_semantic_document_builder_bounds_edge_facts_and_text_length(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
-    nodes = [{"id": "root", "kind": "CALLABLE", "name": "Root.call", "qualified": "example.Root.call"}]
+    nodes = [{"id": "root", "nodeKind": "CALLABLE", "name": "Root.call", "qualified": "example.Root.call"}]
     edges = []
     for index in range(8):
         node_id = f"target-{index}"
-        nodes.append({"id": node_id, "kind": "CALLABLE", "name": f"Target{index}.call", "qualified": f"example.Target{index}.call"})
-        edges.append({"id": f"edge-{index}", "from": "root", "to": node_id, "type": "CALLS"})
+        nodes.append({"id": node_id, "nodeKind": "CALLABLE", "name": f"Target{index}.call", "qualified": f"example.Target{index}.call"})
+        edges.append({"id": f"edge-{index}", "fromNodeId": "root", "toNodeId": node_id, "edgeType": "CALLS"})
     seed_semantic_graph(
         db_path,
         nodes=nodes,

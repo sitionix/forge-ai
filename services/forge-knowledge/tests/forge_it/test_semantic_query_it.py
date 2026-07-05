@@ -116,28 +116,28 @@ def seed_semantic_flow_fixture(db_path, *, graph_suffix="one", refresh_overview=
     nodes = [
         {
             "id": "jarvis-query-service-query",
-            "kind": "CALLABLE",
+            "nodeKind": "CALLABLE",
             "name": "JarvisQueryService.query",
             "qualified": "jarvis.JarvisQueryService.query",
             "path": "src/jarvis/query_service.py",
         },
         {
             "id": "jarvis-knowledge-client-query",
-            "kind": "CALLABLE",
+            "nodeKind": "CALLABLE",
             "name": "KnowledgeClient.query",
             "qualified": "jarvis.KnowledgeClient.query",
             "path": "src/jarvis/knowledge_client.py",
         },
         {
             "id": "knowledge-query-service-query",
-            "kind": "CALLABLE",
+            "nodeKind": "CALLABLE",
             "name": "KnowledgeQueryService.query",
             "qualified": "knowledge.KnowledgeQueryService.query",
             "path": "src/knowledge/query_service.py",
         },
         {
             "id": "wiremock-query-params",
-            "kind": "TYPE",
+            "nodeKind": "TYPE",
             "name": "WireMockQueryParams",
             "qualified": "test.WireMockQueryParams",
             "path": "src/test/WireMockQueryParams.java",
@@ -147,7 +147,7 @@ def seed_semantic_flow_fixture(db_path, *, graph_suffix="one", refresh_overview=
         nodes.append(
             {
                 "id": "new-semantic-node",
-                "kind": "CALLABLE",
+                "nodeKind": "CALLABLE",
                 "name": "NewSemanticNode.query",
                 "qualified": "example.NewSemanticNode.query",
                 "path": "src/new_semantic_node.py",
@@ -160,14 +160,14 @@ def seed_semantic_flow_fixture(db_path, *, graph_suffix="one", refresh_overview=
         refresh_overview=refresh_overview,
         nodes=nodes,
         edges=[
-            {"id": "edge-jarvis-client", "from": "jarvis-query-service-query", "to": "jarvis-knowledge-client-query", "type": "CALLS"},
-            {"id": "edge-client-knowledge", "from": "jarvis-knowledge-client-query", "to": "knowledge-query-service-query", "type": "CALLS"},
+            {"id": "edge-jarvis-client", "fromNodeId": "jarvis-query-service-query", "toNodeId": "jarvis-knowledge-client-query", "edgeType": "CALLS"},
+            {"id": "edge-client-knowledge", "fromNodeId": "jarvis-knowledge-client-query", "toNodeId": "knowledge-query-service-query", "edgeType": "CALLS"},
             {
                 "id": "edge-client-endpoint",
-                "from": "jarvis-knowledge-client-query",
-                "to": None,
-                "type": "CALLS",
-                "resolution": "EXTERNAL_TARGET",
+                "fromNodeId": "jarvis-knowledge-client-query",
+                "toNodeId": None,
+                "edgeType": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
                 "unresolved": {"name": "/api/v1/knowledge/query", "kindHint": "HTTP_ENDPOINT"},
             },
         ],

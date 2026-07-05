@@ -159,7 +159,6 @@ class AnalysisSupervisor:
                     self.config.analysis_base_url,
                     self.config.analysis_model,
                     min(self.config.analysis_ai_call_timeout_seconds, self.config.analysis_per_file_timeout_seconds),
-                    self.config.analysis_prompt_path,
                     self.config.analysis_context_tokens,
                 )
             )

@@ -96,7 +96,6 @@ def candidate(**overrides):
         "sourceId": "source-a",
         "graphId": "graph-a",
         "stableKey": "src/JarvisGateway.java|CALLABLE|JarvisGateway",
-        "kind": "CALLABLE",
         "nodeKind": "CALLABLE",
         "name": "JarvisGateway",
         "label": "JarvisGateway",
@@ -115,7 +114,6 @@ def graph_node(node_id, label, **overrides):
         "id": node_id,
         "sourceId": "source-a",
         "graphId": "graph-a",
-        "kind": "CALLABLE",
         "nodeKind": "CALLABLE",
         "label": label,
         "name": label,
@@ -190,6 +188,8 @@ def test_knowledge_query_response_contract_remains_flow_oriented():
 
     assert {"matchedSources", "matchedNodes", "flowPaths", "coverage", "diagnostics"} <= set(payload)
     assert "answer" not in payload
+    assert payload["matchedNodes"][0]["nodeKind"] == "CALLABLE"
+    assert "kind" not in payload["matchedNodes"][0]
 
 
 def test_baseline_search_finds_by_node_name_stable_key_and_qualified_name():

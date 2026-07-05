@@ -340,7 +340,6 @@ class JavaParserAdapter:
         resolution_status = "UNRESOLVED"
         unresolved_reason: Optional[str] = None
         resolution_reason: Optional[str] = None
-        resolver_signals: List[str] = []
         argument_count = self._argument_count(node.child_by_field_name("arguments"))
         call_kind = "LOCAL_METHOD"
         if node.type == "object_creation_expression":
@@ -353,7 +352,6 @@ class JavaParserAdapter:
             target_callable_local_id, resolution_status = self._resolve_constructor(target_type_text, argument_count, by_owner, by_type_name)
             resolution_reason = ResolutionReason.QUALIFIED_NAME_MATCH.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
             unresolved_reason = None if resolution_status == "RESOLVED" else UnresolvedReason.TARGET_NOT_ANALYZED.value
-            resolver_signals.append("CONSTRUCTOR_TYPE")
         elif node.type == "explicit_constructor_invocation":
             method_name = "this"
             receiver_text = "this"
@@ -380,7 +378,6 @@ class JavaParserAdapter:
                     target_type_text = method_name
                     resolution_reason = ResolutionReason.STATIC_IMPORT_MATCH.value
                     unresolved_reason = UnresolvedReason.EXTERNAL_NOT_MODELED.value
-                    resolver_signals.append("STATIC_IMPORT")
             else:
                 receiver_simple = self._simple_type(receiver_text)
                 field_type = field_types.get((caller.owner_type_local_id or "", receiver_text))
@@ -391,7 +388,6 @@ class JavaParserAdapter:
                     target_callable_local_id, resolution_status = self._resolve_type_method(field_type, method_name, argument_count, by_owner, by_type_name)
                     resolution_reason = ResolutionReason.FIELD_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
                     unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
-                    resolver_signals.append("FIELD_TYPE")
                 elif receiver_text in parameter_types:
                     call_kind = "PARAMETER_RECEIVER"
                     receiver_type_hint = parameter_types[receiver_text]
@@ -401,7 +397,6 @@ class JavaParserAdapter:
                     )
                     resolution_reason = ResolutionReason.PARAMETER_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
                     unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
-                    resolver_signals.append("PARAMETER_TYPE")
                 elif receiver_text in local_variable_types:
                     call_kind = "LOCAL_VARIABLE_RECEIVER"
                     receiver_type_hint = local_variable_types[receiver_text]
@@ -413,7 +408,6 @@ class JavaParserAdapter:
                         ResolutionReason.LOCAL_VARIABLE_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
                     )
                     unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
-                    resolver_signals.append("LOCAL_VARIABLE_TYPE")
                 elif receiver_simple in by_type_name:
                     call_kind = "STATIC_METHOD"
                     target_type_text = receiver_simple
@@ -422,14 +416,12 @@ class JavaParserAdapter:
                     )
                     resolution_reason = ResolutionReason.QUALIFIED_NAME_MATCH.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
                     unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
-                    resolver_signals.append("STATIC_TYPE")
                 elif receiver_simple in imported_simple_names or receiver_simple[:1].isupper():
                     call_kind = "STATIC_METHOD"
                     target_type_text = receiver_simple
                     resolution_status = "EXTERNAL_TARGET"
                     resolution_reason = ResolutionReason.EXTERNAL_PACKAGE_CLASSIFICATION.value
                     unresolved_reason = UnresolvedReason.EXTERNAL_NOT_MODELED.value
-                    resolver_signals.append("IMPORT_OR_UPPERCASE_RECEIVER")
                 elif "." in receiver_text or receiver_text.endswith(")"):
                     call_kind = "CHAINED_CALL"
                     unresolved_reason = UnresolvedReason.CHAINED_CALL_TARGET_UNKNOWN.value
@@ -465,7 +457,6 @@ class JavaParserAdapter:
             target_callable_local_id=target_callable_local_id,
             unresolved_reason=unresolved_reason,
             resolution_reason=resolution_reason,
-            resolver_signals=resolver_signals,
             owner_type_hint=caller.qualified_name.rsplit(".", 1)[0] if "." in caller.qualified_name else caller.qualified_name,
         )
 

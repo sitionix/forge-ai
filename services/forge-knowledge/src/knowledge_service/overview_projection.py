@@ -391,15 +391,3 @@ def _semantic_percent_for_overview_conn(conn: sqlite3.Connection, row: sqlite3.R
 
 def _clamp_percent(value: float) -> float:
     return max(0.0, min(100.0, round(float(value or 0.0), 3)))
-
-
-def _first_numeric(values: Dict[str, Any], *keys: str) -> float:
-    for key in keys:
-        value = values.get(key)
-        if value is None:
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return 0.0

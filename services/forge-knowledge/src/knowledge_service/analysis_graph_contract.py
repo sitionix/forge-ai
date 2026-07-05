@@ -217,35 +217,11 @@ class GraphContractProvider:
         contract = AnalysisGraphContract.from_payload(payload)
         if contract is not None:
             return contract
-        relative_path = str(payload.get("relativePath") or "")
-        content = _payload_content(payload)
-        return self.resolve(relative_path, content)
-
-    def default_contract(self) -> AnalysisGraphContract:
-        resolution = AnalysisPolicyResolution(
-            supported=True,
-            format_id=None,
-            family=None,
-            extractor_id=None,
-            policy_id=self.policy.defaults.default_policy,
-            prompt_id=None,
-            effective_graph_profiles=list(self.policy.defaults.default_graph_profiles),
-            allowed_node_kinds=_profile_kinds(self.policy, self.policy.defaults.default_graph_profiles, "nodes"),
-            allowed_edge_types=_profile_kinds(self.policy, self.policy.defaults.default_graph_profiles, "edges"),
-            allowed_claim_kinds=_profile_kinds(self.policy, self.policy.defaults.default_graph_profiles, "claims"),
-            semantic_node_kinds=[],
-            semantic_edge_types=[],
-            semantic_claim_kinds=[],
-            status_kinds=list(self.policy.graph.statuses.keys()),
-            origin_kinds=list(self.policy.graph.origins.keys()),
-            evidence_kinds=list(self.policy.graph.evidence_kinds.keys()),
-            resolution_statuses=list(self.policy.graph.resolution_statuses.keys()),
-            source_view=self.policy.defaults.canonical_source_view,
-            llm_mode=None,
-            evidence_required=self.policy.defaults.evidence_policy == "grounded_material_support",
-            unsupported_behavior=dict(self.policy.unsupported),
+        raise KnowledgeError(
+            "ANALYSIS_POLICY_CONTRACT_REQUIRED",
+            "Analyzer payload must include the resolved YAML analysisPolicy contract.",
+            relativePath=str(payload.get("relativePath") or ""),
         )
-        return AnalysisGraphContract.from_policy_resolution(self.policy, resolution)
 
 
 class AnalysisPromptRenderer:
@@ -326,22 +302,6 @@ def _load_cached_policy(path: Optional[str]) -> AnalysisPolicy:
     return load_analysis_policy(path or None)
 
 
-def _payload_content(payload: Mapping[str, Any]) -> Optional[str]:
-    content = payload.get("content")
-    if isinstance(content, str):
-        return content
-    lines = payload.get("contentLines")
-    if isinstance(lines, list):
-        texts = []
-        for item in lines:
-            if isinstance(item, Mapping):
-                texts.append(str(item.get("text") or ""))
-            else:
-                texts.append(str(item))
-        return "\n".join(texts)
-    return None
-
-
 def _prompt_id(payload: Mapping[str, Any]) -> Optional[str]:
     raw = payload.get("analysisPolicy")
     if isinstance(raw, Mapping):
@@ -349,19 +309,6 @@ def _prompt_id(payload: Mapping[str, Any]) -> Optional[str]:
         if isinstance(prompt_id, str) and prompt_id:
             return prompt_id
     return None
-
-
-def _profile_kinds(policy: AnalysisPolicy, profile_ids: list[str], field_name: str) -> list[str]:
-    values: list[str] = []
-    seen: set[str] = set()
-    for profile_id in profile_ids:
-        profile = policy.graph_profiles[profile_id]
-        for kind in getattr(profile, field_name):
-            if kind in seen:
-                continue
-            seen.add(kind)
-            values.append(kind)
-    return values
 
 
 def _optional_string(value: Any) -> Optional[str]:

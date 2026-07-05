@@ -109,8 +109,8 @@ def test_semantic_worker_run_once_picks_stale_and_builds_new_revision(tmp_path):
         db_path,
         graph_suffix="new",
         nodes=[
-            {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
-            {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
+            {"id": "node-query", "nodeKind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
+            {"id": "node-client", "nodeKind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
         ],
     )
 
@@ -134,8 +134,8 @@ def test_semantic_worker_builds_stale_source_with_active_analysis(tmp_path):
         db_path,
         graph_suffix="new",
         nodes=[
-            {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
-            {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
+            {"id": "node-query", "nodeKind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
+            {"id": "node-client", "nodeKind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
         ],
     )
     _seed_active_analysis_job(db_path, "semantic-source")
@@ -198,7 +198,7 @@ def test_semantic_worker_skips_missing_or_zero_node_sources(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     seed_semantic_graph(
         db_path,
-        nodes=[{"id": "node-package", "kind": "PACKAGE", "name": "example", "qualified": "example"}],
+        nodes=[{"id": "node-package", "nodeKind": "PACKAGE", "name": "example", "qualified": "example"}],
     )
     provider = CountingEmbeddingProvider()
     worker = _worker(db_path, provider)

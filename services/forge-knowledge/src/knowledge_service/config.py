@@ -47,7 +47,6 @@ class AnalysisSettings(BaseModel):
     provider: str = "ollama"
     base_url: AnyHttpUrl
     model: str = Field(min_length=1)
-    prompt_path: Path
     request_timeout_seconds: int = Field(default=90, ge=1)
     ai_call_timeout_seconds: Optional[int] = Field(default=None, ge=1)
     per_file_timeout_seconds: int = Field(default=120, ge=1)
@@ -141,7 +140,6 @@ class AppConfig(BaseModel):
     analysis_provider: str = "ollama"
     analysis_base_url: str = "http://localhost:11434"
     analysis_model: str = "qwen2.5-coder:14b"
-    analysis_prompt_path: Path = Path("analysis-prompt.md")
     analysis_request_timeout_seconds: int = 90
     analysis_ai_call_timeout_seconds: int = 90
     analysis_per_file_timeout_seconds: int = 120
@@ -189,7 +187,6 @@ class AppConfig(BaseModel):
             for field, value in zip(fields, args):
                 data.setdefault(field, value)
         module_dir = Path(data.get("module_dir", knowledge_module_dir()))
-        data.setdefault("analysis_prompt_path", module_dir / "config" / "analysis-prompt.md")
         data.setdefault("runtime_dir", module_dir / "var")
         data.setdefault("config_dir", module_dir / "config")
         data.setdefault("workspace_root", module_dir.parent)
@@ -224,7 +221,6 @@ class AppConfig(BaseModel):
             analysis_provider=analysis.provider,
             analysis_base_url=str(analysis.base_url).rstrip("/"),
             analysis_model=analysis.model,
-            analysis_prompt_path=analysis.prompt_path,
             analysis_request_timeout_seconds=analysis.request_timeout_seconds,
             analysis_ai_call_timeout_seconds=analysis.ai_call_timeout_seconds or analysis.request_timeout_seconds,
             analysis_per_file_timeout_seconds=analysis.per_file_timeout_seconds,
@@ -425,9 +421,6 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                     "provider": str(analysis.get("provider") or "ollama"),
                     "base_url": str(analysis.get("base-url") or analysis.get("base_url") or "http://localhost:11434"),
                     "model": str(analysis.get("model") or "qwen2.5-coder:14b"),
-                    "prompt_path": _path(
-                        str(analysis.get("prompt-path") or analysis.get("prompt_path") or "${FORGE_CONFIG_DIR}/knowledge/analysis-prompt.md"), env
-                    ),
                     "request_timeout_seconds": int(analysis.get("request-timeout-seconds") or analysis.get("request_timeout_seconds") or 90),
                     "ai_call_timeout_seconds": int(
                         analysis.get("ai-call-timeout-seconds")
@@ -506,7 +499,6 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
         "KNOWLEDGE_ANALYSIS_PROVIDER": ("provider", str),
         "KNOWLEDGE_ANALYSIS_BASE_URL": ("base_url", str),
         "KNOWLEDGE_ANALYSIS_MODEL": ("model", str),
-        "KNOWLEDGE_ANALYSIS_PROMPT_PATH": ("prompt_path", lambda value: _path(value, env)),
         "KNOWLEDGE_ANALYSIS_REQUEST_TIMEOUT_SECONDS": ("request_timeout_seconds", int),
         "KNOWLEDGE_ANALYSIS_AI_CALL_TIMEOUT_SECONDS": ("ai_call_timeout_seconds", int),
         "KNOWLEDGE_ANALYSIS_PER_FILE_TIMEOUT_SECONDS": ("per_file_timeout_seconds", int),

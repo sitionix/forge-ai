@@ -9,16 +9,15 @@ from knowledge_service.knowledge_search import (
 )
 
 
-def doc(node_id, name, *, source_id="source-a", kind="CALLABLE", qualified_name="", relative_path="", stable_key=None, summary=""):
+def doc(node_id, name, *, source_id="source-a", node_kind="CALLABLE", qualified_name="", relative_path="", stable_key=None, summary=""):
     return SearchDocument.from_graph_node(
         {
             "id": node_id,
             "sourceId": source_id,
-            "kind": kind,
-            "nodeKind": kind,
+            "nodeKind": node_kind,
             "name": name,
             "label": name,
-            "stableKey": stable_key or f"{source_id}|{relative_path or name}|{kind}",
+            "stableKey": stable_key or f"{source_id}|{relative_path or name}|{node_kind}",
             "qualifiedName": qualified_name,
             "relativePath": relative_path,
             "summary": summary,
@@ -56,8 +55,8 @@ def test_query_profile_classifies_common_query_shapes():
 
 
 def test_ranker_exact_beats_fuzzy_and_ties_are_deterministic():
-    exact = doc("exact", "AgentChatPage", source_id="source-a", kind="TYPE", qualified_name="example.AgentChatPage")
-    typo = doc("typo", "AgetnChatPage", source_id="source-b", kind="TYPE", qualified_name="example.AgetnChatPage")
+    exact = doc("exact", "AgentChatPage", source_id="source-a", node_kind="TYPE", qualified_name="example.AgentChatPage")
+    typo = doc("typo", "AgetnChatPage", source_id="source-b", node_kind="TYPE", qualified_name="example.AgetnChatPage")
     candidates = [
         SearchCandidate(typo, "FuzzyCandidateProvider", "FUZZY_NAME_EDIT_DISTANCE_1", 0.7, "MEDIUM", 64),
         SearchCandidate(exact, "ExactCandidateProvider", "EXACT_NAME", 0.98, "HIGH", 10),
@@ -73,7 +72,7 @@ def test_ranker_exact_beats_fuzzy_and_ties_are_deterministic():
 def test_ranker_path_beats_lexical_noise():
     engine = DeterministicCodeSearchEngine()
     documents = [
-        doc("file", "jarvis.html", kind="FILE", relative_path="boot/src/main/resources/static/operator/jarvis.html"),
+        doc("file", "jarvis.html", node_kind="FILE", relative_path="boot/src/main/resources/static/operator/jarvis.html"),
         doc("noise", "JarvisQueryNoise", summary="jarvis operator query text but not a path"),
     ]
 
@@ -87,8 +86,8 @@ def test_ranker_qualified_full_match_beats_suffix_match():
     engine = DeterministicCodeSearchEngine()
     full = "com.sitionix.forgeai.api.ForgeAiInfrastructureJarvisController"
     documents = [
-        doc("suffix", "ForgeAiInfrastructureJarvisController", kind="TYPE", qualified_name="other.ForgeAiInfrastructureJarvisController"),
-        doc("full", "ForgeAiInfrastructureJarvisController", kind="TYPE", qualified_name=full),
+        doc("suffix", "ForgeAiInfrastructureJarvisController", node_kind="TYPE", qualified_name="other.ForgeAiInfrastructureJarvisController"),
+        doc("full", "ForgeAiInfrastructureJarvisController", node_kind="TYPE", qualified_name=full),
     ]
 
     results = engine.search(full, documents, SearchConfig()).candidates
@@ -115,10 +114,10 @@ def test_ranker_merges_duplicate_candidates_and_preserves_reasons():
 def test_fuzzy_matcher_finds_transposed_and_missing_character_identifiers():
     engine = DeterministicCodeSearchEngine()
     documents = [
-        doc("agent", "AgentChatPage", kind="TYPE", qualified_name="example.AgentChatPage"),
-        doc("searcher", "UnifiedAnchorSearcher", kind="TYPE", qualified_name="knowledge.UnifiedAnchorSearcher"),
-        doc("jarvis", "JarvisQuery", kind="TYPE", qualified_name="example.JarvisQuery"),
-        doc("knowledge", "KnowledgeQuery", kind="TYPE", qualified_name="example.KnowledgeQuery"),
+        doc("agent", "AgentChatPage", node_kind="TYPE", qualified_name="example.AgentChatPage"),
+        doc("searcher", "UnifiedAnchorSearcher", node_kind="TYPE", qualified_name="knowledge.UnifiedAnchorSearcher"),
+        doc("jarvis", "JarvisQuery", node_kind="TYPE", qualified_name="example.JarvisQuery"),
+        doc("knowledge", "KnowledgeQuery", node_kind="TYPE", qualified_name="example.KnowledgeQuery"),
     ]
 
     assert engine.search("AgetnChatPage", documents, SearchConfig()).candidates[0].document.node_id == "agent"
@@ -129,7 +128,7 @@ def test_fuzzy_matcher_finds_transposed_and_missing_character_identifiers():
 
 def test_exact_match_scores_higher_than_typo_match_for_same_node():
     engine = DeterministicCodeSearchEngine()
-    documents = [doc("agent", "AgentChatPage", kind="TYPE", qualified_name="example.AgentChatPage")]
+    documents = [doc("agent", "AgentChatPage", node_kind="TYPE", qualified_name="example.AgentChatPage")]
 
     exact = engine.search("AgentChatPage", documents, SearchConfig()).candidates[0]
     typo = engine.search("AgetnChatPage", documents, SearchConfig()).candidates[0]

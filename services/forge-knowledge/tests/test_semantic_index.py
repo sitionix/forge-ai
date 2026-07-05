@@ -485,8 +485,8 @@ def test_semantic_index_builder_stale_to_ready_for_new_revision(tmp_path):
         db_path,
         graph_suffix="new",
         nodes=[
-            {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
-            {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
+            {"id": "node-query", "nodeKind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
+            {"id": "node-client", "nodeKind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
         ],
     )
     stale_state = SemanticIndexStore(db_path).status_for_source("semantic-source")
@@ -507,10 +507,10 @@ def test_graph_revision_tracks_arity_fields_and_ignores_edge_debug_metadata(tmp_
         db_path,
         source_id=source_id,
         nodes=[
-            {"id": "caller", "kind": "CALLABLE", "name": "Caller.handle", "qualified": "fixture.Caller.handle"},
-            {"id": "target", "kind": "CALLABLE", "name": "Target.call", "qualified": "fixture.Target.call"},
+            {"id": "caller", "nodeKind": "CALLABLE", "name": "Caller.handle", "qualified": "fixture.Caller.handle"},
+            {"id": "target", "nodeKind": "CALLABLE", "name": "Target.call", "qualified": "fixture.Target.call"},
         ],
-        edges=[{"id": "call-edge", "from": "caller", "to": "target", "type": "CALLS"}],
+        edges=[{"id": "call-edge", "fromNodeId": "caller", "toNodeId": "target", "edgeType": "CALLS"}],
     )
 
     with sqlite3.connect(db_path) as conn:
@@ -542,8 +542,8 @@ def test_semantic_index_status_invalidates_old_revision_vectors_after_file_ident
         db_path,
         graph_suffix="new",
         nodes=[
-            {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
-            {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
+            {"id": "node-query", "nodeKind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
+            {"id": "node-client", "nodeKind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
         ],
     )
 
@@ -577,7 +577,7 @@ def test_semantic_index_status_ignores_unrelated_old_revision_vectors(tmp_path):
         db_path,
         graph_suffix="new",
         nodes=[
-            {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
+            {"id": "node-client", "nodeKind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
         ],
     )
 
@@ -825,7 +825,7 @@ def test_deleting_analysis_file_cascades_graph_children_and_evidence_links(tmp_p
         db_path,
         source_id=source_id,
         claims=[{"id": "claim-cascade", "node_id": node_id, "summary": "Cascade claim.", "evidence_ids": ["ev-node-query"]}],
-        edges=[{"id": "edge-cascade", "from": node_id, "to": None, "unresolved": {"name": "missing"}}],
+        edges=[{"id": "edge-cascade", "fromNodeId": node_id, "toNodeId": None, "unresolved": {"name": "missing"}}],
     )
 
     with sqlite3.connect(db_path) as conn:
@@ -856,7 +856,7 @@ def test_deleting_claim_edge_or_evidence_cascades_join_rows(tmp_path):
         db_path,
         source_id=source_id,
         claims=[{"id": "claim-cascade", "node_id": node_id, "summary": "Cascade claim.", "evidence_ids": ["ev-node-query"]}],
-        edges=[{"id": "edge-cascade", "from": node_id, "to": None, "unresolved": {"name": "missing"}}],
+        edges=[{"id": "edge-cascade", "fromNodeId": node_id, "toNodeId": None, "unresolved": {"name": "missing"}}],
     )
 
     with sqlite3.connect(db_path) as conn:
@@ -873,7 +873,7 @@ def test_deleting_claim_edge_or_evidence_cascades_join_rows(tmp_path):
         db_path,
         source_id=source_id,
         claims=[{"id": "claim-cascade", "node_id": node_id, "summary": "Cascade claim.", "evidence_ids": ["ev-node-query"]}],
-        edges=[{"id": "edge-cascade", "from": node_id, "to": None, "unresolved": {"name": "missing"}}],
+        edges=[{"id": "edge-cascade", "fromNodeId": node_id, "toNodeId": None, "unresolved": {"name": "missing"}}],
     )
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
@@ -1057,7 +1057,7 @@ def test_init_preserves_graph_facts_when_inventory_numeric_id_changes(tmp_path):
         nodes=[
             {
                 "id": "node-query",
-                "kind": "CALLABLE",
+                "nodeKind": "CALLABLE",
                 "name": "SemanticFixture.handle",
                 "qualified": "fixture.SemanticFixture.handle",
                 "path": "src/semantic_fixture.py",
@@ -1216,8 +1216,8 @@ def test_semantic_index_builder_dimension_mismatch_marks_failed(tmp_path):
     seed_semantic_graph(
         db_path,
         nodes=[
-            {"id": "node-a", "kind": "CALLABLE", "name": "A.call", "qualified": "example.A.call"},
-            {"id": "node-b", "kind": "CALLABLE", "name": "B.call", "qualified": "example.B.call"},
+            {"id": "node-a", "nodeKind": "CALLABLE", "name": "A.call", "qualified": "example.A.call"},
+            {"id": "node-b", "nodeKind": "CALLABLE", "name": "B.call", "qualified": "example.B.call"},
         ],
     )
 
@@ -1255,7 +1255,7 @@ def _overview_progress_fixture(
     nodes = [
         {
             "id": f"node-{index:03d}",
-            "kind": "CALLABLE",
+            "nodeKind": "CALLABLE",
             "name": f"Service{index}.handle",
             "qualified": f"fixture.Service{index}.handle",
             "path": f"src/generated_{index:03d}.py",

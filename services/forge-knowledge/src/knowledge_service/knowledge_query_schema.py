@@ -52,7 +52,7 @@ class KnowledgeQueryMatchedNode(BaseModel):
     sourceId: str
     nodeId: str
     stableKey: str
-    kind: str
+    nodeKind: str
     label: str
     score: float
     matchReasons: List[str] = Field(default_factory=list)

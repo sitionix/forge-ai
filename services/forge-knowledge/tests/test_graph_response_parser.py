@@ -166,7 +166,7 @@ def test_parser_without_relative_path_fails_explicitly_instead_of_default_contra
     assert exc_info.value.code == "ANALYSIS_POLICY_RELATIVE_PATH_REQUIRED"
 
 
-def test_prompt_renderer_rejects_unsupported_path_without_legacy_fallback():
+def test_prompt_renderer_requires_resolved_contract_payload_without_path_fallback():
     renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
 
     with pytest.raises(KnowledgeError) as exc_info:
@@ -174,7 +174,7 @@ def test_prompt_renderer_rejects_unsupported_path_without_legacy_fallback():
             {"relativePath": "unknown.bin", "content": "opaque bytes"},
         )
 
-    assert exc_info.value.code == "UNSUPPORTED_FORMAT"
+    assert exc_info.value.code == "ANALYSIS_POLICY_CONTRACT_REQUIRED"
 
 
 def test_prompt_renderer_requires_prompt_id_without_legacy_fallback():

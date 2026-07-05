@@ -41,7 +41,7 @@ from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.java_parser_adapter import JavaParserAdapter
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import build_knowledge_query_service
-from knowledge_service.overview_projection import refresh_overview_for_sources
+from knowledge_service.overview_projection import read_overview, refresh_overview_for_sources
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_index import SemanticIndexStore
 from knowledge_service.snippet_extractor import SnippetExtractor
@@ -1546,6 +1546,82 @@ class TicketDto {}
         assert "parameters" not in metadata
 
 
+def test_resolver_does_not_use_metadata_method_name_as_target_source(tmp_path):
+    controller = """package example;
+
+class Controller {
+  private final TicketMapper mapper;
+
+  TicketDto handle(Ticket ticket) {
+    return mapper.toApi(ticket);
+  }
+}
+
+class Ticket {}
+class TicketDto {}
+"""
+    mapper = """package example;
+
+class TicketMapper {
+  TicketDto toApi(Ticket ticket) { return new TicketDto(); }
+}
+
+class Ticket {}
+class TicketDto {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(controller, "src/main/java/example/Controller.java"),
+        _materialize_static_java_for_test(controller, 1, "src/main/java/example/Controller.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        edge = conn.execute(
+            """
+            SELECT id, unresolved_target_json
+            FROM analysis_graph_edges
+            WHERE edge_type = 'CALLS'
+              AND source_id = 'edge-gateway'
+              AND to_node_id IS NULL
+              AND json_extract(metadata_json, '$.methodName') = 'toApi'
+            """
+        ).fetchone()
+        assert edge is not None
+        unresolved_target = json.loads(edge["unresolved_target_json"])
+        unresolved_target.pop("name", None)
+        conn.execute(
+            "UPDATE analysis_graph_edges SET unresolved_target_json = ? WHERE id = ?",
+            (json.dumps(unresolved_target), edge["id"]),
+        )
+
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(mapper, "src/main/java/example/TicketMapper.java"),
+        _materialize_static_java_for_test(mapper, 2, "src/main/java/example/TicketMapper.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        edge = conn.execute(
+            """
+            SELECT resolution_status, to_node_id, unresolved_target_json, metadata_json
+            FROM analysis_graph_edges
+            WHERE edge_type = 'CALLS'
+              AND source_id = 'edge-gateway'
+              AND json_extract(metadata_json, '$.methodName') = 'toApi'
+            """
+        ).fetchone()
+
+    assert edge is not None
+    assert json.loads(edge["metadata_json"])["methodName"] == "toApi"
+    assert "name" not in json.loads(edge["unresolved_target_json"])
+    assert edge["resolution_status"] == "UNRESOLVED"
+    assert edge["to_node_id"] is None
+
+
 def build_two_service_inventory(tmp_path):
     workspace = tmp_path / "workspace"
     first = workspace / "first-service"
@@ -1650,7 +1726,7 @@ def wait_job(store, job_id):
 
 def test_non_localhost_ollama_base_url_rejected(tmp_path):
     with pytest.raises(Exception):
-        OllamaAnalysisClient("http://example.com:11434", "model", 1, tmp_path / "missing.md")
+        OllamaAnalysisClient("http://example.com:11434", "model", 1)
 
 
 def test_large_llm_required_file_fails_without_partial_graph(tmp_path):
@@ -2300,7 +2376,7 @@ def test_failed_ai_file_does_not_crash_whole_service(tmp_path):
     assert final["status"] == "COMPLETED"
     assert final["processedFiles"] == 1
     assert final["failedFiles"] == 1
-    service = AnalysisStore(store.db_path).service_status(None)["sources"][0]
+    service = read_overview(store.db_path)["sources"][0]
     assert service["analysis"]["processedFiles"] == 1
     assert service["analysis"]["succeededFiles"] == 0
     assert service["analysis"]["failedFiles"] == 1
@@ -2308,7 +2384,7 @@ def test_failed_ai_file_does_not_crash_whole_service(tmp_path):
     assert AnalysisStore(store.db_path).files(None, "FAILED", None, 10, 0)["total"] == 1
 
 
-def test_service_status_uses_max_active_progress_without_double_counting(tmp_path):
+def test_overview_projection_uses_max_active_progress_without_double_counting(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     runner = SupervisorHarness(store, app_config(tmp_path))
     wait_job(store, runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
@@ -2327,7 +2403,7 @@ def test_service_status_uses_max_active_progress_without_double_counting(tmp_pat
         }
     )
 
-    service = analysis_store.service_status(None)["sources"][0]
+    service = read_overview(store.db_path)["sources"][0]
 
     assert service["analysis"]["status"] == "RUNNING"
     assert service["analysis"]["processedFiles"] == 1
@@ -2336,7 +2412,7 @@ def test_service_status_uses_max_active_progress_without_double_counting(tmp_pat
     assert "currentRelativePath" not in service["analysis"]
 
 
-def test_service_status_active_job_shape_is_minimal(tmp_path):
+def test_overview_projection_active_job_shape_is_minimal(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     analysis_store = AnalysisStore(store.db_path)
     analysis_store.create_job(
@@ -2354,7 +2430,7 @@ def test_service_status_active_job_shape_is_minimal(tmp_path):
         }
     )
 
-    status = analysis_store.service_status(None)
+    status = read_overview(store.db_path)
     service = status["sources"][0]
 
     assert status["activeJob"] == {

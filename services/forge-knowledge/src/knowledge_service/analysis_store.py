@@ -15,9 +15,8 @@ from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.observability import observed_connect
-from knowledge_service.overview_projection import ensure_overview_schema, read_overview, rebuild_overview, refresh_overview_for_sources
+from knowledge_service.overview_projection import ensure_overview_schema, rebuild_overview, refresh_overview_for_sources
 from knowledge_service.semantic_index import SemanticIndexStatus, SemanticIndexStore, ensure_semantic_index_schema
-from knowledge_service.source_catalog import SourceMetadata
 
 
 ANALYSIS_SCHEMA_MIGRATIONS = (
@@ -35,14 +34,10 @@ CURRENT_ANALYSIS_SCHEMA_VERSION = ANALYSIS_SCHEMA_MIGRATIONS[-1][0]
 SQLITE_WRITE_BUSY_TIMEOUT_MS = 5000
 SQLITE_STATUS_BUSY_TIMEOUT_MS = 500
 GRAPH_STORE_LOCK_RETRY_DELAYS_SECONDS = (0.05, 0.15, 0.3)
-SERVICE_DIAGNOSTIC_ROW_LIMIT = 1000
 GRAPH_CONTRACT_VERSION = "GRAPH_CURRENT_V1"
 GRAPH_SORT_VERSION = "ID_ASC_V1"
 GRAPH_CURSOR_SIGNATURE_CONTEXT = "knowledge-graph-cursor-v1"
 GRAPH_NODE_DETAIL_RELATION_LIMIT = 25
-PARTIAL_GRAPH_NOT_PROMOTED_CODE = "PARTIAL_GRAPH_NOT_PROMOTED"
-GRAPH_COVERAGE_RECOVERY_REASON = "CURRENT_GRAPH_DEGRADED_RECOVERED"
-GRAPH_COVERAGE_PARTIAL_REASON = "CURRENT_GRAPH_COVERAGE_PARTIAL"
 
 
 def _chunks(values: List[int], size: int):
@@ -1131,58 +1126,6 @@ class AnalysisStore:
             "failureCodeBreakdown": breakdown,
         }
 
-    def service_status(
-        self,
-        catalog_sources: Optional[List[SourceMetadata]],
-    ) -> Dict[str, Any]:
-        self.init()
-        return read_overview(self.db_path)
-
-    def _service_active_job_summary(self, active: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        if not active:
-            return None
-        return {
-            "jobId": active.get("jobId"),
-            "sourceId": active.get("currentSourceId"),
-            "status": active.get("status"),
-            "mode": active.get("mode"),
-            "selectedFileCount": active.get("fileCount"),
-            "processedFileCount": active.get("processedFileCount"),
-            "failedFileCount": active.get("failedFileCount"),
-            "currentRelativePath": active.get("currentRelativePath"),
-        }
-
-    def _inventory_source_state(self, conn: sqlite3.Connection) -> Dict[str, Dict[str, Any]]:
-        rows = conn.execute("SELECT source_id, skipped_count FROM inventory_source_state").fetchall()
-        result: Dict[str, Dict[str, Any]] = {}
-        for row in rows:
-            result[row["source_id"]] = {
-                "skippedCount": row["skipped_count"],
-            }
-        return result
-
-    def _service_source_ids(self, catalog_sources: Optional[List[SourceMetadata]], stats_by_source: Dict[str, Any]) -> List[str]:
-        if catalog_sources is not None:
-            return [source.sourceId for source in catalog_sources]
-        return sorted(stats_by_source.keys())
-
-    def _catalog_source(self, catalog_sources: Optional[List[SourceMetadata]], source_id: str) -> Optional[SourceMetadata]:
-        if catalog_sources is None:
-            return None
-        for source in catalog_sources:
-            if source.sourceId == source_id:
-                return source
-        return None
-
-    def _analysis_service_status(self, is_running: bool, processed: int, failed: int, pending: int) -> str:
-        if is_running:
-            return "RUNNING"
-        if processed == 0:
-            return "NOT_ANALYZED"
-        if pending == 0 and failed == 0:
-            return "COMPLETED"
-        return "PARTIAL"
-
     def unchanged(self, file_id: int, content_hash: str, analyzer_name: str, analyzer_version: str, engine_version: Optional[str] = None) -> bool:
         self.init()
         engine_clause = "AND COALESCE(engine_version, '') = COALESCE(?, '')" if engine_version is not None else ""
@@ -1973,7 +1916,7 @@ class AnalysisStore:
                         break
                     frontier_list = sorted(frontier)
                     frontier_placeholders = ",".join("?" for _ in frontier_list)
-                    relation_rows = conn.execute(
+                    edge_rows = conn.execute(
                         f"""
                         SELECT id, from_node_id, to_node_id, resolution_status
                         FROM analysis_graph_edges
@@ -1985,7 +1928,7 @@ class AnalysisStore:
                         [source_id, *frontier_list, *frontier_list],
                     ).fetchall()
                     next_frontier: Set[str] = set()
-                    for edge in relation_rows:
+                    for edge in edge_rows:
                         from_node_id = str(edge["from_node_id"])
                         to_node_id = str(edge["to_node_id"] or "")
                         if not to_node_id or edge["resolution_status"] in unresolved_statuses:
@@ -3468,14 +3411,13 @@ class AnalysisStore:
             except (TypeError, json.JSONDecodeError):
                 return str(row["unresolved_target_json"])
             if isinstance(value, dict):
-                return value.get("name") or value.get("qualifiedName") or value.get("displayName") or value.get("symbol")
+                return value.get("name") or value.get("qualifiedName") or value.get("displayName")
             return str(value)
 
         def item_from(row: sqlite3.Row) -> Dict[str, Any]:
-            metadata = self._json_dict(row["metadata_json"])
-            line_start = row["evidence_line_start"] or metadata.get("lineStart") or metadata.get("callsiteLineStart") or metadata.get("sourceLineStart")
-            line_end = row["evidence_line_end"] or metadata.get("lineEnd") or metadata.get("callsiteLineEnd") or metadata.get("sourceLineEnd") or line_start
-            source_path = row["evidence_relative_path"] or metadata.get("relativePath") or metadata.get("sourcePath") or metadata.get("file")
+            line_start = row["evidence_line_start"]
+            line_end = row["evidence_line_end"] or line_start
+            source_path = row["evidence_relative_path"]
             return {
                 "edgeId": row["id"],
                 "edgeType": row["edge_type"],
@@ -3630,16 +3572,6 @@ class AnalysisStore:
             "summaryEvidenceCount": int(claim.get("evidence_count") or 0),
         }
 
-    def _node_kind_from_source_kind(self, kind: Optional[str]) -> str:
-        value = str(kind or "UNKNOWN").upper()
-        if value == "CLASS":
-            return "TYPE"
-        if value == "METHOD":
-            return "CALLABLE"
-        if value == "CONFIG_ENTRY":
-            return "CONFIG"
-        return value
-
     def _graph_status(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Dict[str, Any]:
         active = self._active_job_from_conn(conn)
         latest_row = conn.execute("SELECT * FROM analysis_jobs WHERE status = 'COMPLETED' ORDER BY completed_at DESC LIMIT 1").fetchone()
@@ -3762,33 +3694,6 @@ class AnalysisStore:
         row = conn.execute("SELECT * FROM analysis_jobs WHERE status IN ('QUEUED', 'RUNNING') ORDER BY started_at DESC LIMIT 1").fetchone()
         return self._job(row) if row else None
 
-    def _graph_source_name(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Optional[str]:
-        if not source_id:
-            return None
-        try:
-            row = conn.execute("SELECT display_name FROM sources WHERE source_id = ?", (source_id,)).fetchone()
-        except sqlite3.OperationalError:
-            return source_id
-        return row["display_name"] if row else None
-
-    def _graph_status_or_empty(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Dict[str, Any]:
-        try:
-            return self._graph_status(conn, source_id)
-        except sqlite3.OperationalError:
-            return {
-                "analysisStatus": "READY",
-                "jobId": None,
-                "processedFileCount": 0,
-                "processedFiles": 0,
-                "fileCount": 0,
-                "failedFileCount": 0,
-                "failedFiles": 0,
-                "progressPercent": 0,
-                "trustedFactsCount": 0,
-                "diagnosticsCount": 0,
-                "lastUpdatedAt": None,
-            }
-
     def _graph_diagnostic(self, item: Dict[str, Any], source_id: Optional[str], relative_path: Optional[str]) -> Dict[str, Any]:
         code = item.get("code") or "DIAGNOSTIC"
         severity = item.get("severity")
@@ -3805,23 +3710,6 @@ class AnalysisStore:
             **({"metadata": item.get("metadata")} if item.get("metadata") else {}),
             **({"rawPreview": item.get("rawPreview")} if item.get("rawPreview") else {}),
         }
-
-    def _graph_claims(self, nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        claims: List[Dict[str, Any]] = []
-        for node in nodes:
-            claims.extend(node.get("claims") or [])
-        return claims
-
-    def _dedupe_rows(self, rows: List[Dict[str, Any]], key: str) -> List[Dict[str, Any]]:
-        seen: Set[str] = set()
-        result: List[Dict[str, Any]] = []
-        for row in rows:
-            value = row.get(key)
-            if value in seen:
-                continue
-            seen.add(value)
-            result.append(row)
-        return result
 
     def _row_dict(self, row) -> Dict[str, Any]:
         return dict(row)
@@ -4315,7 +4203,7 @@ class AnalysisStore:
         for edge in rows:
             metadata = self._json_dict(edge["metadata_json"])
             unresolved_target = self._json_dict(edge["unresolved_target_json"])
-            method_name = metadata.get("methodName") or unresolved_target.get("name")
+            method_name = unresolved_target.get("name")
             type_hint = unresolved_target.get("receiverTypeHint") or unresolved_target.get("targetTypeText")
             if not method_name or not type_hint:
                 continue

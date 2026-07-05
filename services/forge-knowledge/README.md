@@ -4,7 +4,7 @@ Knowledge is a generic Forge AI infrastructure module for local source discovery
 
 V1 does not implement embeddings, a vector database, semantic search, or RAG answer generation. Ollama is used only by the local AI structural analysis layer.
 
-Knowledge also includes an optional AI-assisted structural analysis layer. It analyzes indexed files with local Ollama, validates strict JSON output, and stores roles, confidence, evidence, and relations in SQLite. AI analysis is local-only and does not mutate source files.
+Knowledge also includes an optional AI-assisted graph analysis layer. It analyzes indexed files with policy-selected static extractors and local Ollama enrichment, validates strict graph JSON, and stores nodes, edges, claims, evidence, diagnostics, and evidence join rows in SQLite. AI analysis is local-only and does not mutate source files.
 
 ## Local Setup
 
@@ -53,4 +53,4 @@ Missing source roots are catalog/configured roots that do not exist locally. The
 
 Context retrieval is a transitional internal Jarvis chat dependency. New user-facing semantic UI and future Q&A flows should consume AI analysis results rather than treating inventory as a semantic knowledge system.
 
-AI structural analysis is a separate evidence layer. Naming conventions may appear in evidence, but suffixes are not role truth. The model must choose from generic roles and relations, provide evidence, and may return `UNKNOWN` when uncertain. Invalid JSON, unsupported enums, missing evidence, and invalid line ranges are rejected.
+AI graph analysis is a separate evidence layer. Naming conventions may appear in evidence, but suffixes are not graph truth. The runtime validates policy-allowed node kinds, edge types, claim kinds, resolution status, evidence, and line ranges. Invalid JSON, unsupported graph fields, missing evidence, and invalid line ranges are rejected.

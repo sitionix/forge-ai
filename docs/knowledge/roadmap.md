@@ -15,6 +15,6 @@ Future vector metadata should include `sourceId`, service label, group, tags, co
 
 The current context API is transitional. It returns budgeted snippets from indexed files for local Jarvis chat without changing the source catalog boundary.
 
-AI structural analysis is the current structural metadata contract. SQLite stores analysis jobs, file states, symbols, roles, relations, evidence, and diagnostics.
+AI graph analysis is the current structural metadata contract. SQLite stores analysis jobs, file states, graph nodes, graph edges, graph claims, evidence, evidence joins, diagnostics, and semantic index rows.
 
-The next retrieval step should use validated AI roles, relations, evidence, and diagnostics while keeping strict validation, local-only execution, and source read-only behavior.
+The next retrieval step should use validated graph nodes, edges, claims, evidence, and diagnostics while keeping strict validation, local-only execution, and source read-only behavior.

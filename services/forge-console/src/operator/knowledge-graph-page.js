@@ -1897,8 +1897,7 @@ export function knowledgeGraphNodeRadius(node, data) {
     FIELD: 14,
     CONFIG: 16,
     RESOURCE: 16,
-    DATA: 15,
-    EXTERNAL: 14
+    DATA: 15
   }[node.nodeKind] || 15;
   const rootBoost = node.id === data?.root?.id ? 7 : 0;
   const degreeBoost = Math.min(10, Math.sqrt(Number(node.degree || 0)) * 2.4);
