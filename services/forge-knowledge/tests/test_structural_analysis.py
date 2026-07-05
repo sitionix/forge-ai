@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from knowledge_service.analysis_graph_contract import GraphContractProvider
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
 from knowledge_service.graph_schema import GraphAnalysisResult
@@ -315,6 +316,7 @@ def test_anchor_validator_rejects_unanchored_llm_structure_and_claim_targets():
 
 
 def test_graph_response_parser_accepts_anchor_enrichment_schema():
+    file_metadata = metadata()
     target = StaticGraphMaterializer().to_graph(parse_sample()).nodes[0].localId
     payload = {
         "schemaVersion": "knowledge.graph.enrichment.v1",
@@ -322,8 +324,8 @@ def test_graph_response_parser_accepts_anchor_enrichment_schema():
             "sourceId": "svc",
             "inventoryFileId": 7,
             "relativePath": "src/main/java/example/TicketController.java",
-            "contentHash": metadata().content_hash,
-            "lineCount": metadata().line_count,
+            "contentHash": file_metadata.content_hash,
+            "lineCount": file_metadata.line_count,
         },
         "claims": [
             {
@@ -340,7 +342,8 @@ def test_graph_response_parser_accepts_anchor_enrichment_schema():
         "diagnostics": [],
     }
 
-    result = GraphAnalysisResponseParser().parse(json.dumps(payload), metadata().line_count)
+    contract = GraphContractProvider().resolve(file_metadata.relative_path, JAVA_SAMPLE)
+    result = GraphAnalysisResponseParser().parse(json.dumps(payload), file_metadata.line_count, contract=contract)
 
     assert isinstance(result, GraphAnalysisResult)
     assert result.nodes == []
