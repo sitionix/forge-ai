@@ -296,8 +296,8 @@
             "title": "Graphrevision",
             "type": "string"
           },
-          "kind": {
-            "title": "Kind",
+          "nodeKind": {
+            "title": "Nodekind",
             "type": "string"
           },
           "label": {
@@ -344,7 +344,7 @@
           "sourceId",
           "nodeId",
           "stableKey",
-          "kind",
+          "nodeKind",
           "label",
           "score"
         ],

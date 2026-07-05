@@ -12,8 +12,8 @@ Skipped means files or paths were seen during inventory build but were not index
 
 The Retrieval Context UI section was removed. Jarvis chat still has a transitional direct Knowledge `/api/v1/knowledge/context` dependency until semantic retrieval is rebuilt on AI analysis results.
 
-The Structural Facts UI section was removed from the primary Knowledge screen. Semantic symbols and relations are shown through AI analysis service details.
+The Structural Facts UI section was removed from the primary Knowledge screen. Graph nodes, edges, claims, and evidence are shown through AI analysis service details.
 
-The AI Structural Analysis section calls Forge analysis endpoints only. It displays latest status, active job progress, processed/skipped/failed counts, current source/file, symbol and relation totals, and previews roles/confidence/evidence. It polls job status while queued or running and never calls Ollama directly from the browser.
+The AI Graph Analysis section calls Forge analysis endpoints only. It displays latest status, active job progress, processed/skipped/failed counts, current source/file, graph node and edge totals, and previews claims/confidence/evidence. It polls job status while queued or running and never calls Ollama directly from the browser.
 
 The Flow Context UI section was removed. Flow-level semantics should be produced or retrieved from AI analysis results, not from manual inventory/facts builders.

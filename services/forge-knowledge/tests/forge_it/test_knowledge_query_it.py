@@ -70,8 +70,8 @@ def test_knowledge_query_integration_extracts_linear_calls_path(tmp_path):
             ("repository-save", "Repository.save", "CALLABLE"),
         ],
         [
-            {"id": "edge-controller-usecase", "from": "controller-create", "to": "usecase-execute"},
-            {"id": "edge-usecase-repository", "from": "usecase-execute", "to": "repository-save"},
+            {"id": "edge-controller-usecase", "fromNodeId": "controller-create", "toNodeId": "usecase-execute"},
+            {"id": "edge-usecase-repository", "fromNodeId": "usecase-execute", "toNodeId": "repository-save"},
         ],
     )
 
@@ -95,7 +95,7 @@ def test_knowledge_query_integration_bounds_adjacency_around_matched_node(tmp_pa
         ("anchor-execute", "Anchor.execute", "CALLABLE"),
         ("terminal-save", "Terminal.save", "CALLABLE"),
     ]
-    edges = [{"id": "zzz-anchor-terminal", "from": "anchor-execute", "to": "terminal-save"}]
+    edges = [{"id": "zzz-anchor-terminal", "fromNodeId": "anchor-execute", "toNodeId": "terminal-save"}]
     for index in range(2100):
         nodes.extend(
             [
@@ -103,7 +103,7 @@ def test_knowledge_query_integration_bounds_adjacency_around_matched_node(tmp_pa
                 (f"noise-to-{index}", f"NoiseTo{index}", "CALLABLE"),
             ]
         )
-        edges.append({"id": f"aaa-noise-{index:04d}", "from": f"noise-from-{index}", "to": f"noise-to-{index}"})
+        edges.append({"id": f"aaa-noise-{index:04d}", "fromNodeId": f"noise-from-{index}", "toNodeId": f"noise-to-{index}"})
     seed_flow_graph(app_config.store_path, "flow-large-source", nodes, edges)
 
     with TestClient(app) as client:
@@ -130,9 +130,9 @@ def test_knowledge_query_integration_extracts_multiple_entrypoints(tmp_path):
             ("repository-save", "Repository.save", "CALLABLE"),
         ],
         [
-            {"id": "edge-a-usecase", "from": "controller-a", "to": "usecase-execute"},
-            {"id": "edge-b-usecase", "from": "controller-b", "to": "usecase-execute"},
-            {"id": "edge-usecase-save", "from": "usecase-execute", "to": "repository-save"},
+            {"id": "edge-a-usecase", "fromNodeId": "controller-a", "toNodeId": "usecase-execute"},
+            {"id": "edge-b-usecase", "fromNodeId": "controller-b", "toNodeId": "usecase-execute"},
+            {"id": "edge-usecase-save", "fromNodeId": "usecase-execute", "toNodeId": "repository-save"},
         ],
     )
 
@@ -158,9 +158,9 @@ def test_knowledge_query_integration_extracts_downstream_branches(tmp_path):
             ("event-publish", "EventPublisher.publish", "CALLABLE"),
         ],
         [
-            {"id": "edge-controller-usecase", "from": "controller-create", "to": "usecase-execute"},
-            {"id": "edge-usecase-save", "from": "usecase-execute", "to": "repository-save"},
-            {"id": "edge-usecase-publish", "from": "usecase-execute", "to": "event-publish"},
+            {"id": "edge-controller-usecase", "fromNodeId": "controller-create", "toNodeId": "usecase-execute"},
+            {"id": "edge-usecase-save", "fromNodeId": "usecase-execute", "toNodeId": "repository-save"},
+            {"id": "edge-usecase-publish", "fromNodeId": "usecase-execute", "toNodeId": "event-publish"},
         ],
     )
 
@@ -183,9 +183,9 @@ def test_knowledge_query_integration_detects_calls_cycle(tmp_path):
         "flow-cycle",
         [("a", "Alpha", "CALLABLE"), ("b", "Beta", "CALLABLE"), ("c", "Gamma", "CALLABLE")],
         [
-            {"id": "edge-a-b", "from": "a", "to": "b"},
-            {"id": "edge-b-c", "from": "b", "to": "c"},
-            {"id": "edge-c-a", "from": "c", "to": "a"},
+            {"id": "edge-a-b", "fromNodeId": "a", "toNodeId": "b"},
+            {"id": "edge-b-c", "fromNodeId": "b", "toNodeId": "c"},
+            {"id": "edge-c-a", "fromNodeId": "c", "toNodeId": "a"},
         ],
     )
 
@@ -208,12 +208,12 @@ def test_knowledge_query_integration_preserves_external_and_unresolved_boundarie
         [
             {
                 "id": "edge-external",
-                "from": "controller-create",
-                "to": None,
-                "resolution": "EXTERNAL_TARGET",
+                "fromNodeId": "controller-create",
+                "toNodeId": None,
+                "resolutionStatus": "EXTERNAL_TARGET",
                 "unresolved": {"name": "HttpClient.post", "kindHint": "CALLABLE"},
             },
-            {"id": "edge-unresolved", "from": "controller-create", "to": None, "resolution": "UNRESOLVED"},
+            {"id": "edge-unresolved", "fromNodeId": "controller-create", "toNodeId": None, "resolutionStatus": "UNRESOLVED"},
         ],
     )
 
@@ -244,8 +244,8 @@ def test_knowledge_query_integration_searches_all_sources_for_flow_paths(tmp_pat
                 (f"{source_id}-repo", "Repository.save", "CALLABLE"),
             ],
             [
-                {"id": f"{source_id}-edge-1", "from": f"{source_id}-controller", "to": f"{source_id}-usecase"},
-                {"id": f"{source_id}-edge-2", "from": f"{source_id}-usecase", "to": f"{source_id}-repo"},
+                {"id": f"{source_id}-edge-1", "fromNodeId": f"{source_id}-controller", "toNodeId": f"{source_id}-usecase"},
+                {"id": f"{source_id}-edge-2", "fromNodeId": f"{source_id}-usecase", "toNodeId": f"{source_id}-repo"},
             ],
         )
 
@@ -296,7 +296,7 @@ def test_knowledge_query_stage3_code_aware_search_hardening(tmp_path):
     assert qualified_suffix["matchedNodes"][0]["nodeId"] == "nexus-type-jarvis-controller"
     assert qualified_suffix["matchedNodes"][0]["sourceId"] == "forge-nexus-test"
 
-    assert endpoint_query["matchedNodes"][0]["kind"] == "CALLABLE"
+    assert endpoint_query["matchedNodes"][0]["nodeKind"] == "CALLABLE"
     assert endpoint_query["matchedNodes"][0]["sourceId"]
     assert "EXACT_ENDPOINT" in endpoint_query["matchedNodes"][0]["matchReasons"]
 
@@ -438,9 +438,9 @@ def seed_flow_graph(db_path, source_id, node_rows, edge_rows):
     edges = [
         (
             edge["id"],
-            edge["from"],
-            edge.get("to"),
-            edge.get("resolution") or ("RESOLVED" if edge.get("to") else "UNRESOLVED"),
+            edge["fromNodeId"],
+            edge.get("toNodeId"),
+            edge.get("resolutionStatus") or ("RESOLVED" if edge.get("toNodeId") else "UNRESOLVED"),
             "CALLS",
             edge.get("unresolved"),
         )
@@ -453,7 +453,7 @@ def _seed_current_graph_from_fixture(db_path, source_id, node_rows, edge_rows, *
     nodes = [
         {
             "id": node_id,
-            "kind": kind,
+            "nodeKind": kind,
             "name": name,
             "qualified": qualified_name or name,
             "path": relative_path,
@@ -465,10 +465,10 @@ def _seed_current_graph_from_fixture(db_path, source_id, node_rows, edge_rows, *
     edges = [
         {
             "id": edge_id,
-            "from": from_node,
-            "to": to_node,
-            "type": edge_type,
-            "resolution": resolution_status,
+            "fromNodeId": from_node,
+            "toNodeId": to_node,
+            "edgeType": edge_type,
+            "resolutionStatus": resolution_status,
         }
         for edge_id, from_node, to_node, resolution_status, *edge_type_value in edge_rows
         for edge_type in [edge_type_value[0] if edge_type_value else "CALLS"]

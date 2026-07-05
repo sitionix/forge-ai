@@ -146,7 +146,7 @@ def seed_graph_fixture(
     nodes = [
         {
             "id": f"node-{index:05d}",
-            "kind": "CALLABLE",
+            "nodeKind": "CALLABLE",
             "name": f"Service{index}.handle",
             "qualified": f"fixture.Service{index}.handle",
             "path": f"src/service_{index:05d}.py",
@@ -162,9 +162,9 @@ def seed_graph_fixture(
         edges.append(
             {
                 "id": f"edge-{index:05d}",
-                "from": f"node-{source_index:05d}",
-                "to": f"node-{target_index:05d}" if node_count else None,
-                "type": "CALLS",
+                "fromNodeId": f"node-{source_index:05d}",
+                "toNodeId": f"node-{target_index:05d}" if node_count else None,
+                "edgeType": "CALLS",
             }
         )
     return seed_semantic_graph(

@@ -196,7 +196,6 @@ services:
     )
     knowledge_dir = config_dir / "knowledge"
     knowledge_dir.mkdir(exist_ok=True)
-    (knowledge_dir / "analysis-prompt.md").write_text("Return graph JSON.\n", encoding="utf-8")
     (knowledge_dir / "knowledge-sources.yaml").write_text(
         f"""
 catalog:
@@ -248,7 +247,6 @@ forge:
           provider: deterministic
           base-url: http://localhost:11434
           model: deterministic
-          prompt-path: "{knowledge_dir / "analysis-prompt.md"}"
           request-timeout-seconds: 5
           context-tokens: 1024
           max-file-chars: 60000

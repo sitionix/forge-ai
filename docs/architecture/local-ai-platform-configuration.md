@@ -13,7 +13,7 @@ Tracked root files:
 - `config/knowledge/knowledge.defaults.yaml`
 - `config/knowledge/knowledge-sources.yaml`
 - `config/knowledge/knowledge-sources.example.yaml`
-- `config/knowledge/analysis-prompt.md`
+- `config/knowledge/analysis-policy.yaml`
 - `config/jarvis/model.yaml`
 - `config/jarvis/allowed-actions.yaml`
 - `config/jarvis/system-prompt.md`

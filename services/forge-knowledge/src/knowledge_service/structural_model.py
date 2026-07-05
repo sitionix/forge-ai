@@ -103,7 +103,6 @@ class StructuralCallsite:
     target_callable_local_id: Optional[str] = None
     unresolved_reason: Optional[str] = None
     resolution_reason: Optional[str] = None
-    resolver_signals: List[str] = field(default_factory=list)
     owner_type_hint: Optional[str] = None
     import_hint: Optional[str] = None
 

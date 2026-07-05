@@ -40,7 +40,6 @@ forge:
           provider: ollama
           base-url: http://localhost:11434
           model: qwen2.5-coder:14b
-          prompt-path: ${FORGE_CONFIG_DIR:./config}/knowledge/analysis-prompt.md
           request-timeout-seconds: 180
           context-tokens: 8192
           max-file-chars: 60000

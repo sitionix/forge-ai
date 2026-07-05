@@ -157,16 +157,51 @@ def test_graph_contract_provider_unsupported_extension_fails_explicitly():
     assert exc_info.value.details["unsupportedBehavior"]["unsupportedFormat"] == "fail_file"
 
 
-def test_parser_without_relative_path_fails_explicitly_instead_of_default_contract():
+def test_parser_without_explicit_contract_or_analysis_policy_fails_explicitly():
     parser = GraphAnalysisResponseParser(GraphContractProvider(policy=load_analysis_policy(POLICY_PATH)))
 
     with pytest.raises(KnowledgeError) as exc_info:
         parser.parse(json.dumps(_graph_payload()), 5)
 
-    assert exc_info.value.code == "ANALYSIS_POLICY_RELATIVE_PATH_REQUIRED"
+    assert exc_info.value.code == "ANALYSIS_POLICY_CONTRACT_REQUIRED"
 
 
-def test_prompt_renderer_rejects_unsupported_path_without_legacy_fallback():
+def test_parser_with_explicit_contract_succeeds_without_analysis_policy_payload():
+    parser, contract = _parser_and_contract("src/Foo.java")
+
+    result = parser.parse(json.dumps(_graph_payload()), 5, contract=contract)
+
+    assert isinstance(result, GraphAnalysisResult)
+    assert result.nodes[0].nodeKind == "FILE"
+
+
+def test_parser_with_analysis_policy_payload_succeeds_without_explicit_contract():
+    parser, contract = _parser_and_contract("src/Foo.java")
+    payload = _graph_payload()
+    payload["analysisPolicy"] = contract_payload(contract)
+
+    result = parser.parse(json.dumps(payload), 5)
+
+    assert isinstance(result, GraphAnalysisResult)
+    assert result.nodes[0].nodeKind == "FILE"
+
+
+def test_parser_does_not_resolve_contract_from_relative_path_fallback():
+    class NoPathFallbackProvider(GraphContractProvider):
+        def resolve(self, *args, **kwargs):
+            raise AssertionError("parser must not resolve analysis policy from relativePath")
+
+    parser = GraphAnalysisResponseParser(NoPathFallbackProvider(policy=load_analysis_policy(POLICY_PATH)))
+    payload = _graph_payload()
+    payload["file"] = {"relativePath": "src/Foo.java", "content": "class Foo {}\n"}
+
+    with pytest.raises(KnowledgeError) as exc_info:
+        parser.parse(json.dumps(payload), 5)
+
+    assert exc_info.value.code == "ANALYSIS_POLICY_CONTRACT_REQUIRED"
+
+
+def test_prompt_renderer_requires_resolved_contract_payload_without_path_fallback():
     renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
 
     with pytest.raises(KnowledgeError) as exc_info:
@@ -174,7 +209,7 @@ def test_prompt_renderer_rejects_unsupported_path_without_legacy_fallback():
             {"relativePath": "unknown.bin", "content": "opaque bytes"},
         )
 
-    assert exc_info.value.code == "UNSUPPORTED_FORMAT"
+    assert exc_info.value.code == "ANALYSIS_POLICY_CONTRACT_REQUIRED"
 
 
 def test_prompt_renderer_requires_prompt_id_without_legacy_fallback():

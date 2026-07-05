@@ -330,7 +330,7 @@ export class JarvisPage {
             <div class="detail-card-head">
               <div>
                 <strong>${escapeHtml(item.label || item.nodeId || '-')}</strong>
-                <p>${escapeHtml(item.sourceId || '-')} / ${escapeHtml(item.kind || '-')}</p>
+                <p>${escapeHtml(item.sourceId || '-')} / ${escapeHtml(item.nodeKind || '-')}</p>
               </div>
               ${pill(`score ${Number(item.score ?? 0).toFixed(2)}`, 'READY_TO_START')}
             </div>

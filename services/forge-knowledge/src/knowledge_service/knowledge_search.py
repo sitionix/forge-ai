@@ -188,7 +188,7 @@ def _json_text(value: Any) -> str:
 class SearchDocument:
     source_id: str
     node_id: str
-    kind: str
+    node_kind: str
     name: str
     label: str
     stable_key: str = ""
@@ -218,7 +218,7 @@ class SearchDocument:
     def from_graph_node(cls, row: Dict[str, Any]) -> "SearchDocument":
         source_id = str(row.get("sourceId") or row.get("source_id") or "")
         node_id = str(row.get("id") or row.get("nodeId") or "")
-        kind = str(row.get("nodeKind") or row.get("node_kind") or "")
+        node_kind = str(row.get("nodeKind") or row.get("node_kind") or "")
         name = str(row.get("name") or "")
         label = str(row.get("label") or row.get("displayName") or row.get("display_name") or name or node_id)
         stable_key = str(row.get("stableKey") or row.get("stable_key") or node_id)
@@ -230,13 +230,13 @@ class SearchDocument:
         declaring_file = str(row.get("declaringFile") or row.get("declaring_file") or "")
 
         path_source = relative_path
-        if not path_source and kind.upper() == "FILE":
+        if not path_source and node_kind.upper() == "FILE":
             for candidate in (name, label, stable_key):
                 if "/" in candidate or "\\" in candidate:
                     path_source = candidate
                     break
         file_name = os.path.basename(path_source.replace("\\", "/")) if path_source else ""
-        if not file_name and kind.upper() == "FILE":
+        if not file_name and node_kind.upper() == "FILE":
             file_name = os.path.basename((name or label).replace("\\", "/"))
         file_stem = file_name.rsplit(".", 1)[0] if "." in file_name else file_name
 
@@ -249,7 +249,7 @@ class SearchDocument:
         values = {
             "ID": node_id,
             "STABLE_KEY": stable_key,
-            "KIND": kind,
+            "KIND": node_kind,
             "NAME": name,
             "LABEL": label,
             "QUALIFIED_NAME": qualified_name,
@@ -272,7 +272,7 @@ class SearchDocument:
         return cls(
             source_id=source_id,
             node_id=node_id,
-            kind=kind,
+            node_kind=node_kind,
             name=name,
             label=label,
             stable_key=stable_key,
@@ -304,7 +304,7 @@ class SearchDocument:
             "sourceId": self.source_id,
             "nodeId": self.node_id,
             "stableKey": self.stable_key or self.node_id,
-            "kind": self.kind,
+            "nodeKind": self.node_kind,
             "label": self.label or self.name or self.node_id,
             "score": round(score, 4),
             "matchReasons": list(reasons),
@@ -457,7 +457,7 @@ class ExactCandidateProvider(CandidateProvider):
         for document in documents:
             for field_name, value in document.exact_values:
                 if query_lower and value == query_lower:
-                    if field_name in {"FILE_NAME", "FILE_STEM"} and document.kind.upper() != "FILE":
+                    if field_name in {"FILE_NAME", "FILE_STEM"} and document.node_kind.upper() != "FILE":
                         continue
                     reason, score = self._SCORES.get(field_name, ("EXACT_FIELD", 0.9))
                     if reason == "EXACT_KIND" and len(query_lower) < 4:
@@ -468,7 +468,7 @@ class ExactCandidateProvider(CandidateProvider):
             if len(query.compact) >= 4:
                 for field_name, value in document.compact_values:
                     if value == query.compact:
-                        if field_name in {"FILE_NAME", "FILE_STEM"} and document.kind.upper() != "FILE":
+                        if field_name in {"FILE_NAME", "FILE_STEM"} and document.node_kind.upper() != "FILE":
                             continue
                         reason, score = self._COMPACT_SCORES.get(field_name, ("EXACT_COMPACT", 0.9))
                         results.append(self._candidate(document, reason, score, "HIGH", 12))
@@ -500,7 +500,7 @@ class PathCandidateProvider(CandidateProvider):
                 ("DECLARING_FILE", document.declaring_file),
             ]
             for field_name, value in path_values:
-                if field_name in {"FILE_NAME", "FILE_STEM"} and document.kind.upper() != "FILE":
+                if field_name in {"FILE_NAME", "FILE_STEM"} and document.node_kind.upper() != "FILE":
                     continue
                 lowered = str(value or "").replace("\\", "/").lower().strip()
                 stripped = lowered.strip("/")
@@ -578,9 +578,9 @@ class LexicalCandidateProvider(CandidateProvider):
                 score += 0.05
             if overlap.intersection(set(document.qualified_segments)):
                 score += 0.04
-            if document.kind.upper() == "FILE" and query.profile == SearchQueryProfile.PATH_LIKE:
+            if document.node_kind.upper() == "FILE" and query.profile == SearchQueryProfile.PATH_LIKE:
                 score += 0.04
-            if document.kind.upper() in {"TYPE", "CALLABLE"} and query.profile == SearchQueryProfile.QUALIFIED_NAME_LIKE:
+            if document.node_kind.upper() in {"TYPE", "CALLABLE"} and query.profile == SearchQueryProfile.QUALIFIED_NAME_LIKE:
                 score += 0.03
             score = min(score, 0.82)
             if score >= config.min_lexical_score:
@@ -771,7 +771,7 @@ class CandidateMerger:
             -round(candidate.score, 6),
             candidate.priority,
             candidate.document.source_id,
-            candidate.document.kind,
+            candidate.document.node_kind,
             (candidate.document.label or candidate.document.name or "").lower(),
             candidate.document.node_id,
         )

@@ -41,8 +41,8 @@ def test_reanalysis_stale_state_is_auto_built_for_new_revision(tmp_path):
         app_config.store_path,
         graph_suffix="new",
         nodes=[
-            {"id": "node-query", "kind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
-            {"id": "node-client", "kind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
+            {"id": "node-query", "nodeKind": "CALLABLE", "name": "JarvisQueryService.query", "qualified": "jarvis.JarvisQueryService.query"},
+            {"id": "node-client", "nodeKind": "CALLABLE", "name": "KnowledgeClient.query", "qualified": "jarvis.KnowledgeClient.query"},
         ],
     )
     stale = store.status_for_source("semantic-source")

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import urllib.parse
-from pathlib import Path
 from typing import Any, Dict
 
 import httpx
@@ -17,13 +16,11 @@ class OllamaAnalysisClient:
     name = "ai-file-analyzer"
     version = "1"
 
-    def __init__(self, base_url: str, model: str, timeout_seconds: int, prompt_path: Path, context_tokens: int = 4096):
+    def __init__(self, base_url: str, model: str, timeout_seconds: int, context_tokens: int = 4096):
         self.base_url = self._require_localhost(base_url.rstrip("/"))
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.context_tokens = max(1024, context_tokens)
-        # Prompt templates are selected by analysis-policy.yaml; the legacy prompt path is no longer a fallback.
-        _ = prompt_path
         self.prompt_renderer = AnalysisPromptRenderer()
         self.contract_provider = self.prompt_renderer.provider
         self.parser = GraphAnalysisResponseParser(self.contract_provider)

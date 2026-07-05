@@ -13,7 +13,6 @@ from knowledge_service.graph_schema import (
     GraphEdge,
     GraphEvidenceRef,
 )
-from knowledge_service.graph_validation import json_path
 
 
 MAX_GRAPH_RAW_PREVIEW_CHARS = 4000
@@ -85,8 +84,8 @@ class GraphAnalysisResponseParser:
                 expected="JSON object",
             )
             return GraphAnalysisParseFailure("ANALYSIS_AI_SCHEMA_INVALID", self._details_message("AI analyzer response does not match graph schema", [detail]), self._preview(raw), [detail])
+        effective_contract = self._effective_contract(parsed, contract)
         try:
-            effective_contract = contract or self._contract_for_parsed(parsed)
             if str(parsed.get("schemaVersion") or "").startswith("knowledge.graph.enrichment."):
                 enrichment_errors = self._validate_enrichment_payload(parsed, line_count, effective_contract, known_node_kinds or {})
                 if enrichment_errors:
@@ -107,7 +106,8 @@ class GraphAnalysisResponseParser:
                         graph_errors,
                     )
                 return result
-            result = GraphAnalysisResult.parse_obj(parsed)
+            result_payload = {key: value for key, value in parsed.items() if key != "analysisPolicy"}
+            result = GraphAnalysisResult.parse_obj(result_payload)
             result.validate_lines(line_count)
             result.validate_references()
             graph_errors = self._validate_result_contract(result, effective_contract, self._node_kind_map(result))
@@ -120,7 +120,7 @@ class GraphAnalysisResponseParser:
                 )
             return result
         except ValidationError as exc:
-            details = self._validation_error_details(exc, parsed, contract or self._contract_for_parsed(parsed))
+            details = self._validation_error_details(exc, parsed, effective_contract)
             return GraphAnalysisParseFailure("ANALYSIS_AI_SCHEMA_INVALID", self._details_message("AI analyzer response does not match graph schema", details), self._preview(raw), details)
         except (ValueError, TypeError) as exc:
             detail = self._graph_validation_error("$", str(exc))
@@ -232,18 +232,14 @@ class GraphAnalysisResponseParser:
             return f"{detail.get('jsonPath') or detail.get('graphEntityId') or '$'}: {detail.get('reason') or detail.get('message')}"
         return str(detail.get("message") or detail)
 
-    def _contract_for_parsed(self, parsed: dict[str, Any]) -> AnalysisGraphContract:
-        file_payload = parsed.get("file")
-        relative_path = ""
-        if isinstance(file_payload, dict):
-            relative_path = str(file_payload.get("relativePath") or "")
-        return self.contract_provider.resolve(relative_path)
+    def _effective_contract(self, parsed: dict[str, Any], contract: AnalysisGraphContract | None) -> AnalysisGraphContract:
+        return contract or self.contract_provider.resolve_payload(parsed)
 
     def _validation_error_details(self, exc: ValidationError, parsed: Any, contract: AnalysisGraphContract) -> list[dict[str, Any]]:
         details: list[dict[str, Any]] = []
         for error in exc.errors():
             loc = tuple(error.get("loc") or ())
-            path = json_path(loc)
+            path = _json_path(loc)
             field = str(loc[-1]) if loc else None
             missing = error.get("type") == "value_error.missing"
             allowed = self._allowed_values_for_path(path, contract)
@@ -367,13 +363,13 @@ class GraphAnalysisResponseParser:
                 details.append(self._schema_error(path, field=None, message="claim must be an object.", actual=type(item).__name__, expected="object"))
                 continue
             details.extend(self._validate_required_string(item, path, "localId"))
-            target = item.get("targetStableKey") or item.get("nodeLocalId")
+            target = item.get("targetStableKey")
             if not target:
                 details.append(
                     self._schema_error(
                         f"{path}.targetStableKey",
                         field="targetStableKey",
-                        message="targetStableKey or nodeLocalId is required.",
+                        message="targetStableKey is required.",
                         actual=None,
                         expected="non-empty string pointing to the FILE anchor",
                         missing_required_field="targetStableKey",
@@ -487,13 +483,13 @@ class GraphAnalysisResponseParser:
                     )
                 )
             else:
-                from_key = item.get("fromStableKey") or item.get("fromNodeLocalId")
-                to_key = item.get("toStableKey") or item.get("toNodeLocalId")
+                from_key = item.get("fromStableKey")
+                to_key = item.get("toStableKey")
                 details.extend(self._validate_edge_endpoints(path, str(edge_type), from_key, to_key, known_node_kinds, contract))
             self._validate_metadata_contract(item.get("metadata"), f"{path}.metadata", contract, details)
             self._validate_edge_resolution_status(
                 item.get("resolutionStatus"),
-                item.get("toStableKey") or item.get("toNodeLocalId"),
+                item.get("toStableKey"),
                 item.get("unresolvedTarget"),
                 path,
                 contract,
@@ -790,7 +786,7 @@ class GraphAnalysisResponseParser:
             claims.append(
                 GraphClaim(
                     localId=str(item.get("localId") or f"claim{index}"),
-                    nodeLocalId=str(item.get("targetStableKey") or item.get("nodeLocalId") or ""),
+                    nodeLocalId=str(item.get("targetStableKey") or ""),
                     claimKind=str(item.get("claimKind") or ""),
                     summary=str(item.get("summary") or ""),
                     evidence=self._evidence_refs(item.get("evidence") or []),
@@ -808,8 +804,8 @@ class GraphAnalysisResponseParser:
             edges.append(
                 GraphEdge(
                     localId=str(item.get("localId") or f"semantic{index}"),
-                    fromNodeLocalId=str(item.get("fromStableKey") or item.get("fromNodeLocalId") or ""),
-                    toNodeLocalId=item.get("toStableKey") or item.get("toNodeLocalId"),
+                    fromNodeLocalId=str(item.get("fromStableKey") or ""),
+                    toNodeLocalId=item.get("toStableKey"),
                     edgeType=str(item.get("edgeType") or ""),
                     resolutionStatus=item.get("resolutionStatus"),
                     confidence=float(item.get("confidence") if item.get("confidence") is not None else 0.0),
@@ -839,3 +835,13 @@ class GraphAnalysisResponseParser:
                 )
             )
         return refs
+
+
+def _json_path(loc: tuple[Any, ...]) -> str:
+    path = "$"
+    for part in loc:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        else:
+            path += f".{part}"
+    return path

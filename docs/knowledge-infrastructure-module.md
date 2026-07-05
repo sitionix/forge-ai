@@ -6,7 +6,7 @@ The local config `infrastructure/knowledge/config/knowledge-sources.yaml` is git
 
 V1 intentionally excludes embeddings, vector DB, semantic search, RAG answer generation, Jarvis integration, and prompt augmentation execution. Ollama is used only by the optional local AI structural analysis layer.
 
-The AI structural analysis layer is optional local analysis, not answer generation. It calls local Ollama for indexed files, validates strict JSON, and stores roles, evidence, confidence, and relations as rebuildable SQLite metadata.
+The AI graph analysis layer is optional local analysis, not answer generation. It uses the YAML analysis policy as the graph contract, calls local Ollama for policy-selected enrichment, validates strict JSON, and stores graph nodes, edges, claims, evidence, diagnostics, and evidence join rows as rebuildable SQLite facts.
 
 Inventory builds write local SQLite metadata only. Indexed files are files accepted by source, include/exclude, size, text, and safety rules. Skipped files or paths are candidates seen during a build but not indexed. `skippedCount` is the total skipped candidate count, and `skippedBreakdown` stores the local runtime summary by reason as JSON.
 
@@ -16,8 +16,8 @@ Knowledge never mutates source files and does not store the full skipped file li
 
 The retrieval context endpoint returns structured snippets from indexed files only. It is a transitional internal Jarvis dependency and is not exposed through the Forge Knowledge UI or Java proxy.
 
-AI analysis uses separate tables for jobs, file state, symbols, symbol roles, and relations. It runs in an in-process background job, reports current source/file progress, skips unchanged files by content hash and analyzer version, and marks oversized or failed files without crashing the service.
+AI analysis uses separate tables for jobs, file state, graph nodes, graph edges, graph claims, graph evidence, graph diagnostics, and evidence joins. It runs in an in-process background job, reports current source/file progress, skips unchanged files by content hash and analyzer version, and marks oversized or failed files without crashing the service.
 
 Production Knowledge code must stay generic. It must not hardcode business domains, service IDs, local paths, or project-specific query synonyms. Analysis uses catalog metadata, file paths, class/method names, annotations, imports, calls, config keys, and contract operations as evidence.
 
-Production code must also not treat naming suffixes as role truth. Suffixes can be evidence in AI prompts/results, but final roles require validated AI output with confidence/evidence or `UNKNOWN`.
+Production code must also not treat naming suffixes as graph truth. Suffixes can be evidence in AI prompts/results, but graph facts require validated output with policy-allowed fields, confidence, and evidence.
