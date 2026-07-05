@@ -232,8 +232,6 @@ indexing:
                     "analyzer_version": "1",
                     "status": "ANALYZED",
                     "analyzed_at": "2026-06-14T12:00:00+00:00",
-                    "symbol_count": 1,
-                    "relation_count": 0,
                     "diagnostics": [],
                 },
             )

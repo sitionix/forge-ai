@@ -28,14 +28,14 @@ class AnalysisGraphContract:
     artifact_labels: tuple[str, ...]
     graph_profiles: tuple[str, ...]
     allowed_node_kinds: tuple[str, ...]
-    allowed_edge_kinds: tuple[str, ...]
+    allowed_edge_types: tuple[str, ...]
     allowed_claim_kinds: tuple[str, ...]
     allowed_statuses: tuple[str, ...]
     allowed_origins: tuple[str, ...]
     allowed_evidence_kinds: tuple[str, ...]
     allowed_resolution_statuses: tuple[str, ...]
     semantic_node_kinds: tuple[str, ...]
-    semantic_edge_kinds: tuple[str, ...]
+    semantic_edge_types: tuple[str, ...]
     semantic_claim_kinds: tuple[str, ...]
     edge_from_kinds: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     edge_to_kinds: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
@@ -43,15 +43,15 @@ class AnalysisGraphContract:
 
     @classmethod
     def from_policy_resolution(cls, policy: AnalysisPolicy, resolution: AnalysisPolicyResolution) -> "AnalysisGraphContract":
-        allowed_edge_kinds = tuple(resolution.allowed_edge_kinds)
+        allowed_edge_types = tuple(resolution.allowed_edge_types)
         edge_from_kinds = {
             kind: tuple(policy.graph.edges[kind].from_kinds)
-            for kind in allowed_edge_kinds
+            for kind in allowed_edge_types
             if kind in policy.graph.edges
         }
         edge_to_kinds = {
             kind: tuple(policy.graph.edges[kind].to_kinds)
-            for kind in allowed_edge_kinds
+            for kind in allowed_edge_types
             if kind in policy.graph.edges
         }
         return cls(
@@ -69,14 +69,14 @@ class AnalysisGraphContract:
             artifact_labels=tuple(resolution.artifact_labels),
             graph_profiles=tuple(resolution.effective_graph_profiles),
             allowed_node_kinds=tuple(resolution.allowed_node_kinds),
-            allowed_edge_kinds=tuple(resolution.allowed_edge_kinds),
+            allowed_edge_types=tuple(resolution.allowed_edge_types),
             allowed_claim_kinds=tuple(resolution.allowed_claim_kinds),
             allowed_statuses=tuple(resolution.status_kinds),
             allowed_origins=tuple(resolution.origin_kinds),
             allowed_evidence_kinds=tuple(resolution.evidence_kinds),
             allowed_resolution_statuses=tuple(resolution.resolution_statuses),
             semantic_node_kinds=tuple(resolution.semantic_node_kinds),
-            semantic_edge_kinds=tuple(resolution.semantic_edge_kinds),
+            semantic_edge_types=tuple(resolution.semantic_edge_types),
             semantic_claim_kinds=tuple(resolution.semantic_claim_kinds),
             edge_from_kinds=edge_from_kinds,
             edge_to_kinds=edge_to_kinds,
@@ -103,14 +103,14 @@ class AnalysisGraphContract:
             artifact_labels=tuple(_string_list(raw.get("artifactLabels"))),
             graph_profiles=tuple(_string_list(raw.get("graphProfiles"))),
             allowed_node_kinds=tuple(_string_list(raw.get("allowedNodeKinds"))),
-            allowed_edge_kinds=tuple(_string_list(raw.get("allowedEdgeKinds"))),
+            allowed_edge_types=tuple(_string_list(raw.get("allowedEdgeKinds"))),
             allowed_claim_kinds=tuple(_string_list(raw.get("allowedClaimKinds"))),
             allowed_statuses=tuple(_string_list(raw.get("allowedStatuses"))),
             allowed_origins=tuple(_string_list(raw.get("allowedOrigins"))),
             allowed_evidence_kinds=tuple(_string_list(raw.get("allowedEvidenceKinds"))),
             allowed_resolution_statuses=tuple(_string_list(raw.get("allowedResolutionStatuses"))),
             semantic_node_kinds=tuple(_string_list(raw.get("semanticNodeKinds"))),
-            semantic_edge_kinds=tuple(_string_list(raw.get("semanticEdgeKinds"))),
+            semantic_edge_types=tuple(_string_list(raw.get("semanticEdgeKinds"))),
             semantic_claim_kinds=tuple(_string_list(raw.get("semanticClaimKinds"))),
             edge_from_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "from"),
             edge_to_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "to"),
@@ -133,18 +133,18 @@ class AnalysisGraphContract:
             "artifactLabels": list(self.artifact_labels),
             "graphProfiles": list(self.graph_profiles),
             "allowedNodeKinds": list(self.allowed_node_kinds),
-            "allowedEdgeKinds": list(self.allowed_edge_kinds),
+            "allowedEdgeKinds": list(self.allowed_edge_types),
             "allowedClaimKinds": list(self.allowed_claim_kinds),
             "allowedStatuses": list(self.allowed_statuses),
             "allowedOrigins": list(self.allowed_origins),
             "allowedEvidenceKinds": list(self.allowed_evidence_kinds),
             "allowedResolutionStatuses": list(self.allowed_resolution_statuses),
             "semanticNodeKinds": list(self.semantic_node_kinds),
-            "semanticEdgeKinds": list(self.semantic_edge_kinds),
+            "semanticEdgeKinds": list(self.semantic_edge_types),
             "semanticClaimKinds": list(self.semantic_claim_kinds),
             "edgeEndpointRules": {
                 kind: {"from": list(self.edge_from_kinds.get(kind, ())), "to": list(self.edge_to_kinds.get(kind, ()))}
-                for kind in self.allowed_edge_kinds
+                for kind in self.allowed_edge_types
             },
             "unsupportedBehavior": dict(self.unsupported_behavior),
             "evidenceRules": {
@@ -165,14 +165,14 @@ class AnalysisGraphContract:
             f"- llmMode: {self.llm_mode or ''}",
             f"- graphProfiles: {_join(self.graph_profiles)}",
             f"- allowedNodeKinds: {_join(self.allowed_node_kinds)}",
-            f"- allowedEdgeKinds: {_join(self.allowed_edge_kinds)}",
+            f"- allowedEdgeKinds: {_join(self.allowed_edge_types)}",
             f"- allowedClaimKinds: {_join(self.allowed_claim_kinds)}",
             f"- allowedStatuses: {_join(self.allowed_statuses)}",
             f"- allowedOrigins: {_join(self.allowed_origins)}",
             f"- allowedEvidenceKinds: {_join(self.allowed_evidence_kinds)}",
             f"- allowedResolutionStatuses: {_join(self.allowed_resolution_statuses)}",
             f"- semanticNodeKinds: {_join(self.semantic_node_kinds)}",
-            f"- semanticEdgeKinds: {_join(self.semantic_edge_kinds)}",
+            f"- semanticEdgeKinds: {_join(self.semantic_edge_types)}",
             f"- semanticClaimKinds: {_join(self.semantic_claim_kinds)}",
             "- unsupportedBehavior:",
         ]
@@ -231,10 +231,10 @@ class GraphContractProvider:
             prompt_id=None,
             effective_graph_profiles=list(self.policy.defaults.default_graph_profiles),
             allowed_node_kinds=_profile_kinds(self.policy, self.policy.defaults.default_graph_profiles, "nodes"),
-            allowed_edge_kinds=_profile_kinds(self.policy, self.policy.defaults.default_graph_profiles, "edges"),
+            allowed_edge_types=_profile_kinds(self.policy, self.policy.defaults.default_graph_profiles, "edges"),
             allowed_claim_kinds=_profile_kinds(self.policy, self.policy.defaults.default_graph_profiles, "claims"),
             semantic_node_kinds=[],
-            semantic_edge_kinds=[],
+            semantic_edge_types=[],
             semantic_claim_kinds=[],
             status_kinds=list(self.policy.graph.statuses.keys()),
             origin_kinds=list(self.policy.graph.origins.keys()),

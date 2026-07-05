@@ -62,7 +62,7 @@ def test_extractor_output_rejects_undeclared_node_kind():
     assert "FILE" in exc.value.details["allowedValues"]
 
 
-def test_extractor_output_rejects_node_kind_not_listed_in_produces():
+def test_extractor_output_rejects_node_kind_not_declared_by_policy():
     policy, context = _context("settings.yaml", "service:\n  url: http://example\n")
     graph = _graph(nodes=[_file_node(), _node("external", "EXTERNAL")])
 
@@ -72,10 +72,11 @@ def test_extractor_output_rejects_node_kind_not_listed_in_produces():
     assert exc.value.code == "ANALYSIS_EXTRACTOR_OUTPUT_INVALID"
     assert exc.value.details["field"] == "nodeKind"
     assert exc.value.details["actual"] == "EXTERNAL"
-    assert exc.value.details["allowedValues"] == ["FILE", "CONFIG", "DATA"]
+    assert "EXTERNAL" not in exc.value.details["allowedValues"]
+    assert set(exc.value.details["allowedValues"]) >= {"FILE", "TYPE", "CALLABLE"}
 
 
-def test_extractor_output_rejects_edge_kind_not_listed_in_produces():
+def test_extractor_output_rejects_edge_type_not_listed_in_produces():
     policy, context = _context("settings.yaml", "service:\n  url: http://example\n")
     graph = _graph(
         nodes=[_file_node(), _node("config", "CONFIG", parent="file")],
@@ -148,6 +149,95 @@ def test_extractor_output_rejects_edge_endpoint_rule_violation():
     assert exc.value.details["allowedValues"] == ["CALLABLE"]
 
 
+def test_final_graph_rejects_imports_target_when_yaml_forbids_targets():
+    policy, context = _context("src/main/java/example/Foo.java", "class Foo {}\n", language="java")
+    graph = _graph(
+        nodes=[_file_node(), _node("type", "TYPE", parent="file")],
+        edges=[_edge("bad-import", "IMPORTS", "file", "type", resolution_status="RESOLVED")],
+    )
+
+    with pytest.raises(KnowledgeError) as exc:
+        GraphPolicyValidator(policy).validate_final_graph(
+            graph,
+            context.graph_contract,
+            context.line_count,
+            relative_path=context.row["relative_path"],
+        )
+
+    assert exc.value.code == "ANALYSIS_GRAPH_POLICY_VALIDATION_FAILED"
+    assert exc.value.details["field"] == "toNodeLocalId"
+    assert exc.value.details["allowedValues"] == []
+    assert "not allowed for this edge type" in exc.value.details["validationErrors"][0]["message"]
+
+
+def test_final_graph_accepts_imports_external_target_without_graph_node():
+    policy, context = _context("src/main/java/example/Foo.java", "import java.util.List;\nclass Foo {}\n", language="java")
+    graph = _graph(
+        nodes=[_file_node(line_end=2)],
+        edges=[
+            _edge(
+                "import-list",
+                "IMPORTS",
+                "file",
+                None,
+                resolution_status="EXTERNAL_TARGET",
+                unresolved_target={"name": "List", "qualifiedName": "java.util.List", "kindHint": "IMPORT"},
+            )
+        ],
+    )
+
+    GraphPolicyValidator(policy).validate_final_graph(
+        graph,
+        context.graph_contract,
+        context.line_count,
+        relative_path=context.row["relative_path"],
+    )
+
+
+def test_final_graph_rejects_resolved_edge_without_target_node():
+    policy, context = _context("src/main/java/example/Foo.java", "class Foo { void call() {} }\n", language="java")
+    graph = _graph(
+        nodes=[_file_node(), _node("call", "CALLABLE", parent="file")],
+        edges=[_edge("call-edge", "CALLS", "call", None, resolution_status="RESOLVED")],
+    )
+
+    with pytest.raises(KnowledgeError) as exc:
+        GraphPolicyValidator(policy).validate_final_graph(
+            graph,
+            context.graph_contract,
+            context.line_count,
+            relative_path=context.row["relative_path"],
+        )
+
+    assert exc.value.code == "ANALYSIS_GRAPH_POLICY_VALIDATION_FAILED"
+    assert exc.value.details["field"] == "resolutionStatus"
+    assert exc.value.details["validationErrors"][0]["path"] == "$.edges[0].resolutionStatus"
+
+
+def test_final_graph_accepts_unresolved_calls_without_target_node():
+    policy, context = _context("src/main/java/example/Foo.java", "class Foo { void call() {} }\n", language="java")
+    graph = _graph(
+        nodes=[_file_node(), _node("call", "CALLABLE", parent="file")],
+        edges=[
+            _edge(
+                "call-edge",
+                "CALLS",
+                "call",
+                None,
+                resolution_status="UNRESOLVED",
+                unresolved_target={"name": "missing", "kindHint": "CALLABLE"},
+            )
+        ],
+    )
+
+    GraphPolicyValidator(policy).validate_final_graph(
+        graph,
+        context.graph_contract,
+        context.line_count,
+        relative_path=context.row["relative_path"],
+    )
+
+
 def test_final_graph_rejects_claim_without_required_evidence():
     policy, context = _context("src/main/java/example/Foo.java", "class Foo {}\n", language="java")
     graph = _graph(nodes=[_file_node()], claims=[_claim("purpose", "RESPONSIBILITY", "file", evidence=[])])
@@ -185,10 +275,26 @@ def test_final_graph_accepts_allowed_metadata_contract_values():
     policy, context = _context("settings.yaml", "service:\n  url: http://example\n", language="yaml")
     graph = _metadata_contract_graph(
         node_metadata={"factOrigin": "STATIC", "status": "TRUSTED"},
-        edge_metadata={"factOrigin": "STATIC", "status": "CANDIDATE", "resolutionStatus": "RESOLVED"},
+        edge_metadata={"factOrigin": "STATIC", "status": "CANDIDATE"},
+        edge_resolution_status="RESOLVED",
         claim_metadata={"factOrigin": "LLM", "status": "CANDIDATE"},
         edge_evidence_metadata={"factOrigin": "STATIC", "evidenceKind": "EDGE"},
         claim_evidence_metadata={"factOrigin": "LLM", "evidenceKind": "CLAIM"},
+    )
+
+    GraphPolicyValidator(policy).validate_final_graph(
+        graph,
+        context.graph_contract,
+        context.line_count,
+        relative_path=context.row["relative_path"],
+    )
+
+
+def test_final_graph_ignores_metadata_resolution_status():
+    policy, context = _context("settings.yaml", "service:\n  url: http://example\n", language="yaml")
+    graph = _metadata_contract_graph(
+        edge_metadata={"factOrigin": "STATIC", "resolutionStatus": "BOGUS"},
+        edge_resolution_status=None,
     )
 
     GraphPolicyValidator(policy).validate_final_graph(
@@ -206,7 +312,7 @@ def test_final_graph_accepts_allowed_metadata_contract_values():
         ("node_origin", "metadata.factOrigin", "BOGUS", "node", "file"),
         ("edge_status", "metadata.status", "BOGUS", "edge", "configures"),
         ("edge_origin", "metadata.factOrigin", "BOGUS", "edge", "configures"),
-        ("edge_resolution", "metadata.resolutionStatus", "BOGUS", "edge", "configures"),
+        ("edge_resolution", "resolutionStatus", "BOGUS", "edge", "configures"),
         ("claim_status", "metadata.status", "BOGUS", "claim", "purpose"),
         ("claim_origin", "metadata.factOrigin", "BOGUS", "claim", "purpose"),
         ("evidence_kind", "metadata.evidenceKind", "BOGUS", "evidence", "configures:evidence:1"),
@@ -292,14 +398,24 @@ def _node(local_id: str, kind: str, *, name: str = "node", parent: str | None = 
     )
 
 
-def _edge(local_id: str, edge_type: str, from_id: str, to_id: str | None = None) -> GraphEdge:
+def _edge(
+    local_id: str,
+    edge_type: str,
+    from_id: str,
+    to_id: str | None = None,
+    *,
+    resolution_status: str | None = None,
+    unresolved_target: dict | None = None,
+) -> GraphEdge:
     return GraphEdge(
         localId=local_id,
         edgeType=edge_type,
         fromNodeLocalId=from_id,
         toNodeLocalId=to_id,
+        resolutionStatus=resolution_status,
         confidence=1.0,
         evidence=[GraphEvidenceRef(lineStart=1, lineEnd=1)],
+        unresolvedTarget=unresolved_target,
         metadata={"factOrigin": "STATIC"},
     )
 
@@ -320,6 +436,7 @@ def _metadata_contract_graph(
     *,
     node_metadata: dict | None = None,
     edge_metadata: dict | None = None,
+    edge_resolution_status: str | None = None,
     claim_metadata: dict | None = None,
     edge_evidence_metadata: dict | None = None,
     claim_evidence_metadata: dict | None = None,
@@ -335,6 +452,7 @@ def _metadata_contract_graph(
                 edgeType="CONFIGURES",
                 fromNodeLocalId="file",
                 toNodeLocalId="config",
+                resolutionStatus=edge_resolution_status,
                 confidence=0.8,
                 evidence=[GraphEvidenceRef(lineStart=1, lineEnd=1, metadata=edge_evidence_metadata or {})],
                 metadata=edge_metadata or {"factOrigin": "STATIC"},
@@ -357,6 +475,7 @@ def _metadata_contract_graph(
 def _invalid_metadata_contract_graph(case: str) -> GraphAnalysisResult:
     node_metadata = {"factOrigin": "STATIC"}
     edge_metadata = {"factOrigin": "STATIC"}
+    edge_resolution_status = None
     claim_metadata = {"factOrigin": "STATIC"}
     edge_evidence_metadata: dict = {}
     claim_evidence_metadata: dict = {}
@@ -369,7 +488,7 @@ def _invalid_metadata_contract_graph(case: str) -> GraphAnalysisResult:
     elif case == "edge_origin":
         edge_metadata["factOrigin"] = "BOGUS"
     elif case == "edge_resolution":
-        edge_metadata["resolutionStatus"] = "BOGUS"
+        edge_resolution_status = "BOGUS"
     elif case == "claim_status":
         claim_metadata["status"] = "BOGUS"
     elif case == "claim_origin":
@@ -383,6 +502,7 @@ def _invalid_metadata_contract_graph(case: str) -> GraphAnalysisResult:
     return _metadata_contract_graph(
         node_metadata=node_metadata,
         edge_metadata=edge_metadata,
+        edge_resolution_status=edge_resolution_status,
         claim_metadata=claim_metadata,
         edge_evidence_metadata=edge_evidence_metadata,
         claim_evidence_metadata=claim_evidence_metadata,

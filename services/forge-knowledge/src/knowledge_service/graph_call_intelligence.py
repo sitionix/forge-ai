@@ -139,13 +139,14 @@ def classify_call_metadata(
     unresolved_target: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     result = dict(metadata or {})
+    result.pop("resolutionStatus", None)
     flow = str(result.get("flowDomain") or flow_domain or "CODE").upper()
-    status = str(result.get("resolutionStatus") or resolution_status or "UNKNOWN").upper()
+    status = str(resolution_status or "UNKNOWN").upper()
     receiver = _blank_to_none(result.get("receiverText"))
     receiver_type = _blank_to_none(result.get("receiverTypeHint"))
     target_type = _blank_to_none(result.get("targetTypeText") or (unresolved_target or {}).get("receiverTypeHint"))
     method_name = _blank_to_none(result.get("methodName") or (unresolved_target or {}).get("name"))
-    raw_text = _blank_to_none(result.get("rawText") or result.get("rawCallText"))
+    raw_text = None
     raw_kind = str(result.get("callKind") or "").upper()
 
     call_kind = result.get("callKind")
@@ -161,7 +162,7 @@ def classify_call_metadata(
     if status in {"UNRESOLVED", "MULTIPLE_CANDIDATES", "INTERFACE_TARGET"} and unresolved_reason not in {item.value for item in UnresolvedReason}:
         unresolved_reason = _unresolved_reason(status, call_kind, receiver, receiver_type, target_type, result)
 
-    flow_usefulness, noise_category, visibility, scores, reasons = _score_call(
+    visibility = _score_call(
         flow,
         status,
         call_kind,
@@ -175,17 +176,9 @@ def classify_call_metadata(
     result.update(
         {
             "callKind": call_kind,
-            "callImportance": flow_usefulness,
             "callTargetCategory": target_category,
             "resolutionReason": resolution_reason,
-            "flowUsefulness": flow_usefulness,
-            "noiseCategory": noise_category,
             "sliceDefaultVisibility": visibility,
-            "flowScore": scores["flowScore"],
-            "displayScore": scores["displayScore"],
-            "expansionScore": scores["expansionScore"],
-            "reasonCodes": sorted(set([*(result.get("reasonCodes") or []), *reasons])),
-            "rawCallText": raw_text,
         }
     )
     if unresolved_reason:
@@ -331,39 +324,28 @@ def _score_call(
     receiver_type: Optional[str],
     target_type: Optional[str],
     raw_text: Optional[str],
-) -> tuple[str, str, str, Dict[str, float], list[str]]:
+) -> str:
     score = 0.45
-    reasons: list[str] = []
     if flow == "CODE":
         score += 0.15
-        reasons.append("CODE_DOMAIN")
     if status == "RESOLVED":
         score += 0.2
-        reasons.append("RESOLVED")
     if target_category == CallTargetCategory.INTERNAL_CODE.value:
         score += 0.2
-        reasons.append("INTERNAL_CODE_TARGET")
     if call_kind in {CallKind.FIELD_RECEIVER.value, CallKind.PARAMETER_RECEIVER.value, CallKind.LOCAL_VARIABLE_RECEIVER.value} and receiver_type:
         score += 0.1
-        reasons.append("RECEIVER_TYPE_HINT")
     if target_category in {CallTargetCategory.EXTERNAL_JDK.value, CallTargetCategory.EXTERNAL_FRAMEWORK.value}:
         score -= 0.3
-        reasons.append(target_category)
     if flow == "TEST":
         score -= 0.2
-        reasons.append("TEST_DOMAIN")
     if method_name in JDK_METHODS or method_name in {"of", "builder", "build"}:
         score -= 0.15
-        reasons.append("UTILITY_METHOD")
     if method_name in FRAMEWORK_METHODS:
         score -= 0.15
-        reasons.append("FRAMEWORK_METHOD")
     if call_kind == CallKind.CHAINED_CALL.value or (raw_text and raw_text.count(".") >= 3):
         score -= 0.1
-        reasons.append("CHAINED_CALL")
     if status in {"UNRESOLVED", "MULTIPLE_CANDIDATES"} and receiver_type:
         score += 0.05
-        reasons.append("EXPLAINABLE_UNRESOLVED")
     score = max(0.0, min(1.0, score))
     if score >= 0.75:
         usefulness = "HIGH"
@@ -373,16 +355,6 @@ def _score_call(
         usefulness = "LOW"
     else:
         usefulness = "NOISE"
-    if target_category == CallTargetCategory.EXTERNAL_JDK.value:
-        noise_category = "JDK_UTILITY"
-    elif target_category == CallTargetCategory.EXTERNAL_FRAMEWORK.value:
-        noise_category = "FRAMEWORK_CALL"
-    elif flow == "TEST":
-        noise_category = "TEST_CALL"
-    elif usefulness == "NOISE":
-        noise_category = "LOW_VALUE_CALL"
-    else:
-        noise_category = "NONE"
     if usefulness in {"HIGH", "MEDIUM"} and status == "RESOLVED":
         visibility = "SHOW"
     elif status in {"UNRESOLVED", "MULTIPLE_CANDIDATES", "INTERFACE_TARGET"} and usefulness in {"HIGH", "MEDIUM", "LOW"}:
@@ -391,17 +363,7 @@ def _score_call(
         visibility = "COLLAPSE"
     else:
         visibility = "HIDE_BY_DEFAULT"
-    return (
-        usefulness,
-        noise_category,
-        visibility,
-        {
-            "flowScore": round(score, 3),
-            "displayScore": round(max(0.05, min(1.0, score - (0.1 if visibility == "HIDE_BY_DEFAULT" else 0))), 3),
-            "expansionScore": round(max(0.0, min(1.0, score - (0.2 if target_category.startswith("EXTERNAL_") else 0))), 3),
-        },
-        reasons,
-    )
+    return visibility
 
 
 def _blank_to_none(value: Any) -> Optional[str]:

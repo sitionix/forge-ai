@@ -176,14 +176,6 @@ public final class InfrastructureProxyEndpoint {
         return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryBlank.json", HttpStatus.BAD_REQUEST, null);
     }
 
-    public static Endpoint<Object, Object> nexusUnsupportedKnowledgeSymbols() {
-        return nexusGet("/api/v1/infrastructure/knowledge/analysis/symbols", HttpStatus.NOT_FOUND, null);
-    }
-
-    public static Endpoint<Object, Object> nexusUnsupportedKnowledgeRelations() {
-        return nexusGet("/api/v1/infrastructure/knowledge/analysis/relations", HttpStatus.NOT_FOUND, null);
-    }
-
     public static Endpoint<Object, Object> nexusUnsupportedKnowledgeGraph() {
         return nexusGet("/api/v1/infrastructure/knowledge/analysis/graph", HttpStatus.NOT_FOUND, null);
     }

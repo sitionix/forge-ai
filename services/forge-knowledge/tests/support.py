@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI
 
-from knowledge_service.analysis_schema import AnalysisResult
 from knowledge_service.analysis_service import AnalysisProvider
 from knowledge_service.bootstrap import KnowledgeDependencies, build_dependencies
 from knowledge_service.config import AppConfig, ForgeSettings, load_forge_settings
@@ -112,7 +111,7 @@ class DeterministicAnalysisProvider:
         payload: Dict[str, object],
         line_count: int,
         repair_prompt: Optional[str] = None,
-    ) -> GraphAnalysisResult | AnalysisResult:
+    ) -> GraphAnalysisResult:
         return GraphAnalysisResult(
             diagnostics=[
                 {
@@ -136,7 +135,7 @@ class FailingAnalysisProvider:
         payload: Dict[str, object],
         line_count: int,
         repair_prompt: Optional[str] = None,
-    ) -> GraphAnalysisResult | AnalysisResult:
+    ) -> GraphAnalysisResult:
         raise KnowledgeError(
             "ANALYSIS_AI_TRANSPORT_ERROR",
             "deterministic provider failure",

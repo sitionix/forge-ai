@@ -28,11 +28,14 @@ def test_loads_default_policy_and_validates_references():
     assert policy.prompts["code_graph_enrichment"].response_shape == "schemas/graph-enrichment-v1-response-shape.json"
     assert policy.prompt_response_shape_path("code_graph_enrichment").name == "graph-enrichment-v1-response-shape.json"
     assert _find_forbidden_entries(data) == []
-    assert set(policy.semantic.indexed_node_kinds) == {"FILE", "TYPE", "CALLABLE", "EXTERNAL"}
+    assert set(policy.semantic.indexed_node_kinds) == {"FILE", "TYPE", "CALLABLE"}
+    assert "EXTERNAL" not in policy.graph.nodes
+    assert "EXTERNAL" not in policy.semantic.indexed_node_kinds
+    assert all("EXTERNAL" not in edge.to_kinds for edge in policy.graph.edges.values())
 
     for kind in policy.semantic.indexed_node_kinds:
         assert policy.graph.nodes[kind].semantic_eligible is True
-    for kind in policy.semantic.indexed_edge_kinds:
+    for kind in policy.semantic.indexed_edge_types:
         assert policy.graph.edges[kind].semantic_eligible is True
     for kind in policy.semantic.indexed_claim_kinds:
         assert policy.graph.claims[kind].semantic_eligible is True

@@ -233,13 +233,15 @@ def test_prompt_renderer_rejects_undeclared_prompt_id_without_legacy_fallback():
     assert exc_info.value.details["promptId"] == "missing_prompt"
 
 
-def test_parser_allows_yaml_declared_claim_and_edge_kinds():
+def test_parser_allows_yaml_declared_claim_and_edge_types():
     parser, contract = _parser_and_contract("src/Foo.java")
     payload = _graph_payload()
     payload["claims"][0]["claimKind"] = "SIDE_EFFECT"
     payload["edges"][0]["edgeType"] = "CALLS"
     payload["edges"][0]["fromNodeLocalId"] = "callable1"
-    payload["edges"][0]["toNodeLocalId"] = "external1"
+    payload["edges"][0]["toNodeLocalId"] = None
+    payload["edges"][0]["unresolvedTarget"] = {"name": "External.call", "kindHint": "CALLABLE"}
+    payload["edges"][0]["resolutionStatus"] = "EXTERNAL_TARGET"
 
     result = parser.parse(json.dumps(payload), 5, contract=contract)
 
@@ -293,7 +295,7 @@ def test_parser_rejects_invalid_claim_kind_with_yaml_allowed_values():
     assert "PURPOSE" not in detail["allowedValues"]
 
 
-def test_parser_rejects_invalid_edge_kind_with_yaml_allowed_values():
+def test_parser_rejects_invalid_edge_type_with_yaml_allowed_values():
     failure = _parse_with_mutation("src/Foo.java", lambda payload: payload["edges"][0].update({"edgeType": "RELATED_TO"}))
 
     detail = _detail(failure, "$.edges[0].edgeType")
@@ -320,13 +322,43 @@ def test_parser_rejects_invalid_status_origin_evidence_and_resolution_values():
     )
     resolution_failure = _parse_with_mutation(
         "src/Foo.java",
-        lambda payload: payload["edges"][0]["metadata"].update({"resolutionStatus": "GUESS"}),
+        lambda payload: payload["edges"][0].update({"resolutionStatus": "GUESS"}),
     )
 
     assert "TRUSTED" in _detail(status_failure, "$.claims[0].metadata.status")["allowedValues"]
     assert "LLM" in _detail(origin_failure, "$.claims[0].metadata.factOrigin")["allowedValues"]
     assert "CLAIM" in _detail(evidence_failure, "$.claims[0].evidence[0].metadata.evidenceKind")["allowedValues"]
-    assert "RESOLVED" in _detail(resolution_failure, "$.edges[0].metadata.resolutionStatus")["allowedValues"]
+    assert "RESOLVED" in _detail(resolution_failure, "$.edges[0].resolutionStatus")["allowedValues"]
+
+
+def test_parser_ignores_metadata_resolution_status():
+    parser, contract = _parser_and_contract("src/Foo.java")
+    payload = _graph_payload()
+    payload["edges"][0].pop("resolutionStatus")
+    payload["edges"][0]["metadata"]["resolutionStatus"] = "GUESS"
+
+    result = parser.parse(json.dumps(payload), 5, contract=contract)
+
+    assert isinstance(result, GraphAnalysisResult)
+    assert result.edges[0].resolutionStatus is None
+
+
+def test_parser_rejects_resolved_edge_without_target_at_first_class_path():
+    failure = _parse_with_mutation(
+        "src/Foo.java",
+        lambda payload: payload["edges"][0].update(
+            {
+                "edgeType": "CALLS",
+                "fromNodeLocalId": "callable1",
+                "toNodeLocalId": None,
+                "resolutionStatus": "RESOLVED",
+            }
+        ),
+    )
+
+    detail = _detail(failure, "$.edges[0].resolutionStatus")
+    assert detail["actual"] == "RESOLVED"
+    assert "requires toNodeLocalId" in detail["message"]
 
 
 def test_parser_rejects_edge_endpoint_rule_violation_when_node_kinds_are_known():
@@ -356,7 +388,7 @@ def test_effective_profiles_allow_java_text_and_document_specific_contracts():
     text_payload["edges"][0]["toNodeLocalId"] = "config1"
     assert isinstance(text_parser.parse(json.dumps(text_payload), 5, contract=text_contract), GraphAnalysisResult)
 
-    document_payload = _graph_payload(node_kind="EXTERNAL", edge_type="CALLS", claim_kind="CONFIG_REFERENCE")
+    document_payload = _graph_payload(node_kind="TYPE", edge_type="CALLS", claim_kind="CONFIG_REFERENCE")
     document_payload["nodes"] = [node for node in document_payload["nodes"] if node["nodeKind"] != "CALLABLE"]
     document_payload["edges"][0]["toNodeLocalId"] = "type1"
     document_failure = document_parser.parse(json.dumps(document_payload), 5, contract=document_contract)
@@ -439,13 +471,6 @@ def _graph_payload(node_kind: str = "TYPE", edge_type: str = "DECLARES", claim_k
                 "confidence": 0.9,
                 "metadata": {"factOrigin": "LLM", "status": "TRUSTED"},
             },
-            {
-                "localId": "external1",
-                "nodeKind": "EXTERNAL",
-                "name": "External",
-                "confidence": 0.7,
-                "metadata": {"factOrigin": "LLM", "status": "TRUSTED"},
-            },
         ],
         "edges": [
             {
@@ -453,9 +478,10 @@ def _graph_payload(node_kind: str = "TYPE", edge_type: str = "DECLARES", claim_k
                 "fromNodeLocalId": "file1",
                 "toNodeLocalId": "type1" if node_kind != "CONFIG" else "config1",
                 "edgeType": edge_type,
+                "resolutionStatus": "RESOLVED",
                 "confidence": 0.8,
                 "evidence": [{"lineStart": 1, "lineEnd": 2, "text": "evidence", "metadata": {"evidenceKind": "EDGE"}}],
-                "metadata": {"factOrigin": "LLM", "status": "TRUSTED", "resolutionStatus": "RESOLVED"},
+                "metadata": {"factOrigin": "LLM", "status": "TRUSTED"},
             }
         ],
         "claims": [

@@ -145,21 +145,28 @@ def test_static_graph_materializer_creates_static_nodes_edges_evidence_and_entry
 
     node_kinds = {node.nodeKind for node in graph.nodes}
     edge_types = {edge.edgeType for edge in graph.edges}
-    assert {"FILE", "TYPE", "CALLABLE", "FIELD", "EXTERNAL"} <= node_kinds
+    assert {"FILE", "TYPE", "CALLABLE", "FIELD"} <= node_kinds
+    assert "EXTERNAL" not in node_kinds
     assert {"DECLARES", "IMPORTS", "REFERENCES", "CALLS"} <= edge_types
     assert all(node.metadata["factOrigin"] == "STATIC" for node in graph.nodes)
     assert all(edge.evidence for edge in graph.edges)
+    import_edges = [edge for edge in graph.edges if edge.edgeType == "IMPORTS"]
+    assert import_edges
+    assert all(edge.toNodeLocalId is None for edge in import_edges)
+    assert all(edge.resolutionStatus == "EXTERNAL_TARGET" for edge in import_edges)
+    assert all(edge.unresolvedTarget for edge in import_edges)
     call_edges = [edge for edge in graph.edges if edge.edgeType == "CALLS"]
-    assert any(edge.metadata["resolutionStatus"] == "RESOLVED" for edge in call_edges)
+    assert any(edge.resolutionStatus == "RESOLVED" for edge in call_edges)
+    assert all("resolutionStatus" not in edge.metadata for edge in graph.edges)
     entrypoint = next(claim for claim in graph.claims if claim.claimKind == "ENTRYPOINT_HINT")
     assert entrypoint.nodeLocalId.endswith("|CALLABLE|example.TicketController|get|get(String)")
     assert entrypoint.metadata["httpMethod"] == "GET"
     assert entrypoint.metadata["route"] == "/tickets/{id}"
-    assert all("flowScore" in edge.metadata for edge in call_edges)
+    assert all("flowScore" not in edge.metadata for edge in call_edges)
     assert next(edge for edge in call_edges if edge.metadata["methodName"] == "toApi").metadata["callKind"] == "FIELD_RECEIVER"
 
 
-def test_java_parser_uses_parameter_and_local_variable_receiver_type_hints():
+def test_java_parser_keeps_receiver_type_hints_out_of_edge_metadata():
     text = """package example;
 
 class Controller {
@@ -186,13 +193,15 @@ class Ticket {}
     validate = next(edge for edge in call_edges if edge.metadata["methodName"] == "validate")
 
     assert to_api.metadata["callKind"] == "PARAMETER_RECEIVER"
-    assert to_api.metadata["receiverTypeHint"] == "TicketMapper"
-    assert to_api.metadata["resolutionStatus"] == "RESOLVED"
+    assert to_api.resolutionStatus == "RESOLVED"
     assert to_api.metadata["resolutionReason"] == "PARAMETER_TYPE_HINT"
+    assert to_api.argument_count == 1
+    assert "receiverTypeHint" not in to_api.metadata
     assert validate.metadata["callKind"] == "LOCAL_VARIABLE_RECEIVER"
-    assert validate.metadata["receiverTypeHint"] == "TicketDto"
-    assert validate.metadata["resolutionStatus"] == "RESOLVED"
+    assert validate.resolutionStatus == "RESOLVED"
     assert validate.metadata["resolutionReason"] == "LOCAL_VARIABLE_TYPE_HINT"
+    assert validate.argument_count == 0
+    assert "receiverTypeHint" not in validate.metadata
 
 
 def test_static_graph_materializer_creates_entrypoint_hints_for_lifecycle_config_and_tests():
@@ -260,7 +269,7 @@ def test_anchor_validator_accepts_callable_claim_only_when_evidence_overlaps_met
 
     assert claims["claim-good"].metadata["status"] == "TRUSTED"
     assert claims["claim-bad"].metadata["status"] == "CANDIDATE"
-    assert claims["claim-bad"].metadata["qualityIssue"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD"
+    assert claims["claim-bad"].metadata["rejectionReason"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD"
     assert any(item["code"] == "ANALYSIS_GRAPH_CALLABLE_EVIDENCE_OUTSIDE_METHOD" for item in merged.diagnostics)
 
 

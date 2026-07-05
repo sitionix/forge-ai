@@ -121,7 +121,7 @@ export class KnowledgeGraphPage {
       this.renderPreview();
     };
     this.entrypointsListener = () => {
-      this.updateUrlFromControls({ nodeKind: 'CALLABLE', graphNodeId: null, graphEdgeId: null });
+      this.updateUrlFromControls({ nodeKind: 'CALLABLE', nodeId: null, edgeId: null });
       this.resetFilterState();
       this.loadGraph({ manual: true });
     };
@@ -129,7 +129,7 @@ export class KnowledgeGraphPage {
       setControlValue(this.document, 'knowledgeGraphMode', 'full');
       setControlValue(this.document, 'knowledgeGraphMaxNodes', '0');
       setControlValue(this.document, 'knowledgeGraphIsolated', 'show');
-      this.updateUrlFromControls({ mode: 'full', graphNodeId: null, graphEdgeId: null });
+      this.updateUrlFromControls({ mode: 'full', nodeId: null, edgeId: null });
       this.resetFilterState();
       this.loadGraph({ manual: true });
     };
@@ -159,7 +159,7 @@ export class KnowledgeGraphPage {
       }
       this.state.selectedNodeId = null;
       this.state.selectedEdgeId = null;
-      this.updateUrlFromControls({ graphNodeId: null, graphEdgeId: null });
+      this.updateUrlFromControls({ nodeId: null, edgeId: null });
       this.renderSelectionState();
     };
   }
@@ -246,7 +246,7 @@ export class KnowledgeGraphPage {
 
   initializeControls() {
     const params = new URLSearchParams(this.window.location.search);
-    const defaultMode = params.get('graphEdgeId') ? 'full' : (params.get('mode') || 'slice');
+    const defaultMode = params.get('edgeId') ? 'full' : (params.get('mode') || 'slice');
     setControlValue(this.document, 'knowledgeGraphMode', defaultMode);
     setControlValue(this.document, 'knowledgeGraphFlowDomain', params.get('flowDomain') || (defaultMode === 'slice' ? 'CODE' : ''));
     setControlValue(this.document, 'knowledgeGraphDirection', params.get('direction') || 'OUTBOUND');
@@ -453,10 +453,10 @@ export class KnowledgeGraphPage {
 
   queryParams() {
     const params = new URLSearchParams(this.window.location.search);
-    const requestedMode = this.document.getElementById('knowledgeGraphMode')?.value || params.get('mode') || (params.get('graphEdgeId') ? 'full' : 'slice');
-    const graphNodeId = params.get('graphNodeId');
-    const graphEdgeId = params.get('graphEdgeId');
-    const mode = requestedMode === 'slice' && !graphNodeId ? 'overview' : requestedMode;
+    const requestedMode = this.document.getElementById('knowledgeGraphMode')?.value || params.get('mode') || (params.get('edgeId') ? 'full' : 'slice');
+    const nodeId = params.get('nodeId');
+    const edgeId = params.get('edgeId');
+    const mode = requestedMode === 'slice' && !nodeId ? 'overview' : requestedMode;
     const query = new URLSearchParams();
     ['sourceId', 'inventoryFileId', 'factOrigin', 'nodeKind', 'edgeType'].forEach((key) => {
       const value = params.get(key);
@@ -464,11 +464,11 @@ export class KnowledgeGraphPage {
         query.set(key, value);
       }
     });
-    if (graphNodeId) {
-      query.set(mode === 'slice' ? 'rootGraphNodeId' : 'graphNodeId', graphNodeId);
+    if (nodeId) {
+      query.set(mode === 'slice' ? 'rootNodeId' : 'nodeId', nodeId);
     }
-    if (graphEdgeId && mode !== 'slice') {
-      query.set('graphEdgeId', graphEdgeId);
+    if (edgeId && mode !== 'slice') {
+      query.set('edgeId', edgeId);
     }
     const flowDomain = this.document.getElementById('knowledgeGraphFlowDomain')?.value || params.get('flowDomain') || (mode === 'slice' ? 'CODE' : '');
     if (flowDomain) {
@@ -534,8 +534,8 @@ export class KnowledgeGraphPage {
 
   applySelectionFromQuery(query, data) {
     const previousKey = this.selectionKey();
-    const candidateNodeId = data.selected?.node?.id || data.root?.id || query.get('graphNodeId') || query.get('rootGraphNodeId') || null;
-    const candidateEdgeId = data.selected?.edge?.id || query.get('graphEdgeId') || null;
+    const candidateNodeId = data.selected?.node?.id || data.root?.id || query.get('nodeId') || query.get('rootNodeId') || null;
+    const candidateEdgeId = data.selected?.edge?.id || query.get('edgeId') || null;
     this.state.selectedNodeId = (data.nodes || []).some((node) => node.id === candidateNodeId) ? candidateNodeId : null;
     this.state.selectedEdgeId = (data.edges || []).some((edge) => edge.id === candidateEdgeId) ? candidateEdgeId : null;
     if (this.selectionKey() !== previousKey) {
@@ -561,7 +561,7 @@ export class KnowledgeGraphPage {
     if (this.selectionKey() !== previousKey) {
       this.clearSelectedDetail(previousKey);
     }
-    this.updateUrlFromControls({ graphNodeId: nodeId, graphEdgeId: null });
+    this.updateUrlFromControls({ nodeId, edgeId: null });
     this.renderSelectionState();
     return this.loadSelectedDetails();
   }
@@ -574,7 +574,7 @@ export class KnowledgeGraphPage {
     if (this.selectionKey() !== previousKey) {
       this.clearSelectedDetail(previousKey);
     }
-    this.updateUrlFromControls({ graphEdgeId: edgeId, graphNodeId: null });
+    this.updateUrlFromControls({ edgeId, nodeId: null });
     this.renderSelectionState();
     return null;
   }
@@ -786,8 +786,8 @@ export class KnowledgeGraphPage {
     target.innerHTML = `
       <div class="knowledge-graph-summary-strip">
         <strong>${escapeHtml(data.sourceName || 'Knowledge Graph')}</strong>
-        <span>${escapeHtml(data.meta?.returnedNodeCount ?? data.nodes.length)} nodes · ${escapeHtml(data.meta?.returnedEdgeCount ?? data.edges.length)} relations</span>
-        <span>${escapeHtml(data.meta?.totalNodeCount ?? data.nodes.length)} total nodes · ${escapeHtml(data.meta?.totalEdgeCount ?? data.edges.length)} total relations</span>
+        <span>${escapeHtml(data.meta?.returnedNodeCount ?? data.nodes.length)} nodes · ${escapeHtml(data.meta?.returnedEdgeCount ?? data.edges.length)} edges</span>
+        <span>${escapeHtml(data.meta?.totalNodeCount ?? data.nodes.length)} total nodes · ${escapeHtml(data.meta?.totalEdgeCount ?? data.edges.length)} total edges</span>
       </div>
     `;
   }
@@ -840,7 +840,7 @@ export class KnowledgeGraphPage {
     }));
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const edges = visibleEdges
-      .map((edge) => ({ ...edge, fromNode: nodeById.get(edge.from), toNode: nodeById.get(edge.to) }))
+      .map((edge) => ({ ...edge, fromNode: nodeById.get(edge.fromNodeId), toNode: nodeById.get(edge.toNodeId) }))
       .filter((edge) => edge.fromNode && edge.toNode);
     this.state.nodes = nodes;
     this.state.edges = edges;
@@ -945,7 +945,7 @@ export class KnowledgeGraphPage {
       'marker-end': 'url(#knowledge-graph-arrow)'
     });
     line.appendChild(createSvgElement(this.document, 'title', {}, [
-      edge.edgeType || 'Relation',
+      edge.edgeType || 'Edge',
       edge.resolutionStatus ? `resolution: ${edge.resolutionStatus}` : '',
       metadata.callKind ? `call: ${metadata.callKind}` : '',
       metadata.receiverText ? `receiver: ${metadata.receiverText}` : '',
@@ -1028,7 +1028,7 @@ export class KnowledgeGraphPage {
     const edges = data.edges || [];
     return {
       nodes,
-      edges: edges.filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to)),
+      edges: edges.filter((edge) => nodeIds.has(edge.fromNodeId) && nodeIds.has(edge.toNodeId)),
       hiddenIsolatedCount: 0
     };
   }
@@ -1280,10 +1280,10 @@ export class KnowledgeGraphPage {
       messages.push(`${hiddenNodes} matching nodes are outside the current graph view.`);
     }
     if (hiddenEdges > 0) {
-      messages.push(`${hiddenEdges} matching relationships are outside the current graph view.`);
+      messages.push(`${hiddenEdges} matching edges are outside the current graph view.`);
     }
     if (hiddenBoundaryEdges > 0) {
-      messages.push(`${hiddenBoundaryEdges} relationships cross from visible nodes to hidden nodes.`);
+      messages.push(`${hiddenBoundaryEdges} edges cross from visible nodes to hidden nodes.`);
     }
     if (skippedMissing > 0) {
       messages.push(`${skippedMissing} edges were hidden because their endpoint nodes were outside the current result.`);
@@ -1387,7 +1387,7 @@ export class KnowledgeGraphPage {
       target.innerHTML = `
         <h3>${escapeHtml(title)}</h3>
         <div class="pill-row">
-          ${renderPill(detailNode.nodeKind || detailNode.kind || node.nodeKind || 'UNKNOWN')}
+          ${renderPill(detailNode.nodeKind || node.nodeKind || 'UNKNOWN')}
           ${renderPill(detailNode.flowDomain || node.flowDomain || 'UNKNOWN')}
           ${renderPill(detailNode.factOrigin || node.factOrigin || 'UNKNOWN')}
         </div>
@@ -1403,7 +1403,7 @@ export class KnowledgeGraphPage {
       `;
     } else if (edge) {
       target.innerHTML = `
-        <h3>${escapeHtml(edge.edgeType || 'Relation')}</h3>
+        <h3>${escapeHtml(edge.edgeType || 'Edge')}</h3>
         <div class="pill-row">
           ${renderPill(edge.resolutionStatus || 'UNKNOWN')}
           ${renderPill(edge.flowDomain || 'UNKNOWN')}
@@ -1419,7 +1419,7 @@ export class KnowledgeGraphPage {
       target.innerHTML = `
         <div class="knowledge-graph-preview-empty">
           <h3>No selection</h3>
-          <p>Select a node or relation to inspect graph context.</p>
+          <p>Select a node or edge to inspect graph context.</p>
         </div>
       `;
     }
@@ -1478,7 +1478,7 @@ export class KnowledgeGraphPage {
       return `<p class="knowledge-graph-detail-state error">Selected item details failed: ${escapeHtml(detailErrorMessage(this.state.selectedDetailError))}</p>`;
     }
     if (!node && !edge) {
-      return '<section class="knowledge-graph-detail-section"><h3>Selected Item</h3><p class="muted">No node or relation selected.</p></section>';
+      return '<section class="knowledge-graph-detail-section"><h3>Selected Item</h3><p class="muted">No node or edge selected.</p></section>';
     }
     if (node) {
       const detailNode = this.state.selectedDetail?.node || {};
@@ -1487,7 +1487,7 @@ export class KnowledgeGraphPage {
         <section class="knowledge-graph-detail-section">
           <h3>Selected Node</h3>
           <div class="knowledge-detail-grid">
-            <div>${renderKnowledgeKv('name', detailNode.label || detailNode.name || node.label || node.name)}${renderKnowledgeKv('kind', detailNode.nodeKind || detailNode.kind || node.nodeKind)}${renderKnowledgeKv('domain', detailNode.flowDomain || node.flowDomain)}</div>
+            <div>${renderKnowledgeKv('name', detailNode.label || detailNode.name || node.label || node.name)}${renderKnowledgeKv('kind', detailNode.nodeKind || node.nodeKind)}${renderKnowledgeKv('domain', detailNode.flowDomain || node.flowDomain)}</div>
             <div>${renderKnowledgeKv('file', detailNode.relativePath || node.relativePath)}${renderKnowledgeKv('source', detailNode.sourceId || node.sourceId)}${renderKnowledgeKv('lines', `${detailNode.lineStart ?? node.lineStart ?? '-'} - ${detailNode.lineEnd ?? node.lineEnd ?? '-'}`)}</div>
           </div>
           ${renderDetailSummary(summary)}
@@ -1500,9 +1500,9 @@ export class KnowledgeGraphPage {
     const summary = detailEdge.summary || detailEdge.description || '';
     return `
       <section class="knowledge-graph-detail-section">
-        <h3>Selected Relation</h3>
+        <h3>Selected Edge</h3>
         <div class="knowledge-detail-grid">
-          <div>${renderKnowledgeKv('relation', detailEdge.edgeType || detailEdge.relation || edge.edgeType)}${renderKnowledgeKv('from', detailEdge.fromLabel || detailEdge.from || edge.fromLabel || edge.from)}${renderKnowledgeKv('to', detailEdge.toLabel || detailEdge.to || edge.toLabel || edge.to)}</div>
+          <div>${renderKnowledgeKv('edge', detailEdge.edgeType || edge.edgeType)}${renderKnowledgeKv('from', detailEdge.fromLabel || edge.fromLabel)}${renderKnowledgeKv('to', detailEdge.toLabel || edge.toLabel)}</div>
           <div>${renderKnowledgeKv('domain', detailEdge.flowDomain || edge.flowDomain)}${renderKnowledgeKv('source', detailEdge.sourceId || edge.sourceId)}${renderKnowledgeKv('evidence', detailEdge.evidenceCount ?? edge.evidenceCount ?? 0)}</div>
         </div>
         ${renderDetailSummary(summary)}
@@ -1521,9 +1521,9 @@ export class KnowledgeGraphPage {
     if (selectedNodeId) {
       connected.add(selectedNodeId);
       this.state.edges.forEach((edge) => {
-        if (edge.from === selectedNodeId || edge.to === selectedNodeId) {
-          connected.add(edge.from);
-          connected.add(edge.to);
+        if (edge.fromNodeId === selectedNodeId || edge.toNodeId === selectedNodeId) {
+          connected.add(edge.fromNodeId);
+          connected.add(edge.toNodeId);
         }
       });
     }
@@ -1548,7 +1548,7 @@ export class KnowledgeGraphPage {
     });
     this.state.edges.forEach((edge) => {
       const isSelected = edge.id === selectedEdgeId;
-      const isConnected = selectedNodeId && (edge.from === selectedNodeId || edge.to === selectedNodeId);
+      const isConnected = selectedNodeId && (edge.fromNodeId === selectedNodeId || edge.toNodeId === selectedNodeId);
       edge.element?.classList.toggle('selected', isSelected);
       edge.element?.classList.toggle('connected', Boolean(isConnected));
       edge.element?.classList.toggle('dimmed', Boolean(selectedNodeId) && !isConnected && !isSelected);
@@ -2027,7 +2027,6 @@ function graphMaxNodesValue(value) {
 function graphNodeMatchesSearch(node, search) {
   const haystack = [
     node.id,
-    node.graphNodeId,
     node.label,
     node.name,
     node.displayName,
@@ -2168,16 +2167,16 @@ function renderNodePreviewDetails(detailNode, evidence, loading, error) {
     `;
   }
   const claims = Array.isArray(detailNode?.claims) ? detailNode.claims : [];
-  const relations = detailNode?.relations || {};
+  const connections = detailNode?.connections || {};
   return `
     <section class="knowledge-graph-detail-section">
       <h3>Purpose</h3>
       <p>${escapeHtml(nodePurpose(detailNode))}</p>
     </section>
     <section class="knowledge-graph-detail-section">
-      <h3>Relationships</h3>
-      ${renderPreviewRelations('Outgoing', relations.outgoing, 'outgoing')}
-      ${renderPreviewRelations('Incoming', relations.incoming, 'incoming')}
+      <h3>Connections</h3>
+      ${renderPreviewConnections('Outgoing', connections.outgoing, 'outgoing')}
+      ${renderPreviewConnections('Incoming', connections.incoming, 'incoming')}
     </section>
     ${renderPreviewClaims(claims)}
     ${renderPreviewEvidence(evidence)}
@@ -2199,35 +2198,35 @@ function renderPreviewClaims(claims) {
   `;
 }
 
-function renderPreviewRelations(title, group, direction) {
+function renderPreviewConnections(title, group, direction) {
   const items = Array.isArray(group?.items) ? group.items.slice(0, 5) : [];
   const total = Number.isFinite(Number(group?.totalCount)) ? Number(group.totalCount) : items.length;
-  const emptyText = direction === 'outgoing' ? 'No outgoing relationships.' : 'No incoming relationships.';
+  const emptyText = direction === 'outgoing' ? 'No outgoing edges.' : 'No incoming edges.';
   return `
-    <div class="knowledge-graph-relation-group">
+    <div class="knowledge-graph-connection-group">
       <h4>${escapeHtml(title)} <span>${escapeHtml(total)}</span></h4>
-      ${items.length ? `<ul class="knowledge-graph-compact-list relations">${items.map((item) => renderPreviewRelationRow(item, direction)).join('')}</ul>${total > items.length ? `<p class="knowledge-graph-more">+${escapeHtml(total - items.length)} more</p>` : ''}` : `<p class="muted">${emptyText}</p>`}
+      ${items.length ? `<ul class="knowledge-graph-compact-list connections">${items.map((item) => renderPreviewConnectionRow(item, direction)).join('')}</ul>${total > items.length ? `<p class="knowledge-graph-more">+${escapeHtml(total - items.length)} more</p>` : ''}` : `<p class="muted">${emptyText}</p>`}
     </div>
   `;
 }
 
-function renderPreviewRelationRow(item, direction) {
+function renderPreviewConnectionRow(item, direction) {
   const outgoing = direction === 'outgoing';
   const neighborName = outgoing
     ? readableEdgeEndpoint(item.targetName, 'Unresolved target')
     : readableEdgeEndpoint(item.sourceName, 'Unknown source');
   const neighborKind = outgoing ? item.targetKind : item.sourceKind;
   const arrow = outgoing ? '->' : '<-';
-  const location = formatRelationLocation(item);
+  const location = formatConnectionLocation(item);
   return `
-    <li class="knowledge-graph-relation-row">
-      <span><strong>${escapeHtml(item.edgeKind || item.edgeType || 'RELATES')} ${arrow} ${escapeHtml(neighborName)}</strong>${neighborKind ? `<em>${escapeHtml(neighborKind)}</em>` : ''}</span>
+    <li class="knowledge-graph-connection-row">
+      <span><strong>${escapeHtml(item.edgeType || 'EDGE')} ${arrow} ${escapeHtml(neighborName)}</strong>${neighborKind ? `<em>${escapeHtml(neighborKind)}</em>` : ''}</span>
       ${location ? `<small>${escapeHtml(location)}</small>` : ''}
     </li>
   `;
 }
 
-function formatRelationLocation(item) {
+function formatConnectionLocation(item) {
   const path = item.sourcePath || item.relativePath || '';
   const lineStart = item.lineStart;
   const lineEnd = item.lineEnd;
@@ -2257,7 +2256,7 @@ function renderPreviewEvidence(evidence) {
       ${items.length ? `<ul class="knowledge-graph-compact-list">${items.map((item) => `
         <li>
           <span>${escapeHtml(item.text || item.excerpt || 'Evidence captured for this node.')}</span>
-          ${formatRelationLocation(item) ? `<small>${escapeHtml(formatRelationLocation(item))}</small>` : ''}
+          ${formatConnectionLocation(item) ? `<small>${escapeHtml(formatConnectionLocation(item))}</small>` : ''}
         </li>
       `).join('')}</ul>${evidence.length > items.length ? `<p class="knowledge-graph-more">+${escapeHtml(evidence.length - items.length)} more</p>` : ''}` : '<p class="muted">No evidence available.</p>'}
     </section>
@@ -2309,21 +2308,21 @@ function renderNodesTable(nodes) {
 function renderEdgesTable(edges) {
   return `
     <section class="knowledge-graph-detail-section">
-      <h3>Relations</h3>
+      <h3>Edges</h3>
       <div class="table-wrap compact">
         <table class="operator-table">
           <thead><tr><th>From</th><th>Edge</th><th>To / Target</th><th>Domain</th><th>Evidence</th><th>Graph</th></tr></thead>
           <tbody>
             ${edges.length ? edges.map((edge) => `
               <tr>
-                <td>${escapeHtml(edge.fromLabel || edge.from || '-')}</td>
+                <td>${escapeHtml(edge.fromLabel || '-')}</td>
                 <td>${escapeHtml(edge.edgeType || '-')}</td>
-                <td>${escapeHtml(edge.toLabel || edge.to || '-')}</td>
+                <td>${escapeHtml(edge.toLabel || '-')}</td>
                 <td>${escapeHtml(edge.flowDomain || '-')}</td>
                 <td>${escapeHtml(edge.evidenceCount ?? 0)}</td>
                 <td><button class="knowledge-graph-row-action" type="button" data-select-edge="${escapeHtml(edge.id)}">Graph</button></td>
               </tr>
-            `).join('') : '<tr><td colspan="6">No graph relations in this projection.</td></tr>'}
+            `).join('') : '<tr><td colspan="6">No graph edges in this projection.</td></tr>'}
           </tbody>
         </table>
       </div>

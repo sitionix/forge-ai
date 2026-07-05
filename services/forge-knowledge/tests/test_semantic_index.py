@@ -157,9 +157,9 @@ def _seed_inventory_membership_lifecycle(
             """
             INSERT OR REPLACE INTO analysis_files(
                 file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status,
-                analyzed_at, symbol_count, relation_count, diagnostics_json, engine_version, flow_domain
+                analyzed_at, diagnostics_json, engine_version, flow_domain
             )
-            VALUES (?, ?, ?, ?, 'fixture-analyzer', '1', 'ANALYZED', ?, 1, 1, '[]', 'GRAPH_V1', 'CODE')
+            VALUES (?, ?, ?, ?, 'fixture-analyzer', '1', 'ANALYZED', ?, '[]', 'GRAPH_V1', 'CODE')
             """,
             (analysis_file_id, source_id, analysis_relative_path, analysis_content_hash, now),
         )
@@ -168,10 +168,10 @@ def _seed_inventory_membership_lifecycle(
             INSERT OR REPLACE INTO analysis_graph_nodes(
                 id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
                 stable_key, node_kind, language, name, qualified_name, display_name, parent_node_id,
-                line_start, line_end, confidence, status, metadata_json, created_at, updated_at, fact_origin, flow_domain
+                line_start, line_end, confidence, status, created_at, updated_at, fact_origin, flow_domain
             )
             VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, ?, 'CALLABLE', 'java', 'handle', 'A.handle', 'handle', NULL,
-                    1, 1, 0.9, 'TRUSTED', '{}', ?, ?, 'AI', 'CODE')
+                    1, 1, 0.9, 'TRUSTED', ?, ?, 'AI', 'CODE')
             """,
             (
                 node_id,
@@ -190,9 +190,9 @@ def _seed_inventory_membership_lifecycle(
             """
             INSERT OR REPLACE INTO analysis_graph_evidence(
                 id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                line_start, line_end, excerpt, excerpt_hash, evidence_kind, metadata_json, created_at, updated_at, fact_origin, flow_domain
+                line_start, line_end, excerpt, excerpt_hash, evidence_kind, created_at, updated_at, fact_origin, flow_domain
             )
-            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, 1, 1, 'class X {}', 'excerpt-hash', 'CLAIM', '{}', ?, ?, 'AI', 'CODE')
+            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, 1, 1, 'class X {}', 'excerpt-hash', 'CLAIM', ?, ?, 'AI', 'CODE')
             """,
             (evidence_id, source_id, analysis_file_id, analysis_file_id, analysis_file_id, analysis_relative_path, analysis_content_hash, now, now),
         )
@@ -200,11 +200,11 @@ def _seed_inventory_membership_lifecycle(
             """
             INSERT OR REPLACE INTO analysis_graph_edges(
                 id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                from_node_id, to_node_id, edge_type, edge_kind, resolution_status, confidence, evidence_id,
-                evidence_ids_json, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
+                from_node_id, to_node_id, edge_type, resolution_status, confidence, unresolved_target_json,
+                metadata_json, status, created_at, updated_at, fact_origin, flow_domain
             )
-            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, ?, NULL, 'CALLS', 'STRUCTURAL', 'UNRESOLVED', 0.8, ?,
-                    ?, NULL, '{}', 'TRUSTED', ?, ?, 'AI', 'CODE')
+            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, ?, NULL, 'CALLS', 'UNRESOLVED', 0.8,
+                    NULL, '{}', 'TRUSTED', ?, ?, 'AI', 'CODE')
             """,
             (
                 edge_id,
@@ -215,8 +215,6 @@ def _seed_inventory_membership_lifecycle(
                 analysis_relative_path,
                 analysis_content_hash,
                 node_id,
-                evidence_id,
-                f'["{evidence_id}"]',
                 now,
                 now,
             ),
@@ -225,20 +223,28 @@ def _seed_inventory_membership_lifecycle(
             """
             INSERT OR REPLACE INTO analysis_graph_claims(
                 id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
-                evidence_ids_json, metadata_json, rejection_reason, created_at, updated_at, fact_origin, flow_domain
+                rejection_reason, created_at, updated_at, fact_origin, flow_domain
             )
-            VALUES (?, 'job-x', ?, ?, 'RESPONSIBILITY', 'Handles x.', 0.9, 'TRUSTED', ?, '{}', NULL, ?, ?, 'AI', 'CODE')
+            VALUES (?, 'job-x', ?, ?, 'RESPONSIBILITY', 'Handles x.', 0.9, 'TRUSTED', NULL, ?, ?, 'AI', 'CODE')
             """,
-            (claim_id, source_id, node_id, f'["{evidence_id}"]', now, now),
+            (claim_id, source_id, node_id, now, now),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO analysis_graph_edge_evidence(edge_id, evidence_id) VALUES (?, ?)",
+            (edge_id, evidence_id),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO analysis_graph_claim_evidence(claim_id, evidence_id) VALUES (?, ?)",
+            (claim_id, evidence_id),
         )
         conn.execute(
             """
             INSERT OR REPLACE INTO analysis_graph_diagnostics(
                 id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                severity, stage, code, diagnostic_code, message, candidate_id, line_start, line_end,
+                severity, stage, code, message, candidate_id, line_start, line_end,
                 metadata_json, created_at, fact_origin, flow_domain
             )
-            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, 'INFO', 'ANALYSIS', 'DIAG', 'DIAG', 'diagnostic',
+            VALUES (?, 'job-x', ?, ?, ?, ?, ?, ?, 'INFO', 'ANALYSIS', 'DIAG', 'diagnostic',
                     NULL, 1, 1, '{}', ?, 'AI', 'CODE')
             """,
             (diagnostic_id, source_id, analysis_file_id, analysis_file_id, analysis_file_id, analysis_relative_path, analysis_content_hash, now),
@@ -257,7 +263,7 @@ def _seed_inventory_membership_lifecycle(
             """
             INSERT OR REPLACE INTO semantic_documents(
                 document_id, source_id, node_id, node_kind, graph_id, document_type, builder_version,
-                text_hash, text, claim_ids_json, evidence_ids_json, status, created_at, updated_at
+                text_hash, text, claim_ids_payload, evidence_ids_payload, status, created_at, updated_at
             )
             VALUES (?, ?, ?, 'CALLABLE', ?, 'node', ?, 'text-hash', 'semantic text', ?, ?, 'READY', ?, ?)
             """,
@@ -267,9 +273,9 @@ def _seed_inventory_membership_lifecycle(
             """
             INSERT OR REPLACE INTO semantic_vectors(
                 document_id, source_id, node_id, graph_id, embedding_model, embedding_dimension,
-                vector_blob, vector_json, created_at, updated_at
+                vector_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, 'fake-deterministic', 2, NULL, '[0.0, 1.0]', ?, ?)
+            VALUES (?, ?, ?, ?, 'fake-deterministic', 2, '[0.0, 1.0]', ?, ?)
             """,
             (document_id, source_id, node_id, graph_id, now, now),
         )
@@ -463,7 +469,7 @@ def test_semantic_index_builder_pending_to_ready_creates_docs_and_vectors(tmp_pa
             ).fetchone()[0]
             == state.indexed_node_count
         )
-        row = conn.execute("SELECT claim_ids_json, evidence_ids_json FROM semantic_documents").fetchone()
+        row = conn.execute("SELECT claim_ids_payload, evidence_ids_payload FROM semantic_documents").fetchone()
     assert row[0] == '["claim-trusted"]'
     assert row[1] == '["ev-node-query"]'
 
@@ -492,6 +498,37 @@ def test_semantic_index_builder_stale_to_ready_for_new_revision(tmp_path):
     assert new_state.status == SemanticIndexStatus.READY
     assert new_state.graph_revision != old_state.graph_revision
     assert new_state.total_node_count == 2
+
+
+def test_graph_revision_tracks_arity_fields_and_ignores_edge_debug_metadata(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    source_id = "semantic-source"
+    seed_semantic_graph(
+        db_path,
+        source_id=source_id,
+        nodes=[
+            {"id": "caller", "kind": "CALLABLE", "name": "Caller.handle", "qualified": "fixture.Caller.handle"},
+            {"id": "target", "kind": "CALLABLE", "name": "Target.call", "qualified": "fixture.Target.call"},
+        ],
+        edges=[{"id": "call-edge", "from": "caller", "to": "target", "type": "CALLS"}],
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        baseline = _current_graph_revision(conn, source_id)
+        conn.execute("UPDATE analysis_graph_edges SET metadata_json = json_set(metadata_json, '$.debugNote', 'changed') WHERE id = 'call-edge'")
+        assert _current_graph_revision(conn, source_id) == baseline
+
+        conn.execute("UPDATE analysis_graph_nodes SET parameter_count = 1 WHERE id = 'target'")
+        parameter_revision = _current_graph_revision(conn, source_id)
+        assert parameter_revision != baseline
+
+        conn.execute("UPDATE analysis_graph_nodes SET parameter_count = NULL WHERE id = 'target'")
+        reset_revision = _current_graph_revision(conn, source_id)
+        assert reset_revision == baseline
+
+        conn.execute("UPDATE analysis_graph_edges SET argument_count = 1 WHERE id = 'call-edge'")
+        argument_revision = _current_graph_revision(conn, source_id)
+        assert argument_revision != baseline
 
 
 def test_semantic_index_status_invalidates_old_revision_vectors_after_file_identity_change(tmp_path):
@@ -780,6 +817,71 @@ def test_deleting_analysis_file_cascades_current_graph_and_semantic_cache(tmp_pa
         assert conn.execute("SELECT COUNT(*) FROM semantic_vectors WHERE source_id = 'semantic-source'").fetchone()[0] == 2
 
 
+def test_deleting_analysis_file_cascades_graph_children_and_evidence_links(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    source_id = "cascade-source"
+    node_id = f"{source_id}:node-query"
+    seed_semantic_graph(
+        db_path,
+        source_id=source_id,
+        claims=[{"id": "claim-cascade", "node_id": node_id, "summary": "Cascade claim.", "evidence_ids": ["ev-node-query"]}],
+        edges=[{"id": "edge-cascade", "from": node_id, "to": None, "unresolved": {"name": "missing"}}],
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        file_id = conn.execute("SELECT file_id FROM analysis_files WHERE source_id = ?", (source_id,)).fetchone()[0]
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claims WHERE source_id = ?", (source_id,)).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence WHERE source_id = ?", (source_id,)).fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claim_evidence").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edge_evidence").fetchone()[0] == 1
+
+        conn.execute("DELETE FROM analysis_files WHERE file_id = ?", (file_id,))
+
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = ?", (source_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = ?", (source_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claims WHERE source_id = ?", (source_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence WHERE source_id = ?", (source_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claim_evidence").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edge_evidence").fetchone()[0] == 0
+
+
+def test_deleting_claim_edge_or_evidence_cascades_join_rows(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    source_id = "join-cascade-source"
+    node_id = f"{source_id}:node-query"
+    seed_semantic_graph(
+        db_path,
+        source_id=source_id,
+        claims=[{"id": "claim-cascade", "node_id": node_id, "summary": "Cascade claim.", "evidence_ids": ["ev-node-query"]}],
+        edges=[{"id": "edge-cascade", "from": node_id, "to": None, "unresolved": {"name": "missing"}}],
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("DELETE FROM analysis_graph_claims WHERE id = 'claim-cascade'")
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claim_evidence").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence WHERE id = 'ev-node-query'").fetchone()[0] == 1
+
+        conn.execute("DELETE FROM analysis_graph_edges WHERE id = 'edge-cascade'")
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edge_evidence").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_evidence WHERE id = 'ev-edge-cascade'").fetchone()[0] == 1
+
+    seed_semantic_graph(
+        db_path,
+        source_id=source_id,
+        claims=[{"id": "claim-cascade", "node_id": node_id, "summary": "Cascade claim.", "evidence_ids": ["ev-node-query"]}],
+        edges=[{"id": "edge-cascade", "from": node_id, "to": None, "unresolved": {"name": "missing"}}],
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("DELETE FROM analysis_graph_evidence WHERE id IN ('ev-node-query', 'ev-edge-cascade')")
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_claim_evidence").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM analysis_graph_edge_evidence").fetchone()[0] == 0
+
+
 def test_init_drops_legacy_graph_storage_and_creates_current_state_schema(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     with sqlite3.connect(db_path) as conn:
@@ -868,7 +970,7 @@ def test_init_purges_stale_semantic_docs_for_old_graph_id(tmp_path):
             """
             INSERT INTO semantic_documents(
                 document_id, source_id, node_id, node_kind, document_type, graph_id, builder_version,
-                text_hash, text, claim_ids_json, evidence_ids_json, status, created_at, updated_at
+                text_hash, text, claim_ids_payload, evidence_ids_payload, status, created_at, updated_at
             )
             VALUES (
                 'stale-doc', ?, 'node-query', 'CALLABLE', 'node', 'old-revision', ?,
@@ -881,9 +983,9 @@ def test_init_purges_stale_semantic_docs_for_old_graph_id(tmp_path):
             """
             INSERT INTO semantic_vectors(
                 document_id, source_id, node_id, graph_id, embedding_model, embedding_dimension,
-                vector_blob, vector_json, created_at, updated_at
+                vector_json, created_at, updated_at
             )
-            VALUES ('stale-doc', ?, 'node-query', 'old-revision', 'fake-deterministic', 8, NULL, '[0.0]', ?, ?)
+            VALUES ('stale-doc', ?, 'node-query', 'old-revision', 'fake-deterministic', 8, '[0.0]', ?, ?)
             """,
             (source_id, now, now),
         )
@@ -919,7 +1021,7 @@ def test_init_purges_semantic_docs_when_current_graph_has_no_facts(tmp_path):
             """
             INSERT INTO semantic_documents(
                 document_id, source_id, node_id, node_kind, document_type, graph_id, builder_version,
-                text_hash, text, claim_ids_json, evidence_ids_json, status, created_at, updated_at
+                text_hash, text, claim_ids_payload, evidence_ids_payload, status, created_at, updated_at
             )
             VALUES (
                 'empty-doc', ?, 'missing-node', 'CALLABLE', 'node', 'old-revision', ?,
@@ -932,9 +1034,9 @@ def test_init_purges_semantic_docs_when_current_graph_has_no_facts(tmp_path):
             """
             INSERT INTO semantic_vectors(
                 document_id, source_id, node_id, graph_id, embedding_model, embedding_dimension,
-                vector_blob, vector_json, created_at, updated_at
+                vector_json, created_at, updated_at
             )
-            VALUES ('empty-doc', ?, 'missing-node', 'old-revision', 'fake-deterministic', 8, NULL, '[0.0]', ?, ?)
+            VALUES ('empty-doc', ?, 'missing-node', 'old-revision', 'fake-deterministic', 8, '[0.0]', ?, ?)
             """,
             (source_id, now, now),
         )
@@ -1162,6 +1264,7 @@ def _overview_progress_fixture(
     ]
     seed_semantic_graph(db_path, nodes=nodes)
     with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
         conn.execute("DELETE FROM analysis_files WHERE source_id = ?", (source_id,))
         conn.execute("DELETE FROM files WHERE source_id = ?", (source_id,))
@@ -1184,9 +1287,9 @@ def _overview_progress_fixture(
                     """
                     INSERT OR REPLACE INTO analysis_files(
                         file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status,
-                        analyzed_at, symbol_count, relation_count, diagnostics_json, engine_version, flow_domain
+                        analyzed_at, diagnostics_json, engine_version, flow_domain
                     )
-                    VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', 'now', 1, 0, '[]', 'GRAPH_V1', 'CODE')
+                    VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', 'now', '[]', 'GRAPH_V1', 'CODE')
                     """,
                     (file_id, source_id, relative_path, content_hash),
                 )
@@ -1196,10 +1299,10 @@ def _overview_progress_fixture(
                     INSERT OR REPLACE INTO analysis_graph_nodes(
                         id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path,
                         content_hash, stable_key, node_kind, language, name, qualified_name, display_name,
-                        parent_node_id, line_start, line_end, confidence, status, metadata_json, created_at,
+                        parent_node_id, line_start, line_end, confidence, status, created_at,
                         updated_at, fact_origin, flow_domain
                     )
-                    VALUES (?, 'semantic-progress-fixture', ?, ?, ?, ?, ?, ?, ?, 'CALLABLE', 'python', ?, ?, ?, NULL, ?, ?, 0.96, 'TRUSTED', '{}', 'now', 'now', 'STATIC', 'CODE')
+                    VALUES (?, 'semantic-progress-fixture', ?, ?, ?, ?, ?, ?, ?, 'CALLABLE', 'python', ?, ?, ?, NULL, ?, ?, 0.96, 'TRUSTED', 'now', 'now', 'STATIC', 'CODE')
                     """,
                     (
                         f"node-{index:03d}",
@@ -1288,9 +1391,9 @@ def _overview_progress_fixture(
                 INSERT OR REPLACE INTO analysis_jobs(
                     job_id, status, started_at, completed_at, source_count, file_count, processed_file_count,
                     failed_file_count, current_source_id, current_relative_path, source_ids_json,
-                    last_progress_at, symbol_count, relation_count, diagnostics_json, mode
+                    last_progress_at, diagnostics_json, mode
                 )
-                VALUES ('active-job', 'RUNNING', 'now', NULL, 1, ?, ?, 0, ?, ?, ?, 'now', 0, 0, '[]', 'FULL')
+                VALUES ('active-job', 'RUNNING', 'now', NULL, 1, ?, ?, 0, ?, ?, ?, 'now', '[]', 'FULL')
                 """,
                 (inventory_total, facts_available, source_id, first_file["relative_path"], '["semantic-source"]'),
             )

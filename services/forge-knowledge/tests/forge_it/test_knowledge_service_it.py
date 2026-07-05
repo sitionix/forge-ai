@@ -226,7 +226,6 @@ def test_inventory_context_analysis_and_sqlite_persistence(tmp_path):
 
         analysis_status = client.get("/api/v1/knowledge/analysis/status").json()
         assert analysis_status["status"] == "READY"
-        assert analysis_status["symbolCount"] > 0
 
         services = client.get("/api/v1/knowledge/overview").json()
         assert services["sources"][0]["analysis"]["succeededFiles"] == 2
@@ -244,8 +243,6 @@ def test_inventory_context_analysis_and_sqlite_persistence(tmp_path):
             f"/api/v1/knowledge/analysis/graph/node/{nodes['items'][0]['id']}?sourceId=forge-ai&graphRevision={manifest['graphRevision']}&includeEvidence=true"
         ).json()
         assert node_detail["item"]["id"] == nodes["items"][0]["id"]
-        assert client.get("/api/v1/knowledge/analysis/symbols").status_code == 404
-        assert client.get("/api/v1/knowledge/analysis/relations").status_code == 404
         assert client.get("/api/v1/knowledge/analysis/graph?sourceId=forge-ai").status_code == 404
         assert client.get("/api/v1/knowledge/analysis/graph/slice?sourceId=forge-ai").status_code == 404
 
@@ -277,7 +274,8 @@ def test_inventory_context_analysis_and_sqlite_persistence(tmp_path):
     restarted, *_ = build_test_app(write_runtime_config(tmp_path, max_file_size_bytes=500))
     with TestClient(restarted) as client:
         assert client.get("/api/v1/knowledge/inventory/status").json()["fileCount"] == 2
-        assert client.get("/api/v1/knowledge/analysis/status").json()["symbolCount"] == counts["analysis_graph_nodes"]
+        restarted_manifest = client.get("/api/v1/knowledge/analysis/graph/manifest?sourceId=forge-ai").json()
+        assert restarted_manifest["totalNodeCount"] == counts["analysis_graph_nodes"]
 
 
 def test_analysis_build_skips_current_analyzed_files_without_provider_call(tmp_path):

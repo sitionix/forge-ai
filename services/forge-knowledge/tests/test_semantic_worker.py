@@ -391,9 +391,9 @@ def _seed_active_analysis_job(db_path, source_id, *, job_status="RUNNING", file_
             INSERT OR REPLACE INTO analysis_jobs(
                 job_id, status, started_at, completed_at, source_count, file_count, processed_file_count,
                 failed_file_count, current_source_id, current_relative_path, source_ids_json,
-                last_progress_at, symbol_count, relation_count, diagnostics_json, mode
+                last_progress_at, diagnostics_json, mode
             )
-            VALUES (?, ?, ?, ?, 1, 1, ?, 0, ?, ?, ?, ?, 0, 0, '[]', 'FULL')
+            VALUES (?, ?, ?, ?, 1, 1, ?, 0, ?, ?, ?, ?, '[]', 'FULL')
             """,
             (
                 job_id,

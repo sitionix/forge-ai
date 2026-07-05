@@ -9,12 +9,10 @@ from support import AsgiTestClient as TestClient
 from support import build_test_app, write_runtime_config
 
 from knowledge_service.analysis_store import AnalysisStore
+from knowledge_service.inventory_store import InventoryStore
 
 
 pytestmark = pytest.mark.forge_it
-
-
-LEGACY_GRAPH_OBJECTS = {"analysis_symbols", "analysis_symbol_roles", "analysis_relations"}
 
 
 def test_it_graph_01_fresh_database_schema_is_current_state_only(tmp_path):
@@ -24,12 +22,29 @@ def test_it_graph_01_fresh_database_schema_is_current_state_only(tmp_path):
 
     objects = sqlite_objects(app_config.store_path)
 
-    assert LEGACY_GRAPH_OBJECTS.isdisjoint(objects)
     assert not any(name.startswith("graph_") for name in objects)
-    assert {"analysis_graph_state", "analysis_graph_nodes", "analysis_graph_edges"}.issubset(objects)
+    assert {"analysis_graph_state", "analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_claim_evidence", "analysis_graph_edge_evidence"}.issubset(objects)
     for table in ("analysis_graph_nodes", "analysis_graph_edges", "analysis_graph_claims", "analysis_graph_evidence"):
-        assert {"id", "source_id"}.issubset(table_columns(app_config.store_path, table))
+        columns = table_columns(app_config.store_path, table)
+        assert {"id", "source_id"}.issubset(columns)
+    assert "parameter_count" in table_columns(app_config.store_path, "analysis_graph_nodes")
+    assert "argument_count" in table_columns(app_config.store_path, "analysis_graph_edges")
+    assert "metadata_json" not in table_columns(app_config.store_path, "analysis_graph_nodes")
+    assert "metadata_json" not in table_columns(app_config.store_path, "analysis_graph_evidence")
+    assert "metadata_json" not in table_columns(app_config.store_path, "analysis_graph_claims")
     assert {"document_id", "source_id", "node_id", "graph_id"}.issubset(table_columns(app_config.store_path, "semantic_documents"))
+    assert fk_delete_rule(app_config.store_path, "analysis_job_files", "analysis_jobs", "job_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_nodes", "analysis_files", "analysis_file_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_edges", "analysis_files", "analysis_file_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_evidence", "analysis_files", "analysis_file_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_claims", "analysis_graph_nodes", "node_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_edges", "analysis_graph_nodes", "from_node_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_edges", "analysis_graph_nodes", "to_node_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_claim_evidence", "analysis_graph_claims", "claim_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_claim_evidence", "analysis_graph_evidence", "evidence_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_edge_evidence", "analysis_graph_edges", "edge_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "analysis_graph_edge_evidence", "analysis_graph_evidence", "evidence_id") == "CASCADE"
+    assert fk_delete_rule(app_config.store_path, "semantic_vectors", "semantic_documents", "document_id") == "CASCADE"
 
 
 def test_it_graph_02_destructive_migration_drops_old_graph_storage(tmp_path):
@@ -43,6 +58,9 @@ def test_it_graph_02_destructive_migration_drops_old_graph_storage(tmp_path):
     assert "analysis_graph_state" in objects
     assert {"id", "source_id", "analysis_file_id", "file_id"}.issubset(table_columns(db_path, "analysis_graph_nodes"))
     assert graph_counts(db_path) == {"state": 0, "nodes": 0, "edges": 0}
+    assert table_count(db_path, "sources") == 1
+    assert table_count(db_path, "files") == 1
+    assert table_count(db_path, "analysis_files") == 0
     assert sqlite_integrity(db_path) == ("ok", [])
 
 
@@ -72,7 +90,7 @@ def test_it_graph_03_manifest_pages_details_and_view_use_graph_id(tmp_path):
     assert node_detail["graphId"] == manifest["graphId"]
     assert edge_detail["graphId"] == manifest["graphId"]
     assert view["graphId"] == manifest["graphId"]
-    assert {edge["from"] for edge in view["edges"]}.issubset({node["id"] for node in view["nodes"]})
+    assert {edge["fromNodeId"] for edge in view["edges"]}.issubset({node["id"] for node in view["nodes"]})
 
 
 def test_it_graph_04_revision_rejects_stale_graph_id_after_replace(tmp_path):
@@ -177,8 +195,24 @@ def traverse_pages(client, resource: str, graph_revision: str, page_size: int):
 
 
 def create_rejected_graph_storage_fixture(db_path) -> None:
+    InventoryStore(db_path).init()
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            """
+            INSERT INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at)
+            VALUES ('forge-ai', 'Forge AI', 'backend', '.', 1, '[]', '{}', 'now')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO files(
+                id, source_id, source_path, absolute_path, relative_path, extension, language, flow_domain,
+                size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at
+            )
+            VALUES (1, 'forge-ai', '.', '.', 'src/Legacy.java', '.java', 'java', 'CODE', 100, 'legacy-hash', 'now', 5, 'utf-8:replace', 'now')
+            """
+        )
         conn.executescript(
             """
             CREATE TABLE graph_old_parent(id TEXT PRIMARY KEY, source_id TEXT NOT NULL);
@@ -218,6 +252,19 @@ def sqlite_objects(db_path) -> set[str]:
 def table_columns(db_path, table: str) -> set[str]:
     with sqlite3.connect(db_path) as conn:
         return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def fk_delete_rule(db_path, table: str, target_table: str, from_column: str) -> str:
+    with sqlite3.connect(db_path) as conn:
+        for row in conn.execute(f"PRAGMA foreign_key_list({table})").fetchall():
+            if row[2] == target_table and row[3] == from_column:
+                return row[6]
+    return ""
+
+
+def table_count(db_path, table: str) -> int:
+    with sqlite3.connect(db_path) as conn:
+        return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
 def graph_counts(db_path) -> dict[str, int]:

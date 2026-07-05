@@ -4,12 +4,28 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional, Set
 
-from knowledge_service.analysis_schema import AnalysisResult
 from knowledge_service.graph_call_intelligence import classify_call_metadata
-from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
+from knowledge_service.graph_schema import GraphAnalysisResult, GraphEdge, GraphEvidenceRef
 
 
 TRUSTED_CONFIDENCE_THRESHOLD = 0.70
+EDGE_METADATA_ALLOWLIST = {
+    "callKind",
+    "callTargetCategory",
+    "methodName",
+    "receiverText",
+    "resolutionReason",
+    "sliceDefaultVisibility",
+    "unresolvedReason",
+}
+CLAIM_METADATA_ALLOWLIST = {
+    "entrypointKind",
+    "exceptionType",
+    "httpMethod",
+    "route",
+    "schedule",
+    "topic",
+}
 
 
 def confidence_status(confidence: Optional[float]) -> str:
@@ -17,82 +33,6 @@ def confidence_status(confidence: Optional[float]) -> str:
     if value >= TRUSTED_CONFIDENCE_THRESHOLD:
         return "TRUSTED"
     return "CANDIDATE"
-
-
-def source_kind_to_node_kind(kind: Optional[str]) -> str:
-    value = str(kind or "UNKNOWN").upper()
-    if value in {"METHOD", "FUNCTION", "CONTRACT_OPERATION"}:
-        return "CALLABLE"
-    if value in {"CLASS", "INTERFACE", "DTO", "RECORD"}:
-        return "TYPE"
-    if value == "CONFIG_ENTRY":
-        return "CONFIG"
-    if value in {"FILE", "FIELD", "RESOURCE", "DATA", "EXTERNAL"}:
-        return value
-    return "UNKNOWN"
-
-
-class LegacyAnalysisProjectionAdapter:
-    """Converts old analyzer responses into graph facts without copying file summaries to symbols."""
-
-    def convert(self, result: AnalysisResult) -> GraphAnalysisResult:
-        nodes: List[GraphNode] = []
-        claims: List[GraphClaim] = []
-        edges: List[GraphEdge] = []
-        for symbol in result.symbols:
-            confidence_values = [role.confidence for role in symbol.roles]
-            metadata = dict(symbol.metadata or {})
-            metadata.setdefault("sourceKind", symbol.kind)
-            nodes.append(
-                GraphNode(
-                    localId=symbol.localId,
-                    nodeKind=source_kind_to_node_kind(symbol.kind),
-                    name=symbol.name,
-                    lineStart=symbol.lineStart,
-                    lineEnd=symbol.lineEnd,
-                    confidence=max(confidence_values) if confidence_values else 0.0,
-                    metadata=metadata,
-                )
-            )
-            for index, role in enumerate(symbol.roles, start=1):
-                claims.append(
-                    GraphClaim(
-                        localId=f"{symbol.localId}:role:{index}",
-                        nodeLocalId=symbol.localId,
-                        claimKind="ROLE",
-                        summary=role.role,
-                        evidence=[
-                            GraphEvidenceRef(
-                                lineStart=symbol.lineStart,
-                                lineEnd=symbol.lineEnd,
-                                text=evidence,
-                            )
-                            for evidence in role.evidence
-                        ],
-                        confidence=role.confidence,
-                        metadata={"classifierRole": role.role},
-                    )
-                )
-        for relation in result.relations:
-            edges.append(
-                GraphEdge(
-                    localId=f"{relation.fromLocalId}:{relation.relation}:{relation.toLocalId}:{relation.lineStart}",
-                    fromNodeLocalId=relation.fromLocalId,
-                    toNodeLocalId=relation.toLocalId,
-                    edgeType=relation.relation,
-                    confidence=relation.confidence,
-                    evidence=[
-                        GraphEvidenceRef(
-                            lineStart=relation.lineStart,
-                            lineEnd=relation.lineEnd,
-                            text=evidence,
-                        )
-                        for evidence in relation.evidence
-                    ],
-                    metadata=relation.metadata,
-                )
-            )
-        return GraphAnalysisResult(nodes=nodes, edges=edges, claims=claims, diagnostics=result.diagnostics)
 
 
 class GraphAnalysisEngine:
@@ -132,11 +72,12 @@ class GraphAnalysisEngine:
                     "display_name": node.displayName,
                     "parent_node_id": None,
                     "parent_local_id": node.parentLocalId or parent_by_local_id.get(node.localId),
+                    "parameter_count": node.parameter_count,
                     "line_start": node.lineStart,
                     "line_end": node.lineEnd,
                     "confidence": node.confidence,
                     "status": metadata.get("status") or confidence_status(node.confidence),
-                    "metadata": metadata,
+                    "metadata": {},
                     "fact_origin": fact_origin,
                     "flow_domain": flow_domain,
                 }
@@ -187,8 +128,8 @@ class GraphAnalysisEngine:
             rejection_reason = None
             fact_origin = self._fact_origin(metadata) if metadata.get("factOrigin") else node["fact_origin"]
             flow_domain = metadata.get("flowDomain") or node["flow_domain"]
-            if metadata.get("qualityIssue") and status == "CANDIDATE":
-                rejection_reason = str(metadata.get("qualityIssue"))
+            if metadata.get("rejectionReason") and status == "CANDIDATE":
+                rejection_reason = str(metadata.get("rejectionReason"))
             claims.append(
                 {
                     "id": claim_id,
@@ -200,7 +141,7 @@ class GraphAnalysisEngine:
                     "confidence": claim.confidence,
                     "status": status,
                     "evidence_ids": claim_evidence_ids,
-                    "metadata": metadata,
+                    "metadata": self._allowlisted_metadata(metadata, CLAIM_METADATA_ALLOWLIST),
                     "rejection_reason": rejection_reason,
                     "fact_origin": fact_origin,
                     "flow_domain": str(flow_domain or "CODE").upper(),
@@ -216,11 +157,12 @@ class GraphAnalysisEngine:
             metadata = dict(edge.metadata or {})
             fact_origin = self._fact_origin(metadata) if metadata.get("factOrigin") else (from_node or {}).get("fact_origin") or "LLM"
             flow_domain = metadata.get("flowDomain") or (from_node or {}).get("flow_domain") or self._flow_domain(row, metadata)
+            resolution_status = self._resolution_status(edge, to_node_id)
             if edge.edgeType == "CALLS":
                 metadata = classify_call_metadata(
                     metadata,
                     flow_domain,
-                    metadata.get("resolutionStatus") or ("RESOLVED" if to_node_id else "UNRESOLVED"),
+                    resolution_status,
                     edge.unresolvedTarget,
                 )
             edge_id = self._stable_id(
@@ -233,7 +175,7 @@ class GraphAnalysisEngine:
                 to_node_id or "",
                 edge.edgeType,
             )
-            edge_evidence_id = None
+            edge_evidence_ids: List[str] = []
             if edge.evidence:
                 evidence_row = self._evidence(
                     row,
@@ -251,7 +193,7 @@ class GraphAnalysisEngine:
                     used_ids=used_evidence_ids,
                 )
                 evidence.append(evidence_row)
-                edge_evidence_id = evidence_row["id"]
+                edge_evidence_ids.append(evidence_row["id"])
             edges.append(
                 {
                     "id": edge_id,
@@ -262,11 +204,12 @@ class GraphAnalysisEngine:
                     "from_node_id": from_node_id,
                     "to_node_id": to_node_id,
                     "edge_type": edge.edgeType,
-                    "resolution_status": str(metadata.get("resolutionStatus") or ("RESOLVED" if to_node_id else "UNRESOLVED")).upper(),
+                    "resolution_status": resolution_status,
+                    "argument_count": edge.argument_count,
                     "confidence": edge.confidence,
-                    "evidence_id": edge_evidence_id,
+                    "evidence_ids": edge_evidence_ids,
                     "unresolved_target": edge.unresolvedTarget,
-                    "metadata": metadata,
+                    "metadata": self._allowlisted_metadata(metadata, EDGE_METADATA_ALLOWLIST),
                     "status": metadata.get("status") or confidence_status(edge.confidence),
                     "fact_origin": fact_origin,
                     "flow_domain": str(flow_domain).upper(),
@@ -326,8 +269,6 @@ class GraphAnalysisEngine:
     ) -> Dict[str, Any]:
         excerpt = self._excerpt(lines, item.lineStart, item.lineEnd)
         metadata = dict(item.metadata or {})
-        if item.text:
-            metadata["text"] = item.text
         stored_evidence_kind = str(metadata.pop("evidenceKind", owner_kind) or owner_kind).upper()
         identity_metadata = {
             key: value
@@ -359,7 +300,6 @@ class GraphAnalysisEngine:
             while evidence_id in used_ids:
                 evidence_id = self._stable_id("analysis-graph-evidence", base_id, "duplicate", str(suffix))
                 suffix += 1
-            metadata["identityCollisionOrdinal"] = suffix - 1
         used_ids.add(evidence_id)
         return {
             "id": evidence_id,
@@ -370,9 +310,10 @@ class GraphAnalysisEngine:
             "content_hash": row["content_hash"],
             "line_start": item.lineStart,
             "line_end": item.lineEnd,
+            "excerpt": item.text or excerpt,
             "excerpt_hash": hashlib.sha256(excerpt.encode("utf-8")).hexdigest(),
             "evidence_kind": stored_evidence_kind,
-            "metadata": metadata,
+            "metadata": {},
             "fact_origin": str(fact_origin or "LLM").upper(),
             "flow_domain": str(flow_domain or "CODE").upper(),
         }
@@ -385,12 +326,18 @@ class GraphAnalysisEngine:
     def _fact_origin(self, metadata: Dict[str, Any]) -> str:
         return str(metadata.get("factOrigin") or "LLM").upper()
 
+    def _resolution_status(self, edge: GraphEdge, to_node_id: Optional[str]) -> str:
+        return str(edge.resolutionStatus or ("RESOLVED" if to_node_id else "UNRESOLVED")).upper()
+
     def _diagnostic_metadata(self, diagnostic: Dict[str, Any]) -> Dict[str, Any]:
         metadata = {key: value for key, value in diagnostic.items() if key not in {"severity", "stage", "code", "message", "factOrigin", "flowDomain"}}
         nested = metadata.pop("metadata", None)
         if isinstance(nested, dict):
             metadata.update(nested)
         return metadata
+
+    def _allowlisted_metadata(self, metadata: Dict[str, Any], allowlist: Set[str]) -> Dict[str, Any]:
+        return {key: value for key, value in (metadata or {}).items() if key in allowlist and value is not None}
 
     def _flow_domain(self, row: Dict[str, Any], metadata: Dict[str, Any]) -> str:
         explicit = metadata.get("flowDomain")

@@ -7,18 +7,18 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Protocol, Union
+from typing import Any, Dict, List, Optional, Protocol
 
 from knowledge_service.analysis_graph_contract import GraphContractProvider
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
-from knowledge_service.analysis_schema import AnalysisBuildRequest, AnalysisResult, RetryFailedAnalysisRequest
+from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.analyzer_runtime import AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.config import AppConfig
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.graph_analysis import GraphAnalysisEngine, LegacyAnalysisProjectionAdapter
+from knowledge_service.graph_analysis import GraphAnalysisEngine
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.snippet_extractor import SnippetExtractor
@@ -34,7 +34,7 @@ class AnalysisProvider(Protocol):
         payload: Dict[str, Any],
         line_count: int,
         repair_prompt: Optional[str] = None,
-    ) -> Union[GraphAnalysisResult, AnalysisResult]: ...
+    ) -> GraphAnalysisResult: ...
 
 
 class AnalysisSupervisor:
@@ -60,7 +60,6 @@ class AnalysisSupervisor:
         self.logger = logger or logging.getLogger("knowledge_service.analysis")
         self.snippets = SnippetExtractor()
         self.graph_engine = GraphAnalysisEngine()
-        self.legacy_adapter = LegacyAnalysisProjectionAdapter()
         self.structural_engine = StructuralAnalysisEngine()
         self.static_materializer = StaticGraphMaterializer()
         self.anchor_validator = AnchorAwareGraphValidator()
@@ -69,7 +68,6 @@ class AnalysisSupervisor:
             self.graph_contract_provider.policy,
             extractor_registry=ExtractorRegistry(self.structural_engine, self.static_materializer),
             anchor_validator=self.anchor_validator,
-            legacy_adapter=self.legacy_adapter,
         )
         self._admission_lock: Optional[asyncio.Lock] = None
         self._queue: Optional[asyncio.Queue[tuple[str, AnalysisBuildRequest, AnalysisProvider, Optional[List[Any]], str, bool]]] = None
@@ -138,8 +136,6 @@ class AnalysisSupervisor:
                 "currentRelativePath": None,
                 "sourceIds": sorted(set(request.sourceIds)),
                 "lastProgressAt": now if selected_rows is not None else None,
-                "symbolCount": 0,
-                "relationCount": 0,
                 "diagnostics": [],
                 "engineVersion": GRAPH_ENGINE_VERSION,
             }
@@ -315,7 +311,7 @@ class AnalysisSupervisor:
             },
         )
         self._log("job_started", jobId=job_id, sourceId=None, processed=0, failed=0)
-        processed = failed = symbols_total = relations_total = 0
+        processed = failed = 0
         diagnostics: List[Dict[str, Any]] = []
         try:
             for row in rows:
@@ -441,8 +437,6 @@ class AnalysisSupervisor:
                             row,
                             analyzer,
                             "ANALYZED",
-                            len(graph["nodes"]),
-                            len(graph["edges"]),
                             file_diagnostics,
                             runtime_result.attempt_state,
                             flow_domain=flow_domain,
@@ -463,8 +457,6 @@ class AnalysisSupervisor:
                         completed=True,
                     )
                     processed += 1
-                    symbols_total += len(graph["nodes"])
-                    relations_total += len(graph["edges"])
                     self._log("file_completed", jobId=job_id, sourceId=row["source_id"], relativePath=row["relative_path"], processed=processed, failed=failed)
                 except Exception as exc:
                     if self._stop_requested(job_id):
@@ -501,8 +493,6 @@ class AnalysisSupervisor:
                     {
                         "processedFileCount": processed,
                         "failedFileCount": failed,
-                        "symbolCount": symbols_total,
-                        "relationCount": relations_total,
                         "diagnostics": diagnostics[-20:],
                         "lastProgressAt": self._now(),
                     },
@@ -691,7 +681,7 @@ class AnalysisSupervisor:
                 self._json_for_prompt(
                     {
                         "nodeKind": list(contract.allowed_node_kinds),
-                        "edgeType": list(contract.allowed_edge_kinds),
+                        "edgeType": list(contract.allowed_edge_types),
                         "claimKind": list(contract.allowed_claim_kinds),
                         "status": list(contract.allowed_statuses),
                         "factOrigin": list(contract.allowed_origins),
@@ -859,7 +849,7 @@ class AnalysisSupervisor:
         attempt_state: Optional[Dict[str, Any]] = None,
         flow_domain: Optional[str] = None,
     ) -> None:
-        state = self._state(row, analyzer, status, 0, 0, diagnostics, attempt_state, flow_domain=flow_domain)
+        state = self._state(row, analyzer, status, diagnostics, attempt_state, flow_domain=flow_domain)
         if status == "FAILED":
             self.analysis_store.mark_file_failed_attempt(row["id"], state)
             return
@@ -870,8 +860,6 @@ class AnalysisSupervisor:
         row,
         analyzer: AnalysisProvider,
         status: str,
-        symbol_count: int,
-        relation_count: int,
         diagnostics: List[Dict[str, Any]],
         attempt_state: Optional[Dict[str, Any]] = None,
         flow_domain: Optional[str] = None,
@@ -886,8 +874,6 @@ class AnalysisSupervisor:
             "flow_domain": flow_domain or self._row_flow_domain(row),
             "status": status,
             "analyzed_at": datetime.now(timezone.utc).isoformat(),
-            "symbol_count": symbol_count,
-            "relation_count": relation_count,
             "diagnostics": diagnostics,
         }
         state.update(attempt_state or {})

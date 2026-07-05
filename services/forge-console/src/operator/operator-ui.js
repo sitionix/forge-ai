@@ -54,8 +54,8 @@ import { bootstrapOperatorConsole } from './operator-bootstrap.js';
  * function knowledgeAnalysisMetrics(analysis)
  * const processedRaw = explicitProcessed ?? completedOutcomes
  * const explicitPercent = Number(analysis?.percent)
- * symbols
- * relations
+ * graph
+ * edges
  * knowledge-source-stop-button
  * /knowledge/analysis/jobs/${encodeURIComponent(jobId)}/stop
  * pending ${escapeHtml(metrics.pending)}
@@ -117,8 +117,8 @@ import { bootstrapOperatorConsole } from './operator-bootstrap.js';
  * skippedMissingEndpointCount
  * skippedByLimitCount
  * truncationReason
- * edge.from
- * edge.to
+ * edge.fromNodeId
+ * edge.toNodeId
  * node.id
  * createKnowledgeGraphStore
  * indexedDB.open('forge-ai-knowledge-graph-cache'

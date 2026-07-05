@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 from typing import List, Tuple
+
+from knowledge_service import graph_schema
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -39,6 +43,36 @@ FORBIDDEN_OLD_NEW_RELINK_TERMS = (
     "newFileId",
     "relink",
     "reattach",
+)
+
+GRAPH_SQL_SCAN_FILES = (
+    REPO_ROOT / "services/forge-knowledge/src/knowledge_service/analysis_store.py",
+    REPO_ROOT / "services/forge-knowledge/src/knowledge_service/semantic_builder.py",
+    REPO_ROOT / "services/forge-knowledge/src/knowledge_service/semantic_index.py",
+    REPO_ROOT / "services/forge-knowledge/src/knowledge_service/overview_projection.py",
+)
+
+FORBIDDEN_INLINE_GRAPH_SQL_VALUES = (
+    "TRUSTED",
+    "CANDIDATE",
+    "REJECTED",
+    "DERIVED",
+    "STALE",
+    "RESPONSIBILITY",
+    "ENTRYPOINT_HINT",
+    "FILE",
+    "TYPE",
+    "CALLABLE",
+    "CALLS",
+    "EXTERNAL",
+    "UNKNOWN",
+    "RESOLVED",
+    "UNRESOLVED",
+    "MULTIPLE_CANDIDATES",
+    "EXTERNAL_TARGET",
+    "CODE",
+    "STATIC",
+    "LLM",
 )
 
 
@@ -85,6 +119,60 @@ def test_forbidden_old_new_relink_lifecycle_terms_are_absent_from_production_sou
     matches = _find_forbidden_terms(RUNTIME_SCAN_ROOTS, FORBIDDEN_OLD_NEW_RELINK_TERMS)
 
     assert matches == []
+
+
+def test_active_graph_sql_does_not_inline_yaml_contract_values():
+    matches: List[Tuple[str, str]] = []
+    for path in GRAPH_SQL_SCAN_FILES:
+        text = path.read_text(encoding="utf-8")
+        for value in FORBIDDEN_INLINE_GRAPH_SQL_VALUES:
+            if f"'{value}'" in text:
+                matches.append((_display_path(path), value))
+
+    assert matches == []
+
+
+def test_analysis_store_index_declarations_are_unique():
+    path = REPO_ROOT / "services/forge-knowledge/src/knowledge_service/analysis_store.py"
+    text = path.read_text(encoding="utf-8")
+    method = text.split("def _create_analysis_indexes", 1)[1].split("\n    def ", 1)[0]
+    index_names = re.findall(r"CREATE INDEX IF NOT EXISTS ([A-Za-z0-9_]+)", method)
+
+    assert index_names
+    assert sorted(index_names) == sorted(set(index_names))
+
+
+def test_analysis_store_source_does_not_use_string_literal_concatenation():
+    path = REPO_ROOT / "services/forge-knowledge/src/knowledge_service/analysis_store.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    offenders = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Add)
+        and isinstance(node.left, ast.Constant)
+        and isinstance(node.left.value, str)
+        and isinstance(node.right, ast.Constant)
+        and isinstance(node.right.value, str)
+    ]
+
+    assert offenders == []
+
+
+def test_graph_contract_enum_layer_is_not_reintroduced():
+    removed_names = (
+        "GraphNodeKind",
+        "GraphEdgeType",
+        "GraphClaimKind",
+        "GraphResolutionStatus",
+        "GraphFactStatus",
+        "GraphFactOrigin",
+        "GraphFlowDomain",
+        "GraphEvidenceKind",
+    )
+
+    assert not (REPO_ROOT / "services/forge-knowledge/src/knowledge_service/graph_model.py").exists()
+    assert [name for name in removed_names if hasattr(graph_schema, name)] == []
 
 
 def test_runtime_guard_excludes_generated_target_output(tmp_path):

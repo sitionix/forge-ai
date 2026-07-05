@@ -197,13 +197,13 @@ function nodeDetailFixture(id = 'node-00000') {
       responsibilitySummary: 'Coordinates graph detail loading',
       claims: [{ id: 'claim-1', claimKind: 'RESPONSIBILITY', summary: 'Coordinates graph detail loading', status: 'TRUSTED', confidence: 0.91 }],
       evidence: [{ id: 'ev-node', text: 'Uses parsed AST evidence', relativePath: 'src/Detail.java', lineStart: 12 }],
-      relations: {
+      connections: {
         outgoing: {
           totalCount: 2,
           items: [
             {
               edgeId: 'edge-out-1',
-              edgeKind: 'CALLS',
+              edgeType: 'CALLS',
               sourceNodeId: id,
               sourceName: 'Detail Node',
               sourceKind: 'CALLABLE',
@@ -218,7 +218,7 @@ function nodeDetailFixture(id = 'node-00000') {
             },
             {
               edgeId: 'edge-out-2',
-              edgeKind: 'REFERENCES',
+              edgeType: 'REFERENCES',
               sourceNodeId: id,
               sourceName: 'Detail Node',
               sourceKind: 'CALLABLE',
@@ -238,7 +238,7 @@ function nodeDetailFixture(id = 'node-00000') {
           items: [
             {
               edgeId: 'edge-in-1',
-              edgeKind: 'CONTAINS',
+              edgeType: 'CONTAINS',
               sourceNodeId: 'node-00003',
               sourceName: 'DetailContainer',
               sourceKind: 'TYPE',
@@ -405,7 +405,7 @@ describe('Knowledge graph filters and max limit', () => {
 
   it('UI-GRAPH-FILTER-06 client-only display options do not hit API', async () => {
     const dom = graphDom();
-    const client = { loadGraphData: vi.fn().mockResolvedValue({ ...manifest(2, 1), nodes: [node(0), node(1)], edges: [{ ...edge(0), from: 'node-00000', to: 'node-00001' }], meta: { returnedNodeCount: 2, returnedEdgeCount: 1 } }), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() };
+    const client = { loadGraphData: vi.fn().mockResolvedValue({ ...manifest(2, 1), nodes: [node(0), node(1)], edges: [{ ...edge(0), fromNodeId: 'node-00000', toNodeId: 'node-00001' }], meta: { returnedNodeCount: 2, returnedEdgeCount: 1 } }), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() };
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: { get: vi.fn(() => Promise.resolve(metadataPayload())) }, client, runtimeConfig: { graphPollIntervalMs: 60000 } });
     page.mount();
     await flushAsync();
@@ -457,7 +457,7 @@ describe('Knowledge graph filters and max limit', () => {
   it('UI-GRAPH-FILTER-08 visual parity with main is retained', () => {
     const dom = graphDom();
     const page = new KnowledgeGraphPage({ document: dom.window.document, window: dom.window, http: {}, client: { loadGraphData: vi.fn(), loadNodeDetail: vi.fn(), loadEdgeDetail: vi.fn() } });
-    page.renderPage({ ...manifest(2, 1), nodes: [node(0), node(1)], edges: [{ ...edge(0), from: 'node-00000', to: 'node-00001' }], meta: { returnedNodeCount: 2, returnedEdgeCount: 1 } });
+    page.renderPage({ ...manifest(2, 1), nodes: [node(0), node(1)], edges: [{ ...edge(0), fromNodeId: 'node-00000', toNodeId: 'node-00001' }], meta: { returnedNodeCount: 2, returnedEdgeCount: 1 } });
 
     expect(knowledgeGraphNodeRadius({ id: 'n', nodeKind: 'CALLABLE' }, {})).toBe(19);
     expect(knowledgeGraphNodeRadius({ id: 'n', nodeKind: 'TYPE' }, {})).toBe(22);
@@ -671,7 +671,7 @@ describe('Knowledge graph filters and max limit', () => {
     page.renderPage({
       ...manifest(40, 39),
       nodes: Array.from({ length: 40 }, (_, index) => node(index)),
-      edges: Array.from({ length: 39 }, (_, index) => ({ ...edge(index), from: `node-${String(index).padStart(5, '0')}`, to: `node-${String(index + 1).padStart(5, '0')}` })),
+      edges: Array.from({ length: 39 }, (_, index) => ({ ...edge(index), fromNodeId: `node-${String(index).padStart(5, '0')}`, toNodeId: `node-${String(index + 1).padStart(5, '0')}` })),
       meta: { returnedNodeCount: 40, returnedEdgeCount: 39, totalNodeCount: 40, totalEdgeCount: 39 }
     });
 
@@ -707,7 +707,7 @@ describe('Knowledge graph filters and max limit', () => {
       const nodeIds = new Set(page.state.nodes.map((item: { id: string }) => item.id));
       expect(page.state.nodes).toHaveLength(Number(value));
       expect(page.state.edges.length).toBeGreaterThan(0);
-      expect(page.state.edges.every((item: { from: string; to: string }) => nodeIds.has(item.from) && nodeIds.has(item.to))).toBe(true);
+      expect(page.state.edges.every((item: { fromNodeId: string; toNodeId: string }) => nodeIds.has(item.fromNodeId) && nodeIds.has(item.toNodeId))).toBe(true);
       expect(dom.window.document.getElementById('knowledgeGraphTruncated')?.textContent).toContain(`Showing ${value} of 320`);
     }
     page.dispose();
@@ -734,7 +734,7 @@ describe('Knowledge graph filters and max limit', () => {
     selectValue(dom, 'knowledgeGraphMaxNodes', '20');
     await flushAsync();
     const firstIds = page.state.nodes.map((item: { id: string }) => item.id);
-    const connectedIds = new Set(page.state.edges.flatMap((item: { from: string; to: string }) => [item.from, item.to]));
+    const connectedIds = new Set(page.state.edges.flatMap((item: { fromNodeId: string; toNodeId: string }) => [item.fromNodeId, item.toNodeId]));
     expect(firstIds.every((id: string) => connectedIds.has(id))).toBe(true);
 
     await page.loadGraph({ manual: true });
@@ -743,7 +743,7 @@ describe('Knowledge graph filters and max limit', () => {
     selectValue(dom, 'knowledgeGraphMaxNodes', '40');
     await flushAsync();
     expect(page.state.edges.length).toBeGreaterThan(0);
-    expect(page.state.nodes.some((item: { id: string }) => page.state.edges.some((edgeItem: { from: string; to: string }) => edgeItem.from === item.id || edgeItem.to === item.id))).toBe(true);
+    expect(page.state.nodes.some((item: { id: string }) => page.state.edges.some((edgeItem: { fromNodeId: string; toNodeId: string }) => edgeItem.fromNodeId === item.id || edgeItem.toNodeId === item.id))).toBe(true);
     page.dispose();
   });
 
@@ -976,8 +976,8 @@ describe('Knowledge graph filters and max limit', () => {
         summaryClaimId: 'claim-hash-secret',
         claims: [{ id: 'claim-hash-secret', claimKind: 'RESPONSIBILITY', summary: 'Maps SiteUpdatedPayload to SiteUpdatedEvent.', status: 'TRUSTED' }],
         evidence: [{ id: 'evidence-hash-secret', excerptHash: 'excerpt-hash-secret', text: 'Mapper uses payload fields.', relativePath: 'src/main/java/SiteUpdatedEventMapper.java', lineStart: 12 }],
-        relations: {
-          outgoing: { totalCount: 1, items: [{ edgeId: 'edge-hash-secret', edgeKind: 'REFERENCES', targetNodeId: 'target-node-secret', targetName: 'SiteUpdatedPayload', targetKind: 'TYPE' }] },
+        connections: {
+          outgoing: { totalCount: 1, items: [{ edgeId: 'edge-hash-secret', edgeType: 'REFERENCES', targetNodeId: 'target-node-secret', targetName: 'SiteUpdatedPayload', targetKind: 'TYPE' }] },
           incoming: { totalCount: 0, items: [] }
         }
       }
@@ -1048,7 +1048,7 @@ describe('Knowledge graph filters and max limit', () => {
     const dom = graphDom();
     const outgoing = Array.from({ length: 7 }, (_, index) => ({
       edgeId: `edge-out-${index}`,
-      edgeKind: index % 2 === 0 ? 'DECLARES' : 'REFERENCES',
+      edgeType: index % 2 === 0 ? 'DECLARES' : 'REFERENCES',
       sourceNodeId: 'node-00000',
       sourceName: 'Detail Node',
       sourceKind: 'CALLABLE',
@@ -1060,7 +1060,7 @@ describe('Knowledge graph filters and max limit', () => {
     }));
     const incoming = Array.from({ length: 6 }, (_, index) => ({
       edgeId: `edge-in-${index}`,
-      edgeKind: 'CONTAINS',
+      edgeType: 'CONTAINS',
       sourceNodeId: `source-${index}`,
       sourceName: `Container${index}`,
       sourceKind: 'FILE',
@@ -1074,7 +1074,7 @@ describe('Knowledge graph filters and max limit', () => {
       ...nodeDetailFixture(),
       item: {
         ...nodeDetailFixture().item,
-        relations: {
+        connections: {
           outgoing: { totalCount: outgoing.length, items: outgoing },
           incoming: { totalCount: incoming.length, items: incoming }
         }
@@ -1101,7 +1101,7 @@ describe('Knowledge graph filters and max limit', () => {
     await flushAsync();
 
     const previewText = dom.window.document.getElementById('knowledgeGraphPreview')?.textContent || '';
-    expect(previewText).toContain('Relationships');
+    expect(previewText).toContain('Connections');
     expect(previewText).toContain('Outgoing 7');
     expect(previewText).toContain('DECLARES -> Neighbor0');
     expect(previewText).toContain('REFERENCES -> Neighbor1');
@@ -1112,7 +1112,7 @@ describe('Knowledge graph filters and max limit', () => {
     expect(previewText).not.toContain('edge-out-');
     expect(previewText).not.toContain('edge-in-');
     expect(dom.window.document.querySelectorAll('#knowledgeGraphPreview .knowledge-graph-fact-list article')).toHaveLength(0);
-    expect(dom.window.document.querySelectorAll('#knowledgeGraphPreview .knowledge-graph-relation-row')).toHaveLength(10);
+    expect(dom.window.document.querySelectorAll('#knowledgeGraphPreview .knowledge-graph-connection-row')).toHaveLength(10);
     page.dispose();
   });
 
@@ -1127,7 +1127,7 @@ describe('Knowledge graph filters and max limit', () => {
         nodeKind: 'CALLABLE',
         claims: [],
         evidence: [],
-        relations: {
+        connections: {
           incoming: { totalCount: 0, items: [] },
           outgoing: { totalCount: 0, items: [] }
         }
@@ -1157,8 +1157,8 @@ describe('Knowledge graph filters and max limit', () => {
     expect(previewText).toContain('No description available yet');
     expect(previewText).toContain('No claims available');
     expect(previewText).toContain('No evidence available');
-    expect(previewText).toContain('No outgoing relationships');
-    expect(previewText).toContain('No incoming relationships');
+    expect(previewText).toContain('No outgoing edges');
+    expect(previewText).toContain('No incoming edges');
     expect(dom.window.document.querySelectorAll('#knowledgeGraphPreview .knowledge-graph-fact-list article')).toHaveLength(0);
     page.dispose();
   });
@@ -1197,7 +1197,7 @@ describe('Knowledge graph filters and max limit', () => {
     const dom = graphDom();
     const manyRelations = Array.from({ length: 40 }, (_, index) => ({
       edgeId: `edge-many-${index}`,
-      edgeKind: 'REFERENCES',
+      edgeType: 'REFERENCES',
       sourceNodeId: 'node-00000',
       sourceName: 'Detail Node',
       targetNodeId: `many-target-${index}`,
@@ -1210,7 +1210,7 @@ describe('Knowledge graph filters and max limit', () => {
       ...nodeDetailFixture(),
       item: {
         ...nodeDetailFixture().item,
-        relations: {
+        connections: {
           outgoing: { totalCount: manyRelations.length, items: manyRelations },
           incoming: { totalCount: 0, items: [] }
         }
@@ -1312,7 +1312,7 @@ describe('Knowledge graph filters and max limit', () => {
         loadGraphData: vi.fn().mockResolvedValue({
           ...manifest(2, 1, 'rev-a'),
           nodes: [node(0), node(1)],
-          edges: [{ ...edge(0), from: 'node-00000', to: 'node-00001' }],
+          edges: [{ ...edge(0), fromNodeId: 'node-00000', toNodeId: 'node-00001' }],
           meta: { returnedNodeCount: 2, returnedEdgeCount: 1 }
         }),
         loadNodeDetail: vi.fn(() => Promise.reject(error)),
@@ -1340,7 +1340,7 @@ describe('Knowledge graph filters and max limit', () => {
       loadGraphData: vi.fn().mockResolvedValue({
         ...manifest(2, 1, 'rev-a'),
         nodes: [node(0), node(1)],
-        edges: [{ ...edge(0), from: 'node-00000', to: 'node-00001' }],
+        edges: [{ ...edge(0), fromNodeId: 'node-00000', toNodeId: 'node-00001' }],
         meta: { returnedNodeCount: 2, returnedEdgeCount: 1 }
       }),
       loadNodeDetail: vi.fn(() => Promise.resolve(nodeDetailFixture())),

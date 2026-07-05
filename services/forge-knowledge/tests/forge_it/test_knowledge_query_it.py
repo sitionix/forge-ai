@@ -204,10 +204,15 @@ def test_knowledge_query_integration_preserves_external_and_unresolved_boundarie
         "flow-boundaries",
         [
             ("controller-create", "Controller.create", "CALLABLE"),
-            ("external-http", "HttpClient.post", "EXTERNAL"),
         ],
         [
-            {"id": "edge-external", "from": "controller-create", "to": "external-http", "resolution": "EXTERNAL_TARGET"},
+            {
+                "id": "edge-external",
+                "from": "controller-create",
+                "to": None,
+                "resolution": "EXTERNAL_TARGET",
+                "unresolved": {"name": "HttpClient.post", "kindHint": "CALLABLE"},
+            },
             {"id": "edge-unresolved", "from": "controller-create", "to": None, "resolution": "UNRESOLVED"},
         ],
     )
@@ -217,7 +222,11 @@ def test_knowledge_query_integration_preserves_external_and_unresolved_boundarie
 
     body = response.json()
     stop_reasons = {flow["stopReason"] for flow in body["flowPaths"]}
-    assert {"EXTERNAL_NODE", "UNRESOLVED_EDGE"} <= stop_reasons
+    assert {"EXTERNAL_TARGET", "UNRESOLVED_EDGE"} <= stop_reasons
+    external_flow = next(flow for flow in body["flowPaths"] if flow["stopReason"] == "EXTERNAL_TARGET")
+    assert external_flow["boundaryEdgeIds"] == ["edge-external"]
+    assert external_flow["edgeIds"] == []
+    assert body["external"][0]["unresolvedTarget"]["name"] == "HttpClient.post"
     unresolved_flow = next(flow for flow in body["flowPaths"] if flow["stopReason"] == "UNRESOLVED_EDGE")
     assert unresolved_flow["boundaryEdgeIds"] == ["edge-unresolved"]
     assert unresolved_flow["edgeIds"] == []
@@ -287,8 +296,7 @@ def test_knowledge_query_stage3_code_aware_search_hardening(tmp_path):
     assert qualified_suffix["matchedNodes"][0]["nodeId"] == "nexus-type-jarvis-controller"
     assert qualified_suffix["matchedNodes"][0]["sourceId"] == "forge-nexus-test"
 
-    assert endpoint_query["matchedNodes"][0]["kind"] == "EXTERNAL"
-    assert endpoint_query["matchedNodes"][0]["label"] == "/api/v1/knowledge/query"
+    assert endpoint_query["matchedNodes"][0]["kind"] == "CALLABLE"
     assert endpoint_query["matchedNodes"][0]["sourceId"]
     assert "EXACT_ENDPOINT" in endpoint_query["matchedNodes"][0]["matchReasons"]
 
@@ -340,20 +348,35 @@ def seed_stage3_search_graph(db_path):
             "nodes": [
                 ("nexus-type-jarvis-controller", "TYPE", "ForgeAiInfrastructureJarvisController", full_controller, "src/main/java/com/sitionix/forgeai/api/ForgeAiInfrastructureJarvisController.java"),
                 ("nexus-callable-query", "CALLABLE", "query", f"{full_controller}.query", "src/main/java/com/sitionix/forgeai/api/ForgeAiInfrastructureJarvisController.java"),
-                ("nexus-endpoint-jarvis-query", "EXTERNAL", "/api/v1/knowledge/query", "/api/v1/knowledge/query", "src/main/java/com/sitionix/forgeai/api/ForgeAiInfrastructureJarvisController.java"),
             ],
-            "edges": [("nexus-call-controller-query", "nexus-type-jarvis-controller", "nexus-callable-query", "RESOLVED")],
+            "edges": [
+                ("nexus-call-controller-query", "nexus-type-jarvis-controller", "nexus-callable-query", "RESOLVED"),
+                (
+                    "nexus-call-query-endpoint",
+                    "nexus-callable-query",
+                    None,
+                    "EXTERNAL_TARGET",
+                    "CALLS",
+                    {"name": "/api/v1/knowledge/query", "kindHint": "HTTP_ENDPOINT"},
+                ),
+            ],
         },
         "forge-jarvis-test": {
             "nodes": [
                 ("jarvis-query-service-query", "CALLABLE", "JarvisQueryService.query", "jarvis_agent.query_service.JarvisQueryService.query", "src/jarvis_agent/query_service.py"),
                 ("jarvis-knowledge-client-query", "CALLABLE", "KnowledgeClient.query", "jarvis_agent.knowledge_client.KnowledgeClient.query", "src/jarvis_agent/knowledge_client.py"),
-                ("jarvis-knowledge-endpoint", "EXTERNAL", "/api/v1/knowledge/query", "/api/v1/knowledge/query", "src/jarvis_agent/knowledge_client.py"),
                 ("jarvis-shared-query", "CALLABLE", "SharedJarvisQuery", "jarvis_agent.SharedJarvisQuery", "src/jarvis_agent/query_service.py"),
             ],
             "edges": [
                 ("jarvis-call-service-client", "jarvis-query-service-query", "jarvis-knowledge-client-query", "RESOLVED"),
-                ("jarvis-call-client-endpoint", "jarvis-knowledge-client-query", "jarvis-knowledge-endpoint", "EXTERNAL_TARGET"),
+                (
+                    "jarvis-call-client-endpoint",
+                    "jarvis-knowledge-client-query",
+                    None,
+                    "EXTERNAL_TARGET",
+                    "CALLS",
+                    {"name": "/api/v1/knowledge/query", "kindHint": "HTTP_ENDPOINT"},
+                ),
             ],
         },
         "forge-knowledge-test": {
@@ -362,12 +385,19 @@ def seed_stage3_search_graph(db_path):
                 ("knowledge-query-service-query", "CALLABLE", "KnowledgeQueryService.query", "knowledge_service.query.KnowledgeQueryService.query", "src/knowledge_service/knowledge_query_service.py"),
                 ("knowledge-unified-searcher-search", "CALLABLE", "UnifiedAnchorSearcher.search", "knowledge_service.query.UnifiedAnchorSearcher.search", "src/knowledge_service/knowledge_query_service.py"),
                 ("knowledge-flow-extractor-extract", "CALLABLE", "FlowPathExtractor.extract", "knowledge_service.query.FlowPathExtractor.extract", "src/knowledge_service/knowledge_query_service.py"),
-                ("knowledge-endpoint", "EXTERNAL", "/api/v1/knowledge/query", "/api/v1/knowledge/query", "src/knowledge_service/knowledge_query_service.py"),
                 ("knowledge-shared-query", "CALLABLE", "SharedJarvisQuery", "knowledge_service.SharedJarvisQuery", "src/knowledge_service/knowledge_query_service.py"),
             ],
             "edges": [
                 ("knowledge-call-service-searcher", "knowledge-query-service-query", "knowledge-unified-searcher-search", "RESOLVED"),
                 ("knowledge-call-searcher-flow", "knowledge-unified-searcher-search", "knowledge-flow-extractor-extract", "RESOLVED"),
+                (
+                    "knowledge-call-query-endpoint",
+                    "knowledge-query-service-query",
+                    None,
+                    "EXTERNAL_TARGET",
+                    "CALLS",
+                    {"name": "/api/v1/knowledge/query", "kindHint": "HTTP_ENDPOINT"},
+                ),
             ],
         },
     }
@@ -406,7 +436,14 @@ def seed_flow_graph(db_path, source_id, node_rows, edge_rows):
         for node_id, label, kind in node_rows
     ]
     edges = [
-        (edge["id"], edge["from"], edge.get("to"), edge.get("resolution") or ("RESOLVED" if edge.get("to") else "UNRESOLVED"), "CALLS")
+        (
+            edge["id"],
+            edge["from"],
+            edge.get("to"),
+            edge.get("resolution") or ("RESOLVED" if edge.get("to") else "UNRESOLVED"),
+            "CALLS",
+            edge.get("unresolved"),
+        )
         for edge in edge_rows
     ]
     _seed_current_graph_from_fixture(db_path, source_id, nodes, edges, graph_suffix="flow")
@@ -436,4 +473,7 @@ def _seed_current_graph_from_fixture(db_path, source_id, node_rows, edge_rows, *
         for edge_id, from_node, to_node, resolution_status, *edge_type_value in edge_rows
         for edge_type in [edge_type_value[0] if edge_type_value else "CALLS"]
     ]
+    for edge, row in zip(edges, edge_rows):
+        if len(row) > 5:
+            edge["unresolved"] = row[5]
     seed_semantic_graph(db_path, source_id=source_id, graph_suffix=graph_suffix, nodes=nodes, edges=edges, claims=claims or [])

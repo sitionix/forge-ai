@@ -72,8 +72,8 @@ class FakeGraphStore:
             "nodes": nodes,
             "edges": edges,
             "evidence": evidence,
-            "unresolved": [edge for edge in edges if edge.get("resolutionStatus") == "UNRESOLVED"],
-            "external": [node for node in nodes if node.get("nodeKind") == "EXTERNAL" or node.get("external")],
+            "unresolved": [edge for edge in edges if edge.get("resolutionStatus") in {"UNRESOLVED", "EXTERNAL_TARGET"}],
+            "external": [edge for edge in edges if edge.get("resolutionStatus") == "EXTERNAL_TARGET" or edge.get("external")],
             "verifiedPaths": [],
             "truncated": truncated,
         }
@@ -306,21 +306,31 @@ def test_flow_path_extractor_detects_cycles():
     assert any(diagnostic.code == "CYCLE_DETECTED" for diagnostic in response.diagnostics)
 
 
-def test_flow_path_extractor_stops_on_external_node():
+def test_flow_path_extractor_stops_on_external_target_edge():
     nodes = [
         graph_node("controller-create", "Controller.create"),
-        graph_node("external-http", "HttpClient.post", kind="EXTERNAL", nodeKind="EXTERNAL", external=True),
     ]
-    edges = [graph_edge("calls-external", "controller-create", "external-http", resolutionStatus="EXTERNAL_TARGET", external=True)]
+    edges = [
+        graph_edge(
+            "calls-external",
+            "controller-create",
+            None,
+            resolutionStatus="EXTERNAL_TARGET",
+            unresolvedTarget={"name": "HttpClient.post", "kindHint": "CALLABLE"},
+            external=True,
+        )
+    ]
     store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[candidate(id="controller-create", name="Controller.create", label="Controller.create")])
 
     response = service(store).query(KnowledgeQueryRequest(query="Controller create"))
 
     flow = response.flowPaths[0]
-    assert flow.nodeIds == ["controller-create", "external-http"]
-    assert flow.edgeIds == ["calls-external"]
-    assert flow.stopReason == "EXTERNAL_NODE"
+    assert flow.nodeIds == ["controller-create"]
+    assert flow.edgeIds == []
+    assert flow.boundaryEdgeIds == ["calls-external"]
+    assert flow.stopReason == "EXTERNAL_TARGET"
     assert flow.complete is True
+    assert response.unresolved[0]["unresolvedTarget"]["name"] == "HttpClient.post"
 
 
 def test_flow_path_extractor_stops_on_unresolved_edge():

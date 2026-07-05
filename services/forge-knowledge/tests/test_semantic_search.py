@@ -62,7 +62,7 @@ def _seed_vectors(db_path, rows):
                 """
                 INSERT OR REPLACE INTO semantic_documents(
                     document_id, source_id, node_id, node_kind, document_type, graph_id, builder_version,
-                    text_hash, text, claim_ids_json, evidence_ids_json, status, created_at, updated_at
+                    text_hash, text, claim_ids_payload, evidence_ids_payload, status, created_at, updated_at
                 )
                 VALUES (?, 'source-a', ?, 'CALLABLE', 'NODE_CONTEXT', 'revision-a', 1, ?, ?, '[]', '[]', 'READY', ?, ?)
                 """,
@@ -72,9 +72,9 @@ def _seed_vectors(db_path, rows):
                 """
                 INSERT OR REPLACE INTO semantic_vectors(
                     document_id, source_id, node_id, graph_id, embedding_model, embedding_dimension,
-                    vector_blob, vector_json, created_at, updated_at
+                    vector_json, created_at, updated_at
                 )
-                VALUES (?, 'source-a', ?, 'revision-a', 'fake', ?, NULL, ?, ?, ?)
+                VALUES (?, 'source-a', ?, 'revision-a', 'fake', ?, ?, ?, ?)
                 """,
                 (document_id, node_id, len(vector), json.dumps(vector), now, now),
             )
