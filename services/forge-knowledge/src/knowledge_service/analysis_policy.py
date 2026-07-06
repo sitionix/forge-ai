@@ -101,6 +101,7 @@ class GraphNodeDefinition:
     kind: str
     identity: str
     semantic_eligible: bool
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,7 @@ class GraphEdgeDefinition:
     from_kinds: List[str]
     to_kinds: List[str]
     semantic_eligible: bool
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -117,6 +119,7 @@ class GraphClaimDefinition:
     evidence_required: bool
     material_support_required: bool
     semantic_eligible: bool
+    description: str = ""
 
 
 @dataclass(frozen=True)

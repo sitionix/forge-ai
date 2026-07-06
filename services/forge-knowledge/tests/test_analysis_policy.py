@@ -32,6 +32,12 @@ def test_loads_default_policy_and_validates_references():
     assert "EXTERNAL" not in policy.graph.nodes
     assert "EXTERNAL" not in policy.semantic.indexed_node_kinds
     assert all("EXTERNAL" not in edge.to_kinds for edge in policy.graph.edges.values())
+    assert policy.graph.nodes["FILE"].description
+    assert policy.graph.edges["CALLS"].description
+    assert policy.graph.claims["RESPONSIBILITY"].description
+    assert policy.graph.origins["LLM"]["description"]
+    assert policy.graph.evidence_kinds["CLAIM"]["description"]
+    assert policy.graph.resolution_statuses["RESOLVED"]["description"]
 
     for kind in policy.semantic.indexed_node_kinds:
         assert policy.graph.nodes[kind].semantic_eligible is True

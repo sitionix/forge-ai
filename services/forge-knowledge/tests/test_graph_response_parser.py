@@ -23,6 +23,28 @@ PROMPT_TEMPLATE_PATHS = [
     REPO_ROOT / "config" / "knowledge" / "prompts" / "document-graph-enrichment.md",
 ]
 FORBIDDEN_PROMPT_VALUES = {"UNKNOWN", "DIAGNOSTIC", "RELATED_TO"}
+REQUIRED_ENRICHMENT_RESPONSE_FIELDS = (
+    "schemaVersion",
+    "claims",
+    "semanticEdges",
+    "diagnostics",
+    "localId",
+    "targetStableKey",
+    "claimKind",
+    "summary",
+    "confidence",
+    "fromStableKey",
+    "toStableKey",
+    "edgeType",
+    "resolutionStatus",
+    "evidence",
+    "lineStart",
+    "lineEnd",
+    "text",
+    "unresolvedTarget",
+    "metadata",
+    "factOrigin",
+)
 
 
 def test_prompt_contract_rendering_uses_yaml_for_code_text_and_document():
@@ -59,6 +81,51 @@ def test_prompt_response_shape_rendering_uses_shared_json_for_code_text_and_docu
     assert "{{GRAPH_RESPONSE_SHAPE}}" not in code_prompt
     assert "{{GRAPH_RESPONSE_SHAPE}}" not in text_prompt
     assert "{{GRAPH_RESPONSE_SHAPE}}" not in document_prompt
+
+
+def test_rendered_response_contract_has_required_fields():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+
+    for field_name in REQUIRED_ENRICHMENT_RESPONSE_FIELDS:
+        assert field_name in prompt
+    assert "Final JSON response shape" in prompt
+    assert "Field rules" in prompt
+    assert "Allowed values for this file from analysis-policy.yaml" in prompt
+    assert "Return rules" in prompt
+    assert "allowedEdgeKinds" not in prompt
+    assert "semanticEdgeKinds" not in prompt
+
+
+def test_rendered_response_contract_uses_policy_descriptions_dynamically(tmp_path):
+    data = copy.deepcopy(yaml.safe_load(POLICY_PATH.read_text(encoding="utf-8")))
+    data["analysis"]["graph"]["claims"]["RESPONSIBILITY"]["description"] = "unique stage7a claim description"
+    data["analysis"]["graph"]["edges"]["REFERENCES"]["description"] = "unique stage7a edge description"
+    data["analysis"]["graph"]["resolutionStatuses"]["RESOLVED"]["description"] = "unique stage7a resolution description"
+    data["analysis"]["graph"]["origins"]["LLM"]["description"] = "unique stage7a origin description"
+    policy_path = tmp_path / "analysis-policy.yaml"
+    policy_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(policy_path))
+
+    prompt = _render_prompt(renderer, "README.md", "# Service\nDocuments service behavior.\n")
+
+    assert "unique stage7a claim description" in prompt
+    assert "unique stage7a edge description" in prompt
+    assert "unique stage7a resolution description" in prompt
+    assert "unique stage7a origin description" in prompt
+
+
+def test_rendered_response_contract_only_includes_allowed_values_for_resolved_policy():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "README.md", "# Service\nDocuments service behavior.\n")
+    allowed_values = _allowed_values_from_prompt(prompt)
+
+    assert set(allowed_values["claimKind"]) == {"RESPONSIBILITY"}
+    assert set(allowed_values["edgeType"]) == {"REFERENCES", "DEPENDS_ON", "CONFIGURES"}
+    assert "SIDE_EFFECT" not in allowed_values["claimKind"]
+    assert "CALLS" not in allowed_values["edgeType"]
 
 
 def test_prompt_markdown_uses_response_shape_placeholder_instead_of_duplicated_json():
@@ -268,6 +335,14 @@ def test_prompt_renderer_rejects_undeclared_prompt_id_without_legacy_fallback():
     assert exc_info.value.details["promptId"] == "missing_prompt"
 
 
+def test_legacy_analysis_prompt_path_fallback_stays_removed():
+    assert not (REPO_ROOT / "config" / "knowledge" / "analysis-prompt.md").exists()
+    config = yaml.safe_load((REPO_ROOT / "config" / "forge-ai.yaml").read_text(encoding="utf-8"))
+    analysis_config = config["forge"]["ai"]["services"]["knowledge"]["analysis"]
+    assert "prompt-path" not in analysis_config
+    assert "promptPath" not in analysis_config
+
+
 def test_parser_allows_yaml_declared_claim_and_edge_types():
     parser, contract = _parser_and_contract("src/Foo.java")
     payload = _graph_payload()
@@ -458,6 +533,34 @@ def test_generic_enrichment_uses_effective_yaml_claim_kinds_not_responsibility_o
     assert result.claims[0].claimKind == "CONFIG_REFERENCE"
 
 
+def test_enrichment_parser_still_rejects_old_edge_kind_field():
+    parser, contract = _parser_and_contract("src/Foo.java")
+    payload = {
+        "schemaVersion": "knowledge.graph.enrichment.v1",
+        "claims": [],
+        "semanticEdges": [
+            {
+                "localId": "edge-1",
+                "fromStableKey": "file1",
+                "toStableKey": None,
+                "edgeKind": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "confidence": 0.8,
+                "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "class Foo"}],
+                "unresolvedTarget": {"name": "External.call", "kindHint": "CALLABLE"},
+                "metadata": {"factOrigin": "LLM"},
+            }
+        ],
+        "diagnostics": [],
+    }
+
+    result = parser.parse(json.dumps(payload), 5, contract=contract, known_node_kinds={"file1": "FILE"})
+
+    assert isinstance(result, GraphAnalysisParseFailure)
+    detail = _detail(result, "$.semanticEdges[0].edgeType")
+    assert detail["missingRequiredField"] == "edgeType"
+
+
 def _render_prompt(renderer: AnalysisPromptRenderer, relative_path: str, content: str = "class Foo {}\n") -> str:
     contract = renderer.provider.resolve(relative_path, content)
     return renderer.render_for_payload(
@@ -552,3 +655,10 @@ def _detail(failure: GraphAnalysisParseFailure, path: str) -> dict[str, Any]:
 
 def _shared_response_shape() -> str:
     return RESPONSE_SHAPE_PATH.read_text(encoding="utf-8").strip()
+
+
+def _allowed_values_from_prompt(prompt: str) -> dict[str, Any]:
+    marker = "Allowed values for this file from analysis-policy.yaml:\n```json\n"
+    start = prompt.index(marker) + len(marker)
+    end = prompt.index("\n```", start)
+    return json.loads(prompt[start:end])["allowedValues"]

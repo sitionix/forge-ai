@@ -23,125 +23,165 @@ analysis:
   graph:
     nodes:
       FILE:
+        description: Source file or document represented as the root static anchor for one inventory file.
         identity: file
         semanticEligible: true
       TYPE:
+        description: Named code type such as a class, interface, enum, object, or similar declaration.
         identity: file_scoped_qualified_name
         semanticEligible: true
       CALLABLE:
+        description: Invokable code unit such as a method, function, constructor, handler, or task step.
         identity: file_scoped_signature
         semanticEligible: true
       FIELD:
+        description: File-scoped variable, property, constant, attribute, or member field.
         identity: file_scoped_name
         semanticEligible: false
       MODULE:
+        description: Module, package, library, component, or build unit declared or configured by a file.
         identity: file_scoped_name
         semanticEligible: false
       CONFIG:
+        description: Configuration key, section, setting, workflow step, or structured text region.
         identity: file_scoped_key_or_region
         semanticEligible: false
       DATA:
+        description: Data schema, payload, endpoint, table, file path, or structured data region.
         identity: file_scoped_path_or_region
         semanticEligible: false
       RESOURCE:
+        description: External resource, service, dependency, artifact, queue, topic, or named integration target.
         identity: file_scoped_name_or_reference
         semanticEligible: false
 
     edges:
       DECLARES:
+        description: Parent anchor declares or contains a child anchor within the same file.
         from: [FILE, TYPE, MODULE]
         to: [TYPE, CALLABLE, FIELD, CONFIG, DATA, RESOURCE]
         semanticEligible: true
       IMPORTS:
+        description: Source anchor imports or includes another module, package, type, or dependency reference.
         from: [FILE, TYPE]
         to: []
         semanticEligible: true
       REFERENCES:
+        description: Source anchor mentions, uses, links to, or otherwise references another anchor or unresolved target.
         from: [FILE, TYPE, CALLABLE, FIELD, CONFIG, DATA, RESOURCE]
         to: [FILE, TYPE, CALLABLE, CONFIG, DATA, RESOURCE]
         semanticEligible: true
       CALLS:
+        description: Callable source invokes, dispatches to, or schedules another callable target.
         from: [CALLABLE]
         to: [CALLABLE]
         semanticEligible: true
       CONFIGURES:
+        description: Source anchor configures a module, data object, resource, or configuration target.
         from: [FILE, CONFIG, MODULE]
         to: [MODULE, DATA, RESOURCE, CONFIG]
         semanticEligible: false
       DEPENDS_ON:
+        description: Source anchor requires, consumes, builds on, or depends on another anchor or external target.
         from: [FILE, MODULE, CONFIG, DATA, RESOURCE]
         to: [FILE, MODULE, CONFIG, DATA, RESOURCE]
         semanticEligible: false
 
     claims:
       RESPONSIBILITY:
+        description: Evidence-backed summary of what an anchor is responsible for or represents.
         evidenceRequired: true
         materialSupportRequired: true
         semanticEligible: true
       ENTRYPOINT_HINT:
+        description: Evidence-backed indication that an anchor can start execution or trigger a workflow.
         evidenceRequired: true
         materialSupportRequired: true
         semanticEligible: true
       CONFIG_REFERENCE:
+        description: Evidence-backed fact about configuration keys, values, defaults, or referenced settings.
         evidenceRequired: true
         materialSupportRequired: true
         semanticEligible: false
       SIDE_EFFECT:
+        description: Evidence-backed fact about writes, mutations, network calls, process execution, or other observable effects.
         evidenceRequired: true
         materialSupportRequired: true
         semanticEligible: false
       DATA_ACCESS_HINT:
+        description: Evidence-backed indication that an anchor reads, writes, transforms, exposes, or depends on data.
         evidenceRequired: true
         materialSupportRequired: true
         semanticEligible: false
       EXTERNAL_BOUNDARY_HINT:
+        description: Evidence-backed indication that an anchor crosses a boundary to an external service, process, user, or system.
         evidenceRequired: true
         materialSupportRequired: true
         semanticEligible: false
 
     statuses:
       TRUSTED:
+        description: Fact is accepted as trusted because it satisfies the current graph contract and evidence rules.
         persistGraphFact: true
         requiresValidEvidence: true
       CANDIDATE:
+        description: Fact may be persisted as a candidate when valid evidence exists but confidence or review state is lower.
         persistGraphFact: true
         requiresValidEvidence: true
       REJECTED:
+        description: Fact is rejected and should be represented as a diagnostic rather than persisted graph data.
         persistGraphFact: false
         emitDiagnostic: true
       DERIVED:
+        description: Fact is derived from other accepted facts and requires derivation trace metadata.
         persistGraphFact: true
         requiresDerivationTrace: true
       STALE:
+        description: Fact remains persisted but is not eligible for normal query results until refreshed.
         persistGraphFact: true
         queryEligible: false
 
     origins:
       STATIC:
+        description: Fact was produced by deterministic static extraction.
         canBeTrusted: true
       LLM:
+        description: Fact was proposed by LLM enrichment and must be grounded in source evidence.
         canBeTrusted: true
         requiresValidEvidence: true
       DERIVED:
+        description: Fact was computed from other graph facts and must carry derivation support.
         canBeTrusted: true
         requiresDerivationTrace: true
       RESOLVER:
+        description: Fact was produced by a resolver that matched references to known anchors or target state.
         canBeTrusted: true
 
     evidenceKinds:
-      NODE: {}
-      EDGE: {}
-      CLAIM: {}
-      CALLSITE: {}
+      NODE:
+        description: Evidence supports a graph node or static anchor.
+      EDGE:
+        description: Evidence supports a graph edge or relationship.
+      CLAIM:
+        description: Evidence supports a grounded claim.
+      CALLSITE:
+        description: Evidence identifies a callsite or invocation location.
 
     resolutionStatuses:
-      RESOLVED: {}
-      UNRESOLVED: {}
-      EXTERNAL_TARGET: {}
-      AMBIGUOUS: {}
-      MULTIPLE_CANDIDATES: {}
-      INTERFACE_TARGET: {}
-      DYNAMIC_TARGET: {}
+      RESOLVED:
+        description: Target was matched to an exact static anchor and toStableKey must be set.
+      UNRESOLVED:
+        description: Target could not be matched to a known static anchor and toStableKey must be null.
+      EXTERNAL_TARGET:
+        description: Target is outside the current static anchors and must be represented as unresolvedTarget, not a fake node.
+      AMBIGUOUS:
+        description: Target has more than one plausible interpretation and should not be forced to a single anchor.
+      MULTIPLE_CANDIDATES:
+        description: Resolver or evidence found several candidate targets and no single toStableKey should be chosen.
+      INTERFACE_TARGET:
+        description: Target is represented through an interface, abstract declaration, protocol, or contract boundary.
+      DYNAMIC_TARGET:
+        description: Target is computed dynamically at runtime and cannot be safely resolved to a static anchor.
 
   semantic:
     indexedNodeKinds: [FILE, TYPE, CALLABLE]

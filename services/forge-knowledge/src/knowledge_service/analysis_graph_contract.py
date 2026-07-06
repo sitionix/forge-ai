@@ -103,14 +103,14 @@ class AnalysisGraphContract:
             artifact_labels=tuple(_string_list(raw.get("artifactLabels"))),
             graph_profiles=tuple(_string_list(raw.get("graphProfiles"))),
             allowed_node_kinds=tuple(_string_list(raw.get("allowedNodeKinds"))),
-            allowed_edge_types=tuple(_string_list(raw.get("allowedEdgeKinds"))),
+            allowed_edge_types=tuple(_string_list(raw.get("allowedEdgeTypes") or raw.get("allowedEdgeKinds"))),
             allowed_claim_kinds=tuple(_string_list(raw.get("allowedClaimKinds"))),
             allowed_statuses=tuple(_string_list(raw.get("allowedStatuses"))),
             allowed_origins=tuple(_string_list(raw.get("allowedOrigins"))),
             allowed_evidence_kinds=tuple(_string_list(raw.get("allowedEvidenceKinds"))),
             allowed_resolution_statuses=tuple(_string_list(raw.get("allowedResolutionStatuses"))),
             semantic_node_kinds=tuple(_string_list(raw.get("semanticNodeKinds"))),
-            semantic_edge_types=tuple(_string_list(raw.get("semanticEdgeKinds"))),
+            semantic_edge_types=tuple(_string_list(raw.get("semanticEdgeTypes") or raw.get("semanticEdgeKinds"))),
             semantic_claim_kinds=tuple(_string_list(raw.get("semanticClaimKinds"))),
             edge_from_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "from"),
             edge_to_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "to"),
@@ -133,14 +133,14 @@ class AnalysisGraphContract:
             "artifactLabels": list(self.artifact_labels),
             "graphProfiles": list(self.graph_profiles),
             "allowedNodeKinds": list(self.allowed_node_kinds),
-            "allowedEdgeKinds": list(self.allowed_edge_types),
+            "allowedEdgeTypes": list(self.allowed_edge_types),
             "allowedClaimKinds": list(self.allowed_claim_kinds),
             "allowedStatuses": list(self.allowed_statuses),
             "allowedOrigins": list(self.allowed_origins),
             "allowedEvidenceKinds": list(self.allowed_evidence_kinds),
             "allowedResolutionStatuses": list(self.allowed_resolution_statuses),
             "semanticNodeKinds": list(self.semantic_node_kinds),
-            "semanticEdgeKinds": list(self.semantic_edge_types),
+            "semanticEdgeTypes": list(self.semantic_edge_types),
             "semanticClaimKinds": list(self.semantic_claim_kinds),
             "edgeEndpointRules": {
                 kind: {"from": list(self.edge_from_kinds.get(kind, ())), "to": list(self.edge_to_kinds.get(kind, ()))}
@@ -165,14 +165,14 @@ class AnalysisGraphContract:
             f"- llmMode: {self.llm_mode or ''}",
             f"- graphProfiles: {_join(self.graph_profiles)}",
             f"- allowedNodeKinds: {_join(self.allowed_node_kinds)}",
-            f"- allowedEdgeKinds: {_join(self.allowed_edge_types)}",
+            f"- allowedEdgeTypes: {_join(self.allowed_edge_types)}",
             f"- allowedClaimKinds: {_join(self.allowed_claim_kinds)}",
             f"- allowedStatuses: {_join(self.allowed_statuses)}",
             f"- allowedOrigins: {_join(self.allowed_origins)}",
             f"- allowedEvidenceKinds: {_join(self.allowed_evidence_kinds)}",
             f"- allowedResolutionStatuses: {_join(self.allowed_resolution_statuses)}",
             f"- semanticNodeKinds: {_join(self.semantic_node_kinds)}",
-            f"- semanticEdgeKinds: {_join(self.semantic_edge_types)}",
+            f"- semanticEdgeTypes: {_join(self.semantic_edge_types)}",
             f"- semanticClaimKinds: {_join(self.semantic_claim_kinds)}",
             "- unsupportedBehavior:",
         ]
@@ -242,11 +242,96 @@ class AnalysisPromptRenderer:
 
     def render(self, template: str, contract: AnalysisGraphContract, response_shape: str | None = None) -> str:
         if response_shape is not None:
-            template = template.replace("{{GRAPH_RESPONSE_SHAPE}}", response_shape)
+            template = template.replace("{{GRAPH_RESPONSE_SHAPE}}", self._response_contract(contract, response_shape))
         block = contract.render_contract_block()
         if "{{ANALYSIS_GRAPH_CONTRACT}}" in template:
             return template.replace("{{ANALYSIS_GRAPH_CONTRACT}}", block)
         return "\n\n".join(part for part in (template.strip(), block) if part)
+
+    def _response_contract(self, contract: AnalysisGraphContract, response_shape: str) -> str:
+        allowed_values = {
+            "claimKind": {
+                kind: {"description": _definition_description(self.policy.graph.claims.get(kind))}
+                for kind in contract.allowed_claim_kinds
+            },
+            "edgeType": {
+                kind: {
+                    "description": _definition_description(self.policy.graph.edges.get(kind)),
+                    "fromNodeKinds": list(contract.edge_from_kinds.get(kind, ())),
+                    "toNodeKinds": list(contract.edge_to_kinds.get(kind, ())),
+                }
+                for kind in contract.allowed_edge_types
+            },
+            "resolutionStatus": {
+                kind: {"description": _definition_description(self.policy.graph.resolution_statuses.get(kind))}
+                for kind in contract.allowed_resolution_statuses
+            },
+            "factOrigin": {
+                kind: {"description": _definition_description(self.policy.graph.origins.get(kind))}
+                for kind in contract.allowed_origins
+            },
+        }
+        return "\n".join(
+            [
+                "Final JSON response shape (return this object shape only):",
+                "```json",
+                response_shape.strip(),
+                "```",
+                "",
+                "Empty arrays are valid when no grounded facts are found:",
+                "```json",
+                json.dumps(
+                    {
+                        "schemaVersion": "knowledge.graph.enrichment.v1",
+                        "claims": [],
+                        "semanticEdges": [],
+                        "diagnostics": [],
+                    },
+                    indent=2,
+                ),
+                "```",
+                "",
+                "Field rules:",
+                "- schemaVersion: fixed value knowledge.graph.enrichment.v1.",
+                "- claims: array of grounded statements attached to existing static anchors.",
+                "- semanticEdges: array of grounded relationships between existing static anchors or unresolved/external targets.",
+                "- diagnostics: optional array of non-fatal notes. Empty array is valid.",
+                "- localId: required unique id inside the response.",
+                "- targetStableKey: exact key from staticAnchors.nodes.",
+                "- fromStableKey: exact key from staticAnchors nodes or callsites.",
+                "- toStableKey: exact key from staticAnchors when resolved; null when not resolved.",
+                "- claimKind: one of the allowed claimKind values for this file.",
+                "- edgeType: one of the allowed edgeType values for this file.",
+                "- resolutionStatus: one of the allowed resolutionStatus values for this file.",
+                "- summary: short factual text supported by evidence.",
+                "- confidence: number from 0.0 to 1.0.",
+                "- evidence: array of evidence objects.",
+                "- lineStart: source line number, integer >= 1.",
+                "- lineEnd: source line number, integer >= lineStart.",
+                "- text: short exact excerpt from source lines.",
+                "- unresolvedTarget: target details only when the edge has no resolved toStableKey.",
+                "- metadata: object containing only fields shown in the final response shape.",
+                "- factOrigin: one of the allowed factOrigin values for this file.",
+                "- severity: diagnostic severity for non-fatal notes; use INFO, WARN, or ERROR.",
+                "",
+                "Allowed values for this file from analysis-policy.yaml:",
+                "```json",
+                json.dumps({"allowedValues": allowed_values}, indent=2, sort_keys=True),
+                "```",
+                "",
+                "Return rules:",
+                "- Use exactly the field names shown in the final response shape.",
+                "- Return only fields shown in the final response shape.",
+                "- Do not rename fields.",
+                "- Do not add extra fields.",
+                "- Use empty arrays when no grounded facts are found.",
+                "- Omit uncertain facts instead of guessing.",
+                "- Use only exact keys from staticAnchors.",
+                "- Put resolutionStatus as a first-class semanticEdges field.",
+                "- Represent external or unresolved targets with toStableKey null, resolutionStatus, and unresolvedTarget; do not create fake external nodes.",
+                "- The code fences above are prompt formatting only; do not include code fences in the response.",
+            ]
+        )
 
     def _template(self, prompt_id: Optional[str]) -> str:
         if not prompt_id:
@@ -334,3 +419,16 @@ def _edge_endpoint_map(value: Any, side: str) -> dict[str, tuple[str, ...]]:
 
 def _join(values: tuple[str, ...]) -> str:
     return ", ".join(values)
+
+
+def _definition_description(value: Any) -> str:
+    if value is None:
+        return ""
+    description = getattr(value, "description", None)
+    if isinstance(description, str):
+        return description
+    if isinstance(value, Mapping):
+        raw = value.get("description")
+        if isinstance(raw, str):
+            return raw
+    return ""

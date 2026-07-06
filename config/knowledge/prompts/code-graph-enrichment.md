@@ -9,7 +9,7 @@ No comments.
 Use only the provided content, metadata, static anchors, and analysis graph contract.
 The static anchors are produced by deterministic extraction and are authoritative for existing file structure.
 
-Required response shape:
+Required response contract:
 {{GRAPH_RESPONSE_SHAPE}}
 
 Rules:
