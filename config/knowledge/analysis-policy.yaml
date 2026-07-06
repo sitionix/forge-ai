@@ -173,7 +173,7 @@ analysis:
       UNRESOLVED:
         description: Target could not be matched to a known static anchor and toStableKey must be null.
       EXTERNAL_TARGET:
-        description: Target is outside the current static anchors and must be represented as unresolvedTarget, not a fake node.
+        description: Target is outside the current static anchors and must be represented with unresolvedTarget and null toStableKey.
       AMBIGUOUS:
         description: Target has more than one plausible interpretation and should not be forced to a single anchor.
       MULTIPLE_CANDIDATES:

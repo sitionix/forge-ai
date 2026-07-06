@@ -12,6 +12,9 @@ from knowledge_service.analysis_policy_resolver import AnalysisPolicyResolveRequ
 from knowledge_service.errors import KnowledgeError
 
 
+RESPONSE_CONTRACT_TEMPLATE = "schemas/graph-enrichment-v1-response-contract.md"
+
+
 @dataclass(frozen=True)
 class AnalysisGraphContract:
     format_id: Optional[str]
@@ -103,14 +106,14 @@ class AnalysisGraphContract:
             artifact_labels=tuple(_string_list(raw.get("artifactLabels"))),
             graph_profiles=tuple(_string_list(raw.get("graphProfiles"))),
             allowed_node_kinds=tuple(_string_list(raw.get("allowedNodeKinds"))),
-            allowed_edge_types=tuple(_string_list(raw.get("allowedEdgeTypes") or raw.get("allowedEdgeKinds"))),
+            allowed_edge_types=tuple(_string_list(raw.get("allowedEdgeTypes"))),
             allowed_claim_kinds=tuple(_string_list(raw.get("allowedClaimKinds"))),
             allowed_statuses=tuple(_string_list(raw.get("allowedStatuses"))),
             allowed_origins=tuple(_string_list(raw.get("allowedOrigins"))),
             allowed_evidence_kinds=tuple(_string_list(raw.get("allowedEvidenceKinds"))),
             allowed_resolution_statuses=tuple(_string_list(raw.get("allowedResolutionStatuses"))),
             semantic_node_kinds=tuple(_string_list(raw.get("semanticNodeKinds"))),
-            semantic_edge_types=tuple(_string_list(raw.get("semanticEdgeTypes") or raw.get("semanticEdgeKinds"))),
+            semantic_edge_types=tuple(_string_list(raw.get("semanticEdgeTypes"))),
             semantic_claim_kinds=tuple(_string_list(raw.get("semanticClaimKinds"))),
             edge_from_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "from"),
             edge_to_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "to"),
@@ -249,7 +252,28 @@ class AnalysisPromptRenderer:
         return "\n\n".join(part for part in (template.strip(), block) if part)
 
     def _response_contract(self, contract: AnalysisGraphContract, response_shape: str) -> str:
-        allowed_values = {
+        template = self._response_contract_template()
+        return (
+            template.replace("{{FINAL_RESPONSE_SHAPE}}", response_shape.strip())
+            .replace("{{ALLOWED_VALUES}}", self._render_allowed_values(contract))
+            .strip()
+        )
+
+    def _response_contract_template(self) -> str:
+        path = (self.policy.prompt_root / RESPONSE_CONTRACT_TEMPLATE).resolve()
+        if not path.exists():
+            raise KnowledgeError(
+                "ANALYSIS_POLICY_RESPONSE_CONTRACT_TEMPLATE_MISSING",
+                f"Analysis policy response contract template does not exist: {path}",
+                responseContractTemplatePath=str(path),
+            )
+        return path.read_text(encoding="utf-8").strip()
+
+    def _render_allowed_values(self, contract: AnalysisGraphContract) -> str:
+        return json.dumps({"allowedValues": self._allowed_values(contract)}, indent=2, sort_keys=True)
+
+    def _allowed_values(self, contract: AnalysisGraphContract) -> dict[str, Any]:
+        return {
             "claimKind": {
                 kind: {"description": _definition_description(self.policy.graph.claims.get(kind))}
                 for kind in contract.allowed_claim_kinds
@@ -266,72 +290,7 @@ class AnalysisPromptRenderer:
                 kind: {"description": _definition_description(self.policy.graph.resolution_statuses.get(kind))}
                 for kind in contract.allowed_resolution_statuses
             },
-            "factOrigin": {
-                kind: {"description": _definition_description(self.policy.graph.origins.get(kind))}
-                for kind in contract.allowed_origins
-            },
         }
-        return "\n".join(
-            [
-                "Final JSON response shape (return this object shape only):",
-                "```json",
-                response_shape.strip(),
-                "```",
-                "",
-                "Empty arrays are valid when no grounded facts are found:",
-                "```json",
-                json.dumps(
-                    {
-                        "schemaVersion": "knowledge.graph.enrichment.v1",
-                        "claims": [],
-                        "semanticEdges": [],
-                        "diagnostics": [],
-                    },
-                    indent=2,
-                ),
-                "```",
-                "",
-                "Field rules:",
-                "- schemaVersion: fixed value knowledge.graph.enrichment.v1.",
-                "- claims: array of grounded statements attached to existing static anchors.",
-                "- semanticEdges: array of grounded relationships between existing static anchors or unresolved/external targets.",
-                "- diagnostics: optional array of non-fatal notes. Empty array is valid.",
-                "- localId: required unique id inside the response.",
-                "- targetStableKey: exact key from staticAnchors.nodes.",
-                "- fromStableKey: exact key from staticAnchors nodes or callsites.",
-                "- toStableKey: exact key from staticAnchors when resolved; null when not resolved.",
-                "- claimKind: one of the allowed claimKind values for this file.",
-                "- edgeType: one of the allowed edgeType values for this file.",
-                "- resolutionStatus: one of the allowed resolutionStatus values for this file.",
-                "- summary: short factual text supported by evidence.",
-                "- confidence: number from 0.0 to 1.0.",
-                "- evidence: array of evidence objects.",
-                "- lineStart: source line number, integer >= 1.",
-                "- lineEnd: source line number, integer >= lineStart.",
-                "- text: short exact excerpt from source lines.",
-                "- unresolvedTarget: target details only when the edge has no resolved toStableKey.",
-                "- metadata: object containing only fields shown in the final response shape.",
-                "- factOrigin: one of the allowed factOrigin values for this file.",
-                "- severity: diagnostic severity for non-fatal notes; use INFO, WARN, or ERROR.",
-                "",
-                "Allowed values for this file from analysis-policy.yaml:",
-                "```json",
-                json.dumps({"allowedValues": allowed_values}, indent=2, sort_keys=True),
-                "```",
-                "",
-                "Return rules:",
-                "- Use exactly the field names shown in the final response shape.",
-                "- Return only fields shown in the final response shape.",
-                "- Do not rename fields.",
-                "- Do not add extra fields.",
-                "- Use empty arrays when no grounded facts are found.",
-                "- Omit uncertain facts instead of guessing.",
-                "- Use only exact keys from staticAnchors.",
-                "- Put resolutionStatus as a first-class semanticEdges field.",
-                "- Represent external or unresolved targets with toStableKey null, resolutionStatus, and unresolvedTarget; do not create fake external nodes.",
-                "- The code fences above are prompt formatting only; do not include code fences in the response.",
-            ]
-        )
 
     def _template(self, prompt_id: Optional[str]) -> str:
         if not prompt_id:

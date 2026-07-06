@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
 
 from pydantic import ValidationError
 
@@ -783,6 +783,7 @@ class GraphAnalysisResponseParser:
         for index, item in enumerate(parsed.get("claims") or [], start=1):
             if not isinstance(item, dict):
                 continue
+            metadata = self._enrichment_metadata(item)
             claims.append(
                 GraphClaim(
                     localId=str(item.get("localId") or f"claim{index}"),
@@ -791,16 +792,14 @@ class GraphAnalysisResponseParser:
                     summary=str(item.get("summary") or ""),
                     evidence=self._evidence_refs(item.get("evidence") or []),
                     confidence=float(item.get("confidence") if item.get("confidence") is not None else 0.0),
-                    metadata=dict(item.get("metadata") or {}),
+                    metadata=metadata,
                 )
             )
         edges = []
         for index, item in enumerate(parsed.get("semanticEdges") or [], start=1):
             if not isinstance(item, dict):
                 continue
-            metadata = dict(item.get("metadata") or {})
-            metadata.pop("resolutionStatus", None)
-            metadata.setdefault("factOrigin", "LLM")
+            metadata = self._enrichment_metadata(item)
             edges.append(
                 GraphEdge(
                     localId=str(item.get("localId") or f"semantic{index}"),
@@ -816,6 +815,12 @@ class GraphAnalysisResponseParser:
             )
         diagnostics = parsed.get("diagnostics") or []
         return GraphAnalysisResult(nodes=[], edges=edges, claims=claims, diagnostics=diagnostics)
+
+    def _enrichment_metadata(self, item: Mapping[str, Any]) -> dict[str, Any]:
+        metadata = dict(item.get("metadata") or {})
+        metadata.pop("resolutionStatus", None)
+        metadata["factOrigin"] = "LLM"
+        return metadata
 
     def _contract_statuses(self, contract: AnalysisGraphContract, *statuses: str) -> set[str]:
         allowed = set(contract.allowed_resolution_statuses)

@@ -13,10 +13,7 @@
           "lineEnd": 1,
           "text": "short exact excerpt"
         }
-      ],
-      "metadata": {
-        "factOrigin": "LLM"
-      }
+      ]
     }
   ],
   "semanticEdges": [
@@ -37,9 +34,6 @@
       "unresolvedTarget": {
         "name": "target name when target is not resolved",
         "kindHint": "optional target kind hint"
-      },
-      "metadata": {
-        "factOrigin": "LLM"
       }
     }
   ],

@@ -683,7 +683,6 @@ class AnalysisSupervisor:
                         "edgeType": list(contract.allowed_edge_types),
                         "claimKind": list(contract.allowed_claim_kinds),
                         "status": list(contract.allowed_statuses),
-                        "factOrigin": list(contract.allowed_origins),
                         "evidenceKind": list(contract.allowed_evidence_kinds),
                         "resolutionStatus": list(contract.allowed_resolution_statuses),
                     },
