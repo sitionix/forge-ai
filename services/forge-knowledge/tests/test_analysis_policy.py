@@ -25,8 +25,8 @@ def test_loads_default_policy_and_validates_references():
 
     assert policy.source_path == POLICY_PATH
     assert policy.schema_version == 1
-    assert policy.prompts["code_graph_enrichment"].response_shape == "schemas/graph-enrichment-v1-response-shape.json"
-    assert policy.prompt_response_shape_path("code_graph_enrichment").name == "graph-enrichment-v1-response-shape.json"
+    assert policy.prompts["target_anchor_enrichment"].response_shape == "schemas/target-anchor-enrichment-v2-response-shape.json"
+    assert policy.prompt_response_shape_path("target_anchor_enrichment").name == "target-anchor-enrichment-v2-response-shape.json"
     assert _find_forbidden_entries(data) == []
     assert set(policy.semantic.indexed_node_kinds) == {"FILE", "TYPE", "CALLABLE"}
     assert "EXTERNAL" not in policy.graph.nodes
@@ -126,12 +126,12 @@ def test_extractor_produces_references_must_be_declared_graph_kinds_with_allowed
 @pytest.mark.parametrize(
     ("relative_path", "format_id", "extractor_id", "policy_id", "prompt_id"),
     [
-        ("src/Foo.java", "java", "java_ast", "parser_assisted_graph_enrichment", "code_graph_enrichment"),
-        ("script.py", "python", "file_anchor", "text_graph_enrichment", "code_graph_enrichment"),
-        ("component.tsx", "typescript", "file_anchor", "text_graph_enrichment", "code_graph_enrichment"),
-        ("config.yaml", "yaml", "structured_text_light", "text_graph_enrichment", "text_graph_enrichment"),
-        ("model.xml", "xml", "structured_text_light", "text_graph_enrichment", "text_graph_enrichment"),
-        ("README.md", "markdown", "document_heading_light", "text_graph_enrichment", "document_graph_enrichment"),
+        ("src/Foo.java", "java", "java_ast", "parser_assisted_graph_enrichment", "target_anchor_enrichment"),
+        ("script.py", "python", "file_anchor", "text_graph_enrichment", "target_anchor_enrichment"),
+        ("component.tsx", "typescript", "file_anchor", "text_graph_enrichment", "target_anchor_enrichment"),
+        ("config.yaml", "yaml", "structured_text_light", "text_graph_enrichment", "target_anchor_enrichment"),
+        ("model.xml", "xml", "structured_text_light", "text_graph_enrichment", "target_anchor_enrichment"),
+        ("README.md", "markdown", "document_heading_light", "text_graph_enrichment", "target_anchor_enrichment"),
     ],
 )
 def test_resolves_supported_formats(relative_path, format_id, extractor_id, policy_id, prompt_id):

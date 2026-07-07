@@ -11,15 +11,9 @@ analysis:
     evidencePolicy: grounded_material_support
 
   prompts:
-    code_graph_enrichment:
-      file: code-graph-enrichment.md
-      responseShape: schemas/graph-enrichment-v1-response-shape.json
-    text_graph_enrichment:
-      file: text-graph-enrichment.md
-      responseShape: schemas/graph-enrichment-v1-response-shape.json
-    document_graph_enrichment:
-      file: document-graph-enrichment.md
-      responseShape: schemas/graph-enrichment-v1-response-shape.json
+    target_anchor_enrichment:
+      file: target-anchor-enrichment.md
+      responseShape: schemas/target-anchor-enrichment-v2-response-shape.json
 
   graph:
     nodes:
@@ -210,7 +204,7 @@ analysis:
       family: code
       extractor: java_ast
       policy: parser_assisted_graph_enrichment
-      prompt: code_graph_enrichment
+      prompt: target_anchor_enrichment
       graphProfiles: [base_file_graph, java_code_graph]
 
     kotlin:
@@ -218,7 +212,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: code_graph_enrichment
+      prompt: target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     typescript:
@@ -226,7 +220,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: code_graph_enrichment
+      prompt: target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     javascript:
@@ -234,7 +228,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: code_graph_enrichment
+      prompt: target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     python:
@@ -242,7 +236,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: code_graph_enrichment
+      prompt: target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     yaml:
@@ -250,7 +244,7 @@ analysis:
       family: structured_text
       extractor: structured_text_light
       policy: text_graph_enrichment
-      prompt: text_graph_enrichment
+      prompt: target_anchor_enrichment
       graphProfiles: [base_file_graph, structured_text_graph]
       artifactClassifiers:
         - id: automation_like
@@ -269,7 +263,7 @@ analysis:
       family: structured_text
       extractor: structured_text_light
       policy: text_graph_enrichment
-      prompt: text_graph_enrichment
+      prompt: target_anchor_enrichment
       graphProfiles: [base_file_graph, structured_text_graph]
       artifactClassifiers:
         - id: build_model_like
@@ -284,7 +278,7 @@ analysis:
       family: document
       extractor: document_heading_light
       policy: text_graph_enrichment
-      prompt: document_graph_enrichment
+      prompt: target_anchor_enrichment
       graphProfiles: [base_file_graph, document_graph]
 
   policies:

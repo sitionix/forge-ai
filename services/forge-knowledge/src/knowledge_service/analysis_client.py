@@ -7,10 +7,9 @@ from typing import Any, Dict
 
 import httpx
 
-from knowledge_service.analysis_graph_contract import AnalysisGraphContract, AnalysisPromptRenderer
+from knowledge_service.analysis_graph_contract import AnalysisGraphContract, GraphContractProvider
 from knowledge_service.analysis_runtime_events import emit_runtime_event, runtime_preview, text_hash, utc_now
 from knowledge_service.graph_schema import GraphAnalysisResult
-from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.target_enrichment import TargetPromptRenderer, TargetResponseParserValidator, is_target_enrichment_payload
 
@@ -31,10 +30,8 @@ class OllamaAnalysisClient:
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.context_tokens = max(1024, context_tokens)
-        self.prompt_renderer = AnalysisPromptRenderer()
-        self.target_prompt_renderer = TargetPromptRenderer()
-        self.contract_provider = self.prompt_renderer.provider
-        self.parser = GraphAnalysisResponseParser(self.contract_provider)
+        self.contract_provider = GraphContractProvider()
+        self.target_prompt_renderer = TargetPromptRenderer(policy=self.contract_provider.policy)
         self.target_parser = TargetResponseParserValidator()
         self._client = http_client or httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 

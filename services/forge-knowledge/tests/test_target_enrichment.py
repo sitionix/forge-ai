@@ -9,7 +9,8 @@ import httpx
 import pytest
 
 from knowledge_service.analysis_client import OllamaAnalysisClient
-from knowledge_service.analysis_graph_contract import GraphContractProvider
+from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
+from knowledge_service.analysis_policy import PromptDefinition
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.errors import KnowledgeError
@@ -97,6 +98,82 @@ def test_llm_input_projection_includes_minimal_contract_and_excludes_internal_pa
         "sliceDefaultVisibility",
     ):
         assert not _contains_key(llm_input, forbidden)
+
+
+def test_target_prompt_renderer_loads_policy_template_and_response_shape():
+    payload, _ = _target_payload()
+
+    renderer = TargetPromptRenderer()
+    prompt = renderer.render(payload)
+    rendered_input = _llm_input_from_prompt(prompt)
+
+    assert "Target-anchor enrichment prompt template." in prompt
+    assert BEGIN_INPUT_MARKER in prompt
+    assert END_INPUT_MARKER in prompt
+    assert rendered_input["requestKind"] == TARGET_REQUEST_KIND
+    assert rendered_input["file"]["contentLines"]
+    assert renderer.response_shape()["schemaVersion"] == TARGET_RESPONSE_SCHEMA_VERSION
+    assert "File metadata and content JSON" not in prompt
+    assert "staticAnchors: see" not in prompt
+    assert "staticAnchors" not in rendered_input
+    assert "callsites" not in rendered_input
+    assert not _contains_key(rendered_input, "stableKey")
+
+
+def test_target_prompt_renderer_uses_policy_prompt_root_without_code_change(tmp_path):
+    policy = load_analysis_policy(POLICY_PATH)
+    schema_dir = tmp_path / "schemas"
+    schema_dir.mkdir()
+    (tmp_path / "custom-target.md").write_text(
+        "\n".join(
+            [
+                "Custom target prompt from policy fixture.",
+                "{{REPAIR_INSTRUCTIONS}}",
+                "{{LLM_INPUT_JSON}}",
+                "Shape:",
+                "{{TARGET_RESPONSE_SHAPE}}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (schema_dir / "custom-response-shape.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": TARGET_RESPONSE_SCHEMA_VERSION,
+                "claims": [],
+                "semanticEdges": [],
+                "diagnostics": [{"code": "custom", "stage": "LLM_ENRICHMENT", "severity": "INFO", "message": "shape-from-policy"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    custom_policy = replace(
+        policy,
+        prompt_root=tmp_path,
+        prompts={
+            "target_anchor_enrichment": PromptDefinition(
+                id="target_anchor_enrichment",
+                file="custom-target.md",
+                response_shape="schemas/custom-response-shape.json",
+            )
+        },
+    )
+    content_lines = ["class Foo {", "  void call() {}", "}"]
+    context = AnalyzerPolicyRuntimeResolver(custom_policy).resolve(_row("src/Foo.java", "\n".join(content_lines)), {}, content_lines)
+    graph = _mixed_anchor_graph()
+    registry = AnchorRefRegistry.build(graph, context.graph_contract)
+    target = LlmEnrichmentPlanner().plan(graph, context.graph_contract, max_target_calls=10).targets[0]
+    renderer = TargetPromptRenderer(policy=custom_policy)
+    builder = LlmEnrichmentInputBuilder(response_shape=renderer.response_shape())
+
+    payload = builder.build(context=context, registry=registry, target=target, budget_chars=50000)
+    prompt = renderer.render(payload, repair_prompt="Use the same target input.")
+    rendered_input = _llm_input_from_prompt(prompt)
+
+    assert "Custom target prompt from policy fixture." in prompt
+    assert "Use the same target input." in prompt
+    assert "shape-from-policy" in prompt
+    assert rendered_input["responseShape"]["diagnostics"][0]["message"] == "shape-from-policy"
 
 
 def test_planner_uses_contract_semantic_node_kinds_without_path_or_language_special_cases():
@@ -318,6 +395,28 @@ def test_ollama_client_captures_outer_request_with_minimal_marked_input_json():
     assert "staticAnchors" not in prompt_input
     assert "callsites" not in prompt_input
     assert not _contains_key(prompt_input, "stableKey")
+
+
+def test_ollama_client_has_no_legacy_prompt_renderer_or_response_parser_and_rejects_non_target_payload():
+    contract = _contract("src/Foo.java")
+    client = OllamaAnalysisClient("http://127.0.0.1:11434", "model", 1)
+    try:
+        assert not hasattr(client, "prompt_renderer")
+        assert not hasattr(client, "parser")
+        with pytest.raises(KnowledgeError) as exc:
+            asyncio.run(
+                client.analyze(
+                    {
+                        "relativePath": "src/Foo.java",
+                        "analysisPolicy": contract_payload(contract),
+                    },
+                    1,
+                )
+            )
+    finally:
+        asyncio.run(client.aclose())
+
+    assert exc.value.code == "ANALYSIS_TARGET_INPUT_REQUIRED"
 
 
 class _CountingAnalyzer:

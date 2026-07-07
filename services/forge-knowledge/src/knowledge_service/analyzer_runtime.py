@@ -387,9 +387,9 @@ class AnalyzerRuntime:
         self.anchor_validator = anchor_validator or AnchorAwareGraphValidator()
         self.graph_policy_validator = graph_policy_validator or GraphPolicyValidator(policy)
         self.enrichment_planner = enrichment_planner or LlmEnrichmentPlanner()
-        self.target_input_builder = target_input_builder or LlmEnrichmentInputBuilder()
+        self.target_prompt_renderer = target_prompt_renderer or TargetPromptRenderer(policy=policy)
+        self.target_input_builder = target_input_builder or LlmEnrichmentInputBuilder(response_shape=self.target_prompt_renderer.response_shape())
         self.file_enrichment_merger = file_enrichment_merger or FileEnrichmentMerger()
-        self.target_prompt_renderer = target_prompt_renderer or TargetPromptRenderer()
 
     async def execute(
         self,
