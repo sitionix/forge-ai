@@ -12,21 +12,31 @@ from knowledge_service.analysis_runtime_events import emit_runtime_event, runtim
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
 from knowledge_service.errors import KnowledgeError
+from knowledge_service.target_enrichment import TargetPromptRenderer, TargetResponseParserValidator, is_target_enrichment_payload
 
 
 class OllamaAnalysisClient:
     name = "ai-file-analyzer"
     version = "1"
 
-    def __init__(self, base_url: str, model: str, timeout_seconds: int, context_tokens: int = 4096):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout_seconds: int,
+        context_tokens: int = 4096,
+        http_client: httpx.AsyncClient | None = None,
+    ):
         self.base_url = self._require_localhost(base_url.rstrip("/"))
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.context_tokens = max(1024, context_tokens)
         self.prompt_renderer = AnalysisPromptRenderer()
+        self.target_prompt_renderer = TargetPromptRenderer()
         self.contract_provider = self.prompt_renderer.provider
         self.parser = GraphAnalysisResponseParser(self.contract_provider)
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
+        self.target_parser = TargetResponseParserValidator()
+        self._client = http_client or httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 
     async def analyze(self, payload: Dict[str, Any], line_count: int, repair_prompt: str | None = None) -> GraphAnalysisResult:
         contract = self.contract_provider.resolve_payload(payload)
@@ -124,7 +134,15 @@ class OllamaAnalysisClient:
             duration_ms=self._duration_ms(request_started),
             metadata=response_metadata,
         )
-        parsed = self.parser.parse(response_text, line_count, contract=contract, known_node_kinds=self._known_node_kinds(payload))
+        if not is_target_enrichment_payload(payload):
+            raise KnowledgeError(
+                "ANALYSIS_TARGET_INPUT_REQUIRED",
+                "AI analyzer requires the target-anchor enrichment input contract.",
+                relativePath=str(payload.get("relativePath") or ""),
+                stage="LLM_ENRICHMENT",
+                severity="ERROR",
+            )
+        parsed = self.target_parser.parse(response_text, payload=payload, line_count=line_count, contract=contract)
         if isinstance(parsed, GraphAnalysisResult):
             return parsed
         self._emit_parse_failure(parsed, response_text, response_metadata)
@@ -144,36 +162,21 @@ class OllamaAnalysisClient:
         repair_prompt: str | None = None,
         contract: AnalysisGraphContract | None = None,
     ) -> str:
-        parts = []
-        rendered_prompt = self.prompt_renderer.render_for_payload(payload, contract=contract)
-        if rendered_prompt:
-            parts.append(rendered_prompt)
-        if repair_prompt:
-            parts.append(repair_prompt)
-        parts.extend(
-            [
-                "File metadata and content JSON:",
-                json.dumps(self._llm_payload(payload), ensure_ascii=False),
-            ]
-        )
-        return "\n".join(parts)
+        if not is_target_enrichment_payload(payload):
+            raise KnowledgeError(
+                "ANALYSIS_TARGET_INPUT_REQUIRED",
+                "AI analyzer requires the target-anchor enrichment input contract.",
+                relativePath=str(payload.get("relativePath") or ""),
+                stage="LLM_ENRICHMENT",
+                severity="ERROR",
+            )
+        return self.target_prompt_renderer.render(payload, repair_prompt)
 
     def _llm_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return {key: value for key, value in payload.items() if key != "analysisPolicy"}
-
-    def _known_node_kinds(self, payload: Dict[str, Any]) -> dict[str, str]:
-        static_anchors = payload.get("staticAnchors")
-        if not isinstance(static_anchors, dict):
-            return {}
-        result: dict[str, str] = {}
-        for item in static_anchors.get("nodes") or []:
-            if not isinstance(item, dict):
-                continue
-            key = item.get("targetStableKey")
-            kind = item.get("nodeKind")
-            if isinstance(key, str) and isinstance(kind, str):
-                result[key] = kind
-        return result
+        llm_input = payload.get("llmInput")
+        if isinstance(llm_input, dict):
+            return dict(llm_input)
+        return {}
 
     def _require_localhost(self, base_url: str) -> str:
         parsed = urllib.parse.urlparse(base_url)
@@ -194,7 +197,8 @@ class OllamaAnalysisClient:
             "promptHash": text_hash(prompt),
             "sourceId": payload.get("sourceId"),
             "relativePath": payload.get("relativePath"),
-            "contentHash": payload.get("contentHash"),
+            "targetRef": payload.get("targetRef"),
+            "targetKind": payload.get("targetKind"),
             "repairAttempt": repair_prompt is not None,
         }
 

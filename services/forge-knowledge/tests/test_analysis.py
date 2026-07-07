@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import httpx
 
 os.environ.setdefault("KNOWLEDGE_STORE_PATH", "/tmp/forge-ai-knowledge-test-main.sqlite")
 
@@ -49,6 +50,13 @@ from knowledge_service.snippet_extractor import SnippetExtractor
 from knowledge_service.source_config import load_source_config
 from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer
 from knowledge_service.structural_model import StructuralFileMetadata
+from knowledge_service.target_enrichment import (
+    BEGIN_INPUT_MARKER,
+    END_INPUT_MARKER,
+    TARGET_INPUT_SCHEMA_VERSION,
+    TARGET_REQUEST_KIND,
+    TARGET_RESPONSE_SCHEMA_VERSION,
+)
 
 
 class StubAnalyzer:
@@ -654,20 +662,16 @@ async def runtime_retry(analyzer, payload, line_count):
 def payload_top_level_shape():
     return {
         "sourceId",
-        "serviceLabel",
-        "group",
-        "tags",
         "relativePath",
-        "extension",
-        "sizeBytes",
-        "contentHash",
-        "lineCount",
-        "language",
-        "format",
-        "metadata",
-        "contentLines",
-        "staticAnchors",
+        "targetRef",
+        "targetKind",
+        "requestKind",
+        "schemaVersion",
+        "llmInput",
         "analysisPolicy",
+        "_refToStableKey",
+        "_stableKeyToRef",
+        "_refToKind",
     }
 
 
@@ -806,6 +810,99 @@ def job_file_diagnostics(db_path, job_id, relative_path="src/main/java/example/O
         ).fetchone()
     assert row is not None
     return row[0], json.loads(row[1] or "[]")
+
+
+def _llm_input_from_prompt(prompt: str):
+    start = prompt.index(BEGIN_INPUT_MARKER) + len(BEGIN_INPUT_MARKER)
+    end = prompt.index(END_INPUT_MARKER, start)
+    return json.loads(prompt[start:end].strip())
+
+
+def _contains_key(value, key_name):
+    if isinstance(value, dict):
+        return key_name in value or any(_contains_key(item, key_name) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_key(item, key_name) for item in value)
+    return False
+
+
+def _capturing_ollama_client(captured, response_factory):
+    async def handler(request):
+        body = json.loads(request.content.decode("utf-8"))
+        captured.append(body)
+        llm_input = _llm_input_from_prompt(body["prompt"])
+        response = response_factory(llm_input)
+        if isinstance(response, str):
+            response_text = response
+        else:
+            response_text = json.dumps(response)
+        return httpx.Response(200, json={"response": response_text})
+
+    return OllamaAnalysisClient(
+        "http://127.0.0.1:11434",
+        "model",
+        1,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+
+def _empty_target_response(llm_input):
+    return {
+        "schemaVersion": TARGET_RESPONSE_SCHEMA_VERSION,
+        "claims": [],
+        "semanticEdges": [],
+        "diagnostics": [],
+    }
+
+
+def _nested_flow_response(llm_input):
+    target = llm_input["targetAnchor"]
+    response = _empty_target_response(llm_input)
+    if target["kind"] != "CALLABLE":
+        return response
+    evidence = [{"lineStart": target["lineStart"], "lineEnd": target["lineStart"], "text": target["name"]}]
+    response["claims"].append(
+        {
+            "localId": f"claim-{target['ref']}",
+            "targetRef": target["ref"],
+            "claimKind": "RESPONSIBILITY",
+            "summary": f"Handles {target['name']} flow.",
+            "confidence": 0.82,
+            "evidence": evidence,
+        }
+    )
+    registry_by_name = {item["name"]: item for item in llm_input["anchorRegistry"]}
+    calls = {
+        "getWorkspace": "loadWorkspace",
+        "validateWorkspace": "ensureActive",
+    }
+    if target["name"] in calls and calls[target["name"]] in registry_by_name:
+        response["semanticEdges"].append(
+            {
+                "localId": f"edge-{target['ref']}",
+                "fromRef": target["ref"],
+                "toRef": registry_by_name[calls[target["name"]]]["ref"],
+                "edgeType": "CALLS",
+                "resolutionStatus": "RESOLVED",
+                "confidence": 0.86,
+                "evidence": evidence,
+                "unresolvedTarget": None,
+            }
+        )
+    if target["name"] in {"loadWorkspace", "mapWorkspace"}:
+        response["semanticEdges"].append(
+            {
+                "localId": f"edge-external-{target['ref']}",
+                "fromRef": target["ref"],
+                "toRef": None,
+                "edgeType": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "confidence": 0.74,
+                "evidence": evidence,
+                "unresolvedTarget": {"name": "external target", "kindHint": "CALLABLE"},
+            }
+        )
+    return response
 
 
 def build_inventory_with_file_count(tmp_path, file_count):
@@ -1730,27 +1827,51 @@ def test_non_localhost_ollama_base_url_rejected(tmp_path):
         OllamaAnalysisClient("http://example.com:11434", "model", 1)
 
 
-def test_ollama_prompt_omits_duplicate_analysis_policy_payload():
+def test_ollama_prompt_renders_minimal_target_input_only():
     policy = load_analysis_policy(POLICY_PATH)
     provider = GraphContractProvider(policy=policy)
     contract = provider.resolve("src/Foo.java", "class Foo {}\n")
+    llm_input = {
+        "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
+        "requestKind": TARGET_REQUEST_KIND,
+        "file": {
+            "sourceId": "edge-gateway",
+            "relativePath": "src/Foo.java",
+            "language": "java",
+            "lineCount": 1,
+            "contentLines": [{"line": 1, "text": "class Foo {}"}],
+        },
+        "anchorRegistry": [{"ref": "F1", "kind": "FILE", "name": "Foo.java", "qualifiedName": None, "lineStart": 1, "lineEnd": 1, "parentRef": None}],
+        "targetAnchor": {"ref": "F1", "kind": "FILE", "name": "Foo.java", "qualifiedName": None, "lineStart": 1, "lineEnd": 1, "parentRef": None},
+        "allowedValues": {"claimKind": list(contract.allowed_claim_kinds), "edgeType": list(contract.allowed_edge_types), "resolutionStatus": list(contract.allowed_resolution_statuses)},
+        "endpointRules": {"REFERENCES": {"fromKinds": ["FILE"], "toKinds": ["FILE"]}},
+        "responseShape": {"schemaVersion": "knowledge.graph.enrichment.response.v2", "claims": [], "semanticEdges": [], "diagnostics": []},
+    }
     payload = {
+        "sourceId": "edge-gateway",
         "relativePath": "src/Foo.java",
-        "content": "class Foo {}\n",
+        "targetRef": "F1",
+        "targetKind": "FILE",
+        "requestKind": TARGET_REQUEST_KIND,
         "analysisPolicy": contract_payload(contract),
-        "staticAnchors": {"nodes": [{"targetStableKey": "file:src/Foo.java", "nodeKind": "FILE"}], "callsites": []},
+        "llmInput": llm_input,
     }
     client = OllamaAnalysisClient("http://127.0.0.1:11434", "model", 1)
     try:
         prompt = client._prompt(payload, contract=contract)
     finally:
         asyncio.run(client.aclose())
+    rendered_input = _llm_input_from_prompt(prompt)
 
     assert '"analysisPolicy"' not in prompt
-    assert "# Resolved analysis policy" in prompt
-    assert '"allowedValues"' in prompt
-    assert '"allowedEdgeEndpoints"' in prompt
-    assert '"staticAnchors"' in prompt
+    assert BEGIN_INPUT_MARKER in prompt
+    assert END_INPUT_MARKER in prompt
+    assert rendered_input["requestKind"] == TARGET_REQUEST_KIND
+    assert rendered_input["file"]["contentLines"]
+    assert rendered_input["anchorRegistry"][0]["ref"] == "F1"
+    assert "staticAnchors" not in rendered_input
+    assert "callsites" not in rendered_input
+    assert not _contains_key(rendered_input, "stableKey")
 
 
 def test_large_llm_required_file_fails_without_partial_graph(tmp_path):
@@ -1780,12 +1901,13 @@ def test_unchanged_file_not_picked_by_new_job(tmp_path):
     runner = SupervisorHarness(store, app_config(tmp_path))
     analyzer = StubAnalyzer()
     wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
+    first_call_count = analyzer.calls
     second = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
 
     assert second["fileCount"] == 0
     assert second["processedFiles"] == 0
     assert _legacy_skipped_unchanged_key() not in second
-    assert analyzer.calls == 1
+    assert analyzer.calls == first_call_count
 
 
 def test_failed_llm_analysis_with_unchanged_hash_is_retried_without_force(tmp_path):
@@ -1802,7 +1924,7 @@ def test_failed_llm_analysis_with_unchanged_hash_is_retried_without_force(tmp_pa
     assert second["fileCount"] == 1
     assert second["processedFiles"] == 1
     assert second["failedFiles"] == 0
-    assert retry_analyzer.calls == 1
+    assert retry_analyzer.calls > 0
     assert analyzed["total"] == 1
     assert failed["total"] == 0
 
@@ -1974,7 +2096,7 @@ def test_analysis_max_files_applies_after_current_files_are_filtered(tmp_path):
     assert second["fileCount"] == 1
     assert second["processedFiles"] == 1
     assert _legacy_skipped_unchanged_key() not in second
-    assert analyzer.calls == 2
+    assert analyzer.calls > 1
     assert files["total"] == 2
     assert [item["relativePath"] for item in files["files"]] == [
         "src/main/java/example/AaaHandler.java",
@@ -1994,7 +2116,7 @@ def test_per_file_guard_skips_current_file_if_candidate_filter_misses_it(tmp_pat
 
     assert second["fileCount"] == 1
     assert second["processedFiles"] == 1
-    assert first_analyzer.calls == 1
+    assert first_analyzer.calls > 0
     assert second_analyzer.calls == 0
     with sqlite3.connect(store.db_path) as conn:
         status = conn.execute(
@@ -2188,7 +2310,7 @@ def test_inventory_refresh_makes_new_files_available_for_next_analysis(tmp_path)
 
     assert final["fileCount"] == 1
     assert final["processedFiles"] == 1
-    assert analyzer.calls == 1
+    assert analyzer.calls > 0
     assert files["total"] == 2
 
 
@@ -2492,7 +2614,7 @@ def test_bad_ai_json_is_retried_before_file_fails(tmp_path):
 
     assert final["status"] == "COMPLETED"
     assert final["failedFiles"] == 0
-    assert analyzer.calls == 2
+    assert analyzer.calls > 1
     assert analyzer.repair_prompts
     assert files["total"] == 1
     assert {item["code"] for item in files["files"][0]["diagnostics"]} >= {"ANALYSIS_AI_INVALID_JSON", "ANALYSIS_AI_RETRY_SUCCEEDED"}
@@ -2538,7 +2660,7 @@ def test_timeout_marks_file_failed_and_continues(tmp_path):
     assert final["status"] == "COMPLETED"
     assert final["processedFiles"] == 2
     assert final["failedFiles"] == 1
-    assert analyzer.calls == 2
+    assert analyzer.calls > 1
     assert {file["analysisStatus"] for file in files["files"]} == {"ANALYZED", "FAILED"}
     assert first["files"][0]["attemptCount"] == 1
     assert first["files"][0]["lastErrorCode"] == "ANALYSIS_AI_TIMEOUT"
@@ -2705,19 +2827,26 @@ def test_runtime_analysis_writes_graph_engine_job_file_flow_and_line_metadata(tm
 def test_analyzer_runtime_builds_unified_payload_shape(relative_path, content, expected_format, expected_extractor, expected_policy):
     _, analyzer = asyncio.run(run_runtime(relative_path, content))
     payload = analyzer.payloads[0]
+    llm_input = payload["llmInput"]
 
     assert set(payload) == payload_top_level_shape()
-    assert payload["contentLines"][0]["line"] == 1
-    assert payload["contentLines"][0]["text"] == content.splitlines()[0]
-    assert payload["staticAnchors"]["nodes"]
+    assert payload["requestKind"] == TARGET_REQUEST_KIND
+    assert llm_input["requestKind"] == TARGET_REQUEST_KIND
+    assert llm_input["file"]["contentLines"][0]["line"] == 1
+    assert llm_input["file"]["contentLines"][0]["text"] == content.splitlines()[0]
+    assert llm_input["anchorRegistry"]
+    assert llm_input["targetAnchor"]["ref"]
     assert payload["analysisPolicy"]["formatId"] == expected_format
     assert payload["analysisPolicy"]["extractorId"] == expected_extractor
     assert payload["analysisPolicy"]["policyId"] == expected_policy
     assert payload["analysisPolicy"]["sourceView"] == "contentLines"
     assert payload["analysisPolicy"]["llmMode"] != "none"
     assert "fileType" not in payload
-    assert "flowDomain" not in payload
+    assert "flowDomain" not in llm_input
     assert "content" not in payload
+    assert "staticAnchors" not in llm_input
+    assert "callsites" not in llm_input
+    assert not _contains_key(llm_input, "stableKey")
 
 
 def test_analyzer_runtime_routing_is_yaml_driven_and_unknown_extension_fails():
@@ -2748,8 +2877,9 @@ def test_legacy_flow_domain_does_not_control_llm_eligibility(flow_domain):
 
     assert analyzer.calls == 1
     assert payload["analysisPolicy"]["extractorId"] == "structured_text_light"
-    assert payload["metadata"]["flowDomain"] == flow_domain
+    assert payload["llmInput"]["file"]["relativePath"] == "config/service.yaml"
     assert "flowDomain" not in payload
+    assert "flowDomain" not in payload["llmInput"]
 
 
 def test_parser_unsupported_text_file_is_not_skipped_by_old_logic():
@@ -2769,22 +2899,201 @@ def test_java_extractor_output_is_used_as_static_anchors():
             language="java",
         )
     )
-    static_anchors = analyzer.payloads[0]["staticAnchors"]
-    anchors = static_anchors["nodes"]
-    kinds = {item["nodeKind"] for item in anchors}
+    static_anchors = analyzer.payloads[0]["llmInput"]["anchorRegistry"]
+    anchors = static_anchors
+    kinds = {item["kind"] for item in anchors}
 
-    assert set(static_anchors) == {"nodes", "callsites", "diagnostics"}
+    assert "staticAnchors" not in analyzer.payloads[0]["llmInput"]
+    assert "callsites" not in analyzer.payloads[0]["llmInput"]
     assert "FILE" in kinds
     assert {"TYPE", "CALLABLE"}.issubset(kinds)
-    assert any(item["edgeType"] == "CALLS" for item in static_anchors["callsites"])
+    assert any(item["kind"] == "CALLABLE" for item in anchors)
+
+
+def test_analyzer_captured_ollama_requests_are_minimal_target_anchor_json(tmp_path):
+    content = """package example;
+
+class NestedCallFlow {
+  private final WorkspaceRepository repository;
+
+  public WorkspaceDto getWorkspace(String id) {
+    Workspace workspace = loadWorkspace(id);
+    validateWorkspace(workspace);
+    return mapWorkspace(workspace);
+  }
+
+  private Workspace loadWorkspace(String id) {
+    return repository.findById(id).orElseThrow();
+  }
+
+  private void validateWorkspace(Workspace workspace) {
+    ensureActive(workspace);
+  }
+
+  private void ensureActive(Workspace workspace) {
+    if (!workspace.active()) {
+      throw new IllegalStateException();
+    }
+  }
+
+  private WorkspaceDto mapWorkspace(Workspace workspace) {
+    return WorkspaceDto.from(workspace);
+  }
+}
+"""
+    store, _, _ = build_inventory(tmp_path, content=content)
+    captured = []
+    client = _capturing_ollama_client(captured, _nested_flow_response)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), client)["jobId"])
+    asyncio.run(client.aclose())
+
+    inputs = [_llm_input_from_prompt(body["prompt"]) for body in captured]
+    target_names = {item["targetAnchor"]["name"] for item in inputs}
+    public_request = next(item for item in inputs if item["targetAnchor"]["name"] == "getWorkspace")
+    public_registry_names = {item["name"] for item in public_request["anchorRegistry"]}
+    facts = graph_facts_for_path(store.db_path, "src/main/java/example/ObjectHandler.java")
+
+    assert final["status"] == "COMPLETED"
+    assert "getWorkspace" in target_names
+    assert {"loadWorkspace", "validateWorkspace", "ensureActive", "mapWorkspace"}.issubset(target_names)
+    assert {"loadWorkspace", "validateWorkspace", "ensureActive", "mapWorkspace"}.issubset(public_registry_names)
+    assert all(item["requestKind"] == TARGET_REQUEST_KIND for item in inputs)
+    assert all(item["file"]["contentLines"] for item in inputs)
+    assert all(item["anchorRegistry"] for item in inputs)
+    assert all(item["targetAnchor"]["ref"] for item in inputs)
+    for item in inputs:
+        for forbidden in (
+            "staticAnchors",
+            "callsites",
+            "callsiteStableKey",
+            "stableKey",
+            "contractRefs",
+            "tags",
+            "tests",
+            "ownsBusinessAreas",
+            "domainKeywords",
+            "parser",
+            "engineVersion",
+            "factOrigin",
+            "flowDomain",
+            "resolutionReason",
+            "unresolvedReason",
+            "sliceDefaultVisibility",
+        ):
+            assert not _contains_key(item, forbidden)
+    assert len(facts["claims"]) >= len([item for item in inputs if item["targetAnchor"]["kind"] == "CALLABLE"])
+
+
+def test_analyzer_rejects_unknown_ref_response_without_persisting_invalid_facts(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+
+    def invalid_response(_llm_input):
+        return {
+            "schemaVersion": TARGET_RESPONSE_SCHEMA_VERSION,
+            "claims": [
+                {
+                    "localId": "claim-unknown",
+                    "targetRef": "M999",
+                    "claimKind": "RESPONSIBILITY",
+                    "summary": "Invalid unknown ref.",
+                    "confidence": 0.8,
+                    "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "public class ObjectHandler"}],
+                }
+            ],
+            "semanticEdges": [],
+            "diagnostics": [],
+        }
+
+    client = _capturing_ollama_client(captured, invalid_response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 1))
+
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), client)["jobId"])
+    asyncio.run(client.aclose())
+    facts = graph_facts_for_path(store.db_path, "src/main/java/example/ObjectHandler.java")
+
+    assert final["failedFiles"] == 1
+    assert captured
+    assert len(facts["nodes"]) == 0
+    assert len(facts["claims"]) == 0
+
+
+def test_retry_repair_prompt_keeps_minimal_target_input(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+    attempts = {"count": 0}
+
+    def flaky_response(llm_input):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            return "{bad"
+        return _empty_target_response(llm_input)
+
+    client = _capturing_ollama_client(captured, flaky_response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), client)["jobId"])
+    asyncio.run(client.aclose())
+
+    assert final["failedFiles"] == 0
+    assert len(captured) >= 2
+    retry_prompt = captured[1]["prompt"]
+    retry_input = _llm_input_from_prompt(retry_prompt)
+    assert BEGIN_INPUT_MARKER in retry_prompt
+    assert retry_input["requestKind"] == TARGET_REQUEST_KIND
+    assert "staticAnchors" not in retry_input
+    assert "callsites" not in retry_input
+
+
+def test_callsite_heavy_fluent_chain_prompt_does_not_include_raw_callsite_payload(tmp_path):
+    content = """package example;
+
+class FluentChainFixture {
+  void heavy() {
+    database.given()
+      .workspace("one")
+      .owner("user")
+      .build()
+      .persist();
+
+    mockMvc.perform(get("/workspaces/{id}", "one")
+        .header("X-Test", "true")
+        .contentType(APPLICATION_JSON))
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.id").value("one"))
+      .andExpect(jsonPath("$.owner").value("user"));
+  }
+}
+"""
+    store, _, _ = build_inventory(tmp_path, content=content)
+    captured = []
+    client = _capturing_ollama_client(captured, _empty_target_response)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), client)["jobId"])
+    asyncio.run(client.aclose())
+
+    assert final["failedFiles"] == 0
+    assert captured
+    for body in captured:
+        prompt = body["prompt"]
+        llm_input = _llm_input_from_prompt(prompt)
+        assert len(prompt) < 30000
+        assert "staticAnchors" not in llm_input
+        assert "callsites" not in llm_input
+        assert not _contains_key(llm_input, "callsiteStableKey")
+        assert not _contains_key(llm_input, "receiverText")
 
 
 def test_structured_text_light_emits_config_regions_only_when_policy_allows_them():
     _, analyzer = asyncio.run(run_runtime("config/service.yaml", "service:\n  endpoint: http://example\n", language="yaml"))
-    kinds = [item["nodeKind"] for item in analyzer.payloads[0]["staticAnchors"]["nodes"]]
+    kinds = [item["kind"] for item in analyzer.payloads[0]["llmInput"]["anchorRegistry"]]
 
     assert "CONFIG" in kinds
-    assert set(analyzer.payloads[0]["staticAnchors"]) == {"nodes", "callsites", "diagnostics"}
+    assert "staticAnchors" not in analyzer.payloads[0]["llmInput"]
+    assert "callsites" not in analyzer.payloads[0]["llmInput"]
 
 
 def test_structured_text_light_emits_only_file_anchor_when_config_not_allowed():
@@ -2799,17 +3108,16 @@ def test_structured_text_light_emits_only_file_anchor_when_config_not_allowed():
     policy = replace(policy, graph_profiles=graph_profiles)
 
     _, analyzer = asyncio.run(run_runtime("config/service.yaml", "service:\n  endpoint: http://example\n", policy=policy, language="yaml"))
-    anchors = analyzer.payloads[0]["staticAnchors"]["nodes"]
+    anchors = analyzer.payloads[0]["llmInput"]["anchorRegistry"]
 
-    assert [item["nodeKind"] for item in anchors] == ["FILE"]
+    assert [item["kind"] for item in anchors] == ["FILE"]
 
 
 def test_xml_structured_labels_produce_normalized_static_anchors_when_allowed():
     _, analyzer = asyncio.run(run_runtime("models/service.xml", "<project>\n  <artifactId>edge-core</artifactId>\n</project>\n", language="xml"))
-    static_anchors = analyzer.payloads[0]["staticAnchors"]
+    static_anchors = analyzer.payloads[0]["llmInput"]["anchorRegistry"]
 
-    assert set(static_anchors) == {"nodes", "callsites", "diagnostics"}
-    assert any(item["nodeKind"] == "CONFIG" and item["name"] == "project" for item in static_anchors["nodes"])
+    assert any(item["kind"] == "CONFIG" and item["name"] == "project" for item in static_anchors)
 
 
 def test_invalid_extractor_output_fails_before_llm():
@@ -2973,8 +3281,8 @@ def test_file_anchor_fallback_works_only_when_policy_allows_it():
     _, analyzer = asyncio.run(run_runtime("README.md", "# Title\n", policy=policy, registry=registry))
     payload = analyzer.payloads[0]
 
-    assert [item["nodeKind"] for item in payload["staticAnchors"]["nodes"]] == ["FILE"]
-    assert payload["staticAnchors"]["diagnostics"][0]["code"] == "ANALYSIS_UNSUPPORTED_EXTRACTOR_FALLBACK_USED"
+    assert [item["kind"] for item in payload["llmInput"]["anchorRegistry"]] == ["FILE"]
+    assert payload["llmInput"]["targetAnchor"]["kind"] == "FILE"
 
 
 def test_required_file_anchor_fallback_mode_allows_file_anchor_fallback():
@@ -2994,8 +3302,8 @@ def test_required_file_anchor_fallback_mode_allows_file_anchor_fallback():
     payload = analyzer.payloads[0]
 
     assert payload["analysisPolicy"]["extractorMode"] == "required_or_file_anchor_fallback"
-    assert [item["nodeKind"] for item in payload["staticAnchors"]["nodes"]] == ["FILE"]
-    assert payload["staticAnchors"]["diagnostics"][0]["code"] == "ANALYSIS_UNSUPPORTED_EXTRACTOR_FALLBACK_USED"
+    assert [item["kind"] for item in payload["llmInput"]["anchorRegistry"]] == ["FILE"]
+    assert payload["llmInput"]["targetAnchor"]["kind"] == "FILE"
 
 
 def test_missing_required_extractor_fails_explicitly_before_llm():
@@ -3142,12 +3450,12 @@ def test_persistence_boundary_writes_only_final_graph_and_no_partial_extractor_f
     assert len(success_store.replacements) == 1
     assert success_store.failed_attempts == []
     assert success_store.replacements[0][2]["nodes"]
-    assert success_analyzer.payloads[0]["staticAnchors"]["nodes"]
+    assert success_analyzer.payloads[0]["llmInput"]["anchorRegistry"]
 
     failing_analyzer = CapturingGraphAnalyzer(fail=True)
     failure_store = run_supervisor_with_fake_store(tmp_path, failing_analyzer, row)
 
-    assert failing_analyzer.payloads[0]["staticAnchors"]["nodes"]
+    assert failing_analyzer.payloads[0]["llmInput"]["anchorRegistry"]
     assert failure_store.replacements == []
     assert len(failure_store.failed_attempts) == 1
     assert failure_store.job_file_updates[-1][2] == "FAILED"

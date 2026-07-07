@@ -675,6 +675,8 @@ class AnalysisSupervisor:
                     "attempt": attempt,
                     "rawPreview": exc.details.get("raw_preview"),
                 }
+                if payload.get("targetRef"):
+                    retry_diagnostic["targetRef"] = payload.get("targetRef")
                 metadata = self._error_metadata(exc)
                 if metadata:
                     retry_diagnostic["metadata"] = metadata
@@ -988,6 +990,8 @@ class AnalysisSupervisor:
             "relativePath": payload.get("relativePath"),
             "attempt": attempt,
         }
+        if payload.get("targetRef"):
+            diagnostic["targetRef"] = payload.get("targetRef")
         raw_preview = self._raw_preview(exc.details.get("raw_preview"))
         if raw_preview:
             diagnostic["rawPreview"] = raw_preview

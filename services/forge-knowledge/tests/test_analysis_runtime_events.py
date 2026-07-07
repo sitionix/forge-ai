@@ -16,6 +16,7 @@ from knowledge_service.analysis_schema import AnalysisBuildRequest
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_schema import GraphAnalysisResult
+from knowledge_service.target_enrichment import TARGET_INPUT_SCHEMA_VERSION, TARGET_REQUEST_KIND, TARGET_RESPONSE_SCHEMA_VERSION
 from test_analysis import SupervisorHarness, app_config_with_retries, build_inventory, wait_job
 
 
@@ -265,19 +266,68 @@ def _run_with_runtime_context(store: AnalysisStore, awaitable):
 def _payload() -> Dict[str, Any]:
     content = "public class ObjectHandler {}"
     contract = GraphContractProvider(policy=load_analysis_policy(POLICY_PATH)).resolve(RELATIVE_PATH, content)
+    stable_key = f"{SOURCE_ID}|{RELATIVE_PATH}|FILE"
+    llm_input = {
+        "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
+        "requestKind": TARGET_REQUEST_KIND,
+        "file": {
+            "sourceId": SOURCE_ID,
+            "relativePath": RELATIVE_PATH,
+            "language": "java",
+            "format": "java",
+            "lineCount": 1,
+            "contentLines": [{"line": 1, "text": content}],
+        },
+        "anchorRegistry": [
+            {
+                "ref": "F1",
+                "kind": "FILE",
+                "name": "ObjectHandler.java",
+                "qualifiedName": None,
+                "lineStart": 1,
+                "lineEnd": 1,
+                "parentRef": None,
+            }
+        ],
+        "targetAnchor": {
+            "ref": "F1",
+            "kind": "FILE",
+            "name": "ObjectHandler.java",
+            "qualifiedName": None,
+            "lineStart": 1,
+            "lineEnd": 1,
+            "parentRef": None,
+        },
+        "allowedValues": {
+            "claimKind": list(contract.allowed_claim_kinds),
+            "edgeType": list(contract.allowed_edge_types),
+            "resolutionStatus": list(contract.allowed_resolution_statuses),
+        },
+        "endpointRules": {
+            edge_type: {
+                "fromKinds": list(contract.edge_from_kinds.get(edge_type, ())),
+                "toKinds": list(contract.edge_to_kinds.get(edge_type, ())),
+            }
+            for edge_type in contract.allowed_edge_types
+        },
+        "responseShape": {
+            "schemaVersion": TARGET_RESPONSE_SCHEMA_VERSION,
+            "claims": [],
+            "semanticEdges": [],
+            "diagnostics": [],
+        },
+    }
     return {
         "sourceId": SOURCE_ID,
-        "serviceLabel": "Edge Gateway",
         "relativePath": RELATIVE_PATH,
-        "extension": ".java",
-        "sizeBytes": len(content.encode("utf-8")),
-        "contentHash": CONTENT_HASH,
-        "lineCount": 1,
-        "language": "java",
-        "format": "code",
-        "metadata": {},
-        "contentLines": [{"line": 1, "text": content}],
-        "staticAnchors": {"nodes": [], "edges": []},
+        "targetRef": "F1",
+        "targetKind": "FILE",
+        "requestKind": TARGET_REQUEST_KIND,
+        "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
+        "llmInput": llm_input,
+        "_refToStableKey": {"F1": stable_key},
+        "_stableKeyToRef": {stable_key: "F1"},
+        "_refToKind": {"F1": "FILE"},
         "analysisPolicy": contract_payload(contract),
     }
 
@@ -285,7 +335,7 @@ def _payload() -> Dict[str, Any]:
 def _valid_enrichment_json() -> str:
     return json.dumps(
         {
-            "schemaVersion": "knowledge.graph.enrichment.v1",
+            "schemaVersion": TARGET_RESPONSE_SCHEMA_VERSION,
             "claims": [],
             "semanticEdges": [],
             "diagnostics": [],

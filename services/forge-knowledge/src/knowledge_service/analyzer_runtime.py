@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Protocol, Tuple
@@ -18,6 +17,7 @@ from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_policy_validator import GraphPolicyValidator
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphNode
 from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer, StructuralAnalysisEngine
+from knowledge_service.target_enrichment import FileEnrichmentMerger, LlmEnrichmentInputBuilder, LlmEnrichmentPlanner
 
 
 class AnalyzerProvider(Protocol):
@@ -367,83 +367,6 @@ class ExtractorRegistry:
         return context.policy_resolution.family or context.policy_resolution.format_id
 
 
-class StaticAnchorPayloadBuilder:
-    def build(self, static_graph: GraphAnalysisResult) -> Dict[str, Any]:
-        return {
-            "nodes": [
-                {
-                    "targetStableKey": node.localId,
-                    "nodeKind": node.nodeKind,
-                    "name": node.name,
-                    "qualifiedName": node.qualifiedName,
-                    "lineStart": node.lineStart,
-                    "lineEnd": node.lineEnd,
-                    "parentStableKey": node.parentLocalId,
-                    "metadata": node.metadata,
-                }
-                for node in static_graph.nodes
-            ],
-            "callsites": [
-                {
-                    "callsiteStableKey": edge.localId,
-                    "fromStableKey": edge.fromNodeLocalId,
-                    "toStableKey": edge.toNodeLocalId,
-                    "edgeType": edge.edgeType,
-                    "resolutionStatus": edge.resolutionStatus,
-                    "lineStart": edge.evidence[0].lineStart if edge.evidence else None,
-                    "lineEnd": edge.evidence[0].lineEnd if edge.evidence else None,
-                    "unresolvedTarget": edge.unresolvedTarget,
-                    "metadata": edge.metadata,
-                }
-                for edge in static_graph.edges
-                if edge.edgeType == "CALLS"
-            ],
-            "diagnostics": static_graph.diagnostics,
-        }
-
-
-class AnalyzerPayloadBuilder:
-    def __init__(self, static_anchor_builder: Optional[StaticAnchorPayloadBuilder] = None) -> None:
-        self.static_anchor_builder = static_anchor_builder or StaticAnchorPayloadBuilder()
-
-    def build(self, context: AnalyzerExecutionContext, extractor_result: ExtractorResult) -> Dict[str, Any]:
-        row = context.row
-        policy_payload = contract_payload(context.graph_contract)
-        metadata = self._metadata(context, extractor_result)
-        return {
-            "sourceId": row.get("source_id"),
-            "serviceLabel": row.get("display_name"),
-            "group": row.get("group_name"),
-            "tags": _json_list(row.get("tags_json")),
-            "relativePath": row.get("relative_path"),
-            "extension": context.policy_resolution.extension or row.get("extension"),
-            "sizeBytes": row.get("size_bytes"),
-            "contentHash": row.get("content_hash"),
-            "lineCount": context.line_count,
-            "language": self._language(context),
-            "format": context.policy_resolution.format_id,
-            "metadata": metadata,
-            "contentLines": [{"line": index, "text": line} for index, line in enumerate(context.content_lines, start=1)],
-            "staticAnchors": self.static_anchor_builder.build(extractor_result.graph_result),
-            "analysisPolicy": policy_payload,
-        }
-
-    def _metadata(self, context: AnalyzerExecutionContext, extractor_result: ExtractorResult) -> Dict[str, Any]:
-        metadata = {key: value for key, value in context.metadata.items() if key != "absoluteRoot"}
-        flow_domain = _row_value(context.row, "flow_domain")
-        if flow_domain:
-            metadata["flowDomain"] = str(flow_domain).upper()
-        if context.policy_resolution.artifact_labels:
-            metadata["artifactLabels"] = list(context.policy_resolution.artifact_labels)
-        return metadata
-
-    def _language(self, context: AnalyzerExecutionContext) -> Optional[str]:
-        language = str(context.row.get("language") or "").strip().lower()
-        if language and language != "unknown":
-            return language
-        return context.policy_resolution.family or context.policy_resolution.format_id
-
-
 class AnalyzerRuntime:
     def __init__(
         self,
@@ -451,16 +374,20 @@ class AnalyzerRuntime:
         *,
         policy_resolver: Optional[AnalyzerPolicyRuntimeResolver] = None,
         extractor_registry: Optional[ExtractorRegistry] = None,
-        payload_builder: Optional[AnalyzerPayloadBuilder] = None,
         anchor_validator: Optional[AnchorAwareGraphValidator] = None,
         graph_policy_validator: Optional[GraphPolicyValidator] = None,
+        enrichment_planner: Optional[LlmEnrichmentPlanner] = None,
+        target_input_builder: Optional[LlmEnrichmentInputBuilder] = None,
+        file_enrichment_merger: Optional[FileEnrichmentMerger] = None,
     ) -> None:
         self.policy = policy
         self.policy_resolver = policy_resolver or AnalyzerPolicyRuntimeResolver(policy)
         self.extractor_registry = extractor_registry or ExtractorRegistry()
-        self.payload_builder = payload_builder or AnalyzerPayloadBuilder()
         self.anchor_validator = anchor_validator or AnchorAwareGraphValidator()
         self.graph_policy_validator = graph_policy_validator or GraphPolicyValidator(policy)
+        self.enrichment_planner = enrichment_planner or LlmEnrichmentPlanner()
+        self.target_input_builder = target_input_builder or LlmEnrichmentInputBuilder()
+        self.file_enrichment_merger = file_enrichment_merger or FileEnrichmentMerger()
 
     async def execute(
         self,
@@ -473,15 +400,36 @@ class AnalyzerRuntime:
         context = self.policy_resolver.resolve(row, metadata, content_lines)
         extractor_result = self.extractor_registry.extract(self.policy, context)
         self._validate_extractor_output(extractor_result, context)
-        payload = self.payload_builder.build(context, extractor_result)
+        payload = self._result_payload(context)
         attempt_state = self._empty_attempt_state()
         retry_diagnostics: List[Dict[str, Any]] = []
         enrichment_result: Optional[GraphAnalysisResult] = None
         llm_called = False
         if self._requires_llm(context):
             self._enforce_llm_input_limits(context)
-            result, retry_diagnostics, attempt_state = await analyze_with_retry(analyzer, payload, context.line_count)
-            enrichment_result = self._graph_result(result)
+            plan = self.enrichment_planner.plan(extractor_result.graph_result, context.graph_contract)
+            target_results: List[GraphAnalysisResult] = []
+            target_attempt_states: List[Dict[str, Any]] = []
+            for target in plan.targets:
+                target_payload = self.target_input_builder.build(
+                    context=context,
+                    registry=plan.registry,
+                    target=target,
+                    budget_chars=int(self.policy.defaults.max_file_chars),
+                )
+                result, target_retry_diagnostics, target_attempt_state = await analyze_with_retry(analyzer, target_payload, context.line_count)
+                retry_diagnostics.extend(target_retry_diagnostics)
+                target_attempt_states.append(target_attempt_state)
+                target_result = self._graph_result(result)
+                self.graph_policy_validator.validate_llm_enrichment(
+                    target_result,
+                    context.graph_contract,
+                    context.line_count,
+                    relative_path=str(context.row.get("relative_path") or ""),
+                    static_graph=extractor_result.graph_result,
+                )
+                target_results.append(target_result)
+            enrichment_result = self.file_enrichment_merger.merge(target_results)
             self.graph_policy_validator.validate_llm_enrichment(
                 enrichment_result,
                 context.graph_contract,
@@ -489,6 +437,7 @@ class AnalyzerRuntime:
                 relative_path=str(context.row.get("relative_path") or ""),
                 static_graph=extractor_result.graph_result,
             )
+            attempt_state = self._merge_attempt_states(target_attempt_states)
             llm_called = True
         final_result = self.anchor_validator.merge(extractor_result.graph_result, enrichment_result, context.line_count)
         final_result.diagnostics.extend(self._runtime_diagnostics(retry_diagnostics))
@@ -557,6 +506,33 @@ class AnalyzerRuntime:
             "last_raw_response_preview": None,
         }
 
+    def _merge_attempt_states(self, states: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if not states:
+            return self._empty_attempt_state()
+        return {
+            "attempt_count": sum(int(state.get("attempt_count") or 0) for state in states),
+            "last_attempt_at": next((state.get("last_attempt_at") for state in reversed(states) if state.get("last_attempt_at")), None),
+            "last_error_code": next((state.get("last_error_code") for state in reversed(states) if state.get("last_error_code")), None),
+            "last_error_message": next((state.get("last_error_message") for state in reversed(states) if state.get("last_error_message")), None),
+            "last_raw_response_preview": next((state.get("last_raw_response_preview") for state in reversed(states) if state.get("last_raw_response_preview")), None),
+        }
+
+    def _result_payload(self, context: AnalyzerExecutionContext) -> Dict[str, Any]:
+        return {
+            "sourceId": context.row.get("source_id"),
+            "relativePath": context.row.get("relative_path"),
+            "lineCount": context.line_count,
+            "language": self._language(context),
+            "format": context.policy_resolution.format_id,
+            "analysisPolicy": contract_payload(context.graph_contract),
+        }
+
+    def _language(self, context: AnalyzerExecutionContext) -> Optional[str]:
+        language = str(context.row.get("language") or "").strip().lower()
+        if language and language != "unknown":
+            return language
+        return context.policy_resolution.family or context.policy_resolution.format_id
+
     def _validate_extractor_output(self, extractor_result: ExtractorResult, context: AnalyzerExecutionContext) -> None:
         extractor = self._extractor_validation_contract(extractor_result)
         self.graph_policy_validator.validate_extractor_output(
@@ -606,15 +582,3 @@ def _row_value(row: Mapping[str, Any], key: str) -> Any:
     except AttributeError:
         return None
     return None
-
-
-def _json_list(value: Any) -> List[Any]:
-    if isinstance(value, list):
-        return value
-    if not value:
-        return []
-    try:
-        parsed = json.loads(str(value))
-    except (TypeError, json.JSONDecodeError):
-        return []
-    return parsed if isinstance(parsed, list) else []
