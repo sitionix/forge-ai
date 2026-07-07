@@ -159,24 +159,19 @@ class AnalysisGraphContract:
 
     def render_contract_block(self) -> str:
         lines = [
-            "Analysis graph contract:",
+            "# Resolved analysis policy",
             f"- formatId: {self.format_id or ''}",
             f"- extractorId: {self.extractor_id or ''}",
             f"- policyId: {self.policy_id or ''}",
             f"- promptId: {self.prompt_id or ''}",
             f"- sourceView: {self.source_view or ''}",
             f"- llmMode: {self.llm_mode or ''}",
+            f"- evidenceRequired: {str(self.evidence_required).lower()}",
             f"- graphProfiles: {_join(self.graph_profiles)}",
-            f"- allowedNodeKinds: {_join(self.allowed_node_kinds)}",
-            f"- allowedEdgeTypes: {_join(self.allowed_edge_types)}",
-            f"- allowedClaimKinds: {_join(self.allowed_claim_kinds)}",
-            f"- allowedStatuses: {_join(self.allowed_statuses)}",
-            f"- allowedOrigins: {_join(self.allowed_origins)}",
-            f"- allowedEvidenceKinds: {_join(self.allowed_evidence_kinds)}",
-            f"- allowedResolutionStatuses: {_join(self.allowed_resolution_statuses)}",
-            f"- semanticNodeKinds: {_join(self.semantic_node_kinds)}",
-            f"- semanticEdgeTypes: {_join(self.semantic_edge_types)}",
-            f"- semanticClaimKinds: {_join(self.semantic_claim_kinds)}",
+            f"- artifactLabels: {_join(self.artifact_labels)}",
+            "- closedValues: see section 4.",
+            "- endpointRules: see allowedEdgeEndpoints in section 4.",
+            "- staticAnchors: see File metadata and content JSON.",
             "- unsupportedBehavior:",
         ]
         lines.extend(f"  - {key}: {value}" for key, value in self.unsupported_behavior.items())
@@ -270,26 +265,42 @@ class AnalysisPromptRenderer:
         return path.read_text(encoding="utf-8").strip()
 
     def _render_allowed_values(self, contract: AnalysisGraphContract) -> str:
-        return json.dumps({"allowedValues": self._allowed_values(contract)}, indent=2, sort_keys=True)
+        return json.dumps(
+            {
+                "allowedValues": self._allowed_values(contract),
+                "allowedEdgeEndpoints": self._allowed_edge_endpoints(contract),
+            },
+            indent=2,
+            sort_keys=True,
+        )
 
     def _allowed_values(self, contract: AnalysisGraphContract) -> dict[str, Any]:
         return {
+            "nodeKind": {
+                kind: {"description": _definition_description(self.policy.graph.nodes.get(kind))}
+                for kind in contract.allowed_node_kinds
+            },
             "claimKind": {
                 kind: {"description": _definition_description(self.policy.graph.claims.get(kind))}
                 for kind in contract.allowed_claim_kinds
             },
             "edgeType": {
-                kind: {
-                    "description": _definition_description(self.policy.graph.edges.get(kind)),
-                    "fromNodeKinds": list(contract.edge_from_kinds.get(kind, ())),
-                    "toNodeKinds": list(contract.edge_to_kinds.get(kind, ())),
-                }
+                kind: {"description": _definition_description(self.policy.graph.edges.get(kind))}
                 for kind in contract.allowed_edge_types
             },
             "resolutionStatus": {
                 kind: {"description": _definition_description(self.policy.graph.resolution_statuses.get(kind))}
                 for kind in contract.allowed_resolution_statuses
             },
+        }
+
+    def _allowed_edge_endpoints(self, contract: AnalysisGraphContract) -> dict[str, dict[str, list[str]]]:
+        return {
+            edge_type: {
+                "fromKinds": list(contract.edge_from_kinds.get(edge_type, ())),
+                "toKinds": list(contract.edge_to_kinds.get(edge_type, ())),
+            }
+            for edge_type in contract.allowed_edge_types
         }
 
     def _template(self, prompt_id: Optional[str]) -> str:

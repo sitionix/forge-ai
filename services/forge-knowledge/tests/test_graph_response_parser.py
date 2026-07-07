@@ -44,6 +44,7 @@ REQUIRED_ENRICHMENT_RESPONSE_FIELDS = (
     "text",
     "unresolvedTarget",
     "code",
+    "stage",
     "severity",
     "message",
 )
@@ -62,7 +63,7 @@ def test_prompt_contract_rendering_uses_yaml_for_code_text_and_document():
     assert "CONFIGURES" in text_prompt
     assert "CONFIG_REFERENCE" in text_prompt
     assert "document_graph" in document_prompt
-    assert "allowedNodeKinds" in document_prompt
+    assert '"nodeKind"' in document_prompt
     assert all(value not in code_prompt for value in FORBIDDEN_PROMPT_VALUES)
     assert all(value not in text_prompt for value in FORBIDDEN_PROMPT_VALUES)
     assert all(value not in document_prompt for value in FORBIDDEN_PROMPT_VALUES)
@@ -93,9 +94,9 @@ def test_rendered_response_contract_has_required_fields():
     for field_name in REQUIRED_ENRICHMENT_RESPONSE_FIELDS:
         assert field_name in prompt
     assert "Final JSON response shape" in prompt
-    assert "Field rules" in prompt
-    assert "Allowed values for this file from analysis-policy.yaml" in prompt
-    assert "Return rules" in prompt
+    assert "# 4. Closed graph contract" in prompt
+    assert "Allowed values and endpoint rules from analysis-policy.yaml" in prompt
+    assert "# 5. Output rules" in prompt
     assert "factOrigin" not in prompt
     assert "use INFO, WARN, or ERROR" not in prompt
     assert "fake external nodes" not in prompt
@@ -110,9 +111,9 @@ def test_rendered_response_contract_uses_template_and_replaces_placeholders():
     prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
     template = RESPONSE_CONTRACT_TEMPLATE_PATH.read_text(encoding="utf-8")
 
-    assert "Final JSON response shape (return this object shape only):" in template
-    assert "Final JSON response shape (return this object shape only):" in prompt
-    assert "- Use exactly the field names shown in the final response shape." in prompt
+    assert "# 6. Final JSON response shape" in template
+    assert "# 6. Final JSON response shape" in prompt
+    assert "Use exactly the field names shown in the final response shape." in prompt
     assert "{{FINAL_RESPONSE_SHAPE}}" not in prompt
     assert "{{ALLOWED_VALUES}}" not in prompt
     assert "{{GRAPH_RESPONSE_SHAPE}}" not in prompt
@@ -142,6 +143,7 @@ def test_rendered_response_contract_only_includes_allowed_values_for_resolved_po
     prompt = _render_prompt(renderer, "README.md", "# Service\nDocuments service behavior.\n")
     allowed_values = _allowed_values_from_prompt(prompt)
 
+    assert set(allowed_values["nodeKind"]) == {"FILE"}
     assert set(allowed_values["claimKind"]) == {"RESPONSIBILITY"}
     assert set(allowed_values["edgeType"]) == {"REFERENCES", "DEPENDS_ON", "CONFIGURES"}
     assert "resolutionStatus" in allowed_values
@@ -159,6 +161,65 @@ def test_rendered_response_contract_contains_single_full_json_shape():
 
     assert prompt.count('"schemaVersion": "knowledge.graph.enrichment.v1"') == 1
     assert "Empty arrays are valid when no grounded facts are found:" not in prompt
+
+
+def test_rendered_response_contract_is_closed_over_static_anchors_and_enums():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+
+    assert "Static anchors are the only valid existing graph nodes." in prompt
+    assert "Every static anchor key is an opaque identifier." in prompt
+    assert "Copy anchor keys exactly as shown in staticAnchors.nodes." in prompt
+    assert "Do not derive, append, shorten, split, normalize, or invent anchor keys" in prompt
+    assert "If an anchor key is not listed in staticAnchors.nodes, it does not exist." in prompt
+    assert "Allowed values are closed." in prompt
+    assert "Use only values listed in allowedValues." in prompt
+    assert "Do not create synonyms, variants, or more specific enum values." in prompt
+    assert "If no listed value fits, omit the item and add a diagnostic." in prompt
+
+
+def test_rendered_response_contract_contains_edge_checklist_and_unresolved_target_rule():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+
+    assert "Create a semantic edge only when all of these are true:" in prompt
+    assert "fromStableKey is exactly one listed static anchor key." in prompt
+    assert "edgeType is exactly one listed allowedValues.edgeType key." in prompt
+    assert "allowedEdgeEndpoints has an entry for edgeType" in prompt
+    assert "If any condition is not true, omit the edge and add a diagnostic explaining why it was omitted." in prompt
+    assert "For unresolved or external targets, use toStableKey null, resolutionStatus, and unresolvedTarget." in prompt
+    assert "Do not represent unresolved, unknown, or external target state by inventing enum values or node references." in prompt
+    assert "stage is the fixed value LLM_ENRICHMENT" in prompt
+
+
+def test_rendered_contract_includes_policy_endpoint_rules_as_compact_data():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+    contract_data = _allowed_contract_from_prompt(prompt)
+
+    assert contract_data["allowedEdgeEndpoints"]["CALLS"] == {"fromKinds": ["CALLABLE"], "toKinds": ["CALLABLE"]}
+    assert "FILE" in contract_data["allowedEdgeEndpoints"]["DECLARES"]["fromKinds"]
+    assert "TYPE" in contract_data["allowedEdgeEndpoints"]["DECLARES"]["toKinds"]
+    assert all(set(item) == {"fromKinds", "toKinds"} for item in contract_data["allowedEdgeEndpoints"].values())
+
+
+def test_rendered_prompt_stays_simple_without_alias_or_blacklist_sections():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+
+    assert prompt.count("# 3. Static anchors") == 1
+    assert prompt.count("Allowed values and endpoint rules from analysis-policy.yaml") == 1
+    assert prompt.count("# 6. Final JSON response shape") == 1
+    assert "invalidAliases" not in prompt
+    assert "edgeKind" not in prompt
+    assert "allowedEdgeKinds" not in prompt
+    assert "semanticEdgeKinds" not in prompt
+    assert "wrong alias" not in prompt.lower()
+    assert "previous" not in prompt.lower()
 
 
 def test_prompt_markdown_uses_response_shape_placeholder_instead_of_duplicated_json():
@@ -791,7 +852,11 @@ def _shared_response_shape() -> str:
 
 
 def _allowed_values_from_prompt(prompt: str) -> dict[str, Any]:
-    marker = "Allowed values for this file from analysis-policy.yaml:\n```json\n"
+    return _allowed_contract_from_prompt(prompt)["allowedValues"]
+
+
+def _allowed_contract_from_prompt(prompt: str) -> dict[str, Any]:
+    marker = "Allowed values and endpoint rules from analysis-policy.yaml:\n```json\n"
     start = prompt.index(marker) + len(marker)
     end = prompt.index("\n```", start)
-    return json.loads(prompt[start:end])["allowedValues"]
+    return json.loads(prompt[start:end])

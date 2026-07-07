@@ -20,6 +20,7 @@ POLICY_PATH = REPO_ROOT / "config" / "knowledge" / "analysis-policy.yaml"
 
 from knowledge_service import main
 from knowledge_service.analysis_client import OllamaAnalysisClient
+from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
 from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry, ExtractorResult
@@ -1727,6 +1728,29 @@ def wait_job(store, job_id):
 def test_non_localhost_ollama_base_url_rejected(tmp_path):
     with pytest.raises(Exception):
         OllamaAnalysisClient("http://example.com:11434", "model", 1)
+
+
+def test_ollama_prompt_omits_duplicate_analysis_policy_payload():
+    policy = load_analysis_policy(POLICY_PATH)
+    provider = GraphContractProvider(policy=policy)
+    contract = provider.resolve("src/Foo.java", "class Foo {}\n")
+    payload = {
+        "relativePath": "src/Foo.java",
+        "content": "class Foo {}\n",
+        "analysisPolicy": contract_payload(contract),
+        "staticAnchors": {"nodes": [{"targetStableKey": "file:src/Foo.java", "nodeKind": "FILE"}], "callsites": []},
+    }
+    client = OllamaAnalysisClient("http://127.0.0.1:11434", "model", 1)
+    try:
+        prompt = client._prompt(payload, contract=contract)
+    finally:
+        asyncio.run(client.aclose())
+
+    assert '"analysisPolicy"' not in prompt
+    assert "# Resolved analysis policy" in prompt
+    assert '"allowedValues"' in prompt
+    assert '"allowedEdgeEndpoints"' in prompt
+    assert '"staticAnchors"' in prompt
 
 
 def test_large_llm_required_file_fails_without_partial_graph(tmp_path):

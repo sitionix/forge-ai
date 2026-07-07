@@ -40,7 +40,8 @@
   "diagnostics": [
     {
       "code": "short diagnostic code",
-      "severity": "allowed severity",
+      "stage": "LLM_ENRICHMENT",
+      "severity": "diagnostic severity",
       "message": "short explanation"
     }
   ]

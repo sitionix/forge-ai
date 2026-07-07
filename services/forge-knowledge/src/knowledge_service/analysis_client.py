@@ -93,10 +93,13 @@ class OllamaAnalysisClient:
         parts.extend(
             [
                 "File metadata and content JSON:",
-                json.dumps(payload, ensure_ascii=False),
+                json.dumps(self._llm_payload(payload), ensure_ascii=False),
             ]
         )
         return "\n".join(parts)
+
+    def _llm_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {key: value for key, value in payload.items() if key != "analysisPolicy"}
 
     def _known_node_kinds(self, payload: Dict[str, Any]) -> dict[str, str]:
         static_anchors = payload.get("staticAnchors")
