@@ -180,7 +180,7 @@ def test_parser_failure_persists_response_and_parse_diagnostics(tmp_path):
     assert parser_failure["metadata"]["model"] == "diagnostic-model"
     assert parser_failure["metadata"]["responsePreviewHead"] == "{"
     assert parser_failure["metadata"]["responsePreviewTail"] == "{"
-    assert parser_failure["metadata"]["responseTruncated"] is True
+    assert parser_failure["metadata"]["responseTruncated"] is False
     assert parser_failure["metadata"]["parserErrorDetails"][0]["errorType"] == "JSON_PARSE_ERROR"
 
 
@@ -189,9 +189,14 @@ def test_long_response_preview_is_bounded(tmp_path):
     long_response = _valid_enrichment_json() + ("x" * 5000)
     client = _client_with_response({"response": long_response, "done": True})
 
-    _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    with pytest.raises(KnowledgeError) as exc:
+        _run_with_runtime_context(store, client.analyze(_payload(), 1))
 
-    response = store.runtime_events(job_id=JOB_ID, relative_path=RELATIVE_PATH)["events"][1]
+    assert exc.value.code == "ANALYSIS_AI_INVALID_JSON"
+    events = store.runtime_events(job_id=JOB_ID, relative_path=RELATIVE_PATH)["events"]
+    assert [event["stage"] for event in events] == ["LLM_REQUEST", "LLM_RESPONSE", "LLM_PARSE"]
+    response = events[1]
+    parser_failure = events[2]
     assert response["metadata"]["responseCharLength"] == len(long_response)
     assert len(response["metadata"]["responsePreviewHead"]) <= 2000
     assert len(response["metadata"]["responsePreviewTail"]) <= 2000
@@ -199,6 +204,10 @@ def test_long_response_preview_is_bounded(tmp_path):
     assert response["metadata"]["maxPreviewChars"] == 2000
     assert response["metadata"]["responsePreviewHead"] != long_response
     assert response["metadata"]["responsePreviewTail"] != long_response
+    assert parser_failure["status"] == "FAILED"
+    assert parser_failure["errorCode"] == "ANALYSIS_AI_INVALID_JSON"
+    assert parser_failure["metadata"]["responseTruncated"] is True
+    assert parser_failure["metadata"]["parserErrorDetails"][0]["errorType"] == "JSON_PARSE_ERROR"
 
 
 def test_runtime_diagnostics_survive_failed_file(tmp_path):

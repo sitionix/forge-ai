@@ -25,6 +25,7 @@ from knowledge_service.target_enrichment import (
     FileEnrichmentMerger,
     LlmEnrichmentInputBuilder,
     LlmEnrichmentPlanner,
+    TargetPromptRenderer,
     TargetResponseParserValidator,
 )
 
@@ -59,7 +60,7 @@ def test_llm_input_projection_includes_minimal_contract_and_excludes_internal_pa
     content_lines = ["class Foo {", "  void call() {}", "}"]
     context = resolver.resolve(_row("src/Foo.java", "\n".join(content_lines)), {"absoluteRoot": "/tmp/root"}, content_lines)
     registry = AnchorRefRegistry.build(_mixed_anchor_graph(), context.graph_contract)
-    target = LlmEnrichmentPlanner().plan(_mixed_anchor_graph(), context.graph_contract).targets[0]
+    target = LlmEnrichmentPlanner().plan(_mixed_anchor_graph(), context.graph_contract, max_target_calls=10).targets[0]
 
     payload = LlmEnrichmentInputBuilder().build(context=context, registry=registry, target=target, budget_chars=50000)
     llm_input = payload["llmInput"]
@@ -102,12 +103,45 @@ def test_planner_uses_contract_semantic_node_kinds_without_path_or_language_spec
     contract = _contract("src/Foo.java")
     graph = _mixed_anchor_graph()
 
-    default_targets = LlmEnrichmentPlanner().plan(graph, contract).targets
+    default_targets = LlmEnrichmentPlanner().plan(graph, contract, max_target_calls=10).targets
     field_only_contract = replace(contract, semantic_node_kinds=("FIELD",))
-    field_targets = LlmEnrichmentPlanner().plan(graph, field_only_contract).targets
+    field_targets = LlmEnrichmentPlanner().plan(graph, field_only_contract, max_target_calls=10).targets
 
     assert {target.kind for target in default_targets} == {"FILE", "TYPE", "CALLABLE"}
     assert [target.kind for target in field_targets] == ["FIELD"]
+
+
+def test_planner_fails_closed_when_target_count_exceeds_policy_cap():
+    contract = _contract("src/Foo.java")
+    graph = _mixed_anchor_graph()
+    many_graph = graph.copy(
+        update={
+            "nodes": [
+                *graph.nodes,
+                GraphNode(
+                    localId="svc|src/Foo.java|CALLABLE|Foo.extra()",
+                    nodeKind="CALLABLE",
+                    name="extra",
+                    qualifiedName="example.Foo.extra",
+                    parentLocalId="svc|src/Foo.java|TYPE|Foo",
+                    lineStart=18,
+                    lineEnd=18,
+                    confidence=1.0,
+                    metadata={"signature": "void extra()"},
+                ),
+            ]
+        }
+    )
+
+    targets = LlmEnrichmentPlanner().plan(many_graph, contract, max_target_calls=6).targets
+    with pytest.raises(KnowledgeError) as exc:
+        LlmEnrichmentPlanner().plan(many_graph, contract, max_target_calls=5, source_id="svc", relative_path="src/Foo.java")
+
+    assert len(targets) == 6
+    assert exc.value.code == "ANALYSIS_TARGET_PLAN_TOO_LARGE"
+    assert exc.value.details["targetCount"] == 6
+    assert exc.value.details["maxTargetCalls"] == 5
+    assert exc.value.details["semanticNodeKinds"] == list(contract.semantic_node_kinds)
 
 
 @pytest.mark.parametrize(
@@ -147,6 +181,41 @@ def test_target_response_validator_accepts_valid_refs_and_maps_to_stable_keys():
     assert parsed.claims[0].metadata["factOrigin"] == "LLM"
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        lambda: f"Here is JSON: {json.dumps(_valid_target_response())}",
+        lambda: f"```json\n{json.dumps(_valid_target_response())}\n```",
+        lambda: f"{json.dumps(_valid_target_response())}\n{json.dumps(_valid_target_response())}",
+    ],
+)
+def test_target_response_validator_rejects_embedded_or_fenced_json(raw):
+    payload, contract = _target_payload()
+
+    parsed = TargetResponseParserValidator().parse(raw(), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    assert parsed.code == "ANALYSIS_AI_INVALID_JSON"
+
+
+def test_target_response_validator_uses_resolution_status_contract_rules():
+    payload, contract = _target_payload()
+    response = _valid_target_response()
+    response["semanticEdges"][0]["toRef"] = None
+    parsed_with_default_rules = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+    flexible_contract = replace(
+        contract,
+        resolution_status_rules={
+            **contract.resolution_status_rules,
+            "RESOLVED": {"resolvedTarget": "optional", "unresolvedTarget": "optional"},
+        },
+    )
+    parsed_with_flexible_rules = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=flexible_contract)
+
+    assert isinstance(parsed_with_default_rules, GraphAnalysisParseFailure)
+    assert isinstance(parsed_with_flexible_rules, GraphAnalysisResult)
+
+
 def test_file_enrichment_merger_deduplicates_exact_duplicate_claims_and_edges():
     payload, contract = _target_payload()
     parsed = TargetResponseParserValidator().parse(json.dumps(_valid_target_response()), payload=payload, line_count=5, contract=contract)
@@ -167,6 +236,52 @@ def test_budget_overflow_fails_closed_before_provider_call():
         asyncio.run(_run_runtime("src/Foo.java", "class Foo { void call() {} }\n", policy=policy, analyzer=analyzer))
 
     assert exc.value.code == "ANALYSIS_LLM_TARGET_INPUT_TOO_LARGE"
+    assert exc.value.details["renderedPromptChars"] > exc.value.details["budgetChars"]
+    assert analyzer.calls == 0
+
+
+def test_rendered_prompt_budget_uses_actual_prompt_and_blocks_http_dispatch():
+    captured: list[dict[str, object]] = []
+    payload, _ = _target_payload()
+    compact_chars = len(json.dumps(payload["llmInput"], ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    rendered_chars = TargetPromptRenderer().estimate_prompt_chars(payload)
+    payload = {**payload, "budgetChars": compact_chars + 1}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"response": json.dumps(_valid_target_response())})
+
+    client = OllamaAnalysisClient(
+        "http://127.0.0.1:11434",
+        "model",
+        1,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        with pytest.raises(KnowledgeError) as exc:
+            asyncio.run(client.analyze(payload, 5))
+    finally:
+        asyncio.run(client.aclose())
+
+    assert compact_chars < payload["budgetChars"] < rendered_chars
+    assert exc.value.code == "ANALYSIS_LLM_TARGET_INPUT_TOO_LARGE"
+    assert exc.value.details["renderedPromptChars"] == rendered_chars
+    assert exc.value.details["budgetChars"] == payload["budgetChars"]
+    assert exc.value.details["targetRef"] == payload["targetRef"]
+    assert exc.value.details["relativePath"] == payload["relativePath"]
+    assert captured == []
+
+
+def test_runtime_target_plan_too_large_makes_no_llm_calls():
+    policy = load_analysis_policy(POLICY_PATH)
+    policy = replace(policy, defaults=replace(policy.defaults, max_target_calls_per_file=1))
+    analyzer = _CountingAnalyzer()
+
+    with pytest.raises(KnowledgeError) as exc:
+        asyncio.run(_run_runtime("src/Foo.java", "class Foo { void call() {} }\n", policy=policy, analyzer=analyzer))
+
+    assert exc.value.code == "ANALYSIS_TARGET_PLAN_TOO_LARGE"
+    assert exc.value.details["targetCount"] > exc.value.details["maxTargetCalls"]
     assert analyzer.calls == 0
 
 
@@ -233,7 +348,7 @@ def _target_payload():
     contract = _contract("src/Foo.java")
     graph = _mixed_anchor_graph()
     registry = AnchorRefRegistry.build(graph, contract)
-    target = next(item for item in LlmEnrichmentPlanner().plan(graph, contract).targets if item.kind == "CALLABLE")
+    target = next(item for item in LlmEnrichmentPlanner().plan(graph, contract, max_target_calls=10).targets if item.kind == "CALLABLE")
     context = AnalyzerPolicyRuntimeResolver(load_analysis_policy(POLICY_PATH)).resolve(
         _row("src/Foo.java", "class Foo {\n  void call() { helper(); }\n  void helper() {}\n}\n"),
         {},

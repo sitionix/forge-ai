@@ -90,6 +90,7 @@ class PromptDefinition:
 @dataclass(frozen=True)
 class AnalysisPolicyDefaults:
     max_file_chars: int
+    max_target_calls_per_file: int
     canonical_source_view: str
     default_policy: str
     default_graph_profiles: List[str]

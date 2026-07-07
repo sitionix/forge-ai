@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional
 
-from knowledge_service.analysis_graph_contract import AnalysisGraphContract, contract_payload
+from knowledge_service.analysis_graph_contract import AnalysisGraphContract, ResolutionStatusContract, contract_payload
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_response_parser import GraphAnalysisParseFailure
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
@@ -131,7 +131,15 @@ class LlmEnrichmentPlan:
 
 
 class LlmEnrichmentPlanner:
-    def plan(self, static_graph: GraphAnalysisResult, contract: AnalysisGraphContract) -> LlmEnrichmentPlan:
+    def plan(
+        self,
+        static_graph: GraphAnalysisResult,
+        contract: AnalysisGraphContract,
+        *,
+        max_target_calls: int,
+        source_id: Optional[str] = None,
+        relative_path: Optional[str] = None,
+    ) -> LlmEnrichmentPlan:
         registry = AnchorRefRegistry.build(static_graph, contract)
         eligible_kinds = set(contract.semantic_node_kinds)
         targets = tuple(
@@ -146,6 +154,18 @@ class LlmEnrichmentPlanner:
                 stage="LLM_ENRICHMENT",
                 severity="ERROR",
                 allowedNodeKinds=list(contract.allowed_node_kinds),
+                semanticNodeKinds=list(contract.semantic_node_kinds),
+            )
+        if max_target_calls < 1 or len(targets) > max_target_calls:
+            raise KnowledgeError(
+                "ANALYSIS_TARGET_PLAN_TOO_LARGE",
+                "Target-anchor enrichment plan exceeds the configured maximum target calls per file.",
+                stage="LLM_ENRICHMENT",
+                severity="ERROR",
+                sourceId=source_id,
+                relativePath=relative_path,
+                targetCount=len(targets),
+                maxTargetCalls=max_target_calls,
                 semanticNodeKinds=list(contract.semantic_node_kinds),
             )
         return LlmEnrichmentPlan(registry=registry, targets=targets)
@@ -188,20 +208,6 @@ class LlmEnrichmentInputBuilder:
             },
             "responseShape": self.response_shape(),
         }
-        rendered = json.dumps(llm_input, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        if len(rendered) > budget_chars:
-            raise KnowledgeError(
-                "ANALYSIS_LLM_TARGET_INPUT_TOO_LARGE",
-                "Minimal target-anchor LLM input exceeds the configured analysis budget; no fallback prompt was used.",
-                stage="LLM_ENRICHMENT",
-                severity="ERROR",
-                sourceId=context.row.get("source_id"),
-                relativePath=context.row.get("relative_path"),
-                targetRef=target.ref,
-                targetKind=target.kind,
-                budgetChars=budget_chars,
-                projectedChars=len(rendered),
-            )
         return {
             "sourceId": context.row.get("source_id"),
             "relativePath": context.row.get("relative_path"),
@@ -209,6 +215,7 @@ class LlmEnrichmentInputBuilder:
             "targetKind": target.kind,
             "requestKind": TARGET_REQUEST_KIND,
             "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
+            "budgetChars": int(budget_chars),
             "analysisPolicy": contract_payload(context.graph_contract),
             "llmInput": llm_input,
             "_refToStableKey": dict(registry.ref_to_stable_key),
@@ -283,6 +290,26 @@ class TargetPromptRenderer:
         if repair_prompt:
             parts.extend(["Repair instructions for the same target request:", repair_prompt])
         return "\n".join(parts)
+
+    def estimate_prompt_chars(self, payload: Mapping[str, Any], repair_prompt: Optional[str] = None) -> int:
+        return len(self.render(payload, repair_prompt))
+
+    def ensure_within_budget(self, payload: Mapping[str, Any], budget_chars: int, repair_prompt: Optional[str] = None) -> int:
+        rendered_prompt_chars = self.estimate_prompt_chars(payload, repair_prompt)
+        if rendered_prompt_chars > budget_chars:
+            raise KnowledgeError(
+                "ANALYSIS_LLM_TARGET_INPUT_TOO_LARGE",
+                "Rendered target-anchor LLM prompt exceeds the configured analysis budget; no fallback prompt was used.",
+                stage="LLM_ENRICHMENT",
+                severity="ERROR",
+                sourceId=payload.get("sourceId"),
+                relativePath=payload.get("relativePath"),
+                targetRef=payload.get("targetRef"),
+                targetKind=payload.get("targetKind"),
+                budgetChars=budget_chars,
+                renderedPromptChars=rendered_prompt_chars,
+            )
+        return rendered_prompt_chars
 
 
 class TargetResponseParserValidator:
@@ -447,7 +474,7 @@ class TargetResponseParserValidator:
                 )
             )
         elif resolution_status:
-            self._edge_resolution_status(item, path, resolution_status, details)
+            self._edge_resolution_status(item, path, resolution_status, ResolutionStatusContract.from_graph_contract(contract), details)
         self._confidence(item, path, details)
         self._evidence_list(item.get("evidence"), f"{path}.evidence", line_count, details)
 
@@ -519,23 +546,32 @@ class TargetResponseParserValidator:
                 )
             )
 
-    def _edge_resolution_status(self, item: Mapping[str, Any], path: str, status: str, details: list[dict[str, Any]]) -> None:
+    def _edge_resolution_status(
+        self,
+        item: Mapping[str, Any],
+        path: str,
+        status: str,
+        rules: ResolutionStatusContract,
+        details: list[dict[str, Any]],
+    ) -> None:
         to_ref = item.get("toRef")
         unresolved_target = item.get("unresolvedTarget")
-        if status == "RESOLVED" and not to_ref:
-            details.append(self._schema_error(f"{path}.resolutionStatus", "RESOLVED edge requires toRef.", actual=status, expected="toRef"))
-        if status in {"UNRESOLVED", "EXTERNAL_TARGET", "DYNAMIC_TARGET", "AMBIGUOUS", "MULTIPLE_CANDIDATES"} and to_ref:
-            details.append(self._schema_error(f"{path}.resolutionStatus", f"{status} edge must not have toRef.", actual=status, expected="null toRef"))
-        if status in {"EXTERNAL_TARGET", "DYNAMIC_TARGET"} and not isinstance(unresolved_target, dict):
+        if rules.requires_resolved_target(status) and not to_ref:
+            details.append(self._schema_error(f"{path}.resolutionStatus", "edge resolution requires toRef.", actual=status, expected="toRef"))
+        if rules.forbids_resolved_target(status) and to_ref:
+            details.append(self._schema_error(f"{path}.resolutionStatus", "edge resolution must not have toRef.", actual=status, expected="null toRef"))
+        if rules.requires_unresolved_target(status) and not isinstance(unresolved_target, dict):
             details.append(
                 self._schema_error(
                     f"{path}.unresolvedTarget",
-                    f"{status} edge requires unresolvedTarget.",
+                    "edge resolution requires unresolvedTarget.",
                     actual=unresolved_target,
                     expected="object",
                 )
             )
-        if to_ref is None and status != "RESOLVED" and unresolved_target is not None and not isinstance(unresolved_target, dict):
+        if unresolved_target is not None and not rules.allows_unresolved_target(status):
+            details.append(self._schema_error(f"{path}.unresolvedTarget", "edge resolution must not include unresolvedTarget.", actual=unresolved_target, expected="null"))
+        if to_ref is None and unresolved_target is not None and not isinstance(unresolved_target, dict):
             details.append(self._schema_error(f"{path}.unresolvedTarget", "unresolvedTarget must be an object or null.", actual=unresolved_target, expected="object or null"))
 
     def _evidence_list(self, value: Any, path: str, line_count: int, details: list[dict[str, Any]]) -> None:
@@ -620,13 +656,6 @@ class TargetResponseParserValidator:
         try:
             return json.loads(raw), None
         except json.JSONDecodeError as exc:
-            extracted = self._extract_first_json_object(raw)
-            if extracted is not None:
-                try:
-                    return json.loads(extracted), None
-                except json.JSONDecodeError as extracted_exc:
-                    exc = extracted_exc
-                    raw = extracted
             return None, GraphAnalysisParseFailure(
                 "ANALYSIS_AI_INVALID_JSON",
                 f"AI analyzer returned invalid JSON: JSON parse error at line {exc.lineno} column {exc.colno}: {exc.msg}",
@@ -639,37 +668,10 @@ class TargetResponseParserValidator:
                         "column": exc.colno,
                         "charPosition": exc.pos,
                         "rawPreview": str(raw)[:800],
-                        "responseTruncated": self._extract_first_json_object(str(raw)) is None and "{" in str(raw),
+                        "responseTruncated": len(str(raw)) > 800,
                     }
                 ],
             )
-
-    def _extract_first_json_object(self, raw: str) -> str | None:
-        start = raw.find("{")
-        if start < 0:
-            return None
-        depth = 0
-        in_string = False
-        escaped = False
-        for index in range(start, len(raw)):
-            char = raw[index]
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == '"':
-                    in_string = False
-                continue
-            if char == '"':
-                in_string = True
-            elif char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    return raw[start : index + 1]
-        return None
 
     def _validate_object_fields(self, item: Mapping[str, Any], path: str, allowed: set[str], details: list[dict[str, Any]]) -> None:
         extra = sorted(set(item.keys()) - allowed)

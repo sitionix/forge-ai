@@ -17,7 +17,7 @@ from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_policy_validator import GraphPolicyValidator
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphNode
 from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer, StructuralAnalysisEngine
-from knowledge_service.target_enrichment import FileEnrichmentMerger, LlmEnrichmentInputBuilder, LlmEnrichmentPlanner
+from knowledge_service.target_enrichment import FileEnrichmentMerger, LlmEnrichmentInputBuilder, LlmEnrichmentPlanner, TargetPromptRenderer
 
 
 class AnalyzerProvider(Protocol):
@@ -379,6 +379,7 @@ class AnalyzerRuntime:
         enrichment_planner: Optional[LlmEnrichmentPlanner] = None,
         target_input_builder: Optional[LlmEnrichmentInputBuilder] = None,
         file_enrichment_merger: Optional[FileEnrichmentMerger] = None,
+        target_prompt_renderer: Optional[TargetPromptRenderer] = None,
     ) -> None:
         self.policy = policy
         self.policy_resolver = policy_resolver or AnalyzerPolicyRuntimeResolver(policy)
@@ -388,6 +389,7 @@ class AnalyzerRuntime:
         self.enrichment_planner = enrichment_planner or LlmEnrichmentPlanner()
         self.target_input_builder = target_input_builder or LlmEnrichmentInputBuilder()
         self.file_enrichment_merger = file_enrichment_merger or FileEnrichmentMerger()
+        self.target_prompt_renderer = target_prompt_renderer or TargetPromptRenderer()
 
     async def execute(
         self,
@@ -407,7 +409,14 @@ class AnalyzerRuntime:
         llm_called = False
         if self._requires_llm(context):
             self._enforce_llm_input_limits(context)
-            plan = self.enrichment_planner.plan(extractor_result.graph_result, context.graph_contract)
+            budget_chars = int(self.policy.defaults.max_file_chars)
+            plan = self.enrichment_planner.plan(
+                extractor_result.graph_result,
+                context.graph_contract,
+                max_target_calls=int(self.policy.defaults.max_target_calls_per_file),
+                source_id=context.row.get("source_id"),
+                relative_path=context.row.get("relative_path"),
+            )
             target_results: List[GraphAnalysisResult] = []
             target_attempt_states: List[Dict[str, Any]] = []
             for target in plan.targets:
@@ -415,8 +424,9 @@ class AnalyzerRuntime:
                     context=context,
                     registry=plan.registry,
                     target=target,
-                    budget_chars=int(self.policy.defaults.max_file_chars),
+                    budget_chars=budget_chars,
                 )
+                self.target_prompt_renderer.ensure_within_budget(target_payload, budget_chars)
                 result, target_retry_diagnostics, target_attempt_state = await analyze_with_retry(analyzer, target_payload, context.line_count)
                 retry_diagnostics.extend(target_retry_diagnostics)
                 target_attempt_states.append(target_attempt_state)

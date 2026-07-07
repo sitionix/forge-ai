@@ -4,6 +4,7 @@ analysis:
 
   defaults:
     maxFileChars: 120000
+    maxTargetCallsPerFile: 200
     canonicalSourceView: contentLines
     defaultPolicy: text_graph_enrichment
     defaultGraphProfiles: [base_file_graph]
@@ -170,18 +171,32 @@ analysis:
     resolutionStatuses:
       RESOLVED:
         description: Target was matched to an exact static anchor and toStableKey must be set.
+        resolvedTarget: required
+        unresolvedTarget: forbidden
       UNRESOLVED:
         description: Target could not be matched to a known static anchor and toStableKey must be null.
+        resolvedTarget: forbidden
+        unresolvedTarget: optional
       EXTERNAL_TARGET:
         description: Target is outside the current static anchors and must be represented with unresolvedTarget and null toStableKey.
+        resolvedTarget: forbidden
+        unresolvedTarget: required
       AMBIGUOUS:
         description: Target has more than one plausible interpretation and should not be forced to a single anchor.
+        resolvedTarget: forbidden
+        unresolvedTarget: optional
       MULTIPLE_CANDIDATES:
         description: Resolver or evidence found several candidate targets and no single toStableKey should be chosen.
+        resolvedTarget: forbidden
+        unresolvedTarget: optional
       INTERFACE_TARGET:
         description: Target is represented through an interface, abstract declaration, protocol, or contract boundary.
+        resolvedTarget: optional
+        unresolvedTarget: optional
       DYNAMIC_TARGET:
         description: Target is computed dynamically at runtime and cannot be safely resolved to a static anchor.
+        resolvedTarget: forbidden
+        unresolvedTarget: required
 
   semantic:
     indexedNodeKinds: [FILE, TYPE, CALLABLE]

@@ -42,6 +42,7 @@ class AnalysisGraphContract:
     semantic_claim_kinds: tuple[str, ...]
     edge_from_kinds: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     edge_to_kinds: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    resolution_status_rules: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
     unsupported_behavior: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -83,6 +84,7 @@ class AnalysisGraphContract:
             semantic_claim_kinds=tuple(resolution.semantic_claim_kinds),
             edge_from_kinds=edge_from_kinds,
             edge_to_kinds=edge_to_kinds,
+            resolution_status_rules=_resolution_status_rules(policy.graph.resolution_statuses, resolution.resolution_statuses),
             unsupported_behavior=dict(resolution.unsupported_behavior),
         )
 
@@ -117,6 +119,7 @@ class AnalysisGraphContract:
             semantic_claim_kinds=tuple(_string_list(raw.get("semanticClaimKinds"))),
             edge_from_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "from"),
             edge_to_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "to"),
+            resolution_status_rules=_resolution_status_rule_payload(raw.get("resolutionStatusRules")),
             unsupported_behavior={str(key): str(value) for key, value in (raw.get("unsupportedBehavior") or {}).items()},
         )
 
@@ -149,6 +152,7 @@ class AnalysisGraphContract:
                 kind: {"from": list(self.edge_from_kinds.get(kind, ())), "to": list(self.edge_to_kinds.get(kind, ()))}
                 for kind in self.allowed_edge_types
             },
+            "resolutionStatusRules": {status: dict(rule) for status, rule in self.resolution_status_rules.items()},
             "unsupportedBehavior": dict(self.unsupported_behavior),
             "evidenceRules": {
                 "lineRangesRequired": self.evidence_required,
@@ -184,6 +188,30 @@ class AnalysisGraphContract:
             ]
         )
         return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class ResolutionStatusContract:
+    rules: Mapping[str, Mapping[str, str]]
+
+    @classmethod
+    def from_graph_contract(cls, contract: AnalysisGraphContract) -> "ResolutionStatusContract":
+        return cls(contract.resolution_status_rules)
+
+    def requires_resolved_target(self, status: str) -> bool:
+        return self._rule(status).get("resolvedTarget") == "required"
+
+    def forbids_resolved_target(self, status: str) -> bool:
+        return self._rule(status).get("resolvedTarget") == "forbidden"
+
+    def requires_unresolved_target(self, status: str) -> bool:
+        return self._rule(status).get("unresolvedTarget") == "required"
+
+    def allows_unresolved_target(self, status: str) -> bool:
+        return self._rule(status).get("unresolvedTarget", "optional") != "forbidden"
+
+    def _rule(self, status: str) -> Mapping[str, str]:
+        return self.rules.get(status) or {}
 
 
 class GraphContractProvider:
@@ -384,6 +412,36 @@ def _edge_endpoint_map(value: Any, side: str) -> dict[str, tuple[str, ...]]:
         if not isinstance(kind, str) or not isinstance(rule, Mapping):
             continue
         result[kind] = tuple(_string_list(rule.get(side)))
+    return result
+
+
+def _resolution_status_rules(raw_rules: Mapping[str, Mapping[str, Any]], allowed_statuses: list[str]) -> dict[str, dict[str, str]]:
+    return {
+        status: _resolution_status_rule(raw_rules.get(status))
+        for status in allowed_statuses
+    }
+
+
+def _resolution_status_rule(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    rule: dict[str, str] = {}
+    resolved_target = value.get("resolvedTarget")
+    if isinstance(resolved_target, str):
+        rule["resolvedTarget"] = resolved_target
+    unresolved_target = value.get("unresolvedTarget")
+    if isinstance(unresolved_target, str):
+        rule["unresolvedTarget"] = unresolved_target
+    return rule
+
+
+def _resolution_status_rule_payload(value: Any) -> dict[str, dict[str, str]]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    for status, rule in value.items():
+        if isinstance(status, str):
+            result[status] = _resolution_status_rule(rule)
     return result
 
 

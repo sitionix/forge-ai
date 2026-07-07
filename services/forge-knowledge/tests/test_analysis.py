@@ -667,6 +667,7 @@ def payload_top_level_shape():
         "targetKind",
         "requestKind",
         "schemaVersion",
+        "budgetChars",
         "llmInput",
         "analysisPolicy",
         "_refToStableKey",
@@ -3028,7 +3029,7 @@ def test_retry_repair_prompt_keeps_minimal_target_input(tmp_path):
     def flaky_response(llm_input):
         attempts["count"] += 1
         if attempts["count"] == 1:
-            return "{bad"
+            return f"Here is JSON: {json.dumps(_empty_target_response(llm_input))}"
         return _empty_target_response(llm_input)
 
     client = _capturing_ollama_client(captured, flaky_response)

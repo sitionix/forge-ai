@@ -41,6 +41,7 @@ class OllamaAnalysisClient:
     async def analyze(self, payload: Dict[str, Any], line_count: int, repair_prompt: str | None = None) -> GraphAnalysisResult:
         contract = self.contract_provider.resolve_payload(payload)
         prompt = self._prompt(payload, repair_prompt, contract)
+        self._enforce_prompt_budget(payload, prompt)
         request_started_at = utc_now()
         request_started = time.perf_counter()
         request_metadata = self._request_metadata(payload, prompt, repair_prompt)
@@ -177,6 +178,29 @@ class OllamaAnalysisClient:
         if isinstance(llm_input, dict):
             return dict(llm_input)
         return {}
+
+    def _enforce_prompt_budget(self, payload: Dict[str, Any], prompt: str) -> None:
+        raw_budget = payload.get("budgetChars")
+        if raw_budget is None:
+            return
+        try:
+            budget_chars = int(raw_budget)
+        except (TypeError, ValueError):
+            return
+        rendered_prompt_chars = len(prompt)
+        if rendered_prompt_chars > budget_chars:
+            raise KnowledgeError(
+                "ANALYSIS_LLM_TARGET_INPUT_TOO_LARGE",
+                "Rendered target-anchor LLM prompt exceeds the configured analysis budget; no fallback prompt was used.",
+                stage="LLM_ENRICHMENT",
+                severity="ERROR",
+                sourceId=payload.get("sourceId"),
+                relativePath=payload.get("relativePath"),
+                targetRef=payload.get("targetRef"),
+                targetKind=payload.get("targetKind"),
+                budgetChars=budget_chars,
+                renderedPromptChars=rendered_prompt_chars,
+            )
 
     def _require_localhost(self, base_url: str) -> str:
         parsed = urllib.parse.urlparse(base_url)
