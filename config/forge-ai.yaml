@@ -41,7 +41,7 @@ forge:
           base-url: http://localhost:11434
           model: qwen2.5-coder:14b
           request-timeout-seconds: 180
-          context-tokens: 32768
+          context-tokens: 65536
           max-file-chars: 60000
           max-chunk-chars: 20000
           concurrency: 1

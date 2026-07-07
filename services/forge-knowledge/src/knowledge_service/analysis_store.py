@@ -6,6 +6,7 @@ import hashlib
 import sqlite3
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime, timezone
@@ -118,6 +119,7 @@ class AnalysisStore:
             self._create_graph_edge_schema(conn)
             self._create_graph_evidence_link_schema(conn)
             self._create_graph_diagnostics_schema(conn)
+            self._create_runtime_event_schema(conn)
             self._create_analysis_indexes(conn)
             self._run_post_schema_reconciliation(conn)
 
@@ -172,7 +174,7 @@ class AnalysisStore:
 
     def _is_current_graph_persistence_table(self, table: str) -> bool:
         return (
-            table in {"analysis_jobs", "analysis_files", "analysis_job_files"}
+            table in {"analysis_jobs", "analysis_files", "analysis_job_files", "analysis_runtime_events"}
             or table.startswith("analysis_graph_")
             or table.startswith("semantic_")
             or table.startswith("graph_")
@@ -506,6 +508,31 @@ class AnalysisStore:
             )
         """)
 
+    def _create_runtime_event_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_runtime_events (
+                id TEXT PRIMARY KEY,
+                job_id TEXT NOT NULL,
+                source_id TEXT,
+                inventory_file_id INTEGER,
+                analysis_file_id INTEGER,
+                relative_path TEXT,
+                content_hash TEXT,
+                attempt INTEGER,
+                stage TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                duration_ms INTEGER,
+                error_code TEXT,
+                error_message TEXT,
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(job_id) REFERENCES analysis_jobs(job_id) ON DELETE CASCADE
+            )
+        """)
+
     def _create_analysis_indexes(self, conn: sqlite3.Connection) -> None:
         indexes_by_table = {
             "analysis_files": (
@@ -539,6 +566,11 @@ class AnalysisStore:
             ),
             "analysis_graph_diagnostics": (
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_diagnostics_source_code ON analysis_graph_diagnostics(source_id, severity, code)",
+            ),
+            "analysis_runtime_events": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_runtime_events_file ON analysis_runtime_events(job_id, source_id, relative_path, attempt)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_runtime_events_stage ON analysis_runtime_events(job_id, stage, status)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_runtime_events_path ON analysis_runtime_events(source_id, relative_path, created_at)",
             ),
         }
         seen_names: Set[str] = set()
@@ -821,6 +853,91 @@ class AnalysisStore:
                 refresh_overview_for_sources(conn, [row["source_id"]])
 
         self._write_with_busy_retry(write)
+
+    def record_runtime_event(self, event: Dict[str, Any]) -> None:
+        self.init()
+        now = datetime.now(timezone.utc).isoformat()
+        metadata = event.get("metadata")
+        if metadata is None:
+            metadata = event.get("metadata_json")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        params = (
+            str(event.get("id") or uuid.uuid4()),
+            str(event["job_id"]),
+            event.get("source_id"),
+            event.get("inventory_file_id"),
+            event.get("analysis_file_id"),
+            event.get("relative_path"),
+            event.get("content_hash"),
+            event.get("attempt"),
+            str(event["stage"]),
+            str(event["event_type"]),
+            str(event["status"]),
+            event.get("started_at"),
+            event.get("completed_at"),
+            event.get("duration_ms"),
+            event.get("error_code"),
+            event.get("error_message"),
+            json.dumps(metadata, ensure_ascii=False, default=str),
+            str(event.get("created_at") or now),
+        )
+
+        def write(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                """
+                INSERT INTO analysis_runtime_events(
+                    id, job_id, source_id, inventory_file_id, analysis_file_id, relative_path, content_hash,
+                    attempt, stage, event_type, status, started_at, completed_at, duration_ms,
+                    error_code, error_message, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                params,
+            )
+
+        self._write_with_busy_retry(write)
+
+    def runtime_events(
+        self,
+        *,
+        job_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+        relative_path: Optional[str] = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        self.init()
+        clauses: List[str] = []
+        params: List[Any] = []
+        if job_id:
+            clauses.append("job_id = ?")
+            params.append(job_id)
+        if source_id:
+            clauses.append("source_id = ?")
+            params.append(source_id)
+        if relative_path:
+            clauses.append("relative_path = ?")
+            params.append(relative_path)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        bounded_limit = max(1, min(int(limit), 1000))
+        bounded_offset = max(0, int(offset))
+        with self._connect() as conn:
+            total = conn.execute(f"SELECT COUNT(*) AS count FROM analysis_runtime_events {where}", params).fetchone()["count"]
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM analysis_runtime_events
+                {where}
+                ORDER BY created_at, id
+                LIMIT ? OFFSET ?
+                """,
+                [*params, bounded_limit, bounded_offset],
+            ).fetchall()
+        return {
+            "total": int(total or 0),
+            "events": [self._runtime_event(row) for row in rows],
+        }
 
     def stop_incomplete_job_files(self, job_id: str) -> None:
         self.init()
@@ -4486,6 +4603,28 @@ class AnalysisStore:
             "message": row["message"],
             "lineStart": row["line_start"],
             "lineEnd": row["line_end"],
+            "metadata": json.loads(row["metadata_json"] or "{}"),
+            "createdAt": row["created_at"],
+        }
+
+    def _runtime_event(self, row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "jobId": row["job_id"],
+            "sourceId": row["source_id"],
+            "inventoryFileId": row["inventory_file_id"],
+            "analysisFileId": row["analysis_file_id"],
+            "relativePath": row["relative_path"],
+            "contentHash": row["content_hash"],
+            "attempt": row["attempt"],
+            "stage": row["stage"],
+            "eventType": row["event_type"],
+            "status": row["status"],
+            "startedAt": row["started_at"],
+            "completedAt": row["completed_at"],
+            "durationMs": row["duration_ms"],
+            "errorCode": row["error_code"],
+            "errorMessage": row["error_message"],
             "metadata": json.loads(row["metadata_json"] or "{}"),
             "createdAt": row["created_at"],
         }
