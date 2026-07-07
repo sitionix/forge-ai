@@ -77,11 +77,13 @@ ANALYSIS_KEYS = {
 DEFAULT_KEYS = {"maxFileChars", "canonicalSourceView", "defaultPolicy", "defaultGraphProfiles", "evidencePolicy"}
 PROMPT_KEYS = {"file", "responseShape"}
 GRAPH_KEYS = {"nodes", "edges", "claims", "statuses", "origins", "evidenceKinds", "resolutionStatuses"}
-GRAPH_NODE_KEYS = {"identity", "semanticEligible"}
-GRAPH_EDGE_KEYS = {"from", "to", "semanticEligible"}
-GRAPH_CLAIM_KEYS = {"evidenceRequired", "materialSupportRequired", "semanticEligible"}
-GRAPH_STATUS_KEYS = {"persistGraphFact", "requiresValidEvidence", "emitDiagnostic", "requiresDerivationTrace", "queryEligible"}
-GRAPH_ORIGIN_KEYS = {"canBeTrusted", "requiresValidEvidence", "requiresDerivationTrace"}
+DESCRIPTION_KEY = "description"
+GRAPH_NODE_KEYS = {"identity", "semanticEligible", DESCRIPTION_KEY}
+GRAPH_EDGE_KEYS = {"from", "to", "semanticEligible", DESCRIPTION_KEY}
+GRAPH_CLAIM_KEYS = {"evidenceRequired", "materialSupportRequired", "semanticEligible", DESCRIPTION_KEY}
+GRAPH_STATUS_KEYS = {"persistGraphFact", "requiresValidEvidence", "emitDiagnostic", "requiresDerivationTrace", "queryEligible", DESCRIPTION_KEY}
+GRAPH_ORIGIN_KEYS = {"canBeTrusted", "requiresValidEvidence", "requiresDerivationTrace", DESCRIPTION_KEY}
+GRAPH_DESCRIPTION_KEYS = {DESCRIPTION_KEY}
 SEMANTIC_KEYS = {"indexedNodeKinds", "indexedClaimKinds", "indexedEdgeKinds", "unsupportedSemanticKind"}
 FORMAT_KEYS = {"extensions", "family", "extractor", "policy", "prompt", "graphProfiles", "artifactClassifiers"}
 ARTIFACT_CLASSIFIER_KEYS = {"id", "detection", "addsGraphProfiles"}
@@ -300,6 +302,7 @@ def _parse_graph_nodes(data: Mapping[Any, Any], diagnostics: List[AnalysisPolicy
             kind=kind,
             identity=_required_str(item, "identity", path, diagnostics),
             semantic_eligible=_required_bool(item, "semanticEligible", path, diagnostics),
+            description=_optional_description(item, path, diagnostics),
         )
     return nodes
 
@@ -318,6 +321,7 @@ def _parse_graph_edges(data: Mapping[Any, Any], diagnostics: List[AnalysisPolicy
             from_kinds=_required_str_list(item, "from", path, diagnostics),
             to_kinds=_required_str_list(item, "to", path, diagnostics),
             semantic_eligible=_required_bool(item, "semanticEligible", path, diagnostics),
+            description=_optional_description(item, path, diagnostics),
         )
     return edges
 
@@ -336,6 +340,7 @@ def _parse_graph_claims(data: Mapping[Any, Any], diagnostics: List[AnalysisPolic
             evidence_required=_required_bool(item, "evidenceRequired", path, diagnostics),
             material_support_required=_required_bool(item, "materialSupportRequired", path, diagnostics),
             semantic_eligible=_required_bool(item, "semanticEligible", path, diagnostics),
+            description=_optional_description(item, path, diagnostics),
         )
     return claims
 
@@ -355,6 +360,9 @@ def _parse_freeform_flag_map(
         item = _require_mapping(raw, item_path, diagnostics)
         _check_allowed_keys(item, item_path, allowed_item_keys, diagnostics)
         for key, value in item.items():
+            if key == DESCRIPTION_KEY:
+                _optional_description(item, item_path, diagnostics)
+                continue
             if not isinstance(value, bool):
                 diagnostics.append(
                     AnalysisPolicyDiagnostic(
@@ -376,7 +384,8 @@ def _parse_empty_map(data: Mapping[Any, Any], path: str, diagnostics: List[Analy
             continue
         item_path = f"{path}.{item_id}"
         item = _require_mapping(raw, item_path, diagnostics)
-        _check_allowed_keys(item, item_path, set(), diagnostics)
+        _check_allowed_keys(item, item_path, GRAPH_DESCRIPTION_KEYS, diagnostics)
+        _optional_description(item, item_path, diagnostics)
         result[item_id] = dict(item)
     return result
 
@@ -857,6 +866,22 @@ def _optional_bool(
             )
         )
         return default
+    return value
+
+
+def _optional_description(data: Mapping[Any, Any], parent_path: str, diagnostics: List[AnalysisPolicyDiagnostic]) -> str:
+    if DESCRIPTION_KEY not in data:
+        return ""
+    value = data[DESCRIPTION_KEY]
+    if not isinstance(value, str) or not value.strip():
+        diagnostics.append(
+            AnalysisPolicyDiagnostic(
+                path=f"{parent_path}.{DESCRIPTION_KEY}",
+                reason="description must be a non-empty string",
+                invalid_value=value,
+            )
+        )
+        return ""
     return value
 
 

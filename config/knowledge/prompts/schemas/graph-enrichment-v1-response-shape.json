@@ -1,6 +1,48 @@
 {
   "schemaVersion": "knowledge.graph.enrichment.v1",
-  "claims": [],
-  "semanticEdges": [],
-  "diagnostics": []
+  "claims": [
+    {
+      "localId": "claim-1",
+      "targetStableKey": "exact key from staticAnchors.nodes",
+      "claimKind": "one allowed claim kind",
+      "summary": "short grounded summary",
+      "confidence": 0.8,
+      "evidence": [
+        {
+          "lineStart": 1,
+          "lineEnd": 1,
+          "text": "short exact excerpt"
+        }
+      ]
+    }
+  ],
+  "semanticEdges": [
+    {
+      "localId": "edge-1",
+      "fromStableKey": "exact key from staticAnchors",
+      "toStableKey": "exact key from staticAnchors or null",
+      "edgeType": "one allowed edge type",
+      "resolutionStatus": "one allowed resolution status",
+      "confidence": 0.8,
+      "evidence": [
+        {
+          "lineStart": 1,
+          "lineEnd": 1,
+          "text": "short exact excerpt"
+        }
+      ],
+      "unresolvedTarget": {
+        "name": "target name when target is not resolved",
+        "kindHint": "optional target kind hint"
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "short diagnostic code",
+      "stage": "LLM_ENRICHMENT",
+      "severity": "diagnostic severity",
+      "message": "short explanation"
+    }
+  ]
 }

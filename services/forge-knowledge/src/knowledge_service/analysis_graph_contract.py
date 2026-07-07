@@ -12,6 +12,9 @@ from knowledge_service.analysis_policy_resolver import AnalysisPolicyResolveRequ
 from knowledge_service.errors import KnowledgeError
 
 
+RESPONSE_CONTRACT_TEMPLATE = "schemas/graph-enrichment-v1-response-contract.md"
+
+
 @dataclass(frozen=True)
 class AnalysisGraphContract:
     format_id: Optional[str]
@@ -103,14 +106,14 @@ class AnalysisGraphContract:
             artifact_labels=tuple(_string_list(raw.get("artifactLabels"))),
             graph_profiles=tuple(_string_list(raw.get("graphProfiles"))),
             allowed_node_kinds=tuple(_string_list(raw.get("allowedNodeKinds"))),
-            allowed_edge_types=tuple(_string_list(raw.get("allowedEdgeKinds"))),
+            allowed_edge_types=tuple(_string_list(raw.get("allowedEdgeTypes"))),
             allowed_claim_kinds=tuple(_string_list(raw.get("allowedClaimKinds"))),
             allowed_statuses=tuple(_string_list(raw.get("allowedStatuses"))),
             allowed_origins=tuple(_string_list(raw.get("allowedOrigins"))),
             allowed_evidence_kinds=tuple(_string_list(raw.get("allowedEvidenceKinds"))),
             allowed_resolution_statuses=tuple(_string_list(raw.get("allowedResolutionStatuses"))),
             semantic_node_kinds=tuple(_string_list(raw.get("semanticNodeKinds"))),
-            semantic_edge_types=tuple(_string_list(raw.get("semanticEdgeKinds"))),
+            semantic_edge_types=tuple(_string_list(raw.get("semanticEdgeTypes"))),
             semantic_claim_kinds=tuple(_string_list(raw.get("semanticClaimKinds"))),
             edge_from_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "from"),
             edge_to_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "to"),
@@ -133,14 +136,14 @@ class AnalysisGraphContract:
             "artifactLabels": list(self.artifact_labels),
             "graphProfiles": list(self.graph_profiles),
             "allowedNodeKinds": list(self.allowed_node_kinds),
-            "allowedEdgeKinds": list(self.allowed_edge_types),
+            "allowedEdgeTypes": list(self.allowed_edge_types),
             "allowedClaimKinds": list(self.allowed_claim_kinds),
             "allowedStatuses": list(self.allowed_statuses),
             "allowedOrigins": list(self.allowed_origins),
             "allowedEvidenceKinds": list(self.allowed_evidence_kinds),
             "allowedResolutionStatuses": list(self.allowed_resolution_statuses),
             "semanticNodeKinds": list(self.semantic_node_kinds),
-            "semanticEdgeKinds": list(self.semantic_edge_types),
+            "semanticEdgeTypes": list(self.semantic_edge_types),
             "semanticClaimKinds": list(self.semantic_claim_kinds),
             "edgeEndpointRules": {
                 kind: {"from": list(self.edge_from_kinds.get(kind, ())), "to": list(self.edge_to_kinds.get(kind, ()))}
@@ -156,24 +159,19 @@ class AnalysisGraphContract:
 
     def render_contract_block(self) -> str:
         lines = [
-            "Analysis graph contract:",
+            "# Resolved analysis policy",
             f"- formatId: {self.format_id or ''}",
             f"- extractorId: {self.extractor_id or ''}",
             f"- policyId: {self.policy_id or ''}",
             f"- promptId: {self.prompt_id or ''}",
             f"- sourceView: {self.source_view or ''}",
             f"- llmMode: {self.llm_mode or ''}",
+            f"- evidenceRequired: {str(self.evidence_required).lower()}",
             f"- graphProfiles: {_join(self.graph_profiles)}",
-            f"- allowedNodeKinds: {_join(self.allowed_node_kinds)}",
-            f"- allowedEdgeKinds: {_join(self.allowed_edge_types)}",
-            f"- allowedClaimKinds: {_join(self.allowed_claim_kinds)}",
-            f"- allowedStatuses: {_join(self.allowed_statuses)}",
-            f"- allowedOrigins: {_join(self.allowed_origins)}",
-            f"- allowedEvidenceKinds: {_join(self.allowed_evidence_kinds)}",
-            f"- allowedResolutionStatuses: {_join(self.allowed_resolution_statuses)}",
-            f"- semanticNodeKinds: {_join(self.semantic_node_kinds)}",
-            f"- semanticEdgeKinds: {_join(self.semantic_edge_types)}",
-            f"- semanticClaimKinds: {_join(self.semantic_claim_kinds)}",
+            f"- artifactLabels: {_join(self.artifact_labels)}",
+            "- closedValues: see section 4.",
+            "- endpointRules: see allowedEdgeEndpoints in section 4.",
+            "- staticAnchors: see File metadata and content JSON.",
             "- unsupportedBehavior:",
         ]
         lines.extend(f"  - {key}: {value}" for key, value in self.unsupported_behavior.items())
@@ -242,11 +240,68 @@ class AnalysisPromptRenderer:
 
     def render(self, template: str, contract: AnalysisGraphContract, response_shape: str | None = None) -> str:
         if response_shape is not None:
-            template = template.replace("{{GRAPH_RESPONSE_SHAPE}}", response_shape)
+            template = template.replace("{{GRAPH_RESPONSE_SHAPE}}", self._response_contract(contract, response_shape))
         block = contract.render_contract_block()
         if "{{ANALYSIS_GRAPH_CONTRACT}}" in template:
             return template.replace("{{ANALYSIS_GRAPH_CONTRACT}}", block)
         return "\n\n".join(part for part in (template.strip(), block) if part)
+
+    def _response_contract(self, contract: AnalysisGraphContract, response_shape: str) -> str:
+        template = self._response_contract_template()
+        return (
+            template.replace("{{FINAL_RESPONSE_SHAPE}}", response_shape.strip())
+            .replace("{{ALLOWED_VALUES}}", self._render_allowed_values(contract))
+            .strip()
+        )
+
+    def _response_contract_template(self) -> str:
+        path = (self.policy.prompt_root / RESPONSE_CONTRACT_TEMPLATE).resolve()
+        if not path.exists():
+            raise KnowledgeError(
+                "ANALYSIS_POLICY_RESPONSE_CONTRACT_TEMPLATE_MISSING",
+                f"Analysis policy response contract template does not exist: {path}",
+                responseContractTemplatePath=str(path),
+            )
+        return path.read_text(encoding="utf-8").strip()
+
+    def _render_allowed_values(self, contract: AnalysisGraphContract) -> str:
+        return json.dumps(
+            {
+                "allowedValues": self._allowed_values(contract),
+                "allowedEdgeEndpoints": self._allowed_edge_endpoints(contract),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+
+    def _allowed_values(self, contract: AnalysisGraphContract) -> dict[str, Any]:
+        return {
+            "nodeKind": {
+                kind: {"description": _definition_description(self.policy.graph.nodes.get(kind))}
+                for kind in contract.allowed_node_kinds
+            },
+            "claimKind": {
+                kind: {"description": _definition_description(self.policy.graph.claims.get(kind))}
+                for kind in contract.allowed_claim_kinds
+            },
+            "edgeType": {
+                kind: {"description": _definition_description(self.policy.graph.edges.get(kind))}
+                for kind in contract.allowed_edge_types
+            },
+            "resolutionStatus": {
+                kind: {"description": _definition_description(self.policy.graph.resolution_statuses.get(kind))}
+                for kind in contract.allowed_resolution_statuses
+            },
+        }
+
+    def _allowed_edge_endpoints(self, contract: AnalysisGraphContract) -> dict[str, dict[str, list[str]]]:
+        return {
+            edge_type: {
+                "fromKinds": list(contract.edge_from_kinds.get(edge_type, ())),
+                "toKinds": list(contract.edge_to_kinds.get(edge_type, ())),
+            }
+            for edge_type in contract.allowed_edge_types
+        }
 
     def _template(self, prompt_id: Optional[str]) -> str:
         if not prompt_id:
@@ -334,3 +389,16 @@ def _edge_endpoint_map(value: Any, side: str) -> dict[str, tuple[str, ...]]:
 
 def _join(values: tuple[str, ...]) -> str:
     return ", ".join(values)
+
+
+def _definition_description(value: Any) -> str:
+    if value is None:
+        return ""
+    description = getattr(value, "description", None)
+    if isinstance(description, str):
+        return description
+    if isinstance(value, Mapping):
+        raw = value.get("description")
+        if isinstance(raw, str):
+            return raw
+    return ""

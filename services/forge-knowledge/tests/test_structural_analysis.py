@@ -289,7 +289,19 @@ def test_anchor_validator_rejects_unanchored_llm_structure_and_claim_targets():
                     "metadata": {},
                 }
             ],
-            "edges": [],
+            "edges": [
+                {
+                    "localId": "edge-missing-source",
+                    "fromNodeLocalId": "missing-anchor",
+                    "toNodeLocalId": None,
+                    "edgeType": "REFERENCES",
+                    "resolutionStatus": "UNRESOLVED",
+                    "confidence": 0.9,
+                    "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "package example", "metadata": {}}],
+                    "unresolvedTarget": {"name": "MissingThing", "kindHint": "TYPE"},
+                    "metadata": {},
+                }
+            ],
             "claims": [
                 {
                     "localId": "claim-missing",
@@ -309,9 +321,11 @@ def test_anchor_validator_rejects_unanchored_llm_structure_and_claim_targets():
 
     assert all(node.localId != "invented" for node in merged.nodes)
     assert all(claim.localId != "claim-missing" for claim in merged.claims)
+    assert all(edge.localId != "edge-missing-source" for edge in merged.edges)
     assert {item["code"] for item in merged.diagnostics} >= {
         "LLM_UNANCHORED_STRUCTURE_CANDIDATE",
         "LLM_CLAIM_TARGET_NOT_FOUND",
+        "LLM_EDGE_SOURCE_NOT_FOUND",
     }
 
 

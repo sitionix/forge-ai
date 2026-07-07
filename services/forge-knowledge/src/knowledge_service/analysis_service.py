@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Protocol
 from knowledge_service.analysis_graph_contract import GraphContractProvider
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
+from knowledge_service.analysis_runtime_events import AnalysisRuntimeContext, analysis_runtime_context
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
@@ -409,7 +410,14 @@ class AnalysisSupervisor:
                 try:
                     file_started_at = datetime.now(timezone.utc)
                     row_data = dict(row)
-                    runtime_result = await self.analyzer_runtime.execute(row_data, metadata, lines, analyzer, self._analyze_with_retry)
+                    async def analyze_with_retry_for_job(
+                        provider: AnalysisProvider,
+                        payload: Dict[str, Any],
+                        payload_line_count: int,
+                    ):
+                        return await self._analyze_with_retry(provider, payload, payload_line_count, job_id=job_id, row=row_data)
+
+                    runtime_result = await self.analyzer_runtime.execute(row_data, metadata, lines, analyzer, analyze_with_retry_for_job)
                     if self._stop_requested(job_id):
                         self._mark_job_stopped(job_id, diagnostics)
                         return
@@ -589,7 +597,15 @@ class AnalysisSupervisor:
             return None
         return None
 
-    async def _analyze_with_retry(self, analyzer: AnalysisProvider, payload: Dict[str, Any], line_count: int):
+    async def _analyze_with_retry(
+        self,
+        analyzer: AnalysisProvider,
+        payload: Dict[str, Any],
+        line_count: int,
+        *,
+        job_id: Optional[str] = None,
+        row: Any = None,
+    ):
         attempts = max(1, self.config.analysis_max_attempts_per_file)
         repair_attempts = max(0, self.config.analysis_repair_attempts_per_file)
         diagnostics: List[Dict[str, Any]] = []
@@ -605,8 +621,14 @@ class AnalysisSupervisor:
                 repair_prompt = self._repair_prompt(payload, last_error, attempt, attempts)
                 repair_used += 1
             try:
-                pending = analyzer.analyze(payload, line_count, repair_prompt)
-                result = await pending if inspect.isawaitable(pending) else pending
+                context = self._runtime_context(job_id, row, payload, attempt)
+                if context is None:
+                    pending = analyzer.analyze(payload, line_count, repair_prompt)
+                    result = await pending if inspect.isawaitable(pending) else pending
+                else:
+                    with analysis_runtime_context(context):
+                        pending = analyzer.analyze(payload, line_count, repair_prompt)
+                        result = await pending if inspect.isawaitable(pending) else pending
                 if attempt > 1:
                     retry_success = {
                         "code": "ANALYSIS_AI_RETRY_SUCCEEDED",
@@ -659,6 +681,41 @@ class AnalysisSupervisor:
                 diagnostics.append(retry_diagnostic)
         raise KnowledgeError("ANALYSIS_AI_MAX_ATTEMPTS_EXCEEDED", "AI analysis exceeded maximum attempts")
 
+    def _runtime_context(
+        self,
+        job_id: Optional[str],
+        row: Any,
+        payload: Dict[str, Any],
+        attempt: int,
+    ) -> Optional[AnalysisRuntimeContext]:
+        if not job_id:
+            return None
+        inventory_file_id = self._optional_int(self._row_value(row, "id"))
+        return AnalysisRuntimeContext(
+            job_id=job_id,
+            source_id=str(payload.get("sourceId") or self._row_value(row, "source_id") or "") or None,
+            inventory_file_id=inventory_file_id,
+            analysis_file_id=inventory_file_id,
+            relative_path=str(payload.get("relativePath") or self._row_value(row, "relative_path") or "") or None,
+            content_hash=str(payload.get("contentHash") or self._row_value(row, "content_hash") or "") or None,
+            attempt=attempt,
+            recorder=self._record_runtime_event,
+        )
+
+    def _record_runtime_event(self, event: Any) -> None:
+        try:
+            self.analysis_store.record_runtime_event(dict(event))
+        except Exception as exc:
+            self.logger.warning("Analysis runtime diagnostic event write failed: %s", exc)
+
+    def _optional_int(self, value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     def _repair_prompt(self, payload: Dict[str, Any], last_error: KnowledgeError, attempt: int, attempts: int) -> str:
         details = self._bounded_error_details(self._error_details(last_error))
         lines = [
@@ -683,7 +740,6 @@ class AnalysisSupervisor:
                         "edgeType": list(contract.allowed_edge_types),
                         "claimKind": list(contract.allowed_claim_kinds),
                         "status": list(contract.allowed_statuses),
-                        "factOrigin": list(contract.allowed_origins),
                         "evidenceKind": list(contract.allowed_evidence_kinds),
                         "resolutionStatus": list(contract.allowed_resolution_statuses),
                     },

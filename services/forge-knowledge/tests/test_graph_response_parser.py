@@ -17,12 +17,37 @@ from knowledge_service.graph_schema import GraphAnalysisResult
 REPO_ROOT = Path(__file__).resolve().parents[3]
 POLICY_PATH = REPO_ROOT / "config" / "knowledge" / "analysis-policy.yaml"
 RESPONSE_SHAPE_PATH = REPO_ROOT / "config" / "knowledge" / "prompts" / "schemas" / "graph-enrichment-v1-response-shape.json"
+RESPONSE_CONTRACT_TEMPLATE_PATH = REPO_ROOT / "config" / "knowledge" / "prompts" / "schemas" / "graph-enrichment-v1-response-contract.md"
 PROMPT_TEMPLATE_PATHS = [
     REPO_ROOT / "config" / "knowledge" / "prompts" / "code-graph-enrichment.md",
     REPO_ROOT / "config" / "knowledge" / "prompts" / "text-graph-enrichment.md",
     REPO_ROOT / "config" / "knowledge" / "prompts" / "document-graph-enrichment.md",
 ]
 FORBIDDEN_PROMPT_VALUES = {"UNKNOWN", "DIAGNOSTIC", "RELATED_TO"}
+REQUIRED_ENRICHMENT_RESPONSE_FIELDS = (
+    "schemaVersion",
+    "claims",
+    "semanticEdges",
+    "diagnostics",
+    "localId",
+    "targetStableKey",
+    "claimKind",
+    "summary",
+    "confidence",
+    "fromStableKey",
+    "toStableKey",
+    "edgeType",
+    "resolutionStatus",
+    "evidence",
+    "lineStart",
+    "lineEnd",
+    "text",
+    "unresolvedTarget",
+    "code",
+    "stage",
+    "severity",
+    "message",
+)
 
 
 def test_prompt_contract_rendering_uses_yaml_for_code_text_and_document():
@@ -38,7 +63,7 @@ def test_prompt_contract_rendering_uses_yaml_for_code_text_and_document():
     assert "CONFIGURES" in text_prompt
     assert "CONFIG_REFERENCE" in text_prompt
     assert "document_graph" in document_prompt
-    assert "allowedNodeKinds" in document_prompt
+    assert '"nodeKind"' in document_prompt
     assert all(value not in code_prompt for value in FORBIDDEN_PROMPT_VALUES)
     assert all(value not in text_prompt for value in FORBIDDEN_PROMPT_VALUES)
     assert all(value not in document_prompt for value in FORBIDDEN_PROMPT_VALUES)
@@ -59,6 +84,142 @@ def test_prompt_response_shape_rendering_uses_shared_json_for_code_text_and_docu
     assert "{{GRAPH_RESPONSE_SHAPE}}" not in code_prompt
     assert "{{GRAPH_RESPONSE_SHAPE}}" not in text_prompt
     assert "{{GRAPH_RESPONSE_SHAPE}}" not in document_prompt
+
+
+def test_rendered_response_contract_has_required_fields():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+
+    for field_name in REQUIRED_ENRICHMENT_RESPONSE_FIELDS:
+        assert field_name in prompt
+    assert "Final JSON response shape" in prompt
+    assert "# 4. Closed graph contract" in prompt
+    assert "Allowed values and endpoint rules from analysis-policy.yaml" in prompt
+    assert "# 5. Output rules" in prompt
+    assert "factOrigin" not in prompt
+    assert "use INFO, WARN, or ERROR" not in prompt
+    assert "fake external nodes" not in prompt
+    assert "fake node" not in prompt
+    assert "allowedEdgeKinds" not in prompt
+    assert "semanticEdgeKinds" not in prompt
+
+
+def test_rendered_response_contract_uses_template_and_replaces_placeholders():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+    template = RESPONSE_CONTRACT_TEMPLATE_PATH.read_text(encoding="utf-8")
+
+    assert "# 6. Final JSON response shape" in template
+    assert "# 6. Final JSON response shape" in prompt
+    assert "Use exactly the field names shown in the final response shape." in prompt
+    assert "{{FINAL_RESPONSE_SHAPE}}" not in prompt
+    assert "{{ALLOWED_VALUES}}" not in prompt
+    assert "{{GRAPH_RESPONSE_SHAPE}}" not in prompt
+
+
+def test_rendered_response_contract_uses_policy_descriptions_dynamically(tmp_path):
+    data = copy.deepcopy(yaml.safe_load(POLICY_PATH.read_text(encoding="utf-8")))
+    data["analysis"]["graph"]["claims"]["RESPONSIBILITY"]["description"] = "unique stage7a claim description"
+    data["analysis"]["graph"]["edges"]["REFERENCES"]["description"] = "unique stage7a edge description"
+    data["analysis"]["graph"]["resolutionStatuses"]["RESOLVED"]["description"] = "unique stage7a resolution description"
+    data["analysis"]["graph"]["origins"]["LLM"]["description"] = "unique stage7a origin description"
+    policy_path = tmp_path / "analysis-policy.yaml"
+    policy_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(policy_path))
+
+    prompt = _render_prompt(renderer, "README.md", "# Service\nDocuments service behavior.\n")
+
+    assert "unique stage7a claim description" in prompt
+    assert "unique stage7a edge description" in prompt
+    assert "unique stage7a resolution description" in prompt
+    assert "unique stage7a origin description" not in prompt
+
+
+def test_rendered_response_contract_only_includes_allowed_values_for_resolved_policy():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "README.md", "# Service\nDocuments service behavior.\n")
+    allowed_values = _allowed_values_from_prompt(prompt)
+
+    assert set(allowed_values["nodeKind"]) == {"FILE"}
+    assert set(allowed_values["claimKind"]) == {"RESPONSIBILITY"}
+    assert set(allowed_values["edgeType"]) == {"REFERENCES", "DEPENDS_ON", "CONFIGURES"}
+    assert "resolutionStatus" in allowed_values
+    assert "RESOLVED" in allowed_values["resolutionStatus"]
+    assert "EXTERNAL_TARGET" in allowed_values["resolutionStatus"]
+    assert "factOrigin" not in allowed_values
+    assert "SIDE_EFFECT" not in allowed_values["claimKind"]
+    assert "CALLS" not in allowed_values["edgeType"]
+
+
+def test_rendered_response_contract_contains_single_full_json_shape():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+
+    assert prompt.count('"schemaVersion": "knowledge.graph.enrichment.v1"') == 1
+    assert "Empty arrays are valid when no grounded facts are found:" not in prompt
+
+
+def test_rendered_response_contract_is_closed_over_static_anchors_and_enums():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+
+    assert "Static anchors are the only valid existing graph nodes." in prompt
+    assert "Every static anchor key is an opaque identifier." in prompt
+    assert "Copy anchor keys exactly as shown in staticAnchors.nodes." in prompt
+    assert "Do not derive, append, shorten, split, normalize, or invent anchor keys" in prompt
+    assert "If an anchor key is not listed in staticAnchors.nodes, it does not exist." in prompt
+    assert "Allowed values are closed." in prompt
+    assert "Use only values listed in allowedValues." in prompt
+    assert "Do not create synonyms, variants, or more specific enum values." in prompt
+    assert "If no listed value fits, omit the item and add a diagnostic." in prompt
+
+
+def test_rendered_response_contract_contains_edge_checklist_and_unresolved_target_rule():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+
+    assert "Create a semantic edge only when all of these are true:" in prompt
+    assert "fromStableKey is exactly one listed static anchor key." in prompt
+    assert "edgeType is exactly one listed allowedValues.edgeType key." in prompt
+    assert "allowedEdgeEndpoints has an entry for edgeType" in prompt
+    assert "If any condition is not true, omit the edge and add a diagnostic explaining why it was omitted." in prompt
+    assert "For unresolved or external targets, use toStableKey null, resolutionStatus, and unresolvedTarget." in prompt
+    assert "Do not represent unresolved, unknown, or external target state by inventing enum values or node references." in prompt
+    assert "stage is the fixed value LLM_ENRICHMENT" in prompt
+
+
+def test_rendered_contract_includes_policy_endpoint_rules_as_compact_data():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+    contract_data = _allowed_contract_from_prompt(prompt)
+
+    assert contract_data["allowedEdgeEndpoints"]["CALLS"] == {"fromKinds": ["CALLABLE"], "toKinds": ["CALLABLE"]}
+    assert "FILE" in contract_data["allowedEdgeEndpoints"]["DECLARES"]["fromKinds"]
+    assert "TYPE" in contract_data["allowedEdgeEndpoints"]["DECLARES"]["toKinds"]
+    assert all(set(item) == {"fromKinds", "toKinds"} for item in contract_data["allowedEdgeEndpoints"].values())
+
+
+def test_rendered_prompt_stays_simple_without_alias_or_blacklist_sections():
+    renderer = AnalysisPromptRenderer(policy=load_analysis_policy(POLICY_PATH))
+
+    prompt = _render_prompt(renderer, "src/Foo.java", "class Foo { void call() {} }\n")
+
+    assert prompt.count("# 3. Static anchors") == 1
+    assert prompt.count("Allowed values and endpoint rules from analysis-policy.yaml") == 1
+    assert prompt.count("# 6. Final JSON response shape") == 1
+    assert "invalidAliases" not in prompt
+    assert "edgeKind" not in prompt
+    assert "allowedEdgeKinds" not in prompt
+    assert "semanticEdgeKinds" not in prompt
+    assert "wrong alias" not in prompt.lower()
+    assert "previous" not in prompt.lower()
 
 
 def test_prompt_markdown_uses_response_shape_placeholder_instead_of_duplicated_json():
@@ -95,6 +256,7 @@ def test_prompt_response_shape_rendering_changes_when_shared_json_changes(tmp_pa
     schema_dir = prompt_root / "schemas"
     schema_dir.mkdir(parents=True)
     (prompt_root / "code-graph-enrichment.md").write_text(PROMPT_TEMPLATE_PATHS[0].read_text(encoding="utf-8"), encoding="utf-8")
+    (schema_dir / "graph-enrichment-v1-response-contract.md").write_text(RESPONSE_CONTRACT_TEMPLATE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
     mutated_shape = {
         "schemaVersion": "knowledge.graph.enrichment.v1",
         "claims": [],
@@ -186,6 +348,26 @@ def test_parser_with_analysis_policy_payload_succeeds_without_explicit_contract(
     assert result.nodes[0].nodeKind == "FILE"
 
 
+def test_graph_contract_provider_uses_only_canonical_edge_type_payload_names():
+    provider = GraphContractProvider(policy=load_analysis_policy(POLICY_PATH))
+    contract = provider.resolve("src/Foo.java", "class Foo {}\n")
+    payload = contract_payload(contract)
+
+    assert "allowedEdgeTypes" in payload
+    assert "semanticEdgeTypes" in payload
+    assert "allowedEdgeKinds" not in payload
+    assert "semanticEdgeKinds" not in payload
+
+    legacy_payload = {"analysisPolicy": copy.deepcopy(payload)}
+    legacy_payload["analysisPolicy"]["allowedEdgeKinds"] = legacy_payload["analysisPolicy"].pop("allowedEdgeTypes")
+    legacy_payload["analysisPolicy"]["semanticEdgeKinds"] = legacy_payload["analysisPolicy"].pop("semanticEdgeTypes")
+
+    legacy_contract = provider.resolve_payload(legacy_payload)
+
+    assert legacy_contract.allowed_edge_types == ()
+    assert legacy_contract.semantic_edge_types == ()
+
+
 def test_parser_does_not_resolve_contract_from_relative_path_fallback():
     class NoPathFallbackProvider(GraphContractProvider):
         def resolve(self, *args, **kwargs):
@@ -266,6 +448,14 @@ def test_prompt_renderer_rejects_undeclared_prompt_id_without_legacy_fallback():
 
     assert exc_info.value.code == "ANALYSIS_POLICY_PROMPT_MISSING"
     assert exc_info.value.details["promptId"] == "missing_prompt"
+
+
+def test_legacy_analysis_prompt_path_fallback_stays_removed():
+    assert not (REPO_ROOT / "config" / "knowledge" / "analysis-prompt.md").exists()
+    config = yaml.safe_load((REPO_ROOT / "config" / "forge-ai.yaml").read_text(encoding="utf-8"))
+    analysis_config = config["forge"]["ai"]["services"]["knowledge"]["analysis"]
+    assert "prompt-path" not in analysis_config
+    assert "promptPath" not in analysis_config
 
 
 def test_parser_allows_yaml_declared_claim_and_edge_types():
@@ -458,6 +648,84 @@ def test_generic_enrichment_uses_effective_yaml_claim_kinds_not_responsibility_o
     assert result.claims[0].claimKind == "CONFIG_REFERENCE"
 
 
+def test_enrichment_parser_sets_fact_origin_llm_server_side():
+    parser, contract = _parser_and_contract("src/Foo.java")
+    payload = _enrichment_payload()
+    payload["claims"][0]["metadata"] = {"factOrigin": "STATIC"}
+    payload["semanticEdges"][0]["metadata"] = {"factOrigin": "STATIC", "resolutionStatus": "GUESS"}
+
+    result = parser.parse(json.dumps(payload), 5, contract=contract, known_node_kinds={"file1": "FILE"})
+
+    assert isinstance(result, GraphAnalysisResult)
+    assert result.claims[0].metadata["factOrigin"] == "LLM"
+    assert result.edges[0].metadata["factOrigin"] == "LLM"
+    assert "resolutionStatus" not in result.edges[0].metadata
+
+
+def test_enrichment_parser_still_rejects_old_edge_kind_field():
+    parser, contract = _parser_and_contract("src/Foo.java")
+    payload = {
+        "schemaVersion": "knowledge.graph.enrichment.v1",
+        "claims": [],
+        "semanticEdges": [
+            {
+                "localId": "edge-1",
+                "fromStableKey": "file1",
+                "toStableKey": None,
+                "edgeKind": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "confidence": 0.8,
+                "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "class Foo"}],
+                "unresolvedTarget": {"name": "External.call", "kindHint": "CALLABLE"},
+                "metadata": {"factOrigin": "LLM"},
+            }
+        ],
+        "diagnostics": [],
+    }
+
+    result = parser.parse(json.dumps(payload), 5, contract=contract, known_node_kinds={"file1": "FILE"})
+
+    assert isinstance(result, GraphAnalysisParseFailure)
+    detail = _detail(result, "$.semanticEdges[0].edgeType")
+    assert detail["missingRequiredField"] == "edgeType"
+
+
+def test_enrichment_parser_still_rejects_missing_local_id():
+    parser, contract = _parser_and_contract("src/Foo.java")
+    payload = _enrichment_payload()
+    payload["claims"][0].pop("localId")
+
+    result = parser.parse(json.dumps(payload), 5, contract=contract, known_node_kinds={"file1": "FILE"})
+
+    assert isinstance(result, GraphAnalysisParseFailure)
+    detail = _detail(result, "$.claims[0].localId")
+    assert detail["missingRequiredField"] == "localId"
+
+
+def test_enrichment_parser_still_rejects_object_shaped_evidence():
+    parser, contract = _parser_and_contract("src/Foo.java")
+    payload = _enrichment_payload()
+    payload["claims"][0]["evidence"] = {"lineStart": 1, "lineEnd": 1, "text": "class Foo"}
+
+    result = parser.parse(json.dumps(payload), 5, contract=contract, known_node_kinds={"file1": "FILE"})
+
+    assert isinstance(result, GraphAnalysisParseFailure)
+    detail = _detail(result, "$.claims[0].evidence")
+    assert detail["field"] == "evidence"
+
+
+def test_enrichment_parser_still_rejects_missing_evidence_line_range():
+    parser, contract = _parser_and_contract("src/Foo.java")
+    payload = _enrichment_payload()
+    payload["claims"][0]["evidence"][0].pop("lineStart")
+
+    result = parser.parse(json.dumps(payload), 5, contract=contract, known_node_kinds={"file1": "FILE"})
+
+    assert isinstance(result, GraphAnalysisParseFailure)
+    detail = _detail(result, "$.claims[0].evidence[0].lineStart")
+    assert detail["missingRequiredField"] == "lineStart"
+
+
 def _render_prompt(renderer: AnalysisPromptRenderer, relative_path: str, content: str = "class Foo {}\n") -> str:
     contract = renderer.provider.resolve(relative_path, content)
     return renderer.render_for_payload(
@@ -534,6 +802,35 @@ def _graph_payload(node_kind: str = "TYPE", edge_type: str = "DECLARES", claim_k
     }
 
 
+def _enrichment_payload() -> dict[str, Any]:
+    return {
+        "schemaVersion": "knowledge.graph.enrichment.v1",
+        "claims": [
+            {
+                "localId": "claim-1",
+                "targetStableKey": "file1",
+                "claimKind": "RESPONSIBILITY",
+                "summary": "The file defines Foo.",
+                "confidence": 0.8,
+                "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "class Foo"}],
+            }
+        ],
+        "semanticEdges": [
+            {
+                "localId": "edge-1",
+                "fromStableKey": "file1",
+                "toStableKey": None,
+                "edgeType": "REFERENCES",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "confidence": 0.8,
+                "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "class Foo"}],
+                "unresolvedTarget": {"name": "ExternalFoo", "kindHint": "TYPE"},
+            }
+        ],
+        "diagnostics": [],
+    }
+
+
 def _parse_with_mutation(relative_path: str, mutate, content: str = "class Foo { void call() {} }\n") -> GraphAnalysisParseFailure:
     parser, contract = _parser_and_contract(relative_path, content)
     payload = _graph_payload()
@@ -552,3 +849,14 @@ def _detail(failure: GraphAnalysisParseFailure, path: str) -> dict[str, Any]:
 
 def _shared_response_shape() -> str:
     return RESPONSE_SHAPE_PATH.read_text(encoding="utf-8").strip()
+
+
+def _allowed_values_from_prompt(prompt: str) -> dict[str, Any]:
+    return _allowed_contract_from_prompt(prompt)["allowedValues"]
+
+
+def _allowed_contract_from_prompt(prompt: str) -> dict[str, Any]:
+    marker = "Allowed values and endpoint rules from analysis-policy.yaml:\n```json\n"
+    start = prompt.index(marker) + len(marker)
+    end = prompt.index("\n```", start)
+    return json.loads(prompt[start:end])
