@@ -35,7 +35,6 @@ from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvi
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.graph_analysis import GraphAnalysisEngine
-from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.inventory_builder import InventoryBuilder
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
@@ -99,58 +98,6 @@ class CapturingGraphAnalyzer(StubAnalyzer):
     def analyze(self, payload, line_count, repair_prompt=None):
         self.payloads.append(payload)
         return super().analyze(payload, line_count, repair_prompt)
-
-
-class RawGraphResponseAnalyzer(StubAnalyzer):
-    name = "ai-file-analyzer"
-    version = "1"
-
-    def __init__(self, responses):
-        super().__init__(result=GraphAnalysisResult())
-        self.responses = list(responses)
-        self.payloads = []
-        self.parser = GraphAnalysisResponseParser()
-
-    def analyze(self, payload, line_count, repair_prompt=None):
-        self.calls += 1
-        if repair_prompt:
-            self.repair_prompts.append(repair_prompt)
-        self.payloads.append(payload)
-        assert self.responses
-        response = self.responses.pop(0)
-        if callable(response):
-            response = response(payload, line_count)
-        if isinstance(response, Exception):
-            raise response
-        contract = self.parser.contract_provider.resolve_payload(payload)
-        parsed = self.parser.parse(str(response), line_count, contract=contract, known_node_kinds=_known_node_kinds(payload))
-        if isinstance(parsed, GraphAnalysisResult):
-            return parsed
-        raise KnowledgeError(
-            parsed.code,
-            parsed.message,
-            raw_preview=parsed.raw_preview,
-            error_details=parsed.error_details,
-            attempt=self.calls,
-        )
-
-
-def _known_node_kinds(payload):
-    anchors = payload.get("staticAnchors") or {}
-    return {
-        item["targetStableKey"]: item["nodeKind"]
-        for item in anchors.get("nodes") or []
-        if isinstance(item, dict) and item.get("targetStableKey") and item.get("nodeKind")
-    }
-
-
-MALFORMED_ENRICHMENT_JSON = """{
-  "schemaVersion": "knowledge.graph.enrichment.v1",
-  "claims": [
-    {
-      "localId": "generic-config-purpose",
-      "claimKind": "RESPONSIBILITY",
-"""
 
 
 REALISTIC_WORKFLOW_YAML = """name: Deploy on comment

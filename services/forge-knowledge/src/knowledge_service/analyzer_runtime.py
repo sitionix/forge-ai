@@ -388,7 +388,7 @@ class AnalyzerRuntime:
         self.graph_policy_validator = graph_policy_validator or GraphPolicyValidator(policy)
         self.enrichment_planner = enrichment_planner or LlmEnrichmentPlanner()
         self.target_prompt_renderer = target_prompt_renderer or TargetPromptRenderer(policy=policy)
-        self.target_input_builder = target_input_builder or LlmEnrichmentInputBuilder(response_shape=self.target_prompt_renderer.response_shape())
+        self.target_input_builder = target_input_builder or LlmEnrichmentInputBuilder(policy=policy)
         self.file_enrichment_merger = file_enrichment_merger or FileEnrichmentMerger()
 
     async def execute(
@@ -426,7 +426,7 @@ class AnalyzerRuntime:
                     target=target,
                     budget_chars=budget_chars,
                 )
-                self.target_prompt_renderer.ensure_within_budget(target_payload, budget_chars)
+                self.target_prompt_renderer.ensure_within_budget(target_payload, budget_chars, contract=context.graph_contract)
                 result, target_retry_diagnostics, target_attempt_state = await analyze_with_retry(analyzer, target_payload, context.line_count)
                 retry_diagnostics.extend(target_retry_diagnostics)
                 target_attempt_states.append(target_attempt_state)

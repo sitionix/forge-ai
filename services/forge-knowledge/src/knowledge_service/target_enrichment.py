@@ -7,17 +7,16 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
 from knowledge_service.analysis_graph_contract import AnalysisGraphContract, ResolutionStatusContract, contract_payload
+from knowledge_service.analysis_parse_failure import GraphAnalysisParseFailure
 from knowledge_service.analysis_policy import AnalysisPolicy
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.graph_response_parser import GraphAnalysisParseFailure
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 
 
 TARGET_INPUT_SCHEMA_VERSION = "knowledge.graph.enrichment.input.v2"
 TARGET_RESPONSE_SCHEMA_VERSION = "knowledge.graph.enrichment.response.v2"
 TARGET_REQUEST_KIND = "TARGET_ANCHOR_ENRICHMENT"
-TARGET_PROMPT_ID = "target_anchor_enrichment"
 
 BEGIN_INPUT_MARKER = "BEGIN_LLM_INPUT_JSON"
 END_INPUT_MARKER = "END_LLM_INPUT_JSON"
@@ -179,8 +178,14 @@ class LlmEnrichmentPlanner:
 
 
 class LlmEnrichmentInputBuilder:
-    def __init__(self, response_shape: Optional[Mapping[str, Any]] = None):
-        self._response_shape = _json_copy(response_shape) if response_shape is not None else TargetPromptRenderer().response_shape()
+    def __init__(
+        self,
+        policy: Optional[AnalysisPolicy] = None,
+        policy_path: Optional[str | Path] = None,
+        response_shape: Optional[Mapping[str, Any]] = None,
+    ):
+        self._response_shape = _json_copy(response_shape) if response_shape is not None else None
+        self._response_shape_loader = None if response_shape is not None else TargetPromptRenderer(policy=policy, policy_path=policy_path)
 
     def build(
         self,
@@ -216,7 +221,7 @@ class LlmEnrichmentInputBuilder:
                 }
                 for edge_type in context.graph_contract.allowed_edge_types
             },
-            "responseShape": self.response_shape(),
+            "responseShape": self.response_shape(contract=context.graph_contract),
         }
         return {
             "sourceId": context.row.get("source_id"),
@@ -233,8 +238,22 @@ class LlmEnrichmentInputBuilder:
             "_refToKind": dict(registry.ref_to_kind),
         }
 
-    def response_shape(self) -> dict[str, Any]:
-        return _json_copy(self._response_shape)
+    def response_shape(
+        self,
+        *,
+        payload: Optional[Mapping[str, Any]] = None,
+        contract: Optional[AnalysisGraphContract] = None,
+    ) -> dict[str, Any]:
+        if self._response_shape is not None:
+            return _json_copy(self._response_shape)
+        if self._response_shape_loader is None:
+            raise KnowledgeError(
+                "ANALYSIS_POLICY_RESPONSE_SHAPE_REQUIRED",
+                "Target response shape loader is not configured.",
+                stage="LLM_ENRICHMENT",
+                severity="ERROR",
+            )
+        return self._response_shape_loader.response_shape(payload=payload, contract=contract)
 
     def _language(self, context: Any) -> Optional[str]:
         language = str(context.row.get("language") or "").strip().lower()
@@ -248,14 +267,20 @@ class TargetPromptRenderer:
         self,
         policy: Optional[AnalysisPolicy] = None,
         policy_path: Optional[str | Path] = None,
-        prompt_id: str = TARGET_PROMPT_ID,
+        default_prompt_id: Optional[str] = None,
     ):
         self.policy = policy or load_analysis_policy(policy_path)
-        self.prompt_id = prompt_id
-        self._template_cache: Optional[str] = None
-        self._response_shape_cache: Optional[dict[str, Any]] = None
+        self.default_prompt_id = default_prompt_id
+        self._template_cache: dict[str, str] = {}
+        self._response_shape_cache: dict[str, dict[str, Any]] = {}
 
-    def render(self, payload: Mapping[str, Any], repair_prompt: Optional[str] = None) -> str:
+    def render(
+        self,
+        payload: Mapping[str, Any],
+        repair_prompt: Optional[str] = None,
+        *,
+        contract: Optional[AnalysisGraphContract] = None,
+    ) -> str:
         llm_input = payload.get("llmInput")
         if not isinstance(llm_input, Mapping):
             raise KnowledgeError(
@@ -265,19 +290,33 @@ class TargetPromptRenderer:
                 severity="ERROR",
                 relativePath=str(payload.get("relativePath") or ""),
             )
+        prompt_id = self._prompt_id(payload=payload, contract=contract)
         return (
-            self._template()
+            self._template(prompt_id)
             .replace(_INPUT_JSON_PLACEHOLDER, self._input_json_block(llm_input))
             .replace(_REPAIR_INSTRUCTIONS_PLACEHOLDER, str(repair_prompt or ""))
-            .replace(_TARGET_RESPONSE_SHAPE_PLACEHOLDER, self._response_shape_text())
+            .replace(_TARGET_RESPONSE_SHAPE_PLACEHOLDER, self._response_shape_text(prompt_id))
             .strip()
         )
 
-    def estimate_prompt_chars(self, payload: Mapping[str, Any], repair_prompt: Optional[str] = None) -> int:
-        return len(self.render(payload, repair_prompt))
+    def estimate_prompt_chars(
+        self,
+        payload: Mapping[str, Any],
+        repair_prompt: Optional[str] = None,
+        *,
+        contract: Optional[AnalysisGraphContract] = None,
+    ) -> int:
+        return len(self.render(payload, repair_prompt, contract=contract))
 
-    def ensure_within_budget(self, payload: Mapping[str, Any], budget_chars: int, repair_prompt: Optional[str] = None) -> int:
-        rendered_prompt_chars = self.estimate_prompt_chars(payload, repair_prompt)
+    def ensure_within_budget(
+        self,
+        payload: Mapping[str, Any],
+        budget_chars: int,
+        repair_prompt: Optional[str] = None,
+        *,
+        contract: Optional[AnalysisGraphContract] = None,
+    ) -> int:
+        rendered_prompt_chars = self.estimate_prompt_chars(payload, repair_prompt, contract=contract)
         if rendered_prompt_chars > budget_chars:
             raise KnowledgeError(
                 "ANALYSIS_LLM_TARGET_INPUT_TOO_LARGE",
@@ -293,10 +332,19 @@ class TargetPromptRenderer:
             )
         return rendered_prompt_chars
 
-    def response_shape(self) -> dict[str, Any]:
-        if self._response_shape_cache is not None:
-            return _json_copy(self._response_shape_cache)
-        path = self._response_shape_path()
+    def response_shape(
+        self,
+        *,
+        payload: Optional[Mapping[str, Any]] = None,
+        contract: Optional[AnalysisGraphContract] = None,
+    ) -> dict[str, Any]:
+        prompt_id = self._prompt_id(payload=payload, contract=contract)
+        return self._response_shape_for_prompt_id(prompt_id)
+
+    def _response_shape_for_prompt_id(self, prompt_id: str) -> dict[str, Any]:
+        if prompt_id in self._response_shape_cache:
+            return _json_copy(self._response_shape_cache[prompt_id])
+        path = self._response_shape_path(prompt_id)
         text = path.read_text(encoding="utf-8").strip()
         try:
             parsed = json.loads(text)
@@ -304,7 +352,7 @@ class TargetPromptRenderer:
             raise KnowledgeError(
                 "ANALYSIS_POLICY_RESPONSE_SHAPE_INVALID_JSON",
                 f"Analysis policy response shape file is invalid JSON: {path}",
-                promptId=self.prompt_id,
+                promptId=prompt_id,
                 responseShapePath=str(path),
                 jsonError=str(exc),
             ) from exc
@@ -312,11 +360,11 @@ class TargetPromptRenderer:
             raise KnowledgeError(
                 "ANALYSIS_POLICY_RESPONSE_SHAPE_INVALID_JSON",
                 f"Analysis policy response shape file must contain a JSON object: {path}",
-                promptId=self.prompt_id,
+                promptId=prompt_id,
                 responseShapePath=str(path),
                 actualType=type(parsed).__name__,
             )
-        self._response_shape_cache = _json_copy(parsed)
+        self._response_shape_cache[prompt_id] = _json_copy(parsed)
         return _json_copy(parsed)
 
     def _input_json_block(self, llm_input: Mapping[str, Any]) -> str:
@@ -328,24 +376,24 @@ class TargetPromptRenderer:
             ]
         )
 
-    def _response_shape_text(self) -> str:
-        return json.dumps(self.response_shape(), ensure_ascii=False, indent=2, sort_keys=True)
+    def _response_shape_text(self, prompt_id: str) -> str:
+        return json.dumps(self._response_shape_for_prompt_id(prompt_id), ensure_ascii=False, indent=2, sort_keys=True)
 
-    def _template(self) -> str:
-        if self._template_cache is not None:
-            return self._template_cache
-        if self.prompt_id not in self.policy.prompts:
+    def _template(self, prompt_id: str) -> str:
+        if prompt_id in self._template_cache:
+            return self._template_cache[prompt_id]
+        if prompt_id not in self.policy.prompts:
             raise KnowledgeError(
                 "ANALYSIS_POLICY_PROMPT_MISSING",
-                f"Analysis policy target prompt id is not declared: {self.prompt_id}",
-                promptId=self.prompt_id,
+                f"Analysis policy target prompt id is not declared: {prompt_id}",
+                promptId=prompt_id,
             )
-        path = self.policy.prompt_path(self.prompt_id)
+        path = self.policy.prompt_path(prompt_id)
         if not path.exists():
             raise KnowledgeError(
                 "ANALYSIS_POLICY_PROMPT_FILE_MISSING",
                 f"Analysis policy target prompt file does not exist: {path}",
-                promptId=self.prompt_id,
+                promptId=prompt_id,
                 promptPath=str(path),
             )
         template = path.read_text(encoding="utf-8")
@@ -362,29 +410,52 @@ class TargetPromptRenderer:
             raise KnowledgeError(
                 "ANALYSIS_POLICY_PROMPT_TEMPLATE_INVALID",
                 "Analysis policy target prompt template is missing required placeholders.",
-                promptId=self.prompt_id,
+                promptId=prompt_id,
                 promptPath=str(path),
                 missingPlaceholders=missing,
             )
-        self._template_cache = template
+        self._template_cache[prompt_id] = template
         return template
 
-    def _response_shape_path(self) -> Path:
-        if self.prompt_id not in self.policy.prompts:
+    def _response_shape_path(self, prompt_id: str) -> Path:
+        if prompt_id not in self.policy.prompts:
             raise KnowledgeError(
                 "ANALYSIS_POLICY_PROMPT_MISSING",
-                f"Analysis policy target prompt id is not declared: {self.prompt_id}",
-                promptId=self.prompt_id,
+                f"Analysis policy target prompt id is not declared: {prompt_id}",
+                promptId=prompt_id,
             )
-        path = self.policy.prompt_response_shape_path(self.prompt_id)
+        path = self.policy.prompt_response_shape_path(prompt_id)
         if not path.exists():
             raise KnowledgeError(
                 "ANALYSIS_POLICY_RESPONSE_SHAPE_FILE_MISSING",
                 f"Analysis policy target response shape file does not exist: {path}",
-                promptId=self.prompt_id,
+                promptId=prompt_id,
                 responseShapePath=str(path),
             )
         return path
+
+    def _prompt_id(
+        self,
+        *,
+        payload: Optional[Mapping[str, Any]] = None,
+        contract: Optional[AnalysisGraphContract] = None,
+    ) -> str:
+        raw_policy = payload.get("analysisPolicy") if isinstance(payload, Mapping) else None
+        if isinstance(raw_policy, Mapping):
+            raw_prompt_id = raw_policy.get("promptId")
+            if isinstance(raw_prompt_id, str) and raw_prompt_id.strip():
+                return raw_prompt_id.strip()
+        if contract is not None and isinstance(contract.prompt_id, str) and contract.prompt_id.strip():
+            return contract.prompt_id.strip()
+        if isinstance(self.default_prompt_id, str) and self.default_prompt_id.strip():
+            return self.default_prompt_id.strip()
+        raise KnowledgeError(
+            "ANALYSIS_POLICY_PROMPT_REQUIRED",
+            "Target-anchor prompt id is required in the resolved analysis policy contract.",
+            stage="LLM_ENRICHMENT",
+            severity="ERROR",
+            relativePath=str(payload.get("relativePath") or "") if isinstance(payload, Mapping) else "",
+        )
 
 
 class TargetResponseParserValidator:

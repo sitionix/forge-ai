@@ -1,11 +1,8 @@
 import hashlib
-import json
 
 import pytest
 
-from knowledge_service.analysis_graph_contract import GraphContractProvider
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
-from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.java_parser_adapter import JavaParserAdapter
 from knowledge_service.structural_analysis import StaticGraphMaterializer, StructuralAnalysisEngine
@@ -327,38 +324,3 @@ def test_anchor_validator_rejects_unanchored_llm_structure_and_claim_targets():
         "LLM_CLAIM_TARGET_NOT_FOUND",
         "LLM_EDGE_SOURCE_NOT_FOUND",
     }
-
-
-def test_graph_response_parser_accepts_anchor_enrichment_schema():
-    file_metadata = metadata()
-    target = StaticGraphMaterializer().to_graph(parse_sample()).nodes[0].localId
-    payload = {
-        "schemaVersion": "knowledge.graph.enrichment.v1",
-        "file": {
-            "sourceId": "svc",
-            "inventoryFileId": 7,
-            "relativePath": "src/main/java/example/TicketController.java",
-            "contentHash": file_metadata.content_hash,
-            "lineCount": file_metadata.line_count,
-        },
-        "claims": [
-            {
-                "localId": "file-summary",
-                "targetStableKey": target,
-                "claimKind": "RESPONSIBILITY",
-                "summary": "Defines ticket controller structure.",
-                "evidence": [{"lineStart": 1, "lineEnd": 30, "text": "file", "metadata": {}}],
-                "confidence": 0.8,
-                "metadata": {},
-            }
-        ],
-        "semanticEdges": [],
-        "diagnostics": [],
-    }
-
-    contract = GraphContractProvider().resolve(file_metadata.relative_path, JAVA_SAMPLE)
-    result = GraphAnalysisResponseParser().parse(json.dumps(payload), file_metadata.line_count, contract=contract)
-
-    assert isinstance(result, GraphAnalysisResult)
-    assert result.nodes == []
-    assert result.claims[0].nodeLocalId == target

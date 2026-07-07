@@ -14,7 +14,7 @@ from knowledge_service.analysis_policy import PromptDefinition
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.graph_response_parser import GraphAnalysisParseFailure
+from knowledge_service.analysis_parse_failure import GraphAnalysisParseFailure
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.target_enrichment import (
     BEGIN_INPUT_MARKER,
@@ -112,16 +112,24 @@ def test_target_prompt_renderer_loads_policy_template_and_response_shape():
     assert END_INPUT_MARKER in prompt
     assert rendered_input["requestKind"] == TARGET_REQUEST_KIND
     assert rendered_input["file"]["contentLines"]
-    assert renderer.response_shape()["schemaVersion"] == TARGET_RESPONSE_SCHEMA_VERSION
-    assert "File metadata and content JSON" not in prompt
-    assert "staticAnchors: see" not in prompt
+    assert renderer.response_shape(payload=payload)["schemaVersion"] == TARGET_RESPONSE_SCHEMA_VERSION
+    for forbidden in (
+        "File metadata and content JSON",
+        "staticAnchors",
+        "targetStableKey",
+        "fromStableKey",
+        "toStableKey",
+        "knowledge.graph.enrichment.v1",
+    ):
+        assert forbidden not in prompt
     assert "staticAnchors" not in rendered_input
     assert "callsites" not in rendered_input
     assert not _contains_key(rendered_input, "stableKey")
 
 
-def test_target_prompt_renderer_uses_policy_prompt_root_without_code_change(tmp_path):
+def test_target_prompt_renderer_uses_policy_selected_prompt_id_without_code_change(tmp_path):
     policy = load_analysis_policy(POLICY_PATH)
+    prompt_id = "custom_target_anchor_enrichment"
     schema_dir = tmp_path / "schemas"
     schema_dir.mkdir()
     (tmp_path / "custom-target.md").write_text(
@@ -151,12 +159,13 @@ def test_target_prompt_renderer_uses_policy_prompt_root_without_code_change(tmp_
         policy,
         prompt_root=tmp_path,
         prompts={
-            "target_anchor_enrichment": PromptDefinition(
-                id="target_anchor_enrichment",
+            prompt_id: PromptDefinition(
+                id=prompt_id,
                 file="custom-target.md",
                 response_shape="schemas/custom-response-shape.json",
             )
         },
+        formats={key: replace(value, prompt=prompt_id) for key, value in policy.formats.items()},
     )
     content_lines = ["class Foo {", "  void call() {}", "}"]
     context = AnalyzerPolicyRuntimeResolver(custom_policy).resolve(_row("src/Foo.java", "\n".join(content_lines)), {}, content_lines)
@@ -164,16 +173,53 @@ def test_target_prompt_renderer_uses_policy_prompt_root_without_code_change(tmp_
     registry = AnchorRefRegistry.build(graph, context.graph_contract)
     target = LlmEnrichmentPlanner().plan(graph, context.graph_contract, max_target_calls=10).targets[0]
     renderer = TargetPromptRenderer(policy=custom_policy)
-    builder = LlmEnrichmentInputBuilder(response_shape=renderer.response_shape())
+    builder = LlmEnrichmentInputBuilder(policy=custom_policy)
 
     payload = builder.build(context=context, registry=registry, target=target, budget_chars=50000)
-    prompt = renderer.render(payload, repair_prompt="Use the same target input.")
+    prompt = renderer.render(payload, repair_prompt="Use the same target input.", contract=context.graph_contract)
     rendered_input = _llm_input_from_prompt(prompt)
+    captured: list[dict[str, object]] = []
 
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        captured.append(body)
+        return httpx.Response(
+            200,
+            json={"response": json.dumps({"schemaVersion": TARGET_RESPONSE_SCHEMA_VERSION, "claims": [], "semanticEdges": [], "diagnostics": []})},
+        )
+
+    client = OllamaAnalysisClient(
+        "http://127.0.0.1:11434",
+        "model",
+        1,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        policy=custom_policy,
+    )
+    try:
+        result = asyncio.run(client.analyze(payload, context.line_count))
+    finally:
+        asyncio.run(client.aclose())
+
+    captured_prompt = str(captured[0]["prompt"])
+    captured_input = _llm_input_from_prompt(captured_prompt)
+    assert context.graph_contract.prompt_id == prompt_id
     assert "Custom target prompt from policy fixture." in prompt
+    assert "Custom target prompt from policy fixture." in captured_prompt
     assert "Use the same target input." in prompt
     assert "shape-from-policy" in prompt
     assert rendered_input["responseShape"]["diagnostics"][0]["message"] == "shape-from-policy"
+    assert captured_input["responseShape"]["diagnostics"][0]["message"] == "shape-from-policy"
+    assert isinstance(result, GraphAnalysisResult)
+
+
+def test_target_prompt_renderer_fails_closed_when_prompt_id_missing():
+    payload, _ = _target_payload()
+    payload = {**payload, "analysisPolicy": {key: value for key, value in payload["analysisPolicy"].items() if key != "promptId"}}
+
+    with pytest.raises(KnowledgeError) as exc:
+        TargetPromptRenderer().render(payload)
+
+    assert exc.value.code == "ANALYSIS_POLICY_PROMPT_REQUIRED"
 
 
 def test_planner_uses_contract_semantic_node_kinds_without_path_or_language_special_cases():
