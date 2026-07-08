@@ -427,12 +427,13 @@ class AnalysisSupervisor:
                         graph_result.diagnostics.append(
                             {
                                 "code": "ANALYSIS_FILE_TIMEOUT",
-                                "message": "File analysis exceeded configured per-file timeout.",
+                                "message": "File analysis completed after exceeding configured per-file timeout budget; result was accepted with diagnostics.",
                                 "sourceId": row["source_id"],
                                 "relativePath": row["relative_path"],
                                 "stage": "FILE_ANALYSIS",
                                 "severity": "WARN",
                                 "elapsedSeconds": elapsed_seconds,
+                                "recovered": True,
                             }
                         )
                     graph_diagnostics = self._file_diagnostics_from_graph(graph_result)
@@ -738,6 +739,13 @@ class AnalysisSupervisor:
         target_anchor = llm_input.get("targetAnchor") if isinstance(llm_input, dict) else None
         target_ref = payload.get("targetRef")
         target_kind = target_anchor.get("kind") if isinstance(target_anchor, dict) else payload.get("targetKind")
+        target_name = target_anchor.get("name") if isinstance(target_anchor, dict) else None
+        target_range = {
+            "lineStart": target_anchor.get("lineStart") if isinstance(target_anchor, dict) else None,
+            "lineEnd": target_anchor.get("lineEnd") if isinstance(target_anchor, dict) else None,
+            "bodyLineStart": target_anchor.get("bodyLineStart") if isinstance(target_anchor, dict) else None,
+            "bodyLineEnd": target_anchor.get("bodyLineEnd") if isinstance(target_anchor, dict) else None,
+        }
         allowed_claim_kinds = []
         if isinstance(allowed_values, dict):
             allowed_claim_kinds = [str(item) for item in allowed_values.get("claimKind") or [] if isinstance(item, str)]
@@ -748,6 +756,8 @@ class AnalysisSupervisor:
                     {
                         "targetRef": target_ref,
                         "targetKind": target_kind,
+                        "targetName": target_name,
+                        "targetRange": target_range,
                         "claimKind": allowed_claim_kinds or list(contract.allowed_claim_kinds),
                     },
                     limit=1200,
@@ -762,6 +772,9 @@ class AnalysisSupervisor:
                 "Do not return graph topology, refs, edgeType, toRef, unresolvedStatus, or unresolvedTarget.",
                 "Remove invalid fields instead of trying to preserve them.",
                 "Do not add schemaVersion, localId, targetRef, fromRef, resolutionStatus, confidence, evidence.text, or diagnostics.",
+                "For CALLABLE targets, every evidence line range must stay inside the current targetAnchor lineStart/lineEnd.",
+                "Use method body evidence for callable responsibility, side effect, and data access claims.",
+                "If a claim needs evidence from another method, remove the claim instead of using that evidence.",
                 "No markdown.",
                 "No prose.",
                 "No comments.",
@@ -801,6 +814,14 @@ class AnalysisSupervisor:
             return text
         if error_type == "GRAPH_VALIDATION_ERROR":
             text = f"{detail.get('jsonPath') or detail.get('graphEntityId') or '$'}: {detail.get('reason') or detail.get('message')}"
+            if detail.get("actual") is not None:
+                text += f" Actual: {self._json_for_prompt(detail.get('actual'))}."
+            if detail.get("expected"):
+                text += f" Expected: {detail.get('expected')}."
+            if detail.get("targetLineStart") is not None and detail.get("targetLineEnd") is not None:
+                text += f" Target range: {detail.get('targetLineStart')}-{detail.get('targetLineEnd')}."
+            if detail.get("evidenceLineStart") is not None and detail.get("evidenceLineEnd") is not None:
+                text += f" Evidence range: {detail.get('evidenceLineStart')}-{detail.get('evidenceLineEnd')}."
             allowed = detail.get("allowedValues") or []
             if allowed:
                 text += f" Allowed values: {self._json_for_prompt(allowed)}."

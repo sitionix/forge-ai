@@ -75,6 +75,9 @@ def test_llm_input_projection_includes_minimal_contract_and_excludes_internal_pa
     assert llm_input["file"]["contentLines"][0] == {"line": 1, "text": "class Foo {"}
     assert llm_input["contextAnchors"]
     assert llm_input["targetAnchor"]["kind"] == target.kind
+    assert llm_input["claimScope"]["targetKind"] == target.kind
+    assert llm_input["claimScope"]["targetLineStart"] == llm_input["targetAnchor"]["lineStart"]
+    assert llm_input["claimScope"]["rules"]
     assert payload["targetRef"] == target.ref
     assert "RESPONSIBILITY" in llm_input["allowedValues"]["claimKind"]
     assert set(llm_input["allowedValues"]) == {"claimKind"}
@@ -145,6 +148,9 @@ def test_target_prompt_renderer_loads_policy_template_and_response_shape():
     assert "contextAnchors" in rendered_input
     assert "anchorRegistry" not in rendered_input
     assert "Do not return graph topology, refs, semanticEdges, or edge facts." in prompt
+    assert "FILE target: describe file-level purpose only" in prompt
+    assert "TYPE target: describe class/type-level responsibility only" in prompt
+    assert "CALLABLE target: describe only the current callable" in prompt
     assert not _contains_key(rendered_input, "stableKey")
 
 
@@ -361,6 +367,72 @@ def test_target_response_validator_accepts_minimal_claim_and_injects_backend_fie
     assert parsed.claims[0].metadata["factOrigin"] == "LLM"
 
 
+def test_target_response_validator_rejects_callable_evidence_outside_target_range():
+    payload, contract = _target_payload()
+    response = _valid_target_response()
+    response["claims"][0]["evidence"] = [{"lineStart": 3, "lineEnd": 3}]
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.claims[0].evidence[0]")
+    assert detail["reason"] == "Evidence line range is outside target anchor range."
+    assert detail["targetRef"] == "M1"
+    assert detail["targetKind"] == "CALLABLE"
+    assert detail["targetName"] == "call"
+    assert detail["targetLineStart"] == 2
+    assert detail["targetLineEnd"] == 2
+    assert detail["evidenceLineStart"] == 3
+    assert detail["evidenceLineEnd"] == 3
+
+
+def test_target_response_validator_rejects_type_evidence_outside_target_range():
+    payload, contract = _target_payload_for_kind("TYPE")
+    response = {
+        "claims": [
+            {
+                "claimKind": "RESPONSIBILITY",
+                "summary": "Describes the type.",
+                "evidence": [{"lineStart": 5, "lineEnd": 5}],
+            }
+        ]
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.claims[0].evidence[0]")
+    assert detail["reason"] == "Evidence line range is outside target anchor range."
+    assert detail["targetKind"] == "TYPE"
+
+
+def test_target_response_validator_reports_inverted_evidence_range():
+    payload, contract = _target_payload()
+    response = _valid_target_response()
+    response["claims"][0]["evidence"] = [{"lineStart": 3, "lineEnd": 2}]
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.claims[0].evidence[0]")
+    assert detail["reason"] == "Evidence line range is inverted: lineStart must be <= lineEnd."
+    assert detail["expected"] == "lineStart <= lineEnd"
+    assert "inverted" in parsed.message
+
+
+def test_target_response_validator_rejects_closing_brace_only_callable_evidence():
+    payload, contract = _target_payload()
+    payload["llmInput"]["targetAnchor"]["lineEnd"] = 4
+    response = _valid_target_response()
+    response["claims"][0]["evidence"] = [{"lineStart": 4, "lineEnd": 4}]
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.claims[0].evidence[0]")
+    assert "non-empty callable body line" in detail["reason"]
+
+
 @pytest.mark.parametrize(
     "raw",
     [
@@ -405,6 +477,8 @@ def test_target_input_builder_exposes_context_anchors_without_graph_topology_sel
         assert "endpointRules" not in llm_input
         assert "anchorRegistry" not in llm_input
         assert "contextAnchors" in llm_input
+        assert "claimScope" in llm_input
+        assert llm_input["claimScope"]["targetKind"] in by_kind
         assert not _contains_key(llm_input, "ref")
         assert not _contains_key(llm_input, "edgeType")
         assert not _contains_key(llm_input, "toRef")
@@ -466,12 +540,46 @@ def test_repair_prompt_is_claims_only_when_model_returns_semantic_edges():
     prompt = supervisor._repair_prompt(payload, error, 2, 3)
 
     assert "Target response contract is claims-only:" in prompt
+    assert "targetRange" in prompt
     assert 'Return claims only: {"claims": [...]} or {"claims": []}.' in prompt
     assert "semanticEdges are not accepted." in prompt
     assert "Convert useful information into grounded claims" in prompt
     assert "Do not return graph topology, refs, edgeType, toRef, unresolvedStatus, or unresolvedTarget." in prompt
     assert "edgeOptions" not in prompt
     assert "endpointRules" not in prompt
+
+
+def test_repair_prompt_includes_target_range_for_outside_target_evidence():
+    policy = load_analysis_policy(POLICY_PATH)
+    payload, _ = _target_payload()
+    error = KnowledgeError(
+        "ANALYSIS_AI_SCHEMA_INVALID",
+        "AI analyzer response does not match target-anchor graph schema.",
+        error_details=[
+            {
+                "errorType": "GRAPH_VALIDATION_ERROR",
+                "jsonPath": "$.claims[0].evidence[0]",
+                "reason": "Evidence line range is outside target anchor range.",
+                "actual": {"lineStart": 3, "lineEnd": 3},
+                "expected": "2 <= lineStart <= lineEnd <= 2",
+                "targetLineStart": 2,
+                "targetLineEnd": 2,
+                "evidenceLineStart": 3,
+                "evidenceLineEnd": 3,
+            }
+        ],
+        raw_preview=json.dumps({"claims": [{"claimKind": "RESPONSIBILITY", "summary": "wrong", "evidence": [{"lineStart": 3, "lineEnd": 3}]}]}),
+    )
+    supervisor = object.__new__(AnalysisSupervisor)
+    supervisor.graph_contract_provider = GraphContractProvider(policy=policy)
+
+    prompt = supervisor._repair_prompt(payload, error, 2, 3)
+
+    assert "$.claims[0].evidence[0]" in prompt
+    assert "Target range: 2-2." in prompt
+    assert "Evidence range: 3-3." in prompt
+    assert "every evidence line range must stay inside the current targetAnchor" in prompt
+    assert "remove the claim" in prompt
 
 
 def test_target_enrichment_package_exports_public_api_without_circular_imports():
@@ -711,7 +819,7 @@ def _mixed_anchor_graph():
                 nodeKind="FILE",
                 name="Foo.java",
                 lineStart=1,
-                lineEnd=20,
+                lineEnd=1,
                 confidence=1.0,
                 metadata={"stableKey": "svc|src/Foo.java|FILE", "parser": "tree-sitter-java"},
             ),
@@ -721,8 +829,8 @@ def _mixed_anchor_graph():
                 name="Foo",
                 qualifiedName="example.Foo",
                 parentLocalId="svc|src/Foo.java|FILE",
-                lineStart=2,
-                lineEnd=19,
+                lineStart=1,
+                lineEnd=2,
                 confidence=1.0,
                 metadata={"stableKey": "svc|src/Foo.java|TYPE|Foo"},
             ),
@@ -732,7 +840,7 @@ def _mixed_anchor_graph():
                 name="repository",
                 qualifiedName="example.Foo.repository",
                 parentLocalId="svc|src/Foo.java|TYPE|Foo",
-                lineStart=3,
+                lineStart=1,
                 lineEnd=3,
                 confidence=1.0,
                 metadata={"typeName": "WorkspaceRepository", "stableKey": "svc|src/Foo.java|FIELD|repository"},
@@ -743,10 +851,17 @@ def _mixed_anchor_graph():
                 name="call",
                 qualifiedName="example.Foo.call",
                 parentLocalId="svc|src/Foo.java|TYPE|Foo",
-                lineStart=5,
-                lineEnd=8,
+                lineStart=2,
+                lineEnd=2,
                 confidence=1.0,
-                metadata={"signature": "void call()", "returnType": "void", "visibility": "PUBLIC", "stableKey": "svc|src/Foo.java|CALLABLE|Foo.call()"},
+                metadata={
+                    "signature": "void call()",
+                    "returnType": "void",
+                    "visibility": "PUBLIC",
+                    "bodyLineStart": 2,
+                    "bodyLineEnd": 2,
+                    "stableKey": "svc|src/Foo.java|CALLABLE|Foo.call()",
+                },
             ),
             GraphNode(
                 localId="svc|src/Foo.java|CALLABLE|Foo.helper()",
@@ -754,13 +869,15 @@ def _mixed_anchor_graph():
                 name="helper",
                 qualifiedName="example.Foo.helper",
                 parentLocalId="svc|src/Foo.java|TYPE|Foo",
-                lineStart=10,
-                lineEnd=12,
+                lineStart=3,
+                lineEnd=3,
                 confidence=1.0,
                 metadata={
                     "signature": "void helper()",
                     "returnType": "void",
                     "visibility": "PRIVATE",
+                    "bodyLineStart": 3,
+                    "bodyLineEnd": 3,
                     "stableKey": "svc|src/Foo.java|CALLABLE|Foo.helper()",
                     "annotations": [{"name": "Test", "argumentsRaw": "(timeout = 1)", "lineStart": 9, "lineEnd": 9}],
                 },
@@ -771,10 +888,16 @@ def _mixed_anchor_graph():
                 name="call",
                 qualifiedName="example.Foo.call",
                 parentLocalId="svc|src/Foo.java|TYPE|Foo",
-                lineStart=14,
-                lineEnd=17,
+                lineStart=4,
+                lineEnd=4,
                 confidence=1.0,
-                metadata={"signature": "void call(String id)", "returnType": "void", "stableKey": "svc|src/Foo.java|CALLABLE|Foo.call(String)"},
+                metadata={
+                    "signature": "void call(String id)",
+                    "returnType": "void",
+                    "bodyLineStart": 4,
+                    "bodyLineEnd": 4,
+                    "stableKey": "svc|src/Foo.java|CALLABLE|Foo.call(String)",
+                },
             ),
         ],
         edges=[

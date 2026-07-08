@@ -39,10 +39,12 @@ class TargetResponseParserValidator:
 
         target_ref = str(payload.get("targetRef") or target_anchor.get("ref") or "")
         target_kind = str(payload.get("targetKind") or target_anchor.get("kind") or "")
+        target_name = str(target_anchor.get("name") or "")
         ref_to_stable_key = {str(key): str(value) for key, value in (payload.get("_refToStableKey") or {}).items()}
         target_stable_key = ref_to_stable_key.get(target_ref)
         content_by_line = self._content_by_line(llm_input)
         details: list[dict[str, Any]] = []
+        target_range = self._target_range(target_anchor, line_count, details)
 
         if not target_ref:
             details.append(self._schema_error("$.targetRef", "Target payload ref is required.", expected="targetRef"))
@@ -56,10 +58,10 @@ class TargetResponseParserValidator:
             claims = []
 
         for index, item in enumerate(claims):
-            self._validate_claim(item, index, contract, line_count, details)
+            self._validate_claim(item, index, contract, line_count, content_by_line, target_range, details)
 
         if details:
-            return self._failure(raw, *self._decorate_details(details, target_ref, target_kind))
+            return self._failure(raw, *self._decorate_details(details, target_ref, target_kind, target_name, target_range))
         try:
             return self._to_graph_result(
                 parsed,
@@ -69,7 +71,7 @@ class TargetResponseParserValidator:
             )
         except (KeyError, TypeError, ValueError) as exc:
             detail = self._schema_error("$", str(exc), expected="valid graph result")
-            return self._failure(raw, *self._decorate_details([detail], target_ref, target_kind))
+            return self._failure(raw, *self._decorate_details([detail], target_ref, target_kind, target_name, target_range))
 
     def _validate_claim(
         self,
@@ -77,6 +79,8 @@ class TargetResponseParserValidator:
         index: int,
         contract: AnalysisGraphContract,
         line_count: int,
+        content_by_line: Mapping[int, str],
+        target_range: Mapping[str, Any],
         details: list[dict[str, Any]],
     ) -> None:
         path = f"$.claims[{index}]"
@@ -98,9 +102,18 @@ class TargetResponseParserValidator:
         summary = self._required_string(item, path, "summary", details)
         if summary and len(summary) > self._MAX_SUMMARY_CHARS:
             details.append(self._schema_error(f"{path}.summary", "summary is too long.", actual=len(summary), expected=f"{self._MAX_SUMMARY_CHARS} chars or fewer"))
-        self._evidence_list(item.get("evidence"), f"{path}.evidence", line_count, details)
+        self._evidence_list(item.get("evidence"), f"{path}.evidence", line_count, str(claim_kind or ""), content_by_line, target_range, details)
 
-    def _evidence_list(self, value: Any, path: str, line_count: int, details: list[dict[str, Any]]) -> None:
+    def _evidence_list(
+        self,
+        value: Any,
+        path: str,
+        line_count: int,
+        claim_kind: str,
+        content_by_line: Mapping[int, str],
+        target_range: Mapping[str, Any],
+        details: list[dict[str, Any]],
+    ) -> None:
         if not isinstance(value, list) or not value:
             details.append(self._schema_error(path, "evidence must be a non-empty array.", actual=value, expected="non-empty array"))
             return
@@ -112,8 +125,108 @@ class TargetResponseParserValidator:
             self._validate_object_fields(item, evidence_path, self._EVIDENCE_FIELDS, details)
             line_start = self._required_int(item, evidence_path, "lineStart", details)
             line_end = self._required_int(item, evidence_path, "lineEnd", details)
-            if line_start is not None and line_end is not None and (line_start < 1 or line_end < line_start or line_end > max(line_count, 1)):
-                details.append(self._graph_error(evidence_path, "Evidence line range outside file."))
+            if line_start is None or line_end is None:
+                continue
+            if line_start > line_end:
+                details.append(
+                    self._graph_error(
+                        evidence_path,
+                        "Evidence line range is inverted: lineStart must be <= lineEnd.",
+                        actual={"lineStart": line_start, "lineEnd": line_end},
+                        expected="lineStart <= lineEnd",
+                        evidenceLineStart=line_start,
+                        evidenceLineEnd=line_end,
+                    )
+                )
+                continue
+            if line_start < 1 or line_end > max(line_count, 1):
+                details.append(
+                    self._graph_error(
+                        evidence_path,
+                        "Evidence line range outside file.",
+                        actual={"lineStart": line_start, "lineEnd": line_end},
+                        expected=f"1 <= lineStart <= lineEnd <= {max(line_count, 1)}",
+                        evidenceLineStart=line_start,
+                        evidenceLineEnd=line_end,
+                    )
+                )
+                continue
+            if not self._inside_target_range(line_start, line_end, target_range):
+                details.append(
+                    self._graph_error(
+                        evidence_path,
+                        "Evidence line range is outside target anchor range.",
+                        actual={"lineStart": line_start, "lineEnd": line_end},
+                        expected=f"{target_range.get('lineStart')} <= lineStart <= lineEnd <= {target_range.get('lineEnd')}",
+                        evidenceLineStart=line_start,
+                        evidenceLineEnd=line_end,
+                        targetLineStart=target_range.get("lineStart"),
+                        targetLineEnd=target_range.get("lineEnd"),
+                    )
+                )
+                continue
+            if target_range.get("kind") == "CALLABLE" and not self._has_material_callable_evidence(line_start, line_end, content_by_line, claim_kind):
+                details.append(
+                    self._graph_error(
+                        evidence_path,
+                        "Evidence line range must include a non-empty callable body line, not only a declaration, blank line, or closing brace.",
+                        actual={"lineStart": line_start, "lineEnd": line_end},
+                        expected="material callable body evidence",
+                        evidenceLineStart=line_start,
+                        evidenceLineEnd=line_end,
+                    )
+                )
+
+    def _target_range(self, target_anchor: Mapping[str, Any], line_count: int, details: list[dict[str, Any]]) -> dict[str, Any]:
+        kind = str(target_anchor.get("kind") or "")
+        line_start = self._plain_int(target_anchor.get("lineStart"))
+        line_end = self._plain_int(target_anchor.get("lineEnd"))
+        body_line_start = self._plain_int(target_anchor.get("bodyLineStart"))
+        body_line_end = self._plain_int(target_anchor.get("bodyLineEnd"))
+        if line_start is None or line_end is None:
+            details.append(
+                self._schema_error(
+                    "$.targetAnchor",
+                    "targetAnchor lineStart and lineEnd are required for target-local claim validation.",
+                    actual={"lineStart": target_anchor.get("lineStart"), "lineEnd": target_anchor.get("lineEnd")},
+                    expected="target anchor line range",
+                )
+            )
+            return {"kind": kind, "lineStart": 1, "lineEnd": max(line_count, 1), "bodyLineStart": body_line_start, "bodyLineEnd": body_line_end}
+        if line_start > line_end:
+            details.append(
+                self._schema_error(
+                    "$.targetAnchor",
+                    "targetAnchor line range is inverted.",
+                    actual={"lineStart": line_start, "lineEnd": line_end},
+                    expected="lineStart <= lineEnd",
+                )
+            )
+        return {"kind": kind, "lineStart": line_start, "lineEnd": line_end, "bodyLineStart": body_line_start, "bodyLineEnd": body_line_end}
+
+    def _inside_target_range(self, line_start: int, line_end: int, target_range: Mapping[str, Any]) -> bool:
+        kind = target_range.get("kind")
+        if kind == "FILE":
+            return True
+        target_start = target_range.get("lineStart")
+        target_end = target_range.get("lineEnd")
+        if not isinstance(target_start, int) or not isinstance(target_end, int):
+            return False
+        return target_start <= line_start <= line_end <= target_end
+
+    def _has_material_callable_evidence(self, line_start: int, line_end: int, content_by_line: Mapping[int, str], claim_kind: str) -> bool:
+        if claim_kind == "ENTRYPOINT_HINT":
+            return True
+        for line_number in range(line_start, line_end + 1):
+            text = str(content_by_line.get(line_number) or "").strip()
+            if not text:
+                continue
+            if text in {"}", "};", ");", ")"}:
+                continue
+            if text.startswith("//"):
+                continue
+            return True
+        return False
 
     def _to_graph_result(
         self,
@@ -243,17 +356,32 @@ class TargetResponseParserValidator:
             return None
         return value
 
+    def _plain_int(self, value: Any) -> Optional[int]:
+        if isinstance(value, bool) or value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        return None
+
     def _decorate_details(
         self,
         details: list[dict[str, Any]],
         target_ref: str,
         target_kind: str,
+        target_name: str,
+        target_range: Mapping[str, Any],
     ) -> list[dict[str, Any]]:
         decorated: list[dict[str, Any]] = []
         for detail in details:
             item = dict(detail)
             item.setdefault("targetRef", target_ref)
             item.setdefault("targetKind", target_kind)
+            if target_name:
+                item.setdefault("targetName", target_name)
+            if target_range.get("lineStart") is not None:
+                item.setdefault("targetLineStart", target_range.get("lineStart"))
+            if target_range.get("lineEnd") is not None:
+                item.setdefault("targetLineEnd", target_range.get("lineEnd"))
             decorated.append(item)
         return decorated
 
@@ -281,14 +409,18 @@ class TargetResponseParserValidator:
         error.update({key: value for key, value in extra.items() if value is not None})
         return error
 
-    def _graph_error(self, path: str, reason: str) -> dict[str, Any]:
-        return {
+    def _graph_error(self, path: str, reason: str, *, actual: Any = None, expected: Optional[str] = None, **extra: Any) -> dict[str, Any]:
+        error = {
             "errorType": "GRAPH_VALIDATION_ERROR",
             "jsonPath": path,
             "reason": reason,
-            "invalidValue": None,
+            "actual": actual,
+            "invalidValue": actual,
+            "expected": expected,
             "allowedValues": [],
         }
+        error.update({key: value for key, value in extra.items() if value is not None})
+        return error
 
     def _failure(self, raw: str, *details: dict[str, Any]) -> GraphAnalysisParseFailure:
         summaries = "; ".join(str(detail.get("reason") or detail.get("message") or detail) for detail in details[:3])

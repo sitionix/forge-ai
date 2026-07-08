@@ -45,6 +45,7 @@ class LlmEnrichmentInputBuilder:
             },
             "targetAnchor": _anchor_context(target_entry),
             "contextAnchors": [_anchor_context(entry, role="context") for entry in registry.entries if entry.ref != target_entry.ref],
+            "claimScope": _claim_scope(target_entry),
             "allowedValues": {
                 "claimKind": list(context.graph_contract.allowed_claim_kinds),
             },
@@ -101,6 +102,10 @@ def _anchor_context(entry: Any, *, role: Optional[str] = None) -> dict[str, Any]
         "lineStart": entry.line_start,
         "lineEnd": entry.line_end,
     }
+    if getattr(entry, "body_line_start", None) is not None:
+        payload["bodyLineStart"] = entry.body_line_start
+    if getattr(entry, "body_line_end", None) is not None:
+        payload["bodyLineEnd"] = entry.body_line_end
     if entry.signature:
         payload["signature"] = entry.signature
     if entry.return_type:
@@ -112,3 +117,39 @@ def _anchor_context(entry: Any, *, role: Optional[str] = None) -> dict[str, Any]
     if role:
         payload["role"] = role
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def _claim_scope(entry: Any) -> dict[str, Any]:
+    kind = str(entry.kind or "")
+    base: dict[str, Any] = {
+        "targetKind": kind,
+        "targetName": entry.name,
+        "targetLineStart": entry.line_start,
+        "targetLineEnd": entry.line_end,
+    }
+    if getattr(entry, "body_line_start", None) is not None:
+        base["bodyLineStart"] = entry.body_line_start
+    if getattr(entry, "body_line_end", None) is not None:
+        base["bodyLineEnd"] = entry.body_line_end
+    if kind == "FILE":
+        base["rules"] = [
+            "Describe file-level purpose only.",
+            "Do not summarize individual methods as FILE claims.",
+            "If only method-level behavior is grounded, return no FILE claim.",
+        ]
+    elif kind == "TYPE":
+        base["rules"] = [
+            "Describe class/type-level responsibility only.",
+            "Do not duplicate every method scenario as TYPE claims.",
+            "Evidence must stay inside the current type range.",
+        ]
+    elif kind == "CALLABLE":
+        base["rules"] = [
+            "Describe only the current callable responsibility.",
+            "Every evidence range must be inside the current callable range.",
+            "Use method body evidence for responsibility, side effects, and data access.",
+            "Do not describe another method, caller, or callee as this callable.",
+        ]
+    else:
+        base["rules"] = ["Describe only the current target anchor."]
+    return {key: value for key, value in base.items() if value is not None}

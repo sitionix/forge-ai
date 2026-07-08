@@ -26,6 +26,8 @@ class AnchorRegistryEntry:
     line_start: Optional[int]
     line_end: Optional[int]
     parent_ref: Optional[str]
+    body_line_start: Optional[int] = None
+    body_line_end: Optional[int] = None
     signature: Optional[str] = None
     return_type: Optional[str] = None
     type_name: Optional[str] = None
@@ -41,6 +43,10 @@ class AnchorRegistryEntry:
             "lineEnd": self.line_end,
             "parentRef": self.parent_ref,
         }
+        if self.body_line_start is not None:
+            payload["bodyLineStart"] = self.body_line_start
+        if self.body_line_end is not None:
+            payload["bodyLineEnd"] = self.body_line_end
         if self.signature:
             payload["signature"] = self.signature
         if self.return_type:
@@ -84,6 +90,8 @@ class AnchorRefRegistry:
                     line_start=node.lineStart,
                     line_end=node.lineEnd,
                     parent_ref=refs_by_stable_key.get(node.parentLocalId or ""),
+                    body_line_start=_optional_int(metadata.get("bodyLineStart")),
+                    body_line_end=_optional_int(metadata.get("bodyLineEnd")),
                     signature=_bounded_string(metadata.get("signature"), 300),
                     return_type=_bounded_string(metadata.get("returnType"), 160),
                     type_name=_bounded_string(metadata.get("typeName"), 160),
@@ -172,3 +180,12 @@ def _bounded_string(value: Any, limit: int) -> Optional[str]:
     if len(text) > limit:
         return text[:limit].rstrip()
     return text
+
+
+def _optional_int(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
