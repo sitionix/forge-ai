@@ -84,8 +84,8 @@ GRAPH_CLAIM_KEYS = {"evidenceRequired", "materialSupportRequired", "semanticElig
 GRAPH_STATUS_KEYS = {"persistGraphFact", "requiresValidEvidence", "emitDiagnostic", "requiresDerivationTrace", "queryEligible", DESCRIPTION_KEY}
 GRAPH_ORIGIN_KEYS = {"canBeTrusted", "requiresValidEvidence", "requiresDerivationTrace", DESCRIPTION_KEY}
 GRAPH_DESCRIPTION_KEYS = {DESCRIPTION_KEY}
-GRAPH_RESOLUTION_STATUS_KEYS = {DESCRIPTION_KEY, "resolvedTarget", "unresolvedTarget"}
-RESOLVED_TARGET_RULES = {"required", "optional", "forbidden"}
+GRAPH_RESOLUTION_STATUS_KEYS = {DESCRIPTION_KEY, "toRef", "unresolvedTarget"}
+TO_REF_RULES = {"required", "optional", "forbidden"}
 UNRESOLVED_TARGET_RULES = {"required", "optional", "forbidden"}
 SEMANTIC_KEYS = {"indexedNodeKinds", "indexedClaimKinds", "indexedEdgeKinds", "unsupportedSemanticKind"}
 FORMAT_KEYS = {"extensions", "family", "extractor", "policy", "prompt", "graphProfiles", "artifactClassifiers"}
@@ -404,7 +404,7 @@ def _parse_resolution_statuses(data: Mapping[Any, Any], path: str, diagnostics: 
         item = _require_mapping(raw, item_path, diagnostics)
         _check_allowed_keys(item, item_path, GRAPH_RESOLUTION_STATUS_KEYS, diagnostics)
         _optional_description(item, item_path, diagnostics)
-        _optional_enum(item, "resolvedTarget", item_path, RESOLVED_TARGET_RULES, diagnostics)
+        _optional_enum(item, "toRef", item_path, TO_REF_RULES, diagnostics)
         _optional_enum(item, "unresolvedTarget", item_path, UNRESOLVED_TARGET_RULES, diagnostics)
         result[item_id] = dict(item)
     return result

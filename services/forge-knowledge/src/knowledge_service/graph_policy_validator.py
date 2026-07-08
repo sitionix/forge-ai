@@ -651,7 +651,7 @@ class GraphPolicyValidator:
             return
 
         resolution_rules = ResolutionStatusContract.from_graph_contract(contract)
-        if resolution_rules.requires_resolved_target(status) and not edge.toNodeLocalId:
+        if resolution_rules.requires_to_ref(status) and not edge.toNodeLocalId:
             issues.append(
                 GraphPolicyValidationIssue(
                     message="Edge resolution requires toNodeLocalId.",
@@ -663,7 +663,7 @@ class GraphPolicyValidator:
                     path=f"{path}.resolutionStatus",
                 )
             )
-        if resolution_rules.forbids_resolved_target(status) and edge.toNodeLocalId:
+        if resolution_rules.forbids_to_ref(status) and edge.toNodeLocalId:
             issues.append(
                 GraphPolicyValidationIssue(
                     message="Edge resolution must not have toNodeLocalId.",

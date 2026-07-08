@@ -11,8 +11,14 @@ analysis:
     evidencePolicy: grounded_material_support
 
   prompts:
-    target_anchor_enrichment:
-      file: target-anchor-enrichment.md
+    code_target_anchor_enrichment:
+      file: target-anchor-code-enrichment.md
+      responseShape: schemas/target-anchor-enrichment-v2-response-shape.json
+    structured_text_target_anchor_enrichment:
+      file: target-anchor-structured-text-enrichment.md
+      responseShape: schemas/target-anchor-enrichment-v2-response-shape.json
+    document_target_anchor_enrichment:
+      file: target-anchor-document-enrichment.md
       responseShape: schemas/target-anchor-enrichment-v2-response-shape.json
 
   graph:
@@ -164,32 +170,32 @@ analysis:
 
     resolutionStatuses:
       RESOLVED:
-        description: Target was matched to an exact static anchor and toStableKey must be set.
-        resolvedTarget: required
+        description: Target was matched to an exact static anchor and toRef must be set.
+        toRef: required
         unresolvedTarget: forbidden
       UNRESOLVED:
-        description: Target could not be matched to a known static anchor and toStableKey must be null.
-        resolvedTarget: forbidden
+        description: Target could not be matched to a known static anchor and toRef must be null.
+        toRef: forbidden
         unresolvedTarget: optional
       EXTERNAL_TARGET:
-        description: Target is outside the current static anchors and must be represented with unresolvedTarget and null toStableKey.
-        resolvedTarget: forbidden
+        description: Target is outside the current static anchors and must be represented with unresolvedTarget and null toRef.
+        toRef: forbidden
         unresolvedTarget: required
       AMBIGUOUS:
         description: Target has more than one plausible interpretation and should not be forced to a single anchor.
-        resolvedTarget: forbidden
+        toRef: forbidden
         unresolvedTarget: optional
       MULTIPLE_CANDIDATES:
-        description: Resolver or evidence found several candidate targets and no single toStableKey should be chosen.
-        resolvedTarget: forbidden
+        description: Resolver or evidence found several candidate targets and no single toRef should be chosen.
+        toRef: forbidden
         unresolvedTarget: optional
       INTERFACE_TARGET:
         description: Target is represented through an interface, abstract declaration, protocol, or contract boundary.
-        resolvedTarget: optional
+        toRef: optional
         unresolvedTarget: optional
       DYNAMIC_TARGET:
         description: Target is computed dynamically at runtime and cannot be safely resolved to a static anchor.
-        resolvedTarget: forbidden
+        toRef: forbidden
         unresolvedTarget: required
 
   semantic:
@@ -204,7 +210,7 @@ analysis:
       family: code
       extractor: java_ast
       policy: parser_assisted_graph_enrichment
-      prompt: target_anchor_enrichment
+      prompt: code_target_anchor_enrichment
       graphProfiles: [base_file_graph, java_code_graph]
 
     kotlin:
@@ -212,7 +218,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: target_anchor_enrichment
+      prompt: code_target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     typescript:
@@ -220,7 +226,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: target_anchor_enrichment
+      prompt: code_target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     javascript:
@@ -228,7 +234,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: target_anchor_enrichment
+      prompt: code_target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     python:
@@ -236,7 +242,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: target_anchor_enrichment
+      prompt: code_target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     yaml:
@@ -244,7 +250,7 @@ analysis:
       family: structured_text
       extractor: structured_text_light
       policy: text_graph_enrichment
-      prompt: target_anchor_enrichment
+      prompt: structured_text_target_anchor_enrichment
       graphProfiles: [base_file_graph, structured_text_graph]
       artifactClassifiers:
         - id: automation_like
@@ -263,7 +269,7 @@ analysis:
       family: structured_text
       extractor: structured_text_light
       policy: text_graph_enrichment
-      prompt: target_anchor_enrichment
+      prompt: structured_text_target_anchor_enrichment
       graphProfiles: [base_file_graph, structured_text_graph]
       artifactClassifiers:
         - id: build_model_like
@@ -278,7 +284,7 @@ analysis:
       family: document
       extractor: document_heading_light
       policy: text_graph_enrichment
-      prompt: target_anchor_enrichment
+      prompt: document_target_anchor_enrichment
       graphProfiles: [base_file_graph, document_graph]
 
   policies:

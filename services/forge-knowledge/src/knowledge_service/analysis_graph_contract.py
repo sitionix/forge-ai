@@ -164,11 +164,11 @@ class ResolutionStatusContract:
     def from_graph_contract(cls, contract: AnalysisGraphContract) -> "ResolutionStatusContract":
         return cls(contract.resolution_status_rules)
 
-    def requires_resolved_target(self, status: str) -> bool:
-        return self._rule(status).get("resolvedTarget") == "required"
+    def requires_to_ref(self, status: str) -> bool:
+        return self._rule(status).get("toRef") == "required"
 
-    def forbids_resolved_target(self, status: str) -> bool:
-        return self._rule(status).get("resolvedTarget") == "forbidden"
+    def forbids_to_ref(self, status: str) -> bool:
+        return self._rule(status).get("toRef") == "forbidden"
 
     def requires_unresolved_target(self, status: str) -> bool:
         return self._rule(status).get("unresolvedTarget") == "required"
@@ -257,9 +257,9 @@ def _resolution_status_rule(value: Any) -> dict[str, str]:
     if not isinstance(value, Mapping):
         return {}
     rule: dict[str, str] = {}
-    resolved_target = value.get("resolvedTarget")
-    if isinstance(resolved_target, str):
-        rule["resolvedTarget"] = resolved_target
+    to_ref = value.get("toRef")
+    if isinstance(to_ref, str):
+        rule["toRef"] = to_ref
     unresolved_target = value.get("unresolvedTarget")
     if isinstance(unresolved_target, str):
         rule["unresolvedTarget"] = unresolved_target

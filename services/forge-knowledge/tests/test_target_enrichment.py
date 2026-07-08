@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -107,7 +108,7 @@ def test_target_prompt_renderer_loads_policy_template_and_response_shape():
     prompt = renderer.render(payload)
     rendered_input = _llm_input_from_prompt(prompt)
 
-    assert "Target-anchor enrichment prompt template." in prompt
+    assert "Code target-anchor enrichment prompt." in prompt
     assert BEGIN_INPUT_MARKER in prompt
     assert END_INPUT_MARKER in prompt
     assert rendered_input["requestKind"] == TARGET_REQUEST_KIND
@@ -125,6 +126,27 @@ def test_target_prompt_renderer_loads_policy_template_and_response_shape():
     assert "staticAnchors" not in rendered_input
     assert "callsites" not in rendered_input
     assert not _contains_key(rendered_input, "stableKey")
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "content_lines", "prompt_id", "prompt_text"),
+    [
+        ("src/Foo.java", ["class Foo {", "  void call() {}", "}"], "code_target_anchor_enrichment", "Code target-anchor enrichment prompt."),
+        ("config.yaml", ["jobs:", "  build:", "    steps: []"], "structured_text_target_anchor_enrichment", "Structured-text target-anchor enrichment prompt."),
+        ("model.xml", ["<project><dependencies /></project>"], "structured_text_target_anchor_enrichment", "Structured-text target-anchor enrichment prompt."),
+        ("README.md", ["# Service", "Documents service behavior."], "document_target_anchor_enrichment", "Document target-anchor enrichment prompt."),
+    ],
+)
+def test_target_prompt_renderer_uses_format_specific_prompt_and_shared_response_shape(relative_path, content_lines, prompt_id, prompt_text):
+    payload, contract = _target_payload_for(relative_path, content_lines)
+    renderer = TargetPromptRenderer()
+
+    prompt = renderer.render(payload, contract=contract)
+
+    assert payload["analysisPolicy"]["promptId"] == prompt_id
+    assert prompt_text in prompt
+    assert renderer.response_shape(payload=payload)["schemaVersion"] == TARGET_RESPONSE_SCHEMA_VERSION
+    assert payload["llmInput"]["responseShape"] == renderer.response_shape(payload=payload)
 
 
 def test_target_prompt_renderer_uses_policy_selected_prompt_id_without_code_change(tmp_path):
@@ -330,13 +352,31 @@ def test_target_response_validator_uses_resolution_status_contract_rules():
         contract,
         resolution_status_rules={
             **contract.resolution_status_rules,
-            "RESOLVED": {"resolvedTarget": "optional", "unresolvedTarget": "optional"},
+            "RESOLVED": {"toRef": "optional", "unresolvedTarget": "optional"},
         },
     )
     parsed_with_flexible_rules = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=flexible_contract)
 
     assert isinstance(parsed_with_default_rules, GraphAnalysisParseFailure)
     assert isinstance(parsed_with_flexible_rules, GraphAnalysisResult)
+
+
+def test_target_enrichment_package_exports_public_api_without_circular_imports():
+    package = importlib.import_module("knowledge_service.target_enrichment")
+    submodules = [
+        importlib.import_module("knowledge_service.target_enrichment.constants"),
+        importlib.import_module("knowledge_service.target_enrichment.registry"),
+        importlib.import_module("knowledge_service.target_enrichment.planner"),
+        importlib.import_module("knowledge_service.target_enrichment.input_builder"),
+        importlib.import_module("knowledge_service.target_enrichment.prompt_renderer"),
+        importlib.import_module("knowledge_service.target_enrichment.response_validator"),
+        importlib.import_module("knowledge_service.target_enrichment.merger"),
+    ]
+
+    assert Path(package.__file__).name == "__init__.py"
+    assert package.TargetPromptRenderer is TargetPromptRenderer
+    assert package.TargetResponseParserValidator is TargetResponseParserValidator
+    assert all(module is not None for module in submodules)
 
 
 def test_file_enrichment_merger_deduplicates_exact_duplicate_claims_and_edges():
@@ -500,6 +540,28 @@ def _target_payload():
         ["class Foo {", "  void call() { helper(); }", "  void helper() {}", "}", ""],
     )
     return LlmEnrichmentInputBuilder().build(context=context, registry=registry, target=target, budget_chars=50000), contract
+
+
+def _target_payload_for(relative_path: str, content_lines: list[str]):
+    policy = load_analysis_policy(POLICY_PATH)
+    content = "\n".join(content_lines)
+    context = AnalyzerPolicyRuntimeResolver(policy).resolve(_row(relative_path, content), {}, content_lines)
+    graph = GraphAnalysisResult(
+        nodes=[
+            GraphNode(
+                localId=f"svc|{relative_path}|FILE",
+                nodeKind="FILE",
+                name=Path(relative_path).name,
+                lineStart=1,
+                lineEnd=max(len(content_lines), 1),
+                confidence=1.0,
+                metadata={"stableKey": f"svc|{relative_path}|FILE"},
+            )
+        ]
+    )
+    registry = AnchorRefRegistry.build(graph, context.graph_contract)
+    target = LlmEnrichmentPlanner().plan(graph, context.graph_contract, max_target_calls=10).targets[0]
+    return LlmEnrichmentInputBuilder(policy=policy).build(context=context, registry=registry, target=target, budget_chars=50000), context.graph_contract
 
 
 def _valid_target_response(target_ref: str = "M1"):

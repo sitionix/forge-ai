@@ -22,11 +22,18 @@ FORBIDDEN_GRAPH_VALUES = {"UNKNOWN", "DIAGNOSTIC", "RELATED_TO", "SECTION", "KEY
 def test_loads_default_policy_and_validates_references():
     policy = load_analysis_policy(POLICY_PATH)
     data = _policy_data()
+    target_prompt_ids = {
+        "code_target_anchor_enrichment",
+        "structured_text_target_anchor_enrichment",
+        "document_target_anchor_enrichment",
+    }
 
     assert policy.source_path == POLICY_PATH
     assert policy.schema_version == 1
-    assert policy.prompts["target_anchor_enrichment"].response_shape == "schemas/target-anchor-enrichment-v2-response-shape.json"
-    assert policy.prompt_response_shape_path("target_anchor_enrichment").name == "target-anchor-enrichment-v2-response-shape.json"
+    assert target_prompt_ids <= set(policy.prompts)
+    for prompt_id in target_prompt_ids:
+        assert policy.prompts[prompt_id].response_shape == "schemas/target-anchor-enrichment-v2-response-shape.json"
+        assert policy.prompt_response_shape_path(prompt_id).name == "target-anchor-enrichment-v2-response-shape.json"
     assert _find_forbidden_entries(data) == []
     assert set(policy.semantic.indexed_node_kinds) == {"FILE", "TYPE", "CALLABLE"}
     assert "EXTERNAL" not in policy.graph.nodes
@@ -38,6 +45,8 @@ def test_loads_default_policy_and_validates_references():
     assert policy.graph.origins["LLM"]["description"]
     assert policy.graph.evidence_kinds["CLAIM"]["description"]
     assert policy.graph.resolution_statuses["RESOLVED"]["description"]
+    assert policy.graph.resolution_statuses["RESOLVED"]["toRef"] == "required"
+    assert policy.graph.resolution_statuses["UNRESOLVED"]["toRef"] == "forbidden"
 
     for kind in policy.semantic.indexed_node_kinds:
         assert policy.graph.nodes[kind].semantic_eligible is True
@@ -104,6 +113,29 @@ def test_invalid_llm_mode_fails_with_allowed_values(tmp_path):
     assert diagnostic.allowed_values == list(ALLOWED_LLM_MODES)
 
 
+def test_resolution_status_policy_rejects_legacy_resolved_target_key(tmp_path):
+    data = _policy_data()
+    rule = data["analysis"]["graph"]["resolutionStatuses"]["RESOLVED"]
+    rule["resolvedTarget"] = rule.pop("toRef")
+
+    error = _load_invalid(tmp_path, data)
+    diagnostic = _diagnostic_for_path(error, "$.analysis.graph.resolutionStatuses.RESOLVED.resolvedTarget")
+
+    assert diagnostic.reason == "unknown field is not allowed"
+    assert diagnostic.invalid_value == "resolvedTarget"
+
+
+def test_resolution_status_policy_accepts_to_ref_rules(tmp_path):
+    data = _policy_data()
+    data["analysis"]["graph"]["resolutionStatuses"]["RESOLVED"]["toRef"] = "optional"
+    data["analysis"]["graph"]["resolutionStatuses"]["EXTERNAL_TARGET"]["unresolvedTarget"] = "optional"
+
+    policy = _load_valid(tmp_path, data)
+
+    assert policy.graph.resolution_statuses["RESOLVED"]["toRef"] == "optional"
+    assert policy.graph.resolution_statuses["EXTERNAL_TARGET"]["unresolvedTarget"] == "optional"
+
+
 @pytest.mark.parametrize(
     ("field", "missing_kind", "declared_path"),
     [
@@ -126,12 +158,14 @@ def test_extractor_produces_references_must_be_declared_graph_kinds_with_allowed
 @pytest.mark.parametrize(
     ("relative_path", "format_id", "extractor_id", "policy_id", "prompt_id"),
     [
-        ("src/Foo.java", "java", "java_ast", "parser_assisted_graph_enrichment", "target_anchor_enrichment"),
-        ("script.py", "python", "file_anchor", "text_graph_enrichment", "target_anchor_enrichment"),
-        ("component.tsx", "typescript", "file_anchor", "text_graph_enrichment", "target_anchor_enrichment"),
-        ("config.yaml", "yaml", "structured_text_light", "text_graph_enrichment", "target_anchor_enrichment"),
-        ("model.xml", "xml", "structured_text_light", "text_graph_enrichment", "target_anchor_enrichment"),
-        ("README.md", "markdown", "document_heading_light", "text_graph_enrichment", "target_anchor_enrichment"),
+        ("src/Foo.java", "java", "java_ast", "parser_assisted_graph_enrichment", "code_target_anchor_enrichment"),
+        ("src/Foo.kt", "kotlin", "file_anchor", "text_graph_enrichment", "code_target_anchor_enrichment"),
+        ("script.py", "python", "file_anchor", "text_graph_enrichment", "code_target_anchor_enrichment"),
+        ("component.tsx", "typescript", "file_anchor", "text_graph_enrichment", "code_target_anchor_enrichment"),
+        ("component.jsx", "javascript", "file_anchor", "text_graph_enrichment", "code_target_anchor_enrichment"),
+        ("config.yaml", "yaml", "structured_text_light", "text_graph_enrichment", "structured_text_target_anchor_enrichment"),
+        ("model.xml", "xml", "structured_text_light", "text_graph_enrichment", "structured_text_target_anchor_enrichment"),
+        ("README.md", "markdown", "document_heading_light", "text_graph_enrichment", "document_target_anchor_enrichment"),
     ],
 )
 def test_resolves_supported_formats(relative_path, format_id, extractor_id, policy_id, prompt_id):

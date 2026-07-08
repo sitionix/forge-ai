@@ -1,10 +1,11 @@
-Target-anchor enrichment prompt template.
+Document target-anchor enrichment prompt.
 
-Enrich exactly one target anchor for the local structural knowledge graph.
+Enrich exactly one document anchor for the local structural knowledge graph.
 Use only the target-anchor input JSON between the markers.
+Focus on headings, declared responsibilities, described flows, and references when supported by evidence.
 Return one JSON object only. Do not include markdown, code fences, comments, or prose outside JSON.
 Use prompt-local refs exactly as provided.
-For this request, every claim targetRef and every semantic edge fromRef must equal targetAnchor.ref.
+Every claim targetRef and semantic edge fromRef must equal targetAnchor.ref.
 
 {{REPAIR_INSTRUCTIONS}}
 

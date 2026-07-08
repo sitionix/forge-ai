@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -212,6 +213,28 @@ def test_final_graph_rejects_resolved_edge_without_target_node():
     assert exc.value.code == "ANALYSIS_GRAPH_POLICY_VALIDATION_FAILED"
     assert exc.value.details["field"] == "resolutionStatus"
     assert exc.value.details["validationErrors"][0]["path"] == "$.edges[0].resolutionStatus"
+
+
+def test_final_graph_uses_to_ref_resolution_status_rules_from_contract():
+    policy, context = _context("src/main/java/example/Foo.java", "class Foo { void call() {} }\n", language="java")
+    graph = _graph(
+        nodes=[_file_node(), _node("call", "CALLABLE", parent="file")],
+        edges=[_edge("call-edge", "CALLS", "call", None, resolution_status="RESOLVED")],
+    )
+    flexible_contract = replace(
+        context.graph_contract,
+        resolution_status_rules={
+            **context.graph_contract.resolution_status_rules,
+            "RESOLVED": {"toRef": "optional", "unresolvedTarget": "optional"},
+        },
+    )
+
+    GraphPolicyValidator(policy).validate_final_graph(
+        graph,
+        flexible_contract,
+        context.line_count,
+        relative_path=context.row["relative_path"],
+    )
 
 
 def test_final_graph_accepts_unresolved_calls_without_target_node():
