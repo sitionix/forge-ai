@@ -1,11 +1,8 @@
 import hashlib
-import json
 
 import pytest
 
-from knowledge_service.analysis_graph_contract import GraphContractProvider
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
-from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.java_parser_adapter import JavaParserAdapter
 from knowledge_service.structural_analysis import StaticGraphMaterializer, StructuralAnalysisEngine
@@ -136,6 +133,7 @@ def test_java_parser_extracts_static_callsites_with_conservative_resolution():
     assert calls[("helper", None)].resolution_status == "RESOLVED"
     assert calls[("toApi", "mapper")].receiver_type_hint == "TicketMapper"
     assert calls[("toApi", "mapper")].resolution_status == "RESOLVED"
+    assert calls[("toApi", "mapper")].field_receiver_local_id == next(item.local_id for item in result.fields if item.name == "mapper")
     assert calls[("ok", "ResponseEntity")].resolution_status == "EXTERNAL_TARGET"
     assert calls[("requireNonNull", None)].resolution_status == "EXTERNAL_TARGET"
     assert next(call for call in result.callsites if call.method_name == "helper").line_start == 18
@@ -165,6 +163,69 @@ def test_static_graph_materializer_creates_static_nodes_edges_evidence_and_entry
     assert entrypoint.metadata["route"] == "/tickets/{id}"
     assert all("flowScore" not in edge.metadata for edge in call_edges)
     assert next(edge for edge in call_edges if edge.metadata["methodName"] == "toApi").metadata["callKind"] == "FIELD_RECEIVER"
+    uses_field_edges = [edge for edge in graph.edges if edge.edgeType == "USES_FIELD"]
+    mapper = next(node for node in graph.nodes if node.nodeKind == "FIELD" and node.name == "mapper")
+    get = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "get")
+    mapper_usage = next(edge for edge in uses_field_edges if edge.fromNodeLocalId == get.localId and edge.toNodeLocalId == mapper.localId)
+    assert mapper_usage.resolutionStatus == "RESOLVED"
+    assert mapper_usage.metadata["factOrigin"] == "STATIC"
+    assert [item.lineStart for item in mapper_usage.evidence] == [19]
+
+
+def test_static_graph_materializer_materializes_uses_field_for_this_receiver_and_dedupes_lines():
+    text = """package example;
+
+class Controller {
+  private final Dep service;
+  private final Dep unused;
+  private final Dep localShadow;
+
+  void handle(Dep service) {
+    Dep localShadow = new Dep();
+    this.service.call();
+    service.call();
+    localShadow.call();
+    verify(this.service).call();
+  }
+}
+
+class Dep { void call() {} }
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+
+    fields = {node.name: node for node in graph.nodes if node.nodeKind == "FIELD"}
+    handle = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "handle")
+    uses_field_edges = [edge for edge in graph.edges if edge.edgeType == "USES_FIELD" and edge.fromNodeLocalId == handle.localId]
+
+    assert [(edge.toNodeLocalId, [item.lineStart for item in edge.evidence]) for edge in uses_field_edges] == [
+        (fields["service"].localId, [10, 13])
+    ]
+    assert all(edge.toNodeLocalId != fields["unused"].localId for edge in uses_field_edges)
+    assert all(edge.toNodeLocalId != fields["localShadow"].localId for edge in uses_field_edges)
+
+
+def test_static_graph_materializer_materializes_uses_field_for_implicit_receiver_when_not_shadowed():
+    text = """package example;
+
+class Controller {
+  private final Dep service;
+
+  void handle() {
+    service.call();
+  }
+}
+
+class Dep { void call() {} }
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+
+    field = next(node for node in graph.nodes if node.nodeKind == "FIELD" and node.name == "service")
+    handle = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "handle")
+    edge = next(edge for edge in graph.edges if edge.edgeType == "USES_FIELD")
+
+    assert edge.fromNodeLocalId == handle.localId
+    assert edge.toNodeLocalId == field.localId
+    assert [item.lineStart for item in edge.evidence] == [7]
 
 
 def test_java_parser_keeps_receiver_type_hints_out_of_edge_metadata():
@@ -325,40 +386,5 @@ def test_anchor_validator_rejects_unanchored_llm_structure_and_claim_targets():
     assert {item["code"] for item in merged.diagnostics} >= {
         "LLM_UNANCHORED_STRUCTURE_CANDIDATE",
         "LLM_CLAIM_TARGET_NOT_FOUND",
-        "LLM_EDGE_SOURCE_NOT_FOUND",
+        "LLM_EDGE_TOPOLOGY_REJECTED",
     }
-
-
-def test_graph_response_parser_accepts_anchor_enrichment_schema():
-    file_metadata = metadata()
-    target = StaticGraphMaterializer().to_graph(parse_sample()).nodes[0].localId
-    payload = {
-        "schemaVersion": "knowledge.graph.enrichment.v1",
-        "file": {
-            "sourceId": "svc",
-            "inventoryFileId": 7,
-            "relativePath": "src/main/java/example/TicketController.java",
-            "contentHash": file_metadata.content_hash,
-            "lineCount": file_metadata.line_count,
-        },
-        "claims": [
-            {
-                "localId": "file-summary",
-                "targetStableKey": target,
-                "claimKind": "RESPONSIBILITY",
-                "summary": "Defines ticket controller structure.",
-                "evidence": [{"lineStart": 1, "lineEnd": 30, "text": "file", "metadata": {}}],
-                "confidence": 0.8,
-                "metadata": {},
-            }
-        ],
-        "semanticEdges": [],
-        "diagnostics": [],
-    }
-
-    contract = GraphContractProvider().resolve(file_metadata.relative_path, JAVA_SAMPLE)
-    result = GraphAnalysisResponseParser().parse(json.dumps(payload), file_metadata.line_count, contract=contract)
-
-    assert isinstance(result, GraphAnalysisResult)
-    assert result.nodes == []
-    assert result.claims[0].nodeLocalId == target

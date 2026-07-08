@@ -3,34 +3,46 @@ from __future__ import annotations
 import json
 import time
 import urllib.parse
+from pathlib import Path
 from typing import Any, Dict
 
 import httpx
 
-from knowledge_service.analysis_graph_contract import AnalysisGraphContract, AnalysisPromptRenderer
+from knowledge_service.analysis_graph_contract import AnalysisGraphContract, GraphContractProvider
+from knowledge_service.analysis_policy import AnalysisPolicy
 from knowledge_service.analysis_runtime_events import emit_runtime_event, runtime_preview, text_hash, utc_now
 from knowledge_service.graph_schema import GraphAnalysisResult
-from knowledge_service.graph_response_parser import GraphAnalysisResponseParser
 from knowledge_service.errors import KnowledgeError
+from knowledge_service.target_enrichment import TargetPromptRenderer, TargetResponseParserValidator, is_target_enrichment_payload
 
 
 class OllamaAnalysisClient:
     name = "ai-file-analyzer"
     version = "1"
 
-    def __init__(self, base_url: str, model: str, timeout_seconds: int, context_tokens: int = 4096):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout_seconds: int,
+        context_tokens: int = 4096,
+        http_client: httpx.AsyncClient | None = None,
+        policy: AnalysisPolicy | None = None,
+        policy_path: str | Path | None = None,
+    ):
         self.base_url = self._require_localhost(base_url.rstrip("/"))
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.context_tokens = max(1024, context_tokens)
-        self.prompt_renderer = AnalysisPromptRenderer()
-        self.contract_provider = self.prompt_renderer.provider
-        self.parser = GraphAnalysisResponseParser(self.contract_provider)
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
+        self.contract_provider = GraphContractProvider(policy=policy, policy_path=policy_path)
+        self.target_prompt_renderer = TargetPromptRenderer(policy=self.contract_provider.policy)
+        self.target_parser = TargetResponseParserValidator()
+        self._client = http_client or httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 
     async def analyze(self, payload: Dict[str, Any], line_count: int, repair_prompt: str | None = None) -> GraphAnalysisResult:
         contract = self.contract_provider.resolve_payload(payload)
         prompt = self._prompt(payload, repair_prompt, contract)
+        self._enforce_prompt_budget(payload, prompt)
         request_started_at = utc_now()
         request_started = time.perf_counter()
         request_metadata = self._request_metadata(payload, prompt, repair_prompt)
@@ -124,7 +136,15 @@ class OllamaAnalysisClient:
             duration_ms=self._duration_ms(request_started),
             metadata=response_metadata,
         )
-        parsed = self.parser.parse(response_text, line_count, contract=contract, known_node_kinds=self._known_node_kinds(payload))
+        if not is_target_enrichment_payload(payload):
+            raise KnowledgeError(
+                "ANALYSIS_TARGET_INPUT_REQUIRED",
+                "AI analyzer requires the target-anchor enrichment input contract.",
+                relativePath=str(payload.get("relativePath") or ""),
+                stage="LLM_ENRICHMENT",
+                severity="ERROR",
+            )
+        parsed = self.target_parser.parse(response_text, payload=payload, line_count=line_count, contract=contract)
         if isinstance(parsed, GraphAnalysisResult):
             return parsed
         self._emit_parse_failure(parsed, response_text, response_metadata)
@@ -144,36 +164,44 @@ class OllamaAnalysisClient:
         repair_prompt: str | None = None,
         contract: AnalysisGraphContract | None = None,
     ) -> str:
-        parts = []
-        rendered_prompt = self.prompt_renderer.render_for_payload(payload, contract=contract)
-        if rendered_prompt:
-            parts.append(rendered_prompt)
-        if repair_prompt:
-            parts.append(repair_prompt)
-        parts.extend(
-            [
-                "File metadata and content JSON:",
-                json.dumps(self._llm_payload(payload), ensure_ascii=False),
-            ]
-        )
-        return "\n".join(parts)
+        if not is_target_enrichment_payload(payload):
+            raise KnowledgeError(
+                "ANALYSIS_TARGET_INPUT_REQUIRED",
+                "AI analyzer requires the target-anchor enrichment input contract.",
+                relativePath=str(payload.get("relativePath") or ""),
+                stage="LLM_ENRICHMENT",
+                severity="ERROR",
+            )
+        return self.target_prompt_renderer.render(payload, repair_prompt, contract=contract)
 
     def _llm_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return {key: value for key, value in payload.items() if key != "analysisPolicy"}
+        llm_input = payload.get("llmInput")
+        if isinstance(llm_input, dict):
+            return dict(llm_input)
+        return {}
 
-    def _known_node_kinds(self, payload: Dict[str, Any]) -> dict[str, str]:
-        static_anchors = payload.get("staticAnchors")
-        if not isinstance(static_anchors, dict):
-            return {}
-        result: dict[str, str] = {}
-        for item in static_anchors.get("nodes") or []:
-            if not isinstance(item, dict):
-                continue
-            key = item.get("targetStableKey")
-            kind = item.get("nodeKind")
-            if isinstance(key, str) and isinstance(kind, str):
-                result[key] = kind
-        return result
+    def _enforce_prompt_budget(self, payload: Dict[str, Any], prompt: str) -> None:
+        raw_budget = payload.get("budgetChars")
+        if raw_budget is None:
+            return
+        try:
+            budget_chars = int(raw_budget)
+        except (TypeError, ValueError):
+            return
+        rendered_prompt_chars = len(prompt)
+        if rendered_prompt_chars > budget_chars:
+            raise KnowledgeError(
+                "ANALYSIS_LLM_TARGET_INPUT_TOO_LARGE",
+                "Rendered target-anchor LLM prompt exceeds the configured analysis budget; no fallback prompt was used.",
+                stage="LLM_ENRICHMENT",
+                severity="ERROR",
+                sourceId=payload.get("sourceId"),
+                relativePath=payload.get("relativePath"),
+                targetRef=payload.get("targetRef"),
+                targetKind=payload.get("targetKind"),
+                budgetChars=budget_chars,
+                renderedPromptChars=rendered_prompt_chars,
+            )
 
     def _require_localhost(self, base_url: str) -> str:
         parsed = urllib.parse.urlparse(base_url)
@@ -194,7 +222,8 @@ class OllamaAnalysisClient:
             "promptHash": text_hash(prompt),
             "sourceId": payload.get("sourceId"),
             "relativePath": payload.get("relativePath"),
-            "contentHash": payload.get("contentHash"),
+            "targetRef": payload.get("targetRef"),
+            "targetKind": payload.get("targetKind"),
             "repairAttempt": repair_prompt is not None,
         }
 

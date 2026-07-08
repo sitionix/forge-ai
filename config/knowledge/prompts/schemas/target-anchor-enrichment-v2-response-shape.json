@@ -1,0 +1,14 @@
+{
+  "claims": [
+    {
+      "claimKind": "RESPONSIBILITY",
+      "summary": "short grounded summary",
+      "evidence": [
+        {
+          "lineStart": 1,
+          "lineEnd": 1
+        }
+      ]
+    }
+  ]
+}

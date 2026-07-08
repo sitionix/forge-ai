@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -10,10 +9,6 @@ from knowledge_service.analysis_policy import AnalysisPolicy
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analysis_policy_resolver import AnalysisPolicyResolveRequest, AnalysisPolicyResolution, resolve_analysis_policy
 from knowledge_service.errors import KnowledgeError
-
-
-RESPONSE_CONTRACT_TEMPLATE = "schemas/graph-enrichment-v1-response-contract.md"
-
 
 @dataclass(frozen=True)
 class AnalysisGraphContract:
@@ -42,6 +37,7 @@ class AnalysisGraphContract:
     semantic_claim_kinds: tuple[str, ...]
     edge_from_kinds: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     edge_to_kinds: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    resolution_status_rules: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
     unsupported_behavior: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -83,6 +79,7 @@ class AnalysisGraphContract:
             semantic_claim_kinds=tuple(resolution.semantic_claim_kinds),
             edge_from_kinds=edge_from_kinds,
             edge_to_kinds=edge_to_kinds,
+            resolution_status_rules=_resolution_status_rules(policy.graph.resolution_statuses, resolution.resolution_statuses),
             unsupported_behavior=dict(resolution.unsupported_behavior),
         )
 
@@ -117,6 +114,7 @@ class AnalysisGraphContract:
             semantic_claim_kinds=tuple(_string_list(raw.get("semanticClaimKinds"))),
             edge_from_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "from"),
             edge_to_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "to"),
+            resolution_status_rules=_resolution_status_rule_payload(raw.get("resolutionStatusRules")),
             unsupported_behavior={str(key): str(value) for key, value in (raw.get("unsupportedBehavior") or {}).items()},
         )
 
@@ -149,6 +147,7 @@ class AnalysisGraphContract:
                 kind: {"from": list(self.edge_from_kinds.get(kind, ())), "to": list(self.edge_to_kinds.get(kind, ()))}
                 for kind in self.allowed_edge_types
             },
+            "resolutionStatusRules": {status: dict(rule) for status, rule in self.resolution_status_rules.items()},
             "unsupportedBehavior": dict(self.unsupported_behavior),
             "evidenceRules": {
                 "lineRangesRequired": self.evidence_required,
@@ -157,33 +156,28 @@ class AnalysisGraphContract:
             },
         }
 
-    def render_contract_block(self) -> str:
-        lines = [
-            "# Resolved analysis policy",
-            f"- formatId: {self.format_id or ''}",
-            f"- extractorId: {self.extractor_id or ''}",
-            f"- policyId: {self.policy_id or ''}",
-            f"- promptId: {self.prompt_id or ''}",
-            f"- sourceView: {self.source_view or ''}",
-            f"- llmMode: {self.llm_mode or ''}",
-            f"- evidenceRequired: {str(self.evidence_required).lower()}",
-            f"- graphProfiles: {_join(self.graph_profiles)}",
-            f"- artifactLabels: {_join(self.artifact_labels)}",
-            "- closedValues: see section 4.",
-            "- endpointRules: see allowedEdgeEndpoints in section 4.",
-            "- staticAnchors: see File metadata and content JSON.",
-            "- unsupportedBehavior:",
-        ]
-        lines.extend(f"  - {key}: {value}" for key, value in self.unsupported_behavior.items())
-        lines.extend(
-            [
-                "- evidenceRules:",
-                "  - Cite exact source line ranges for every claim or semantic edge.",
-                "  - Use only facts materially supported by the provided file content and static anchors.",
-                "  - Omit unsupported facts instead of inventing replacements.",
-            ]
-        )
-        return "\n".join(lines)
+@dataclass(frozen=True)
+class ResolutionStatusContract:
+    rules: Mapping[str, Mapping[str, str]]
+
+    @classmethod
+    def from_graph_contract(cls, contract: AnalysisGraphContract) -> "ResolutionStatusContract":
+        return cls(contract.resolution_status_rules)
+
+    def requires_to_ref(self, status: str) -> bool:
+        return self._rule(status).get("toRef") == "required"
+
+    def forbids_to_ref(self, status: str) -> bool:
+        return self._rule(status).get("toRef") == "forbidden"
+
+    def requires_unresolved_target(self, status: str) -> bool:
+        return self._rule(status).get("unresolvedTarget") == "required"
+
+    def allows_unresolved_target(self, status: str) -> bool:
+        return self._rule(status).get("unresolvedTarget", "optional") != "forbidden"
+
+    def _rule(self, status: str) -> Mapping[str, str]:
+        return self.rules.get(status) or {}
 
 
 class GraphContractProvider:
@@ -222,132 +216,6 @@ class GraphContractProvider:
         )
 
 
-class AnalysisPromptRenderer:
-    def __init__(self, policy: Optional[AnalysisPolicy] = None, policy_path: Optional[str | Path] = None):
-        self.provider = GraphContractProvider(policy=policy, policy_path=policy_path)
-        self.policy = self.provider.policy
-
-    def render_for_payload(
-        self,
-        payload: Mapping[str, Any],
-        contract: AnalysisGraphContract | None = None,
-    ) -> str:
-        contract = contract or self.provider.resolve_payload(payload)
-        prompt_id = _prompt_id(payload) or contract.prompt_id
-        template = self._template(prompt_id)
-        response_shape = self._response_shape(prompt_id)
-        return self.render(template, contract, response_shape)
-
-    def render(self, template: str, contract: AnalysisGraphContract, response_shape: str | None = None) -> str:
-        if response_shape is not None:
-            template = template.replace("{{GRAPH_RESPONSE_SHAPE}}", self._response_contract(contract, response_shape))
-        block = contract.render_contract_block()
-        if "{{ANALYSIS_GRAPH_CONTRACT}}" in template:
-            return template.replace("{{ANALYSIS_GRAPH_CONTRACT}}", block)
-        return "\n\n".join(part for part in (template.strip(), block) if part)
-
-    def _response_contract(self, contract: AnalysisGraphContract, response_shape: str) -> str:
-        template = self._response_contract_template()
-        return (
-            template.replace("{{FINAL_RESPONSE_SHAPE}}", response_shape.strip())
-            .replace("{{ALLOWED_VALUES}}", self._render_allowed_values(contract))
-            .strip()
-        )
-
-    def _response_contract_template(self) -> str:
-        path = (self.policy.prompt_root / RESPONSE_CONTRACT_TEMPLATE).resolve()
-        if not path.exists():
-            raise KnowledgeError(
-                "ANALYSIS_POLICY_RESPONSE_CONTRACT_TEMPLATE_MISSING",
-                f"Analysis policy response contract template does not exist: {path}",
-                responseContractTemplatePath=str(path),
-            )
-        return path.read_text(encoding="utf-8").strip()
-
-    def _render_allowed_values(self, contract: AnalysisGraphContract) -> str:
-        return json.dumps(
-            {
-                "allowedValues": self._allowed_values(contract),
-                "allowedEdgeEndpoints": self._allowed_edge_endpoints(contract),
-            },
-            indent=2,
-            sort_keys=True,
-        )
-
-    def _allowed_values(self, contract: AnalysisGraphContract) -> dict[str, Any]:
-        return {
-            "nodeKind": {
-                kind: {"description": _definition_description(self.policy.graph.nodes.get(kind))}
-                for kind in contract.allowed_node_kinds
-            },
-            "claimKind": {
-                kind: {"description": _definition_description(self.policy.graph.claims.get(kind))}
-                for kind in contract.allowed_claim_kinds
-            },
-            "edgeType": {
-                kind: {"description": _definition_description(self.policy.graph.edges.get(kind))}
-                for kind in contract.allowed_edge_types
-            },
-            "resolutionStatus": {
-                kind: {"description": _definition_description(self.policy.graph.resolution_statuses.get(kind))}
-                for kind in contract.allowed_resolution_statuses
-            },
-        }
-
-    def _allowed_edge_endpoints(self, contract: AnalysisGraphContract) -> dict[str, dict[str, list[str]]]:
-        return {
-            edge_type: {
-                "fromKinds": list(contract.edge_from_kinds.get(edge_type, ())),
-                "toKinds": list(contract.edge_to_kinds.get(edge_type, ())),
-            }
-            for edge_type in contract.allowed_edge_types
-        }
-
-    def _template(self, prompt_id: Optional[str]) -> str:
-        if not prompt_id:
-            raise KnowledgeError(
-                "ANALYSIS_POLICY_PROMPT_REQUIRED",
-                "Analysis policy prompt id is required for prompt rendering.",
-            )
-        if prompt_id not in self.policy.prompts:
-            raise KnowledgeError(
-                "ANALYSIS_POLICY_PROMPT_MISSING",
-                f"Analysis policy prompt id is not declared: {prompt_id}",
-                promptId=prompt_id,
-            )
-        path = self.policy.prompt_path(prompt_id)
-        if not path.exists():
-            raise KnowledgeError(
-                "ANALYSIS_POLICY_PROMPT_FILE_MISSING",
-                f"Analysis policy prompt file does not exist: {path}",
-                promptId=prompt_id,
-                promptPath=str(path),
-            )
-        return path.read_text(encoding="utf-8")
-
-    def _response_shape(self, prompt_id: str) -> str:
-        path = self.policy.prompt_response_shape_path(prompt_id)
-        if not path.exists():
-            raise KnowledgeError(
-                "ANALYSIS_POLICY_RESPONSE_SHAPE_FILE_MISSING",
-                f"Analysis policy response shape file does not exist: {path}",
-                promptId=prompt_id,
-                responseShapePath=str(path),
-            )
-        text = path.read_text(encoding="utf-8").strip()
-        try:
-            json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise KnowledgeError(
-                "ANALYSIS_POLICY_RESPONSE_SHAPE_INVALID_JSON",
-                f"Analysis policy response shape file is invalid JSON: {path}",
-                promptId=prompt_id,
-                responseShapePath=str(path),
-                jsonError=str(exc),
-            ) from exc
-        return text
-
-
 def contract_payload(contract: AnalysisGraphContract) -> dict[str, Any]:
     return contract.to_prompt_dict()
 
@@ -355,15 +223,6 @@ def contract_payload(contract: AnalysisGraphContract) -> dict[str, Any]:
 @lru_cache(maxsize=8)
 def _load_cached_policy(path: Optional[str]) -> AnalysisPolicy:
     return load_analysis_policy(path or None)
-
-
-def _prompt_id(payload: Mapping[str, Any]) -> Optional[str]:
-    raw = payload.get("analysisPolicy")
-    if isinstance(raw, Mapping):
-        prompt_id = raw.get("promptId")
-        if isinstance(prompt_id, str) and prompt_id:
-            return prompt_id
-    return None
 
 
 def _optional_string(value: Any) -> Optional[str]:
@@ -387,18 +246,31 @@ def _edge_endpoint_map(value: Any, side: str) -> dict[str, tuple[str, ...]]:
     return result
 
 
-def _join(values: tuple[str, ...]) -> str:
-    return ", ".join(values)
+def _resolution_status_rules(raw_rules: Mapping[str, Mapping[str, Any]], allowed_statuses: list[str]) -> dict[str, dict[str, str]]:
+    return {
+        status: _resolution_status_rule(raw_rules.get(status))
+        for status in allowed_statuses
+    }
 
 
-def _definition_description(value: Any) -> str:
-    if value is None:
-        return ""
-    description = getattr(value, "description", None)
-    if isinstance(description, str):
-        return description
-    if isinstance(value, Mapping):
-        raw = value.get("description")
-        if isinstance(raw, str):
-            return raw
-    return ""
+def _resolution_status_rule(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    rule: dict[str, str] = {}
+    to_ref = value.get("toRef")
+    if isinstance(to_ref, str):
+        rule["toRef"] = to_ref
+    unresolved_target = value.get("unresolvedTarget")
+    if isinstance(unresolved_target, str):
+        rule["unresolvedTarget"] = unresolved_target
+    return rule
+
+
+def _resolution_status_rule_payload(value: Any) -> dict[str, dict[str, str]]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    for status, rule in value.items():
+        if isinstance(status, str):
+            result[status] = _resolution_status_rule(rule)
+    return result

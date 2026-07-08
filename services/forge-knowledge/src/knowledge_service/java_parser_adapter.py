@@ -291,10 +291,9 @@ class JavaParserAdapter:
         for item in callables:
             if item.owner_type_local_id:
                 by_owner.setdefault(item.owner_type_local_id, []).append(item)
-        field_types: Dict[Tuple[str, str], str] = {}
+        fields_by_owner_name: Dict[Tuple[str, str], StructuralField] = {}
         for field in fields:
-            if field.type_name:
-                field_types[(field.owner_type_local_id, field.name)] = self._simple_type(field.type_name)
+            fields_by_owner_name[(field.owner_type_local_id, field.name)] = field
         imported_simple_names = {self._simple_type(item.imported_name) for item in imports if not item.is_wildcard}
         callsites: List[StructuralCallsite] = []
         for caller, body in callable_bodies:
@@ -310,7 +309,7 @@ class JavaParserAdapter:
                     caller,
                     by_owner,
                     by_type_name,
-                    field_types,
+                    fields_by_owner_name,
                     parameter_types,
                     local_variable_types,
                     imported_simple_names,
@@ -327,7 +326,7 @@ class JavaParserAdapter:
         caller: StructuralCallable,
         by_owner: Dict[str, List[StructuralCallable]],
         by_type_name: Dict[str, StructuralType],
-        field_types: Dict[Tuple[str, str], str],
+        fields_by_owner_name: Dict[Tuple[str, str], StructuralField],
         parameter_types: Dict[str, str],
         local_variable_types: Dict[str, str],
         imported_simple_names: set[str],
@@ -337,6 +336,7 @@ class JavaParserAdapter:
         receiver_type_hint: Optional[str] = None
         target_type_text: Optional[str] = None
         target_callable_local_id: Optional[str] = None
+        field_receiver_local_id: Optional[str] = None
         resolution_status = "UNRESOLVED"
         unresolved_reason: Optional[str] = None
         resolution_reason: Optional[str] = None
@@ -380,9 +380,12 @@ class JavaParserAdapter:
                     unresolved_reason = UnresolvedReason.EXTERNAL_NOT_MODELED.value
             else:
                 receiver_simple = self._simple_type(receiver_text)
-                field_type = field_types.get((caller.owner_type_local_id or "", receiver_text))
-                if field_type:
+                explicit_field = self._explicit_this_field(receiver_text, caller.owner_type_local_id, fields_by_owner_name)
+                implicit_field = self._implicit_field(receiver_text, caller.owner_type_local_id, fields_by_owner_name)
+                if explicit_field is not None:
                     call_kind = "FIELD_RECEIVER"
+                    field_receiver_local_id = explicit_field.local_id
+                    field_type = self._simple_type(explicit_field.type_name or "")
                     receiver_type_hint = field_type
                     target_type_text = field_type
                     target_callable_local_id, resolution_status = self._resolve_type_method(field_type, method_name, argument_count, by_owner, by_type_name)
@@ -407,6 +410,15 @@ class JavaParserAdapter:
                     resolution_reason = (
                         ResolutionReason.LOCAL_VARIABLE_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
                     )
+                    unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
+                elif implicit_field is not None and implicit_field.type_name:
+                    field_type = self._simple_type(implicit_field.type_name)
+                    call_kind = "FIELD_RECEIVER"
+                    field_receiver_local_id = implicit_field.local_id
+                    receiver_type_hint = field_type
+                    target_type_text = field_type
+                    target_callable_local_id, resolution_status = self._resolve_type_method(field_type, method_name, argument_count, by_owner, by_type_name)
+                    resolution_reason = ResolutionReason.FIELD_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
                     unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
                 elif receiver_simple in by_type_name:
                     call_kind = "STATIC_METHOD"
@@ -458,7 +470,31 @@ class JavaParserAdapter:
             unresolved_reason=unresolved_reason,
             resolution_reason=resolution_reason,
             owner_type_hint=caller.qualified_name.rsplit(".", 1)[0] if "." in caller.qualified_name else caller.qualified_name,
+            field_receiver_local_id=field_receiver_local_id,
         )
+
+    def _explicit_this_field(
+        self,
+        receiver_text: Optional[str],
+        owner_type_local_id: Optional[str],
+        fields_by_owner_name: Dict[Tuple[str, str], StructuralField],
+    ) -> Optional[StructuralField]:
+        if not receiver_text or not owner_type_local_id:
+            return None
+        if not receiver_text.startswith("this."):
+            return None
+        field_name = receiver_text[len("this.") :].split(".", 1)[0]
+        return fields_by_owner_name.get((owner_type_local_id, field_name))
+
+    def _implicit_field(
+        self,
+        receiver_text: Optional[str],
+        owner_type_local_id: Optional[str],
+        fields_by_owner_name: Dict[Tuple[str, str], StructuralField],
+    ) -> Optional[StructuralField]:
+        if not receiver_text or not owner_type_local_id or "." in receiver_text or receiver_text.endswith(")"):
+            return None
+        return fields_by_owner_name.get((owner_type_local_id, receiver_text))
 
     def _resolve_same_owner(
         self, caller: StructuralCallable, method_name: str, argument_count: Optional[int], by_owner: Dict[str, List[StructuralCallable]]

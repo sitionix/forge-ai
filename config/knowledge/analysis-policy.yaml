@@ -4,21 +4,22 @@ analysis:
 
   defaults:
     maxFileChars: 120000
+    maxTargetCallsPerFile: 200
     canonicalSourceView: contentLines
     defaultPolicy: text_graph_enrichment
     defaultGraphProfiles: [base_file_graph]
     evidencePolicy: grounded_material_support
 
   prompts:
-    code_graph_enrichment:
-      file: code-graph-enrichment.md
-      responseShape: schemas/graph-enrichment-v1-response-shape.json
-    text_graph_enrichment:
-      file: text-graph-enrichment.md
-      responseShape: schemas/graph-enrichment-v1-response-shape.json
-    document_graph_enrichment:
-      file: document-graph-enrichment.md
-      responseShape: schemas/graph-enrichment-v1-response-shape.json
+    code_target_anchor_enrichment:
+      file: target-anchor-code-enrichment.md
+      responseShape: schemas/target-anchor-enrichment-v2-response-shape.json
+    structured_text_target_anchor_enrichment:
+      file: target-anchor-structured-text-enrichment.md
+      responseShape: schemas/target-anchor-enrichment-v2-response-shape.json
+    document_target_anchor_enrichment:
+      file: target-anchor-document-enrichment.md
+      responseShape: schemas/target-anchor-enrichment-v2-response-shape.json
 
   graph:
     nodes:
@@ -75,6 +76,11 @@ analysis:
         description: Callable source invokes, dispatches to, or schedules another callable target.
         from: [CALLABLE]
         to: [CALLABLE]
+        semanticEligible: true
+      USES_FIELD:
+        description: Callable source reads from, invokes through, or otherwise uses a declared field in its body.
+        from: [CALLABLE]
+        to: [FIELD]
         semanticEligible: true
       CONFIGURES:
         description: Source anchor configures a module, data object, resource, or configuration target.
@@ -169,19 +175,33 @@ analysis:
 
     resolutionStatuses:
       RESOLVED:
-        description: Target was matched to an exact static anchor and toStableKey must be set.
+        description: Target was matched to an exact static anchor and toRef must be set.
+        toRef: required
+        unresolvedTarget: forbidden
       UNRESOLVED:
-        description: Target could not be matched to a known static anchor and toStableKey must be null.
+        description: Target could not be matched to a known static anchor and toRef must be null.
+        toRef: forbidden
+        unresolvedTarget: optional
       EXTERNAL_TARGET:
-        description: Target is outside the current static anchors and must be represented with unresolvedTarget and null toStableKey.
+        description: Target is outside the current static anchors and must be represented with unresolvedTarget and null toRef.
+        toRef: forbidden
+        unresolvedTarget: required
       AMBIGUOUS:
         description: Target has more than one plausible interpretation and should not be forced to a single anchor.
+        toRef: forbidden
+        unresolvedTarget: optional
       MULTIPLE_CANDIDATES:
-        description: Resolver or evidence found several candidate targets and no single toStableKey should be chosen.
+        description: Resolver or evidence found several candidate targets and no single toRef should be chosen.
+        toRef: forbidden
+        unresolvedTarget: optional
       INTERFACE_TARGET:
         description: Target is represented through an interface, abstract declaration, protocol, or contract boundary.
+        toRef: optional
+        unresolvedTarget: optional
       DYNAMIC_TARGET:
         description: Target is computed dynamically at runtime and cannot be safely resolved to a static anchor.
+        toRef: forbidden
+        unresolvedTarget: required
 
   semantic:
     indexedNodeKinds: [FILE, TYPE, CALLABLE]
@@ -195,7 +215,7 @@ analysis:
       family: code
       extractor: java_ast
       policy: parser_assisted_graph_enrichment
-      prompt: code_graph_enrichment
+      prompt: code_target_anchor_enrichment
       graphProfiles: [base_file_graph, java_code_graph]
 
     kotlin:
@@ -203,7 +223,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: code_graph_enrichment
+      prompt: code_target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     typescript:
@@ -211,7 +231,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: code_graph_enrichment
+      prompt: code_target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     javascript:
@@ -219,7 +239,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: code_graph_enrichment
+      prompt: code_target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     python:
@@ -227,7 +247,7 @@ analysis:
       family: code
       extractor: file_anchor
       policy: text_graph_enrichment
-      prompt: code_graph_enrichment
+      prompt: code_target_anchor_enrichment
       graphProfiles: [base_file_graph, code_text_graph]
 
     yaml:
@@ -235,7 +255,7 @@ analysis:
       family: structured_text
       extractor: structured_text_light
       policy: text_graph_enrichment
-      prompt: text_graph_enrichment
+      prompt: structured_text_target_anchor_enrichment
       graphProfiles: [base_file_graph, structured_text_graph]
       artifactClassifiers:
         - id: automation_like
@@ -254,7 +274,7 @@ analysis:
       family: structured_text
       extractor: structured_text_light
       policy: text_graph_enrichment
-      prompt: text_graph_enrichment
+      prompt: structured_text_target_anchor_enrichment
       graphProfiles: [base_file_graph, structured_text_graph]
       artifactClassifiers:
         - id: build_model_like
@@ -269,7 +289,7 @@ analysis:
       family: document
       extractor: document_heading_light
       policy: text_graph_enrichment
-      prompt: document_graph_enrichment
+      prompt: document_target_anchor_enrichment
       graphProfiles: [base_file_graph, document_graph]
 
   policies:
@@ -306,7 +326,7 @@ analysis:
 
     java_code_graph:
       nodes: [FILE, TYPE, CALLABLE, FIELD]
-      edges: [DECLARES, IMPORTS, REFERENCES, CALLS, DEPENDS_ON]
+      edges: [DECLARES, IMPORTS, REFERENCES, CALLS, USES_FIELD, DEPENDS_ON]
       claims: [RESPONSIBILITY, ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
 
     code_text_graph:
@@ -351,7 +371,7 @@ analysis:
       trust: structural
       produces:
         nodes: [FILE, TYPE, CALLABLE, FIELD]
-        edges: [DECLARES, IMPORTS, REFERENCES, CALLS]
+        edges: [DECLARES, IMPORTS, REFERENCES, CALLS, USES_FIELD]
         claims: [ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
 
     structured_text_light:

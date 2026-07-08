@@ -105,6 +105,7 @@ class StructuralCallsite:
     resolution_reason: Optional[str] = None
     owner_type_hint: Optional[str] = None
     import_hint: Optional[str] = None
+    field_receiver_local_id: Optional[str] = None
 
 
 @dataclass(frozen=True)

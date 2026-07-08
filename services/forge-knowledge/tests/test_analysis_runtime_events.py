@@ -16,6 +16,7 @@ from knowledge_service.analysis_schema import AnalysisBuildRequest
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_schema import GraphAnalysisResult
+from knowledge_service.target_enrichment import TARGET_INPUT_SCHEMA_VERSION, TARGET_REQUEST_KIND
 from test_analysis import SupervisorHarness, app_config_with_retries, build_inventory, wait_job
 
 
@@ -179,7 +180,7 @@ def test_parser_failure_persists_response_and_parse_diagnostics(tmp_path):
     assert parser_failure["metadata"]["model"] == "diagnostic-model"
     assert parser_failure["metadata"]["responsePreviewHead"] == "{"
     assert parser_failure["metadata"]["responsePreviewTail"] == "{"
-    assert parser_failure["metadata"]["responseTruncated"] is True
+    assert parser_failure["metadata"]["responseTruncated"] is False
     assert parser_failure["metadata"]["parserErrorDetails"][0]["errorType"] == "JSON_PARSE_ERROR"
 
 
@@ -188,9 +189,14 @@ def test_long_response_preview_is_bounded(tmp_path):
     long_response = _valid_enrichment_json() + ("x" * 5000)
     client = _client_with_response({"response": long_response, "done": True})
 
-    _run_with_runtime_context(store, client.analyze(_payload(), 1))
+    with pytest.raises(KnowledgeError) as exc:
+        _run_with_runtime_context(store, client.analyze(_payload(), 1))
 
-    response = store.runtime_events(job_id=JOB_ID, relative_path=RELATIVE_PATH)["events"][1]
+    assert exc.value.code == "ANALYSIS_AI_INVALID_JSON"
+    events = store.runtime_events(job_id=JOB_ID, relative_path=RELATIVE_PATH)["events"]
+    assert [event["stage"] for event in events] == ["LLM_REQUEST", "LLM_RESPONSE", "LLM_PARSE"]
+    response = events[1]
+    parser_failure = events[2]
     assert response["metadata"]["responseCharLength"] == len(long_response)
     assert len(response["metadata"]["responsePreviewHead"]) <= 2000
     assert len(response["metadata"]["responsePreviewTail"]) <= 2000
@@ -198,6 +204,10 @@ def test_long_response_preview_is_bounded(tmp_path):
     assert response["metadata"]["maxPreviewChars"] == 2000
     assert response["metadata"]["responsePreviewHead"] != long_response
     assert response["metadata"]["responsePreviewTail"] != long_response
+    assert parser_failure["status"] == "FAILED"
+    assert parser_failure["errorCode"] == "ANALYSIS_AI_INVALID_JSON"
+    assert parser_failure["metadata"]["responseTruncated"] is True
+    assert parser_failure["metadata"]["parserErrorDetails"][0]["errorType"] == "JSON_PARSE_ERROR"
 
 
 def test_runtime_diagnostics_survive_failed_file(tmp_path):
@@ -265,29 +275,45 @@ def _run_with_runtime_context(store: AnalysisStore, awaitable):
 def _payload() -> Dict[str, Any]:
     content = "public class ObjectHandler {}"
     contract = GraphContractProvider(policy=load_analysis_policy(POLICY_PATH)).resolve(RELATIVE_PATH, content)
+    stable_key = f"{SOURCE_ID}|{RELATIVE_PATH}|FILE"
+    llm_input = {
+        "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
+        "requestKind": TARGET_REQUEST_KIND,
+        "file": {
+            "sourceId": SOURCE_ID,
+            "relativePath": RELATIVE_PATH,
+            "language": "java",
+            "format": "java",
+            "lineCount": 1,
+            "contentLines": [{"line": 1, "text": content}],
+        },
+        "targetAnchor": {
+            "kind": "FILE",
+            "name": "ObjectHandler.java",
+            "qualifiedName": None,
+            "lineStart": 1,
+            "lineEnd": 1,
+        },
+        "contextAnchors": [],
+        "allowedValues": {
+            "claimKind": list(contract.allowed_claim_kinds),
+        },
+        "responseShape": {"claims": []},
+    }
     return {
         "sourceId": SOURCE_ID,
-        "serviceLabel": "Edge Gateway",
         "relativePath": RELATIVE_PATH,
-        "extension": ".java",
-        "sizeBytes": len(content.encode("utf-8")),
-        "contentHash": CONTENT_HASH,
-        "lineCount": 1,
-        "language": "java",
-        "format": "code",
-        "metadata": {},
-        "contentLines": [{"line": 1, "text": content}],
-        "staticAnchors": {"nodes": [], "edges": []},
+        "targetRef": "F1",
+        "targetKind": "FILE",
+        "requestKind": TARGET_REQUEST_KIND,
+        "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
+        "llmInput": llm_input,
+        "_refToStableKey": {"F1": stable_key},
+        "_stableKeyToRef": {stable_key: "F1"},
+        "_refToKind": {"F1": "FILE"},
         "analysisPolicy": contract_payload(contract),
     }
 
 
 def _valid_enrichment_json() -> str:
-    return json.dumps(
-        {
-            "schemaVersion": "knowledge.graph.enrichment.v1",
-            "claims": [],
-            "semanticEdges": [],
-            "diagnostics": [],
-        }
-    )
+    return json.dumps({"claims": []})

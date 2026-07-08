@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -149,6 +150,45 @@ def test_extractor_output_rejects_edge_endpoint_rule_violation():
     assert exc.value.details["allowedValues"] == ["CALLABLE"]
 
 
+def test_extractor_output_accepts_static_uses_field_edge():
+    policy, context = _context("src/main/java/example/Foo.java", "class Foo { Dep dep; void call() { dep.run(); } }\n", language="java")
+    graph = _graph(
+        nodes=[
+            _file_node(),
+            _node("type", "TYPE", parent="file"),
+            _node("call", "CALLABLE", parent="type"),
+            _node("field", "FIELD", parent="type"),
+        ],
+        edges=[_edge("uses-field", "USES_FIELD", "call", "field", resolution_status="RESOLVED")],
+    )
+
+    _validate_extractor_graph(policy, context, "java_ast", graph)
+
+
+def test_llm_enrichment_rejects_graph_edges_even_when_endpoint_is_valid():
+    policy, context = _context("src/main/java/example/Foo.java", "class Foo { void call() { helper(); } void helper() {} }\n", language="java")
+    nodes = [_file_node(), _node("type", "TYPE", parent="file"), _node("call", "CALLABLE", parent="type"), _node("helper", "CALLABLE", parent="type")]
+    static_graph = _graph(nodes=nodes)
+    llm_graph = _graph(
+        nodes=[],
+        edges=[_edge("llm-call", "CALLS", "call", "helper", resolution_status="RESOLVED")],
+    )
+
+    with pytest.raises(KnowledgeError) as exc:
+        GraphPolicyValidator(policy).validate_llm_enrichment(
+            llm_graph,
+            context.graph_contract,
+            context.line_count,
+            relative_path=context.row["relative_path"],
+            static_graph=static_graph,
+        )
+
+    assert exc.value.code == "ANALYSIS_GRAPH_POLICY_VALIDATION_FAILED"
+    assert exc.value.details["stage"] == "LLM_ENRICHMENT"
+    assert exc.value.details["field"] == "edges"
+    assert exc.value.details["actual"] == "CALLS"
+
+
 def test_final_graph_rejects_imports_target_when_yaml_forbids_targets():
     policy, context = _context("src/main/java/example/Foo.java", "class Foo {}\n", language="java")
     graph = _graph(
@@ -212,6 +252,28 @@ def test_final_graph_rejects_resolved_edge_without_target_node():
     assert exc.value.code == "ANALYSIS_GRAPH_POLICY_VALIDATION_FAILED"
     assert exc.value.details["field"] == "resolutionStatus"
     assert exc.value.details["validationErrors"][0]["path"] == "$.edges[0].resolutionStatus"
+
+
+def test_final_graph_uses_to_ref_resolution_status_rules_from_contract():
+    policy, context = _context("src/main/java/example/Foo.java", "class Foo { void call() {} }\n", language="java")
+    graph = _graph(
+        nodes=[_file_node(), _node("call", "CALLABLE", parent="file")],
+        edges=[_edge("call-edge", "CALLS", "call", None, resolution_status="RESOLVED")],
+    )
+    flexible_contract = replace(
+        context.graph_contract,
+        resolution_status_rules={
+            **context.graph_contract.resolution_status_rules,
+            "RESOLVED": {"toRef": "optional", "unresolvedTarget": "optional"},
+        },
+    )
+
+    GraphPolicyValidator(policy).validate_final_graph(
+        graph,
+        flexible_contract,
+        context.line_count,
+        relative_path=context.row["relative_path"],
+    )
 
 
 def test_final_graph_accepts_unresolved_calls_without_target_node():

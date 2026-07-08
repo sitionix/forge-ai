@@ -74,7 +74,7 @@ ANALYSIS_KEYS = {
     "extractors",
     "unsupported",
 }
-DEFAULT_KEYS = {"maxFileChars", "canonicalSourceView", "defaultPolicy", "defaultGraphProfiles", "evidencePolicy"}
+DEFAULT_KEYS = {"maxFileChars", "maxTargetCallsPerFile", "canonicalSourceView", "defaultPolicy", "defaultGraphProfiles", "evidencePolicy"}
 PROMPT_KEYS = {"file", "responseShape"}
 GRAPH_KEYS = {"nodes", "edges", "claims", "statuses", "origins", "evidenceKinds", "resolutionStatuses"}
 DESCRIPTION_KEY = "description"
@@ -84,6 +84,9 @@ GRAPH_CLAIM_KEYS = {"evidenceRequired", "materialSupportRequired", "semanticElig
 GRAPH_STATUS_KEYS = {"persistGraphFact", "requiresValidEvidence", "emitDiagnostic", "requiresDerivationTrace", "queryEligible", DESCRIPTION_KEY}
 GRAPH_ORIGIN_KEYS = {"canBeTrusted", "requiresValidEvidence", "requiresDerivationTrace", DESCRIPTION_KEY}
 GRAPH_DESCRIPTION_KEYS = {DESCRIPTION_KEY}
+GRAPH_RESOLUTION_STATUS_KEYS = {DESCRIPTION_KEY, "toRef", "unresolvedTarget"}
+TO_REF_RULES = {"required", "optional", "forbidden"}
+UNRESOLVED_TARGET_RULES = {"required", "optional", "forbidden"}
 SEMANTIC_KEYS = {"indexedNodeKinds", "indexedClaimKinds", "indexedEdgeKinds", "unsupportedSemanticKind"}
 FORMAT_KEYS = {"extensions", "family", "extractor", "policy", "prompt", "graphProfiles", "artifactClassifiers"}
 ARTIFACT_CLASSIFIER_KEYS = {"id", "detection", "addsGraphProfiles"}
@@ -240,6 +243,7 @@ def _parse_defaults(data: Mapping[Any, Any], diagnostics: List[AnalysisPolicyDia
     _check_allowed_keys(data, path, DEFAULT_KEYS, diagnostics)
     return AnalysisPolicyDefaults(
         max_file_chars=_required_int(data, "maxFileChars", path, diagnostics),
+        max_target_calls_per_file=_required_int(data, "maxTargetCallsPerFile", path, diagnostics),
         canonical_source_view=_required_str(data, "canonicalSourceView", path, diagnostics),
         default_policy=_required_str(data, "defaultPolicy", path, diagnostics),
         default_graph_profiles=_required_str_list(data, "defaultGraphProfiles", path, diagnostics),
@@ -273,7 +277,7 @@ def _parse_graph(data: Mapping[Any, Any], diagnostics: List[AnalysisPolicyDiagno
     statuses = _parse_freeform_flag_map(_required_mapping(data, "statuses", path, diagnostics), f"{path}.statuses", GRAPH_STATUS_KEYS, diagnostics)
     origins = _parse_freeform_flag_map(_required_mapping(data, "origins", path, diagnostics), f"{path}.origins", GRAPH_ORIGIN_KEYS, diagnostics)
     evidence_kinds = _parse_empty_map(_required_mapping(data, "evidenceKinds", path, diagnostics), f"{path}.evidenceKinds", diagnostics)
-    resolution_statuses = _parse_empty_map(
+    resolution_statuses = _parse_resolution_statuses(
         _required_mapping(data, "resolutionStatuses", path, diagnostics),
         f"{path}.resolutionStatuses",
         diagnostics,
@@ -386,6 +390,22 @@ def _parse_empty_map(data: Mapping[Any, Any], path: str, diagnostics: List[Analy
         item = _require_mapping(raw, item_path, diagnostics)
         _check_allowed_keys(item, item_path, GRAPH_DESCRIPTION_KEYS, diagnostics)
         _optional_description(item, item_path, diagnostics)
+        result[item_id] = dict(item)
+    return result
+
+
+def _parse_resolution_statuses(data: Mapping[Any, Any], path: str, diagnostics: List[AnalysisPolicyDiagnostic]) -> Dict[str, Mapping[str, Any]]:
+    result: Dict[str, Mapping[str, Any]] = {}
+    _require_string_keys(data, path, diagnostics)
+    for item_id, raw in data.items():
+        if not isinstance(item_id, str):
+            continue
+        item_path = f"{path}.{item_id}"
+        item = _require_mapping(raw, item_path, diagnostics)
+        _check_allowed_keys(item, item_path, GRAPH_RESOLUTION_STATUS_KEYS, diagnostics)
+        _optional_description(item, item_path, diagnostics)
+        _optional_enum(item, "toRef", item_path, TO_REF_RULES, diagnostics)
+        _optional_enum(item, "unresolvedTarget", item_path, UNRESOLVED_TARGET_RULES, diagnostics)
         result[item_id] = dict(item)
     return result
 
@@ -866,6 +886,29 @@ def _optional_bool(
             )
         )
         return default
+    return value
+
+
+def _optional_enum(
+    data: Mapping[Any, Any],
+    key: str,
+    parent_path: str,
+    allowed_values: Set[str],
+    diagnostics: List[AnalysisPolicyDiagnostic],
+) -> Optional[str]:
+    if key not in data:
+        return None
+    value = data[key]
+    if not isinstance(value, str) or value not in allowed_values:
+        diagnostics.append(
+            AnalysisPolicyDiagnostic(
+                path=f"{parent_path}.{key}",
+                reason=f"{key} is not an allowed value",
+                invalid_value=value,
+                allowed_values=sorted(allowed_values),
+            )
+        )
+        return None
     return value
 
 

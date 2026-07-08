@@ -53,7 +53,6 @@ module = [
   "knowledge_service.analysis_schema",
   "knowledge_service.analysis_store",
   "knowledge_service.graph_analysis",
-  "knowledge_service.graph_response_parser",
   "knowledge_service.java_parser_adapter",
   "knowledge_service.source_catalog",
   "knowledge_service.structural_analysis",

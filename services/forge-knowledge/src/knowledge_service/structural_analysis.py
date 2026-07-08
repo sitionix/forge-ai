@@ -117,6 +117,12 @@ class StaticGraphMaterializer:
         claims: List[GraphClaim] = []
         diagnostics: List[Dict[str, Any]] = []
         file_local_id = result.file_stable_key
+        callables_by_id = {item.local_id: item for item in result.callables}
+        fields_by_id = {item.local_id: item for item in result.fields}
+        fields_by_owner: Dict[str, List[Any]] = {}
+        for item in result.fields:
+            fields_by_owner.setdefault(item.owner_type_local_id, []).append(item)
+        field_usages: Dict[tuple[str, str], Dict[str, Any]] = {}
         nodes.append(
             GraphNode(
                 localId=file_local_id,
@@ -351,6 +357,30 @@ class StaticGraphMaterializer:
                 )
             )
             claims.extend(self._call_boundary_claims(result, callsite))
+            self._collect_field_usage(result, callsite, callables_by_id, fields_by_id, fields_by_owner, field_usages)
+        for (caller_local_id, field_local_id), usage in field_usages.items():
+            evidence = usage["evidence"]
+            edges.append(
+                GraphEdge(
+                    localId=self._stable_key(result, "USES_FIELD", caller_local_id, field_local_id),
+                    fromNodeLocalId=caller_local_id,
+                    toNodeLocalId=field_local_id,
+                    edgeType="USES_FIELD",
+                    resolutionStatus="RESOLVED",
+                    confidence=1.0,
+                    evidence=evidence,
+                    unresolvedTarget=None,
+                    metadata=self._metadata(
+                        result,
+                        "FIELD_USAGE",
+                        self._stable_key(result, "USES_FIELD", caller_local_id, field_local_id),
+                        {
+                            "fieldName": usage.get("fieldName"),
+                            "usageLineCount": len(evidence),
+                        },
+                    ),
+                )
+            )
         for diagnostic in result.diagnostics:
             diagnostics.append(
                 {
@@ -371,6 +401,61 @@ class StaticGraphMaterializer:
                 }
             )
         return GraphAnalysisResult(nodes=nodes, edges=edges, claims=claims, diagnostics=diagnostics)
+
+    def _collect_field_usage(
+        self,
+        result: StructuralParseResult,
+        callsite: StructuralCallsite,
+        callables_by_id: Dict[str, Any],
+        fields_by_id: Dict[str, Any],
+        fields_by_owner: Dict[str, List[Any]],
+        field_usages: Dict[tuple[str, str], Dict[str, Any]],
+    ) -> None:
+        caller = callables_by_id.get(callsite.caller_callable_local_id)
+        if caller is None:
+            return
+        if callsite.field_receiver_local_id in fields_by_id:
+            self._record_field_usage(result, field_usages, callsite, fields_by_id[callsite.field_receiver_local_id])
+        for field in fields_by_owner.get(caller.owner_type_local_id or "", []):
+            if self._contains_explicit_this_field(callsite.receiver_text, field.name) or self._contains_explicit_this_field(callsite.raw_text, field.name):
+                self._record_field_usage(result, field_usages, callsite, field)
+
+    def _record_field_usage(
+        self,
+        result: StructuralParseResult,
+        field_usages: Dict[tuple[str, str], Dict[str, Any]],
+        callsite: StructuralCallsite,
+        field: Any,
+    ) -> None:
+        key = (callsite.caller_callable_local_id, field.local_id)
+        usage = field_usages.setdefault(
+            key,
+            {
+                "fieldName": field.name,
+                "evidence": [],
+                "evidenceKeys": set(),
+            },
+        )
+        evidence_key = (callsite.line_start, callsite.line_end)
+        if evidence_key in usage["evidenceKeys"]:
+            return
+        usage["evidenceKeys"].add(evidence_key)
+        usage["evidence"].append(
+            self._evidence(
+                callsite.line_start,
+                callsite.line_end,
+                callsite.raw_text,
+                {
+                    "evidenceKind": "CALLSITE",
+                    "fieldName": field.name,
+                },
+            )
+        )
+
+    def _contains_explicit_this_field(self, value: Optional[str], field_name: str) -> bool:
+        if not value:
+            return False
+        return re.search(r"(?<![\w$])this\." + re.escape(field_name) + r"\b", value) is not None
 
     def _entrypoint_claims(
         self, result: StructuralParseResult, target_local_id: str, annotations: List[StructuralAnnotation], owner_annotations: List[StructuralAnnotation]

@@ -289,14 +289,15 @@ def test_analysis_build_skips_current_analyzed_files_without_provider_call(tmp_p
         assert first_job["status"] == "COMPLETED"
         assert first_job["processedFileCount"] == 2
         assert first_job["failedFileCount"] == 0
-        assert provider.calls == 2
+        first_call_count = provider.calls
+        assert first_call_count >= 2
 
         second_build = client.post("/api/v1/knowledge/analysis/build", json={"sourceIds": ["forge-ai"], "force": False}).json()
         second_job = wait_job(client, second_build["jobId"], "COMPLETED")
         assert second_job["status"] == "COMPLETED"
         assert second_job["fileCount"] == 0
         assert second_job["processedFileCount"] == 0
-        assert provider.calls == 2
+        assert provider.calls == first_call_count
 
         services = client.get("/api/v1/knowledge/overview").json()
         assert services["sources"][0]["analysis"]["succeededFiles"] == 2
@@ -328,7 +329,8 @@ def test_analysis_build_runs_pending_files_through_provider_after_skipping_curre
         assert first_job["fileCount"] == 1
         assert first_job["processedFileCount"] == 1
         assert first_job["failedFileCount"] == 0
-        assert provider.calls == 1
+        first_call_count = provider.calls
+        assert first_call_count > 0
 
         second_build = client.post(
             "/api/v1/knowledge/analysis/build",
@@ -339,7 +341,8 @@ def test_analysis_build_runs_pending_files_through_provider_after_skipping_curre
         assert second_job["fileCount"] == 1
         assert second_job["processedFileCount"] == 1
         assert second_job["failedFileCount"] == 0
-        assert provider.calls == 2
+        second_call_count = provider.calls
+        assert second_call_count > first_call_count
 
         third_build = client.post(
             "/api/v1/knowledge/analysis/build",
@@ -348,7 +351,7 @@ def test_analysis_build_runs_pending_files_through_provider_after_skipping_curre
         third_job = wait_job(client, third_build["jobId"], "COMPLETED")
         assert third_job["status"] == "COMPLETED"
         assert third_job["fileCount"] == 0
-        assert provider.calls == 2
+        assert provider.calls == second_call_count
 
         services = client.get("/api/v1/knowledge/overview").json()
         assert services["sources"][0]["analysis"]["succeededFiles"] == 2
