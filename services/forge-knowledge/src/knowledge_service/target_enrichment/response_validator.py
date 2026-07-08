@@ -6,16 +6,17 @@ from typing import Any, Iterable, Mapping, Optional
 from knowledge_service.analysis_graph_contract import AnalysisGraphContract, ResolutionStatusContract
 from knowledge_service.analysis_parse_failure import GraphAnalysisParseFailure
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef
-from knowledge_service.target_enrichment.constants import TARGET_RESPONSE_SCHEMA_VERSION
 
 
 class TargetResponseParserValidator:
-    _TOP_LEVEL_FIELDS = {"schemaVersion", "claims", "semanticEdges", "diagnostics"}
-    _CLAIM_FIELDS = {"localId", "targetRef", "claimKind", "summary", "confidence", "evidence"}
-    _EDGE_FIELDS = {"localId", "fromRef", "toRef", "edgeType", "resolutionStatus", "confidence", "evidence", "unresolvedTarget"}
-    _EVIDENCE_FIELDS = {"lineStart", "lineEnd", "text"}
-    _DIAGNOSTIC_FIELDS = {"code", "stage", "severity", "message"}
-    _DIAGNOSTIC_SEVERITIES = {"INFO", "WARN", "ERROR"}
+    _TOP_LEVEL_FIELDS = {"claims", "semanticEdges"}
+    _CLAIM_FIELDS = {"claimKind", "summary", "evidence"}
+    _EDGE_FIELDS = {"edgeType", "toRef", "unresolvedStatus", "unresolvedTarget", "evidence"}
+    _EVIDENCE_FIELDS = {"lineStart", "lineEnd"}
+    _DEFAULT_CONFIDENCE = 0.8
+    _MAX_SUMMARY_CHARS = 600
+    _MAX_EVIDENCE_TEXT_CHARS = 2000
+    _MAX_UNRESOLVED_TARGET_JSON_CHARS = 2000
 
     def parse(
         self,
@@ -30,65 +31,76 @@ class TargetResponseParserValidator:
             return load_error
         if not isinstance(parsed, dict):
             return self._failure(raw, self._schema_error("$", "Response must be one JSON object.", actual=type(parsed).__name__, expected="object"))
+
         llm_input = payload.get("llmInput")
         if not isinstance(llm_input, Mapping):
             return self._failure(raw, self._schema_error("$", "Target input context is missing.", expected="llmInput"))
         target_anchor = llm_input.get("targetAnchor")
         if not isinstance(target_anchor, Mapping):
             return self._failure(raw, self._schema_error("$.targetAnchor", "Target input anchor is missing.", expected="targetAnchor"))
+
         target_ref = str(target_anchor.get("ref") or "")
+        target_kind = str(target_anchor.get("kind") or "")
         known_refs = self._known_refs(llm_input)
         ref_to_stable_key = {str(key): str(value) for key, value in (payload.get("_refToStableKey") or {}).items()}
         ref_to_kind = {str(key): str(value) for key, value in (payload.get("_refToKind") or {}).items()}
+        target_stable_key = ref_to_stable_key.get(target_ref)
+        content_by_line = self._content_by_line(llm_input)
+        allowed_edge_types = self._target_scoped_allowed_edge_types(llm_input, contract, target_kind)
+        allowed_unresolved_statuses = self._allowed_unresolved_statuses(llm_input, contract)
         details: list[dict[str, Any]] = []
 
+        if not target_ref:
+            details.append(self._schema_error("$.targetAnchor.ref", "Target input anchor ref is required.", expected="targetAnchor.ref"))
+        elif target_ref not in known_refs:
+            details.append(self._schema_error("$.targetAnchor.ref", "targetAnchor.ref is not in anchorRegistry.", actual=target_ref, expected="known ref"))
+        if not target_stable_key:
+            details.append(self._schema_error("$.targetAnchor.ref", "targetAnchor.ref has no backend stable key mapping.", actual=target_ref, expected="stable key mapping"))
+
         self._validate_object_fields(parsed, "$", self._TOP_LEVEL_FIELDS, details)
-        if parsed.get("schemaVersion") != TARGET_RESPONSE_SCHEMA_VERSION:
-            details.append(
-                self._schema_error(
-                    "$.schemaVersion",
-                    "schemaVersion must match the target-anchor response contract.",
-                    actual=parsed.get("schemaVersion"),
-                    expected=TARGET_RESPONSE_SCHEMA_VERSION,
-                )
-            )
         claims = parsed.get("claims")
         edges = parsed.get("semanticEdges")
-        diagnostics = parsed.get("diagnostics")
         if not isinstance(claims, list):
             details.append(self._schema_error("$.claims", "claims must be an array.", actual=claims, expected="array"))
             claims = []
         if not isinstance(edges, list):
             details.append(self._schema_error("$.semanticEdges", "semanticEdges must be an array.", actual=edges, expected="array"))
             edges = []
-        if not isinstance(diagnostics, list):
-            details.append(self._schema_error("$.diagnostics", "diagnostics must be an array.", actual=diagnostics, expected="array"))
-            diagnostics = []
 
         for index, item in enumerate(claims):
-            self._validate_claim(item, index, target_ref, known_refs, contract, line_count, details)
+            self._validate_claim(item, index, contract, line_count, details)
         for index, item in enumerate(edges):
-            self._validate_edge(item, index, target_ref, known_refs, ref_to_kind, contract, line_count, details)
-        for index, item in enumerate(diagnostics):
-            self._validate_diagnostic(item, index, details)
+            self._validate_edge(
+                item,
+                index,
+                target_kind,
+                known_refs,
+                ref_to_kind,
+                contract,
+                allowed_edge_types,
+                allowed_unresolved_statuses,
+                line_count,
+                details,
+            )
 
         if details:
-            return self._failure(raw, *details)
+            return self._failure(raw, *self._decorate_details(details, target_ref, target_kind, allowed_edge_types, allowed_unresolved_statuses))
         try:
             return self._to_graph_result(
                 parsed,
                 target_ref=target_ref,
+                target_stable_key=str(target_stable_key),
                 ref_to_stable_key=ref_to_stable_key,
+                content_by_line=content_by_line,
             )
-        except (TypeError, ValueError) as exc:
-            return self._failure(raw, self._schema_error("$", str(exc), expected="valid graph result"))
+        except (KeyError, TypeError, ValueError) as exc:
+            detail = self._schema_error("$", str(exc), expected="valid graph result")
+            return self._failure(raw, *self._decorate_details([detail], target_ref, target_kind, allowed_edge_types, allowed_unresolved_statuses))
 
     def _validate_claim(
         self,
         item: Any,
         index: int,
-        target_ref: str,
-        known_refs: set[str],
         contract: AnalysisGraphContract,
         line_count: int,
         details: list[dict[str, Any]],
@@ -98,12 +110,6 @@ class TargetResponseParserValidator:
             details.append(self._schema_error(path, "claim must be an object.", actual=type(item).__name__, expected="object"))
             return
         self._validate_object_fields(item, path, self._CLAIM_FIELDS, details)
-        self._required_string(item, path, "localId", details)
-        target = self._required_string(item, path, "targetRef", details)
-        if target and target not in known_refs:
-            details.append(self._schema_error(f"{path}.targetRef", "targetRef is not in anchorRegistry.", actual=target, expected="known ref"))
-        if target and target != target_ref:
-            details.append(self._schema_error(f"{path}.targetRef", "claim targetRef must equal targetAnchor.ref.", actual=target, expected=target_ref))
         claim_kind = self._required_string(item, path, "claimKind", details)
         if claim_kind and claim_kind not in contract.allowed_claim_kinds:
             details.append(
@@ -115,18 +121,21 @@ class TargetResponseParserValidator:
                     allowed_values=list(contract.allowed_claim_kinds),
                 )
             )
-        self._required_string(item, path, "summary", details)
-        self._confidence(item, path, details)
+        summary = self._required_string(item, path, "summary", details)
+        if summary and len(summary) > self._MAX_SUMMARY_CHARS:
+            details.append(self._schema_error(f"{path}.summary", "summary is too long.", actual=len(summary), expected=f"{self._MAX_SUMMARY_CHARS} chars or fewer"))
         self._evidence_list(item.get("evidence"), f"{path}.evidence", line_count, details)
 
     def _validate_edge(
         self,
         item: Any,
         index: int,
-        target_ref: str,
+        target_kind: str,
         known_refs: set[str],
         ref_to_kind: Mapping[str, str],
         contract: AnalysisGraphContract,
+        allowed_edge_types: list[str],
+        allowed_unresolved_statuses: list[str],
         line_count: int,
         details: list[dict[str, Any]],
     ) -> None:
@@ -135,93 +144,72 @@ class TargetResponseParserValidator:
             details.append(self._schema_error(path, "semantic edge must be an object.", actual=type(item).__name__, expected="object"))
             return
         self._validate_object_fields(item, path, self._EDGE_FIELDS, details)
-        self._required_string(item, path, "localId", details)
-        from_ref = self._required_string(item, path, "fromRef", details)
-        if from_ref and from_ref not in known_refs:
-            details.append(self._schema_error(f"{path}.fromRef", "fromRef is not in anchorRegistry.", actual=from_ref, expected="known ref"))
-        if from_ref and from_ref != target_ref:
-            details.append(self._schema_error(f"{path}.fromRef", "semantic edge fromRef must equal targetAnchor.ref.", actual=from_ref, expected=target_ref))
-        to_ref = item.get("toRef")
-        if to_ref is not None and (not isinstance(to_ref, str) or not to_ref.strip()):
-            details.append(self._schema_error(f"{path}.toRef", "toRef must be a known ref or null.", actual=to_ref, expected="known ref or null"))
-        elif isinstance(to_ref, str) and to_ref not in known_refs:
-            details.append(self._schema_error(f"{path}.toRef", "toRef is not in anchorRegistry.", actual=to_ref, expected="known ref or null"))
         edge_type = self._required_string(item, path, "edgeType", details)
-        if edge_type and edge_type not in contract.allowed_edge_types:
+        if edge_type and edge_type not in allowed_edge_types:
             details.append(
                 self._schema_error(
                     f"{path}.edgeType",
-                    "edgeType is not allowed by the effective analysis graph policy.",
+                    "edgeType is not allowed for the current target anchor kind.",
                     actual=edge_type,
-                    expected="allowed edge type",
-                    allowed_values=list(contract.allowed_edge_types),
+                    expected="target-scoped allowed edge type",
+                    allowed_values=allowed_edge_types,
                 )
             )
         elif edge_type:
-            self._edge_endpoint(edge_type, from_ref, to_ref, ref_to_kind, contract, path, details)
-        resolution_status = self._required_string(item, path, "resolutionStatus", details)
-        if resolution_status and resolution_status not in contract.allowed_resolution_statuses:
-            details.append(
-                self._schema_error(
-                    f"{path}.resolutionStatus",
-                    "resolutionStatus is not allowed by the effective analysis graph policy.",
-                    actual=resolution_status,
-                    expected="allowed resolution status",
-                    allowed_values=list(contract.allowed_resolution_statuses),
+            allowed_from = list(contract.edge_from_kinds.get(edge_type, ()))
+            if allowed_from and target_kind not in allowed_from:
+                details.append(
+                    self._schema_error(
+                        f"{path}.edgeType",
+                        "edge source anchor kind violates endpoint rules.",
+                        actual=target_kind,
+                        expected=f"{edge_type} source kind",
+                        allowed_values=allowed_from,
+                    )
                 )
-            )
-        elif resolution_status:
-            self._edge_resolution_status(item, path, resolution_status, ResolutionStatusContract.from_graph_contract(contract), details)
-        self._confidence(item, path, details)
+
+        has_to_ref = "toRef" in item and item.get("toRef") is not None
+        to_ref = item.get("toRef")
+        if has_to_ref:
+            if not isinstance(to_ref, str) or not to_ref.strip():
+                details.append(self._schema_error(f"{path}.toRef", "toRef must be a known ref when present.", actual=to_ref, expected="known ref"))
+            elif to_ref not in known_refs:
+                details.append(self._schema_error(f"{path}.toRef", "toRef is not in anchorRegistry.", actual=to_ref, expected="known ref"))
+            elif edge_type:
+                self._edge_target_endpoint(edge_type, str(to_ref), ref_to_kind, contract, path, details)
+            if "unresolvedStatus" in item:
+                details.append(self._schema_error(f"{path}.unresolvedStatus", "unresolvedStatus must be omitted when toRef is present.", actual=item.get("unresolvedStatus"), expected="omit field"))
+            if "unresolvedTarget" in item:
+                details.append(self._schema_error(f"{path}.unresolvedTarget", "unresolvedTarget must be omitted when toRef is present.", actual=item.get("unresolvedTarget"), expected="omit field"))
+        else:
+            unresolved_status = self._required_string(item, path, "unresolvedStatus", details)
+            if unresolved_status:
+                if unresolved_status == "RESOLVED":
+                    details.append(self._schema_error(f"{path}.unresolvedStatus", "unresolvedStatus must not be RESOLVED.", actual=unresolved_status, expected="unresolved status"))
+                elif unresolved_status not in allowed_unresolved_statuses:
+                    details.append(
+                        self._schema_error(
+                            f"{path}.unresolvedStatus",
+                            "unresolvedStatus is not allowed by the effective analysis graph policy.",
+                            actual=unresolved_status,
+                            expected="allowed unresolved status",
+                            allowed_values=allowed_unresolved_statuses,
+                        )
+                    )
+                self._edge_unresolved_status(item, path, unresolved_status, ResolutionStatusContract.from_graph_contract(contract), details)
         self._evidence_list(item.get("evidence"), f"{path}.evidence", line_count, details)
 
-    def _validate_diagnostic(self, item: Any, index: int, details: list[dict[str, Any]]) -> None:
-        path = f"$.diagnostics[{index}]"
-        if not isinstance(item, dict):
-            details.append(self._schema_error(path, "diagnostic must be an object.", actual=type(item).__name__, expected="object"))
-            return
-        self._validate_object_fields(item, path, self._DIAGNOSTIC_FIELDS, details)
-        self._required_string(item, path, "code", details)
-        stage = self._required_string(item, path, "stage", details)
-        if stage and stage != "LLM_ENRICHMENT":
-            details.append(self._schema_error(f"{path}.stage", "diagnostic stage must be LLM_ENRICHMENT.", actual=stage, expected="LLM_ENRICHMENT"))
-        severity = self._required_string(item, path, "severity", details)
-        if severity and severity not in self._DIAGNOSTIC_SEVERITIES:
-            details.append(
-                self._schema_error(
-                    f"{path}.severity",
-                    "diagnostic severity is not allowed.",
-                    actual=severity,
-                    expected="diagnostic severity",
-                    allowed_values=sorted(self._DIAGNOSTIC_SEVERITIES),
-                )
-            )
-        self._required_string(item, path, "message", details)
-
-    def _edge_endpoint(
+    def _edge_target_endpoint(
         self,
         edge_type: str,
-        from_ref: Optional[str],
-        to_ref: Any,
+        to_ref: str,
         ref_to_kind: Mapping[str, str],
         contract: AnalysisGraphContract,
         path: str,
         details: list[dict[str, Any]],
     ) -> None:
-        from_kind = ref_to_kind.get(str(from_ref)) if from_ref else None
-        to_kind = ref_to_kind.get(str(to_ref)) if to_ref else None
-        allowed_from = list(contract.edge_from_kinds.get(edge_type, ()))
+        to_kind = ref_to_kind.get(str(to_ref))
         allowed_to = list(contract.edge_to_kinds.get(edge_type, ()))
-        if from_kind is not None and allowed_from and from_kind not in allowed_from:
-            details.append(
-                self._schema_error(
-                    f"{path}.fromRef",
-                    "edge source anchor kind violates endpoint rules.",
-                    actual=from_kind,
-                    expected=f"{edge_type} source kind",
-                    allowed_values=allowed_from,
-                )
-            )
         if to_kind is not None and allowed_to and to_kind not in allowed_to:
             details.append(
                 self._schema_error(
@@ -243,7 +231,7 @@ class TargetResponseParserValidator:
                 )
             )
 
-    def _edge_resolution_status(
+    def _edge_unresolved_status(
         self,
         item: Mapping[str, Any],
         path: str,
@@ -251,12 +239,9 @@ class TargetResponseParserValidator:
         rules: ResolutionStatusContract,
         details: list[dict[str, Any]],
     ) -> None:
-        to_ref = item.get("toRef")
         unresolved_target = item.get("unresolvedTarget")
-        if rules.requires_to_ref(status) and not to_ref:
-            details.append(self._schema_error(f"{path}.resolutionStatus", "edge resolution requires toRef.", actual=status, expected="toRef"))
-        if rules.forbids_to_ref(status) and to_ref:
-            details.append(self._schema_error(f"{path}.resolutionStatus", "edge resolution must not have toRef.", actual=status, expected="null toRef"))
+        if rules.requires_to_ref(status):
+            details.append(self._schema_error(f"{path}.unresolvedStatus", "unresolvedStatus requires toRef and cannot be used without toRef.", actual=status, expected="status without required toRef"))
         if rules.requires_unresolved_target(status) and not isinstance(unresolved_target, dict):
             details.append(
                 self._schema_error(
@@ -267,9 +252,24 @@ class TargetResponseParserValidator:
                 )
             )
         if unresolved_target is not None and not rules.allows_unresolved_target(status):
-            details.append(self._schema_error(f"{path}.unresolvedTarget", "edge resolution must not include unresolvedTarget.", actual=unresolved_target, expected="null"))
-        if to_ref is None and unresolved_target is not None and not isinstance(unresolved_target, dict):
-            details.append(self._schema_error(f"{path}.unresolvedTarget", "unresolvedTarget must be an object or null.", actual=unresolved_target, expected="object or null"))
+            details.append(self._schema_error(f"{path}.unresolvedTarget", "edge resolution must not include unresolvedTarget.", actual=unresolved_target, expected="omit field"))
+        if unresolved_target is not None:
+            if not isinstance(unresolved_target, dict):
+                details.append(self._schema_error(f"{path}.unresolvedTarget", "unresolvedTarget must be an object when present.", actual=unresolved_target, expected="object"))
+            else:
+                self._validate_unresolved_target(unresolved_target, f"{path}.unresolvedTarget", details)
+
+    def _validate_unresolved_target(self, value: Mapping[str, Any], path: str, details: list[dict[str, Any]]) -> None:
+        encoded = json.dumps(dict(value), ensure_ascii=False, sort_keys=True, default=str)
+        if len(encoded) > self._MAX_UNRESOLVED_TARGET_JSON_CHARS:
+            details.append(
+                self._schema_error(
+                    path,
+                    "unresolvedTarget is too large.",
+                    actual=len(encoded),
+                    expected=f"{self._MAX_UNRESOLVED_TARGET_JSON_CHARS} chars or fewer",
+                )
+            )
 
     def _evidence_list(self, value: Any, path: str, line_count: int, details: list[dict[str, Any]]) -> None:
         if not isinstance(value, list) or not value:
@@ -285,67 +285,121 @@ class TargetResponseParserValidator:
             line_end = self._required_int(item, evidence_path, "lineEnd", details)
             if line_start is not None and line_end is not None and (line_start < 1 or line_end < line_start or line_end > max(line_count, 1)):
                 details.append(self._graph_error(evidence_path, "Evidence line range outside file."))
-            text = item.get("text")
-            if text is not None and not isinstance(text, str):
-                details.append(self._schema_error(f"{evidence_path}.text", "evidence text must be a string.", actual=text, expected="string"))
-            if isinstance(text, str) and len(text) > 2000:
-                details.append(self._schema_error(f"{evidence_path}.text", "evidence text is too long.", actual=len(text), expected="2000 chars or fewer"))
 
     def _to_graph_result(
         self,
         parsed: Mapping[str, Any],
         *,
         target_ref: str,
+        target_stable_key: str,
         ref_to_stable_key: Mapping[str, str],
+        content_by_line: Mapping[int, str],
     ) -> GraphAnalysisResult:
         claims: list[GraphClaim] = []
-        for item in parsed.get("claims") or []:
-            stable_key = ref_to_stable_key[str(item["targetRef"])]
+        for index, item in enumerate(parsed.get("claims") or [], start=1):
             claims.append(
                 GraphClaim(
-                    localId=str(item["localId"]),
-                    nodeLocalId=stable_key,
+                    localId=f"llm-claim-{target_ref}-{index}",
+                    nodeLocalId=target_stable_key,
                     claimKind=str(item["claimKind"]),
                     summary=str(item["summary"]),
-                    confidence=float(item["confidence"]),
-                    evidence=self._evidence_refs(item.get("evidence") or []),
+                    confidence=self._DEFAULT_CONFIDENCE,
+                    evidence=self._evidence_refs(item.get("evidence") or [], content_by_line),
                     metadata={"factOrigin": "LLM"},
                 )
             )
         edges: list[GraphEdge] = []
-        for item in parsed.get("semanticEdges") or []:
+        for index, item in enumerate(parsed.get("semanticEdges") or [], start=1):
             to_ref = item.get("toRef")
+            has_to_ref = isinstance(to_ref, str) and bool(to_ref.strip())
             edges.append(
                 GraphEdge(
-                    localId=str(item["localId"]),
-                    fromNodeLocalId=ref_to_stable_key[str(item["fromRef"] or target_ref)],
-                    toNodeLocalId=ref_to_stable_key[str(to_ref)] if to_ref else None,
+                    localId=f"llm-edge-{target_ref}-{index}",
+                    fromNodeLocalId=target_stable_key,
+                    toNodeLocalId=ref_to_stable_key[str(to_ref)] if has_to_ref else None,
                     edgeType=str(item["edgeType"]),
-                    resolutionStatus=str(item["resolutionStatus"]),
-                    confidence=float(item["confidence"]),
-                    evidence=self._evidence_refs(item.get("evidence") or []),
-                    unresolvedTarget=item.get("unresolvedTarget"),
+                    resolutionStatus="RESOLVED" if has_to_ref else str(item["unresolvedStatus"]),
+                    confidence=self._DEFAULT_CONFIDENCE,
+                    evidence=self._evidence_refs(item.get("evidence") or [], content_by_line),
+                    unresolvedTarget=None if has_to_ref else item.get("unresolvedTarget"),
                     metadata={"factOrigin": "LLM"},
                 )
             )
-        return GraphAnalysisResult(
-            nodes=[],
-            edges=edges,
-            claims=claims,
-            diagnostics=[dict(item) for item in parsed.get("diagnostics") or []],
-        )
+        return GraphAnalysisResult(nodes=[], edges=edges, claims=claims, diagnostics=[])
 
-    def _evidence_refs(self, value: Iterable[Any]) -> list[GraphEvidenceRef]:
+    def _evidence_refs(self, value: Iterable[Any], content_by_line: Mapping[int, str]) -> list[GraphEvidenceRef]:
         refs: list[GraphEvidenceRef] = []
         for item in value:
-            refs.append(GraphEvidenceRef(lineStart=int(item["lineStart"]), lineEnd=int(item["lineEnd"]), text=item.get("text")))
+            line_start = int(item["lineStart"])
+            line_end = int(item["lineEnd"])
+            refs.append(
+                GraphEvidenceRef(
+                    lineStart=line_start,
+                    lineEnd=line_end,
+                    text=self._evidence_text(content_by_line, line_start, line_end),
+                )
+            )
         return refs
+
+    def _evidence_text(self, content_by_line: Mapping[int, str], line_start: int, line_end: int) -> str:
+        text = "\n".join(content_by_line.get(line, "") for line in range(line_start, line_end + 1))
+        if len(text) > self._MAX_EVIDENCE_TEXT_CHARS:
+            return text[: self._MAX_EVIDENCE_TEXT_CHARS].rstrip()
+        return text
+
+    def _content_by_line(self, llm_input: Mapping[str, Any]) -> dict[int, str]:
+        file_payload = llm_input.get("file")
+        lines = file_payload.get("contentLines") if isinstance(file_payload, Mapping) else None
+        content_by_line: dict[int, str] = {}
+        if not isinstance(lines, list):
+            return content_by_line
+        for item in lines:
+            if not isinstance(item, Mapping):
+                continue
+            line = item.get("line")
+            if isinstance(line, int) and not isinstance(line, bool):
+                content_by_line[int(line)] = str(item.get("text") or "")
+        return content_by_line
 
     def _known_refs(self, llm_input: Mapping[str, Any]) -> set[str]:
         registry = llm_input.get("anchorRegistry")
         if not isinstance(registry, list):
             return set()
         return {str(item.get("ref")) for item in registry if isinstance(item, Mapping) and item.get("ref")}
+
+    def _target_scoped_allowed_edge_types(self, llm_input: Mapping[str, Any], contract: AnalysisGraphContract, target_kind: str) -> list[str]:
+        target_scoped = [
+            edge_type
+            for edge_type in contract.allowed_edge_types
+            if target_kind in set(contract.edge_from_kinds.get(edge_type, ()))
+        ]
+        input_values = self._allowed_values(llm_input, "edgeType")
+        if not input_values:
+            return target_scoped
+        target_scoped_set = set(target_scoped)
+        return [edge_type for edge_type in input_values if edge_type in target_scoped_set]
+
+    def _allowed_unresolved_statuses(self, llm_input: Mapping[str, Any], contract: AnalysisGraphContract) -> list[str]:
+        rules = ResolutionStatusContract.from_graph_contract(contract)
+        input_values = self._allowed_values(llm_input, "unresolvedStatus")
+        if input_values:
+            return [
+                status
+                for status in input_values
+                if status != "RESOLVED" and not rules.requires_to_ref(status)
+            ]
+        return [
+            status
+            for status in contract.allowed_resolution_statuses
+            if status != "RESOLVED" and not rules.requires_to_ref(status)
+        ]
+
+    def _allowed_values(self, llm_input: Mapping[str, Any], key: str) -> list[str]:
+        allowed_values = llm_input.get("allowedValues")
+        raw_values = allowed_values.get(key) if isinstance(allowed_values, Mapping) else None
+        if not isinstance(raw_values, list):
+            return []
+        return [str(item) for item in raw_values if isinstance(item, str) and item.strip()]
 
     def _load(self, raw: str) -> tuple[Any | None, GraphAnalysisParseFailure | None]:
         if raw is None or not str(raw).strip():
@@ -413,26 +467,28 @@ class TargetResponseParserValidator:
                 )
             )
             return None
-        if not isinstance(value, int):
+        if not isinstance(value, int) or isinstance(value, bool):
             details.append(self._schema_error(f"{path}.{field_name}", f"{field_name} must be an integer.", actual=value, expected="integer"))
             return None
         return value
 
-    def _confidence(self, item: Mapping[str, Any], path: str, details: list[dict[str, Any]]) -> None:
-        value = item.get("confidence")
-        if value is None:
-            details.append(
-                self._schema_error(
-                    f"{path}.confidence",
-                    "confidence is required.",
-                    actual=None,
-                    expected="number between 0 and 1",
-                    missing_required_field="confidence",
-                )
-            )
-            return
-        if not isinstance(value, (int, float)) or isinstance(value, bool) or float(value) < 0 or float(value) > 1:
-            details.append(self._schema_error(f"{path}.confidence", "confidence must be a number between 0 and 1.", actual=value, expected="number between 0 and 1"))
+    def _decorate_details(
+        self,
+        details: list[dict[str, Any]],
+        target_ref: str,
+        target_kind: str,
+        allowed_edge_types: list[str],
+        allowed_unresolved_statuses: list[str],
+    ) -> list[dict[str, Any]]:
+        decorated: list[dict[str, Any]] = []
+        for detail in details:
+            item = dict(detail)
+            item.setdefault("targetRef", target_ref)
+            item.setdefault("targetKind", target_kind)
+            item.setdefault("targetAllowedEdgeTypes", list(allowed_edge_types))
+            item.setdefault("allowedUnresolvedStatuses", list(allowed_unresolved_statuses))
+            decorated.append(item)
+        return decorated
 
     def _schema_error(
         self,

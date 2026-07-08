@@ -22,7 +22,6 @@ from knowledge_service.target_enrichment import (
     END_INPUT_MARKER,
     TARGET_INPUT_SCHEMA_VERSION,
     TARGET_REQUEST_KIND,
-    TARGET_RESPONSE_SCHEMA_VERSION,
     AnchorRefRegistry,
     FileEnrichmentMerger,
     LlmEnrichmentInputBuilder,
@@ -76,8 +75,10 @@ def test_llm_input_projection_includes_minimal_contract_and_excludes_internal_pa
     assert llm_input["anchorRegistry"]
     assert llm_input["targetAnchor"]["ref"] == target.ref
     assert "RESPONSIBILITY" in llm_input["allowedValues"]["claimKind"]
-    assert llm_input["endpointRules"]["CALLS"] == {"fromKinds": ["CALLABLE"], "toKinds": ["CALLABLE"]}
-    assert llm_input["responseShape"]["schemaVersion"] == TARGET_RESPONSE_SCHEMA_VERSION
+    assert "CALLS" not in llm_input["allowedValues"]["edgeType"]
+    assert "CALLS" not in llm_input["endpointRules"]
+    assert "RESOLVED" not in llm_input["allowedValues"]["unresolvedStatus"]
+    assert set(llm_input["responseShape"]) == {"claims", "semanticEdges"}
     for forbidden in (
         "serviceLabel",
         "tags",
@@ -113,7 +114,9 @@ def test_target_prompt_renderer_loads_policy_template_and_response_shape():
     assert END_INPUT_MARKER in prompt
     assert rendered_input["requestKind"] == TARGET_REQUEST_KIND
     assert rendered_input["file"]["contentLines"]
-    assert renderer.response_shape(payload=payload)["schemaVersion"] == TARGET_RESPONSE_SCHEMA_VERSION
+    response_shape = renderer.response_shape(payload=payload)
+    assert set(response_shape) == {"claims", "semanticEdges"}
+    assert not _contains_key(response_shape, "schemaVersion")
     for forbidden in (
         "File metadata and content JSON",
         "staticAnchors",
@@ -145,7 +148,7 @@ def test_target_prompt_renderer_uses_format_specific_prompt_and_shared_response_
 
     assert payload["analysisPolicy"]["promptId"] == prompt_id
     assert prompt_text in prompt
-    assert renderer.response_shape(payload=payload)["schemaVersion"] == TARGET_RESPONSE_SCHEMA_VERSION
+    assert set(renderer.response_shape(payload=payload)) == {"claims", "semanticEdges"}
     assert payload["llmInput"]["responseShape"] == renderer.response_shape(payload=payload)
 
 
@@ -169,10 +172,8 @@ def test_target_prompt_renderer_uses_policy_selected_prompt_id_without_code_chan
     (schema_dir / "custom-response-shape.json").write_text(
         json.dumps(
             {
-                "schemaVersion": TARGET_RESPONSE_SCHEMA_VERSION,
-                "claims": [],
+                "claims": [{"claimKind": "RESPONSIBILITY", "summary": "shape-from-policy", "evidence": [{"lineStart": 1, "lineEnd": 1}]}],
                 "semanticEdges": [],
-                "diagnostics": [{"code": "custom", "stage": "LLM_ENRICHMENT", "severity": "INFO", "message": "shape-from-policy"}],
             }
         ),
         encoding="utf-8",
@@ -207,7 +208,7 @@ def test_target_prompt_renderer_uses_policy_selected_prompt_id_without_code_chan
         captured.append(body)
         return httpx.Response(
             200,
-            json={"response": json.dumps({"schemaVersion": TARGET_RESPONSE_SCHEMA_VERSION, "claims": [], "semanticEdges": [], "diagnostics": []})},
+            json={"response": json.dumps({"claims": [], "semanticEdges": []})},
         )
 
     client = OllamaAnalysisClient(
@@ -229,8 +230,8 @@ def test_target_prompt_renderer_uses_policy_selected_prompt_id_without_code_chan
     assert "Custom target prompt from policy fixture." in captured_prompt
     assert "Use the same target input." in prompt
     assert "shape-from-policy" in prompt
-    assert rendered_input["responseShape"]["diagnostics"][0]["message"] == "shape-from-policy"
-    assert captured_input["responseShape"]["diagnostics"][0]["message"] == "shape-from-policy"
+    assert rendered_input["responseShape"]["claims"][0]["summary"] == "shape-from-policy"
+    assert captured_input["responseShape"]["claims"][0]["summary"] == "shape-from-policy"
     assert isinstance(result, GraphAnalysisResult)
 
 
@@ -292,18 +293,24 @@ def test_planner_fails_closed_when_target_count_exceeds_policy_cap():
 @pytest.mark.parametrize(
     ("mutate", "path"),
     [
-        (lambda payload: payload["claims"][0].update({"targetRef": "M999"}), "$.claims[0].targetRef"),
+        (lambda payload: payload.update({"schemaVersion": "knowledge.graph.enrichment.response.v2"}), "$.schemaVersion"),
+        (lambda payload: payload.update({"diagnostics": []}), "$.diagnostics"),
+        (lambda payload: payload["claims"][0].update({"localId": "claim-1"}), "$.claims[0].localId"),
+        (lambda payload: payload["claims"][0].update({"targetRef": "M1"}), "$.claims[0].targetRef"),
+        (lambda payload: payload["claims"][0].update({"confidence": 0.8}), "$.claims[0].confidence"),
+        (lambda payload: payload["claims"][0]["evidence"][0].update({"text": "helper();"}), "$.claims[0].evidence[0].text"),
+        (lambda payload: payload["semanticEdges"][0].update({"localId": "edge-1"}), "$.semanticEdges[0].localId"),
+        (lambda payload: payload["semanticEdges"][0].update({"fromRef": "M1"}), "$.semanticEdges[0].fromRef"),
+        (lambda payload: payload["semanticEdges"][0].update({"resolutionStatus": "RESOLVED"}), "$.semanticEdges[0].resolutionStatus"),
+        (lambda payload: payload["semanticEdges"][0].update({"confidence": 0.8}), "$.semanticEdges[0].confidence"),
+        (lambda payload: payload["semanticEdges"][0]["evidence"][0].update({"text": "helper();"}), "$.semanticEdges[0].evidence[0].text"),
         (lambda payload: payload["semanticEdges"][0].update({"toRef": "M999"}), "$.semanticEdges[0].toRef"),
-        (lambda payload: payload["claims"][0].update({"targetRef": "M2"}), "$.claims[0].targetRef"),
-        (lambda payload: payload["semanticEdges"][0].update({"fromRef": "M2"}), "$.semanticEdges[0].fromRef"),
         (lambda payload: payload["claims"][0].update({"claimKind": "BOGUS"}), "$.claims[0].claimKind"),
         (lambda payload: payload["semanticEdges"][0].update({"edgeType": "BOGUS"}), "$.semanticEdges[0].edgeType"),
-        (lambda payload: payload["semanticEdges"][0].update({"resolutionStatus": "BOGUS"}), "$.semanticEdges[0].resolutionStatus"),
-        (lambda payload: payload["semanticEdges"][0].update({"fromRef": "F1", "edgeType": "CALLS"}), "$.semanticEdges[0].fromRef"),
         (lambda payload: payload["claims"][0]["evidence"][0].update({"lineStart": 99, "lineEnd": 100}), "$.claims[0].evidence[0]"),
     ],
 )
-def test_target_response_validator_rejects_invalid_refs_values_endpoint_rules_and_evidence(mutate, path):
+def test_target_response_validator_rejects_old_fields_invalid_values_refs_and_evidence(mutate, path):
     payload, contract = _target_payload()
     response = _valid_target_response()
     mutate(response)
@@ -314,16 +321,42 @@ def test_target_response_validator_rejects_invalid_refs_values_endpoint_rules_an
     assert any(detail.get("jsonPath") == path for detail in parsed.error_details)
 
 
-def test_target_response_validator_accepts_valid_refs_and_maps_to_stable_keys():
+def test_target_response_validator_accepts_minimal_claim_and_injects_backend_fields():
+    payload, contract = _target_payload()
+    response = {
+        "claims": [
+            {
+                "claimKind": "RESPONSIBILITY",
+                "summary": "Handles workspace lookup.",
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
+            }
+        ],
+        "semanticEdges": [],
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisResult)
+    assert parsed.claims[0].nodeLocalId == "svc|src/Foo.java|CALLABLE|Foo.call()"
+    assert parsed.claims[0].localId == "llm-claim-M1-1"
+    assert parsed.claims[0].confidence == 0.8
+    assert parsed.claims[0].evidence[0].text == "  void call() { helper(); }"
+    assert parsed.claims[0].metadata["factOrigin"] == "LLM"
+
+
+def test_target_response_validator_accepts_minimal_resolved_edge_and_injects_backend_fields():
     payload, contract = _target_payload()
 
     parsed = TargetResponseParserValidator().parse(json.dumps(_valid_target_response()), payload=payload, line_count=5, contract=contract)
 
     assert isinstance(parsed, GraphAnalysisResult)
-    assert parsed.claims[0].nodeLocalId == "svc|src/Foo.java|CALLABLE|Foo.call()"
     assert parsed.edges[0].fromNodeLocalId == "svc|src/Foo.java|CALLABLE|Foo.call()"
     assert parsed.edges[0].toNodeLocalId == "svc|src/Foo.java|CALLABLE|Foo.helper()"
-    assert parsed.claims[0].metadata["factOrigin"] == "LLM"
+    assert parsed.edges[0].resolutionStatus == "RESOLVED"
+    assert parsed.edges[0].localId == "llm-edge-M1-1"
+    assert parsed.edges[0].confidence == 0.8
+    assert parsed.edges[0].evidence[0].text == "  void call() { helper(); }"
+    assert parsed.edges[0].metadata["factOrigin"] == "LLM"
 
 
 @pytest.mark.parametrize(
@@ -343,22 +376,74 @@ def test_target_response_validator_rejects_embedded_or_fenced_json(raw):
     assert parsed.code == "ANALYSIS_AI_INVALID_JSON"
 
 
-def test_target_response_validator_uses_resolution_status_contract_rules():
+def test_target_response_validator_accepts_valid_unresolved_external_edge():
     payload, contract = _target_payload()
-    response = _valid_target_response()
-    response["semanticEdges"][0]["toRef"] = None
-    parsed_with_default_rules = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
-    flexible_contract = replace(
-        contract,
-        resolution_status_rules={
-            **contract.resolution_status_rules,
-            "RESOLVED": {"toRef": "optional", "unresolvedTarget": "optional"},
-        },
-    )
-    parsed_with_flexible_rules = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=flexible_contract)
+    response = {
+        "claims": [],
+        "semanticEdges": [
+            {
+                "edgeType": "REFERENCES",
+                "unresolvedStatus": "EXTERNAL_TARGET",
+                "unresolvedTarget": {"name": "external API", "kindHint": "RESOURCE"},
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
+            }
+        ],
+    }
 
-    assert isinstance(parsed_with_default_rules, GraphAnalysisParseFailure)
-    assert isinstance(parsed_with_flexible_rules, GraphAnalysisResult)
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisResult)
+    assert parsed.edges[0].toNodeLocalId is None
+    assert parsed.edges[0].resolutionStatus == "EXTERNAL_TARGET"
+    assert parsed.edges[0].unresolvedTarget == {"name": "external API", "kindHint": "RESOURCE"}
+    assert parsed.edges[0].evidence[0].text == "  void call() { helper(); }"
+
+
+@pytest.mark.parametrize(
+    ("edge", "path"),
+    [
+        ({"edgeType": "CALLS", "toRef": "M2", "unresolvedStatus": "EXTERNAL_TARGET", "evidence": [{"lineStart": 2, "lineEnd": 2}]}, "$.semanticEdges[0].unresolvedStatus"),
+        ({"edgeType": "CALLS", "toRef": "M2", "unresolvedTarget": {"name": "x"}, "evidence": [{"lineStart": 2, "lineEnd": 2}]}, "$.semanticEdges[0].unresolvedTarget"),
+        ({"edgeType": "CALLS", "evidence": [{"lineStart": 2, "lineEnd": 2}]}, "$.semanticEdges[0].unresolvedStatus"),
+        ({"edgeType": "CALLS", "unresolvedStatus": "RESOLVED", "evidence": [{"lineStart": 2, "lineEnd": 2}]}, "$.semanticEdges[0].unresolvedStatus"),
+        ({"edgeType": "REFERENCES", "unresolvedStatus": "EXTERNAL_TARGET", "evidence": [{"lineStart": 2, "lineEnd": 2}]}, "$.semanticEdges[0].unresolvedTarget"),
+    ],
+)
+def test_target_response_validator_rejects_impossible_resolved_unresolved_combinations(edge, path):
+    payload, contract = _target_payload()
+    response = {"claims": [], "semanticEdges": [edge]}
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    assert any(detail.get("jsonPath") == path for detail in parsed.error_details)
+
+
+def test_target_input_builder_scopes_edge_types_to_target_kind_and_unresolved_statuses():
+    contract = _contract("src/Foo.java")
+    graph = _mixed_anchor_graph()
+    registry = AnchorRefRegistry.build(graph, contract)
+    context = AnalyzerPolicyRuntimeResolver(load_analysis_policy(POLICY_PATH)).resolve(
+        _row("src/Foo.java", "class Foo {\n  void call() { helper(); }\n  void helper() {}\n}\n"),
+        {},
+        ["class Foo {", "  void call() { helper(); }", "  void helper() {}", "}", ""],
+    )
+    targets = LlmEnrichmentPlanner().plan(graph, contract, max_target_calls=10).targets
+
+    by_kind = {}
+    for target in targets:
+        payload = LlmEnrichmentInputBuilder().build(context=context, registry=registry, target=target, budget_chars=50000)
+        by_kind.setdefault(target.kind, payload["llmInput"])
+    field_contract = replace(contract, semantic_node_kinds=("FIELD",))
+    field_target = LlmEnrichmentPlanner().plan(graph, field_contract, max_target_calls=10).targets[0]
+    field_payload = LlmEnrichmentInputBuilder().build(context=context, registry=registry, target=field_target, budget_chars=50000)
+    by_kind["FIELD"] = field_payload["llmInput"]
+
+    assert "CALLS" not in by_kind["FILE"]["allowedValues"]["edgeType"]
+    assert "CALLS" in by_kind["CALLABLE"]["allowedValues"]["edgeType"]
+    assert set(by_kind["FIELD"]["allowedValues"]["edgeType"]) <= {"REFERENCES"}
+    assert "RESOLVED" not in by_kind["CALLABLE"]["allowedValues"]["unresolvedStatus"]
+    assert set(by_kind["FILE"]["endpointRules"]) == set(by_kind["FILE"]["allowedValues"]["edgeType"])
 
 
 def test_target_enrichment_package_exports_public_api_without_circular_imports():
@@ -566,30 +651,20 @@ def _target_payload_for(relative_path: str, content_lines: list[str]):
 
 def _valid_target_response(target_ref: str = "M1"):
     return {
-        "schemaVersion": TARGET_RESPONSE_SCHEMA_VERSION,
         "claims": [
             {
-                "localId": "claim-1",
-                "targetRef": target_ref,
                 "claimKind": "RESPONSIBILITY",
                 "summary": "Calls the helper.",
-                "confidence": 0.8,
-                "evidence": [{"lineStart": 2, "lineEnd": 2, "text": "helper();"}],
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
             }
         ],
         "semanticEdges": [
             {
-                "localId": "edge-1",
-                "fromRef": target_ref,
                 "toRef": "M2",
                 "edgeType": "CALLS",
-                "resolutionStatus": "RESOLVED",
-                "confidence": 0.8,
-                "evidence": [{"lineStart": 2, "lineEnd": 2, "text": "helper();"}],
-                "unresolvedTarget": None,
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
             }
         ],
-        "diagnostics": [],
     }
 
 

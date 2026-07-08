@@ -3,7 +3,6 @@ from knowledge_service.target_enrichment.constants import (
     END_INPUT_MARKER,
     TARGET_INPUT_SCHEMA_VERSION,
     TARGET_REQUEST_KIND,
-    TARGET_RESPONSE_SCHEMA_VERSION,
     is_target_enrichment_payload,
 )
 from knowledge_service.target_enrichment.input_builder import LlmEnrichmentInputBuilder
@@ -18,7 +17,6 @@ __all__ = [
     "END_INPUT_MARKER",
     "TARGET_INPUT_SCHEMA_VERSION",
     "TARGET_REQUEST_KIND",
-    "TARGET_RESPONSE_SCHEMA_VERSION",
     "AnchorRefRegistry",
     "AnchorRegistryEntry",
     "FileEnrichmentMerger",

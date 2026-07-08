@@ -21,7 +21,7 @@ POLICY_PATH = REPO_ROOT / "config" / "knowledge" / "analysis-policy.yaml"
 
 from knowledge_service import main
 from knowledge_service.analysis_client import OllamaAnalysisClient
-from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
+from knowledge_service.analysis_graph_contract import GraphContractProvider, ResolutionStatusContract, contract_payload
 from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry, ExtractorResult
@@ -54,7 +54,6 @@ from knowledge_service.target_enrichment import (
     END_INPUT_MARKER,
     TARGET_INPUT_SCHEMA_VERSION,
     TARGET_REQUEST_KIND,
-    TARGET_RESPONSE_SCHEMA_VERSION,
 )
 
 
@@ -796,10 +795,8 @@ def _capturing_ollama_client(captured, response_factory):
 
 def _empty_target_response(llm_input):
     return {
-        "schemaVersion": TARGET_RESPONSE_SCHEMA_VERSION,
         "claims": [],
         "semanticEdges": [],
-        "diagnostics": [],
     }
 
 
@@ -808,14 +805,11 @@ def _nested_flow_response(llm_input):
     response = _empty_target_response(llm_input)
     if target["kind"] != "CALLABLE":
         return response
-    evidence = [{"lineStart": target["lineStart"], "lineEnd": target["lineStart"], "text": target["name"]}]
+    evidence = [{"lineStart": target["lineStart"], "lineEnd": target["lineStart"]}]
     response["claims"].append(
         {
-            "localId": f"claim-{target['ref']}",
-            "targetRef": target["ref"],
             "claimKind": "RESPONSIBILITY",
             "summary": f"Handles {target['name']} flow.",
-            "confidence": 0.82,
             "evidence": evidence,
         }
     )
@@ -827,25 +821,16 @@ def _nested_flow_response(llm_input):
     if target["name"] in calls and calls[target["name"]] in registry_by_name:
         response["semanticEdges"].append(
             {
-                "localId": f"edge-{target['ref']}",
-                "fromRef": target["ref"],
                 "toRef": registry_by_name[calls[target["name"]]]["ref"],
                 "edgeType": "CALLS",
-                "resolutionStatus": "RESOLVED",
-                "confidence": 0.86,
                 "evidence": evidence,
-                "unresolvedTarget": None,
             }
         )
     if target["name"] in {"loadWorkspace", "mapWorkspace"}:
         response["semanticEdges"].append(
             {
-                "localId": f"edge-external-{target['ref']}",
-                "fromRef": target["ref"],
-                "toRef": None,
                 "edgeType": "CALLS",
-                "resolutionStatus": "EXTERNAL_TARGET",
-                "confidence": 0.74,
+                "unresolvedStatus": "EXTERNAL_TARGET",
                 "evidence": evidence,
                 "unresolvedTarget": {"name": "external target", "kindHint": "CALLABLE"},
             }
@@ -1779,6 +1764,17 @@ def test_ollama_prompt_renders_minimal_target_input_only():
     policy = load_analysis_policy(POLICY_PATH)
     provider = GraphContractProvider(policy=policy)
     contract = provider.resolve("src/Foo.java", "class Foo {}\n")
+    file_edge_types = [
+        edge_type
+        for edge_type in contract.allowed_edge_types
+        if "FILE" in set(contract.edge_from_kinds.get(edge_type, ()))
+    ]
+    resolution_rules = ResolutionStatusContract.from_graph_contract(contract)
+    unresolved_statuses = [
+        status
+        for status in contract.allowed_resolution_statuses
+        if status != "RESOLVED" and not resolution_rules.requires_to_ref(status)
+    ]
     llm_input = {
         "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
         "requestKind": TARGET_REQUEST_KIND,
@@ -1791,9 +1787,19 @@ def test_ollama_prompt_renders_minimal_target_input_only():
         },
         "anchorRegistry": [{"ref": "F1", "kind": "FILE", "name": "Foo.java", "qualifiedName": None, "lineStart": 1, "lineEnd": 1, "parentRef": None}],
         "targetAnchor": {"ref": "F1", "kind": "FILE", "name": "Foo.java", "qualifiedName": None, "lineStart": 1, "lineEnd": 1, "parentRef": None},
-        "allowedValues": {"claimKind": list(contract.allowed_claim_kinds), "edgeType": list(contract.allowed_edge_types), "resolutionStatus": list(contract.allowed_resolution_statuses)},
-        "endpointRules": {"REFERENCES": {"fromKinds": ["FILE"], "toKinds": ["FILE"]}},
-        "responseShape": {"schemaVersion": "knowledge.graph.enrichment.response.v2", "claims": [], "semanticEdges": [], "diagnostics": []},
+        "allowedValues": {
+            "claimKind": list(contract.allowed_claim_kinds),
+            "edgeType": file_edge_types,
+            "unresolvedStatus": unresolved_statuses,
+        },
+        "endpointRules": {
+            edge_type: {
+                "fromKinds": list(contract.edge_from_kinds.get(edge_type, ())),
+                "toKinds": list(contract.edge_to_kinds.get(edge_type, ())),
+            }
+            for edge_type in file_edge_types
+        },
+        "responseShape": {"claims": [], "semanticEdges": []},
     }
     payload = {
         "sourceId": "edge-gateway",
@@ -1817,9 +1823,26 @@ def test_ollama_prompt_renders_minimal_target_input_only():
     assert rendered_input["requestKind"] == TARGET_REQUEST_KIND
     assert rendered_input["file"]["contentLines"]
     assert rendered_input["anchorRegistry"][0]["ref"] == "F1"
+    assert "CALLS" not in rendered_input["allowedValues"]["edgeType"]
+    assert "RESOLVED" not in rendered_input["allowedValues"]["unresolvedStatus"]
     assert "staticAnchors" not in rendered_input
     assert "callsites" not in rendered_input
     assert not _contains_key(rendered_input, "stableKey")
+    response_shape = rendered_input["responseShape"]
+    for forbidden in (
+        "schemaVersion",
+        "localId",
+        "targetRef",
+        "fromRef",
+        "resolutionStatus",
+        "confidence",
+        "diagnostics",
+        "targetStableKey",
+        "fromStableKey",
+        "toStableKey",
+        "knowledge.graph.enrichment.v1",
+    ):
+        assert not _contains_key(response_shape, forbidden)
 
 
 def test_large_llm_required_file_fails_without_partial_graph(tmp_path):
@@ -2940,19 +2963,14 @@ def test_analyzer_rejects_unknown_ref_response_without_persisting_invalid_facts(
 
     def invalid_response(_llm_input):
         return {
-            "schemaVersion": TARGET_RESPONSE_SCHEMA_VERSION,
-            "claims": [
+            "claims": [],
+            "semanticEdges": [
                 {
-                    "localId": "claim-unknown",
-                    "targetRef": "M999",
-                    "claimKind": "RESPONSIBILITY",
-                    "summary": "Invalid unknown ref.",
-                    "confidence": 0.8,
-                    "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "public class ObjectHandler"}],
+                    "edgeType": "REFERENCES",
+                    "toRef": "M999",
+                    "evidence": [{"lineStart": 1, "lineEnd": 1}],
                 }
             ],
-            "semanticEdges": [],
-            "diagnostics": [],
         }
 
     client = _capturing_ollama_client(captured, invalid_response)
@@ -2976,7 +2994,32 @@ def test_retry_repair_prompt_keeps_minimal_target_input(tmp_path):
     def flaky_response(llm_input):
         attempts["count"] += 1
         if attempts["count"] == 1:
-            return f"Here is JSON: {json.dumps(_empty_target_response(llm_input))}"
+            old_style_response = {
+                "schemaVersion": "knowledge.graph.enrichment.response.v2",
+                "claims": [
+                    {
+                        "localId": "old-claim",
+                        "targetRef": llm_input["targetAnchor"]["ref"],
+                        "claimKind": "RESPONSIBILITY",
+                        "summary": "Old response shape.",
+                        "confidence": 0.8,
+                        "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "old"}],
+                    }
+                ],
+                "semanticEdges": [
+                    {
+                        "localId": "old-edge",
+                        "fromRef": llm_input["targetAnchor"]["ref"],
+                        "edgeType": "REFERENCES",
+                        "resolutionStatus": "RESOLVED",
+                        "toRef": llm_input["targetAnchor"]["ref"],
+                        "confidence": 0.8,
+                        "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "old"}],
+                    }
+                ],
+                "diagnostics": [],
+            }
+            return json.dumps(old_style_response)
         return _empty_target_response(llm_input)
 
     client = _capturing_ollama_client(captured, flaky_response)
@@ -2993,6 +3036,10 @@ def test_retry_repair_prompt_keeps_minimal_target_input(tmp_path):
     assert retry_input["requestKind"] == TARGET_REQUEST_KIND
     assert "staticAnchors" not in retry_input
     assert "callsites" not in retry_input
+    assert "Remove invalid fields" in retry_prompt
+    assert "schemaVersion, localId, targetRef, fromRef, resolutionStatus, confidence, evidence.text, or diagnostics" in retry_prompt
+    assert "If an edge cannot be made valid, remove that edge." in retry_prompt
+    assert "If no edge is valid, return semanticEdges: []." in retry_prompt
 
 
 def test_callsite_heavy_fluent_chain_prompt_does_not_include_raw_callsite_payload(tmp_path):

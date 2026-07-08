@@ -4,7 +4,6 @@ from typing import Any, Mapping
 
 
 TARGET_INPUT_SCHEMA_VERSION = "knowledge.graph.enrichment.input.v2"
-TARGET_RESPONSE_SCHEMA_VERSION = "knowledge.graph.enrichment.response.v2"
 TARGET_REQUEST_KIND = "TARGET_ANCHOR_ENRICHMENT"
 
 BEGIN_INPUT_MARKER = "BEGIN_LLM_INPUT_JSON"

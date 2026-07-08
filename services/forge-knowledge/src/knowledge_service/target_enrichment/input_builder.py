@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from knowledge_service.analysis_graph_contract import AnalysisGraphContract, contract_payload
+from knowledge_service.analysis_graph_contract import AnalysisGraphContract, ResolutionStatusContract, contract_payload
 from knowledge_service.analysis_policy import AnalysisPolicy
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.target_enrichment.constants import TARGET_INPUT_SCHEMA_VERSION, TARGET_REQUEST_KIND, TARGET_RESPONSE_SCHEMA_VERSION
+from knowledge_service.target_enrichment.constants import TARGET_INPUT_SCHEMA_VERSION, TARGET_REQUEST_KIND
 from knowledge_service.target_enrichment.planner import PlannedTargetAnchor
 from knowledge_service.target_enrichment.prompt_renderer import TargetPromptRenderer
 from knowledge_service.target_enrichment.registry import AnchorRefRegistry
@@ -32,6 +32,8 @@ class LlmEnrichmentInputBuilder:
         budget_chars: int,
     ) -> dict[str, Any]:
         target_entry = registry.entry_for_ref(target.ref)
+        target_allowed_edge_types = _target_allowed_edge_types(context.graph_contract, target_entry.kind)
+        allowed_unresolved_statuses = _allowed_unresolved_statuses(context.graph_contract)
         llm_input = {
             "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
             "requestKind": TARGET_REQUEST_KIND,
@@ -47,15 +49,15 @@ class LlmEnrichmentInputBuilder:
             "targetAnchor": target_entry.to_llm_dict(),
             "allowedValues": {
                 "claimKind": list(context.graph_contract.allowed_claim_kinds),
-                "edgeType": list(context.graph_contract.allowed_edge_types),
-                "resolutionStatus": list(context.graph_contract.allowed_resolution_statuses),
+                "edgeType": target_allowed_edge_types,
+                "unresolvedStatus": allowed_unresolved_statuses,
             },
             "endpointRules": {
                 edge_type: {
                     "fromKinds": list(context.graph_contract.edge_from_kinds.get(edge_type, ())),
                     "toKinds": list(context.graph_contract.edge_to_kinds.get(edge_type, ())),
                 }
-                for edge_type in context.graph_contract.allowed_edge_types
+                for edge_type in target_allowed_edge_types
             },
             "responseShape": self.response_shape(contract=context.graph_contract),
         }
@@ -100,3 +102,20 @@ class LlmEnrichmentInputBuilder:
 
 def _json_copy(value: Mapping[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(dict(value)))
+
+
+def _target_allowed_edge_types(contract: AnalysisGraphContract, target_kind: str) -> list[str]:
+    return [
+        edge_type
+        for edge_type in contract.allowed_edge_types
+        if target_kind in set(contract.edge_from_kinds.get(edge_type, ()))
+    ]
+
+
+def _allowed_unresolved_statuses(contract: AnalysisGraphContract) -> list[str]:
+    rules = ResolutionStatusContract.from_graph_contract(contract)
+    return [
+        status
+        for status in contract.allowed_resolution_statuses
+        if status != "RESOLVED" and not rules.requires_to_ref(status)
+    ]

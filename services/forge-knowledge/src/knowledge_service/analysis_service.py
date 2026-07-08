@@ -733,17 +733,26 @@ class AnalysisSupervisor:
         if preview:
             lines.extend(["Bounded invalid response preview:", preview])
         contract = self.graph_contract_provider.resolve_payload(payload)
+        llm_input = payload.get("llmInput") if isinstance(payload, dict) else None
+        allowed_values = llm_input.get("allowedValues") if isinstance(llm_input, dict) else None
+        target_anchor = llm_input.get("targetAnchor") if isinstance(llm_input, dict) else None
+        target_ref = target_anchor.get("ref") if isinstance(target_anchor, dict) else payload.get("targetRef")
+        target_kind = target_anchor.get("kind") if isinstance(target_anchor, dict) else payload.get("targetKind")
+        target_allowed_edge_types = []
+        allowed_unresolved_statuses = []
+        if isinstance(allowed_values, dict):
+            target_allowed_edge_types = [str(item) for item in allowed_values.get("edgeType") or [] if isinstance(item, str)]
+            allowed_unresolved_statuses = [str(item) for item in allowed_values.get("unresolvedStatus") or [] if isinstance(item, str)]
         lines.extend(
             [
-                "Allowed graph contract values:",
+                "Target-scoped graph contract values:",
                 self._json_for_prompt(
                     {
-                        "nodeKind": list(contract.allowed_node_kinds),
-                        "edgeType": list(contract.allowed_edge_types),
+                        "targetRef": target_ref,
+                        "targetKind": target_kind,
+                        "edgeType": target_allowed_edge_types,
                         "claimKind": list(contract.allowed_claim_kinds),
-                        "status": list(contract.allowed_statuses),
-                        "evidenceKind": list(contract.allowed_evidence_kinds),
-                        "resolutionStatus": list(contract.allowed_resolution_statuses),
+                        "unresolvedStatus": allowed_unresolved_statuses,
                     },
                     limit=1200,
                 ),
@@ -752,6 +761,10 @@ class AnalysisSupervisor:
         lines.extend(
             [
                 "Return ONLY corrected JSON matching the requested schema.",
+                "Remove invalid fields instead of trying to preserve them.",
+                "Do not add schemaVersion, localId, targetRef, fromRef, resolutionStatus, confidence, evidence.text, or diagnostics.",
+                "If an edge cannot be made valid, remove that edge.",
+                "If no edge is valid, return semanticEdges: [].",
                 "No markdown.",
                 "No prose.",
                 "No comments.",
