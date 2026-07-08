@@ -165,6 +165,30 @@ def test_extractor_output_accepts_static_uses_field_edge():
     _validate_extractor_graph(policy, context, "java_ast", graph)
 
 
+def test_llm_enrichment_rejects_graph_edges_even_when_endpoint_is_valid():
+    policy, context = _context("src/main/java/example/Foo.java", "class Foo { void call() { helper(); } void helper() {} }\n", language="java")
+    nodes = [_file_node(), _node("type", "TYPE", parent="file"), _node("call", "CALLABLE", parent="type"), _node("helper", "CALLABLE", parent="type")]
+    static_graph = _graph(nodes=nodes)
+    llm_graph = _graph(
+        nodes=[],
+        edges=[_edge("llm-call", "CALLS", "call", "helper", resolution_status="RESOLVED")],
+    )
+
+    with pytest.raises(KnowledgeError) as exc:
+        GraphPolicyValidator(policy).validate_llm_enrichment(
+            llm_graph,
+            context.graph_contract,
+            context.line_count,
+            relative_path=context.row["relative_path"],
+            static_graph=static_graph,
+        )
+
+    assert exc.value.code == "ANALYSIS_GRAPH_POLICY_VALIDATION_FAILED"
+    assert exc.value.details["stage"] == "LLM_ENRICHMENT"
+    assert exc.value.details["field"] == "edges"
+    assert exc.value.details["actual"] == "CALLS"
+
+
 def test_final_graph_rejects_imports_target_when_yaml_forbids_targets():
     policy, context = _context("src/main/java/example/Foo.java", "class Foo {}\n", language="java")
     graph = _graph(

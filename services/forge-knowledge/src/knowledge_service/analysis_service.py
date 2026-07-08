@@ -736,43 +736,32 @@ class AnalysisSupervisor:
         llm_input = payload.get("llmInput") if isinstance(payload, dict) else None
         allowed_values = llm_input.get("allowedValues") if isinstance(llm_input, dict) else None
         target_anchor = llm_input.get("targetAnchor") if isinstance(llm_input, dict) else None
-        edge_options = llm_input.get("edgeOptions") if isinstance(llm_input, dict) else []
-        target_ref = target_anchor.get("ref") if isinstance(target_anchor, dict) else payload.get("targetRef")
+        target_ref = payload.get("targetRef")
         target_kind = target_anchor.get("kind") if isinstance(target_anchor, dict) else payload.get("targetKind")
-        target_allowed_edge_types = []
-        allowed_unresolved_statuses = []
+        allowed_claim_kinds = []
         if isinstance(allowed_values, dict):
-            target_allowed_edge_types = [str(item) for item in allowed_values.get("edgeType") or [] if isinstance(item, str)]
-            allowed_unresolved_statuses = [str(item) for item in allowed_values.get("unresolvedStatus") or [] if isinstance(item, str)]
+            allowed_claim_kinds = [str(item) for item in allowed_values.get("claimKind") or [] if isinstance(item, str)]
         lines.extend(
             [
-                "Target-scoped graph contract values:",
+                "Target response contract is claims-only:",
                 self._json_for_prompt(
                     {
                         "targetRef": target_ref,
                         "targetKind": target_kind,
-                        "edgeType": target_allowed_edge_types,
-                        "claimKind": list(contract.allowed_claim_kinds),
-                        "unresolvedStatus": allowed_unresolved_statuses,
+                        "claimKind": allowed_claim_kinds or list(contract.allowed_claim_kinds),
                     },
                     limit=1200,
                 ),
-                "Target-scoped edgeOptions:",
-                self._json_for_prompt(edge_options if isinstance(edge_options, list) else [], limit=2400),
             ]
         )
         lines.extend(
             [
                 "Return ONLY corrected JSON matching the requested schema.",
+                "Return claims only: {\"claims\": [...]} or {\"claims\": []}.",
+                "semanticEdges are not accepted. Convert useful information into grounded claims if appropriate, otherwise remove it.",
+                "Do not return graph topology, refs, edgeType, toRef, unresolvedStatus, or unresolvedTarget.",
                 "Remove invalid fields instead of trying to preserve them.",
                 "Do not add schemaVersion, localId, targetRef, fromRef, resolutionStatus, confidence, evidence.text, or diagnostics.",
-                "Do not add semanticEdges[].summary.",
-                "Allowed toRefs are provided in edgeOptions.toRefs for each edgeType.",
-                "Remove an invalid edge if its toRef is not listed in edgeOptions.toRefs for that edgeType.",
-                "Do not invent toRef.",
-                "Do not choose refs from anchorRegistry unless they appear in edgeOptions.toRefs for that edgeType.",
-                "If an edge cannot be made valid, remove that edge.",
-                "If no edge is valid, return semanticEdges: [].",
                 "No markdown.",
                 "No prose.",
                 "No comments.",

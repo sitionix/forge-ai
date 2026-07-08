@@ -88,6 +88,27 @@ class GraphPolicyValidator:
         relative_path: str,
         static_graph: GraphAnalysisResult,
     ) -> None:
+        topology_issues = [
+            GraphPolicyValidationIssue(
+                message="LLM enrichment must not emit graph edges; graph topology is static/backend-owned.",
+                stage="LLM_ENRICHMENT",
+                entity_type="edge",
+                entity_id=edge.localId or None,
+                field="edges",
+                actual=edge.edgeType,
+                allowed_values=[],
+                path=f"$.edges[{index}]",
+            )
+            for index, edge in enumerate(graph_result.edges)
+        ]
+        if topology_issues:
+            self._raise(
+                GRAPH_POLICY_VALIDATION_FAILED,
+                "LLM graph enrichment violates the analysis graph policy.",
+                topology_issues,
+                relative_path=relative_path,
+                stage="LLM_ENRICHMENT",
+            )
         issues = self._validate_graph(
             graph_result,
             contract,

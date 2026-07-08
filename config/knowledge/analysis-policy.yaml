@@ -82,7 +82,6 @@ analysis:
         from: [CALLABLE]
         to: [FIELD]
         semanticEligible: true
-        llmEmittable: false
       CONFIGURES:
         description: Source anchor configures a module, data object, resource, or configuration target.
         from: [FILE, CONFIG, MODULE]

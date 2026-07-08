@@ -21,13 +21,14 @@ POLICY_PATH = REPO_ROOT / "config" / "knowledge" / "analysis-policy.yaml"
 
 from knowledge_service import main
 from knowledge_service.analysis_client import OllamaAnalysisClient
-from knowledge_service.analysis_graph_contract import GraphContractProvider, ResolutionStatusContract, contract_payload
+from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
 from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry, ExtractorResult
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_service import AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
+from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.config import AppConfig
 from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
@@ -233,81 +234,15 @@ class SupervisorHarness:
 
 
 def responsibility_graph_result(method_claim=True, type_claim=True, file_claim=False, method_confidence=0.86, method_summary="Handles object creation."):
-    nodes = [
-        {
-            "localId": "type1",
-            "nodeKind": "TYPE",
-            "name": "ObjectHandler",
-            "language": "java",
-            "qualifiedName": "example.ObjectHandler",
-            "displayName": "ObjectHandler",
-            "parentLocalId": "file1" if file_claim else None,
-            "lineStart": 1,
-            "lineEnd": 5,
-            "confidence": 0.91,
-            "metadata": {"sourceKind": "CLASS"},
-        },
-        {
-            "localId": "method1",
-            "nodeKind": "CALLABLE",
-            "name": "create",
-            "language": "java",
-            "qualifiedName": "example.ObjectHandler.create",
-            "displayName": "create",
-            "parentLocalId": "type1",
-            "lineStart": 3,
-            "lineEnd": 4,
-            "confidence": method_confidence,
-            "metadata": {"sourceKind": "METHOD"},
-        },
-    ]
-    edges = [
-        {
-            "localId": "declares-create",
-            "fromNodeLocalId": "type1",
-            "toNodeLocalId": "method1",
-            "edgeType": "DECLARES",
-            "confidence": 0.95,
-            "evidence": [{"lineStart": 3, "lineEnd": 4, "text": "create method declaration", "metadata": {}}],
-            "unresolvedTarget": None,
-            "metadata": {},
-        }
-    ]
+    file_id = "edge-gateway|src/main/java/example/ObjectHandler.java|FILE"
+    type_id = "edge-gateway|src/main/java/example/ObjectHandler.java|TYPE|ObjectHandler"
+    method_id = "edge-gateway|src/main/java/example/ObjectHandler.java|CALLABLE|ObjectHandler|create|create()"
     claims = []
     if file_claim:
-        nodes.insert(
-            0,
-            {
-                "localId": "file1",
-                "nodeKind": "FILE",
-                "name": "ObjectHandler.java",
-                "language": "java",
-                "qualifiedName": None,
-                "displayName": "ObjectHandler.java",
-                "parentLocalId": None,
-                "lineStart": 1,
-                "lineEnd": 5,
-                "confidence": 0.9,
-                "metadata": {"sourceKind": "FILE"},
-            },
-        )
-        edges.insert(
-            0,
-            {
-                "localId": "file-declares-type",
-                "fromNodeLocalId": "file1",
-                "toNodeLocalId": "type1",
-                "edgeType": "DECLARES",
-                "confidence": 0.9,
-                "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "class declaration", "metadata": {}}],
-                "unresolvedTarget": None,
-                "metadata": {},
-            },
-        )
         claims.append(
             {
                 "localId": "file-responsibility",
-                "nodeLocalId": "file1",
+                "nodeLocalId": file_id,
                 "claimKind": "RESPONSIBILITY",
                 "summary": "Defines an object handler file.",
                 "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "file content", "metadata": {}}],
@@ -319,7 +254,7 @@ def responsibility_graph_result(method_claim=True, type_claim=True, file_claim=F
         claims.append(
             {
                 "localId": "type-responsibility",
-                "nodeLocalId": "type1",
+                "nodeLocalId": type_id,
                 "claimKind": "RESPONSIBILITY",
                 "summary": "Handles object requests.",
                 "evidence": [{"lineStart": 1, "lineEnd": 5, "text": "class body", "metadata": {}}],
@@ -331,7 +266,7 @@ def responsibility_graph_result(method_claim=True, type_claim=True, file_claim=F
         claims.append(
             {
                 "localId": "method-responsibility",
-                "nodeLocalId": "method1",
+                "nodeLocalId": method_id,
                 "claimKind": "RESPONSIBILITY",
                 "summary": method_summary,
                 "evidence": [{"lineStart": 3, "lineEnd": 4, "text": "method body", "metadata": {}}],
@@ -341,8 +276,8 @@ def responsibility_graph_result(method_claim=True, type_claim=True, file_claim=F
         )
     return GraphAnalysisResult.parse_obj(
         {
-            "nodes": nodes,
-            "edges": edges,
+            "nodes": [],
+            "edges": [],
             "claims": claims,
             "diagnostics": [],
         }
@@ -470,7 +405,7 @@ def materialize_graph_for_test(result, content=None, file_id=1, relative_path="s
     return GraphAnalysisEngine().materialize(row, "job-1", "test-analyzer", "1", result, content.splitlines())
 
 
-def _materialize_static_java_for_test(content: str, file_id: int, relative_path: str):
+def _static_java_graph_result_for_test(content: str, file_id: int, relative_path: str):
     file_metadata = StructuralFileMetadata(
         source_id="edge-gateway",
         inventory_file_id=file_id,
@@ -482,8 +417,29 @@ def _materialize_static_java_for_test(content: str, file_id: int, relative_path:
         decode_policy="utf-8:replace",
     )
     structural = JavaParserAdapter().parse(content, file_metadata)
+    return StaticGraphMaterializer().to_graph(structural)
+
+
+def _materialize_static_java_for_test(content: str, file_id: int, relative_path: str):
     return materialize_graph_for_test(
-        StaticGraphMaterializer().to_graph(structural),
+        _static_java_graph_result_for_test(content, file_id, relative_path),
+        content=content,
+        file_id=file_id,
+        relative_path=relative_path,
+    )
+
+
+def _materialize_static_plus_enrichment_for_test(
+    enrichment: GraphAnalysisResult,
+    *,
+    content: str,
+    file_id: int,
+    relative_path: str,
+):
+    static_graph = _static_java_graph_result_for_test(content, file_id, relative_path)
+    merged = AnchorAwareGraphValidator().merge(static_graph, enrichment, len(content.splitlines()))
+    return materialize_graph_for_test(
+        merged,
         content=content,
         file_id=file_id,
         relative_path=relative_path,
@@ -796,7 +752,6 @@ def _capturing_ollama_client(captured, response_factory):
 def _empty_target_response(llm_input):
     return {
         "claims": [],
-        "semanticEdges": [],
     }
 
 
@@ -813,28 +768,6 @@ def _nested_flow_response(llm_input):
             "evidence": evidence,
         }
     )
-    registry_by_name = {item["name"]: item for item in llm_input["anchorRegistry"]}
-    calls = {
-        "getWorkspace": "loadWorkspace",
-        "validateWorkspace": "ensureActive",
-    }
-    if target["name"] in calls and calls[target["name"]] in registry_by_name:
-        response["semanticEdges"].append(
-            {
-                "toRef": registry_by_name[calls[target["name"]]]["ref"],
-                "edgeType": "CALLS",
-                "evidence": evidence,
-            }
-        )
-    if target["name"] in {"loadWorkspace", "mapWorkspace"}:
-        response["semanticEdges"].append(
-            {
-                "edgeType": "CALLS",
-                "unresolvedStatus": "EXTERNAL_TARGET",
-                "evidence": evidence,
-                "unresolvedTarget": {"name": "external target", "kindHint": "CALLABLE"},
-            }
-        )
     return response
 
 
@@ -1764,17 +1697,6 @@ def test_ollama_prompt_renders_minimal_target_input_only():
     policy = load_analysis_policy(POLICY_PATH)
     provider = GraphContractProvider(policy=policy)
     contract = provider.resolve("src/Foo.java", "class Foo {}\n")
-    file_edge_types = [
-        edge_type
-        for edge_type in contract.allowed_edge_types
-        if "FILE" in set(contract.edge_from_kinds.get(edge_type, ()))
-    ]
-    resolution_rules = ResolutionStatusContract.from_graph_contract(contract)
-    unresolved_statuses = [
-        status
-        for status in contract.allowed_resolution_statuses
-        if status != "RESOLVED" and not resolution_rules.requires_to_ref(status)
-    ]
     llm_input = {
         "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
         "requestKind": TARGET_REQUEST_KIND,
@@ -1783,23 +1705,14 @@ def test_ollama_prompt_renders_minimal_target_input_only():
             "relativePath": "src/Foo.java",
             "language": "java",
             "lineCount": 1,
-            "contentLines": [{"line": 1, "text": "class Foo {}"}],
+                "contentLines": [{"line": 1, "text": "class Foo {}"}],
         },
-        "anchorRegistry": [{"ref": "F1", "kind": "FILE", "name": "Foo.java", "qualifiedName": None, "lineStart": 1, "lineEnd": 1, "parentRef": None}],
-        "targetAnchor": {"ref": "F1", "kind": "FILE", "name": "Foo.java", "qualifiedName": None, "lineStart": 1, "lineEnd": 1, "parentRef": None},
+        "targetAnchor": {"kind": "FILE", "name": "Foo.java", "qualifiedName": None, "lineStart": 1, "lineEnd": 1},
+        "contextAnchors": [],
         "allowedValues": {
             "claimKind": list(contract.allowed_claim_kinds),
-            "edgeType": file_edge_types,
-            "unresolvedStatus": unresolved_statuses,
         },
-        "endpointRules": {
-            edge_type: {
-                "fromKinds": list(contract.edge_from_kinds.get(edge_type, ())),
-                "toKinds": list(contract.edge_to_kinds.get(edge_type, ())),
-            }
-            for edge_type in file_edge_types
-        },
-        "responseShape": {"claims": [], "semanticEdges": []},
+        "responseShape": {"claims": []},
     }
     payload = {
         "sourceId": "edge-gateway",
@@ -1822,9 +1735,12 @@ def test_ollama_prompt_renders_minimal_target_input_only():
     assert END_INPUT_MARKER in prompt
     assert rendered_input["requestKind"] == TARGET_REQUEST_KIND
     assert rendered_input["file"]["contentLines"]
-    assert rendered_input["anchorRegistry"][0]["ref"] == "F1"
-    assert "CALLS" not in rendered_input["allowedValues"]["edgeType"]
-    assert "RESOLVED" not in rendered_input["allowedValues"]["unresolvedStatus"]
+    assert rendered_input["targetAnchor"]["kind"] == "FILE"
+    assert set(rendered_input["allowedValues"]) == {"claimKind"}
+    assert rendered_input["contextAnchors"] == []
+    assert "anchorRegistry" not in rendered_input
+    assert "edgeOptions" not in rendered_input
+    assert "endpointRules" not in rendered_input
     assert "staticAnchors" not in rendered_input
     assert "callsites" not in rendered_input
     assert not _contains_key(rendered_input, "stableKey")
@@ -2139,12 +2055,12 @@ def test_changed_hash_cleanup_deletes_old_graph_and_semantic_facts(tmp_path):
 
 
 def test_successful_reanalysis_replaces_graph_facts_and_marks_semantic_pending(tmp_path):
-    store, _, _ = build_inventory(tmp_path)
+    store, _, _ = build_inventory(tmp_path, content="public class ObjectHandler {\n  public void create() {\n  }\n}\n")
     rows, _ = store.search_rows([], [])
     file_row = rows[0]
     analysis_store = AnalysisStore(store.db_path)
     content = Path(file_row["absolute_path"]).read_text(encoding="utf-8")
-    first = materialize_graph_for_test(
+    first = _materialize_static_plus_enrichment_for_test(
         responsibility_graph_result(file_claim=True),
         content=content,
         file_id=int(file_row["id"]),
@@ -2158,7 +2074,7 @@ def test_successful_reanalysis_replaces_graph_facts_and_marks_semantic_pending(t
     before_semantic = semantic_cache_counts(store.db_path)
     assert before_semantic["semantic_documents"] > 0
 
-    second = materialize_graph_for_test(
+    second = _materialize_static_plus_enrichment_for_test(
         responsibility_graph_result(method_claim=False, type_claim=False, file_claim=False),
         content=content,
         file_id=int(file_row["id"]),
@@ -2805,8 +2721,9 @@ def test_analyzer_runtime_builds_unified_payload_shape(relative_path, content, e
     assert llm_input["requestKind"] == TARGET_REQUEST_KIND
     assert llm_input["file"]["contentLines"][0]["line"] == 1
     assert llm_input["file"]["contentLines"][0]["text"] == content.splitlines()[0]
-    assert llm_input["anchorRegistry"]
-    assert llm_input["targetAnchor"]["ref"]
+    assert "contextAnchors" in llm_input
+    assert llm_input["targetAnchor"]["kind"]
+    assert payload["targetRef"]
     assert payload["analysisPolicy"]["formatId"] == expected_format
     assert payload["analysisPolicy"]["extractorId"] == expected_extractor
     assert payload["analysisPolicy"]["policyId"] == expected_policy
@@ -2815,9 +2732,11 @@ def test_analyzer_runtime_builds_unified_payload_shape(relative_path, content, e
     assert "fileType" not in payload
     assert "flowDomain" not in llm_input
     assert "content" not in payload
+    assert "anchorRegistry" not in llm_input
     assert "staticAnchors" not in llm_input
     assert "callsites" not in llm_input
     assert not _contains_key(llm_input, "stableKey")
+    assert not _contains_key(llm_input, "ref")
 
 
 def test_analyzer_runtime_routing_is_yaml_driven_and_unknown_extension_fails():
@@ -2870,7 +2789,8 @@ def test_java_extractor_output_is_used_as_static_anchors():
             language="java",
         )
     )
-    static_anchors = analyzer.payloads[0]["llmInput"]["anchorRegistry"]
+    llm_input = analyzer.payloads[0]["llmInput"]
+    static_anchors = [llm_input["targetAnchor"], *llm_input["contextAnchors"]]
     anchors = static_anchors
     kinds = {item["kind"] for item in anchors}
 
@@ -2923,19 +2843,21 @@ class NestedCallFlow {
     inputs = [_llm_input_from_prompt(body["prompt"]) for body in captured]
     target_names = {item["targetAnchor"]["name"] for item in inputs}
     public_request = next(item for item in inputs if item["targetAnchor"]["name"] == "getWorkspace")
-    public_registry_names = {item["name"] for item in public_request["anchorRegistry"]}
+    public_context_names = {item["name"] for item in public_request["contextAnchors"]}
     facts = graph_facts_for_path(store.db_path, "src/main/java/example/ObjectHandler.java")
 
     assert final["status"] == "COMPLETED"
     assert "getWorkspace" in target_names
     assert {"loadWorkspace", "validateWorkspace", "ensureActive", "mapWorkspace"}.issubset(target_names)
-    assert {"loadWorkspace", "validateWorkspace", "ensureActive", "mapWorkspace"}.issubset(public_registry_names)
+    assert {"loadWorkspace", "validateWorkspace", "ensureActive", "mapWorkspace"}.issubset(public_context_names)
     assert all(item["requestKind"] == TARGET_REQUEST_KIND for item in inputs)
     assert all(item["file"]["contentLines"] for item in inputs)
-    assert all(item["anchorRegistry"] for item in inputs)
-    assert all(item["targetAnchor"]["ref"] for item in inputs)
+    assert all("contextAnchors" in item for item in inputs)
+    assert all(item["targetAnchor"]["kind"] for item in inputs)
     for item in inputs:
         for forbidden in (
+            "anchorRegistry",
+            "ref",
             "staticAnchors",
             "callsites",
             "callsiteStableKey",
@@ -2999,7 +2921,7 @@ def test_retry_repair_prompt_keeps_minimal_target_input(tmp_path):
                 "claims": [
                     {
                         "localId": "old-claim",
-                        "targetRef": llm_input["targetAnchor"]["ref"],
+                        "targetRef": "M1",
                         "claimKind": "RESPONSIBILITY",
                         "summary": "Old response shape.",
                         "confidence": 0.8,
@@ -3009,10 +2931,10 @@ def test_retry_repair_prompt_keeps_minimal_target_input(tmp_path):
                 "semanticEdges": [
                     {
                         "localId": "old-edge",
-                        "fromRef": llm_input["targetAnchor"]["ref"],
+                        "fromRef": "M1",
                         "edgeType": "REFERENCES",
                         "resolutionStatus": "RESOLVED",
-                        "toRef": llm_input["targetAnchor"]["ref"],
+                        "toRef": "M1",
                         "confidence": 0.8,
                         "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "old"}],
                     }
@@ -3038,8 +2960,10 @@ def test_retry_repair_prompt_keeps_minimal_target_input(tmp_path):
     assert "callsites" not in retry_input
     assert "Remove invalid fields" in retry_prompt
     assert "schemaVersion, localId, targetRef, fromRef, resolutionStatus, confidence, evidence.text, or diagnostics" in retry_prompt
-    assert "If an edge cannot be made valid, remove that edge." in retry_prompt
-    assert "If no edge is valid, return semanticEdges: []." in retry_prompt
+    assert "semanticEdges are not accepted." in retry_prompt
+    assert 'Return claims only: {"claims": [...]} or {"claims": []}.' in retry_prompt
+    assert "edgeOptions" not in retry_prompt
+    assert "endpointRules" not in retry_prompt
 
 
 def test_callsite_heavy_fluent_chain_prompt_does_not_include_raw_callsite_payload(tmp_path):
@@ -3084,7 +3008,8 @@ class FluentChainFixture {
 
 def test_structured_text_light_emits_config_regions_only_when_policy_allows_them():
     _, analyzer = asyncio.run(run_runtime("config/service.yaml", "service:\n  endpoint: http://example\n", language="yaml"))
-    kinds = [item["kind"] for item in analyzer.payloads[0]["llmInput"]["anchorRegistry"]]
+    llm_input = analyzer.payloads[0]["llmInput"]
+    kinds = [llm_input["targetAnchor"]["kind"], *[item["kind"] for item in llm_input["contextAnchors"]]]
 
     assert "CONFIG" in kinds
     assert "staticAnchors" not in analyzer.payloads[0]["llmInput"]
@@ -3103,14 +3028,16 @@ def test_structured_text_light_emits_only_file_anchor_when_config_not_allowed():
     policy = replace(policy, graph_profiles=graph_profiles)
 
     _, analyzer = asyncio.run(run_runtime("config/service.yaml", "service:\n  endpoint: http://example\n", policy=policy, language="yaml"))
-    anchors = analyzer.payloads[0]["llmInput"]["anchorRegistry"]
+    llm_input = analyzer.payloads[0]["llmInput"]
 
-    assert [item["kind"] for item in anchors] == ["FILE"]
+    assert llm_input["targetAnchor"]["kind"] == "FILE"
+    assert llm_input["contextAnchors"] == []
 
 
 def test_xml_structured_labels_produce_normalized_static_anchors_when_allowed():
     _, analyzer = asyncio.run(run_runtime("models/service.xml", "<project>\n  <artifactId>edge-core</artifactId>\n</project>\n", language="xml"))
-    static_anchors = analyzer.payloads[0]["llmInput"]["anchorRegistry"]
+    llm_input = analyzer.payloads[0]["llmInput"]
+    static_anchors = [llm_input["targetAnchor"], *llm_input["contextAnchors"]]
 
     assert any(item["kind"] == "CONFIG" and item["name"] == "project" for item in static_anchors)
 
@@ -3233,7 +3160,7 @@ def test_invalid_fallback_output_fails_before_llm():
                     )
                 ]
             ),
-            "edgeType",
+            "edges",
             "CALLS",
         ),
         (
@@ -3276,8 +3203,8 @@ def test_file_anchor_fallback_works_only_when_policy_allows_it():
     _, analyzer = asyncio.run(run_runtime("README.md", "# Title\n", policy=policy, registry=registry))
     payload = analyzer.payloads[0]
 
-    assert [item["kind"] for item in payload["llmInput"]["anchorRegistry"]] == ["FILE"]
     assert payload["llmInput"]["targetAnchor"]["kind"] == "FILE"
+    assert payload["llmInput"]["contextAnchors"] == []
 
 
 def test_required_file_anchor_fallback_mode_allows_file_anchor_fallback():
@@ -3297,8 +3224,8 @@ def test_required_file_anchor_fallback_mode_allows_file_anchor_fallback():
     payload = analyzer.payloads[0]
 
     assert payload["analysisPolicy"]["extractorMode"] == "required_or_file_anchor_fallback"
-    assert [item["kind"] for item in payload["llmInput"]["anchorRegistry"]] == ["FILE"]
     assert payload["llmInput"]["targetAnchor"]["kind"] == "FILE"
+    assert payload["llmInput"]["contextAnchors"] == []
 
 
 def test_missing_required_extractor_fails_explicitly_before_llm():
@@ -3445,12 +3372,12 @@ def test_persistence_boundary_writes_only_final_graph_and_no_partial_extractor_f
     assert len(success_store.replacements) == 1
     assert success_store.failed_attempts == []
     assert success_store.replacements[0][2]["nodes"]
-    assert success_analyzer.payloads[0]["llmInput"]["anchorRegistry"]
+    assert "contextAnchors" in success_analyzer.payloads[0]["llmInput"]
 
     failing_analyzer = CapturingGraphAnalyzer(fail=True)
     failure_store = run_supervisor_with_fake_store(tmp_path, failing_analyzer, row)
 
-    assert failing_analyzer.payloads[0]["llmInput"]["anchorRegistry"]
+    assert "contextAnchors" in failing_analyzer.payloads[0]["llmInput"]
     assert failure_store.replacements == []
     assert len(failure_store.failed_attempts) == 1
     assert failure_store.job_file_updates[-1][2] == "FAILED"

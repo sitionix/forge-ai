@@ -40,7 +40,6 @@ class AnalysisPolicyResolution:
     semantic_node_kinds: List[str] = field(default_factory=list)
     semantic_edge_types: List[str] = field(default_factory=list)
     semantic_claim_kinds: List[str] = field(default_factory=list)
-    llm_emittable_edge_types: List[str] = field(default_factory=list)
     status_kinds: List[str] = field(default_factory=list)
     origin_kinds: List[str] = field(default_factory=list)
     evidence_kinds: List[str] = field(default_factory=list)
@@ -130,11 +129,6 @@ class AnalysisPolicyResolver:
             semantic_node_kinds=[kind for kind in self.policy.semantic.indexed_node_kinds if kind in allowed_node_kinds],
             semantic_edge_types=[kind for kind in self.policy.semantic.indexed_edge_types if kind in allowed_edge_types],
             semantic_claim_kinds=[kind for kind in self.policy.semantic.indexed_claim_kinds if kind in allowed_claim_kinds],
-            llm_emittable_edge_types=[
-                kind
-                for kind in allowed_edge_types
-                if self.policy.graph.edges[kind].llm_emittable
-            ],
             status_kinds=list(self.policy.graph.statuses.keys()),
             origin_kinds=list(self.policy.graph.origins.keys()),
             evidence_kinds=list(self.policy.graph.evidence_kinds.keys()),

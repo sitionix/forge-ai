@@ -43,7 +43,6 @@ def test_loads_default_policy_and_validates_references():
     assert policy.graph.edges["CALLS"].description
     assert policy.graph.edges["USES_FIELD"].from_kinds == ["CALLABLE"]
     assert policy.graph.edges["USES_FIELD"].to_kinds == ["FIELD"]
-    assert policy.graph.edges["USES_FIELD"].llm_emittable is False
     assert "USES_FIELD" not in policy.semantic.indexed_edge_types
     assert policy.graph.claims["RESPONSIBILITY"].description
     assert policy.graph.origins["LLM"]["description"]
@@ -56,7 +55,6 @@ def test_loads_default_policy_and_validates_references():
         assert policy.graph.nodes[kind].semantic_eligible is True
     for kind in policy.semantic.indexed_edge_types:
         assert policy.graph.edges[kind].semantic_eligible is True
-        assert policy.graph.edges[kind].llm_emittable is True
     for kind in policy.semantic.indexed_claim_kinds:
         assert policy.graph.claims[kind].semantic_eligible is True
 
@@ -72,7 +70,6 @@ def test_loads_default_policy_and_validates_references():
 
     resolution = resolve_analysis_policy(policy, AnalysisPolicyResolveRequest(relative_path="src/Foo.java", content="class Foo {}", content_lines=["class Foo {}"]))
     assert "USES_FIELD" in resolution.allowed_edge_types
-    assert "USES_FIELD" not in resolution.llm_emittable_edge_types
 
     assert {execution.extractor_mode for execution in policy.policies.values()} <= set(ALLOWED_EXTRACTOR_MODES)
     assert {execution.llm_mode for execution in policy.policies.values()} <= set(ALLOWED_LLM_MODES)
@@ -132,6 +129,17 @@ def test_resolution_status_policy_rejects_legacy_resolved_target_key(tmp_path):
 
     assert diagnostic.reason == "unknown field is not allowed"
     assert diagnostic.invalid_value == "resolvedTarget"
+
+
+def test_graph_edge_policy_rejects_legacy_llm_emittable_key(tmp_path):
+    data = _policy_data()
+    data["analysis"]["graph"]["edges"]["USES_FIELD"]["llmEmittable"] = False
+
+    error = _load_invalid(tmp_path, data)
+    diagnostic = _diagnostic_for_path(error, "$.analysis.graph.edges.USES_FIELD.llmEmittable")
+
+    assert diagnostic.reason == "unknown field is not allowed"
+    assert diagnostic.invalid_value == "llmEmittable"
 
 
 def test_resolution_status_policy_accepts_to_ref_rules(tmp_path):

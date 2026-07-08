@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from knowledge_service.graph_analysis import confidence_status
-from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphNode
+from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphNode
 
 
 class AnchorAwareGraphValidator:
@@ -49,46 +49,15 @@ class AnchorAwareGraphValidator:
             accepted_claims.append(validated)
 
         for edge in enrichment.edges:
-            from_local_id = self._resolve_edge_endpoint(edge.fromNodeLocalId, anchors, source_nodes)
-            to_local_id = self._resolve_edge_endpoint(edge.toNodeLocalId, anchors, source_nodes) if edge.toNodeLocalId else None
-            if from_local_id is None:
-                diagnostics.append(
-                    {
-                        "severity": "WARN",
-                        "stage": "ANCHOR_VALIDATION",
-                        "code": "LLM_EDGE_SOURCE_NOT_FOUND",
-                        "message": "LLM semantic edge source did not match any parser anchor.",
-                        "edgeLocalId": edge.localId,
-                        "fromNodeLocalId": edge.fromNodeLocalId,
-                    }
-                )
-                continue
-            if edge.toNodeLocalId and to_local_id is None:
-                diagnostics.append(
-                    {
-                        "severity": "WARN",
-                        "stage": "ANCHOR_VALIDATION",
-                        "code": "LLM_EDGE_TARGET_NOT_FOUND",
-                        "message": "LLM semantic edge target did not match any parser anchor; edge remains unresolved.",
-                        "edgeLocalId": edge.localId,
-                        "toNodeLocalId": edge.toNodeLocalId,
-                    }
-                )
-            metadata = dict(edge.metadata or {})
-            metadata.pop("resolutionStatus", None)
-            metadata.setdefault("factOrigin", "LLM")
-            resolution_status = edge.resolutionStatus or ("RESOLVED" if to_local_id else "UNRESOLVED")
-            if edge.toNodeLocalId and to_local_id is None:
-                resolution_status = "UNRESOLVED"
-            accepted_edges.append(
-                edge.copy(
-                    update={
-                        "fromNodeLocalId": from_local_id,
-                        "toNodeLocalId": to_local_id,
-                        "resolutionStatus": resolution_status,
-                        "metadata": metadata,
-                    }
-                )
+            diagnostics.append(
+                {
+                    "severity": "WARN",
+                    "stage": "ANCHOR_VALIDATION",
+                    "code": "LLM_EDGE_TOPOLOGY_REJECTED",
+                    "message": "LLM enrichment edges are not accepted; graph topology is static/backend-owned.",
+                    "edgeLocalId": edge.localId,
+                    "edgeType": edge.edgeType,
+                }
             )
 
         return GraphAnalysisResult(

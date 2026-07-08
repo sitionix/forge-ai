@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from knowledge_service.analysis_graph_contract import AnalysisGraphContract, ResolutionStatusContract, contract_payload
+from knowledge_service.analysis_graph_contract import contract_payload
 from knowledge_service.analysis_policy import AnalysisPolicy
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.target_enrichment.constants import TARGET_INPUT_SCHEMA_VERSION, TARGET_REQUEST_KIND
@@ -32,9 +32,6 @@ class LlmEnrichmentInputBuilder:
         budget_chars: int,
     ) -> dict[str, Any]:
         target_entry = registry.entry_for_ref(target.ref)
-        target_allowed_edge_types = _target_allowed_edge_types(context.graph_contract, target_entry.kind)
-        allowed_unresolved_statuses = _allowed_unresolved_statuses(context.graph_contract)
-        edge_options = _edge_options(context.graph_contract, registry, target_entry.ref, target_entry.kind, target_allowed_edge_types, allowed_unresolved_statuses)
         llm_input = {
             "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
             "requestKind": TARGET_REQUEST_KIND,
@@ -46,20 +43,10 @@ class LlmEnrichmentInputBuilder:
                 "lineCount": context.line_count,
                 "contentLines": [{"line": index, "text": line} for index, line in enumerate(context.content_lines, start=1)],
             },
-            "anchorRegistry": registry.to_llm_list(),
-            "targetAnchor": target_entry.to_llm_dict(),
+            "targetAnchor": _anchor_context(target_entry),
+            "contextAnchors": [_anchor_context(entry, role="context") for entry in registry.entries if entry.ref != target_entry.ref],
             "allowedValues": {
                 "claimKind": list(context.graph_contract.allowed_claim_kinds),
-                "edgeType": target_allowed_edge_types,
-                "unresolvedStatus": allowed_unresolved_statuses,
-            },
-            "edgeOptions": edge_options,
-            "endpointRules": {
-                edge_type: {
-                    "fromKinds": list(context.graph_contract.edge_from_kinds.get(edge_type, ())),
-                    "toKinds": list(context.graph_contract.edge_to_kinds.get(edge_type, ())),
-                }
-                for edge_type in target_allowed_edge_types
             },
             "responseShape": self.response_shape(contract=context.graph_contract),
         }
@@ -106,57 +93,22 @@ def _json_copy(value: Mapping[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(dict(value)))
 
 
-def _target_allowed_edge_types(contract: AnalysisGraphContract, target_kind: str) -> list[str]:
-    return [
-        edge_type
-        for edge_type in _llm_emittable_edge_types(contract)
-        if target_kind in set(contract.edge_from_kinds.get(edge_type, ()))
-    ]
-
-
-def _llm_emittable_edge_types(contract: AnalysisGraphContract) -> tuple[str, ...]:
-    return tuple(contract.llm_emittable_edge_types or contract.allowed_edge_types)
-
-
-def _allowed_unresolved_statuses(contract: AnalysisGraphContract) -> list[str]:
-    rules = ResolutionStatusContract.from_graph_contract(contract)
-    return [
-        status
-        for status in contract.allowed_resolution_statuses
-        if status != "RESOLVED" and not rules.requires_to_ref(status)
-    ]
-
-
-def _edge_options(
-    contract: AnalysisGraphContract,
-    registry: AnchorRefRegistry,
-    target_ref: str,
-    target_kind: str,
-    target_allowed_edge_types: list[str],
-    allowed_unresolved_statuses: list[str],
-) -> list[dict[str, Any]]:
-    # TODO: Split graph edge types from LLM-emittable edge types in policy.
-    entries = registry.entries
-    options: list[dict[str, Any]] = []
-    for edge_type in target_allowed_edge_types:
-        allowed_to_kinds = list(contract.edge_to_kinds.get(edge_type, ()))
-        allowed_to_set = set(allowed_to_kinds)
-        to_refs = [
-            {
-                "ref": entry.ref,
-                "kind": entry.kind,
-                "name": entry.name,
-            }
-            for entry in entries
-            if entry.ref != target_ref and entry.kind in allowed_to_set
-        ]
-        options.append(
-            {
-                "edgeType": edge_type,
-                "fromKind": target_kind,
-                "allowedToKinds": allowed_to_kinds,
-                "toRefs": to_refs,
-                "unresolvedStatuses": list(allowed_unresolved_statuses),
-            }
-        )
-    return options
+def _anchor_context(entry: Any, *, role: Optional[str] = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "kind": entry.kind,
+        "name": entry.name,
+        "qualifiedName": entry.qualified_name,
+        "lineStart": entry.line_start,
+        "lineEnd": entry.line_end,
+    }
+    if entry.signature:
+        payload["signature"] = entry.signature
+    if entry.return_type:
+        payload["returnType"] = entry.return_type
+    if entry.type_name:
+        payload["typeName"] = entry.type_name
+    if entry.annotations:
+        payload["annotations"] = [dict(item) for item in entry.annotations]
+    if role:
+        payload["role"] = role
+    return {key: value for key, value in payload.items() if value is not None}

@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from knowledge_service.analysis_client import OllamaAnalysisClient
-from knowledge_service.analysis_graph_contract import GraphContractProvider, ResolutionStatusContract, contract_payload
+from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analysis_runtime_events import AnalysisRuntimeContext, analysis_runtime_context, emit_runtime_event
 from knowledge_service.analysis_schema import AnalysisBuildRequest
@@ -276,17 +276,6 @@ def _payload() -> Dict[str, Any]:
     content = "public class ObjectHandler {}"
     contract = GraphContractProvider(policy=load_analysis_policy(POLICY_PATH)).resolve(RELATIVE_PATH, content)
     stable_key = f"{SOURCE_ID}|{RELATIVE_PATH}|FILE"
-    file_edge_types = [
-        edge_type
-        for edge_type in contract.allowed_edge_types
-        if "FILE" in set(contract.edge_from_kinds.get(edge_type, ()))
-    ]
-    resolution_rules = ResolutionStatusContract.from_graph_contract(contract)
-    unresolved_statuses = [
-        status
-        for status in contract.allowed_resolution_statuses
-        if status != "RESOLVED" and not resolution_rules.requires_to_ref(status)
-    ]
     llm_input = {
         "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
         "requestKind": TARGET_REQUEST_KIND,
@@ -298,39 +287,18 @@ def _payload() -> Dict[str, Any]:
             "lineCount": 1,
             "contentLines": [{"line": 1, "text": content}],
         },
-        "anchorRegistry": [
-            {
-                "ref": "F1",
-                "kind": "FILE",
-                "name": "ObjectHandler.java",
-                "qualifiedName": None,
-                "lineStart": 1,
-                "lineEnd": 1,
-                "parentRef": None,
-            }
-        ],
         "targetAnchor": {
-            "ref": "F1",
             "kind": "FILE",
             "name": "ObjectHandler.java",
             "qualifiedName": None,
             "lineStart": 1,
             "lineEnd": 1,
-            "parentRef": None,
         },
+        "contextAnchors": [],
         "allowedValues": {
             "claimKind": list(contract.allowed_claim_kinds),
-            "edgeType": file_edge_types,
-            "unresolvedStatus": unresolved_statuses,
         },
-        "endpointRules": {
-            edge_type: {
-                "fromKinds": list(contract.edge_from_kinds.get(edge_type, ())),
-                "toKinds": list(contract.edge_to_kinds.get(edge_type, ())),
-            }
-            for edge_type in file_edge_types
-        },
-        "responseShape": {"claims": [], "semanticEdges": []},
+        "responseShape": {"claims": []},
     }
     return {
         "sourceId": SOURCE_ID,
@@ -348,4 +316,4 @@ def _payload() -> Dict[str, Any]:
 
 
 def _valid_enrichment_json() -> str:
-    return json.dumps({"claims": [], "semanticEdges": []})
+    return json.dumps({"claims": []})

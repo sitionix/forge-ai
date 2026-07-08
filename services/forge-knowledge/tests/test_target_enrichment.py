@@ -73,16 +73,23 @@ def test_llm_input_projection_includes_minimal_contract_and_excludes_internal_pa
     assert llm_input["file"]["language"] == "java"
     assert llm_input["file"]["lineCount"] == 3
     assert llm_input["file"]["contentLines"][0] == {"line": 1, "text": "class Foo {"}
-    assert llm_input["anchorRegistry"]
-    assert llm_input["targetAnchor"]["ref"] == target.ref
+    assert llm_input["contextAnchors"]
+    assert llm_input["targetAnchor"]["kind"] == target.kind
+    assert payload["targetRef"] == target.ref
     assert "RESPONSIBILITY" in llm_input["allowedValues"]["claimKind"]
-    assert "CALLS" not in llm_input["allowedValues"]["edgeType"]
-    assert "CALLS" not in llm_input["endpointRules"]
-    assert llm_input["edgeOptions"]
-    assert "CALLS" not in {item["edgeType"] for item in llm_input["edgeOptions"]}
-    assert "RESOLVED" not in llm_input["allowedValues"]["unresolvedStatus"]
-    assert set(llm_input["responseShape"]) == {"claims", "semanticEdges"}
+    assert set(llm_input["allowedValues"]) == {"claimKind"}
+    assert set(llm_input["responseShape"]) == {"claims"}
+    assert any(item["kind"] == "FIELD" and item["role"] == "context" for item in llm_input["contextAnchors"])
     for forbidden in (
+        "anchorRegistry",
+        "ref",
+        "parentRef",
+        "edgeOptions",
+        "endpointRules",
+        "edgeType",
+        "toRef",
+        "unresolvedStatus",
+        "unresolvedTarget",
         "serviceLabel",
         "tags",
         "domainKeywords",
@@ -118,13 +125,15 @@ def test_target_prompt_renderer_loads_policy_template_and_response_shape():
     assert rendered_input["requestKind"] == TARGET_REQUEST_KIND
     assert rendered_input["file"]["contentLines"]
     response_shape = renderer.response_shape(payload=payload)
-    assert set(response_shape) == {"claims", "semanticEdges"}
+    assert set(response_shape) == {"claims"}
     assert not _contains_key(response_shape, "schemaVersion")
-    assert '"edgeType": "CALLS"' not in json.dumps(response_shape)
-    assert '"edgeType": "REFERENCES"' not in json.dumps(response_shape)
+    assert not _contains_key(response_shape, "edgeType")
+    assert not _contains_key(response_shape, "toRef")
     for forbidden in (
         "File metadata and content JSON",
         "staticAnchors",
+        "edgeOptions",
+        "endpointRules",
         "targetStableKey",
         "fromStableKey",
         "toStableKey",
@@ -133,7 +142,9 @@ def test_target_prompt_renderer_loads_policy_template_and_response_shape():
         assert forbidden not in prompt
     assert "staticAnchors" not in rendered_input
     assert "callsites" not in rendered_input
-    assert "edgeOptions" in rendered_input
+    assert "contextAnchors" in rendered_input
+    assert "anchorRegistry" not in rendered_input
+    assert "Do not return graph topology, refs, semanticEdges, or edge facts." in prompt
     assert not _contains_key(rendered_input, "stableKey")
 
 
@@ -154,7 +165,7 @@ def test_target_prompt_renderer_uses_format_specific_prompt_and_shared_response_
 
     assert payload["analysisPolicy"]["promptId"] == prompt_id
     assert prompt_text in prompt
-    assert set(renderer.response_shape(payload=payload)) == {"claims", "semanticEdges"}
+    assert set(renderer.response_shape(payload=payload)) == {"claims"}
     assert payload["llmInput"]["responseShape"] == renderer.response_shape(payload=payload)
 
 
@@ -179,7 +190,6 @@ def test_target_prompt_renderer_uses_policy_selected_prompt_id_without_code_chan
         json.dumps(
             {
                 "claims": [{"claimKind": "RESPONSIBILITY", "summary": "shape-from-policy", "evidence": [{"lineStart": 1, "lineEnd": 1}]}],
-                "semanticEdges": [],
             }
         ),
         encoding="utf-8",
@@ -214,7 +224,7 @@ def test_target_prompt_renderer_uses_policy_selected_prompt_id_without_code_chan
         captured.append(body)
         return httpx.Response(
             200,
-            json={"response": json.dumps({"claims": [], "semanticEdges": []})},
+            json={"response": json.dumps({"claims": []})},
         )
 
     client = OllamaAnalysisClient(
@@ -301,19 +311,20 @@ def test_planner_fails_closed_when_target_count_exceeds_policy_cap():
     [
         (lambda payload: payload.update({"schemaVersion": "knowledge.graph.enrichment.response.v2"}), "$.schemaVersion"),
         (lambda payload: payload.update({"diagnostics": []}), "$.diagnostics"),
+        (lambda payload: payload.update({"semanticEdges": []}), "$.semanticEdges"),
+        (lambda payload: payload.update({"edgeType": "CALLS"}), "$.edgeType"),
+        (lambda payload: payload.update({"toRef": "M2"}), "$.toRef"),
+        (lambda payload: payload.update({"unresolvedStatus": "EXTERNAL_TARGET"}), "$.unresolvedStatus"),
+        (lambda payload: payload.update({"unresolvedTarget": {"name": "external"}}), "$.unresolvedTarget"),
         (lambda payload: payload["claims"][0].update({"localId": "claim-1"}), "$.claims[0].localId"),
         (lambda payload: payload["claims"][0].update({"targetRef": "M1"}), "$.claims[0].targetRef"),
         (lambda payload: payload["claims"][0].update({"confidence": 0.8}), "$.claims[0].confidence"),
+        (lambda payload: payload["claims"][0].update({"edgeType": "CALLS"}), "$.claims[0].edgeType"),
+        (lambda payload: payload["claims"][0].update({"toRef": "M2"}), "$.claims[0].toRef"),
+        (lambda payload: payload["claims"][0].update({"unresolvedStatus": "EXTERNAL_TARGET"}), "$.claims[0].unresolvedStatus"),
+        (lambda payload: payload["claims"][0].update({"unresolvedTarget": {"name": "external"}}), "$.claims[0].unresolvedTarget"),
         (lambda payload: payload["claims"][0]["evidence"][0].update({"text": "helper();"}), "$.claims[0].evidence[0].text"),
-        (lambda payload: payload["semanticEdges"][0].update({"localId": "edge-1"}), "$.semanticEdges[0].localId"),
-        (lambda payload: payload["semanticEdges"][0].update({"fromRef": "M1"}), "$.semanticEdges[0].fromRef"),
-        (lambda payload: payload["semanticEdges"][0].update({"resolutionStatus": "RESOLVED"}), "$.semanticEdges[0].resolutionStatus"),
-        (lambda payload: payload["semanticEdges"][0].update({"confidence": 0.8}), "$.semanticEdges[0].confidence"),
-        (lambda payload: payload["semanticEdges"][0].update({"summary": "invalid edge summary"}), "$.semanticEdges[0].summary"),
-        (lambda payload: payload["semanticEdges"][0]["evidence"][0].update({"text": "helper();"}), "$.semanticEdges[0].evidence[0].text"),
-        (lambda payload: payload["semanticEdges"][0].update({"toRef": "M999"}), "$.semanticEdges[0].toRef"),
         (lambda payload: payload["claims"][0].update({"claimKind": "BOGUS"}), "$.claims[0].claimKind"),
-        (lambda payload: payload["semanticEdges"][0].update({"edgeType": "BOGUS"}), "$.semanticEdges[0].edgeType"),
         (lambda payload: payload["claims"][0]["evidence"][0].update({"lineStart": 99, "lineEnd": 100}), "$.claims[0].evidence[0]"),
     ],
 )
@@ -338,7 +349,6 @@ def test_target_response_validator_accepts_minimal_claim_and_injects_backend_fie
                 "evidence": [{"lineStart": 2, "lineEnd": 2}],
             }
         ],
-        "semanticEdges": [],
     }
 
     parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
@@ -349,92 +359,6 @@ def test_target_response_validator_accepts_minimal_claim_and_injects_backend_fie
     assert parsed.claims[0].confidence == 0.8
     assert parsed.claims[0].evidence[0].text == "  void call() { helper(); }"
     assert parsed.claims[0].metadata["factOrigin"] == "LLM"
-
-
-def test_target_response_validator_accepts_minimal_resolved_edge_and_injects_backend_fields():
-    payload, contract = _target_payload()
-    calls_option = _edge_option(payload["llmInput"], "CALLS")
-
-    parsed = TargetResponseParserValidator().parse(json.dumps(_valid_target_response()), payload=payload, line_count=5, contract=contract)
-
-    assert isinstance(parsed, GraphAnalysisResult)
-    assert "M2" in {item["ref"] for item in calls_option["toRefs"]}
-    assert parsed.edges[0].fromNodeLocalId == "svc|src/Foo.java|CALLABLE|Foo.call()"
-    assert parsed.edges[0].toNodeLocalId == "svc|src/Foo.java|CALLABLE|Foo.helper()"
-    assert parsed.edges[0].resolutionStatus == "RESOLVED"
-    assert parsed.edges[0].localId == "llm-edge-M1-1"
-    assert parsed.edges[0].confidence == 0.8
-    assert parsed.edges[0].evidence[0].text == "  void call() { helper(); }"
-    assert parsed.edges[0].metadata["factOrigin"] == "LLM"
-
-
-def test_target_response_validator_rejects_to_ref_not_listed_in_edge_options():
-    payload, contract = _target_payload()
-    response = {
-        "claims": [],
-        "semanticEdges": [
-            {
-                "edgeType": "CALLS",
-                "toRef": "F1",
-                "evidence": [{"lineStart": 2, "lineEnd": 2}],
-            }
-        ],
-    }
-
-    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
-
-    assert isinstance(parsed, GraphAnalysisParseFailure)
-    detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.semanticEdges[0].toRef")
-    assert detail["actual"] == "F1"
-    assert detail["actualToRefKind"] == "FILE"
-    assert detail["edgeType"] == "CALLS"
-    assert detail["allowedToKinds"] == ["CALLABLE"]
-    assert set(detail["allowedToRefs"]) == {"M2", "M3"}
-
-
-def test_target_response_validator_rejects_self_referential_edge_even_if_edge_options_allow_it():
-    payload, contract = _target_payload()
-    _edge_option(payload["llmInput"], "CALLS")["toRefs"].append({"ref": "M1", "kind": "CALLABLE", "name": "call"})
-    response = {
-        "claims": [],
-        "semanticEdges": [
-            {
-                "edgeType": "CALLS",
-                "toRef": "M1",
-                "evidence": [{"lineStart": 2, "lineEnd": 2}],
-            }
-        ],
-    }
-
-    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
-
-    assert isinstance(parsed, GraphAnalysisParseFailure)
-    detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.semanticEdges[0].toRef")
-    assert detail["message"] == "self-referential semantic edge is not allowed."
-    assert detail["actual"] == "M1"
-    assert detail["actualToRef"] == "M1"
-    assert detail["targetRef"] == "M1"
-
-
-def test_target_response_validator_rejects_field_ref_for_file_depends_on():
-    payload, contract = _target_payload_for_kind("FILE")
-    response = {
-        "claims": [],
-        "semanticEdges": [
-            {
-                "edgeType": "DEPENDS_ON",
-                "toRef": "FIELD1",
-                "evidence": [{"lineStart": 3, "lineEnd": 3}],
-            }
-        ],
-    }
-
-    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
-
-    assert isinstance(parsed, GraphAnalysisParseFailure)
-    to_ref_details = [item for item in parsed.error_details if item.get("jsonPath") == "$.semanticEdges[0].toRef"]
-    assert any(item.get("actual") == "FIELD1" and item.get("actualToRefKind") == "FIELD" for item in to_ref_details)
-    assert any(item.get("message") == "toRef is not listed in edgeOptions.toRefs for this edgeType." for item in to_ref_details)
 
 
 @pytest.mark.parametrize(
@@ -454,50 +378,7 @@ def test_target_response_validator_rejects_embedded_or_fenced_json(raw):
     assert parsed.code == "ANALYSIS_AI_INVALID_JSON"
 
 
-def test_target_response_validator_accepts_valid_unresolved_external_edge():
-    payload, contract = _target_payload()
-    response = {
-        "claims": [],
-        "semanticEdges": [
-            {
-                "edgeType": "REFERENCES",
-                "unresolvedStatus": "EXTERNAL_TARGET",
-                "unresolvedTarget": {"name": "external API", "kindHint": "RESOURCE"},
-                "evidence": [{"lineStart": 2, "lineEnd": 2}],
-            }
-        ],
-    }
-
-    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
-
-    assert isinstance(parsed, GraphAnalysisResult)
-    assert parsed.edges[0].toNodeLocalId is None
-    assert parsed.edges[0].resolutionStatus == "EXTERNAL_TARGET"
-    assert parsed.edges[0].unresolvedTarget == {"name": "external API", "kindHint": "RESOURCE"}
-    assert parsed.edges[0].evidence[0].text == "  void call() { helper(); }"
-
-
-@pytest.mark.parametrize(
-    ("edge", "path"),
-    [
-        ({"edgeType": "CALLS", "toRef": "M2", "unresolvedStatus": "EXTERNAL_TARGET", "evidence": [{"lineStart": 2, "lineEnd": 2}]}, "$.semanticEdges[0].unresolvedStatus"),
-        ({"edgeType": "CALLS", "toRef": "M2", "unresolvedTarget": {"name": "x"}, "evidence": [{"lineStart": 2, "lineEnd": 2}]}, "$.semanticEdges[0].unresolvedTarget"),
-        ({"edgeType": "CALLS", "evidence": [{"lineStart": 2, "lineEnd": 2}]}, "$.semanticEdges[0].unresolvedStatus"),
-        ({"edgeType": "CALLS", "unresolvedStatus": "RESOLVED", "evidence": [{"lineStart": 2, "lineEnd": 2}]}, "$.semanticEdges[0].unresolvedStatus"),
-        ({"edgeType": "REFERENCES", "unresolvedStatus": "EXTERNAL_TARGET", "evidence": [{"lineStart": 2, "lineEnd": 2}]}, "$.semanticEdges[0].unresolvedTarget"),
-    ],
-)
-def test_target_response_validator_rejects_impossible_resolved_unresolved_combinations(edge, path):
-    payload, contract = _target_payload()
-    response = {"claims": [], "semanticEdges": [edge]}
-
-    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
-
-    assert isinstance(parsed, GraphAnalysisParseFailure)
-    assert any(detail.get("jsonPath") == path for detail in parsed.error_details)
-
-
-def test_target_input_builder_scopes_edge_types_to_target_kind_and_unresolved_statuses():
+def test_target_input_builder_exposes_context_anchors_without_graph_topology_selectors():
     contract = _contract("src/Foo.java")
     graph = _mixed_anchor_graph()
     registry = AnchorRefRegistry.build(graph, contract)
@@ -517,35 +398,21 @@ def test_target_input_builder_scopes_edge_types_to_target_kind_and_unresolved_st
     field_payload = LlmEnrichmentInputBuilder().build(context=context, registry=registry, target=field_target, budget_chars=50000)
     by_kind["FIELD"] = field_payload["llmInput"]
 
-    assert "CALLS" not in by_kind["FILE"]["allowedValues"]["edgeType"]
-    assert "CALLS" in by_kind["CALLABLE"]["allowedValues"]["edgeType"]
     assert "USES_FIELD" in contract.allowed_edge_types
-    assert "USES_FIELD" not in contract.llm_emittable_edge_types
-    assert "USES_FIELD" not in by_kind["CALLABLE"]["allowedValues"]["edgeType"]
-    assert set(by_kind["FIELD"]["allowedValues"]["edgeType"]) <= {"REFERENCES"}
-    assert "RESOLVED" not in by_kind["CALLABLE"]["allowedValues"]["unresolvedStatus"]
-    assert set(by_kind["FILE"]["endpointRules"]) == set(by_kind["FILE"]["allowedValues"]["edgeType"])
-    assert "CALLS" not in {item["edgeType"] for item in by_kind["FILE"]["edgeOptions"]}
-    assert "CALLS" not in {item["edgeType"] for item in by_kind["TYPE"]["edgeOptions"]}
-    assert "CALLS" in {item["edgeType"] for item in by_kind["CALLABLE"]["edgeOptions"]}
-    assert "USES_FIELD" not in {item["edgeType"] for item in by_kind["CALLABLE"]["edgeOptions"]}
-    assert all(
-        item["kind"] != "FIELD"
-        for option in by_kind["CALLABLE"]["edgeOptions"]
-        for item in option["toRefs"]
-    )
-    assert {item["kind"] for item in _edge_option(by_kind["CALLABLE"], "CALLS")["toRefs"]} == {"CALLABLE"}
-    assert "M2" in {item["ref"] for item in _edge_option(by_kind["CALLABLE"], "CALLS")["toRefs"]}
-    depends_on = _edge_option(by_kind["FILE"], "DEPENDS_ON")
-    assert "FIELD" not in depends_on["allowedToKinds"]
-    assert "FIELD1" not in {item["ref"] for item in depends_on["toRefs"]}
-    assert "F1" not in {item["ref"] for item in depends_on["toRefs"]}
-    assert by_kind["FILE"]["targetAnchor"]["ref"] not in {item["ref"] for option in by_kind["FILE"]["edgeOptions"] for item in option["toRefs"]}
-    assert by_kind["CALLABLE"]["targetAnchor"]["ref"] not in {item["ref"] for option in by_kind["CALLABLE"]["edgeOptions"] for item in option["toRefs"]}
-    assert all(status != "RESOLVED" for option in by_kind["FILE"]["edgeOptions"] for status in option["unresolvedStatuses"])
+    for llm_input in by_kind.values():
+        assert set(llm_input["allowedValues"]) == {"claimKind"}
+        assert "edgeOptions" not in llm_input
+        assert "endpointRules" not in llm_input
+        assert "anchorRegistry" not in llm_input
+        assert "contextAnchors" in llm_input
+        assert not _contains_key(llm_input, "ref")
+        assert not _contains_key(llm_input, "edgeType")
+        assert not _contains_key(llm_input, "toRef")
+        assert not _contains_key(llm_input, "unresolvedStatus")
+    assert any(item["kind"] == "FIELD" and item["role"] == "context" for item in by_kind["CALLABLE"]["contextAnchors"])
 
 
-def test_target_response_validator_rejects_static_owned_uses_field_edges_from_llm():
+def test_target_response_validator_rejects_static_owned_edges_from_llm():
     payload, contract = _target_payload_for_kind("CALLABLE")
     response = {
         "claims": [],
@@ -562,12 +429,11 @@ def test_target_response_validator_rejects_static_owned_uses_field_edges_from_ll
 
     assert isinstance(parsed, GraphAnalysisParseFailure)
     assert parsed.code == "ANALYSIS_AI_SCHEMA_INVALID"
-    detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.semanticEdges[0].edgeType")
-    assert detail["actual"] == "USES_FIELD"
-    assert "USES_FIELD" not in detail["allowedValues"]
+    detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.semanticEdges")
+    assert detail["actual"] == "semanticEdges"
 
 
-def test_repair_prompt_includes_edge_options_for_invalid_edge_ref():
+def test_repair_prompt_is_claims_only_when_model_returns_semantic_edges():
     policy = load_analysis_policy(POLICY_PATH)
     payload, _ = _target_payload_for_kind("FILE")
     invalid_response = {
@@ -586,11 +452,10 @@ def test_repair_prompt_includes_edge_options_for_invalid_edge_ref():
         error_details=[
             {
                 "errorType": "SCHEMA_VALIDATION_ERROR",
-                "jsonPath": "$.semanticEdges[0].toRef",
-                "message": "toRef is not listed in edgeOptions.toRefs for this edgeType.",
-                "actual": "FIELD1",
-                "expected": "DEPENDS_ON toRef from edgeOptions",
-                "allowedValues": ["F1"],
+                "jsonPath": "$.semanticEdges",
+                "message": "Unknown field is not allowed by the target-anchor response contract.",
+                "actual": "semanticEdges",
+                "expected": "no extra fields",
             }
         ],
         raw_preview=json.dumps(invalid_response),
@@ -600,13 +465,13 @@ def test_repair_prompt_includes_edge_options_for_invalid_edge_ref():
 
     prompt = supervisor._repair_prompt(payload, error, 2, 3)
 
-    assert "Target-scoped edgeOptions:" in prompt
-    assert "Allowed toRefs are provided in edgeOptions.toRefs" in prompt
-    assert '"edgeType": "DEPENDS_ON"' in prompt
-    assert '"toRefs"' in prompt
-    assert "Remove an invalid edge if its toRef is not listed" in prompt
-    assert "Do not invent toRef." in prompt
-    assert "Do not add semanticEdges[].summary." in prompt
+    assert "Target response contract is claims-only:" in prompt
+    assert 'Return claims only: {"claims": [...]} or {"claims": []}.' in prompt
+    assert "semanticEdges are not accepted." in prompt
+    assert "Convert useful information into grounded claims" in prompt
+    assert "Do not return graph topology, refs, edgeType, toRef, unresolvedStatus, or unresolvedTarget." in prompt
+    assert "edgeOptions" not in prompt
+    assert "endpointRules" not in prompt
 
 
 def test_target_enrichment_package_exports_public_api_without_circular_imports():
@@ -635,7 +500,7 @@ def test_file_enrichment_merger_deduplicates_exact_duplicate_claims_and_edges():
     merged = FileEnrichmentMerger().merge([parsed, parsed])
 
     assert len(merged.claims) == 1
-    assert len(merged.edges) == 1
+    assert len(merged.edges) == 0
 
 
 def test_budget_overflow_fails_closed_before_provider_call():
@@ -704,7 +569,7 @@ def test_ollama_client_captures_outer_request_with_minimal_marked_input_json():
         body = json.loads(request.content.decode("utf-8"))
         captured.append(body)
         prompt_input = _llm_input_from_prompt(body["prompt"])
-        response = _valid_target_response(target_ref=prompt_input["targetAnchor"]["ref"])
+        response = _valid_target_response()
         return httpx.Response(200, json={"response": json.dumps(response)})
 
     client = OllamaAnalysisClient(
@@ -724,10 +589,11 @@ def test_ollama_client_captures_outer_request_with_minimal_marked_input_json():
     prompt_input = _llm_input_from_prompt(body["prompt"])
     assert prompt_input["requestKind"] == TARGET_REQUEST_KIND
     assert prompt_input["file"]["contentLines"]
-    assert prompt_input["anchorRegistry"]
-    assert prompt_input["targetAnchor"]["ref"] == "M1"
+    assert prompt_input["contextAnchors"]
+    assert prompt_input["targetAnchor"]["kind"] == "CALLABLE"
     assert "staticAnchors" not in prompt_input
     assert "callsites" not in prompt_input
+    assert "anchorRegistry" not in prompt_input
     assert not _contains_key(prompt_input, "stableKey")
 
 
@@ -825,11 +691,7 @@ def _target_payload_for(relative_path: str, content_lines: list[str]):
     return LlmEnrichmentInputBuilder(policy=policy).build(context=context, registry=registry, target=target, budget_chars=50000), context.graph_contract
 
 
-def _edge_option(llm_input: dict, edge_type: str):
-    return next(item for item in llm_input["edgeOptions"] if item["edgeType"] == edge_type)
-
-
-def _valid_target_response(target_ref: str = "M1"):
+def _valid_target_response():
     return {
         "claims": [
             {
@@ -837,14 +699,7 @@ def _valid_target_response(target_ref: str = "M1"):
                 "summary": "Calls the helper.",
                 "evidence": [{"lineStart": 2, "lineEnd": 2}],
             }
-        ],
-        "semanticEdges": [
-            {
-                "toRef": "M2",
-                "edgeType": "CALLS",
-                "evidence": [{"lineStart": 2, "lineEnd": 2}],
-            }
-        ],
+        ]
     }
 
 

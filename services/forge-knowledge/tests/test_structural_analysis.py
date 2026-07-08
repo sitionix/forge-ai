@@ -386,5 +386,5 @@ def test_anchor_validator_rejects_unanchored_llm_structure_and_claim_targets():
     assert {item["code"] for item in merged.diagnostics} >= {
         "LLM_UNANCHORED_STRUCTURE_CANDIDATE",
         "LLM_CLAIM_TARGET_NOT_FOUND",
-        "LLM_EDGE_SOURCE_NOT_FOUND",
+        "LLM_EDGE_TOPOLOGY_REJECTED",
     }
