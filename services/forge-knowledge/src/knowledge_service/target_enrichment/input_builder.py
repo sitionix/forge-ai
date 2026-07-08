@@ -34,6 +34,7 @@ class LlmEnrichmentInputBuilder:
         target_entry = registry.entry_for_ref(target.ref)
         target_allowed_edge_types = _target_allowed_edge_types(context.graph_contract, target_entry.kind)
         allowed_unresolved_statuses = _allowed_unresolved_statuses(context.graph_contract)
+        edge_options = _edge_options(context.graph_contract, registry, target_entry.kind, target_allowed_edge_types, allowed_unresolved_statuses)
         llm_input = {
             "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
             "requestKind": TARGET_REQUEST_KIND,
@@ -52,6 +53,7 @@ class LlmEnrichmentInputBuilder:
                 "edgeType": target_allowed_edge_types,
                 "unresolvedStatus": allowed_unresolved_statuses,
             },
+            "edgeOptions": edge_options,
             "endpointRules": {
                 edge_type: {
                     "fromKinds": list(context.graph_contract.edge_from_kinds.get(edge_type, ())),
@@ -119,3 +121,37 @@ def _allowed_unresolved_statuses(contract: AnalysisGraphContract) -> list[str]:
         for status in contract.allowed_resolution_statuses
         if status != "RESOLVED" and not rules.requires_to_ref(status)
     ]
+
+
+def _edge_options(
+    contract: AnalysisGraphContract,
+    registry: AnchorRefRegistry,
+    target_kind: str,
+    target_allowed_edge_types: list[str],
+    allowed_unresolved_statuses: list[str],
+) -> list[dict[str, Any]]:
+    # TODO: Split graph edge types from LLM-emittable edge types in policy.
+    entries = registry.entries
+    options: list[dict[str, Any]] = []
+    for edge_type in target_allowed_edge_types:
+        allowed_to_kinds = list(contract.edge_to_kinds.get(edge_type, ()))
+        allowed_to_set = set(allowed_to_kinds)
+        to_refs = [
+            {
+                "ref": entry.ref,
+                "kind": entry.kind,
+                "name": entry.name,
+            }
+            for entry in entries
+            if entry.kind in allowed_to_set
+        ]
+        options.append(
+            {
+                "edgeType": edge_type,
+                "fromKind": target_kind,
+                "allowedToKinds": allowed_to_kinds,
+                "toRefs": to_refs,
+                "unresolvedStatuses": list(allowed_unresolved_statuses),
+            }
+        )
+    return options

@@ -1,7 +1,7 @@
 {
   "claims": [
     {
-      "claimKind": "RESPONSIBILITY",
+      "claimKind": "one claimKind from allowedValues.claimKind",
       "summary": "short grounded summary",
       "evidence": [
         {
@@ -13,8 +13,8 @@
   ],
   "semanticEdges": [
     {
-      "edgeType": "CALLS",
-      "toRef": "another anchor ref when resolved",
+      "edgeType": "one edgeType from edgeOptions.edgeType",
+      "toRef": "one ref from matching edgeOptions.toRefs when resolved",
       "evidence": [
         {
           "lineStart": 1,
@@ -23,11 +23,11 @@
       ]
     },
     {
-      "edgeType": "REFERENCES",
-      "unresolvedStatus": "EXTERNAL_TARGET",
+      "edgeType": "one edgeType from edgeOptions.edgeType",
+      "unresolvedStatus": "one status from matching edgeOptions.unresolvedStatuses",
       "unresolvedTarget": {
-        "name": "external target name",
-        "kindHint": "RESOURCE"
+        "name": "external or unresolved target name",
+        "kindHint": "optional target kind hint"
       },
       "evidence": [
         {

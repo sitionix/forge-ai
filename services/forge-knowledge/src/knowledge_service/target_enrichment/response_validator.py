@@ -46,7 +46,8 @@ class TargetResponseParserValidator:
         ref_to_kind = {str(key): str(value) for key, value in (payload.get("_refToKind") or {}).items()}
         target_stable_key = ref_to_stable_key.get(target_ref)
         content_by_line = self._content_by_line(llm_input)
-        allowed_edge_types = self._target_scoped_allowed_edge_types(llm_input, contract, target_kind)
+        edge_options = self._edge_options(llm_input, contract, target_kind)
+        allowed_edge_types = list(edge_options.keys())
         allowed_unresolved_statuses = self._allowed_unresolved_statuses(llm_input, contract)
         details: list[dict[str, Any]] = []
 
@@ -77,7 +78,7 @@ class TargetResponseParserValidator:
                 known_refs,
                 ref_to_kind,
                 contract,
-                allowed_edge_types,
+                edge_options,
                 allowed_unresolved_statuses,
                 line_count,
                 details,
@@ -134,7 +135,7 @@ class TargetResponseParserValidator:
         known_refs: set[str],
         ref_to_kind: Mapping[str, str],
         contract: AnalysisGraphContract,
-        allowed_edge_types: list[str],
+        edge_options: Mapping[str, dict[str, Any]],
         allowed_unresolved_statuses: list[str],
         line_count: int,
         details: list[dict[str, Any]],
@@ -145,11 +146,13 @@ class TargetResponseParserValidator:
             return
         self._validate_object_fields(item, path, self._EDGE_FIELDS, details)
         edge_type = self._required_string(item, path, "edgeType", details)
+        allowed_edge_types = list(edge_options.keys())
+        edge_option = edge_options.get(edge_type) if edge_type else None
         if edge_type and edge_type not in allowed_edge_types:
             details.append(
                 self._schema_error(
                     f"{path}.edgeType",
-                    "edgeType is not allowed for the current target anchor kind.",
+                    "edgeType is not listed in edgeOptions for the current target anchor kind.",
                     actual=edge_type,
                     expected="target-scoped allowed edge type",
                     allowed_values=allowed_edge_types,
@@ -176,6 +179,8 @@ class TargetResponseParserValidator:
             elif to_ref not in known_refs:
                 details.append(self._schema_error(f"{path}.toRef", "toRef is not in anchorRegistry.", actual=to_ref, expected="known ref"))
             elif edge_type:
+                if edge_option is not None:
+                    self._edge_target_option(edge_type, str(to_ref), ref_to_kind, edge_option, path, details)
                 self._edge_target_endpoint(edge_type, str(to_ref), ref_to_kind, contract, path, details)
             if "unresolvedStatus" in item:
                 details.append(self._schema_error(f"{path}.unresolvedStatus", "unresolvedStatus must be omitted when toRef is present.", actual=item.get("unresolvedStatus"), expected="omit field"))
@@ -186,6 +191,17 @@ class TargetResponseParserValidator:
             if unresolved_status:
                 if unresolved_status == "RESOLVED":
                     details.append(self._schema_error(f"{path}.unresolvedStatus", "unresolvedStatus must not be RESOLVED.", actual=unresolved_status, expected="unresolved status"))
+                elif edge_option is not None and unresolved_status not in set(edge_option.get("unresolvedStatuses") or []):
+                    details.append(
+                        self._schema_error(
+                            f"{path}.unresolvedStatus",
+                            "unresolvedStatus is not listed in edgeOptions for this edgeType.",
+                            actual=unresolved_status,
+                            expected=f"{edge_type} unresolved status",
+                            allowed_values=list(edge_option.get("unresolvedStatuses") or []),
+                            edgeType=edge_type,
+                        )
+                    )
                 elif unresolved_status not in allowed_unresolved_statuses:
                     details.append(
                         self._schema_error(
@@ -198,6 +214,32 @@ class TargetResponseParserValidator:
                     )
                 self._edge_unresolved_status(item, path, unresolved_status, ResolutionStatusContract.from_graph_contract(contract), details)
         self._evidence_list(item.get("evidence"), f"{path}.evidence", line_count, details)
+
+    def _edge_target_option(
+        self,
+        edge_type: str,
+        to_ref: str,
+        ref_to_kind: Mapping[str, str],
+        edge_option: Mapping[str, Any],
+        path: str,
+        details: list[dict[str, Any]],
+    ) -> None:
+        allowed_refs = self._edge_option_refs(edge_option)
+        if to_ref not in allowed_refs:
+            details.append(
+                self._schema_error(
+                    f"{path}.toRef",
+                    "toRef is not listed in edgeOptions.toRefs for this edgeType.",
+                    actual=to_ref,
+                    expected=f"{edge_type} toRef from edgeOptions",
+                    allowed_values=list(allowed_refs),
+                    edgeType=edge_type,
+                    actualToRef=to_ref,
+                    actualToRefKind=ref_to_kind.get(to_ref),
+                    allowedToKinds=list(edge_option.get("allowedToKinds") or []),
+                    allowedToRefs=list(allowed_refs),
+                )
+            )
 
     def _edge_target_endpoint(
         self,
@@ -367,17 +409,58 @@ class TargetResponseParserValidator:
             return set()
         return {str(item.get("ref")) for item in registry if isinstance(item, Mapping) and item.get("ref")}
 
-    def _target_scoped_allowed_edge_types(self, llm_input: Mapping[str, Any], contract: AnalysisGraphContract, target_kind: str) -> list[str]:
+    def _edge_options(self, llm_input: Mapping[str, Any], contract: AnalysisGraphContract, target_kind: str) -> dict[str, dict[str, Any]]:
+        raw_options = llm_input.get("edgeOptions")
+        if not isinstance(raw_options, list):
+            return {}
         target_scoped = [
             edge_type
             for edge_type in contract.allowed_edge_types
             if target_kind in set(contract.edge_from_kinds.get(edge_type, ()))
         ]
-        input_values = self._allowed_values(llm_input, "edgeType")
-        if not input_values:
-            return target_scoped
         target_scoped_set = set(target_scoped)
-        return [edge_type for edge_type in input_values if edge_type in target_scoped_set]
+        rules = ResolutionStatusContract.from_graph_contract(contract)
+        options: dict[str, dict[str, Any]] = {}
+        for item in raw_options:
+            if not isinstance(item, Mapping):
+                continue
+            edge_type = item.get("edgeType")
+            if not isinstance(edge_type, str) or not edge_type.strip() or edge_type not in target_scoped_set:
+                continue
+            allowed_to_kinds = [str(kind) for kind in item.get("allowedToKinds") or [] if isinstance(kind, str) and kind.strip()]
+            to_refs = []
+            for ref_item in item.get("toRefs") or []:
+                if not isinstance(ref_item, Mapping):
+                    continue
+                ref = ref_item.get("ref")
+                kind = ref_item.get("kind")
+                if not isinstance(ref, str) or not ref.strip() or not isinstance(kind, str) or not kind.strip():
+                    continue
+                if allowed_to_kinds and kind not in allowed_to_kinds:
+                    continue
+                to_refs.append({"ref": ref, "kind": kind, "name": str(ref_item.get("name") or "")})
+            unresolved_statuses = [
+                str(status)
+                for status in item.get("unresolvedStatuses") or []
+                if isinstance(status, str) and status.strip() and status != "RESOLVED" and not rules.requires_to_ref(str(status))
+            ]
+            options[edge_type] = {
+                "edgeType": edge_type,
+                "allowedToKinds": allowed_to_kinds,
+                "toRefs": to_refs,
+                "unresolvedStatuses": unresolved_statuses,
+            }
+        return options
+
+    def _edge_option_refs(self, edge_option: Mapping[str, Any]) -> list[str]:
+        refs: list[str] = []
+        raw_refs = edge_option.get("toRefs")
+        if not isinstance(raw_refs, list):
+            return refs
+        for item in raw_refs:
+            if isinstance(item, Mapping) and isinstance(item.get("ref"), str) and item.get("ref").strip():
+                refs.append(str(item.get("ref")))
+        return refs
 
     def _allowed_unresolved_statuses(self, llm_input: Mapping[str, Any], contract: AnalysisGraphContract) -> list[str]:
         rules = ResolutionStatusContract.from_graph_contract(contract)
@@ -499,8 +582,9 @@ class TargetResponseParserValidator:
         expected: Optional[str] = None,
         allowed_values: Optional[list[str]] = None,
         missing_required_field: Optional[str] = None,
+        **extra: Any,
     ) -> dict[str, Any]:
-        return {
+        error = {
             "errorType": "SCHEMA_VALIDATION_ERROR",
             "jsonPath": path,
             "message": message,
@@ -510,6 +594,8 @@ class TargetResponseParserValidator:
             "allowedValues": list(allowed_values or []),
             "missingRequiredField": missing_required_field,
         }
+        error.update({key: value for key, value in extra.items() if value is not None})
+        return error
 
     def _graph_error(self, path: str, reason: str) -> dict[str, Any]:
         return {

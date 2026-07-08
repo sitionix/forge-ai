@@ -7,9 +7,14 @@ Return one JSON object only. Do not include markdown, code fences, comments, or 
 You are enriching only the current targetAnchor.
 Backend attaches every claim and edge to targetAnchor and fills ids, confidence, evidence text, and resolved status.
 Do not return schemaVersion, localId, targetRef, fromRef, resolutionStatus, confidence, evidence.text, or diagnostics.
-Use only claimKind values from allowedValues.claimKind and edgeType values from allowedValues.edgeType.
-If allowedValues.edgeType is empty or no valid edge is grounded, return semanticEdges: [].
-For a resolved edge, return toRef. For an unresolved/external edge, omit toRef and return unresolvedStatus plus unresolvedTarget when required.
+Use only claimKind values from allowedValues.claimKind.
+Use edgeOptions as the only source of valid semantic edge choices.
+edgeType must be one of edgeOptions[].edgeType.
+For resolved edges, toRef must be one of toRefs for the same edgeType; do not choose arbitrary anchorRegistry refs.
+If edgeOptions for an edgeType has empty toRefs, do not create a resolved edge for that edgeType.
+For unresolved/external edges, use one unresolvedStatus from that edgeOption and unresolvedTarget when supported by evidence.
+Do not add semanticEdges[].summary.
+If no valid edge can be formed, omit the edge or return semanticEdges: [].
 Omit invalid or weakly supported facts instead of guessing.
 
 {{REPAIR_INSTRUCTIONS}}

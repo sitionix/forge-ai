@@ -736,6 +736,7 @@ class AnalysisSupervisor:
         llm_input = payload.get("llmInput") if isinstance(payload, dict) else None
         allowed_values = llm_input.get("allowedValues") if isinstance(llm_input, dict) else None
         target_anchor = llm_input.get("targetAnchor") if isinstance(llm_input, dict) else None
+        edge_options = llm_input.get("edgeOptions") if isinstance(llm_input, dict) else []
         target_ref = target_anchor.get("ref") if isinstance(target_anchor, dict) else payload.get("targetRef")
         target_kind = target_anchor.get("kind") if isinstance(target_anchor, dict) else payload.get("targetKind")
         target_allowed_edge_types = []
@@ -756,6 +757,8 @@ class AnalysisSupervisor:
                     },
                     limit=1200,
                 ),
+                "Target-scoped edgeOptions:",
+                self._json_for_prompt(edge_options if isinstance(edge_options, list) else [], limit=2400),
             ]
         )
         lines.extend(
@@ -763,6 +766,11 @@ class AnalysisSupervisor:
                 "Return ONLY corrected JSON matching the requested schema.",
                 "Remove invalid fields instead of trying to preserve them.",
                 "Do not add schemaVersion, localId, targetRef, fromRef, resolutionStatus, confidence, evidence.text, or diagnostics.",
+                "Do not add semanticEdges[].summary.",
+                "Allowed toRefs are provided in edgeOptions.toRefs for each edgeType.",
+                "Remove an invalid edge if its toRef is not listed in edgeOptions.toRefs for that edgeType.",
+                "Do not invent toRef.",
+                "Do not choose refs from anchorRegistry unless they appear in edgeOptions.toRefs for that edgeType.",
                 "If an edge cannot be made valid, remove that edge.",
                 "If no edge is valid, return semanticEdges: [].",
                 "No markdown.",
