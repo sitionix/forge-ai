@@ -389,7 +389,52 @@ def test_target_response_validator_rejects_to_ref_not_listed_in_edge_options():
     assert detail["actualToRefKind"] == "FILE"
     assert detail["edgeType"] == "CALLS"
     assert detail["allowedToKinds"] == ["CALLABLE"]
-    assert set(detail["allowedToRefs"]) == {"M1", "M2", "M3"}
+    assert set(detail["allowedToRefs"]) == {"M2", "M3"}
+
+
+def test_target_response_validator_rejects_self_referential_edge_even_if_edge_options_allow_it():
+    payload, contract = _target_payload()
+    _edge_option(payload["llmInput"], "CALLS")["toRefs"].append({"ref": "M1", "kind": "CALLABLE", "name": "call"})
+    response = {
+        "claims": [],
+        "semanticEdges": [
+            {
+                "edgeType": "CALLS",
+                "toRef": "M1",
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
+            }
+        ],
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.semanticEdges[0].toRef")
+    assert detail["message"] == "self-referential semantic edge is not allowed."
+    assert detail["actual"] == "M1"
+    assert detail["actualToRef"] == "M1"
+    assert detail["targetRef"] == "M1"
+
+
+def test_target_response_validator_rejects_field_ref_for_file_depends_on():
+    payload, contract = _target_payload_for_kind("FILE")
+    response = {
+        "claims": [],
+        "semanticEdges": [
+            {
+                "edgeType": "DEPENDS_ON",
+                "toRef": "FIELD1",
+                "evidence": [{"lineStart": 3, "lineEnd": 3}],
+            }
+        ],
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    to_ref_details = [item for item in parsed.error_details if item.get("jsonPath") == "$.semanticEdges[0].toRef"]
+    assert any(item.get("actual") == "FIELD1" and item.get("actualToRefKind") == "FIELD" for item in to_ref_details)
+    assert any(item.get("message") == "toRef is not listed in edgeOptions.toRefs for this edgeType." for item in to_ref_details)
 
 
 @pytest.mark.parametrize(
@@ -485,6 +530,9 @@ def test_target_input_builder_scopes_edge_types_to_target_kind_and_unresolved_st
     depends_on = _edge_option(by_kind["FILE"], "DEPENDS_ON")
     assert "FIELD" not in depends_on["allowedToKinds"]
     assert "FIELD1" not in {item["ref"] for item in depends_on["toRefs"]}
+    assert "F1" not in {item["ref"] for item in depends_on["toRefs"]}
+    assert by_kind["FILE"]["targetAnchor"]["ref"] not in {item["ref"] for option in by_kind["FILE"]["edgeOptions"] for item in option["toRefs"]}
+    assert by_kind["CALLABLE"]["targetAnchor"]["ref"] not in {item["ref"] for option in by_kind["CALLABLE"]["edgeOptions"] for item in option["toRefs"]}
     assert all(status != "RESOLVED" for option in by_kind["FILE"]["edgeOptions"] for status in option["unresolvedStatuses"])
 
 
@@ -525,7 +573,6 @@ def test_repair_prompt_includes_edge_options_for_invalid_edge_ref():
     assert "Allowed toRefs are provided in edgeOptions.toRefs" in prompt
     assert '"edgeType": "DEPENDS_ON"' in prompt
     assert '"toRefs"' in prompt
-    assert '"F1"' in prompt
     assert "Remove an invalid edge if its toRef is not listed" in prompt
     assert "Do not invent toRef." in prompt
     assert "Do not add semanticEdges[].summary." in prompt

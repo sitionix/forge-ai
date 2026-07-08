@@ -34,7 +34,7 @@ class LlmEnrichmentInputBuilder:
         target_entry = registry.entry_for_ref(target.ref)
         target_allowed_edge_types = _target_allowed_edge_types(context.graph_contract, target_entry.kind)
         allowed_unresolved_statuses = _allowed_unresolved_statuses(context.graph_contract)
-        edge_options = _edge_options(context.graph_contract, registry, target_entry.kind, target_allowed_edge_types, allowed_unresolved_statuses)
+        edge_options = _edge_options(context.graph_contract, registry, target_entry.ref, target_entry.kind, target_allowed_edge_types, allowed_unresolved_statuses)
         llm_input = {
             "schemaVersion": TARGET_INPUT_SCHEMA_VERSION,
             "requestKind": TARGET_REQUEST_KIND,
@@ -126,6 +126,7 @@ def _allowed_unresolved_statuses(contract: AnalysisGraphContract) -> list[str]:
 def _edge_options(
     contract: AnalysisGraphContract,
     registry: AnchorRefRegistry,
+    target_ref: str,
     target_kind: str,
     target_allowed_edge_types: list[str],
     allowed_unresolved_statuses: list[str],
@@ -143,7 +144,7 @@ def _edge_options(
                 "name": entry.name,
             }
             for entry in entries
-            if entry.kind in allowed_to_set
+            if entry.ref != target_ref and entry.kind in allowed_to_set
         ]
         options.append(
             {

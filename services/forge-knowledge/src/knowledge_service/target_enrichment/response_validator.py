@@ -75,6 +75,7 @@ class TargetResponseParserValidator:
                 item,
                 index,
                 target_kind,
+                target_ref,
                 known_refs,
                 ref_to_kind,
                 contract,
@@ -132,6 +133,7 @@ class TargetResponseParserValidator:
         item: Any,
         index: int,
         target_kind: str,
+        target_ref: str,
         known_refs: set[str],
         ref_to_kind: Mapping[str, str],
         contract: AnalysisGraphContract,
@@ -176,6 +178,17 @@ class TargetResponseParserValidator:
         if has_to_ref:
             if not isinstance(to_ref, str) or not to_ref.strip():
                 details.append(self._schema_error(f"{path}.toRef", "toRef must be a known ref when present.", actual=to_ref, expected="known ref"))
+            elif to_ref == target_ref:
+                details.append(
+                    self._schema_error(
+                        f"{path}.toRef",
+                        "self-referential semantic edge is not allowed.",
+                        actual=to_ref,
+                        expected="non-self target ref",
+                        actualToRef=to_ref,
+                        targetRef=target_ref,
+                    )
+                )
             elif to_ref not in known_refs:
                 details.append(self._schema_error(f"{path}.toRef", "toRef is not in anchorRegistry.", actual=to_ref, expected="known ref"))
             elif edge_type:
