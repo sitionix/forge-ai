@@ -35,6 +35,7 @@ class AnalysisGraphContract:
     semantic_node_kinds: tuple[str, ...]
     semantic_edge_types: tuple[str, ...]
     semantic_claim_kinds: tuple[str, ...]
+    llm_emittable_edge_types: tuple[str, ...]
     edge_from_kinds: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     edge_to_kinds: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     resolution_status_rules: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
@@ -77,6 +78,7 @@ class AnalysisGraphContract:
             semantic_node_kinds=tuple(resolution.semantic_node_kinds),
             semantic_edge_types=tuple(resolution.semantic_edge_types),
             semantic_claim_kinds=tuple(resolution.semantic_claim_kinds),
+            llm_emittable_edge_types=tuple(resolution.llm_emittable_edge_types),
             edge_from_kinds=edge_from_kinds,
             edge_to_kinds=edge_to_kinds,
             resolution_status_rules=_resolution_status_rules(policy.graph.resolution_statuses, resolution.resolution_statuses),
@@ -112,6 +114,7 @@ class AnalysisGraphContract:
             semantic_node_kinds=tuple(_string_list(raw.get("semanticNodeKinds"))),
             semantic_edge_types=tuple(_string_list(raw.get("semanticEdgeTypes"))),
             semantic_claim_kinds=tuple(_string_list(raw.get("semanticClaimKinds"))),
+            llm_emittable_edge_types=tuple(_string_list(raw.get("llmEmittableEdgeTypes"))),
             edge_from_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "from"),
             edge_to_kinds=_edge_endpoint_map(raw.get("edgeEndpointRules"), "to"),
             resolution_status_rules=_resolution_status_rule_payload(raw.get("resolutionStatusRules")),
@@ -143,6 +146,7 @@ class AnalysisGraphContract:
             "semanticNodeKinds": list(self.semantic_node_kinds),
             "semanticEdgeTypes": list(self.semantic_edge_types),
             "semanticClaimKinds": list(self.semantic_claim_kinds),
+            "llmEmittableEdgeTypes": list(self.llm_emittable_edge_types),
             "edgeEndpointRules": {
                 kind: {"from": list(self.edge_from_kinds.get(kind, ())), "to": list(self.edge_to_kinds.get(kind, ()))}
                 for kind in self.allowed_edge_types

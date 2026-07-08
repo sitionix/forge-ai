@@ -77,6 +77,12 @@ analysis:
         from: [CALLABLE]
         to: [CALLABLE]
         semanticEligible: true
+      USES_FIELD:
+        description: Callable source reads from, invokes through, or otherwise uses a declared field in its body.
+        from: [CALLABLE]
+        to: [FIELD]
+        semanticEligible: true
+        llmEmittable: false
       CONFIGURES:
         description: Source anchor configures a module, data object, resource, or configuration target.
         from: [FILE, CONFIG, MODULE]
@@ -321,7 +327,7 @@ analysis:
 
     java_code_graph:
       nodes: [FILE, TYPE, CALLABLE, FIELD]
-      edges: [DECLARES, IMPORTS, REFERENCES, CALLS, DEPENDS_ON]
+      edges: [DECLARES, IMPORTS, REFERENCES, CALLS, USES_FIELD, DEPENDS_ON]
       claims: [RESPONSIBILITY, ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
 
     code_text_graph:
@@ -366,7 +372,7 @@ analysis:
       trust: structural
       produces:
         nodes: [FILE, TYPE, CALLABLE, FIELD]
-        edges: [DECLARES, IMPORTS, REFERENCES, CALLS]
+        edges: [DECLARES, IMPORTS, REFERENCES, CALLS, USES_FIELD]
         claims: [ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
 
     structured_text_light:

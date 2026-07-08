@@ -150,6 +150,21 @@ def test_extractor_output_rejects_edge_endpoint_rule_violation():
     assert exc.value.details["allowedValues"] == ["CALLABLE"]
 
 
+def test_extractor_output_accepts_static_uses_field_edge():
+    policy, context = _context("src/main/java/example/Foo.java", "class Foo { Dep dep; void call() { dep.run(); } }\n", language="java")
+    graph = _graph(
+        nodes=[
+            _file_node(),
+            _node("type", "TYPE", parent="file"),
+            _node("call", "CALLABLE", parent="type"),
+            _node("field", "FIELD", parent="type"),
+        ],
+        edges=[_edge("uses-field", "USES_FIELD", "call", "field", resolution_status="RESOLVED")],
+    )
+
+    _validate_extractor_graph(policy, context, "java_ast", graph)
+
+
 def test_final_graph_rejects_imports_target_when_yaml_forbids_targets():
     policy, context = _context("src/main/java/example/Foo.java", "class Foo {}\n", language="java")
     graph = _graph(

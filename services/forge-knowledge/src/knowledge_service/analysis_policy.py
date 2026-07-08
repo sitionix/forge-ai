@@ -111,6 +111,7 @@ class GraphEdgeDefinition:
     from_kinds: List[str]
     to_kinds: List[str]
     semantic_eligible: bool
+    llm_emittable: bool
     description: str = ""
 
 

@@ -109,9 +109,13 @@ def _json_copy(value: Mapping[str, Any]) -> dict[str, Any]:
 def _target_allowed_edge_types(contract: AnalysisGraphContract, target_kind: str) -> list[str]:
     return [
         edge_type
-        for edge_type in contract.allowed_edge_types
+        for edge_type in _llm_emittable_edge_types(contract)
         if target_kind in set(contract.edge_from_kinds.get(edge_type, ()))
     ]
+
+
+def _llm_emittable_edge_types(contract: AnalysisGraphContract) -> tuple[str, ...]:
+    return tuple(contract.llm_emittable_edge_types or contract.allowed_edge_types)
 
 
 def _allowed_unresolved_statuses(contract: AnalysisGraphContract) -> list[str]:

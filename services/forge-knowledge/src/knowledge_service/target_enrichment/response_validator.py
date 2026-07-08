@@ -428,7 +428,7 @@ class TargetResponseParserValidator:
             return {}
         target_scoped = [
             edge_type
-            for edge_type in contract.allowed_edge_types
+            for edge_type in tuple(contract.llm_emittable_edge_types or contract.allowed_edge_types)
             if target_kind in set(contract.edge_from_kinds.get(edge_type, ()))
         ]
         target_scoped_set = set(target_scoped)

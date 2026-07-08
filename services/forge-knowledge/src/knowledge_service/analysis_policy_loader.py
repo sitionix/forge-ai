@@ -79,7 +79,7 @@ PROMPT_KEYS = {"file", "responseShape"}
 GRAPH_KEYS = {"nodes", "edges", "claims", "statuses", "origins", "evidenceKinds", "resolutionStatuses"}
 DESCRIPTION_KEY = "description"
 GRAPH_NODE_KEYS = {"identity", "semanticEligible", DESCRIPTION_KEY}
-GRAPH_EDGE_KEYS = {"from", "to", "semanticEligible", DESCRIPTION_KEY}
+GRAPH_EDGE_KEYS = {"from", "to", "semanticEligible", "llmEmittable", DESCRIPTION_KEY}
 GRAPH_CLAIM_KEYS = {"evidenceRequired", "materialSupportRequired", "semanticEligible", DESCRIPTION_KEY}
 GRAPH_STATUS_KEYS = {"persistGraphFact", "requiresValidEvidence", "emitDiagnostic", "requiresDerivationTrace", "queryEligible", DESCRIPTION_KEY}
 GRAPH_ORIGIN_KEYS = {"canBeTrusted", "requiresValidEvidence", "requiresDerivationTrace", DESCRIPTION_KEY}
@@ -325,6 +325,7 @@ def _parse_graph_edges(data: Mapping[Any, Any], diagnostics: List[AnalysisPolicy
             from_kinds=_required_str_list(item, "from", path, diagnostics),
             to_kinds=_required_str_list(item, "to", path, diagnostics),
             semantic_eligible=_required_bool(item, "semanticEligible", path, diagnostics),
+            llm_emittable=_optional_bool(item, "llmEmittable", path, diagnostics, default=True),
             description=_optional_description(item, path, diagnostics),
         )
     return edges

@@ -41,6 +41,10 @@ def test_loads_default_policy_and_validates_references():
     assert all("EXTERNAL" not in edge.to_kinds for edge in policy.graph.edges.values())
     assert policy.graph.nodes["FILE"].description
     assert policy.graph.edges["CALLS"].description
+    assert policy.graph.edges["USES_FIELD"].from_kinds == ["CALLABLE"]
+    assert policy.graph.edges["USES_FIELD"].to_kinds == ["FIELD"]
+    assert policy.graph.edges["USES_FIELD"].llm_emittable is False
+    assert "USES_FIELD" not in policy.semantic.indexed_edge_types
     assert policy.graph.claims["RESPONSIBILITY"].description
     assert policy.graph.origins["LLM"]["description"]
     assert policy.graph.evidence_kinds["CLAIM"]["description"]
@@ -52,6 +56,7 @@ def test_loads_default_policy_and_validates_references():
         assert policy.graph.nodes[kind].semantic_eligible is True
     for kind in policy.semantic.indexed_edge_types:
         assert policy.graph.edges[kind].semantic_eligible is True
+        assert policy.graph.edges[kind].llm_emittable is True
     for kind in policy.semantic.indexed_claim_kinds:
         assert policy.graph.claims[kind].semantic_eligible is True
 
@@ -64,6 +69,10 @@ def test_loads_default_policy_and_validates_references():
         assert set(profile.nodes) <= set(policy.graph.nodes)
         assert set(profile.edges) <= set(policy.graph.edges)
         assert set(profile.claims) <= set(policy.graph.claims)
+
+    resolution = resolve_analysis_policy(policy, AnalysisPolicyResolveRequest(relative_path="src/Foo.java", content="class Foo {}", content_lines=["class Foo {}"]))
+    assert "USES_FIELD" in resolution.allowed_edge_types
+    assert "USES_FIELD" not in resolution.llm_emittable_edge_types
 
     assert {execution.extractor_mode for execution in policy.policies.values()} <= set(ALLOWED_EXTRACTOR_MODES)
     assert {execution.llm_mode for execution in policy.policies.values()} <= set(ALLOWED_LLM_MODES)

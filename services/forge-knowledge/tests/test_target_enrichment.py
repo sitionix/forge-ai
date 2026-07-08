@@ -519,12 +519,21 @@ def test_target_input_builder_scopes_edge_types_to_target_kind_and_unresolved_st
 
     assert "CALLS" not in by_kind["FILE"]["allowedValues"]["edgeType"]
     assert "CALLS" in by_kind["CALLABLE"]["allowedValues"]["edgeType"]
+    assert "USES_FIELD" in contract.allowed_edge_types
+    assert "USES_FIELD" not in contract.llm_emittable_edge_types
+    assert "USES_FIELD" not in by_kind["CALLABLE"]["allowedValues"]["edgeType"]
     assert set(by_kind["FIELD"]["allowedValues"]["edgeType"]) <= {"REFERENCES"}
     assert "RESOLVED" not in by_kind["CALLABLE"]["allowedValues"]["unresolvedStatus"]
     assert set(by_kind["FILE"]["endpointRules"]) == set(by_kind["FILE"]["allowedValues"]["edgeType"])
     assert "CALLS" not in {item["edgeType"] for item in by_kind["FILE"]["edgeOptions"]}
     assert "CALLS" not in {item["edgeType"] for item in by_kind["TYPE"]["edgeOptions"]}
     assert "CALLS" in {item["edgeType"] for item in by_kind["CALLABLE"]["edgeOptions"]}
+    assert "USES_FIELD" not in {item["edgeType"] for item in by_kind["CALLABLE"]["edgeOptions"]}
+    assert all(
+        item["kind"] != "FIELD"
+        for option in by_kind["CALLABLE"]["edgeOptions"]
+        for item in option["toRefs"]
+    )
     assert {item["kind"] for item in _edge_option(by_kind["CALLABLE"], "CALLS")["toRefs"]} == {"CALLABLE"}
     assert "M2" in {item["ref"] for item in _edge_option(by_kind["CALLABLE"], "CALLS")["toRefs"]}
     depends_on = _edge_option(by_kind["FILE"], "DEPENDS_ON")
@@ -534,6 +543,28 @@ def test_target_input_builder_scopes_edge_types_to_target_kind_and_unresolved_st
     assert by_kind["FILE"]["targetAnchor"]["ref"] not in {item["ref"] for option in by_kind["FILE"]["edgeOptions"] for item in option["toRefs"]}
     assert by_kind["CALLABLE"]["targetAnchor"]["ref"] not in {item["ref"] for option in by_kind["CALLABLE"]["edgeOptions"] for item in option["toRefs"]}
     assert all(status != "RESOLVED" for option in by_kind["FILE"]["edgeOptions"] for status in option["unresolvedStatuses"])
+
+
+def test_target_response_validator_rejects_static_owned_uses_field_edges_from_llm():
+    payload, contract = _target_payload_for_kind("CALLABLE")
+    response = {
+        "claims": [],
+        "semanticEdges": [
+            {
+                "edgeType": "USES_FIELD",
+                "toRef": "FIELD1",
+                "evidence": [{"lineStart": 2, "lineEnd": 2}],
+            }
+        ],
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=20, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    assert parsed.code == "ANALYSIS_AI_SCHEMA_INVALID"
+    detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.semanticEdges[0].edgeType")
+    assert detail["actual"] == "USES_FIELD"
+    assert "USES_FIELD" not in detail["allowedValues"]
 
 
 def test_repair_prompt_includes_edge_options_for_invalid_edge_ref():
