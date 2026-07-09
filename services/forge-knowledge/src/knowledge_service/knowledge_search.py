@@ -368,7 +368,6 @@ def _optional_float(value: Any) -> float:
 @dataclass(frozen=True)
 class SearchConfig:
     max_candidates_per_provider: int = 100
-    max_total_candidates: int = 100
     min_lexical_score: float = 0.28
     min_fuzzy_score: float = 0.58
     fuzzy_max_edit_distance: int = 3
@@ -402,6 +401,7 @@ class SearchRunResult:
     candidate_limit_reached: bool = False
     low_confidence_matches: bool = False
     diagnostics: List[Dict[str, Any]] = field(default_factory=list)
+    raw_candidates: List[SearchCandidate] = field(default_factory=list)
 
 
 class CandidateProvider:
@@ -791,10 +791,8 @@ class SearchRanker:
     def __init__(self, merger: CandidateMerger | None = None) -> None:
         self.merger = merger or CandidateMerger()
 
-    def rank(self, candidates: Sequence[SearchCandidate], limit: int) -> List[MergedCandidate]:
-        ranked = self.merger.merge(candidates)
-        safe_limit = max(1, int(limit or 1))
-        return ranked[:safe_limit]
+    def rank(self, candidates: Sequence[SearchCandidate]) -> List[MergedCandidate]:
+        return self.merger.merge(candidates)
 
 
 class DeterministicCodeSearchEngine:
@@ -815,11 +813,12 @@ class DeterministicCodeSearchEngine:
             LexicalCandidateProvider(),
             FuzzyCandidateProvider(),
         )
+        self.supplemental_providers: Tuple[CandidateProvider, ...] = ()
         if providers is not None:
             self.precise_providers = tuple(providers)
             self.broad_providers = ()
         elif extra_broad_providers is not None:
-            self.broad_providers = (*self.broad_providers, *tuple(extra_broad_providers))
+            self.supplemental_providers = tuple(extra_broad_providers)
         self.ranker = ranker or SearchRanker()
 
     def search(self, raw_query: str, documents: Sequence[SearchDocument], config: SearchConfig) -> SearchRunResult:
@@ -841,10 +840,16 @@ class DeterministicCodeSearchEngine:
             diagnostics.extend(broad_candidates.diagnostics)
             candidate_limit_reached = candidate_limit_reached or broad_candidates.limit_reached
 
-        ranked = self.ranker.rank(all_candidates, config.max_total_candidates) if all_candidates else []
+        supplemental_candidates = self._run_providers(self.supplemental_providers, query, documents, config)
+        all_candidates.extend(supplemental_candidates.candidates)
+        diagnostics.extend(supplemental_candidates.diagnostics)
+        candidate_limit_reached = candidate_limit_reached or supplemental_candidates.limit_reached
+
+        ranked = self.ranker.rank(all_candidates) if all_candidates else []
         low_confidence_matches = bool(all_candidates and not ranked)
         return SearchRunResult(
             candidates=ranked,
+            raw_candidates=list(all_candidates),
             candidate_limit_reached=candidate_limit_reached,
             low_confidence_matches=low_confidence_matches,
             diagnostics=diagnostics,

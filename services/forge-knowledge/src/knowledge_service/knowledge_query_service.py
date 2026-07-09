@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from knowledge_service.knowledge_search import (
+    CandidateMerger,
     DeterministicCodeSearchEngine,
+    MergedCandidate,
     QueryNormalizer,
     SearchConfig,
+    SearchCandidate,
     SearchDocument,
 )
 from knowledge_service.knowledge_query_schema import (
@@ -25,9 +30,8 @@ from knowledge_service.knowledge_query_schema import (
 @dataclass(frozen=True)
 class KnowledgeQueryPolicy:
     max_search_documents: int = 5000
-    max_search_candidates: int = 100
     max_candidates_per_provider: int = 100
-    max_matched_nodes: int = 5
+    max_display_candidates: int = 20
     graph_slice_depth: int = 2
     max_traversal_nodes: int = 80
     max_flow_paths: int = 25
@@ -39,6 +43,24 @@ class KnowledgeQueryPolicy:
     fuzzy_max_edit_distance: int = 3
     enable_fuzzy_search: bool = True
     enable_search_diagnostics: bool = True
+
+
+class CandidatePoolKind(str, Enum):
+    EXACT = "EXACT"
+    PATH = "PATH"
+    QUALIFIED_NAME = "QUALIFIED_NAME"
+    LEXICAL = "LEXICAL"
+    FUZZY = "FUZZY"
+    SEMANTIC = "SEMANTIC"
+
+
+@dataclass(frozen=True)
+class CandidateRetrievalResult:
+    pools: Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]]
+    all_candidates: List[KnowledgeQueryMatchedNode]
+    display_candidates: List[KnowledgeQueryMatchedNode]
+    diagnostics: List[KnowledgeQueryDiagnostic]
+    truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -111,26 +133,31 @@ class UnifiedAnchorSearcher:
         self.graph_store = graph_store
         self.search_engine = search_engine or DeterministicCodeSearchEngine()
         self.normalizer = QueryNormalizer()
+        self.candidate_merger = CandidateMerger()
 
     def search(
         self,
         query: str,
         eligible_sources: Sequence[QuerySource],
         policy: KnowledgeQueryPolicy,
-    ) -> tuple[List[KnowledgeQueryMatchedNode], List[KnowledgeQueryDiagnostic], bool]:
+    ) -> CandidateRetrievalResult:
         search_query = self.normalizer.normalize(query)
         if not search_query.tokens or not eligible_sources:
-            return [], [], False
+            return self._empty_result()
         raw_documents, document_truncated = self._load_search_documents(search_query.tokens, eligible_sources, policy)
         documents = [SearchDocument.from_graph_node(candidate) for candidate in raw_documents if candidate.get("sourceId") or candidate.get("source_id")]
         result = self.search_engine.search(query, documents, self._search_config(policy))
-        matched_nodes = [
-            KnowledgeQueryMatchedNode(**candidate.document.to_matched_node_dict(candidate.score, candidate.reasons))
-            for candidate in result.candidates
-        ]
-        truncated = len(matched_nodes) > policy.max_matched_nodes
+        raw_candidates = list(getattr(result, "raw_candidates", []) or [])
+        pools = self._candidate_pools(raw_candidates)
+        all_candidates = self._all_candidates(raw_candidates)
+        if not all_candidates:
+            all_candidates = [self._matched_node(candidate) for candidate in result.candidates]
+            pools = self._fallback_candidate_pools(result.candidates)
+        display_limit = max(1, int(policy.max_display_candidates or 1))
+        display_candidates = all_candidates[:display_limit]
+        truncated = document_truncated or bool(getattr(result, "candidate_limit_reached", False))
         diagnostics: List[KnowledgeQueryDiagnostic] = [self._search_diagnostic(item) for item in result.diagnostics]
-        if policy.enable_search_diagnostics and (document_truncated or result.candidate_limit_reached):
+        if policy.enable_search_diagnostics and truncated:
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
                     code="SEARCH_CANDIDATE_LIMIT_REACHED",
@@ -139,11 +166,10 @@ class UnifiedAnchorSearcher:
                     metadata={
                         "maxSearchDocuments": policy.max_search_documents,
                         "maxCandidatesPerProvider": policy.max_candidates_per_provider,
-                        "maxSearchCandidates": policy.max_search_candidates,
                     },
                 )
             )
-        if policy.enable_search_diagnostics and documents and not matched_nodes:
+        if policy.enable_search_diagnostics and documents and not all_candidates:
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
                     code="SEARCH_MATCHES_BELOW_THRESHOLD",
@@ -151,16 +177,93 @@ class UnifiedAnchorSearcher:
                     severity="INFO",
                 )
             )
-        if truncated:
+        if policy.enable_search_diagnostics and len(display_candidates) < len(all_candidates):
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
-                    code="RESULT_LIMIT_REACHED",
-                    message="Matched graph nodes exceeded the query policy and were truncated before flow extraction.",
+                    code="MATCHED_NODE_PREVIEW_LIMITED",
+                    message="Matched node preview is limited for response size; graph processing used the full candidate set.",
                     severity="INFO",
-                    metadata={"limit": policy.max_matched_nodes},
+                    metadata={"displayed": len(display_candidates), "internalCandidates": len(all_candidates)},
                 )
             )
-        return matched_nodes[: policy.max_matched_nodes], diagnostics, truncated
+        return CandidateRetrievalResult(
+            pools=pools,
+            all_candidates=all_candidates,
+            display_candidates=display_candidates,
+            diagnostics=diagnostics,
+            truncated=truncated,
+        )
+
+    def _empty_result(self) -> CandidateRetrievalResult:
+        return CandidateRetrievalResult(
+            pools={kind: [] for kind in CandidatePoolKind},
+            all_candidates=[],
+            display_candidates=[],
+            diagnostics=[],
+            truncated=False,
+        )
+
+    def _candidate_pools(self, candidates: Sequence[SearchCandidate]) -> Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]]:
+        grouped: Dict[CandidatePoolKind, List[SearchCandidate]] = defaultdict(list)
+        for candidate in candidates:
+            grouped[self._candidate_pool_kind(candidate.provider, candidate.reason)].append(candidate)
+        pools: Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]] = {kind: [] for kind in CandidatePoolKind}
+        for kind, pool_candidates in grouped.items():
+            pools[kind] = [self._matched_node(candidate) for candidate in self.candidate_merger.merge(pool_candidates)]
+        return pools
+
+    def _all_candidates(self, candidates: Sequence[SearchCandidate]) -> List[KnowledgeQueryMatchedNode]:
+        return [self._matched_node(candidate) for candidate in self.candidate_merger.merge(candidates)] if candidates else []
+
+    def _fallback_candidate_pools(self, candidates: Sequence[MergedCandidate]) -> Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]]:
+        pools: Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]] = {kind: [] for kind in CandidatePoolKind}
+        for candidate in candidates:
+            matched_node = self._matched_node(candidate)
+            for kind in self._candidate_pool_kinds(candidate):
+                pools[kind].append(matched_node)
+        return pools
+
+    def _matched_node(self, candidate: MergedCandidate) -> KnowledgeQueryMatchedNode:
+        return KnowledgeQueryMatchedNode(**candidate.document.to_matched_node_dict(candidate.score, candidate.reasons))
+
+    def _candidate_pool_kinds(self, candidate: MergedCandidate) -> List[CandidatePoolKind]:
+        kinds: set[CandidatePoolKind] = set()
+        for provider in candidate.providers:
+            kinds.add(self._candidate_pool_kind(provider, ""))
+        for reason in candidate.reasons:
+            kinds.add(self._candidate_pool_kind("", reason))
+        ordered = {kind: index for index, kind in enumerate(CandidatePoolKind)}
+        return sorted(kinds or {CandidatePoolKind.EXACT}, key=lambda kind: ordered[kind])
+
+    def _candidate_pool_kind(self, provider: str, reason: str) -> CandidatePoolKind:
+        provider_name = str(provider or "")
+        provider_upper = provider_name.upper()
+        reason_upper = str(reason or "").upper()
+        if provider_upper == "SEMANTIC" or reason_upper.startswith("SEMANTIC"):
+            return CandidatePoolKind.SEMANTIC
+        if (
+            provider_name == "PathCandidateProvider"
+            or reason_upper.startswith("PATH_")
+            or reason_upper
+            in {
+                "PATH_MATCH",
+                "EXACT_PATH",
+                "EXACT_FILE_NAME",
+                "EXACT_FILE_STEM",
+                "EXACT_FILE_COMPACT",
+                "EXACT_FILE_STEM_COMPACT",
+                "EXACT_ENDPOINT",
+                "EXACT_DECLARING_FILE",
+            }
+        ):
+            return CandidatePoolKind.PATH
+        if provider_name == "QualifiedNameCandidateProvider" or "QUALIFIED" in reason_upper:
+            return CandidatePoolKind.QUALIFIED_NAME
+        if provider_name == "LexicalCandidateProvider" or reason_upper.startswith("LEXICAL"):
+            return CandidatePoolKind.LEXICAL
+        if provider_name == "FuzzyCandidateProvider" or reason_upper.startswith("FUZZY"):
+            return CandidatePoolKind.FUZZY
+        return CandidatePoolKind.EXACT
 
     def _search_diagnostic(self, item: Dict[str, Any]) -> KnowledgeQueryDiagnostic:
         metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
@@ -192,7 +295,6 @@ class UnifiedAnchorSearcher:
     def _search_config(self, policy: KnowledgeQueryPolicy) -> SearchConfig:
         return SearchConfig(
             max_candidates_per_provider=policy.max_candidates_per_provider,
-            max_total_candidates=policy.max_search_candidates,
             min_lexical_score=policy.min_lexical_score,
             min_fuzzy_score=policy.min_fuzzy_score,
             fuzzy_max_edit_distance=policy.fuzzy_max_edit_distance,
@@ -776,9 +878,9 @@ class KnowledgeQueryService:
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         eligible_sources, scope_diagnostics = self.source_scope_resolver.resolve()
         diagnostics.extend(scope_diagnostics)
-        matched_nodes, search_diagnostics, search_truncated = self.anchor_searcher.search(request.queryText, eligible_sources, self.policy)
-        diagnostics.extend(search_diagnostics)
-        if not matched_nodes:
+        candidate_result = self.anchor_searcher.search(request.queryText, eligible_sources, self.policy)
+        diagnostics.extend(candidate_result.diagnostics)
+        if not candidate_result.all_candidates:
             return KnowledgeQueryResponse(
                 queryId=self._query_id(),
                 status=KnowledgeQueryStatus.NO_CANDIDATES,
@@ -794,6 +896,8 @@ class KnowledgeQueryService:
                 ],
             )
 
+        matched_nodes = candidate_result.all_candidates
+        display_matched_nodes = candidate_result.display_candidates
         slice_bundle, slice_diagnostics = self.graph_slice_service.build(matched_nodes, self.policy)
         diagnostics.extend(slice_diagnostics)
         flow_paths, flow_diagnostics, flow_truncated, flow_bundle = self.flow_path_extractor.extract(
@@ -821,7 +925,7 @@ class KnowledgeQueryService:
             status=status,
             intent=request.intent.value,
             matchedSources=matched_sources,
-            matchedNodes=matched_nodes,
+            matchedNodes=display_matched_nodes,
             flowPaths=flow_paths,
             nodes=response_bundle["nodes"],
             edges=response_bundle["edges"],
@@ -837,8 +941,8 @@ class KnowledgeQueryService:
                 nodeCount=len(response_bundle["nodes"]),
                 edgeCount=len(response_bundle["edges"]),
                 evidenceCount=len(evidence_bundle["evidence"]),
-                truncated=search_truncated or flow_truncated,
-                continuationAvailable=search_truncated or flow_truncated,
+                truncated=candidate_result.truncated or flow_truncated,
+                continuationAvailable=candidate_result.truncated or flow_truncated,
             ),
             diagnostics=diagnostics,
         )
