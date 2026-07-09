@@ -279,7 +279,7 @@ class TargetResponseParserValidator:
                     self._validation_error(
                         "EVIDENCE_RANGE_INVERTED",
                         evidence_path,
-                        "Evidence line range is inverted: lineStart must be <= lineEnd.",
+                        self._inverted_evidence_range_message(line_start, line_end),
                         actual=evidence_range,
                         expected="lineStart <= lineEnd",
                         evidence_range=evidence_range,
@@ -361,6 +361,14 @@ class TargetResponseParserValidator:
         if not isinstance(target_start, int) or not isinstance(target_end, int):
             return False
         return target_start <= line_start <= line_end <= target_end
+
+    def _inverted_evidence_range_message(self, line_start: int, line_end: int) -> str:
+        return (
+            "Evidence line range is inverted. Return evidence ranges in ascending source order: "
+            "lineStart must be the smaller/earlier line and lineEnd must be the larger/later line. "
+            f"For actual range {line_start}-{line_end}, use lineStart={line_end} and lineEnd={line_start} "
+            "only if those same lines materially support the claim; otherwise choose another valid evidence range inside the target."
+        )
 
     def _has_material_callable_evidence(self, line_start: int, line_end: int, content_by_line: Mapping[int, str], claim_kind: str) -> bool:
         if claim_kind == "ENTRYPOINT_HINT":

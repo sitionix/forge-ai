@@ -2948,6 +2948,13 @@ def test_validation_feedback_retry_prompt_keeps_minimal_target_input(tmp_path):
     assert '"lineStart": 55' in retry_prompt
     assert '"lineEnd": 46' in retry_prompt
     assert "lineStart <= lineEnd" in retry_prompt
+    assert "ascending source order" in retry_prompt
+    assert "lineStart must be the smaller/earlier line" in retry_prompt
+    assert "lineEnd must be the larger/later line" in retry_prompt
+    assert "For actual range 55-46" in retry_prompt
+    assert "use lineStart=46 and lineEnd=55 only if those same lines materially support the claim" in retry_prompt
+    assert "otherwise choose another valid evidence range inside the target" in retry_prompt
+    assert "correctionHint" not in retry_prompt
     assert "Fix only the listed validation errors." in retry_prompt
     assert "Remove invalid fields" not in retry_prompt
     assert "semanticEdges are not accepted." not in retry_prompt
@@ -2956,6 +2963,7 @@ def test_validation_feedback_retry_prompt_keeps_minimal_target_input(tmp_path):
     assert "topology" not in retry_prompt
     assert "COMMENT_ONLY" not in retry_prompt
     assert "CLOSING_BRACE_ONLY" not in retry_prompt
+    assert "outside target" not in retry_prompt
     assert "edgeOptions" not in retry_prompt
     assert "endpointRules" not in retry_prompt
 

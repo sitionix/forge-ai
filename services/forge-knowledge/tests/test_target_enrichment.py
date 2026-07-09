@@ -459,16 +459,23 @@ def test_target_response_validator_rejects_type_evidence_outside_target_range():
 def test_target_response_validator_reports_inverted_evidence_range():
     payload, contract = _target_payload()
     response = _valid_target_response()
-    response["claims"][0]["evidence"] = [{"lineStart": 3, "lineEnd": 2}]
+    response["claims"][0]["evidence"] = [{"lineStart": 55, "lineEnd": 46}]
 
     parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
 
     assert isinstance(parsed, GraphAnalysisParseFailure)
     detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.claims[0].evidence[0]")
     assert detail["code"] == "EVIDENCE_RANGE_INVERTED"
-    assert detail["message"] == "Evidence line range is inverted: lineStart must be <= lineEnd."
-    assert detail["actual"] == {"lineStart": 3, "lineEnd": 2}
+    assert "ascending source order" in detail["message"]
+    assert "lineStart must be the smaller/earlier line" in detail["message"]
+    assert "lineEnd must be the larger/later line" in detail["message"]
+    assert "For actual range 55-46" in detail["message"]
+    assert "use lineStart=46 and lineEnd=55 only if those same lines materially support the claim" in detail["message"]
+    assert "otherwise choose another valid evidence range inside the target" in detail["message"]
+    assert detail["actual"] == {"lineStart": 55, "lineEnd": 46}
     assert detail["expected"] == "lineStart <= lineEnd"
+    assert detail["evidenceRange"] == {"lineStart": 55, "lineEnd": 46}
+    assert "correctionHint" not in detail
     assert "EVIDENCE_RANGE_INVERTED" in parsed.message
 
 
@@ -649,6 +656,12 @@ def test_validation_feedback_prompt_for_old_fields_includes_only_observed_field_
 
 def test_validation_feedback_prompt_for_inverted_range_contains_no_unrelated_rules():
     payload, _ = _target_payload()
+    message = (
+        "Evidence line range is inverted. Return evidence ranges in ascending source order: "
+        "lineStart must be the smaller/earlier line and lineEnd must be the larger/later line. "
+        "For actual range 55-46, use lineStart=46 and lineEnd=55 only if those same lines materially support the claim; "
+        "otherwise choose another valid evidence range inside the target."
+    )
     error = KnowledgeError(
         "ANALYSIS_AI_SCHEMA_INVALID",
         "AI analyzer response failed target-anchor validation.",
@@ -657,7 +670,7 @@ def test_validation_feedback_prompt_for_inverted_range_contains_no_unrelated_rul
                 "code": "EVIDENCE_RANGE_INVERTED",
                 "errorType": "EVIDENCE_RANGE_INVERTED",
                 "jsonPath": "$.claims[0].evidence[0]",
-                "message": "Evidence line range is inverted: lineStart must be <= lineEnd.",
+                "message": message,
                 "actual": {"lineStart": 55, "lineEnd": 46},
                 "expected": "lineStart <= lineEnd",
                 "evidenceRange": {"lineStart": 55, "lineEnd": 46},
@@ -675,11 +688,19 @@ def test_validation_feedback_prompt_for_inverted_range_contains_no_unrelated_rul
     assert '"lineStart": 55' in prompt
     assert '"lineEnd": 46' in prompt
     assert "lineStart <= lineEnd" in prompt
+    assert "ascending source order" in prompt
+    assert "lineStart must be the smaller/earlier line" in prompt
+    assert "lineEnd must be the larger/later line" in prompt
+    assert "For actual range 55-46" in prompt
+    assert "use lineStart=46 and lineEnd=55 only if those same lines materially support the claim" in prompt
+    assert "otherwise choose another valid evidence range inside the target" in prompt
+    assert "correctionHint" not in prompt
     assert "semanticEdges" not in prompt
     assert "toRef" not in prompt
     assert "topology" not in prompt
     assert "COMMENT_ONLY" not in prompt
     assert "CLOSING_BRACE_ONLY" not in prompt
+    assert "outside target" not in prompt
 
 
 def test_validation_feedback_prompt_includes_exactly_multiple_validation_errors():
