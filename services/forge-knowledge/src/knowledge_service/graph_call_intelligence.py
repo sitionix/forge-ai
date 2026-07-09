@@ -15,6 +15,12 @@ class CallKind(str, Enum):
     SUPER_METHOD = "SUPER_METHOD"
     CHAINED_CALL = "CHAINED_CALL"
     METHOD_REFERENCE = "METHOD_REFERENCE"
+    FIELD_METHOD_REFERENCE = "FIELD_METHOD_REFERENCE"
+    PARAMETER_METHOD_REFERENCE = "PARAMETER_METHOD_REFERENCE"
+    LOCAL_VARIABLE_METHOD_REFERENCE = "LOCAL_VARIABLE_METHOD_REFERENCE"
+    STATIC_METHOD_REFERENCE = "STATIC_METHOD_REFERENCE"
+    CONSTRUCTOR_REFERENCE = "CONSTRUCTOR_REFERENCE"
+    CHAINED_METHOD_REFERENCE = "CHAINED_METHOD_REFERENCE"
     LAMBDA_CALL = "LAMBDA_CALL"
     FRAMEWORK_CALLBACK = "FRAMEWORK_CALLBACK"
     UNKNOWN = "UNKNOWN"
@@ -155,7 +161,12 @@ def classify_call_metadata(
     target_category = result.get("callTargetCategory")
     if target_category not in {item.value for item in CallTargetCategory}:
         target_category = _target_category(flow, status, receiver_type, target_type, method_name, raw_text)
+    if status == "RESOLVED":
+        result.pop("unresolvedReason", None)
+        result.pop("unresolvedTarget", None)
     resolution_reason = result.get("resolutionReason")
+    if status == "RESOLVED" and resolution_reason == ResolutionReason.NOT_RESOLVED.value:
+        resolution_reason = None
     if resolution_reason not in {item.value for item in ResolutionReason}:
         resolution_reason = _resolution_reason(status, call_kind, receiver_type, result)
     unresolved_reason = result.get("unresolvedReason")
@@ -181,7 +192,7 @@ def classify_call_metadata(
             "sliceDefaultVisibility": visibility,
         }
     )
-    if unresolved_reason:
+    if status != "RESOLVED" and unresolved_reason:
         result["unresolvedReason"] = unresolved_reason
     if receiver is not None:
         result["receiverText"] = receiver
@@ -209,6 +220,12 @@ def _normalized_call_kind(raw_kind: str, receiver: Optional[str], receiver_type:
             return CallKind.PARAMETER_RECEIVER.value
         if source == "LOCAL_VARIABLE_RECEIVER":
             return CallKind.LOCAL_VARIABLE_RECEIVER.value
+        if source == "FIELD_METHOD_REFERENCE":
+            return CallKind.FIELD_METHOD_REFERENCE.value
+        if source == "PARAMETER_METHOD_REFERENCE":
+            return CallKind.PARAMETER_METHOD_REFERENCE.value
+        if source == "LOCAL_VARIABLE_METHOD_REFERENCE":
+            return CallKind.LOCAL_VARIABLE_METHOD_REFERENCE.value
         return CallKind.FIELD_RECEIVER.value
     if receiver and raw_text and "." in receiver:
         return CallKind.CHAINED_CALL.value
@@ -280,9 +297,15 @@ def _resolution_reason(status: str, call_kind: str, receiver_type: Optional[str]
             return ResolutionReason.PARAMETER_TYPE_HINT.value
         if call_kind == CallKind.LOCAL_VARIABLE_RECEIVER.value and receiver_type:
             return ResolutionReason.LOCAL_VARIABLE_TYPE_HINT.value
+        if call_kind == CallKind.FIELD_METHOD_REFERENCE.value and receiver_type:
+            return ResolutionReason.FIELD_TYPE_HINT.value
+        if call_kind == CallKind.PARAMETER_METHOD_REFERENCE.value and receiver_type:
+            return ResolutionReason.PARAMETER_TYPE_HINT.value
+        if call_kind == CallKind.LOCAL_VARIABLE_METHOD_REFERENCE.value and receiver_type:
+            return ResolutionReason.LOCAL_VARIABLE_TYPE_HINT.value
         if call_kind in {CallKind.LOCAL_METHOD.value, CallKind.THIS_METHOD.value}:
             return ResolutionReason.SAME_TYPE_METHOD.value
-        if call_kind == CallKind.STATIC_METHOD.value:
+        if call_kind in {CallKind.STATIC_METHOD.value, CallKind.STATIC_METHOD_REFERENCE.value}:
             return ResolutionReason.QUALIFIED_NAME_MATCH.value
         return ResolutionReason.SAME_FILE_UNIQUE_METHOD.value
     if status == "EXTERNAL_TARGET":
@@ -301,13 +324,13 @@ def _unresolved_reason(
         return UnresolvedReason.MULTIPLE_METHODS_MATCH.value
     if status == "INTERFACE_TARGET":
         return UnresolvedReason.INTERFACE_TARGET.value
-    if call_kind == CallKind.CHAINED_CALL.value:
+    if call_kind in {CallKind.CHAINED_CALL.value, CallKind.CHAINED_METHOD_REFERENCE.value}:
         return UnresolvedReason.CHAINED_CALL_TARGET_UNKNOWN.value
-    if call_kind == CallKind.FIELD_RECEIVER.value:
+    if call_kind in {CallKind.FIELD_RECEIVER.value, CallKind.FIELD_METHOD_REFERENCE.value}:
         return UnresolvedReason.TARGET_NOT_ANALYZED.value if receiver_type else UnresolvedReason.FIELD_TYPE_UNKNOWN.value
-    if call_kind == CallKind.PARAMETER_RECEIVER.value:
+    if call_kind in {CallKind.PARAMETER_RECEIVER.value, CallKind.PARAMETER_METHOD_REFERENCE.value}:
         return UnresolvedReason.TARGET_NOT_ANALYZED.value if receiver_type else UnresolvedReason.PARAMETER_TYPE_UNKNOWN.value
-    if call_kind == CallKind.LOCAL_VARIABLE_RECEIVER.value:
+    if call_kind in {CallKind.LOCAL_VARIABLE_RECEIVER.value, CallKind.LOCAL_VARIABLE_METHOD_REFERENCE.value}:
         return UnresolvedReason.TARGET_NOT_ANALYZED.value if receiver_type else UnresolvedReason.LOCAL_VARIABLE_TYPE_UNKNOWN.value
     if receiver and not receiver_type and not target_type:
         return UnresolvedReason.RECEIVER_TYPE_UNKNOWN.value

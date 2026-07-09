@@ -14,8 +14,11 @@ EDGE_METADATA_ALLOWLIST = {
     "callTargetCategory",
     "methodName",
     "receiverText",
+    "receiverTypeHint",
     "resolutionReason",
     "sliceDefaultVisibility",
+    "targetTypeHint",
+    "targetTypeText",
     "unresolvedReason",
 }
 CLAIM_METADATA_ALLOWLIST = {
