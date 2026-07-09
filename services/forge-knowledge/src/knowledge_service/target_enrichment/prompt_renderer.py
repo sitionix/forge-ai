@@ -46,6 +46,8 @@ class TargetPromptRenderer:
                 relativePath=str(payload.get("relativePath") or ""),
             )
         prompt_id = self._prompt_id(payload=payload, contract=contract)
+        if repair_prompt:
+            return self._validation_feedback_prompt(prompt_id, llm_input, repair_prompt)
         return (
             self._template(prompt_id)
             .replace(INPUT_JSON_PLACEHOLDER, self._input_json_block(llm_input))
@@ -133,6 +135,22 @@ class TargetPromptRenderer:
 
     def _response_shape_text(self, prompt_id: str) -> str:
         return json.dumps(self._response_shape_for_prompt_id(prompt_id), ensure_ascii=False, indent=2, sort_keys=True)
+
+    def _validation_feedback_prompt(self, prompt_id: str, llm_input: Mapping[str, Any], validation_feedback: str) -> str:
+        return "\n".join(
+            [
+                "Target-anchor validation feedback retry.",
+                "Use the same target-anchor input JSON below.",
+                "Claims-only response shape:",
+                "```json",
+                self._response_shape_text(prompt_id),
+                "```",
+                "",
+                str(validation_feedback).strip(),
+                "",
+                self._input_json_block(llm_input),
+            ]
+        ).strip()
 
     def _template(self, prompt_id: str) -> str:
         if prompt_id in self._template_cache:

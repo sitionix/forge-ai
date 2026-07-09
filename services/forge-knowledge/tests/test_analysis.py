@@ -2909,7 +2909,7 @@ def test_analyzer_rejects_unknown_ref_response_without_persisting_invalid_facts(
     assert len(facts["claims"]) == 0
 
 
-def test_retry_repair_prompt_keeps_minimal_target_input(tmp_path):
+def test_validation_feedback_retry_prompt_keeps_minimal_target_input(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     captured = []
     attempts = {"count": 0}
@@ -2917,32 +2917,16 @@ def test_retry_repair_prompt_keeps_minimal_target_input(tmp_path):
     def flaky_response(llm_input):
         attempts["count"] += 1
         if attempts["count"] == 1:
-            old_style_response = {
-                "schemaVersion": "knowledge.graph.enrichment.response.v2",
+            invalid_response = {
                 "claims": [
                     {
-                        "localId": "old-claim",
-                        "targetRef": "M1",
                         "claimKind": "RESPONSIBILITY",
-                        "summary": "Old response shape.",
-                        "confidence": 0.8,
-                        "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "old"}],
+                        "summary": "Bad evidence range.",
+                        "evidence": [{"lineStart": 55, "lineEnd": 46}],
                     }
-                ],
-                "semanticEdges": [
-                    {
-                        "localId": "old-edge",
-                        "fromRef": "M1",
-                        "edgeType": "REFERENCES",
-                        "resolutionStatus": "RESOLVED",
-                        "toRef": "M1",
-                        "confidence": 0.8,
-                        "evidence": [{"lineStart": 1, "lineEnd": 1, "text": "old"}],
-                    }
-                ],
-                "diagnostics": [],
+                ]
             }
-            return json.dumps(old_style_response)
+            return json.dumps(invalid_response)
         return _empty_target_response(llm_input)
 
     client = _capturing_ollama_client(captured, flaky_response)
@@ -2959,12 +2943,63 @@ def test_retry_repair_prompt_keeps_minimal_target_input(tmp_path):
     assert retry_input["requestKind"] == TARGET_REQUEST_KIND
     assert "staticAnchors" not in retry_input
     assert "callsites" not in retry_input
-    assert "Remove invalid fields" in retry_prompt
-    assert "schemaVersion, localId, targetRef, fromRef, resolutionStatus, confidence, evidence.text, or diagnostics" in retry_prompt
-    assert "semanticEdges are not accepted." in retry_prompt
-    assert 'Return claims only: {"claims": [...]} or {"claims": []}.' in retry_prompt
+    assert "Structured validationErrors:" in retry_prompt
+    assert "EVIDENCE_RANGE_INVERTED" in retry_prompt
+    assert '"lineStart": 55' in retry_prompt
+    assert '"lineEnd": 46' in retry_prompt
+    assert "lineStart <= lineEnd" in retry_prompt
+    assert "Fix only the listed validation errors." in retry_prompt
+    assert "Remove invalid fields" not in retry_prompt
+    assert "semanticEdges are not accepted." not in retry_prompt
+    assert "semanticEdges" not in retry_prompt
+    assert "toRef" not in retry_prompt
+    assert "topology" not in retry_prompt
+    assert "COMMENT_ONLY" not in retry_prompt
+    assert "CLOSING_BRACE_ONLY" not in retry_prompt
     assert "edgeOptions" not in retry_prompt
     assert "endpointRules" not in retry_prompt
+
+
+def test_validation_feedback_retry_preserves_all_attempt_validation_errors(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    captured = []
+
+    def still_invalid_response(_llm_input):
+        return json.dumps(
+            {
+                "claims": [
+                    {
+                        "claimKind": "RESPONSIBILITY",
+                        "summary": "Still bad evidence.",
+                        "evidence": [
+                            {"lineStart": 3, "lineEnd": 2},
+                            {"lineStart": 999, "lineEnd": 999},
+                        ],
+                    }
+                ]
+            }
+        )
+
+    client = _capturing_ollama_client(captured, still_invalid_response)
+    runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 2))
+
+    final = wait_job(store, runner.start(AnalysisBuildRequest(), client)["jobId"])
+    asyncio.run(client.aclose())
+    files = AnalysisStore(store.db_path).files(None, "FAILED", None, 10, 0)
+
+    assert final["failedFiles"] == 1
+    assert len(captured) == 2
+    retry_prompt = captured[1]["prompt"]
+    assert "EVIDENCE_RANGE_INVERTED" in retry_prompt
+    assert "EVIDENCE_RANGE_OUTSIDE_FILE" in retry_prompt
+    diagnostics = files["files"][0]["diagnostics"]
+    metadata = [item.get("metadata") for item in diagnostics if item.get("metadata")]
+    validation_errors = [
+        error
+        for item in metadata
+        for error in item.get("validationErrors", [])
+    ]
+    assert {item["code"] for item in validation_errors} >= {"EVIDENCE_RANGE_INVERTED", "EVIDENCE_RANGE_OUTSIDE_FILE"}
 
 
 def test_callsite_heavy_fluent_chain_prompt_does_not_include_raw_callsite_payload(tmp_path):

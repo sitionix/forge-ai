@@ -153,6 +153,8 @@ class OllamaAnalysisClient:
             parsed.message,
             raw_preview=parsed.raw_preview,
             error_details=parsed.error_details,
+            validation_report=parsed.validation_report,
+            validationErrors=parsed.error_details,
         )
 
     async def aclose(self) -> None:
@@ -225,6 +227,8 @@ class OllamaAnalysisClient:
             "targetRef": payload.get("targetRef"),
             "targetKind": payload.get("targetKind"),
             "repairAttempt": repair_prompt is not None,
+            "validationFeedbackRetry": repair_prompt is not None,
+            "correctedResponseAttempt": repair_prompt is not None,
         }
 
     def _provider_response_metadata(self, raw: Dict[str, Any], response_text: str) -> Dict[str, Any]:
@@ -245,6 +249,7 @@ class OllamaAnalysisClient:
             "responsePreviewTail": preview["tail"],
             "responseTruncated": preview["truncated"],
             "maxPreviewChars": preview["maxPreviewChars"],
+            "responseHash": text_hash(response_text),
             "providerResponseMetadata": {key: raw.get(key) for key in provider_metadata_keys if key in raw},
         }
 
@@ -303,6 +308,10 @@ class OllamaAnalysisClient:
                 "responseTruncated": response_truncated,
                 "maxPreviewChars": preview["maxPreviewChars"],
                 "parserErrorDetails": details,
+                "validationReport": getattr(parsed, "validation_report", None),
+                "validationErrors": (getattr(parsed, "validation_report", None) or {}).get("validationErrors")
+                if isinstance(getattr(parsed, "validation_report", None), dict)
+                else details,
             },
         )
 

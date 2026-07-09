@@ -10,3 +10,4 @@ class GraphAnalysisParseFailure:
     message: str
     raw_preview: str
     error_details: list[dict[str, Any]] = field(default_factory=list)
+    validation_report: dict[str, Any] | None = None
