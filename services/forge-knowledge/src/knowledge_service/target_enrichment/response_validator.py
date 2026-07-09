@@ -12,9 +12,24 @@ class TargetResponseParserValidator:
     _TOP_LEVEL_FIELDS = {"claims"}
     _CLAIM_FIELDS = {"claimKind", "summary", "evidence"}
     _EVIDENCE_FIELDS = {"lineStart", "lineEnd"}
+    _OLD_CONTRACT_FIELDS = {
+        "schemaVersion",
+        "localId",
+        "targetRef",
+        "fromRef",
+        "toRef",
+        "edgeType",
+        "unresolvedStatus",
+        "unresolvedTarget",
+        "resolutionStatus",
+        "confidence",
+        "diagnostics",
+        "text",
+    }
     _DEFAULT_CONFIDENCE = 0.8
     _MAX_SUMMARY_CHARS = 600
     _MAX_EVIDENCE_TEXT_CHARS = 2000
+    _CLOSING_BRACE_LINES = {"}", "};", ");", ")"}
 
     def parse(
         self,
@@ -24,18 +39,31 @@ class TargetResponseParserValidator:
         line_count: int,
         contract: AnalysisGraphContract,
     ) -> GraphAnalysisResult | GraphAnalysisParseFailure:
-        parsed, load_error = self._load(raw)
-        if load_error is not None:
-            return load_error
-        if not isinstance(parsed, dict):
-            return self._failure(raw, self._schema_error("$", "Response must be one JSON object.", actual=type(parsed).__name__, expected="object"))
-
+        context_errors: list[dict[str, Any]] = []
         llm_input = payload.get("llmInput")
+        target_anchor = None
         if not isinstance(llm_input, Mapping):
-            return self._failure(raw, self._schema_error("$", "Target input context is missing.", expected="llmInput"))
-        target_anchor = llm_input.get("targetAnchor")
+            context_errors.append(
+                self._validation_error(
+                    "CLAIMS_MISSING",
+                    "$",
+                    "Target input context is missing.",
+                    expected="llmInput",
+                )
+            )
+            llm_input = {}
+        else:
+            target_anchor = llm_input.get("targetAnchor")
         if not isinstance(target_anchor, Mapping):
-            return self._failure(raw, self._schema_error("$.targetAnchor", "Target input anchor is missing.", expected="targetAnchor"))
+            context_errors.append(
+                self._validation_error(
+                    "CLAIMS_MISSING",
+                    "$.targetAnchor",
+                    "Target input anchor is missing.",
+                    expected="targetAnchor",
+                )
+            )
+            target_anchor = {}
 
         target_ref = str(payload.get("targetRef") or target_anchor.get("ref") or "")
         target_kind = str(payload.get("targetKind") or target_anchor.get("kind") or "")
@@ -43,25 +71,82 @@ class TargetResponseParserValidator:
         ref_to_stable_key = {str(key): str(value) for key, value in (payload.get("_refToStableKey") or {}).items()}
         target_stable_key = ref_to_stable_key.get(target_ref)
         content_by_line = self._content_by_line(llm_input)
-        details: list[dict[str, Any]] = []
-        target_range = self._target_range(target_anchor, line_count, details)
+        target_range = self._target_range(target_anchor, line_count, context_errors)
 
+        parsed, load_error = self._load(
+            raw,
+            target_ref=target_ref,
+            target_kind=target_kind,
+            target_name=target_name,
+            target_range=target_range,
+        )
+        if load_error is not None:
+            return load_error
+        if not isinstance(parsed, dict):
+            detail = self._validation_error(
+                "RESPONSE_NOT_OBJECT",
+                "$",
+                "Response must be one JSON object.",
+                actual=type(parsed).__name__,
+                expected="object",
+            )
+            return self._failure(raw, [detail], target_ref, target_kind, target_name, target_range)
+
+        details: list[dict[str, Any]] = list(context_errors)
         if not target_ref:
-            details.append(self._schema_error("$.targetRef", "Target payload ref is required.", expected="targetRef"))
+            details.append(
+                self._validation_error(
+                    "CLAIMS_MISSING",
+                    "$.targetRef",
+                    "Target payload ref is required.",
+                    expected="targetRef",
+                )
+            )
         if not target_stable_key:
-            details.append(self._schema_error("$.targetRef", "targetRef has no backend stable key mapping.", actual=target_ref, expected="stable key mapping"))
+            details.append(
+                self._validation_error(
+                    "CLAIMS_MISSING",
+                    "$.targetRef",
+                    "targetRef has no backend stable key mapping.",
+                    actual=target_ref,
+                    expected="stable key mapping",
+                )
+            )
 
         self._validate_object_fields(parsed, "$", self._TOP_LEVEL_FIELDS, details)
-        claims = parsed.get("claims")
-        if not isinstance(claims, list):
-            details.append(self._schema_error("$.claims", "claims must be an array.", actual=claims, expected="array"))
-            claims = []
+        if "claims" not in parsed:
+            details.append(
+                self._validation_error(
+                    "CLAIMS_MISSING",
+                    "$.claims",
+                    "claims is required.",
+                    actual=None,
+                    expected="claims array",
+                    missing_required_field="claims",
+                )
+            )
+            claims: list[Any] = []
+        else:
+            claims_value = parsed.get("claims")
+            if not isinstance(claims_value, list):
+                details.append(
+                    self._validation_error(
+                        "CLAIMS_NOT_ARRAY",
+                        "$.claims",
+                        "claims must be an array.",
+                        actual=claims_value,
+                        expected="array",
+                    )
+                )
+                claims = []
+            else:
+                claims = claims_value
 
         for index, item in enumerate(claims):
             self._validate_claim(item, index, contract, line_count, content_by_line, target_range, details)
 
         if details:
-            return self._failure(raw, *self._decorate_details(details, target_ref, target_kind, target_name, target_range))
+            return self._failure(raw, details, target_ref, target_kind, target_name, target_range)
         try:
             return self._to_graph_result(
                 parsed,
@@ -70,8 +155,13 @@ class TargetResponseParserValidator:
                 content_by_line=content_by_line,
             )
         except (KeyError, TypeError, ValueError) as exc:
-            detail = self._schema_error("$", str(exc), expected="valid graph result")
-            return self._failure(raw, *self._decorate_details([detail], target_ref, target_kind, target_name, target_range))
+            detail = self._validation_error(
+                "CLAIM_SCHEMA_INVALID",
+                "$",
+                str(exc),
+                expected="valid graph result",
+            )
+            return self._failure(raw, [detail], target_ref, target_kind, target_name, target_range)
 
     def _validate_claim(
         self,
@@ -85,13 +175,22 @@ class TargetResponseParserValidator:
     ) -> None:
         path = f"$.claims[{index}]"
         if not isinstance(item, dict):
-            details.append(self._schema_error(path, "claim must be an object.", actual=type(item).__name__, expected="object"))
+            details.append(
+                self._validation_error(
+                    "CLAIM_NOT_OBJECT",
+                    path,
+                    "claim must be an object.",
+                    actual=type(item).__name__,
+                    expected="object",
+                )
+            )
             return
         self._validate_object_fields(item, path, self._CLAIM_FIELDS, details)
         claim_kind = self._required_string(item, path, "claimKind", details)
         if claim_kind and claim_kind not in contract.allowed_claim_kinds:
             details.append(
-                self._schema_error(
+                self._validation_error(
+                    "CLAIM_KIND_INVALID",
                     f"{path}.claimKind",
                     "claimKind is not allowed by the effective analysis graph policy.",
                     actual=claim_kind,
@@ -101,7 +200,15 @@ class TargetResponseParserValidator:
             )
         summary = self._required_string(item, path, "summary", details)
         if summary and len(summary) > self._MAX_SUMMARY_CHARS:
-            details.append(self._schema_error(f"{path}.summary", "summary is too long.", actual=len(summary), expected=f"{self._MAX_SUMMARY_CHARS} chars or fewer"))
+            details.append(
+                self._validation_error(
+                    "SUMMARY_TOO_LONG",
+                    f"{path}.summary",
+                    "summary is too long.",
+                    actual=len(summary),
+                    expected=f"{self._MAX_SUMMARY_CHARS} chars or fewer",
+                )
+            )
         self._evidence_list(item.get("evidence"), f"{path}.evidence", line_count, str(claim_kind or ""), content_by_line, target_range, details)
 
     def _evidence_list(
@@ -114,66 +221,105 @@ class TargetResponseParserValidator:
         target_range: Mapping[str, Any],
         details: list[dict[str, Any]],
     ) -> None:
-        if not isinstance(value, list) or not value:
-            details.append(self._schema_error(path, "evidence must be a non-empty array.", actual=value, expected="non-empty array"))
+        if value is None:
+            details.append(
+                self._validation_error(
+                    "EVIDENCE_MISSING",
+                    path,
+                    "evidence is required.",
+                    actual=None,
+                    expected="non-empty evidence array",
+                    missing_required_field="evidence",
+                )
+            )
+            return
+        if not isinstance(value, list):
+            details.append(
+                self._validation_error(
+                    "EVIDENCE_NOT_ARRAY",
+                    path,
+                    "evidence must be an array.",
+                    actual=value,
+                    expected="array",
+                )
+            )
+            return
+        if not value:
+            details.append(
+                self._validation_error(
+                    "EVIDENCE_MISSING",
+                    path,
+                    "evidence must be a non-empty array.",
+                    actual=value,
+                    expected="non-empty evidence array",
+                )
+            )
             return
         for index, item in enumerate(value):
             evidence_path = f"{path}[{index}]"
             if not isinstance(item, dict):
-                details.append(self._schema_error(evidence_path, "evidence must be an object.", actual=type(item).__name__, expected="object"))
+                details.append(
+                    self._validation_error(
+                        "EVIDENCE_NOT_ARRAY",
+                        evidence_path,
+                        "evidence item must be an object.",
+                        actual=type(item).__name__,
+                        expected="object evidence item",
+                    )
+                )
                 continue
             self._validate_object_fields(item, evidence_path, self._EVIDENCE_FIELDS, details)
             line_start = self._required_int(item, evidence_path, "lineStart", details)
             line_end = self._required_int(item, evidence_path, "lineEnd", details)
             if line_start is None or line_end is None:
                 continue
+            evidence_range = {"lineStart": line_start, "lineEnd": line_end}
             if line_start > line_end:
                 details.append(
-                    self._graph_error(
+                    self._validation_error(
+                        "EVIDENCE_RANGE_INVERTED",
                         evidence_path,
                         "Evidence line range is inverted: lineStart must be <= lineEnd.",
-                        actual={"lineStart": line_start, "lineEnd": line_end},
+                        actual=evidence_range,
                         expected="lineStart <= lineEnd",
-                        evidenceLineStart=line_start,
-                        evidenceLineEnd=line_end,
+                        evidence_range=evidence_range,
                     )
                 )
                 continue
             if line_start < 1 or line_end > max(line_count, 1):
                 details.append(
-                    self._graph_error(
+                    self._validation_error(
+                        "EVIDENCE_RANGE_OUTSIDE_FILE",
                         evidence_path,
-                        "Evidence line range outside file.",
-                        actual={"lineStart": line_start, "lineEnd": line_end},
+                        "Evidence line range is outside file bounds.",
+                        actual=evidence_range,
                         expected=f"1 <= lineStart <= lineEnd <= {max(line_count, 1)}",
-                        evidenceLineStart=line_start,
-                        evidenceLineEnd=line_end,
+                        evidence_range=evidence_range,
                     )
                 )
                 continue
             if not self._inside_target_range(line_start, line_end, target_range):
                 details.append(
-                    self._graph_error(
+                    self._validation_error(
+                        "EVIDENCE_RANGE_OUTSIDE_TARGET",
                         evidence_path,
                         "Evidence line range is outside target anchor range.",
-                        actual={"lineStart": line_start, "lineEnd": line_end},
+                        actual=evidence_range,
                         expected=f"{target_range.get('lineStart')} <= lineStart <= lineEnd <= {target_range.get('lineEnd')}",
-                        evidenceLineStart=line_start,
-                        evidenceLineEnd=line_end,
-                        targetLineStart=target_range.get("lineStart"),
-                        targetLineEnd=target_range.get("lineEnd"),
+                        evidence_range=evidence_range,
                     )
                 )
                 continue
             if target_range.get("kind") == "CALLABLE" and not self._has_material_callable_evidence(line_start, line_end, content_by_line, claim_kind):
+                line_class = self._line_class(line_start, line_end, content_by_line)
                 details.append(
-                    self._graph_error(
+                    self._validation_error(
+                        "EVIDENCE_NOT_MATERIAL",
                         evidence_path,
-                        "Evidence line range must include a non-empty callable body line, not only a declaration, blank line, or closing brace.",
-                        actual={"lineStart": line_start, "lineEnd": line_end},
-                        expected="material callable body evidence",
-                        evidenceLineStart=line_start,
-                        evidenceLineEnd=line_end,
+                        "Evidence points only to a comment, blank line, or closing brace.",
+                        actual={"lineStart": line_start, "lineEnd": line_end, "lineClass": line_class},
+                        expected="Evidence must cite material code lines that support the claim.",
+                        evidence_range=evidence_range,
                     )
                 )
 
@@ -185,7 +331,8 @@ class TargetResponseParserValidator:
         body_line_end = self._plain_int(target_anchor.get("bodyLineEnd"))
         if line_start is None or line_end is None:
             details.append(
-                self._schema_error(
+                self._validation_error(
+                    "EVIDENCE_RANGE_MISSING",
                     "$.targetAnchor",
                     "targetAnchor lineStart and lineEnd are required for target-local claim validation.",
                     actual={"lineStart": target_anchor.get("lineStart"), "lineEnd": target_anchor.get("lineEnd")},
@@ -195,7 +342,8 @@ class TargetResponseParserValidator:
             return {"kind": kind, "lineStart": 1, "lineEnd": max(line_count, 1), "bodyLineStart": body_line_start, "bodyLineEnd": body_line_end}
         if line_start > line_end:
             details.append(
-                self._schema_error(
+                self._validation_error(
+                    "EVIDENCE_RANGE_INVERTED",
                     "$.targetAnchor",
                     "targetAnchor line range is inverted.",
                     actual={"lineStart": line_start, "lineEnd": line_end},
@@ -217,16 +365,35 @@ class TargetResponseParserValidator:
     def _has_material_callable_evidence(self, line_start: int, line_end: int, content_by_line: Mapping[int, str], claim_kind: str) -> bool:
         if claim_kind == "ENTRYPOINT_HINT":
             return True
+        return self._line_class(line_start, line_end, content_by_line) == "MATERIAL"
+
+    def _line_class(self, line_start: int, line_end: int, content_by_line: Mapping[int, str]) -> str:
+        seen_comment = False
+        seen_closing = False
+        seen_blank = False
         for line_number in range(line_start, line_end + 1):
             text = str(content_by_line.get(line_number) or "").strip()
             if not text:
+                seen_blank = True
                 continue
-            if text in {"}", "};", ");", ")"}:
+            if text in self._CLOSING_BRACE_LINES:
+                seen_closing = True
                 continue
             if text.startswith("//"):
+                seen_comment = True
                 continue
-            return True
-        return False
+            return "MATERIAL"
+        if seen_comment and not seen_closing:
+            return "COMMENT_ONLY"
+        if seen_closing and not seen_comment:
+            return "CLOSING_BRACE_ONLY"
+        if seen_blank and not seen_comment and not seen_closing:
+            return "BLANK_ONLY"
+        if seen_comment:
+            return "COMMENT_ONLY"
+        if seen_closing:
+            return "CLOSING_BRACE_ONLY"
+        return "NON_MATERIAL"
 
     def _to_graph_result(
         self,
@@ -285,46 +452,69 @@ class TargetResponseParserValidator:
                 content_by_line[int(line)] = str(item.get("text") or "")
         return content_by_line
 
-    def _load(self, raw: str) -> tuple[Any | None, GraphAnalysisParseFailure | None]:
+    def _load(
+        self,
+        raw: str,
+        *,
+        target_ref: str,
+        target_kind: str,
+        target_name: str,
+        target_range: Mapping[str, Any],
+    ) -> tuple[Any | None, GraphAnalysisParseFailure | None]:
         if raw is None or not str(raw).strip():
-            return None, self._failure("", self._schema_error("$", "AI analyzer returned an empty response.", expected="JSON object"))
+            detail = self._validation_error(
+                "JSON_PARSE_ERROR",
+                "$",
+                "AI analyzer returned an empty response.",
+                actual="",
+                expected="one valid JSON object",
+                raw_preview="",
+                response_truncated=False,
+            )
+            return None, self._json_failure("", detail, target_ref, target_kind, target_name, target_range)
         try:
             return json.loads(raw), None
         except json.JSONDecodeError as exc:
-            return None, GraphAnalysisParseFailure(
-                "ANALYSIS_AI_INVALID_JSON",
-                f"AI analyzer returned invalid JSON: JSON parse error at line {exc.lineno} column {exc.colno}: {exc.msg}",
-                str(raw)[:4000],
-                [
-                    {
-                        "errorType": "JSON_PARSE_ERROR",
-                        "message": exc.msg,
-                        "line": exc.lineno,
-                        "column": exc.colno,
-                        "charPosition": exc.pos,
-                        "rawPreview": str(raw)[:800],
-                        "responseTruncated": len(str(raw)) > 800,
-                    }
-                ],
+            detail = self._validation_error(
+                "JSON_PARSE_ERROR",
+                "$",
+                f"JSON parse error at line {exc.lineno} column {exc.colno}: {exc.msg}",
+                actual={"line": exc.lineno, "column": exc.colno, "charPosition": exc.pos},
+                expected="one valid JSON object",
+                line=exc.lineno,
+                column=exc.colno,
+                char_position=exc.pos,
+                raw_preview=str(raw)[:800],
+                response_truncated=len(str(raw)) > 800,
             )
+            return None, self._json_failure(str(raw), detail, target_ref, target_kind, target_name, target_range)
 
     def _validate_object_fields(self, item: Mapping[str, Any], path: str, allowed: set[str], details: list[dict[str, Any]]) -> None:
         extra = sorted(set(item.keys()) - allowed)
         for field_name in extra:
+            code = "UNKNOWN_TOP_LEVEL_FIELD" if path == "$" else "UNKNOWN_CLAIM_FIELD"
+            if field_name == "semanticEdges":
+                code = "SEMANTIC_EDGES_RETURNED"
+            elif field_name in self._OLD_CONTRACT_FIELDS:
+                code = "OLD_CONTRACT_FIELD_RETURNED"
             details.append(
-                self._schema_error(
+                self._validation_error(
+                    code,
                     f"{path}.{field_name}",
-                    "Unknown field is not allowed by the target-anchor response contract.",
+                    "Unknown or removed field is not allowed by the target-anchor claims-only response contract.",
                     actual=field_name,
                     expected="no extra fields",
+                    field=field_name,
                 )
             )
 
     def _required_string(self, item: Mapping[str, Any], path: str, field_name: str, details: list[dict[str, Any]]) -> Optional[str]:
         value = item.get(field_name)
+        missing_code = "CLAIM_KIND_MISSING" if field_name == "claimKind" else "SUMMARY_MISSING"
         if value is None:
             details.append(
-                self._schema_error(
+                self._validation_error(
+                    missing_code,
                     f"{path}.{field_name}",
                     f"{field_name} is required.",
                     actual=None,
@@ -334,7 +524,15 @@ class TargetResponseParserValidator:
             )
             return None
         if not isinstance(value, str) or not value.strip():
-            details.append(self._schema_error(f"{path}.{field_name}", f"{field_name} must be a non-empty string.", actual=value, expected="non-empty string"))
+            details.append(
+                self._validation_error(
+                    missing_code,
+                    f"{path}.{field_name}",
+                    f"{field_name} must be a non-empty string.",
+                    actual=value,
+                    expected="non-empty string",
+                )
+            )
             return None
         return value
 
@@ -342,7 +540,8 @@ class TargetResponseParserValidator:
         value = item.get(field_name)
         if value is None:
             details.append(
-                self._schema_error(
+                self._validation_error(
+                    "EVIDENCE_RANGE_MISSING",
                     f"{path}.{field_name}",
                     f"{field_name} is required.",
                     actual=None,
@@ -352,7 +551,15 @@ class TargetResponseParserValidator:
             )
             return None
         if not isinstance(value, int) or isinstance(value, bool):
-            details.append(self._schema_error(f"{path}.{field_name}", f"{field_name} must be an integer.", actual=value, expected="integer"))
+            details.append(
+                self._validation_error(
+                    "EVIDENCE_RANGE_NOT_INTEGER",
+                    f"{path}.{field_name}",
+                    f"{field_name} must be an integer.",
+                    actual=value,
+                    expected="integer",
+                )
+            )
             return None
         return value
 
@@ -372,21 +579,31 @@ class TargetResponseParserValidator:
         target_range: Mapping[str, Any],
     ) -> list[dict[str, Any]]:
         decorated: list[dict[str, Any]] = []
+        report_target_range = self._public_target_range(target_range)
         for detail in details:
             item = dict(detail)
             item.setdefault("targetRef", target_ref)
             item.setdefault("targetKind", target_kind)
             if target_name:
                 item.setdefault("targetName", target_name)
-            if target_range.get("lineStart") is not None:
-                item.setdefault("targetLineStart", target_range.get("lineStart"))
-            if target_range.get("lineEnd") is not None:
-                item.setdefault("targetLineEnd", target_range.get("lineEnd"))
+            if report_target_range:
+                item.setdefault("targetRange", report_target_range)
+                if report_target_range.get("lineStart") is not None:
+                    item.setdefault("targetLineStart", report_target_range.get("lineStart"))
+                if report_target_range.get("lineEnd") is not None:
+                    item.setdefault("targetLineEnd", report_target_range.get("lineEnd"))
+            evidence_range = item.get("evidenceRange")
+            if isinstance(evidence_range, Mapping):
+                if evidence_range.get("lineStart") is not None:
+                    item.setdefault("evidenceLineStart", evidence_range.get("lineStart"))
+                if evidence_range.get("lineEnd") is not None:
+                    item.setdefault("evidenceLineEnd", evidence_range.get("lineEnd"))
             decorated.append(item)
         return decorated
 
-    def _schema_error(
+    def _validation_error(
         self,
+        code: str,
         path: str,
         message: str,
         *,
@@ -394,41 +611,110 @@ class TargetResponseParserValidator:
         expected: Optional[str] = None,
         allowed_values: Optional[list[str]] = None,
         missing_required_field: Optional[str] = None,
-        **extra: Any,
+        field: Optional[str] = None,
+        evidence_range: Optional[Mapping[str, Any]] = None,
+        raw_preview: Optional[str] = None,
+        response_truncated: Optional[bool] = None,
+        line: Optional[int] = None,
+        column: Optional[int] = None,
+        char_position: Optional[int] = None,
     ) -> dict[str, Any]:
-        error = {
-            "errorType": "SCHEMA_VALIDATION_ERROR",
+        error: dict[str, Any] = {
+            "code": code,
+            "errorType": code,
             "jsonPath": path,
             "message": message,
             "actual": actual,
             "invalidValue": actual,
             "expected": expected,
-            "allowedValues": list(allowed_values or []),
-            "missingRequiredField": missing_required_field,
         }
-        error.update({key: value for key, value in extra.items() if value is not None})
+        if allowed_values is not None:
+            error["allowedValues"] = list(allowed_values)
+        if missing_required_field is not None:
+            error["missingRequiredField"] = missing_required_field
+        if field is not None:
+            error["field"] = field
+        if evidence_range is not None:
+            error["evidenceRange"] = dict(evidence_range)
+        if raw_preview is not None:
+            error["rawPreview"] = raw_preview
+        if response_truncated is not None:
+            error["responseTruncated"] = response_truncated
+        if line is not None:
+            error["line"] = line
+        if column is not None:
+            error["column"] = column
+        if char_position is not None:
+            error["charPosition"] = char_position
         return error
 
-    def _graph_error(self, path: str, reason: str, *, actual: Any = None, expected: Optional[str] = None, **extra: Any) -> dict[str, Any]:
-        error = {
-            "errorType": "GRAPH_VALIDATION_ERROR",
-            "jsonPath": path,
-            "reason": reason,
-            "actual": actual,
-            "invalidValue": actual,
-            "expected": expected,
-            "allowedValues": [],
+    def _validation_report(
+        self,
+        details: list[dict[str, Any]],
+        target_ref: str,
+        target_kind: str,
+        target_name: str,
+        target_range: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        report: dict[str, Any] = {
+            "errorType": "TARGET_RESPONSE_VALIDATION_FAILED",
+            "targetRef": target_ref,
+            "targetKind": target_kind,
+            "validationErrors": details,
         }
-        error.update({key: value for key, value in extra.items() if value is not None})
-        return error
+        if target_name:
+            report["targetName"] = target_name
+        public_range = self._public_target_range(target_range)
+        if public_range:
+            report["targetRange"] = public_range
+        return report
 
-    def _failure(self, raw: str, *details: dict[str, Any]) -> GraphAnalysisParseFailure:
-        summaries = "; ".join(str(detail.get("reason") or detail.get("message") or detail) for detail in details[:3])
-        if len(details) > 3:
-            summaries = f"{summaries}; and {len(details) - 3} more error(s)"
+    def _public_target_range(self, target_range: Mapping[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key in ("lineStart", "lineEnd"):
+            value = target_range.get(key)
+            if value is not None:
+                result[key] = value
+        return result
+
+    def _json_failure(
+        self,
+        raw: str,
+        detail: dict[str, Any],
+        target_ref: str,
+        target_kind: str,
+        target_name: str,
+        target_range: Mapping[str, Any],
+    ) -> GraphAnalysisParseFailure:
+        details = self._decorate_details([detail], target_ref, target_kind, target_name, target_range)
+        report = self._validation_report(details, target_ref, target_kind, target_name, target_range)
+        report["errorType"] = "TARGET_RESPONSE_JSON_PARSE_FAILED"
+        return GraphAnalysisParseFailure(
+            "ANALYSIS_AI_INVALID_JSON",
+            str(detail.get("message") or "AI analyzer returned invalid JSON."),
+            str(raw)[:4000],
+            details,
+            report,
+        )
+
+    def _failure(
+        self,
+        raw: str,
+        details: list[dict[str, Any]],
+        target_ref: str,
+        target_kind: str,
+        target_name: str,
+        target_range: Mapping[str, Any],
+    ) -> GraphAnalysisParseFailure:
+        decorated = self._decorate_details(details, target_ref, target_kind, target_name, target_range)
+        summaries = "; ".join(f"{detail.get('code')} at {detail.get('jsonPath')}: {detail.get('message')}" for detail in decorated[:3])
+        if len(decorated) > 3:
+            summaries = f"{summaries}; and {len(decorated) - 3} more error(s)"
+        report = self._validation_report(decorated, target_ref, target_kind, target_name, target_range)
         return GraphAnalysisParseFailure(
             "ANALYSIS_AI_SCHEMA_INVALID",
-            f"AI analyzer response does not match target-anchor graph schema: {summaries}",
+            f"AI analyzer response failed target-anchor validation: {summaries}",
             str(raw)[:4000],
-            list(details),
+            decorated,
+            report,
         )

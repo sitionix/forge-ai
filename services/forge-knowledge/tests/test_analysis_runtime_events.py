@@ -135,6 +135,7 @@ def test_ollama_success_persists_llm_request_and_response_diagnostics(tmp_path):
     assert response["metadata"]["responsePreviewHead"] == _valid_enrichment_json()
     assert response["metadata"]["responsePreviewTail"] == _valid_enrichment_json()
     assert response["metadata"]["responseTruncated"] is False
+    assert len(response["metadata"]["responseHash"]) == 64
     assert response["metadata"]["providerResponseMetadata"]["done_reason"] == "stop"
     assert response["metadata"]["providerResponseMetadata"]["prompt_eval_count"] == 41
     assert response["metadata"]["providerResponseMetadata"]["eval_count"] == 17
@@ -182,6 +183,45 @@ def test_parser_failure_persists_response_and_parse_diagnostics(tmp_path):
     assert parser_failure["metadata"]["responsePreviewTail"] == "{"
     assert parser_failure["metadata"]["responseTruncated"] is False
     assert parser_failure["metadata"]["parserErrorDetails"][0]["errorType"] == "JSON_PARSE_ERROR"
+    assert parser_failure["metadata"]["validationReport"]["errorType"] == "TARGET_RESPONSE_JSON_PARSE_FAILED"
+    assert parser_failure["metadata"]["validationErrors"][0]["code"] == "JSON_PARSE_ERROR"
+
+
+def test_parser_failure_persists_structured_validation_report(tmp_path):
+    store = _runtime_store(tmp_path)
+    invalid_json = json.dumps(
+        {
+            "claims": [
+                {
+                    "claimKind": "RESPONSIBILITY",
+                    "summary": "Uses evidence outside the file.",
+                    "evidence": [{"lineStart": 2, "lineEnd": 2}],
+                }
+            ]
+        }
+    )
+    client = _client_with_response({"response": invalid_json, "done": True})
+
+    with pytest.raises(KnowledgeError) as exc:
+        _run_with_runtime_context(store, client.analyze(_payload(), 1))
+
+    assert exc.value.code == "ANALYSIS_AI_SCHEMA_INVALID"
+    assert exc.value.details["validation_report"]["validationErrors"][0]["code"] == "EVIDENCE_RANGE_OUTSIDE_FILE"
+    events = store.runtime_events(job_id=JOB_ID, relative_path=RELATIVE_PATH)["events"]
+    assert [event["stage"] for event in events] == ["LLM_REQUEST", "LLM_RESPONSE", "LLM_PARSE"]
+    response = events[1]
+    parser_failure = events[2]
+    assert len(response["metadata"]["responseHash"]) == 64
+    assert parser_failure["metadata"]["responseHash"] == response["metadata"]["responseHash"]
+    assert parser_failure["metadata"]["validationReport"]["errorType"] == "TARGET_RESPONSE_VALIDATION_FAILED"
+    assert parser_failure["metadata"]["validationReport"]["targetRef"] == "F1"
+    assert parser_failure["metadata"]["validationReport"]["targetKind"] == "FILE"
+    assert parser_failure["metadata"]["validationReport"]["targetRange"] == {"lineStart": 1, "lineEnd": 1}
+    validation_error = parser_failure["metadata"]["validationErrors"][0]
+    assert validation_error["code"] == "EVIDENCE_RANGE_OUTSIDE_FILE"
+    assert validation_error["jsonPath"] == "$.claims[0].evidence[0]"
+    assert validation_error["actual"] == {"lineStart": 2, "lineEnd": 2}
+    assert validation_error["evidenceRange"] == {"lineStart": 2, "lineEnd": 2}
 
 
 def test_long_response_preview_is_bounded(tmp_path):

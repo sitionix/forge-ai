@@ -222,7 +222,7 @@ def test_target_prompt_renderer_uses_policy_selected_prompt_id_without_code_chan
     builder = LlmEnrichmentInputBuilder(policy=custom_policy)
 
     payload = builder.build(context=context, registry=registry, target=target, budget_chars=50000)
-    prompt = renderer.render(payload, repair_prompt="Use the same target input.", contract=context.graph_contract)
+    prompt = renderer.render(payload, contract=context.graph_contract)
     rendered_input = _llm_input_from_prompt(prompt)
     captured: list[dict[str, object]] = []
 
@@ -251,7 +251,6 @@ def test_target_prompt_renderer_uses_policy_selected_prompt_id_without_code_chan
     assert context.graph_contract.prompt_id == prompt_id
     assert "Custom target prompt from policy fixture." in prompt
     assert "Custom target prompt from policy fixture." in captured_prompt
-    assert "Use the same target input." in prompt
     assert "shape-from-policy" in prompt
     assert rendered_input["responseShape"]["claims"][0]["summary"] == "shape-from-policy"
     assert captured_input["responseShape"]["claims"][0]["summary"] == "shape-from-policy"
@@ -346,6 +345,57 @@ def test_target_response_validator_rejects_old_fields_invalid_values_refs_and_ev
     assert any(detail.get("jsonPath") == path for detail in parsed.error_details)
 
 
+def test_target_response_validator_collects_all_evidence_errors_without_fail_fast():
+    payload, contract = _target_payload()
+    _replace_content_lines(
+        payload,
+        [
+            "class Foo {",
+            "  //given",
+            "  void helper() {}",
+            "}",
+            "",
+        ],
+    )
+    payload["llmInput"]["targetAnchor"]["lineEnd"] = 3
+    response = {
+        "claims": [
+            {
+                "claimKind": "RESPONSIBILITY",
+                "summary": "Handles the call.",
+                "evidence": [
+                    {"lineStart": 3, "lineEnd": 2},
+                    {"lineStart": 2, "lineEnd": 2},
+                ],
+            },
+            {
+                "claimKind": "RESPONSIBILITY",
+                "summary": "Uses outside evidence.",
+                "evidence": [{"lineStart": 4, "lineEnd": 4}],
+            },
+        ]
+    }
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    assert parsed.validation_report is not None
+    errors = parsed.validation_report["validationErrors"]
+    assert [item["code"] for item in errors] == [
+        "EVIDENCE_RANGE_INVERTED",
+        "EVIDENCE_NOT_MATERIAL",
+        "EVIDENCE_RANGE_OUTSIDE_TARGET",
+    ]
+    assert errors[0]["jsonPath"] == "$.claims[0].evidence[0]"
+    assert errors[0]["actual"] == {"lineStart": 3, "lineEnd": 2}
+    assert errors[0]["expected"] == "lineStart <= lineEnd"
+    assert errors[1]["jsonPath"] == "$.claims[0].evidence[1]"
+    assert errors[1]["actual"]["lineClass"] == "COMMENT_ONLY"
+    assert errors[2]["jsonPath"] == "$.claims[1].evidence[0]"
+    assert errors[2]["targetRange"] == {"lineStart": 2, "lineEnd": 3}
+    assert errors[2]["evidenceRange"] == {"lineStart": 4, "lineEnd": 4}
+
+
 def test_target_response_validator_accepts_minimal_claim_and_injects_backend_fields():
     payload, contract = _target_payload()
     response = {
@@ -377,14 +427,13 @@ def test_target_response_validator_rejects_callable_evidence_outside_target_rang
 
     assert isinstance(parsed, GraphAnalysisParseFailure)
     detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.claims[0].evidence[0]")
-    assert detail["reason"] == "Evidence line range is outside target anchor range."
+    assert detail["code"] == "EVIDENCE_RANGE_OUTSIDE_TARGET"
+    assert detail["message"] == "Evidence line range is outside target anchor range."
     assert detail["targetRef"] == "M1"
     assert detail["targetKind"] == "CALLABLE"
     assert detail["targetName"] == "call"
-    assert detail["targetLineStart"] == 2
-    assert detail["targetLineEnd"] == 2
-    assert detail["evidenceLineStart"] == 3
-    assert detail["evidenceLineEnd"] == 3
+    assert detail["targetRange"] == {"lineStart": 2, "lineEnd": 2}
+    assert detail["evidenceRange"] == {"lineStart": 3, "lineEnd": 3}
 
 
 def test_target_response_validator_rejects_type_evidence_outside_target_range():
@@ -403,7 +452,7 @@ def test_target_response_validator_rejects_type_evidence_outside_target_range():
 
     assert isinstance(parsed, GraphAnalysisParseFailure)
     detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.claims[0].evidence[0]")
-    assert detail["reason"] == "Evidence line range is outside target anchor range."
+    assert detail["code"] == "EVIDENCE_RANGE_OUTSIDE_TARGET"
     assert detail["targetKind"] == "TYPE"
 
 
@@ -416,9 +465,35 @@ def test_target_response_validator_reports_inverted_evidence_range():
 
     assert isinstance(parsed, GraphAnalysisParseFailure)
     detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.claims[0].evidence[0]")
-    assert detail["reason"] == "Evidence line range is inverted: lineStart must be <= lineEnd."
+    assert detail["code"] == "EVIDENCE_RANGE_INVERTED"
+    assert detail["message"] == "Evidence line range is inverted: lineStart must be <= lineEnd."
+    assert detail["actual"] == {"lineStart": 3, "lineEnd": 2}
     assert detail["expected"] == "lineStart <= lineEnd"
-    assert "inverted" in parsed.message
+    assert "EVIDENCE_RANGE_INVERTED" in parsed.message
+
+
+def test_target_response_validator_rejects_comment_only_callable_evidence():
+    payload, contract = _target_payload()
+    _replace_content_lines(
+        payload,
+        [
+            "class Foo {",
+            "  //given",
+            "  void helper() {}",
+            "}",
+            "",
+        ],
+    )
+    response = _valid_target_response()
+    response["claims"][0]["evidence"] = [{"lineStart": 2, "lineEnd": 2}]
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.claims[0].evidence[0]")
+    assert detail["code"] == "EVIDENCE_NOT_MATERIAL"
+    assert detail["actual"]["lineClass"] == "COMMENT_ONLY"
+    assert detail["expected"] == "Evidence must cite material code lines that support the claim."
 
 
 def test_target_response_validator_rejects_closing_brace_only_callable_evidence():
@@ -431,7 +506,28 @@ def test_target_response_validator_rejects_closing_brace_only_callable_evidence(
 
     assert isinstance(parsed, GraphAnalysisParseFailure)
     detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.claims[0].evidence[0]")
-    assert "non-empty callable body line" in detail["reason"]
+    assert detail["code"] == "EVIDENCE_NOT_MATERIAL"
+    assert detail["actual"]["lineClass"] == "CLOSING_BRACE_ONLY"
+    assert detail["expected"] == "Evidence must cite material code lines that support the claim."
+
+
+def test_target_response_validator_collects_old_contract_fields_and_semantic_edges():
+    payload, contract = _target_payload()
+    response = _valid_target_response()
+    response["semanticEdges"] = []
+    response["claims"][0]["confidence"] = 0.8
+
+    parsed = TargetResponseParserValidator().parse(json.dumps(response), payload=payload, line_count=5, contract=contract)
+
+    assert isinstance(parsed, GraphAnalysisParseFailure)
+    by_path = {item["jsonPath"]: item for item in parsed.error_details}
+    assert by_path["$.semanticEdges"]["code"] == "SEMANTIC_EDGES_RETURNED"
+    assert by_path["$.claims[0].confidence"]["code"] == "OLD_CONTRACT_FIELD_RETURNED"
+    assert parsed.validation_report is not None
+    assert [item["code"] for item in parsed.validation_report["validationErrors"]] == [
+        "SEMANTIC_EDGES_RETURNED",
+        "OLD_CONTRACT_FIELD_RETURNED",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -505,82 +601,146 @@ def test_target_response_validator_rejects_static_owned_edges_from_llm():
     assert isinstance(parsed, GraphAnalysisParseFailure)
     assert parsed.code == "ANALYSIS_AI_SCHEMA_INVALID"
     detail = next(item for item in parsed.error_details if item.get("jsonPath") == "$.semanticEdges")
+    assert detail["code"] == "SEMANTIC_EDGES_RETURNED"
     assert detail["actual"] == "semanticEdges"
 
 
-def test_repair_prompt_is_claims_only_when_model_returns_semantic_edges():
-    policy = load_analysis_policy(POLICY_PATH)
+def test_validation_feedback_prompt_for_old_fields_includes_only_observed_field_errors():
     payload, _ = _target_payload_for_kind("FILE")
-    invalid_response = {
-        "claims": [],
-        "semanticEdges": [
-            {
-                "edgeType": "DEPENDS_ON",
-                "toRef": "FIELD1",
-                "evidence": [{"lineStart": 3, "lineEnd": 3}],
-            }
-        ],
-    }
     error = KnowledgeError(
         "ANALYSIS_AI_SCHEMA_INVALID",
-        "AI analyzer response does not match target-anchor graph schema.",
+        "AI analyzer response failed target-anchor validation.",
         error_details=[
             {
-                "errorType": "SCHEMA_VALIDATION_ERROR",
+                "code": "SEMANTIC_EDGES_RETURNED",
+                "errorType": "SEMANTIC_EDGES_RETURNED",
                 "jsonPath": "$.semanticEdges",
-                "message": "Unknown field is not allowed by the target-anchor response contract.",
+                "message": "Unknown or removed field is not allowed by the target-anchor claims-only response contract.",
                 "actual": "semanticEdges",
+                "expected": "no extra fields",
+            },
+            {
+                "code": "OLD_CONTRACT_FIELD_RETURNED",
+                "errorType": "OLD_CONTRACT_FIELD_RETURNED",
+                "jsonPath": "$.claims[0].confidence",
+                "message": "Unknown or removed field is not allowed by the target-anchor claims-only response contract.",
+                "actual": "confidence",
                 "expected": "no extra fields",
             }
         ],
-        raw_preview=json.dumps(invalid_response),
+        raw_preview=json.dumps({"claims": [{"confidence": 0.8}], "semanticEdges": []}),
     )
     supervisor = object.__new__(AnalysisSupervisor)
-    supervisor.graph_contract_provider = GraphContractProvider(policy=policy)
 
-    prompt = supervisor._repair_prompt(payload, error, 2, 3)
+    feedback = supervisor._validation_feedback_prompt(payload, error, 2, 3)
+    prompt = TargetPromptRenderer().render(payload, repair_prompt=feedback)
 
-    assert "Target response contract is claims-only:" in prompt
-    assert "targetRange" in prompt
-    assert 'Return claims only: {"claims": [...]} or {"claims": []}.' in prompt
-    assert "semanticEdges are not accepted." in prompt
-    assert "Convert useful information into grounded claims" in prompt
-    assert "Do not return graph topology, refs, edgeType, toRef, unresolvedStatus, or unresolvedTarget." in prompt
+    assert "Structured validationErrors:" in prompt
+    assert "SEMANTIC_EDGES_RETURNED" in prompt
+    assert "OLD_CONTRACT_FIELD_RETURNED" in prompt
+    assert "$.semanticEdges" in prompt
+    assert "$.claims[0].confidence" in prompt
+    assert "Fix only the listed validation errors." in prompt
+    assert "Remove invalid fields" not in prompt
+    assert "Convert useful information into grounded claims" not in prompt
     assert "edgeOptions" not in prompt
     assert "endpointRules" not in prompt
 
 
-def test_repair_prompt_includes_target_range_for_outside_target_evidence():
-    policy = load_analysis_policy(POLICY_PATH)
+def test_validation_feedback_prompt_for_inverted_range_contains_no_unrelated_rules():
     payload, _ = _target_payload()
     error = KnowledgeError(
         "ANALYSIS_AI_SCHEMA_INVALID",
-        "AI analyzer response does not match target-anchor graph schema.",
+        "AI analyzer response failed target-anchor validation.",
         error_details=[
             {
-                "errorType": "GRAPH_VALIDATION_ERROR",
+                "code": "EVIDENCE_RANGE_INVERTED",
+                "errorType": "EVIDENCE_RANGE_INVERTED",
                 "jsonPath": "$.claims[0].evidence[0]",
-                "reason": "Evidence line range is outside target anchor range.",
-                "actual": {"lineStart": 3, "lineEnd": 3},
-                "expected": "2 <= lineStart <= lineEnd <= 2",
-                "targetLineStart": 2,
-                "targetLineEnd": 2,
-                "evidenceLineStart": 3,
-                "evidenceLineEnd": 3,
+                "message": "Evidence line range is inverted: lineStart must be <= lineEnd.",
+                "actual": {"lineStart": 55, "lineEnd": 46},
+                "expected": "lineStart <= lineEnd",
+                "evidenceRange": {"lineStart": 55, "lineEnd": 46},
             }
         ],
-        raw_preview=json.dumps({"claims": [{"claimKind": "RESPONSIBILITY", "summary": "wrong", "evidence": [{"lineStart": 3, "lineEnd": 3}]}]}),
+        raw_preview=json.dumps({"claims": [{"claimKind": "RESPONSIBILITY", "summary": "wrong", "evidence": [{"lineStart": 55, "lineEnd": 46}]}]}),
     )
     supervisor = object.__new__(AnalysisSupervisor)
-    supervisor.graph_contract_provider = GraphContractProvider(policy=policy)
 
-    prompt = supervisor._repair_prompt(payload, error, 2, 3)
+    feedback = supervisor._validation_feedback_prompt(payload, error, 2, 3)
+    prompt = TargetPromptRenderer().render(payload, repair_prompt=feedback)
 
+    assert "EVIDENCE_RANGE_INVERTED" in prompt
     assert "$.claims[0].evidence[0]" in prompt
-    assert "Target range: 2-2." in prompt
-    assert "Evidence range: 3-3." in prompt
-    assert "every evidence line range must stay inside the current targetAnchor" in prompt
-    assert "remove the claim" in prompt
+    assert '"lineStart": 55' in prompt
+    assert '"lineEnd": 46' in prompt
+    assert "lineStart <= lineEnd" in prompt
+    assert "semanticEdges" not in prompt
+    assert "toRef" not in prompt
+    assert "topology" not in prompt
+    assert "COMMENT_ONLY" not in prompt
+    assert "CLOSING_BRACE_ONLY" not in prompt
+
+
+def test_validation_feedback_prompt_includes_exactly_multiple_validation_errors():
+    payload, _ = _target_payload()
+    error = KnowledgeError(
+        "ANALYSIS_AI_SCHEMA_INVALID",
+        "AI analyzer response failed target-anchor validation.",
+        error_details=[
+            {"code": "EVIDENCE_RANGE_INVERTED", "jsonPath": "$.claims[0].evidence[0]", "message": "inverted", "actual": {"lineStart": 3, "lineEnd": 2}, "expected": "lineStart <= lineEnd"},
+            {"code": "EVIDENCE_NOT_MATERIAL", "jsonPath": "$.claims[0].evidence[1]", "message": "comment", "actual": {"lineStart": 2, "lineEnd": 2, "lineClass": "COMMENT_ONLY"}, "expected": "material code lines"},
+            {"code": "EVIDENCE_RANGE_OUTSIDE_TARGET", "jsonPath": "$.claims[1].evidence[0]", "message": "outside", "actual": {"lineStart": 4, "lineEnd": 4}, "expected": "target range"},
+        ],
+        raw_preview=json.dumps({"claims": []}),
+    )
+    supervisor = object.__new__(AnalysisSupervisor)
+
+    feedback = supervisor._validation_feedback_prompt(payload, error, 2, 3)
+    marker = "Structured validationErrors:\n"
+    validation_json = feedback.split(marker, 1)[1].split("\nReturn corrected JSON only.", 1)[0]
+    errors = json.loads(validation_json)
+
+    assert [item["code"] for item in errors] == [
+        "EVIDENCE_RANGE_INVERTED",
+        "EVIDENCE_NOT_MATERIAL",
+        "EVIDENCE_RANGE_OUTSIDE_TARGET",
+    ]
+
+
+def test_validation_feedback_prompt_for_json_parse_error_contains_no_evidence_rules():
+    payload, _ = _target_payload()
+    error = KnowledgeError(
+        "ANALYSIS_AI_INVALID_JSON",
+        "JSON parse error at line 1 column 2.",
+        error_details=[
+            {
+                "code": "JSON_PARSE_ERROR",
+                "errorType": "JSON_PARSE_ERROR",
+                "jsonPath": "$",
+                "message": "JSON parse error at line 1 column 2: Expecting property name enclosed in double quotes",
+                "actual": {"line": 1, "column": 2, "charPosition": 1},
+                "expected": "one valid JSON object",
+                "line": 1,
+                "column": 2,
+                "charPosition": 1,
+            }
+        ],
+        raw_preview="{",
+    )
+    supervisor = object.__new__(AnalysisSupervisor)
+
+    feedback = supervisor._validation_feedback_prompt(payload, error, 2, 3)
+    prompt = TargetPromptRenderer().render(payload, repair_prompt=feedback)
+
+    assert "JSON_PARSE_ERROR" in prompt
+    assert "line 1 column 2" in prompt
+    assert "Output must be one valid JSON object." in prompt
+    assert "Corrected response must match the claims-only response shape." in prompt
+    assert "Fix only the listed validation errors." not in prompt
+    assert "EVIDENCE_RANGE" not in prompt
+    assert "material code lines" not in prompt
+    assert "lineStart <= lineEnd" not in prompt
 
 
 def test_target_enrichment_package_exports_public_api_without_circular_imports():
@@ -836,6 +996,11 @@ def _valid_target_response():
             }
         ]
     }
+
+
+def _replace_content_lines(payload: dict, lines: list[str]) -> None:
+    payload["llmInput"]["file"]["lineCount"] = len(lines)
+    payload["llmInput"]["file"]["contentLines"] = [{"line": index, "text": text} for index, text in enumerate(lines, start=1)]
 
 
 def _mixed_anchor_graph():

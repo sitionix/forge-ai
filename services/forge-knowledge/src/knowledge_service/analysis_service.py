@@ -626,27 +626,27 @@ class AnalysisSupervisor:
         row: Any = None,
     ):
         attempts = max(1, self.config.analysis_max_attempts_per_file)
-        repair_attempts = max(0, self.config.analysis_repair_attempts_per_file)
+        validation_feedback_attempts = max(0, self.config.analysis_repair_attempts_per_file)
         diagnostics: List[Dict[str, Any]] = []
-        repair_used = 0
+        validation_feedback_used = 0
         last_error: KnowledgeError | None = None
         for attempt in range(1, attempts + 1):
-            repair_prompt = None
+            validation_feedback_prompt = None
             if (
                 last_error is not None
                 and last_error.code in {"ANALYSIS_AI_INVALID_JSON", "ANALYSIS_AI_SCHEMA_INVALID", "ANALYSIS_AI_EMPTY_RESPONSE", "ANALYSIS_AI_BAD_RESPONSE"}
-                and repair_used < repair_attempts
+                and validation_feedback_used < validation_feedback_attempts
             ):
-                repair_prompt = self._repair_prompt(payload, last_error, attempt, attempts)
-                repair_used += 1
+                validation_feedback_prompt = self._validation_feedback_prompt(payload, last_error, attempt, attempts)
+                validation_feedback_used += 1
             try:
                 context = self._runtime_context(job_id, row, payload, attempt)
                 if context is None:
-                    pending = analyzer.analyze(payload, line_count, repair_prompt)
+                    pending = analyzer.analyze(payload, line_count, validation_feedback_prompt)
                     result = await pending if inspect.isawaitable(pending) else pending
                 else:
                     with analysis_runtime_context(context):
-                        pending = analyzer.analyze(payload, line_count, repair_prompt)
+                        pending = analyzer.analyze(payload, line_count, validation_feedback_prompt)
                         result = await pending if inspect.isawaitable(pending) else pending
                 if attempt > 1:
                     retry_success = {
@@ -737,73 +737,50 @@ class AnalysisSupervisor:
         except (TypeError, ValueError):
             return None
 
-    def _repair_prompt(self, payload: Dict[str, Any], last_error: KnowledgeError, attempt: int, attempts: int) -> str:
+    def _validation_feedback_prompt(self, payload: Dict[str, Any], last_error: KnowledgeError, attempt: int, attempts: int) -> str:
         details = self._bounded_error_details(self._error_details(last_error))
-        lines = [
-            "Your previous response was invalid.",
-            f"You are repairing attempt {attempt} of {attempts} for this same file.",
-            "Exact errors to correct:",
+        validation_errors = details or [
+            {
+                "code": getattr(last_error, "code", "ANALYSIS_AI_RESPONSE_INVALID"),
+                "jsonPath": "$",
+                "message": getattr(last_error, "message", str(last_error)),
+                "expected": "valid claims-only JSON response",
+            }
         ]
-        if details:
-            lines.extend(f"- {self._format_error_detail(detail)}" for detail in details[:10])
+        json_parse_only = bool(validation_errors) and all(str(item.get("code") or item.get("errorType")) == "JSON_PARSE_ERROR" for item in validation_errors)
+        lines = [
+            f"Validation feedback retry attempt {attempt} of {attempts}.",
+            "Structured validationErrors:",
+            self._json_for_prompt(validation_errors, limit=6000),
+        ]
+        if json_parse_only:
+            lines.extend(
+                [
+                    "Output must be one valid JSON object.",
+                    "Corrected response must match the claims-only response shape.",
+                    "Return corrected JSON only.",
+                ]
+            )
         else:
-            lines.append(f"- {last_error.code}: {last_error.message}")
+            lines.extend(
+                [
+                    "Return corrected JSON only.",
+                    "Fix only the listed validation errors.",
+                    "If a claim cannot be supported with valid evidence, remove that claim.",
+                    "Do not add unrelated fields.",
+                ]
+            )
         preview = self._error_preview(last_error)
         if preview:
-            lines.extend(["Bounded invalid response preview:", preview])
-        contract = self.graph_contract_provider.resolve_payload(payload)
-        llm_input = payload.get("llmInput") if isinstance(payload, dict) else None
-        allowed_values = llm_input.get("allowedValues") if isinstance(llm_input, dict) else None
-        target_anchor = llm_input.get("targetAnchor") if isinstance(llm_input, dict) else None
-        target_ref = payload.get("targetRef")
-        target_kind = target_anchor.get("kind") if isinstance(target_anchor, dict) else payload.get("targetKind")
-        target_name = target_anchor.get("name") if isinstance(target_anchor, dict) else None
-        target_range = {
-            "lineStart": target_anchor.get("lineStart") if isinstance(target_anchor, dict) else None,
-            "lineEnd": target_anchor.get("lineEnd") if isinstance(target_anchor, dict) else None,
-            "bodyLineStart": target_anchor.get("bodyLineStart") if isinstance(target_anchor, dict) else None,
-            "bodyLineEnd": target_anchor.get("bodyLineEnd") if isinstance(target_anchor, dict) else None,
-        }
-        allowed_claim_kinds = []
-        if isinstance(allowed_values, dict):
-            allowed_claim_kinds = [str(item) for item in allowed_values.get("claimKind") or [] if isinstance(item, str)]
-        lines.extend(
-            [
-                "Target response contract is claims-only:",
-                self._json_for_prompt(
-                    {
-                        "targetRef": target_ref,
-                        "targetKind": target_kind,
-                        "targetName": target_name,
-                        "targetRange": target_range,
-                        "claimKind": allowed_claim_kinds or list(contract.allowed_claim_kinds),
-                    },
-                    limit=1200,
-                ),
-            ]
-        )
-        lines.extend(
-            [
-                "Return ONLY corrected JSON matching the requested schema.",
-                "Return claims only: {\"claims\": [...]} or {\"claims\": []}.",
-                "semanticEdges are not accepted. Convert useful information into grounded claims if appropriate, otherwise remove it.",
-                "Do not return graph topology, refs, edgeType, toRef, unresolvedStatus, or unresolvedTarget.",
-                "Remove invalid fields instead of trying to preserve them.",
-                "Do not add schemaVersion, localId, targetRef, fromRef, resolutionStatus, confidence, evidence.text, or diagnostics.",
-                "For CALLABLE targets, every evidence line range must stay inside the current targetAnchor lineStart/lineEnd.",
-                "Use method body evidence for callable responsibility, side effect, and data access claims.",
-                "If a claim needs evidence from another method, remove the claim instead of using that evidence.",
-                "No markdown.",
-                "No prose.",
-                "No comments.",
-                "Keep claims grounded in the provided contentLines and source evidence.",
-            ]
-        )
+            lines.extend(["Previous invalid response:", preview])
         return "\n".join(lines)
 
+    def _repair_prompt(self, payload: Dict[str, Any], last_error: KnowledgeError, attempt: int, attempts: int) -> str:
+        return self._validation_feedback_prompt(payload, last_error, attempt, attempts)
+
     def _format_error_detail(self, detail: Dict[str, Any]) -> str:
-        error_type = str(detail.get("errorType") or "ERROR")
-        if error_type == "JSON_PARSE_ERROR":
+        error_code = str(detail.get("code") or detail.get("errorType") or "ERROR")
+        if error_code == "JSON_PARSE_ERROR":
             position = detail.get("charPosition")
             position_text = f" char {position}" if position is not None else ""
             truncated = detail.get("responseTruncated")
@@ -812,39 +789,33 @@ class AnalysisSupervisor:
                 f"JSON parse error at line {detail.get('line')} column {detail.get('column')}{position_text}: "
                 f"{detail.get('message')}.{truncated_text}"
             )
-        if error_type == "SCHEMA_VALIDATION_ERROR":
-            path = detail.get("jsonPath") or "$"
-            missing = detail.get("missingRequiredField")
-            if missing:
-                return f"{path} is missing required field {missing}. Expected: {detail.get('expected')}."
-            text = f"{path}"
-            if detail.get("field"):
-                text += f" ({detail.get('field')})"
-            if "actual" in detail:
-                text += f" = {self._json_for_prompt(detail.get('actual'))}"
-            if detail.get("expected"):
-                text += f" is invalid. Expected: {detail.get('expected')}."
-            allowed = detail.get("allowedValues") or []
-            if allowed:
-                text += f" Allowed values: {self._json_for_prompt(allowed)}."
-            if detail.get("message"):
-                text += f" {detail.get('message')}"
-            return text
-        if error_type == "GRAPH_VALIDATION_ERROR":
-            text = f"{detail.get('jsonPath') or detail.get('graphEntityId') or '$'}: {detail.get('reason') or detail.get('message')}"
-            if detail.get("actual") is not None:
-                text += f" Actual: {self._json_for_prompt(detail.get('actual'))}."
-            if detail.get("expected"):
-                text += f" Expected: {detail.get('expected')}."
-            if detail.get("targetLineStart") is not None and detail.get("targetLineEnd") is not None:
-                text += f" Target range: {detail.get('targetLineStart')}-{detail.get('targetLineEnd')}."
-            if detail.get("evidenceLineStart") is not None and detail.get("evidenceLineEnd") is not None:
-                text += f" Evidence range: {detail.get('evidenceLineStart')}-{detail.get('evidenceLineEnd')}."
-            allowed = detail.get("allowedValues") or []
-            if allowed:
-                text += f" Allowed values: {self._json_for_prompt(allowed)}."
-            return text
-        return f"{error_type}: {detail.get('message') or detail}"
+        path = detail.get("jsonPath") or detail.get("graphEntityId") or "$"
+        text = f"{error_code} at {path}"
+        if detail.get("message") or detail.get("reason"):
+            text += f": {detail.get('message') or detail.get('reason')}"
+        missing = detail.get("missingRequiredField")
+        if missing:
+            text += f" Missing required field: {missing}."
+        if detail.get("field"):
+            text += f" Field: {detail.get('field')}."
+        if detail.get("actual") is not None:
+            text += f" Actual: {self._json_for_prompt(detail.get('actual'))}."
+        if detail.get("expected"):
+            text += f" Expected: {detail.get('expected')}."
+        target_range = detail.get("targetRange")
+        if isinstance(target_range, dict):
+            text += f" Target range: {target_range.get('lineStart')}-{target_range.get('lineEnd')}."
+        elif detail.get("targetLineStart") is not None and detail.get("targetLineEnd") is not None:
+            text += f" Target range: {detail.get('targetLineStart')}-{detail.get('targetLineEnd')}."
+        evidence_range = detail.get("evidenceRange")
+        if isinstance(evidence_range, dict):
+            text += f" Evidence range: {evidence_range.get('lineStart')}-{evidence_range.get('lineEnd')}."
+        elif detail.get("evidenceLineStart") is not None and detail.get("evidenceLineEnd") is not None:
+            text += f" Evidence range: {detail.get('evidenceLineStart')}-{detail.get('evidenceLineEnd')}."
+        allowed = detail.get("allowedValues") or []
+        if allowed:
+            text += f" Allowed values: {self._json_for_prompt(allowed)}."
+        return text
 
     def _json_for_prompt(self, value: Any, limit: int = 240) -> str:
         text = json.dumps(value, ensure_ascii=False, default=str)
@@ -854,6 +825,7 @@ class AnalysisSupervisor:
 
     def _error_details(self, exc: Exception) -> List[Dict[str, Any]]:
         details = getattr(exc, "details", {}) or {}
+        validation_report = details.get("validation_report") or details.get("validationReport")
         raw_details = (
             details.get("error_details")
             or details.get("errorDetails")
@@ -861,6 +833,8 @@ class AnalysisSupervisor:
             or details.get("validationErrors")
             or []
         )
+        if not raw_details and isinstance(validation_report, dict):
+            raw_details = validation_report.get("validationErrors") or []
         if isinstance(raw_details, dict):
             raw_details = [raw_details]
         return [dict(item) for item in raw_details if isinstance(item, dict)]
@@ -893,12 +867,23 @@ class AnalysisSupervisor:
 
     def _error_metadata(self, exc: Exception) -> Dict[str, Any]:
         details = self._bounded_error_details(self._error_details(exc))
+        exc_details = getattr(exc, "details", {}) or {}
+        validation_report = exc_details.get("validation_report") or exc_details.get("validationReport")
         metadata: Dict[str, Any] = {}
+        if isinstance(validation_report, dict):
+            metadata["validationReport"] = validation_report
+            validation_errors = validation_report.get("validationErrors")
+            if isinstance(validation_errors, list):
+                metadata["validationErrors"] = self._bounded_error_details([dict(item) for item in validation_errors if isinstance(item, dict)])
+            for key in ("targetRef", "targetKind", "targetName", "targetRange"):
+                if validation_report.get(key) is not None:
+                    metadata[key] = validation_report.get(key)
         if details:
             metadata["errorDetails"] = details
             metadata["errorSummary"] = self._error_summary(exc)
             first = details[0]
             for key in (
+                "code",
                 "errorType",
                 "message",
                 "line",
@@ -913,6 +898,12 @@ class AnalysisSupervisor:
                 "missingRequiredField",
                 "reason",
                 "graphEntityId",
+                "targetRef",
+                "targetKind",
+                "targetName",
+                "targetRange",
+                "evidenceRange",
+                "responseHash",
             ):
                 if first.get(key) is not None:
                     metadata[key] = first.get(key)
