@@ -79,11 +79,11 @@ class FakeGraphStore:
             "verifiedPaths": [],
         }
 
-    def load_call_adjacency_for_sources(self, source_scopes, max_edges=2000, max_evidence=25, include_structural=False):
+    def load_call_adjacency_for_sources(self, source_scopes, max_edges=2000, max_evidence=25):
         self.adjacency_loads += 1
         scopes = {(scope["sourceId"], scope.get("graphId") or "graph-a") for scope in source_scopes}
         nodes = [dict(node) for node in self.nodes if (node.get("sourceId"), node.get("graphId")) in scopes]
-        edges = [dict(edge) for edge in self.edges if (edge.get("sourceId"), edge.get("graphId")) in scopes]
+        edges = [dict(edge) for edge in self.edges if (edge.get("sourceId"), edge.get("graphId")) in scopes and edge.get("edgeType") == "CALLS"]
         truncated = self.adjacency_truncated or len(edges) > max_edges
         edges = edges[:max_edges]
         evidence = [dict(item) for item in self.evidence[:max_evidence]]

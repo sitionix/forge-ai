@@ -2077,7 +2077,6 @@ class AnalysisStore:
         source_scopes: List[Dict[str, Any]],
         max_edges: int = 2000,
         max_evidence: int = 25,
-        include_structural: bool = False,
     ) -> Dict[str, Any]:
         self.init()
         safe_max_edges = max(1, min(int(max_edges or 1), 10000))
@@ -2098,10 +2097,6 @@ class AnalysisStore:
         truncated = False
         contract = graph_query_contract()
         current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
-        edge_types = [contract.calls_edge_type]
-        if include_structural:
-            edge_types.extend([contract.required_edge_type("DECLARES"), contract.required_edge_type("USES_FIELD")])
-        edge_type_sql, edge_type_params = sql_in_clause(edge_types)
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             remaining_edges = safe_max_edges + 1
             edge_ids_by_source: Dict[str, Set[str]] = {}
@@ -2129,13 +2124,13 @@ class AnalysisStore:
                         LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
                         LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
                         WHERE e.source_id = ?
-                          AND e.edge_type IN ({edge_type_sql})
+                          AND e.edge_type = ?
                           AND e.status IN ({current_status_sql})
                           AND (e.from_node_id IN ({frontier_placeholders}) OR e.to_node_id IN ({frontier_placeholders}))
                         ORDER BY e.id
                         LIMIT ?
                         """,
-                        [source_id, *edge_type_params, *current_status_params, *frontier_list, *frontier_list, remaining_edges],
+                        [source_id, contract.calls_edge_type, *current_status_params, *frontier_list, *frontier_list, remaining_edges],
                     ).fetchall()
                     if len(edge_rows) >= remaining_edges:
                         truncated = True
