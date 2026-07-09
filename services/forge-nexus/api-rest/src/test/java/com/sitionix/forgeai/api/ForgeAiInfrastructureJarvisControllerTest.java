@@ -59,12 +59,18 @@ class ForgeAiInfrastructureJarvisControllerTest {
 
     @Test
     void querySerializesTypedRequestAndDelegatesToGenericProxyRoute() {
-        this.stub("{\"queryId\":\"q1\",\"status\":\"OK\",\"intent\":\"AUTO\",\"matchedSources\":[],\"matchedNodes\":[],\"flowPaths\":[],\"nodes\":[],\"edges\":[],\"verifiedPaths\":[],\"evidence\":[],\"unresolved\":[],\"external\":[],\"coverage\":{},\"diagnostics\":[]}");
-        final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest("JarvisGateway", "AUTO");
+        this.stub("{\"queryId\":\"q1\",\"status\":\"OK\",\"intent\":\"UNKNOWN\",\"matchedSources\":[],\"matchedNodes\":[],\"flowPaths\":[],\"nodes\":[],\"edges\":[],\"verifiedPaths\":[],\"evidence\":[],\"unresolved\":[],\"external\":[],\"coverage\":{},\"diagnostics\":[]}");
+        final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
+                "JarvisGateway",
+                JarvisKnowledgeQueryIntent.UNKNOWN,
+                "en",
+                false,
+                10
+        );
 
         this.controller.query(body, this.headers, this.request);
 
-        final byte[] expectedBody = "{\"query\":\"JarvisGateway\",\"intent\":\"AUTO\"}".getBytes(StandardCharsets.UTF_8);
+        final byte[] expectedBody = "{\"queryText\":\"JarvisGateway\",\"intent\":\"UNKNOWN\",\"answerLanguage\":\"en\",\"includeTests\":false,\"maxFlows\":10}".getBytes(StandardCharsets.UTF_8);
         verify(this.transport).forward(
                 eq("jarvis.query"),
                 eq(Map.of()),
@@ -77,10 +83,14 @@ class ForgeAiInfrastructureJarvisControllerTest {
     @Test
     void queryPreservesSuccessfulFactualBundleBytes() throws Exception {
         this.stub("""
-                {"queryId":"q1","status":"OK","intent":"AUTO","matchedSources":[{"sourceId":"source-a","displayName":"Source A","score":0.98}],"matchedNodes":[{"sourceId":"source-a","nodeId":"n1","stableKey":"source-a|src/App.tsx|FILE","nodeKind":"FILE","label":"App.tsx","score":0.98,"matchReasons":["NAME_MATCH"]}],"flowPaths":[{"flowId":"flow-1","sourceId":"source-a","matchedNodeIds":["n1"],"nodeIds":["n1","n2"],"edgeIds":["e1"],"boundaryEdgeIds":[],"evidenceIds":["ev1"],"nodes":[{"id":"n1","sourceId":"source-a","nodeKind":"FILE","label":"App.tsx"},{"id":"n2","sourceId":"source-a","nodeKind":"CALLABLE","label":"run"}],"edges":[{"id":"e1","sourceId":"source-a","fromNodeId":"n1","toNodeId":"n2","edgeType":"CALLS"}],"evidence":[{"id":"ev1","sourceId":"source-a","nodeId":"n1","edgeId":"e1"}],"complete":true,"stopReason":"TERMINAL_NODE"}],"nodes":[{"id":"n1","sourceId":"source-a","nodeKind":"FILE","label":"App.tsx"},{"id":"n2","sourceId":"source-a","nodeKind":"CALLABLE","label":"run"}],"edges":[{"id":"e1","sourceId":"source-a","fromNodeId":"n1","toNodeId":"n2","edgeType":"CALLS"}],"verifiedPaths":[],"evidence":[{"id":"ev1","sourceId":"source-a","nodeId":"n1","edgeId":"e1"}],"unresolved":[],"external":[],"coverage":{"searchedSourceCount":2,"matchedSourceCount":1,"matchedNodeCount":1,"flowPathCount":1,"nodeCount":2,"edgeCount":1,"evidenceCount":1,"truncated":false,"continuationAvailable":false},"diagnostics":[{"code":"RESULT_LIMIT_REACHED","severity":"INFO","message":"slice limited"}]}
+                {"queryId":"q1","status":"OK","intent":"UNKNOWN","matchedSources":[{"sourceId":"source-a","displayName":"Source A","score":0.98}],"matchedNodes":[{"sourceId":"source-a","nodeId":"n1","stableKey":"source-a|src/App.tsx|FILE","nodeKind":"FILE","label":"App.tsx","score":0.98,"matchReasons":["NAME_MATCH"]}],"flowPaths":[{"flowId":"flow-1","sourceId":"source-a","matchedNodeIds":["n1"],"nodeIds":["n1","n2"],"edgeIds":["e1"],"boundaryEdgeIds":[],"evidenceIds":["ev1"],"nodes":[{"id":"n1","sourceId":"source-a","nodeKind":"FILE","label":"App.tsx"},{"id":"n2","sourceId":"source-a","nodeKind":"CALLABLE","label":"run"}],"edges":[{"id":"e1","sourceId":"source-a","fromNodeId":"n1","toNodeId":"n2","edgeType":"CALLS"}],"evidence":[{"id":"ev1","sourceId":"source-a","nodeId":"n1","edgeId":"e1"}],"complete":true,"stopReason":"TERMINAL_NODE"}],"nodes":[{"id":"n1","sourceId":"source-a","nodeKind":"FILE","label":"App.tsx"},{"id":"n2","sourceId":"source-a","nodeKind":"CALLABLE","label":"run"}],"edges":[{"id":"e1","sourceId":"source-a","fromNodeId":"n1","toNodeId":"n2","edgeType":"CALLS"}],"verifiedPaths":[],"evidence":[{"id":"ev1","sourceId":"source-a","nodeId":"n1","edgeId":"e1"}],"unresolved":[],"external":[],"coverage":{"searchedSourceCount":2,"matchedSourceCount":1,"matchedNodeCount":1,"flowPathCount":1,"nodeCount":2,"edgeCount":1,"evidenceCount":1,"truncated":false,"continuationAvailable":false},"diagnostics":[{"code":"RESULT_LIMIT_REACHED","severity":"INFO","message":"slice limited"}]}
                 """);
 
-        final ResponseEntity<byte[]> result = this.controller.query(new JarvisKnowledgeQueryRequest("App.tsx", "AUTO"), this.headers, this.request).join();
+        final ResponseEntity<byte[]> result = this.controller.query(
+                new JarvisKnowledgeQueryRequest("App.tsx", JarvisKnowledgeQueryIntent.UNKNOWN, "en", false, 10),
+                this.headers,
+                this.request
+        ).join();
         final JarvisKnowledgeQueryResponse body = this.objectMapper.readValue(result.getBody(), JarvisKnowledgeQueryResponse.class);
 
         assertThat(body.queryId()).isEqualTo("q1");
@@ -100,12 +110,16 @@ class ForgeAiInfrastructureJarvisControllerTest {
 
     @Test
     void queryValidationErrorDoesNotProxyBlankQuery() throws Exception {
-        final ResponseEntity<byte[]> result = this.controller.query(new JarvisKnowledgeQueryRequest("   ", "AUTO"), this.headers, this.request).join();
+        final ResponseEntity<byte[]> result = this.controller.query(
+                new JarvisKnowledgeQueryRequest("   ", JarvisKnowledgeQueryIntent.UNKNOWN, "en", false, 10),
+                this.headers,
+                this.request
+        ).join();
 
         assertThat(result.getStatusCode().value()).isEqualTo(400);
         final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
         assertThat(body.get("title")).isEqualTo("VALIDATION_FAILED");
-        assertThat(body.get("details")).asString().contains("query");
+        assertThat(body.get("details")).asString().contains("queryText");
         verifyNoInteractions(this.transport);
     }
 

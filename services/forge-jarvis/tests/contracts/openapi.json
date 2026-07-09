@@ -94,22 +94,52 @@
         "title": "Intent",
         "type": "object"
       },
+      "JarvisQueryIntent": {
+        "description": "An enumeration.",
+        "enum": [
+          "FLOW_EXPLANATION",
+          "COMPONENT_USAGE",
+          "COMPONENT_RESPONSIBILITY",
+          "CODE_LOCATION",
+          "ARCHITECTURE_OVERVIEW",
+          "UNKNOWN"
+        ],
+        "title": "JarvisQueryIntent",
+        "type": "string"
+      },
       "JarvisQueryRequest": {
         "additionalProperties": false,
         "properties": {
-          "intent": {
-            "default": "AUTO",
-            "title": "Intent",
+          "answerLanguage": {
+            "minLength": 1,
+            "title": "Answerlanguage",
             "type": "string"
           },
-          "query": {
+          "includeTests": {
+            "title": "Includetests",
+            "type": "boolean"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/JarvisQueryIntent"
+          },
+          "maxFlows": {
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Maxflows",
+            "type": "integer"
+          },
+          "queryText": {
             "minLength": 1,
-            "title": "Query",
+            "title": "Querytext",
             "type": "string"
           }
         },
         "required": [
-          "query"
+          "queryText",
+          "intent",
+          "answerLanguage",
+          "includeTests",
+          "maxFlows"
         ],
         "title": "JarvisQueryRequest",
         "type": "object"

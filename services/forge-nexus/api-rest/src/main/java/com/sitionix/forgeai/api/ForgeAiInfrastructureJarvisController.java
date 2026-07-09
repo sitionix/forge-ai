@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.api.proxy.InfrastructureProxyTransport;
 import jakarta.servlet.http.HttpServletRequest;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import lombok.RequiredArgsConstructor;
@@ -64,12 +63,7 @@ public class ForgeAiInfrastructureJarvisController {
 
     private byte[] write(final JarvisKnowledgeQueryRequest body) {
         try {
-            final Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("query", body.query());
-            if (body.intent() != null) {
-                payload.put("intent", body.intent());
-            }
-            return this.objectMapper.writeValueAsBytes(payload);
+            return this.objectMapper.writeValueAsBytes(body);
         } catch (final JsonProcessingException exception) {
             throw new IllegalArgumentException("Jarvis query request could not be serialized.", exception);
         }
@@ -77,10 +71,22 @@ public class ForgeAiInfrastructureJarvisController {
 
     private ResponseEntity<byte[]> validate(final JarvisKnowledgeQueryRequest body) {
         if (body == null) {
-            return this.validationError("query must not be blank");
+            return this.validationError("queryText must not be blank");
         }
-        if (body.query() == null || body.query().isBlank()) {
-            return this.validationError("query must not be blank");
+        if (body.queryText() == null || body.queryText().isBlank()) {
+            return this.validationError("queryText must not be blank");
+        }
+        if (body.intent() == null) {
+            return this.validationError("intent is required");
+        }
+        if (body.answerLanguage() == null || body.answerLanguage().isBlank()) {
+            return this.validationError("answerLanguage must not be blank");
+        }
+        if (body.includeTests() == null) {
+            return this.validationError("includeTests is required");
+        }
+        if (body.maxFlows() == null || body.maxFlows() < 1 || body.maxFlows() > 10) {
+            return this.validationError("maxFlows must be between 1 and 10");
         }
         return null;
     }

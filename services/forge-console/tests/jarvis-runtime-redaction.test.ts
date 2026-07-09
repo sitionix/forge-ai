@@ -35,6 +35,16 @@ async function flushAsync() {
   await Promise.resolve();
 }
 
+function queryPayload(queryText: string) {
+  return {
+    queryText,
+    intent: 'UNKNOWN',
+    answerLanguage: 'en',
+    includeTests: false,
+    maxFlows: 10
+  };
+}
+
 describe('Jarvis runtime rendering', () => {
   it('PERF-CON-06 renders Jarvis responses without source content or command arrays', async () => {
     const dom = jarvisDom();
@@ -49,7 +59,7 @@ describe('Jarvis runtime rendering', () => {
         }
         return Promise.resolve({
           status: 'OK',
-          intent: 'AUTO',
+          intent: 'UNKNOWN',
           matchedSources: [{ sourceId: 'forge-ai', displayName: 'Forge AI', score: 0.95 }],
           matchedNodes: [{
             sourceId: 'forge-ai',
@@ -99,15 +109,15 @@ describe('Jarvis runtime rendering', () => {
     (dom.window.document.getElementById('jarvisCommandText') as HTMLTextAreaElement).value = 'run';
     await page.submitCommand({ preventDefault: () => undefined });
 
-	    const text = dom.window.document.body.textContent || '';
-	    expect(text).toContain('JarvisGateway');
-	    expect(text).toContain('src/JarvisGateway.java');
-	    expect(text).toContain('Flow Paths (1)');
-	    expect(text).toContain('Controller.create -> UseCase.execute -> Repository.save');
-	    expect(text).not.toContain('SECRET_SOURCE_CONTENT');
+    const text = dom.window.document.body.textContent || '';
+    expect(text).toContain('JarvisGateway');
+    expect(text).toContain('src/JarvisGateway.java');
+    expect(text).toContain('Flow Paths (1)');
+    expect(text).toContain('Controller.create -> UseCase.execute -> Repository.save');
+    expect(text).not.toContain('SECRET_SOURCE_CONTENT');
     expect(text).not.toContain('["bash"');
     expect(text).not.toContain('sleep 0.2');
-    expect(http.post).toHaveBeenCalledWith('/jarvis/query', { query: 'explain', intent: 'AUTO' }, expect.any(Object));
+    expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('explain'), expect.any(Object));
     page.dispose();
   });
 
@@ -117,7 +127,7 @@ describe('Jarvis runtime rendering', () => {
       get: vi.fn(() => Promise.resolve({ status: 'UP', model: {}, ollama: {}, actions: { count: 0 } })),
       post: vi.fn(() => Promise.resolve({
         status: 'NO_CANDIDATES',
-        intent: 'AUTO',
+        intent: 'UNKNOWN',
         matchedSources: [],
         matchedNodes: [],
         flowPaths: [],
@@ -150,7 +160,7 @@ describe('Jarvis runtime rendering', () => {
       get: vi.fn(() => Promise.resolve({ status: 'UP', model: {}, ollama: {}, actions: { count: 0 } })),
       post: vi.fn(() => Promise.resolve({
         status: 'OK',
-        intent: 'AUTO',
+        intent: 'UNKNOWN',
         matchedSources: [{ sourceId: 'svc', displayName: 'Service', score: 1 }],
         matchedNodes: [{
           sourceId: 'svc',
@@ -179,7 +189,7 @@ describe('Jarvis runtime rendering', () => {
     const text = dom.window.document.body.textContent || '';
     expect(text).toContain('Flow Paths (0)');
     expect(text).toContain('No verified CALLS path could be built.');
-    expect(http.post).toHaveBeenCalledWith('/jarvis/query', { query: 'lonely', intent: 'AUTO' }, expect.any(Object));
+    expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('lonely'), expect.any(Object));
     page.dispose();
   });
 

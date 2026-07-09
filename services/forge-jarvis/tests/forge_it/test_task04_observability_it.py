@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 from support import AsgiTestClient as TestClient
-from support import FakeKnowledgeClient, FakeModelClient, build_test_app, write_runtime_config
+from support import FakeKnowledgeClient, FakeModelClient, build_test_app, query_payload, write_runtime_config
 
 from jarvis_agent.knowledge_client import KnowledgeUnavailableError
 from jarvis_agent.ollama_client import OllamaUnavailableError
@@ -17,7 +17,7 @@ def test_it_obs_04_jarvis_observability_and_redaction(tmp_path):
         status = client.get("/api/v1/jarvis/status")
         actions = client.get("/api/v1/jarvis/actions")
         command = client.post("/api/v1/jarvis/command", json={"text": "check ollama"})
-        query = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"})
+        query = client.post("/api/v1/jarvis/query", json=query_payload("explain JarvisGateway"))
 
     for response in (status, actions, command, query):
         assert response.headers["x-correlation-id"]
@@ -33,8 +33,8 @@ def test_it_obs_05_jarvis_correlation_id_is_sanitized_and_forwarded(tmp_path):
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        unsafe = client.post("/api/v1/jarvis/query", json={"query": "explain"}, headers={"X-Correlation-Id": "unsafe value"})
-        safe = client.post("/api/v1/jarvis/query", json={"query": "explain"}, headers={"X-Correlation-Id": "corr-safe"})
+        unsafe = client.post("/api/v1/jarvis/query", json=query_payload("explain"), headers={"X-Correlation-Id": "unsafe value"})
+        safe = client.post("/api/v1/jarvis/query", json=query_payload("explain"), headers={"X-Correlation-Id": "corr-safe"})
 
     assert unsafe.headers["x-correlation-id"] != "unsafe value"
     assert safe.headers["x-correlation-id"] == "corr-safe"
@@ -49,7 +49,7 @@ def test_it_obs_06_jarvis_public_error_redaction(tmp_path):
 
     with TestClient(app) as client:
         command = client.post("/api/v1/jarvis/command", json={"text": "check ollama"})
-        query = client.post("/api/v1/jarvis/query", json={"query": "explain"})
+        query = client.post("/api/v1/jarvis/query", json=query_payload("explain"))
         invalid_command = client.post("/api/v1/jarvis/command", json={"text": "   "})
 
     assert command.status_code == 503

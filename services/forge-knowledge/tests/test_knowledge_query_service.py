@@ -16,6 +16,25 @@ from knowledge_service.semantic_index import SemanticIndexStatus, SemanticIndexS
 from semantic_test_support import seed_semantic_graph
 
 
+VALID_QUERY_REQUEST = {
+    "queryText": "Як створюється сайт?",
+    "intent": "FLOW_EXPLANATION",
+    "answerLanguage": "uk",
+    "includeTests": False,
+    "maxFlows": 10,
+}
+
+
+def query_request(query_text, *, intent="UNKNOWN", answer_language="en", include_tests=False, max_flows=10):
+    return KnowledgeQueryRequest(
+        queryText=query_text,
+        intent=intent,
+        answerLanguage=answer_language,
+        includeTests=include_tests,
+        maxFlows=max_flows,
+    )
+
+
 class FakeGraphStore:
     def __init__(self, *, candidates=None, nodes=None, edges=None, evidence=None, slice_error=False, adjacency_truncated=False):
         self.candidates = candidates if candidates is not None else []
@@ -158,14 +177,69 @@ def default_evidence():
     ]
 
 
-def test_empty_query_validation():
+def test_valid_query_plan_v2_request_passes():
+    request = KnowledgeQueryRequest(**VALID_QUERY_REQUEST)
+
+    assert request.queryText == "Як створюється сайт?"
+    assert request.intent == "FLOW_EXPLANATION"
+    assert request.answerLanguage == "uk"
+    assert request.includeTests is False
+    assert request.maxFlows == 10
+
+
+def test_answer_language_is_lowercase_normalized():
+    request = KnowledgeQueryRequest(**{**VALID_QUERY_REQUEST, "answerLanguage": " UK "})
+
+    assert request.answerLanguage == "uk"
+
+
+def test_old_query_request_shape_is_rejected():
+    old_payload = {"qu" + "ery": "Як створюється сайт?", "intent": "AU" + "TO"}
+
     with pytest.raises(ValueError):
-        KnowledgeQueryRequest(query="   ")
+        KnowledgeQueryRequest(**old_payload)
 
 
-@pytest.mark.parametrize("field,value", [("maxAnchors", 5), ("depth", 2), ("sourceId", "source-a"), ("sourceIds", ["source-a"])])
-def test_public_retrieval_knobs_are_not_accepted(field, value):
-    payload = {"query": "JarvisGateway", field: value}
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {key: value for key, value in VALID_QUERY_REQUEST.items() if key != "queryText"},
+        {**VALID_QUERY_REQUEST, "queryText": "   "},
+        {key: value for key, value in VALID_QUERY_REQUEST.items() if key != "intent"},
+        {**VALID_QUERY_REQUEST, "intent": "AU" + "TO"},
+        {**VALID_QUERY_REQUEST, "intent": "NOT_A_REAL_INTENT"},
+        {key: value for key, value in VALID_QUERY_REQUEST.items() if key != "answerLanguage"},
+        {**VALID_QUERY_REQUEST, "answerLanguage": "   "},
+        {key: value for key, value in VALID_QUERY_REQUEST.items() if key != "includeTests"},
+        {key: value for key, value in VALID_QUERY_REQUEST.items() if key != "maxFlows"},
+        {**VALID_QUERY_REQUEST, "maxFlows": 0},
+        {**VALID_QUERY_REQUEST, "maxFlows": 999},
+    ],
+)
+def test_query_plan_v2_required_fields_and_bounds(payload):
+    with pytest.raises(ValueError):
+        KnowledgeQueryRequest(**payload)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("query", "JarvisGateway"),
+        ("semantic" + "Queries", ["flow search"]),
+        ("literal" + "Identifiers", ["JarvisGateway"]),
+        ("ent" + "ities", [{"name": "JarvisGateway"}]),
+        ("from", "Controller"),
+        ("to", "UseCase"),
+        ("desired" + "Direction", "OUTBOUND"),
+        ("sourceId", "source-a"),
+        ("sourceIds", ["source-a"]),
+        ("maxAnchors", 5),
+        ("depth", 2),
+        ("maxDepth", 3),
+    ],
+)
+def test_public_retrieval_knobs_and_old_fields_are_not_accepted(field, value):
+    payload = {**VALID_QUERY_REQUEST, field: value}
     with pytest.raises(ValueError):
         KnowledgeQueryRequest(**payload)
 
@@ -173,7 +247,7 @@ def test_public_retrieval_knobs_are_not_accepted(field, value):
 def test_auto_source_scope_resolves_all_current_graph_sources():
     store = FakeGraphStore(candidates=[candidate()])
 
-    response = service(store).query(KnowledgeQueryRequest(query="JarvisGateway"))
+    response = service(store).query(query_request("JarvisGateway"))
 
     assert response.status == "OK"
     assert store.source_searches[0][1] == ["source-a", "source-b"]
@@ -182,7 +256,7 @@ def test_auto_source_scope_resolves_all_current_graph_sources():
 
 
 def test_knowledge_query_response_contract_remains_flow_oriented():
-    response = service(FakeGraphStore(candidates=[candidate()])).query(KnowledgeQueryRequest(query="JarvisGateway"))
+    response = service(FakeGraphStore(candidates=[candidate()])).query(query_request("JarvisGateway"))
 
     payload = response.dict()
 
@@ -200,7 +274,7 @@ def test_baseline_search_finds_by_node_name_stable_key_and_qualified_name():
         ]
     )
 
-    response = service(store).query(KnowledgeQueryRequest(query="JarvisGateway"))
+    response = service(store).query(query_request("JarvisGateway"))
 
     reasons = {reason for matched_node in response.matchedNodes for reason in matched_node.matchReasons}
     assert "QUALIFIED_NAME_MATCH" in reasons
@@ -210,7 +284,7 @@ def test_baseline_search_finds_by_node_name_stable_key_and_qualified_name():
 def test_flow_path_extraction_uses_calls_edges_from_graph_slice():
     store = FakeGraphStore(candidates=[candidate(id="controller-create", name="Controller.create", label="Controller.create")])
 
-    response = service(store).query(KnowledgeQueryRequest(query="Controller create"))
+    response = service(store).query(query_request("Controller create"))
 
     assert response.flowPaths
     flow = response.flowPaths[0]
@@ -226,7 +300,7 @@ def test_flow_path_extraction_uses_calls_edges_from_graph_slice():
 def test_flow_path_extractor_extracts_upstream_and_downstream_for_middle_match():
     store = FakeGraphStore(candidates=[candidate(id="usecase-execute", name="CreateUseCase.execute", label="CreateUseCase.execute")])
 
-    response = service(store).query(KnowledgeQueryRequest(query="CreateUseCase.execute"))
+    response = service(store).query(query_request("CreateUseCase.execute"))
 
     flow = response.flowPaths[0]
     assert flow.nodeIds == ["controller-create", "usecase-execute", "repository-save"]
@@ -249,7 +323,7 @@ def test_flow_path_extractor_handles_multiple_upstream_callers():
     ]
     store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[candidate(id="usecase-execute", name="UseCase.execute", label="UseCase.execute")])
 
-    response = service(store).query(KnowledgeQueryRequest(query="UseCase.execute"))
+    response = service(store).query(query_request("UseCase.execute"))
 
     assert sorted(flow.nodeIds for flow in response.flowPaths) == [
         ["controller-a", "usecase-execute", "repository-save"],
@@ -271,7 +345,7 @@ def test_flow_path_extractor_handles_downstream_branching_without_labels():
     ]
     store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[candidate(id="usecase-execute", name="UseCase.execute", label="UseCase.execute")])
 
-    response = service(store).query(KnowledgeQueryRequest(query="UseCase.execute"))
+    response = service(store).query(query_request("UseCase.execute"))
 
     assert sorted(flow.nodeIds for flow in response.flowPaths) == [
         ["controller-create", "usecase-execute", "event-publish"],
@@ -288,7 +362,7 @@ def test_flow_path_extractor_deduplicates_identical_paths_and_merges_matches():
         ]
     )
 
-    response = service(store).query(KnowledgeQueryRequest(query="execute save"))
+    response = service(store).query(query_request("execute save"))
 
     assert len(response.flowPaths) == 1
     assert response.flowPaths[0].nodeIds == ["controller-create", "usecase-execute", "repository-save"]
@@ -300,7 +374,7 @@ def test_flow_path_extractor_detects_cycles():
     edges = [graph_edge("ab", "a", "b"), graph_edge("bc", "b", "c"), graph_edge("ca", "c", "a")]
     store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[candidate(id="a", name="Alpha", label="Alpha")])
 
-    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(KnowledgeQueryRequest(query="Alpha"))
+    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(query_request("Alpha"))
 
     assert any(flow.stopReason == "CYCLE_DETECTED" and flow.complete is False for flow in response.flowPaths)
     assert any(diagnostic.code == "CYCLE_DETECTED" for diagnostic in response.diagnostics)
@@ -322,7 +396,7 @@ def test_flow_path_extractor_stops_on_external_target_edge():
     ]
     store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[candidate(id="controller-create", name="Controller.create", label="Controller.create")])
 
-    response = service(store).query(KnowledgeQueryRequest(query="Controller create"))
+    response = service(store).query(query_request("Controller create"))
 
     flow = response.flowPaths[0]
     assert flow.nodeIds == ["controller-create"]
@@ -338,7 +412,7 @@ def test_flow_path_extractor_stops_on_unresolved_edge():
     edges = [graph_edge("calls-missing", "controller-create", None, resolutionStatus="UNRESOLVED", unresolvedTarget={"name": "missing"})]
     store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[candidate(id="controller-create", name="Controller.create", label="Controller.create")])
 
-    response = service(store).query(KnowledgeQueryRequest(query="Controller create"))
+    response = service(store).query(query_request("Controller create"))
 
     flow = response.flowPaths[0]
     assert flow.nodeIds == ["controller-create"]
@@ -353,7 +427,7 @@ def test_flow_path_extractor_does_not_mutate_graph_facts():
     original_nodes = [dict(node) for node in store.nodes]
     original_edges = [dict(edge) for edge in store.edges]
 
-    service(store).query(KnowledgeQueryRequest(query="CreateUseCase.execute"))
+    service(store).query(query_request("CreateUseCase.execute"))
 
     assert store.nodes == original_nodes
     assert store.edges == original_edges
@@ -362,224 +436,9 @@ def test_flow_path_extractor_does_not_mutate_graph_facts():
 def test_flow_path_extractor_batch_loads_adjacency_once():
     store = FakeGraphStore(candidates=[candidate(id="usecase-execute", name="CreateUseCase.execute", label="CreateUseCase.execute")])
 
-    service(store).query(KnowledgeQueryRequest(query="CreateUseCase.execute"))
+    service(store).query(query_request("CreateUseCase.execute"))
 
     assert store.adjacency_loads == 1
-
-
-def mapper_flow_fixture(*, include_field=True, include_test=False, include_unrelated=False, include_calls=True):
-    nodes = [
-        graph_node(
-            "controller-type",
-            "SiteController",
-            nodeKind="TYPE",
-            name="SiteController",
-            qualifiedName="example.SiteController",
-            relativePath="src/main/java/example/SiteController.java",
-        ),
-        graph_node(
-            "controller-create",
-            "createSite",
-            nodeKind="CALLABLE",
-            name="createSite",
-            qualifiedName="example.SiteController.createSite",
-            relativePath="src/main/java/example/SiteController.java",
-        ),
-        graph_node(
-            "mapper-type",
-            "SiteApiMapper",
-            nodeKind="TYPE",
-            name="SiteApiMapper",
-            qualifiedName="example.SiteApiMapper",
-            relativePath="src/main/java/example/SiteApiMapper.java",
-        ),
-        graph_node(
-            "mapper-command",
-            "asCreateSiteCommand",
-            nodeKind="CALLABLE",
-            name="asCreateSiteCommand",
-            qualifiedName="example.SiteApiMapper.asCreateSiteCommand",
-            relativePath="src/main/java/example/SiteApiMapper.java",
-        ),
-        graph_node(
-            "mapper-response",
-            "asCreateSiteResponseDTO",
-            nodeKind="CALLABLE",
-            name="asCreateSiteResponseDTO",
-            qualifiedName="example.SiteApiMapper.asCreateSiteResponseDTO",
-            relativePath="src/main/java/example/SiteApiMapper.java",
-        ),
-    ]
-    edges = [
-        graph_edge("declares-create", "controller-type", "controller-create", edgeType="DECLARES"),
-        graph_edge("declares-command", "mapper-type", "mapper-command", edgeType="DECLARES"),
-        graph_edge("declares-response", "mapper-type", "mapper-response", edgeType="DECLARES"),
-    ]
-    if include_field:
-        nodes.append(
-            graph_node(
-                "controller-mapper-field",
-                "siteApiMapper",
-                nodeKind="FIELD",
-                name="siteApiMapper",
-                qualifiedName="example.SiteController.siteApiMapper",
-                relativePath="src/main/java/example/SiteController.java",
-            )
-        )
-        edges.extend(
-            [
-                graph_edge("declares-field", "controller-type", "controller-mapper-field", edgeType="DECLARES"),
-                graph_edge("uses-field", "controller-create", "controller-mapper-field", edgeType="USES_FIELD"),
-            ]
-        )
-    if include_calls:
-        edges.extend(
-            [
-                graph_edge(
-                    "calls-command",
-                    "controller-create",
-                    "mapper-command",
-                    metadata={"receiverText": "this.siteApiMapper", "methodName": "asCreateSiteCommand", "callKind": "FIELD_RECEIVER"},
-                ),
-                graph_edge(
-                    "calls-response",
-                    "controller-create",
-                    "mapper-response",
-                    metadata={"receiverText": "this.siteApiMapper", "methodName": "asCreateSiteResponseDTO", "callKind": "FIELD_RECEIVER"},
-                ),
-            ]
-        )
-    if include_test:
-        nodes.append(
-            graph_node(
-                "test-create",
-                "givenCreateSiteRequestDto_whenCreateSite_thenReturnCreatedResponse",
-                name="givenCreateSiteRequestDto_whenCreateSite_thenReturnCreatedResponse",
-                qualifiedName="example.SiteControllerTest.givenCreateSiteRequestDto_whenCreateSite_thenReturnCreatedResponse",
-                relativePath="src/test/java/example/SiteControllerTest.java",
-            )
-        )
-        edges.extend(
-            [
-                graph_edge("test-calls-command", "test-create", "mapper-command", metadata={"receiverText": "this.siteApiMapper"}),
-                graph_edge("test-calls-response", "test-create", "mapper-response", metadata={"receiverText": "this.siteApiMapper"}),
-            ]
-        )
-    if include_unrelated:
-        nodes.extend(
-            [
-                graph_node("publisher", "Publisher.publish", name="publish", qualifiedName="example.Publisher.publish"),
-                graph_node("publisher-mapper", "PublisherMapper.asPayload", name="asPayload", qualifiedName="example.PublisherMapper.asPayload"),
-            ]
-        )
-        edges.append(graph_edge("publisher-calls-mapper", "publisher", "publisher-mapper"))
-    return nodes, edges
-
-
-def mapper_type_candidate():
-    return candidate(
-        id="mapper-type",
-        nodeKind="TYPE",
-        name="SiteApiMapper",
-        label="SiteApiMapper",
-        qualifiedName="example.SiteApiMapper",
-        stableKey="source-a|src/main/java/example/SiteApiMapper.java|TYPE|example.SiteApiMapper",
-        relativePath="src/main/java/example/SiteApiMapper.java",
-    )
-
-
-def mapper_field_candidate():
-    return candidate(
-        id="controller-mapper-field",
-        nodeKind="FIELD",
-        name="siteApiMapper",
-        label="siteApiMapper",
-        qualifiedName="example.SiteController.siteApiMapper",
-        stableKey="source-a|src/main/java/example/SiteController.java|FIELD|example.SiteController|siteApiMapper",
-        relativePath="src/main/java/example/SiteController.java",
-    )
-
-
-def controller_candidate():
-    return candidate(
-        id="controller-create",
-        nodeKind="CALLABLE",
-        name="createSite",
-        label="createSite",
-        qualifiedName="example.SiteController.createSite",
-        stableKey="source-a|src/main/java/example/SiteController.java|CALLABLE|example.SiteController|createSite|createSite(Request)",
-        relativePath="src/main/java/example/SiteController.java",
-    )
-
-
-def test_explicit_flow_query_expands_target_type_to_declared_callables():
-    nodes, edges = mapper_flow_fixture()
-    store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[mapper_type_candidate()])
-
-    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
-        KnowledgeQueryRequest(query="Show flow from SiteController createSite to SiteApiMapper.")
-    )
-
-    assert [flow.nodeIds for flow in response.flowPaths] == [
-        ["controller-create", "mapper-command"],
-        ["controller-create", "mapper-response"],
-    ]
-    assert [edge["id"] for flow in response.flowPaths for edge in flow.edges] == ["calls-command", "calls-response"]
-    assert not any(diagnostic.code == "NO_CALLS_PATH" for diagnostic in response.diagnostics)
-
-
-def test_how_does_use_query_uses_direct_type_expansion():
-    nodes, edges = mapper_flow_fixture(include_test=True)
-    store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[mapper_type_candidate()])
-
-    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
-        KnowledgeQueryRequest(query="How does SiteController use SiteApiMapper?")
-    )
-
-    assert [flow.nodeIds for flow in response.flowPaths] == [
-        ["controller-create", "mapper-command"],
-        ["controller-create", "mapper-response"],
-    ]
-
-
-def test_explicit_flow_query_expands_target_field_to_called_callables():
-    nodes, edges = mapper_flow_fixture()
-    store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[mapper_field_candidate()])
-
-    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
-        KnowledgeQueryRequest(query="Show flow from SiteController createSite to siteApiMapper.")
-    )
-
-    assert sorted(flow.nodeIds for flow in response.flowPaths) == [
-        ["controller-create", "mapper-command"],
-        ["controller-create", "mapper-response"],
-    ]
-
-
-def test_explicit_flow_query_ranks_exact_source_before_test_callers():
-    nodes, edges = mapper_flow_fixture(include_test=True)
-    store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[mapper_type_candidate()])
-
-    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
-        KnowledgeQueryRequest(query="Show flow from SiteController createSite to SiteApiMapper.")
-    )
-
-    assert [flow.nodeIds for flow in response.flowPaths[:2]] == [
-        ["controller-create", "mapper-command"],
-        ["controller-create", "mapper-response"],
-    ]
-
-
-def test_explicit_flow_query_no_path_returns_clear_diagnostic_without_unrelated_paths():
-    nodes, edges = mapper_flow_fixture(include_calls=False, include_unrelated=True)
-    store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[controller_candidate(), mapper_type_candidate()])
-
-    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
-        KnowledgeQueryRequest(query="Show flow from SiteController createSite to SiteApiMapper.")
-    )
-
-    assert response.flowPaths == []
-    assert any(diagnostic.code == "NO_CALLS_PATH" for diagnostic in response.diagnostics)
 
 
 def test_method_reference_query_keeps_field_method_reference_mapper_path():
@@ -612,7 +471,7 @@ def test_method_reference_query_keeps_field_method_reference_mapper_path():
     )
 
     response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
-        KnowledgeQueryRequest(query="How does SiteRepositoryImpl.findById map SiteEntity to Site?")
+        query_request("SiteRepositoryImpl.findById")
     )
 
     assert response.flowPaths[0].nodeIds == ["repository-find", "infra-as-site"]
@@ -620,7 +479,7 @@ def test_method_reference_query_keeps_field_method_reference_mapper_path():
 
 
 def test_no_candidates_returns_controlled_response():
-    response = service(FakeGraphStore(candidates=[])).query(KnowledgeQueryRequest(query="missing"))
+    response = service(FakeGraphStore(candidates=[])).query(query_request("missing"))
 
     assert response.status == "NO_CANDIDATES"
     assert response.matchedNodes == []
@@ -629,7 +488,7 @@ def test_no_candidates_returns_controlled_response():
 
 
 def test_graph_slice_failure_becomes_diagnostic_not_exception():
-    response = service(FakeGraphStore(candidates=[candidate()], slice_error=True)).query(KnowledgeQueryRequest(query="JarvisGateway"))
+    response = service(FakeGraphStore(candidates=[candidate()], slice_error=True)).query(query_request("JarvisGateway"))
 
     assert response.status == "OK"
     assert any(diagnostic.code == "GRAPH_SLICE_FAILED" for diagnostic in response.diagnostics)
@@ -644,7 +503,7 @@ def test_guardrail_reports_truncated_flow_result():
         ]
     )
 
-    response = service(store).query(KnowledgeQueryRequest(query="Controller create"))
+    response = service(store).query(query_request("Controller create"))
 
     assert response.coverage.truncated is True
     assert response.coverage.continuationAvailable is True
@@ -661,7 +520,7 @@ def test_search_candidate_limit_reports_diagnostic():
     )
 
     response = service(store, KnowledgeQueryPolicy(max_search_documents=1, max_matched_nodes=2, max_flow_paths=2)).query(
-        KnowledgeQueryRequest(query="Controller.create")
+        query_request("Controller.create")
     )
 
     assert any(diagnostic.code == "SEARCH_CANDIDATE_LIMIT_REACHED" for diagnostic in response.diagnostics)
@@ -690,7 +549,7 @@ def test_query_uses_deterministic_search_when_semantic_index_failed(tmp_path):
     response = build_knowledge_query_service(
         store,
         embedding_provider=FakeDeterministicEmbeddingProvider(model="embeddinggemma"),
-    ).query(KnowledgeQueryRequest(query="Controller create flow"))
+    ).query(query_request("Controller create flow"))
 
     assert SemanticIndexStore(db_path).status_for_source("source-a").status == SemanticIndexStatus.FAILED
     assert response.status == "OK"

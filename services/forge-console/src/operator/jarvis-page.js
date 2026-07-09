@@ -119,8 +119,11 @@ export class JarvisPage {
       return null;
     }
     const payload = {
-      query,
-      intent: 'AUTO'
+      queryText: query,
+      intent: 'UNKNOWN',
+      answerLanguage: 'en',
+      includeTests: false,
+      maxFlows: 10
     };
     this.setQueryBusy(true);
     try {
@@ -256,7 +259,7 @@ export class JarvisPage {
           <div class="detail-card-head">
             <div>
               <strong>No graph matches found</strong>
-              <p>${escapeHtml(response.intent || 'AUTO')}</p>
+              <p>${escapeHtml(response.intent || 'UNKNOWN')}</p>
             </div>
             ${pill(response.status, response.status)}
           </div>
@@ -274,7 +277,7 @@ export class JarvisPage {
         <div class="detail-card-head">
           <div>
             <strong>Status</strong>
-            <p>Intent: ${escapeHtml(response.intent || 'AUTO')}</p>
+            <p>Intent: ${escapeHtml(response.intent || 'UNKNOWN')}</p>
           </div>
           ${pill(response.status || 'UNKNOWN', response.status || 'UNKNOWN')}
         </div>

@@ -34,3 +34,22 @@ def test_openapi_contract_snapshot() -> None:
     assert normalized_openapi(create_app()) == expected, (
         "OpenAPI contract changed. If intentional, refresh with: cd services/forge-jarvis && python tests/contracts/refresh_openapi.py"
     )
+
+
+def test_jarvis_query_request_schema_is_query_plan_v2() -> None:
+    spec = normalized_openapi(create_app())
+    schema = spec["components"]["schemas"]["JarvisQueryRequest"]
+    properties = schema["properties"]
+
+    assert set(properties) == {"queryText", "intent", "answerLanguage", "includeTests", "maxFlows"}
+    assert set(schema["required"]) == {"queryText", "intent", "answerLanguage", "includeTests", "maxFlows"}
+    assert "query" not in properties
+    assert all("default" not in property_schema for property_schema in properties.values())
+    assert spec["components"]["schemas"]["JarvisQueryIntent"]["enum"] == [
+        "FLOW_EXPLANATION",
+        "COMPONENT_USAGE",
+        "COMPONENT_RESPONSIBILITY",
+        "CODE_LOCATION",
+        "ARCHITECTURE_OVERVIEW",
+        "UNKNOWN",
+    ]

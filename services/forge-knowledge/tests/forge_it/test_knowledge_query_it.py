@@ -11,6 +11,27 @@ from support import build_test_app, write_runtime_config
 pytestmark = pytest.mark.forge_it
 
 
+def query_payload(query_text, *, intent="UNKNOWN", answer_language="en", include_tests=False, max_flows=10):
+    return {
+        "queryText": query_text,
+        "intent": intent,
+        "answerLanguage": answer_language,
+        "includeTests": include_tests,
+        "maxFlows": max_flows,
+    }
+
+
+def test_knowledge_query_rejects_old_request_shape(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_query_graph(app_config.store_path)
+    old_payload = {"qu" + "ery": "SiteController createSite", "intent": "AU" + "TO"}
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/knowledge/query", json=old_payload)
+
+    assert response.status_code == 422
+
+
 def test_knowledge_query_searches_all_current_graph_sources_without_source_id(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_query_graph(app_config.store_path)
@@ -18,9 +39,9 @@ def test_knowledge_query_searches_all_current_graph_sources_without_source_id(tm
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/knowledge/query",
-            json={"query": "поясни як працює JarvisGateway", "intent": "AUTO"},
+            json=query_payload("поясни як працює JarvisGateway"),
         )
-        no_candidates = client.post("/api/v1/knowledge/query", json={"query": "does-not-exist"})
+        no_candidates = client.post("/api/v1/knowledge/query", json=query_payload("does-not-exist"))
 
     assert response.status_code == 200
     body = response.json()
@@ -76,7 +97,7 @@ def test_knowledge_query_integration_extracts_linear_calls_path(tmp_path):
     )
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json={"query": "UseCase.execute", "intent": "AUTO"})
+        response = client.post("/api/v1/knowledge/query", json=query_payload("UseCase.execute"))
 
     assert response.status_code == 200
     body = response.json()
@@ -107,7 +128,7 @@ def test_knowledge_query_integration_bounds_adjacency_around_matched_node(tmp_pa
     seed_flow_graph(app_config.store_path, "flow-large-source", nodes, edges)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json={"query": "Anchor.execute", "intent": "AUTO"})
+        response = client.post("/api/v1/knowledge/query", json=query_payload("Anchor.execute"))
 
     assert response.status_code == 200
     body = response.json()
@@ -137,7 +158,7 @@ def test_knowledge_query_integration_extracts_multiple_entrypoints(tmp_path):
     )
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json={"query": "UseCase.execute"})
+        response = client.post("/api/v1/knowledge/query", json=query_payload("UseCase.execute"))
 
     body = response.json()
     assert sorted(flow["nodeIds"] for flow in body["flowPaths"]) == [
@@ -165,7 +186,7 @@ def test_knowledge_query_integration_extracts_downstream_branches(tmp_path):
     )
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json={"query": "UseCase.execute"})
+        response = client.post("/api/v1/knowledge/query", json=query_payload("UseCase.execute"))
 
     body = response.json()
     assert sorted(flow["nodeIds"] for flow in body["flowPaths"]) == [
@@ -190,7 +211,7 @@ def test_knowledge_query_integration_detects_calls_cycle(tmp_path):
     )
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json={"query": "Alpha"})
+        response = client.post("/api/v1/knowledge/query", json=query_payload("Alpha"))
 
     body = response.json()
     assert any(flow["stopReason"] == "CYCLE_DETECTED" and flow["complete"] is False for flow in body["flowPaths"])
@@ -218,7 +239,7 @@ def test_knowledge_query_integration_preserves_external_and_unresolved_boundarie
     )
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json={"query": "Controller.create"})
+        response = client.post("/api/v1/knowledge/query", json=query_payload("Controller.create"))
 
     body = response.json()
     stop_reasons = {flow["stopReason"] for flow in body["flowPaths"]}
@@ -250,7 +271,7 @@ def test_knowledge_query_integration_searches_all_sources_for_flow_paths(tmp_pat
         )
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json={"query": "SharedUseCase.execute"})
+        response = client.post("/api/v1/knowledge/query", json=query_payload("SharedUseCase.execute"))
 
     body = response.json()
     assert {flow["sourceId"] for flow in body["flowPaths"]} == {"source-one", "source-two"}
@@ -262,21 +283,21 @@ def test_knowledge_query_stage3_code_aware_search_hardening(tmp_path):
     seed_stage3_search_graph(app_config.store_path)
 
     with TestClient(app) as client:
-        exact_file = client.post("/api/v1/knowledge/query", json={"query": "jarvis.html"}).json()
-        exact_callable = client.post("/api/v1/knowledge/query", json={"query": "submitJarvisQuery"}).json()
-        path_query = client.post("/api/v1/knowledge/query", json={"query": "static/operator/jarvis.html"}).json()
+        exact_file = client.post("/api/v1/knowledge/query", json=query_payload("jarvis.html")).json()
+        exact_callable = client.post("/api/v1/knowledge/query", json=query_payload("submitJarvisQuery")).json()
+        path_query = client.post("/api/v1/knowledge/query", json=query_payload("static/operator/jarvis.html")).json()
         qualified_full = client.post(
             "/api/v1/knowledge/query",
-            json={"query": "com.sitionix.forgeai.api.ForgeAiInfrastructureJarvisController"},
+            json=query_payload("com.sitionix.forgeai.api.ForgeAiInfrastructureJarvisController"),
         ).json()
-        qualified_suffix = client.post("/api/v1/knowledge/query", json={"query": "ForgeAiInfrastructureJarvisController"}).json()
-        endpoint_query = client.post("/api/v1/knowledge/query", json={"query": "/api/v1/knowledge/query"}).json()
-        lexical_query = client.post("/api/v1/knowledge/query", json={"query": "jarvis query knowledge"}).json()
-        typo_query = client.post("/api/v1/knowledge/query", json={"query": "AgetnChatPage"}).json()
-        exact_typo_baseline = client.post("/api/v1/knowledge/query", json={"query": "AgentChatPage"}).json()
-        multi_source = client.post("/api/v1/knowledge/query", json={"query": "SharedJarvisQuery"}).json()
-        no_candidates = client.post("/api/v1/knowledge/query", json={"query": "definitely-no-such-node-xyz"}).json()
-        flow_integration = client.post("/api/v1/knowledge/query", json={"query": "JarvisQueryService.query"}).json()
+        qualified_suffix = client.post("/api/v1/knowledge/query", json=query_payload("ForgeAiInfrastructureJarvisController")).json()
+        endpoint_query = client.post("/api/v1/knowledge/query", json=query_payload("/api/v1/knowledge/query")).json()
+        lexical_query = client.post("/api/v1/knowledge/query", json=query_payload("jarvis query knowledge")).json()
+        typo_query = client.post("/api/v1/knowledge/query", json=query_payload("AgetnChatPage")).json()
+        exact_typo_baseline = client.post("/api/v1/knowledge/query", json=query_payload("AgentChatPage")).json()
+        multi_source = client.post("/api/v1/knowledge/query", json=query_payload("SharedJarvisQuery")).json()
+        no_candidates = client.post("/api/v1/knowledge/query", json=query_payload("definitely-no-such-node-xyz")).json()
+        flow_integration = client.post("/api/v1/knowledge/query", json=query_payload("JarvisQueryService.query")).json()
 
     assert exact_file["matchedNodes"][0]["nodeId"] == "console-file-jarvis-html"
     assert exact_file["matchedNodes"][0]["sourceId"] == "forge-console-test"

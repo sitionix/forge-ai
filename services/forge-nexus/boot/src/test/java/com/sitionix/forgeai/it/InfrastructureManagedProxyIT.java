@@ -911,7 +911,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryBlank())
                 .header("X-Correlation-Id", "corr-jarvis-query-blank")
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.title").value("VALIDATION_FAILED"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.details", containsString("query")))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.details", containsString("queryText")))
                 .assertDefault();
     }
 

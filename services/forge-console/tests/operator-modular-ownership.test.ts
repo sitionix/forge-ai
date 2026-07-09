@@ -126,6 +126,16 @@ async function flushAsync() {
   await Promise.resolve();
 }
 
+function queryPayload(queryText: string) {
+  return {
+    queryText,
+    intent: 'UNKNOWN',
+    answerLanguage: 'en',
+    includeTests: false,
+    maxFlows: 10
+  };
+}
+
 describe('Operator Console modular request ownership', () => {
   it('UI-IT-01 mounts the correct page owner only', async () => {
     const overview = overviewHtml();
@@ -195,9 +205,9 @@ describe('Operator Console modular request ownership', () => {
     const second = page.submitQuery(new dom.window.Event('submit'));
     await flushAsync();
     expect(http.post).toHaveBeenCalledTimes(1);
-    expect(http.post).toHaveBeenCalledWith('/jarvis/query', { query: 'hello', intent: 'AUTO' }, expect.any(Object));
+    expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('hello'), expect.any(Object));
     await second;
-    slow.resolve({ status: 'OK', intent: 'AUTO', matchedSources: [], matchedNodes: [], flowPaths: [], nodes: [], edges: [], coverage: {}, diagnostics: [] });
+    slow.resolve({ status: 'OK', intent: 'UNKNOWN', matchedSources: [], matchedNodes: [], flowPaths: [], nodes: [], edges: [], coverage: {}, diagnostics: [] });
     await first;
     expect(dom.window.document.getElementById('sendJarvisQuery')?.textContent).toBe('Send');
   });
@@ -221,7 +231,7 @@ describe('Operator Console modular request ownership', () => {
       get: vi.fn(),
       post: vi.fn(() => Promise.resolve({
         status: 'OK',
-        intent: 'AUTO',
+        intent: 'UNKNOWN',
         matchedSources: [{ sourceId: 'svc', displayName: 'Service', score: 0.9 }],
         matchedNodes: [{
           sourceId: 'svc',
