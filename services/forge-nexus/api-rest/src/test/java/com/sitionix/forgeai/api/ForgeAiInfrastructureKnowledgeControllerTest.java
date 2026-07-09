@@ -1,14 +1,14 @@
 package com.sitionix.forgeai.api;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.api.proxy.InfrastructureProxyTransport;
 import jakarta.servlet.http.HttpServletRequest;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
@@ -18,85 +18,86 @@ import org.springframework.http.ResponseEntity;
 class ForgeAiInfrastructureKnowledgeControllerTest {
 
     private final InfrastructureProxyTransport transport = mock(InfrastructureProxyTransport.class);
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private final ForgeAiInfrastructureKnowledgeController controller = new ForgeAiInfrastructureKnowledgeController(this.transport);
     private final HttpHeaders headers = new HttpHeaders();
     private final HttpServletRequest request = mock(HttpServletRequest.class);
 
     @Test
-    void statusDelegatesToGenericProxyRoute() {
+    void statusDelegatesToJsonProxyRoute() {
         this.stub();
 
         this.controller.status(this.headers, this.request);
 
-        verify(this.transport).forward("knowledge.status", Map.of(), null, this.headers, this.request);
+        verify(this.transport).forwardJson("knowledge.status", Map.of(), null, JsonNode.class, this.headers, this.request);
     }
 
     @Test
-    void analysisBuildDelegatesRawBodyToGenericProxyRoute() {
+    void analysisBuildDelegatesJsonBodyToJsonProxyRoute() throws Exception {
         this.stub();
-        final byte[] body = "{\"sourceIds\":[\"svc\"]}".getBytes(StandardCharsets.UTF_8);
+        final JsonNode body = this.objectMapper.readTree("{\"sourceIds\":[\"svc\"]}");
 
         this.controller.buildAnalysis(body, this.headers, this.request);
 
-        verify(this.transport).forward("knowledge.analysis.build", Map.of(), body, this.headers, this.request);
+        verify(this.transport).forwardJson("knowledge.analysis.build", Map.of(), body, JsonNode.class, this.headers, this.request);
     }
 
     @Test
-    void analysisJobPathVariableDelegatesToGenericProxyRoute() {
+    void analysisJobPathVariableDelegatesToJsonProxyRoute() {
         this.stub();
 
         this.controller.analysisJob("job-1", this.headers, this.request);
 
-        verify(this.transport).forward("knowledge.analysis.job", Map.of("jobId", "job-1"), null, this.headers, this.request);
+        verify(this.transport).forwardJson("knowledge.analysis.job", Map.of("jobId", "job-1"), null, JsonNode.class, this.headers, this.request);
     }
 
     @Test
-    void graphDetailPathVariableDelegatesToGenericProxyRoute() {
+    void graphDetailPathVariableDelegatesToJsonProxyRoute() {
         this.stub();
 
         this.controller.analysisGraphNode("node-1", this.headers, this.request);
 
-        verify(this.transport).forward("knowledge.graph.node", Map.of("nodeId", "node-1"), null, this.headers, this.request);
+        verify(this.transport).forwardJson("knowledge.graph.node", Map.of("nodeId", "node-1"), null, JsonNode.class, this.headers, this.request);
     }
 
     @Test
-    void diagnosticsRouteDelegatesToGenericProxyRoute() {
+    void diagnosticsRouteDelegatesToJsonProxyRoute() {
         this.stub();
 
         this.controller.analysisDiagnostics(this.headers, this.request);
 
-        verify(this.transport).forward("knowledge.analysis.diagnostics", Map.of(), null, this.headers, this.request);
+        verify(this.transport).forwardJson("knowledge.analysis.diagnostics", Map.of(), null, JsonNode.class, this.headers, this.request);
     }
 
     @Test
-    void currentFileProgressDelegatesToGenericProxyRoute() {
+    void currentFileProgressDelegatesToJsonProxyRoute() {
         this.stub();
 
         this.controller.analysisCurrentFileProgress(this.headers, this.request);
 
-        verify(this.transport).forward("knowledge.analysis.current-file-progress", Map.of(), null, this.headers, this.request);
+        verify(this.transport).forwardJson("knowledge.analysis.current-file-progress", Map.of(), null, JsonNode.class, this.headers, this.request);
     }
 
     @Test
-    void graphMetadataDelegatesToGenericProxyRoute() {
+    void graphMetadataDelegatesToJsonProxyRoute() {
         this.stub();
 
         this.controller.analysisGraphMetadata(this.headers, this.request);
 
-        verify(this.transport).forward("knowledge.graph.metadata", Map.of(), null, this.headers, this.request);
+        verify(this.transport).forwardJson("knowledge.graph.metadata", Map.of(), null, JsonNode.class, this.headers, this.request);
     }
 
     @Test
-    void graphViewDelegatesToGenericProxyRoute() {
+    void graphViewDelegatesToJsonProxyRoute() {
         this.stub();
 
         this.controller.analysisGraphView(this.headers, this.request);
 
-        verify(this.transport).forward("knowledge.graph.view", Map.of(), null, this.headers, this.request);
+        verify(this.transport).forwardJson("knowledge.graph.view", Map.of(), null, JsonNode.class, this.headers, this.request);
     }
 
     private void stub() {
-        when(this.transport.forward(any(), any(), any(), any(), any()))
-                .thenReturn(CompletableFuture.completedFuture(ResponseEntity.ok(new byte[0])));
+        when(this.transport.forwardJson(any(), any(), any(), any(), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(ResponseEntity.ok(this.objectMapper.createObjectNode())));
     }
 }

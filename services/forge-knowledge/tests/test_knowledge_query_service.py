@@ -24,6 +24,10 @@ VALID_QUERY_REQUEST = {
     "maxFlows": 10,
 }
 
+MINIMAL_QUERY_REQUEST = {
+    "queryText": "Як створюється сайт?",
+}
+
 
 def query_request(query_text, *, intent="UNKNOWN", answer_language="en", include_tests=False, max_flows=10):
     return KnowledgeQueryRequest(
@@ -187,6 +191,33 @@ def test_valid_query_plan_v2_request_passes():
     assert request.maxFlows == 10
 
 
+def test_minimal_query_plan_v2_request_defaults_optional_controls():
+    request = KnowledgeQueryRequest(**MINIMAL_QUERY_REQUEST)
+
+    assert request.queryText == "Як створюється сайт?"
+    assert request.intent == "UNKNOWN"
+    assert request.answerLanguage == "en"
+    assert request.includeTests is False
+    assert request.maxFlows == 10
+
+
+def test_null_and_blank_optional_controls_default_when_allowed():
+    request = KnowledgeQueryRequest(
+        **{
+            **MINIMAL_QUERY_REQUEST,
+            "intent": None,
+            "answerLanguage": "   ",
+            "includeTests": None,
+            "maxFlows": None,
+        }
+    )
+
+    assert request.intent == "UNKNOWN"
+    assert request.answerLanguage == "en"
+    assert request.includeTests is False
+    assert request.maxFlows == 10
+
+
 def test_answer_language_is_lowercase_normalized():
     request = KnowledgeQueryRequest(**{**VALID_QUERY_REQUEST, "answerLanguage": " UK "})
 
@@ -205,18 +236,16 @@ def test_old_query_request_shape_is_rejected():
     [
         {key: value for key, value in VALID_QUERY_REQUEST.items() if key != "queryText"},
         {**VALID_QUERY_REQUEST, "queryText": "   "},
-        {key: value for key, value in VALID_QUERY_REQUEST.items() if key != "intent"},
         {**VALID_QUERY_REQUEST, "intent": "AU" + "TO"},
         {**VALID_QUERY_REQUEST, "intent": "NOT_A_REAL_INTENT"},
-        {key: value for key, value in VALID_QUERY_REQUEST.items() if key != "answerLanguage"},
-        {**VALID_QUERY_REQUEST, "answerLanguage": "   "},
-        {key: value for key, value in VALID_QUERY_REQUEST.items() if key != "includeTests"},
-        {key: value for key, value in VALID_QUERY_REQUEST.items() if key != "maxFlows"},
+        {**VALID_QUERY_REQUEST, "answerLanguage": 123},
+        {**VALID_QUERY_REQUEST, "includeTests": "false"},
+        {**VALID_QUERY_REQUEST, "maxFlows": "10"},
         {**VALID_QUERY_REQUEST, "maxFlows": 0},
         {**VALID_QUERY_REQUEST, "maxFlows": 999},
     ],
 )
-def test_query_plan_v2_required_fields_and_bounds(payload):
+def test_query_plan_v2_required_field_strict_types_and_bounds(payload):
     with pytest.raises(ValueError):
         KnowledgeQueryRequest(**payload)
 

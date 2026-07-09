@@ -127,13 +127,7 @@ async function flushAsync() {
 }
 
 function queryPayload(queryText: string) {
-  return {
-    queryText,
-    intent: 'UNKNOWN',
-    answerLanguage: 'en',
-    includeTests: false,
-    maxFlows: 10
-  };
+  return { queryText };
 }
 
 describe('Operator Console modular request ownership', () => {

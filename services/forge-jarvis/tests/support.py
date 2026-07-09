@@ -228,9 +228,20 @@ def knowledge_query_bundle(
     }
 
 
-def query_payload(query_text: str, *, intent: str = "UNKNOWN", answer_language: str = "en", include_tests: bool = False, max_flows: int = 10) -> Dict[str, Any]:
+def query_payload(query_text: str) -> Dict[str, Any]:
+    return {"queryText": query_text}
+
+
+def normalized_query_payload(
+    query_text: str,
+    *,
+    intent: str = "UNKNOWN",
+    answer_language: str = "en",
+    include_tests: bool = False,
+    max_flows: int = 10,
+) -> Dict[str, Any]:
     return {
-        "queryText": query_text,
+        "queryText": query_text.strip(),
         "intent": intent,
         "answerLanguage": answer_language,
         "includeTests": include_tests,

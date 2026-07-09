@@ -1,5 +1,7 @@
 package com.sitionix.forgeai.api.proxy;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.ByteArrayOutputStream;
@@ -12,7 +14,6 @@ import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -52,13 +53,29 @@ public class InfrastructureProxyTransport {
         this.objectMapper = objectMapper;
     }
 
-    public CompletableFuture<ResponseEntity<byte[]>> forward(final String routeKey,
-                                                             final Map<String, String> pathVariables,
-                                                             final byte[] requestBody,
-                                                             final org.springframework.http.HttpHeaders incomingHeaders,
-                                                             final HttpServletRequest servletRequest) {
+    public <T> CompletableFuture<ResponseEntity<?>> forwardJson(final String routeKey,
+                                                                final Map<String, String> pathVariables,
+                                                                final Object requestBody,
+                                                                final Class<T> responseType,
+                                                                final org.springframework.http.HttpHeaders incomingHeaders,
+                                                                final HttpServletRequest servletRequest) {
         final long startedNanos = System.nanoTime();
         final String correlationId = this.correlationId(incomingHeaders);
+        final byte[] requestBytes;
+        try {
+            requestBytes = this.serializeRequestBody(requestBody);
+        } catch (final JsonProcessingException exception) {
+            return CompletableFuture.completedFuture(this.responseMapper.error(
+                    InfrastructureProxyErrorCode.UPSTREAM_ERROR,
+                    "Infrastructure proxy request body could not be serialized.",
+                    correlationId,
+                    null,
+                    routeKey,
+                    HttpStatus.BAD_REQUEST,
+                    this.elapsedMs(startedNanos),
+                    "nexus"
+            ));
+        }
         final InfrastructureProxyRoute route;
         try {
             route = this.routeRegistry.require(routeKey);
@@ -88,7 +105,7 @@ public class InfrastructureProxyTransport {
                     "nexus"
             ));
         }
-        if (!route.requestBodyAllowed() && requestBody != null && requestBody.length > 0) {
+        if (!route.requestBodyAllowed() && requestBytes != null && requestBytes.length > 0) {
             return CompletableFuture.completedFuture(this.responseMapper.error(
                     InfrastructureProxyErrorCode.ROUTE_NOT_ALLOWLISTED,
                     "Infrastructure proxy route does not accept a request body.",
@@ -100,7 +117,7 @@ public class InfrastructureProxyTransport {
                     "nexus"
             ));
         }
-        if (requestBody != null && requestBody.length > this.properties.getProxy().getMaxRequestBodyBytes()) {
+        if (requestBytes != null && requestBytes.length > this.properties.getProxy().getMaxRequestBodyBytes()) {
             return CompletableFuture.completedFuture(this.responseMapper.error(
                     InfrastructureProxyErrorCode.REQUEST_BODY_TOO_LARGE,
                     "Proxy request body exceeds the configured limit.",
@@ -113,8 +130,8 @@ public class InfrastructureProxyTransport {
             ));
         }
 
-        final HttpRequest upstreamRequest = this.upstreamRequest(route, pathVariables, requestBody, incomingHeaders, servletRequest, service, correlationId);
-        final CompletableFuture<ResponseEntity<byte[]>> result = new CompletableFuture<>();
+        final HttpRequest upstreamRequest = this.upstreamRequest(route, pathVariables, requestBytes, incomingHeaders, servletRequest, service, correlationId);
+        final CompletableFuture<ResponseEntity<?>> result = new CompletableFuture<>();
         final CompletableFuture<HttpResponse<InputStream>> upstream = this.httpClient.sendAsync(upstreamRequest, HttpResponse.BodyHandlers.ofInputStream());
         result.whenComplete((ignoredResponse, ignoredThrowable) -> {
             if (result.isCancelled()) {
@@ -127,12 +144,19 @@ public class InfrastructureProxyTransport {
                 return;
             }
             try {
-                result.complete(this.mapResponse(response, route, correlationId, startedNanos));
+                result.complete(this.mapResponse(response, route, responseType, correlationId, startedNanos));
             } catch (final RuntimeException exception) {
                 result.complete(this.mapException(exception, route, correlationId, startedNanos));
             }
         });
         return result;
+    }
+
+    private byte[] serializeRequestBody(final Object requestBody) throws JsonProcessingException {
+        if (requestBody == null) {
+            return null;
+        }
+        return this.objectMapper.writeValueAsBytes(requestBody);
     }
 
     private HttpRequest upstreamRequest(final InfrastructureProxyRoute route,
@@ -172,10 +196,11 @@ public class InfrastructureProxyTransport {
         return path + "?" + query;
     }
 
-    private ResponseEntity<byte[]> mapResponse(final HttpResponse<InputStream> response,
-                                               final InfrastructureProxyRoute route,
-                                               final String correlationId,
-                                               final long startedNanos) {
+    private <T> ResponseEntity<?> mapResponse(final HttpResponse<InputStream> response,
+                                              final InfrastructureProxyRoute route,
+                                              final Class<T> responseType,
+                                              final String correlationId,
+                                              final long startedNanos) {
         final byte[] body = this.readLimited(response.body());
         if (route.jsonExpected() && !this.isJsonResponse(response.headers(), body)) {
             return this.responseMapper.error(
@@ -201,13 +226,32 @@ public class InfrastructureProxyTransport {
                     "upstream"
             );
         }
-        return new ResponseEntity<>(body, this.safeResponseHeaders(response.headers(), correlationId), HttpStatus.valueOf(response.statusCode()));
+        final Object responseBody = this.deserializeResponseBody(body, responseType, response.statusCode() >= 400);
+        final org.springframework.http.HttpHeaders headers = this.safeResponseHeaders(response.headers(), correlationId);
+        headers.set("X-Proxy-Duration-Ms", Long.toString(this.elapsedMs(startedNanos)));
+        return new ResponseEntity<>(responseBody, headers, HttpStatus.valueOf(response.statusCode()));
     }
 
-    private ResponseEntity<byte[]> mapException(final Throwable throwable,
-                                                final InfrastructureProxyRoute route,
-                                                final String correlationId,
-                                                final long startedNanos) {
+    private <T> Object deserializeResponseBody(final byte[] body,
+                                               final Class<T> responseType,
+                                               final boolean upstreamClientError) {
+        if (body == null || body.length == 0) {
+            return null;
+        }
+        try {
+            if (upstreamClientError || responseType == null || responseType == JsonNode.class) {
+                return this.objectMapper.readTree(body);
+            }
+            return this.objectMapper.readValue(body, responseType);
+        } catch (final IOException exception) {
+            throw new InfrastructureProxyInvalidJsonBodyException(exception);
+        }
+    }
+
+    private ResponseEntity<InfrastructureProxyErrorResponse> mapException(final Throwable throwable,
+                                                                          final InfrastructureProxyRoute route,
+                                                                          final String correlationId,
+                                                                          final long startedNanos) {
         final Throwable cause = this.unwrap(throwable);
         if (cause instanceof InfrastructureProxyBodyTooLargeException) {
             return this.responseMapper.error(
@@ -219,6 +263,18 @@ public class InfrastructureProxyTransport {
                     HttpStatus.BAD_GATEWAY,
                     this.elapsedMs(startedNanos),
                     "nexus"
+            );
+        }
+        if (cause instanceof InfrastructureProxyInvalidJsonBodyException) {
+            return this.responseMapper.error(
+                    InfrastructureProxyErrorCode.UPSTREAM_INVALID_RESPONSE,
+                    this.serviceLabel(route) + " service returned a JSON response that does not match the expected contract.",
+                    correlationId,
+                    null,
+                    route.key(),
+                    HttpStatus.BAD_GATEWAY,
+                    this.elapsedMs(startedNanos),
+                    "upstream"
             );
         }
         if (cause instanceof HttpTimeoutException || cause instanceof java.util.concurrent.TimeoutException) {

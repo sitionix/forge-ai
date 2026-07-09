@@ -11,14 +11,8 @@ from support import build_test_app, write_runtime_config
 pytestmark = pytest.mark.forge_it
 
 
-def query_payload(query_text, *, intent="UNKNOWN", answer_language="en", include_tests=False, max_flows=10):
-    return {
-        "queryText": query_text,
-        "intent": intent,
-        "answerLanguage": answer_language,
-        "includeTests": include_tests,
-        "maxFlows": max_flows,
-    }
+def query_payload(query_text):
+    return {"queryText": query_text}
 
 
 def test_knowledge_query_rejects_old_request_shape(tmp_path):

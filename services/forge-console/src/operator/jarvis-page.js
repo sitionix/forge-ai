@@ -118,13 +118,7 @@ export class JarvisPage {
       setError('jarvisQueryError', new Error('Question is required.'), this.document);
       return null;
     }
-    const payload = {
-      queryText: query,
-      intent: 'UNKNOWN',
-      answerLanguage: 'en',
-      includeTests: false,
-      maxFlows: 10
-    };
+    const payload = { queryText: query };
     this.setQueryBusy(true);
     try {
       const result = await this.requestCoordinator.run('jarvis-query', ({ signal }) => this.http.post('/jarvis/query', payload, { signal }));

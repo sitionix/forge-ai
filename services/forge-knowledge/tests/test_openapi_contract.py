@@ -42,9 +42,12 @@ def test_knowledge_query_request_schema_is_query_plan_v2() -> None:
     properties = schema["properties"]
 
     assert set(properties) == {"queryText", "intent", "answerLanguage", "includeTests", "maxFlows"}
-    assert set(schema["required"]) == {"queryText", "intent", "answerLanguage", "includeTests", "maxFlows"}
+    assert set(schema["required"]) == {"queryText"}
     assert "query" not in properties
-    assert all("default" not in property_schema for property_schema in properties.values())
+    assert properties["intent"]["default"] == "UNKNOWN"
+    assert properties["answerLanguage"]["default"] == "en"
+    assert properties["includeTests"]["default"] is False
+    assert properties["maxFlows"]["default"] == 10
     assert spec["components"]["schemas"]["KnowledgeQueryIntent"]["enum"] == [
         "FLOW_EXPLANATION",
         "COMPONENT_USAGE",

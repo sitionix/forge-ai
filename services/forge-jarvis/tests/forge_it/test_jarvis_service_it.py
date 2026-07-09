@@ -12,6 +12,7 @@ from support import (
     knowledge_bad_response,
     knowledge_query_bundle,
     knowledge_unavailable,
+    normalized_query_payload,
     ollama_bad_response,
     ollama_unavailable,
     query_payload,
@@ -82,7 +83,7 @@ def test_status_actions_command_and_query_success_paths(tmp_path):
     assert actions["actions"] and "command" not in str(actions)
     assert command["execution"]["executed"] is True
     assert executor.invocations == [("ollama_status", "health", "check ollama")]
-    assert knowledge.calls == [query_payload("explain JarvisGateway")]
+    assert knowledge.calls == [normalized_query_payload("explain JarvisGateway")]
     assert model.prompts == []
     assert model.health_calls == 0
     assert query["matchedNodes"][0]["sourceId"] == "forge-ai"
@@ -196,4 +197,4 @@ def test_query_surfaces_knowledge_analysis_diagnostics_when_graph_is_not_ready(t
     assert body["flowPaths"] == []
     assert "answer" not in body
     assert {item["code"] for item in body["diagnostics"]} == {"ANALYSIS_NOT_READY"}
-    assert knowledge.calls == [query_payload("explain analyzed files")]
+    assert knowledge.calls == [normalized_query_payload("explain analyzed files")]

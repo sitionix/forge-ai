@@ -10,6 +10,7 @@ from support import (
     knowledge_bad_response,
     knowledge_query_bundle,
     knowledge_unavailable,
+    normalized_query_payload,
     ollama_unavailable,
     query_payload,
     write_runtime_config,
@@ -149,6 +150,25 @@ def test_query_rejects_old_request_shape(tmp_path) -> None:
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"queryText": "explain", "intent": "AU" + "TO"},
+        {"queryText": "explain", "includeTests": "false"},
+        {"queryText": "explain", "maxFlows": "10"},
+        {"queryText": "explain", "maxFlows": 0},
+        {"queryText": "explain", "maxFlows": 999},
+    ],
+)
+def test_query_rejects_invalid_optional_controls(tmp_path, payload) -> None:
+    app, *_ = build_test_app(write_runtime_config(tmp_path))
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/jarvis/query", json=payload)
+
+    assert response.status_code == 422
+
+
 def test_query_calls_knowledge_gateway(tmp_path) -> None:
     knowledge = FakeKnowledgeClient()
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
@@ -157,7 +177,7 @@ def test_query_calls_knowledge_gateway(tmp_path) -> None:
         response = client.post("/api/v1/jarvis/query", json=query_payload(" explain JarvisGateway "))
 
     assert response.status_code == 200
-    assert knowledge.calls == [query_payload("explain JarvisGateway")]
+    assert knowledge.calls == [normalized_query_payload("explain JarvisGateway")]
     assert response.json()["matchedNodes"][0]["sourceId"] == "forge-ai"
 
 

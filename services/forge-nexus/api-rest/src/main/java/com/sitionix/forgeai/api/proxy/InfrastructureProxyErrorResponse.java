@@ -1,6 +1,6 @@
 package com.sitionix.forgeai.api.proxy;
 
-record InfrastructureProxyErrorResponse(
+public record InfrastructureProxyErrorResponse(
         String code,
         String message,
         String correlationId,

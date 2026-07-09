@@ -391,18 +391,26 @@
         "additionalProperties": false,
         "properties": {
           "answerLanguage": {
+            "default": "en",
             "minLength": 1,
             "title": "Answerlanguage",
             "type": "string"
           },
           "includeTests": {
+            "default": false,
             "title": "Includetests",
             "type": "boolean"
           },
           "intent": {
-            "$ref": "#/components/schemas/KnowledgeQueryIntent"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeQueryIntent"
+              }
+            ],
+            "default": "UNKNOWN"
           },
           "maxFlows": {
+            "default": 10,
             "maximum": 10.0,
             "minimum": 1.0,
             "title": "Maxflows",
@@ -415,11 +423,7 @@
           }
         },
         "required": [
-          "queryText",
-          "intent",
-          "answerLanguage",
-          "includeTests",
-          "maxFlows"
+          "queryText"
         ],
         "title": "KnowledgeQueryRequest",
         "type": "object"

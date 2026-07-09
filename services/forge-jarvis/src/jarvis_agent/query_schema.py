@@ -25,10 +25,10 @@ class JarvisQueryIntent(str, Enum):
 
 class JarvisQueryRequest(BaseModel):
     queryText: str = Field(..., min_length=1)
-    intent: JarvisQueryIntent
-    answerLanguage: str = Field(..., min_length=1)
-    includeTests: StrictBool
-    maxFlows: int = Field(..., ge=1, le=10)
+    intent: JarvisQueryIntent = JarvisQueryIntent.UNKNOWN
+    answerLanguage: str = Field("en", min_length=1)
+    includeTests: StrictBool = False
+    maxFlows: int = Field(10, ge=1, le=10)
 
     class Config:
         extra = "forbid"
@@ -42,17 +42,33 @@ class JarvisQueryRequest(BaseModel):
             raise ValueError("queryText must not be empty")
         return normalized
 
-    @validator("answerLanguage", pre=True)
-    def answer_language_must_not_be_blank(cls, value: str) -> str:
+    @validator("intent", pre=True, always=True)
+    def default_missing_intent(cls, value: JarvisQueryIntent) -> JarvisQueryIntent:
+        if value is None:
+            return JarvisQueryIntent.UNKNOWN
+        return value
+
+    @validator("answerLanguage", pre=True, always=True)
+    def normalize_answer_language(cls, value: str) -> str:
+        if value is None:
+            return "en"
         if not isinstance(value, str):
             raise ValueError("answerLanguage must be a string")
         normalized = value.strip().lower()
         if not normalized:
-            raise ValueError("answerLanguage must not be empty")
+            return "en"
         return normalized
 
-    @validator("maxFlows", pre=True)
+    @validator("includeTests", pre=True, always=True)
+    def default_missing_include_tests(cls, value: StrictBool) -> StrictBool:
+        if value is None:
+            return False
+        return value
+
+    @validator("maxFlows", pre=True, always=True)
     def max_flows_must_be_an_integer(cls, value: int) -> int:
+        if value is None:
+            return 10
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError("maxFlows must be an integer")
         return value
