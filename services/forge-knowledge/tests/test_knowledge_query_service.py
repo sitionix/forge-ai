@@ -14,6 +14,7 @@ from knowledge_service.knowledge_query_service import (
     build_knowledge_query_service,
 )
 from knowledge_service.knowledge_search import (
+    CandidateMerger,
     CandidateProvider,
     DeterministicCodeSearchEngine,
     SearchCandidate,
@@ -165,6 +166,25 @@ class StaticDuplicateSearchEngine:
                     priority=42,
                 ),
             ],
+        )
+
+
+class RankedPreviewOnlySearchEngine:
+    def search(self, raw_query, documents, config):
+        raw_candidates = [
+            SearchCandidate(
+                document=document,
+                provider="ExactCandidateProvider",
+                reason="EXACT_NAME",
+                score=0.98,
+                confidence="HIGH",
+                priority=10,
+            )
+            for document in documents
+        ]
+        return SearchRunResult(
+            candidates=CandidateMerger().merge(raw_candidates[:1]),
+            raw_candidates=raw_candidates,
         )
 
 
@@ -439,6 +459,45 @@ def test_flow_extraction_uses_candidate_after_old_top_five_cutoff():
     assert not any(forbidden_message in diagnostic.message for diagnostic in response.diagnostics)
 
 
+def test_graph_flow_uses_raw_candidates_not_ranked_preview():
+    decoys = [
+        candidate(id=f"a-decoy-{index}", name="SharedTerm", label="SharedTerm", qualifiedName=f"example.Decoy{index}", degree=0)
+        for index in range(6)
+    ]
+    store = FakeGraphStore(
+        candidates=[
+            *decoys,
+            candidate(id="z-flow-anchor", name="SharedTerm", label="SharedTerm", qualifiedName="example.FlowAnchor", degree=0),
+        ],
+        nodes=[
+            *[graph_node(f"a-decoy-{index}", "SharedTerm") for index in range(6)],
+            graph_node("controller-start", "Controller.start"),
+            graph_node("z-flow-anchor", "SharedTerm"),
+            graph_node("repository-save", "Repository.save"),
+        ],
+        edges=[
+            graph_edge("calls-start", "controller-start", "z-flow-anchor"),
+            graph_edge("calls-save", "z-flow-anchor", "repository-save"),
+        ],
+    )
+    query_service = KnowledgeQueryService(
+        SourceScopeResolver(store),
+        UnifiedAnchorSearcher(store, RankedPreviewOnlySearchEngine()),
+        GraphSliceQueryService(store),
+        FlowPathExtractor(store),
+        EvidenceBundleBuilder(),
+        KnowledgeQueryPolicy(max_display_candidates=1, max_flow_paths=4),
+    )
+
+    response = query_service.query(query_request("SharedTerm"))
+
+    assert len(response.matchedNodes) == 1
+    assert response.matchedNodes[0].nodeId == "a-decoy-0"
+    assert response.coverage.matchedNodeCount == 7
+    assert any(flow.nodeIds == ["controller-start", "z-flow-anchor", "repository-save"] for flow in response.flowPaths)
+    assert any("z-flow-anchor" in flow.matchedNodeIds for flow in response.flowPaths)
+
+
 def test_flow_path_extraction_uses_calls_edges_from_graph_slice():
     store = FakeGraphStore(candidates=[candidate(id="controller-create", name="Controller.create", label="Controller.create")])
 
@@ -640,7 +699,7 @@ def test_guardrail_reports_truncated_flow_result():
     assert any(diagnostic.code == "RESULT_LIMIT_REACHED" for diagnostic in response.diagnostics)
 
 
-def test_search_candidate_limit_reports_diagnostic():
+def test_document_safety_cap_reports_diagnostic_without_ranked_limit_metadata():
     store = FakeGraphStore(
         candidates=[
             candidate(id="controller-create", name="Controller.create", label="Controller.create"),
@@ -651,7 +710,23 @@ def test_search_candidate_limit_reports_diagnostic():
 
     response = service(store, KnowledgeQueryPolicy(max_search_documents=1, max_flow_paths=2)).query(query_request("Controller.create"))
 
-    assert any(diagnostic.code == "SEARCH_CANDIDATE_LIMIT_REACHED" for diagnostic in response.diagnostics)
+    diagnostic = next(diagnostic for diagnostic in response.diagnostics if diagnostic.code == "SEARCH_CANDIDATE_LIMIT_REACHED")
+    assert diagnostic.metadata == {"maxSearchDocuments": 1, "maxCandidatesPerProvider": 100}
+
+
+def test_provider_safety_cap_reports_diagnostic_without_ranked_limit_metadata():
+    store = FakeGraphStore(
+        candidates=[
+            candidate(id="shared-a", name="SharedTerm", label="SharedTerm"),
+            candidate(id="shared-b", name="SharedTerm", label="SharedTerm"),
+            candidate(id="shared-c", name="SharedTerm", label="SharedTerm"),
+        ]
+    )
+
+    response = service(store, KnowledgeQueryPolicy(max_candidates_per_provider=1, max_flow_paths=2)).query(query_request("SharedTerm"))
+
+    diagnostic = next(diagnostic for diagnostic in response.diagnostics if diagnostic.code == "SEARCH_CANDIDATE_LIMIT_REACHED")
+    assert diagnostic.metadata == {"maxSearchDocuments": 5000, "maxCandidatesPerProvider": 1}
 
 
 def test_query_uses_deterministic_search_when_semantic_index_failed(tmp_path):

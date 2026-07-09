@@ -30,7 +30,6 @@ from knowledge_service.knowledge_query_schema import (
 @dataclass(frozen=True)
 class KnowledgeQueryPolicy:
     max_search_documents: int = 5000
-    max_search_candidates: int = 100
     max_candidates_per_provider: int = 100
     max_display_candidates: int = 20
     graph_slice_depth: int = 2
@@ -167,7 +166,6 @@ class UnifiedAnchorSearcher:
                     metadata={
                         "maxSearchDocuments": policy.max_search_documents,
                         "maxCandidatesPerProvider": policy.max_candidates_per_provider,
-                        "maxSearchCandidates": policy.max_search_candidates,
                     },
                 )
             )
@@ -297,7 +295,6 @@ class UnifiedAnchorSearcher:
     def _search_config(self, policy: KnowledgeQueryPolicy) -> SearchConfig:
         return SearchConfig(
             max_candidates_per_provider=policy.max_candidates_per_provider,
-            max_total_candidates=policy.max_search_candidates,
             min_lexical_score=policy.min_lexical_score,
             min_fuzzy_score=policy.min_fuzzy_score,
             fuzzy_max_edit_distance=policy.fuzzy_max_edit_distance,
