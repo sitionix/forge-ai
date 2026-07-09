@@ -19,6 +19,7 @@ class ForgeAiInfrastructureRouteContractTest {
                         "GET /api/v1/infrastructure/jarvis/actions",
                         "GET /api/v1/infrastructure/jarvis/status",
                         "GET /api/v1/infrastructure/knowledge/analysis/files",
+                        "GET /api/v1/infrastructure/knowledge/analysis/current-file-progress",
                         "GET /api/v1/infrastructure/knowledge/analysis/diagnostics",
                         "GET /api/v1/infrastructure/knowledge/analysis/graph/edge/{edgeId}",
                         "GET /api/v1/infrastructure/knowledge/analysis/graph/edges",

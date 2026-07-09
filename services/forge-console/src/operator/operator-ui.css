@@ -2167,6 +2167,48 @@ body.sidebar-collapsed .sidebar-link {
   white-space: nowrap;
 }
 
+.knowledge-current-target-progress {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(100, 116, 139, 0.18);
+}
+
+.knowledge-current-target-progress small {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-current-target-progress strong {
+  font-size: 11px;
+}
+
+.knowledge-target-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.knowledge-target-progress-track {
+  --target-percent: 0%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      to right,
+      rgba(14, 165, 233, 0.88) 0%,
+      rgba(14, 165, 233, 0.88) var(--target-percent),
+      rgba(27, 36, 31, 0.12) var(--target-percent),
+      rgba(27, 36, 31, 0.12) 100%
+    );
+}
+
 .knowledge-facts-cell,
 .knowledge-mini-status {
   display: grid;

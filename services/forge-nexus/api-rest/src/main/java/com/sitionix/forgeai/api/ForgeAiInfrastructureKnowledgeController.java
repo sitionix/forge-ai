@@ -92,6 +92,12 @@ public class ForgeAiInfrastructureKnowledgeController {
         return this.proxy("knowledge.analysis.status", Map.of(), null, headers, request);
     }
 
+    @GetMapping("/api/v1/infrastructure/knowledge/analysis/current-file-progress")
+    public CompletableFuture<ResponseEntity<byte[]>> analysisCurrentFileProgress(@RequestHeader final HttpHeaders headers,
+                                                                                final HttpServletRequest request) {
+        return this.proxy("knowledge.analysis.current-file-progress", Map.of(), null, headers, request);
+    }
+
     @GetMapping("/api/v1/infrastructure/knowledge/analysis/files")
     public CompletableFuture<ResponseEntity<byte[]>> analysisFiles(@RequestHeader final HttpHeaders headers,
                                                                    final HttpServletRequest request) {

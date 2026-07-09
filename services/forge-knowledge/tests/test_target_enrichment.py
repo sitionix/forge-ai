@@ -12,6 +12,7 @@ import pytest
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
 from knowledge_service.analysis_service import AnalysisSupervisor
+from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
 from knowledge_service.analysis_policy import PromptDefinition
 from knowledge_service.analysis_policy_loader import load_analysis_policy
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry
@@ -667,6 +668,32 @@ def test_runtime_target_plan_too_large_makes_no_llm_calls():
     assert exc.value.code == "ANALYSIS_TARGET_PLAN_TOO_LARGE"
     assert exc.value.details["targetCount"] > exc.value.details["maxTargetCalls"]
     assert analyzer.calls == 0
+
+
+def test_runtime_updates_current_file_target_progress_after_successful_targets_only():
+    policy = load_analysis_policy(POLICY_PATH)
+    tracker = CurrentFileTargetProgressTracker()
+    runtime = AnalyzerRuntime(policy, extractor_registry=ExtractorRegistry(), target_progress_tracker=tracker)
+    content = "class Foo { void call() {} }\n"
+    row = _row("src/Foo.java", content)
+    snapshots = []
+
+    async def retry(provider, payload, line_count):
+        snapshots.append(tracker.snapshot())
+        result = provider.analyze(payload, line_count)
+        return result, [], {"attempt_count": 1, "last_attempt_at": "now", "last_error_code": None, "last_error_message": None, "last_raw_response_preview": None}
+
+    asyncio.run(runtime.execute(row, {}, content.splitlines(), _CountingAnalyzer(), retry, job_id="job-1"))
+
+    assert snapshots[0]["entries"][0]["totalTargets"] == 3
+    assert snapshots[0]["entries"][0]["completedTargets"] == 0
+    assert snapshots[1]["entries"][0]["completedTargets"] == 1
+    assert snapshots[2]["entries"][0]["completedTargets"] == 2
+    final_entry = tracker.snapshot()["entries"][0]
+    assert final_entry["totalTargets"] == 3
+    assert final_entry["completedTargets"] == 3
+    assert final_entry["percent"] == 100.0
+    assert final_entry["showTargetProgress"] is True
 
 
 def test_ollama_client_captures_outer_request_with_minimal_marked_input_json():

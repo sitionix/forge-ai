@@ -39,6 +39,7 @@ PUBLIC_ENDPOINTS = {
     ("GET", "/api/v1/knowledge/analysis/jobs/{job_id}"),
     ("POST", "/api/v1/knowledge/analysis/jobs/{job_id}/stop"),
     ("GET", "/api/v1/knowledge/analysis/status"),
+    ("GET", "/api/v1/knowledge/analysis/current-file-progress"),
     ("GET", "/api/v1/knowledge/overview"),
     ("GET", "/api/v1/knowledge/analysis/files"),
     ("GET", "/api/v1/knowledge/analysis/diagnostics"),

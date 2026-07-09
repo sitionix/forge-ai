@@ -324,6 +324,7 @@ def create_app(
     async def analysis_status(request: Request, includeFreshness: bool = False) -> Dict[str, Any]:
         config, deps = _state(request)
         result = deps.analysis_store.status()
+        result["currentFileProgress"] = _current_file_progress(deps)
         source_config = load_source_config(config.local_config_path)
         if not includeFreshness or source_config is None or not result.get("lastCompletedAt"):
             result["freshness"] = _unknown_freshness()
@@ -331,10 +332,17 @@ def create_app(
             result["freshness"] = KnowledgeFreshnessService(source_config, deps.inventory_store).check()
         return result
 
+    @app.get("/api/v1/knowledge/analysis/current-file-progress")
+    async def analysis_current_file_progress(request: Request) -> Dict[str, Any]:
+        _, deps = _state(request)
+        return _current_file_progress(deps)
+
     @app.get("/api/v1/knowledge/overview")
     async def overview(request: Request) -> Dict[str, Any]:
         _, deps = _state(request)
-        return read_overview(deps.inventory_store.db_path)
+        result = read_overview(deps.inventory_store.db_path)
+        result["currentFileProgress"] = _current_file_progress(deps)
+        return result
 
     @app.get("/api/v1/knowledge/analysis/files")
     async def analysis_files(
@@ -640,6 +648,13 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
             storage_operations=StorageOperations(store.db_path),
         )
     raise RuntimeError("Knowledge app dependencies are not initialized")
+
+
+def _current_file_progress(dependencies: KnowledgeDependencies) -> Dict[str, Any]:
+    progress = getattr(dependencies.analysis_supervisor, "current_file_progress", None)
+    if callable(progress):
+        return progress()
+    return {"active": False, "entries": []}
 
 
 def _semantic_job_state(app: FastAPI):
