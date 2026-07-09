@@ -3,6 +3,7 @@ import pytest
 from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import (
+    CandidatePoolKind,
     EvidenceBundleBuilder,
     FlowPathExtractor,
     GraphSliceQueryService,
@@ -11,6 +12,12 @@ from knowledge_service.knowledge_query_service import (
     SourceScopeResolver,
     UnifiedAnchorSearcher,
     build_knowledge_query_service,
+)
+from knowledge_service.knowledge_search import (
+    CandidateProvider,
+    DeterministicCodeSearchEngine,
+    SearchCandidate,
+    SearchRunResult,
 )
 from knowledge_service.semantic_index import SemanticIndexStatus, SemanticIndexStore
 from semantic_test_support import seed_semantic_graph
@@ -109,8 +116,56 @@ def service(store, policy=None):
         GraphSliceQueryService(store),
         FlowPathExtractor(store),
         EvidenceBundleBuilder(),
-        policy or KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=2),
+        policy or KnowledgeQueryPolicy(max_flow_paths=2),
     )
+
+
+class StaticSemanticProvider(CandidateProvider):
+    name = "SEMANTIC"
+
+    def __init__(self, node_id):
+        self.node_id = node_id
+        self.last_diagnostics = []
+
+    def search(self, query, documents, config):
+        return [
+            SearchCandidate(
+                document=document,
+                provider=self.name,
+                reason="SEMANTIC_VECTOR_SIMILARITY",
+                score=0.86,
+                confidence="HIGH",
+                priority=52,
+            )
+            for document in documents
+            if document.node_id == self.node_id
+        ]
+
+
+class StaticDuplicateSearchEngine:
+    def search(self, raw_query, documents, config):
+        document = documents[0]
+        return SearchRunResult(
+            candidates=[],
+            raw_candidates=[
+                SearchCandidate(
+                    document=document,
+                    provider="ExactCandidateProvider",
+                    reason="EXACT_NAME",
+                    score=0.98,
+                    confidence="HIGH",
+                    priority=10,
+                ),
+                SearchCandidate(
+                    document=document,
+                    provider="LexicalCandidateProvider",
+                    reason="LEXICAL_TOKEN_OVERLAP",
+                    score=0.42,
+                    confidence="LOW",
+                    priority=42,
+                ),
+            ],
+        )
 
 
 def candidate(**overrides):
@@ -310,6 +365,80 @@ def test_baseline_search_finds_by_node_name_stable_key_and_qualified_name():
     assert "STABLE_KEY_MATCH" in reasons
 
 
+def test_candidate_pools_preserve_exact_match_when_semantic_supplements():
+    store = FakeGraphStore(
+        candidates=[
+            candidate(id="site-controller", name="SiteController", label="SiteController", qualifiedName="app.SiteController"),
+            candidate(
+                id="semantic-site-service",
+                name="CreateSiteService",
+                label="CreateSiteService",
+                qualifiedName="app.CreateSiteService",
+                summary="Creates a site from a request.",
+            ),
+        ]
+    )
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+    searcher = UnifiedAnchorSearcher(
+        store,
+        DeterministicCodeSearchEngine(extra_broad_providers=[StaticSemanticProvider("semantic-site-service")]),
+    )
+
+    result = searcher.search("SiteController", eligible_sources, KnowledgeQueryPolicy())
+
+    assert any(node.nodeId == "site-controller" for node in result.pools[CandidatePoolKind.EXACT])
+    assert any(node.nodeId == "semantic-site-service" for node in result.pools[CandidatePoolKind.SEMANTIC])
+    assert result.all_candidates[0].nodeId == "site-controller"
+    assert "SEMANTIC_VECTOR_SIMILARITY" not in result.all_candidates[0].matchReasons
+
+
+def test_candidate_pool_dedup_merges_reasons_and_preserves_highest_score():
+    store = FakeGraphStore(candidates=[candidate(id="site-controller", name="SiteController", label="SiteController")])
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+    result = UnifiedAnchorSearcher(store, StaticDuplicateSearchEngine()).search("SiteController", eligible_sources, KnowledgeQueryPolicy())
+
+    assert len(result.all_candidates) == 1
+    assert result.all_candidates[0].nodeId == "site-controller"
+    assert result.all_candidates[0].score >= 0.98
+    assert {"EXACT_NAME", "NAME_MATCH", "LEXICAL_TOKEN_OVERLAP"} <= set(result.all_candidates[0].matchReasons)
+    assert result.pools[CandidatePoolKind.EXACT][0].nodeId == "site-controller"
+    assert result.pools[CandidatePoolKind.LEXICAL][0].nodeId == "site-controller"
+
+
+def test_flow_extraction_uses_candidate_after_old_top_five_cutoff():
+    decoys = [
+        candidate(id=f"a-decoy-{index}", name="SharedTerm", label="SharedTerm", qualifiedName=f"example.Decoy{index}", degree=0)
+        for index in range(6)
+    ]
+    store = FakeGraphStore(
+        candidates=[
+            *decoys,
+            candidate(id="z-flow-anchor", name="SharedTerm", label="SharedTerm", qualifiedName="example.FlowAnchor", degree=0),
+        ],
+        nodes=[
+            *[graph_node(f"a-decoy-{index}", "SharedTerm") for index in range(6)],
+            graph_node("controller-start", "Controller.start"),
+            graph_node("z-flow-anchor", "SharedTerm"),
+            graph_node("repository-save", "Repository.save"),
+        ],
+        edges=[
+            graph_edge("calls-start", "controller-start", "z-flow-anchor"),
+            graph_edge("calls-save", "z-flow-anchor", "repository-save"),
+        ],
+    )
+
+    response = service(store, KnowledgeQueryPolicy(max_display_candidates=5, max_flow_paths=4)).query(query_request("SharedTerm"))
+
+    displayed_ids = [node.nodeId for node in response.matchedNodes]
+    assert "z-flow-anchor" not in displayed_ids
+    assert response.coverage.matchedNodeCount == 7
+    assert any(flow.nodeIds == ["controller-start", "z-flow-anchor", "repository-save"] for flow in response.flowPaths)
+    assert any("z-flow-anchor" in flow.matchedNodeIds for flow in response.flowPaths)
+    assert any(diagnostic.code == "MATCHED_NODE_PREVIEW_LIMITED" for diagnostic in response.diagnostics)
+    forbidden_message = "truncated before " + "flow extraction"
+    assert not any(forbidden_message in diagnostic.message for diagnostic in response.diagnostics)
+
+
 def test_flow_path_extraction_uses_calls_edges_from_graph_slice():
     store = FakeGraphStore(candidates=[candidate(id="controller-create", name="Controller.create", label="Controller.create")])
 
@@ -403,7 +532,7 @@ def test_flow_path_extractor_detects_cycles():
     edges = [graph_edge("ab", "a", "b"), graph_edge("bc", "b", "c"), graph_edge("ca", "c", "a")]
     store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[candidate(id="a", name="Alpha", label="Alpha")])
 
-    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(query_request("Alpha"))
+    response = service(store, KnowledgeQueryPolicy(max_flow_paths=4)).query(query_request("Alpha"))
 
     assert any(flow.stopReason == "CYCLE_DETECTED" and flow.complete is False for flow in response.flowPaths)
     assert any(diagnostic.code == "CYCLE_DETECTED" for diagnostic in response.diagnostics)
@@ -487,15 +616,24 @@ def test_graph_slice_failure_becomes_diagnostic_not_exception():
 
 
 def test_guardrail_reports_truncated_flow_result():
+    nodes = [
+        graph_node("controller-create", "Controller.create"),
+        graph_node("usecase-execute", "UseCase.execute"),
+        graph_node("repository-save", "Repository.save"),
+        graph_node("event-publish", "EventPublisher.publish"),
+    ]
+    edges = [
+        graph_edge("calls-controller", "controller-create", "usecase-execute"),
+        graph_edge("calls-publish", "usecase-execute", "event-publish"),
+        graph_edge("calls-save", "usecase-execute", "repository-save"),
+    ]
     store = FakeGraphStore(
-        candidates=[
-            candidate(id="controller-create", name="Controller.create", label="Controller.create"),
-            candidate(id="node-extra", name="Controller.createExtra", label="Controller.createExtra"),
-            candidate(id="node-more", name="Controller.createMore", label="Controller.createMore"),
-        ]
+        nodes=nodes,
+        edges=edges,
+        candidates=[candidate(id="usecase-execute", name="UseCase.execute", label="UseCase.execute")],
     )
 
-    response = service(store).query(query_request("Controller create"))
+    response = service(store, KnowledgeQueryPolicy(max_flow_paths=1)).query(query_request("UseCase.execute"))
 
     assert response.coverage.truncated is True
     assert response.coverage.continuationAvailable is True
@@ -511,9 +649,7 @@ def test_search_candidate_limit_reports_diagnostic():
         ]
     )
 
-    response = service(store, KnowledgeQueryPolicy(max_search_documents=1, max_matched_nodes=2, max_flow_paths=2)).query(
-        query_request("Controller.create")
-    )
+    response = service(store, KnowledgeQueryPolicy(max_search_documents=1, max_flow_paths=2)).query(query_request("Controller.create"))
 
     assert any(diagnostic.code == "SEARCH_CANDIDATE_LIMIT_REACHED" for diagnostic in response.diagnostics)
 

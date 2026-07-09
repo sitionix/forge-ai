@@ -402,6 +402,7 @@ class SearchRunResult:
     candidate_limit_reached: bool = False
     low_confidence_matches: bool = False
     diagnostics: List[Dict[str, Any]] = field(default_factory=list)
+    raw_candidates: List[SearchCandidate] = field(default_factory=list)
 
 
 class CandidateProvider:
@@ -815,11 +816,12 @@ class DeterministicCodeSearchEngine:
             LexicalCandidateProvider(),
             FuzzyCandidateProvider(),
         )
+        self.supplemental_providers: Tuple[CandidateProvider, ...] = ()
         if providers is not None:
             self.precise_providers = tuple(providers)
             self.broad_providers = ()
         elif extra_broad_providers is not None:
-            self.broad_providers = (*self.broad_providers, *tuple(extra_broad_providers))
+            self.supplemental_providers = tuple(extra_broad_providers)
         self.ranker = ranker or SearchRanker()
 
     def search(self, raw_query: str, documents: Sequence[SearchDocument], config: SearchConfig) -> SearchRunResult:
@@ -841,10 +843,16 @@ class DeterministicCodeSearchEngine:
             diagnostics.extend(broad_candidates.diagnostics)
             candidate_limit_reached = candidate_limit_reached or broad_candidates.limit_reached
 
+        supplemental_candidates = self._run_providers(self.supplemental_providers, query, documents, config)
+        all_candidates.extend(supplemental_candidates.candidates)
+        diagnostics.extend(supplemental_candidates.diagnostics)
+        candidate_limit_reached = candidate_limit_reached or supplemental_candidates.limit_reached
+
         ranked = self.ranker.rank(all_candidates, config.max_total_candidates) if all_candidates else []
         low_confidence_matches = bool(all_candidates and not ranked)
         return SearchRunResult(
             candidates=ranked,
+            raw_candidates=list(all_candidates),
             candidate_limit_reached=candidate_limit_reached,
             low_confidence_matches=low_confidence_matches,
             diagnostics=diagnostics,
