@@ -168,12 +168,24 @@ public final class InfrastructureProxyEndpoint {
         return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQuery.json", "responseProxyJarvisQuery.json");
     }
 
+    public static Endpoint<Object, Object> nexusJarvisQueryOptionalControls() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryOptionalControls.json", "responseProxyJarvisQuery.json");
+    }
+
     public static Endpoint<Object, Object> nexusJarvisQueryNoCandidates() {
         return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", "responseProxyJarvisQueryNoCandidates.json");
     }
 
     public static Endpoint<Object, Object> nexusJarvisQueryBlank() {
         return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryBlank.json", HttpStatus.BAD_REQUEST, null);
+    }
+
+    public static Endpoint<Object, Object> nexusJarvisQueryOldRequest() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryOld.json", HttpStatus.BAD_REQUEST, null);
+    }
+
+    public static Endpoint<Object, Object> nexusJarvisQueryUnknownField() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryUnknownField.json", HttpStatus.BAD_REQUEST, null);
     }
 
     public static Endpoint<Object, Object> nexusUnsupportedKnowledgeGraph() {
@@ -396,6 +408,10 @@ public final class InfrastructureProxyEndpoint {
 
     public static Endpoint<Object, Object> upstreamJarvisQuery() {
         return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQuery.json", "responseProxyJarvisQuery.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamJarvisQueryOptionalControls() {
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryOptionalControls.json", "responseProxyJarvisQuery.json");
     }
 
     public static Endpoint<Object, Object> upstreamJarvisQueryNoCandidates() {

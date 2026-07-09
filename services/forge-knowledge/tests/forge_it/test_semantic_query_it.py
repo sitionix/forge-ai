@@ -15,6 +15,16 @@ from semantic_test_support import seed_semantic_graph
 pytestmark = pytest.mark.forge_it
 
 
+def query_request(query_text):
+    return KnowledgeQueryRequest(
+        queryText=query_text,
+        intent="UNKNOWN",
+        answerLanguage="en",
+        includeTests=False,
+        maxFlows=10,
+    )
+
+
 def test_semantic_query_improves_human_retrieval_and_flow_paths(tmp_path):
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     assert app is not None
@@ -27,7 +37,7 @@ def test_semantic_query_improves_human_retrieval_and_flow_paths(tmp_path):
     ).build(["forge-semantic-test"], force=True)
     service = build_knowledge_query_service(deps.analysis_store, app_config, embedding_provider=provider)
 
-    response = service.query(KnowledgeQueryRequest(query="де Jarvis передає query в Knowledge"))
+    response = service.query(query_request("де Jarvis передає query в Knowledge"))
 
     matched_ids = [node.nodeId for node in response.matchedNodes]
     assert {"jarvis-query-service-query", "jarvis-knowledge-client-query", "knowledge-query-service-query"} & set(matched_ids)
@@ -54,7 +64,7 @@ def test_exact_query_beats_semantic_candidate(tmp_path):
     SemanticIndexBuilder(app_config.store_path, provider, config=SemanticBuildConfig()).build(["forge-semantic-test"], force=True)
     service = build_knowledge_query_service(deps.analysis_store, app_config, embedding_provider=provider)
 
-    response = service.query(KnowledgeQueryRequest(query="WireMockQueryParams"))
+    response = service.query(query_request("WireMockQueryParams"))
 
     assert response.matchedNodes[0].nodeId == "wiremock-query-params"
     assert "NAME_MATCH" in response.matchedNodes[0].matchReasons
@@ -80,7 +90,7 @@ def test_query_falls_back_when_semantic_not_ready(tmp_path, state):
         )
     service = build_knowledge_query_service(deps.analysis_store, app_config, embedding_provider=provider)
 
-    response = service.query(KnowledgeQueryRequest(query="Jarvis query Knowledge"))
+    response = service.query(query_request("Jarvis query Knowledge"))
 
     assert response.matchedNodes
     assert response.status in {"OK", "AMBIGUOUS"}

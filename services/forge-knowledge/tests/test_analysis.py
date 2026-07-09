@@ -59,6 +59,26 @@ from knowledge_service.target_enrichment import (
 )
 
 
+def knowledge_query_request(query_text: str) -> KnowledgeQueryRequest:
+    return KnowledgeQueryRequest(
+        queryText=query_text,
+        intent="UNKNOWN",
+        answerLanguage="en",
+        includeTests=False,
+        maxFlows=10,
+    )
+
+
+def knowledge_query_payload(query_text: str):
+    return {
+        "queryText": query_text,
+        "intent": "UNKNOWN",
+        "answerLanguage": "en",
+        "includeTests": False,
+        "maxFlows": 10,
+    }
+
+
 class StubAnalyzer:
     name = "ai-file-analyzer"
     version = "1"
@@ -1930,7 +1950,7 @@ def test_failed_retry_preserves_existing_graph_semantic_cache_and_query_results(
         app_config(tmp_path),
         embedding_provider=FakeDeterministicEmbeddingProvider(dimension=8),
     )
-    response = query_service.query(KnowledgeQueryRequest(query="ObjectHandler create"))
+    response = query_service.query(knowledge_query_request("ObjectHandler create"))
 
     assert response.status == "OK"
     assert response.matchedNodes
@@ -4502,19 +4522,19 @@ def test_knowledge_query_works_with_missing_pending_and_stale_semantic_index(tmp
     monkeypatch.setattr(main, "app_config", cfg)
     monkeypatch.setattr(main, "store", store)
 
-    missing = post_json("/api/v1/knowledge/query", {"query": "ObjectHandler"})
+    missing = post_json("/api/v1/knowledge/query", knowledge_query_payload("ObjectHandler"))
     assert missing["status"] == 200
     assert missing["json"]["status"] != "QUERY_FAILED"
 
     wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
-    pending = post_json("/api/v1/knowledge/query", {"query": "ObjectHandler"})
+    pending = post_json("/api/v1/knowledge/query", knowledge_query_payload("ObjectHandler"))
     assert pending["status"] == 200
     assert pending["json"]["status"] in {"OK", "AMBIGUOUS"}
 
     semantic_store = SemanticIndexStore(store.db_path)
     state = semantic_store.get_state("edge-gateway")
     semantic_store.mark_source_stale("edge-gateway", f"{state['graph_revision']}:manual-stale", state["total_node_count"])
-    stale = post_json("/api/v1/knowledge/query", {"query": "ObjectHandler"})
+    stale = post_json("/api/v1/knowledge/query", knowledge_query_payload("ObjectHandler"))
     assert stale["status"] == 200
     assert stale["json"]["status"] in {"OK", "AMBIGUOUS"}
 

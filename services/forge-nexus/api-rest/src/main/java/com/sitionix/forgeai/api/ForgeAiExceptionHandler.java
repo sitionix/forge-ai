@@ -12,6 +12,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import com.sitionix.forgeai.domain.exception.ServicePropertyMissingException;
 
 @RestControllerAdvice
@@ -72,6 +73,16 @@ public class ForgeAiExceptionHandler {
                         "code", HttpStatus.BAD_REQUEST.value(),
                         "title", "VALIDATION_FAILED",
                         "details", this.buildValidationDetails(exception.getBindingResult().getFieldErrors())
+                ));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, Object>> handleHttpMessageNotReadableException(final HttpMessageNotReadableException exception) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(
+                        "code", HttpStatus.BAD_REQUEST.value(),
+                        "title", "VALIDATION_FAILED",
+                        "details", "Request body is invalid or does not match the expected contract"
                 ));
     }
 

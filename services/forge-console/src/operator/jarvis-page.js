@@ -118,10 +118,7 @@ export class JarvisPage {
       setError('jarvisQueryError', new Error('Question is required.'), this.document);
       return null;
     }
-    const payload = {
-      query,
-      intent: 'AUTO'
-    };
+    const payload = { queryText: query };
     this.setQueryBusy(true);
     try {
       const result = await this.requestCoordinator.run('jarvis-query', ({ signal }) => this.http.post('/jarvis/query', payload, { signal }));
@@ -256,7 +253,7 @@ export class JarvisPage {
           <div class="detail-card-head">
             <div>
               <strong>No graph matches found</strong>
-              <p>${escapeHtml(response.intent || 'AUTO')}</p>
+              <p>${escapeHtml(response.intent || 'UNKNOWN')}</p>
             </div>
             ${pill(response.status, response.status)}
           </div>
@@ -274,7 +271,7 @@ export class JarvisPage {
         <div class="detail-card-head">
           <div>
             <strong>Status</strong>
-            <p>Intent: ${escapeHtml(response.intent || 'AUTO')}</p>
+            <p>Intent: ${escapeHtml(response.intent || 'UNKNOWN')}</p>
           </div>
           ${pill(response.status || 'UNKNOWN', response.status || 'UNKNOWN')}
         </div>

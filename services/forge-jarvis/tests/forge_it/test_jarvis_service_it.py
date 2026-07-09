@@ -12,8 +12,10 @@ from support import (
     knowledge_bad_response,
     knowledge_query_bundle,
     knowledge_unavailable,
+    normalized_query_payload,
     ollama_bad_response,
     ollama_unavailable,
+    query_payload,
     write_runtime_config,
 )
 
@@ -75,13 +77,13 @@ def test_status_actions_command_and_query_success_paths(tmp_path):
         status = client.get("/api/v1/jarvis/status").json()
         actions = client.get("/api/v1/jarvis/actions").json()
         command = client.post("/api/v1/jarvis/command", json={"text": "check ollama"}).json()
-        query = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"}).json()
+        query = client.post("/api/v1/jarvis/query", json=query_payload("explain JarvisGateway")).json()
 
     assert status["ollama"]["status"] == "UNKNOWN"
     assert actions["actions"] and "command" not in str(actions)
     assert command["execution"]["executed"] is True
     assert executor.invocations == [("ollama_status", "health", "check ollama")]
-    assert knowledge.calls == [{"query": "explain JarvisGateway", "intent": "AUTO"}]
+    assert knowledge.calls == [normalized_query_payload("explain JarvisGateway")]
     assert model.prompts == []
     assert model.health_calls == 0
     assert query["matchedNodes"][0]["sourceId"] == "forge-ai"
@@ -134,7 +136,7 @@ def test_command_validation_and_failure_matrix(tmp_path):
 
 def test_query_failure_matrix_and_diagnostics(tmp_path):
     with TestClient(build_test_app(write_runtime_config(tmp_path))[0]) as client:
-        blank = client.post("/api/v1/jarvis/query", json={"query": "   "})
+        blank = client.post("/api/v1/jarvis/query", json=query_payload("   "))
         assert blank.status_code == 422
 
     empty = FakeKnowledgeClient(
@@ -143,28 +145,28 @@ def test_query_failure_matrix_and_diagnostics(tmp_path):
         )
     )
     with TestClient(build_test_app(write_runtime_config(tmp_path), knowledge=empty)[0]) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "missing"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("missing"))
         body = response.json()
         assert body["matchedNodes"] == []
         assert body["flowPaths"] == []
         assert {item["code"] for item in body["diagnostics"]} == {"NO_GRAPH_CANDIDATES"}
 
     with TestClient(build_test_app(write_runtime_config(tmp_path), knowledge=FakeKnowledgeClient(error=knowledge_unavailable()))[0]) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "explain"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("explain"))
         assert response.status_code == 503
         assert response.json()["code"] == "KNOWLEDGE_UNAVAILABLE"
 
     with TestClient(build_test_app(write_runtime_config(tmp_path), knowledge=FakeKnowledgeClient(error=knowledge_bad_response()))[0]) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "explain"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("explain"))
         assert response.status_code == 502
         assert response.json()["code"] == "KNOWLEDGE_BAD_RESPONSE"
 
     with TestClient(build_test_app(write_runtime_config(tmp_path), model=FakeModelClient(generate_error=ollama_unavailable()))[0]) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "explain"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("explain"))
         assert response.status_code == 200
 
     with TestClient(build_test_app(write_runtime_config(tmp_path), model=FakeModelClient(generate_error=ollama_bad_response()))[0]) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "explain"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("explain"))
         assert response.status_code == 200
 
 
@@ -187,7 +189,7 @@ def test_query_surfaces_knowledge_analysis_diagnostics_when_graph_is_not_ready(t
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "explain analyzed files"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("explain analyzed files"))
 
     body = response.json()
     assert response.status_code == 200
@@ -195,4 +197,4 @@ def test_query_surfaces_knowledge_analysis_diagnostics_when_graph_is_not_ready(t
     assert body["flowPaths"] == []
     assert "answer" not in body
     assert {item["code"] for item in body["diagnostics"]} == {"ANALYSIS_NOT_READY"}
-    assert knowledge.calls == [{"query": "explain analyzed files", "intent": "AUTO"}]
+    assert knowledge.calls == [normalized_query_payload("explain analyzed files")]

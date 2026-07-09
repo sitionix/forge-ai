@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from support import AsgiResponse
 from support import AsgiTestClient as TestClient
-from support import FakeKnowledgeClient, FakeModelClient, build_test_app, knowledge_query_bundle, write_runtime_config
+from support import FakeKnowledgeClient, FakeModelClient, build_test_app, knowledge_query_bundle, query_payload, write_runtime_config
 
 from jarvis_agent.action_executor import ActionExecutionError, ActionExecutor
 from jarvis_agent.action_registry import ActionRegistry
@@ -49,7 +49,7 @@ def test_perf_jar_02_query_records_knowledge_timing_and_does_not_generate_answer
     app, *_ = build_test_app(write_runtime_config(tmp_path), model=model, knowledge=knowledge)
 
     with TestClient(app) as client:
-        samples = _sample_route(lambda: client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"}))
+        samples = _sample_route(lambda: client.post("/api/v1/jarvis/query", json=query_payload("explain JarvisGateway")))
 
     for sample in samples:
         body = sample.response.json()
