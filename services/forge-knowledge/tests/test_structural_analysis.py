@@ -228,6 +228,277 @@ class Dep { void call() {} }
     assert [item.lineStart for item in edge.evidence] == [7]
 
 
+def test_java_method_reference_explicit_field_receiver_resolves_and_uses_field():
+    text = """package example;
+
+import java.util.Optional;
+import java.util.UUID;
+
+class Repo {
+  private final Repository repository;
+  private final SiteInfraMapper siteInfraMapper;
+
+  Optional<Site> findById(UUID id) {
+    return repository.findById(id).map(this.siteInfraMapper::asSite);
+  }
+}
+
+interface SiteInfraMapper {
+  Site asSite(SiteEntity entity);
+}
+
+interface Repository {
+  Optional<SiteEntity> findById(UUID id);
+}
+
+class Site {}
+class SiteEntity {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    method_ref_line = next(index for index, line in enumerate(text.splitlines(), 1) if "this.siteInfraMapper::asSite" in line)
+    find_by_id = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "findById")
+    target = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "asSite")
+    field = next(node for node in graph.nodes if node.nodeKind == "FIELD" and node.name == "siteInfraMapper")
+    call_edge = next(edge for edge in graph.edges if edge.edgeType == "CALLS" and edge.fromNodeLocalId == find_by_id.localId and edge.toNodeLocalId == target.localId)
+    uses_field = next(edge for edge in graph.edges if edge.edgeType == "USES_FIELD" and edge.fromNodeLocalId == find_by_id.localId and edge.toNodeLocalId == field.localId)
+
+    assert call_edge.resolutionStatus == "RESOLVED"
+    assert call_edge.argument_count is None
+    assert call_edge.unresolvedTarget is None
+    assert call_edge.metadata["callKind"] == "FIELD_METHOD_REFERENCE"
+    assert call_edge.metadata["receiverText"] == "this.siteInfraMapper"
+    assert call_edge.metadata["receiverTypeHint"] == "SiteInfraMapper"
+    assert call_edge.metadata["targetTypeText"] == "SiteInfraMapper"
+    assert call_edge.metadata["resolutionReason"] == "FIELD_TYPE_HINT"
+    assert "unresolvedReason" not in call_edge.metadata
+    assert [item.lineStart for item in call_edge.evidence] == [method_ref_line]
+    assert [item.lineStart for item in uses_field.evidence] == [method_ref_line]
+    assert all("SiteInfraMapperImpl" not in (node.name or "") for node in graph.nodes)
+
+
+def test_java_method_reference_bare_field_receiver_resolves_when_not_shadowed():
+    text = """package example;
+
+import java.util.Optional;
+import java.util.UUID;
+
+class Repo {
+  private final Repository repository;
+  private final SiteInfraMapper siteInfraMapper;
+
+  Optional<Site> findById(UUID id) {
+    return repository.findById(id).map(siteInfraMapper::asSite);
+  }
+}
+
+interface SiteInfraMapper {
+  Site asSite(SiteEntity entity);
+}
+
+interface Repository {
+  Optional<SiteEntity> findById(UUID id);
+}
+
+class Site {}
+class SiteEntity {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    method_ref_line = next(index for index, line in enumerate(text.splitlines(), 1) if "siteInfraMapper::asSite" in line)
+    find_by_id = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "findById")
+    target = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "asSite")
+    field = next(node for node in graph.nodes if node.nodeKind == "FIELD" and node.name == "siteInfraMapper")
+    call_edge = next(edge for edge in graph.edges if edge.edgeType == "CALLS" and edge.fromNodeLocalId == find_by_id.localId and edge.toNodeLocalId == target.localId)
+    uses_field = next(edge for edge in graph.edges if edge.edgeType == "USES_FIELD" and edge.fromNodeLocalId == find_by_id.localId and edge.toNodeLocalId == field.localId)
+
+    assert call_edge.resolutionStatus == "RESOLVED"
+    assert call_edge.metadata["callKind"] == "FIELD_METHOD_REFERENCE"
+    assert call_edge.metadata["receiverText"] == "siteInfraMapper"
+    assert [item.lineStart for item in call_edge.evidence] == [method_ref_line]
+    assert [item.lineStart for item in uses_field.evidence] == [method_ref_line]
+
+
+def test_java_method_reference_parameter_receiver_resolves_without_field_usage():
+    text = """package example;
+
+import java.util.List;
+import java.util.stream.Stream;
+
+class Service {
+  List<Site> map(Stream<SiteEntity> stream, SiteInfraMapper mapper) {
+    return stream.map(mapper::asSite).toList();
+  }
+}
+
+interface SiteInfraMapper {
+  Site asSite(SiteEntity entity);
+}
+
+class Site {}
+class SiteEntity {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    caller = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "map")
+    target = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "asSite")
+    call_edge = next(edge for edge in graph.edges if edge.edgeType == "CALLS" and edge.fromNodeLocalId == caller.localId and edge.toNodeLocalId == target.localId)
+
+    assert call_edge.resolutionStatus == "RESOLVED"
+    assert call_edge.metadata["callKind"] == "PARAMETER_METHOD_REFERENCE"
+    assert call_edge.metadata["receiverText"] == "mapper"
+    assert call_edge.metadata["receiverTypeHint"] == "SiteInfraMapper"
+    assert not [edge for edge in graph.edges if edge.edgeType == "USES_FIELD" and edge.fromNodeLocalId == caller.localId]
+
+
+def test_java_method_reference_bare_receiver_uses_local_variable_before_shadowed_field():
+    text = """package example;
+
+import java.util.List;
+import java.util.stream.Stream;
+
+class Service {
+  private final OtherMapper siteInfraMapper;
+
+  List<Site> map(Stream<SiteEntity> stream) {
+    SiteInfraMapper siteInfraMapper = createMapper();
+    return stream.map(siteInfraMapper::asSite).toList();
+  }
+
+  SiteInfraMapper createMapper() {
+    return null;
+  }
+}
+
+interface SiteInfraMapper {
+  Site asSite(SiteEntity entity);
+}
+
+interface OtherMapper {
+  Other asSite(SiteEntity entity);
+}
+
+class Site {}
+class Other {}
+class SiteEntity {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    caller = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "map")
+    target = next(
+        node
+        for node in graph.nodes
+        if node.nodeKind == "CALLABLE" and node.name == "asSite" and "SiteInfraMapper" in (node.localId or "")
+    )
+    field = next(node for node in graph.nodes if node.nodeKind == "FIELD" and node.name == "siteInfraMapper")
+    call_edge = next(edge for edge in graph.edges if edge.edgeType == "CALLS" and edge.fromNodeLocalId == caller.localId and edge.toNodeLocalId == target.localId)
+
+    assert call_edge.resolutionStatus == "RESOLVED"
+    assert call_edge.metadata["callKind"] == "LOCAL_VARIABLE_METHOD_REFERENCE"
+    assert call_edge.metadata["receiverTypeHint"] == "SiteInfraMapper"
+    assert not [
+        edge
+        for edge in graph.edges
+        if edge.edgeType == "USES_FIELD" and edge.fromNodeLocalId == caller.localId and edge.toNodeLocalId == field.localId
+    ]
+
+
+def test_java_method_reference_overloaded_target_is_not_guessed_without_arity():
+    text = """package example;
+
+import java.util.List;
+import java.util.stream.Stream;
+
+class Service {
+  List<Site> map(Stream<SiteEntity> stream, SiteInfraMapper mapper) {
+    return stream.map(mapper::asSite).toList();
+  }
+}
+
+interface SiteInfraMapper {
+  Site asSite(SiteEntity entity);
+  Site asSite(OtherEntity entity);
+}
+
+class Site {}
+class SiteEntity {}
+class OtherEntity {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    caller = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "map")
+    method_ref_call = next(
+        edge
+        for edge in graph.edges
+        if edge.edgeType == "CALLS"
+        and edge.fromNodeLocalId == caller.localId
+        and edge.metadata.get("methodName") == "asSite"
+        and edge.metadata.get("callKind") == "PARAMETER_METHOD_REFERENCE"
+    )
+
+    assert method_ref_call.toNodeLocalId is None
+    assert method_ref_call.resolutionStatus == "MULTIPLE_CANDIDATES"
+    assert method_ref_call.unresolvedTarget["name"] == "asSite"
+    assert method_ref_call.metadata["unresolvedReason"] == "MULTIPLE_METHODS_MATCH"
+
+
+def test_java_method_reference_static_local_type_resolves():
+    text = """package example;
+
+import java.util.List;
+import java.util.stream.Stream;
+
+class Service {
+  List<Site> map(Stream<SiteEntity> stream) {
+    return stream.map(SomeMapper::asSite).toList();
+  }
+}
+
+class SomeMapper {
+  static Site asSite(SiteEntity entity) {
+    return new Site();
+  }
+}
+
+class Site {}
+class SiteEntity {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    caller = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "map")
+    target = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "asSite")
+    call_edge = next(edge for edge in graph.edges if edge.edgeType == "CALLS" and edge.fromNodeLocalId == caller.localId and edge.toNodeLocalId == target.localId)
+
+    assert call_edge.resolutionStatus == "RESOLVED"
+    assert call_edge.metadata["callKind"] == "STATIC_METHOD_REFERENCE"
+    assert call_edge.metadata["receiverText"] == "SomeMapper"
+    assert call_edge.metadata["targetTypeText"] == "SomeMapper"
+    assert call_edge.metadata["resolutionReason"] == "QUALIFIED_NAME_MATCH"
+
+
+def test_java_direct_field_receiver_call_still_resolves_after_method_reference_support():
+    text = """package example;
+
+class Repo {
+  private final SiteInfraMapper siteInfraMapper;
+
+  Site convert(SiteEntity entity) {
+    return this.siteInfraMapper.asSite(entity);
+  }
+}
+
+interface SiteInfraMapper {
+  Site asSite(SiteEntity entity);
+}
+
+class Site {}
+class SiteEntity {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    caller = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "convert")
+    target = next(node for node in graph.nodes if node.nodeKind == "CALLABLE" and node.name == "asSite")
+    call_edge = next(edge for edge in graph.edges if edge.edgeType == "CALLS" and edge.fromNodeLocalId == caller.localId and edge.toNodeLocalId == target.localId)
+
+    assert call_edge.resolutionStatus == "RESOLVED"
+    assert call_edge.argument_count == 1
+    assert call_edge.metadata["callKind"] == "FIELD_RECEIVER"
+    assert call_edge.metadata["resolutionReason"] == "FIELD_TYPE_HINT"
+
+
 def test_java_parser_keeps_receiver_type_hints_out_of_edge_metadata():
     text = """package example;
 

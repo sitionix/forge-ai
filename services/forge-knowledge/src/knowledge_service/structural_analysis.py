@@ -316,6 +316,7 @@ class StaticGraphMaterializer:
             claims.extend(self._field_config_claims(result, item.local_id, item.annotations))
         for callsite in result.callsites:
             unresolved = None
+            edge_resolution_status = "RESOLVED" if callsite.target_callable_local_id else callsite.resolution_status
             if callsite.target_callable_local_id is None:
                 unresolved = {
                     "name": callsite.method_name,
@@ -324,22 +325,33 @@ class StaticGraphMaterializer:
                     "targetTypeText": callsite.target_type_text,
                     "kindHint": "CALLABLE",
                 }
+            resolution_reason = callsite.resolution_reason
+            if edge_resolution_status == "RESOLVED" and resolution_reason == "NOT_RESOLVED":
+                resolution_reason = None
+            call_metadata_extra = {
+                "receiverText": callsite.receiver_text,
+                "methodName": callsite.method_name,
+                "callKind": callsite.call_kind,
+                "unresolvedReason": None if edge_resolution_status == "RESOLVED" else callsite.unresolved_reason,
+                "resolutionReason": resolution_reason,
+            }
+            if "METHOD_REFERENCE" in str(callsite.call_kind):
+                call_metadata_extra.update(
+                    {
+                        "receiverTypeHint": callsite.receiver_type_hint,
+                        "targetTypeText": callsite.target_type_text,
+                    }
+                )
             call_metadata = self._metadata(
                 result,
                 "CALLSITE",
                 callsite.stable_key,
-                {
-                    "receiverText": callsite.receiver_text,
-                    "methodName": callsite.method_name,
-                    "callKind": callsite.call_kind,
-                    "unresolvedReason": callsite.unresolved_reason,
-                    "resolutionReason": callsite.resolution_reason,
-                },
+                call_metadata_extra,
             )
             call_metadata = classify_call_metadata(
                 call_metadata,
                 result.file.flow_domain,
-                callsite.resolution_status,
+                edge_resolution_status,
                 unresolved,
             )
             edges.append(
@@ -348,9 +360,9 @@ class StaticGraphMaterializer:
                     fromNodeLocalId=callsite.caller_callable_local_id,
                     toNodeLocalId=callsite.target_callable_local_id,
                     edgeType="CALLS",
-                    resolutionStatus="RESOLVED" if callsite.target_callable_local_id else callsite.resolution_status,
+                    resolutionStatus=edge_resolution_status,
                     argument_count=callsite.argument_count,
-                    confidence=1.0 if callsite.resolution_status == "RESOLVED" else 0.72,
+                    confidence=1.0 if edge_resolution_status == "RESOLVED" else 0.72,
                     evidence=[self._evidence(callsite.line_start, callsite.line_end, callsite.raw_text, {"evidenceKind": "CALLSITE"})],
                     unresolvedTarget=unresolved,
                     metadata=call_metadata,

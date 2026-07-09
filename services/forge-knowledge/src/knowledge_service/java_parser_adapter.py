@@ -33,6 +33,7 @@ CALLSITE_NODE_TYPES = {
     "super_method_invocation",
     "object_creation_expression",
     "explicit_constructor_invocation",
+    "method_reference",
 }
 
 
@@ -357,6 +358,97 @@ class JavaParserAdapter:
             receiver_text = "this"
             call_kind = "THIS_METHOD"
             unresolved_reason = UnresolvedReason.DYNAMIC_DISPATCH.value
+        elif node.type == "method_reference":
+            parts = self._method_reference_parts(node, content)
+            if parts is None:
+                return None
+            receiver_text, method_name = parts
+            argument_count = None
+            receiver_simple = self._simple_type(receiver_text)
+            if method_name == "new":
+                call_kind = "CONSTRUCTOR_REFERENCE"
+                target_type_text = receiver_simple
+                if receiver_simple in imported_simple_names or receiver_simple[:1].isupper():
+                    resolution_status = "EXTERNAL_TARGET"
+                    resolution_reason = ResolutionReason.EXTERNAL_PACKAGE_CLASSIFICATION.value
+                    unresolved_reason = UnresolvedReason.EXTERNAL_NOT_MODELED.value
+                else:
+                    resolution_status = "UNRESOLVED"
+                    resolution_reason = ResolutionReason.NOT_RESOLVED.value
+                    unresolved_reason = UnresolvedReason.PARSER_LIMITATION.value
+            elif receiver_text == "super":
+                call_kind = "METHOD_REFERENCE"
+                resolution_status = "UNRESOLVED"
+                resolution_reason = ResolutionReason.NOT_RESOLVED.value
+                unresolved_reason = UnresolvedReason.DYNAMIC_DISPATCH.value
+            elif receiver_text == "this":
+                call_kind = "METHOD_REFERENCE"
+                target_callable_local_id, resolution_status = self._resolve_same_owner(caller, method_name, argument_count, by_owner)
+                resolution_reason = ResolutionReason.SAME_TYPE_METHOD.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
+                unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.NO_MATCH.value)
+            else:
+                explicit_field = self._explicit_this_field(receiver_text, caller.owner_type_local_id, fields_by_owner_name)
+                implicit_field = self._implicit_field(receiver_text, caller.owner_type_local_id, fields_by_owner_name)
+                if explicit_field is not None:
+                    call_kind = "FIELD_METHOD_REFERENCE"
+                    field_receiver_local_id = explicit_field.local_id
+                    field_type = self._simple_type(explicit_field.type_name or "")
+                    receiver_type_hint = field_type
+                    target_type_text = field_type
+                    target_callable_local_id, resolution_status = self._resolve_type_method(field_type, method_name, argument_count, by_owner, by_type_name)
+                    resolution_reason = ResolutionReason.FIELD_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
+                    unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
+                elif receiver_text in parameter_types:
+                    call_kind = "PARAMETER_METHOD_REFERENCE"
+                    receiver_type_hint = parameter_types[receiver_text]
+                    target_type_text = receiver_type_hint
+                    target_callable_local_id, resolution_status = self._resolve_type_method(
+                        receiver_type_hint, method_name, argument_count, by_owner, by_type_name
+                    )
+                    resolution_reason = ResolutionReason.PARAMETER_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
+                    unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
+                elif receiver_text in local_variable_types:
+                    call_kind = "LOCAL_VARIABLE_METHOD_REFERENCE"
+                    receiver_type_hint = local_variable_types[receiver_text]
+                    target_type_text = receiver_type_hint
+                    target_callable_local_id, resolution_status = self._resolve_type_method(
+                        receiver_type_hint, method_name, argument_count, by_owner, by_type_name
+                    )
+                    resolution_reason = (
+                        ResolutionReason.LOCAL_VARIABLE_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
+                    )
+                    unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
+                elif implicit_field is not None and implicit_field.type_name:
+                    field_type = self._simple_type(implicit_field.type_name)
+                    call_kind = "FIELD_METHOD_REFERENCE"
+                    field_receiver_local_id = implicit_field.local_id
+                    receiver_type_hint = field_type
+                    target_type_text = field_type
+                    target_callable_local_id, resolution_status = self._resolve_type_method(field_type, method_name, argument_count, by_owner, by_type_name)
+                    resolution_reason = ResolutionReason.FIELD_TYPE_HINT.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
+                    unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
+                elif receiver_simple in by_type_name:
+                    call_kind = "STATIC_METHOD_REFERENCE"
+                    target_type_text = receiver_simple
+                    target_callable_local_id, resolution_status = self._resolve_type_method(
+                        receiver_simple, method_name, argument_count, by_owner, by_type_name
+                    )
+                    resolution_reason = ResolutionReason.QUALIFIED_NAME_MATCH.value if resolution_status == "RESOLVED" else ResolutionReason.NOT_RESOLVED.value
+                    unresolved_reason = self._unresolved_reason_from_status(resolution_status, UnresolvedReason.TARGET_NOT_ANALYZED.value)
+                elif receiver_simple in imported_simple_names or receiver_simple[:1].isupper():
+                    call_kind = "STATIC_METHOD_REFERENCE"
+                    target_type_text = receiver_simple
+                    resolution_status = "EXTERNAL_TARGET"
+                    resolution_reason = ResolutionReason.EXTERNAL_PACKAGE_CLASSIFICATION.value
+                    unresolved_reason = UnresolvedReason.EXTERNAL_NOT_MODELED.value
+                elif "." in receiver_text or receiver_text.endswith(")"):
+                    call_kind = "CHAINED_METHOD_REFERENCE"
+                    unresolved_reason = UnresolvedReason.CHAINED_CALL_TARGET_UNKNOWN.value
+                    resolution_reason = ResolutionReason.NOT_RESOLVED.value
+                else:
+                    call_kind = "METHOD_REFERENCE"
+                    unresolved_reason = UnresolvedReason.RECEIVER_TYPE_UNKNOWN.value
+                    resolution_reason = ResolutionReason.NOT_RESOLVED.value
         else:
             name_node = node.child_by_field_name("name")
             if name_node is None:
@@ -539,6 +631,21 @@ class JavaParserAdapter:
         if len(candidates) == 1:
             return candidates[0].local_id, "RESOLVED"
         return None, "MULTIPLE_CANDIDATES"
+
+    def _method_reference_parts(self, node, content: bytes) -> Optional[Tuple[str, str]]:
+        named_children = list(node.named_children)
+        if not named_children:
+            return None
+        receiver_node = named_children[0]
+        receiver_text = self._text(receiver_node, content)
+        method_name: Optional[str] = None
+        if len(named_children) >= 2:
+            method_name = self._text(named_children[-1], content)
+        elif any(child.type == "new" for child in node.children):
+            method_name = "new"
+        if not receiver_text or not method_name:
+            return None
+        return receiver_text, method_name
 
     def _unresolved_reason_from_status(self, status: str, default: str) -> Optional[str]:
         if status == "RESOLVED":

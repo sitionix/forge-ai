@@ -3649,7 +3649,19 @@ class AnalysisStore:
             "metadata": {
                 key: value
                 for key, value in metadata.items()
-                if key in {"callKind", "callTargetCategory", "methodName", "receiverText", "sliceDefaultVisibility", "unresolvedReason", "resolutionReason"}
+                if key
+                in {
+                    "callKind",
+                    "callTargetCategory",
+                    "methodName",
+                    "receiverText",
+                    "receiverTypeHint",
+                    "resolutionReason",
+                    "sliceDefaultVisibility",
+                    "targetTypeHint",
+                    "targetTypeText",
+                    "unresolvedReason",
+                }
             },
         }
 
@@ -4333,7 +4345,7 @@ class AnalysisStore:
                 conn, type_candidates[0]["id"], str(method_name), edge["argument_count"]
             )
             if len(callable_candidates) == 1:
-                metadata = classify_call_metadata(metadata, metadata.get("flowDomain"), contract.resolved_status, None)
+                metadata = self._resolved_call_metadata(metadata, unresolved_target)
                 metadata = self._edge_metadata_for_storage(metadata)
                 conn.execute(
                     """
@@ -4348,6 +4360,34 @@ class AnalysisStore:
                 )
             elif len(callable_candidates) > 1:
                 self._mark_call_edge_multiple(conn, edge["id"], metadata, len(callable_candidates))
+
+    def _resolved_call_metadata(self, metadata: Dict[str, Any], unresolved_target: Dict[str, Any]) -> Dict[str, Any]:
+        result = dict(metadata or {})
+        call_kind = str(result.get("callKind") or "")
+        receiver_type_hint = unresolved_target.get("receiverTypeHint")
+        target_type_text = unresolved_target.get("targetTypeText") or receiver_type_hint
+        result.pop("unresolvedReason", None)
+        result.pop("unresolvedTarget", None)
+        result["resolutionReason"] = self._resolved_call_reason(call_kind, receiver_type_hint, target_type_text)
+        if "METHOD_REFERENCE" in call_kind:
+            if receiver_type_hint:
+                result["receiverTypeHint"] = receiver_type_hint
+            if target_type_text:
+                result["targetTypeText"] = target_type_text
+        return classify_call_metadata(result, result.get("flowDomain"), graph_query_contract().resolved_status, None)
+
+    def _resolved_call_reason(self, call_kind: str, receiver_type_hint: Optional[str], target_type_text: Optional[str]) -> str:
+        if call_kind in {"FIELD_RECEIVER", "FIELD_METHOD_REFERENCE"} and receiver_type_hint:
+            return "FIELD_TYPE_HINT"
+        if call_kind in {"PARAMETER_RECEIVER", "PARAMETER_METHOD_REFERENCE"} and receiver_type_hint:
+            return "PARAMETER_TYPE_HINT"
+        if call_kind in {"LOCAL_VARIABLE_RECEIVER", "LOCAL_VARIABLE_METHOD_REFERENCE"} and receiver_type_hint:
+            return "LOCAL_VARIABLE_TYPE_HINT"
+        if call_kind in {"STATIC_METHOD", "STATIC_METHOD_REFERENCE"} and target_type_text:
+            return "QUALIFIED_NAME_MATCH"
+        if call_kind in {"LOCAL_METHOD", "THIS_METHOD", "METHOD_REFERENCE"}:
+            return "SAME_TYPE_METHOD"
+        return "SAME_FILE_UNIQUE_METHOD"
 
     def _callable_candidates_for_type(
         self, conn: sqlite3.Connection, type_node_id: str, method_name: str, argument_count: Optional[int]
@@ -4387,7 +4427,19 @@ class AnalysisStore:
         return {
             key: value
             for key, value in (metadata or {}).items()
-            if key in {"callKind", "callTargetCategory", "methodName", "receiverText", "resolutionReason", "sliceDefaultVisibility", "unresolvedReason"}
+            if key
+            in {
+                "callKind",
+                "callTargetCategory",
+                "methodName",
+                "receiverText",
+                "receiverTypeHint",
+                "resolutionReason",
+                "sliceDefaultVisibility",
+                "targetTypeHint",
+                "targetTypeText",
+                "unresolvedReason",
+            }
             and value is not None
         }
 

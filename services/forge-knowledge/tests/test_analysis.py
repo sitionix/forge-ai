@@ -1396,7 +1396,85 @@ class TicketDto {}
         assert edge["resolution_status"] == "RESOLVED"
         assert edge["target_name"] == "toApi"
         assert edge["parameter_count"] == 1
-        assert json.loads(edge["metadata_json"]).get("argumentCount") is None
+        metadata = json.loads(edge["metadata_json"])
+        assert metadata.get("argumentCount") is None
+        assert metadata["resolutionReason"] == "FIELD_TYPE_HINT"
+        assert "unresolvedReason" not in metadata
+
+
+def test_resolver_upgrades_cross_file_method_reference_without_stale_unresolved_metadata(tmp_path):
+    repository = """package example;
+
+import java.util.Optional;
+import java.util.UUID;
+
+class Repo {
+  private final Repository repository;
+  private final SiteInfraMapper siteInfraMapper;
+
+  Optional<Site> findById(UUID id) {
+    return repository.findById(id).map(this.siteInfraMapper::asSite);
+  }
+}
+
+interface Repository {
+  Optional<SiteEntity> findById(UUID id);
+}
+
+class Site {}
+class SiteEntity {}
+"""
+    mapper = """package example;
+
+interface SiteInfraMapper {
+  Site asSite(SiteEntity entity);
+}
+
+class Site {}
+class SiteEntity {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(repository, "src/main/java/example/Repo.java"),
+        _materialize_static_java_for_test(repository, 1, "src/main/java/example/Repo.java"),
+    )
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(mapper, "src/main/java/example/SiteInfraMapper.java"),
+        _materialize_static_java_for_test(mapper, 2, "src/main/java/example/SiteInfraMapper.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        edge = conn.execute(
+            """
+            SELECT e.resolution_status, e.to_node_id, e.argument_count, e.metadata_json,
+                   e.unresolved_target_json, target.name AS target_name, ev.line_start, ev.excerpt
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            JOIN analysis_graph_edge_evidence ee ON ee.edge_id = e.id
+            JOIN analysis_graph_evidence ev ON ev.id = ee.evidence_id
+            WHERE e.edge_type = 'CALLS'
+              AND e.source_id = 'edge-gateway'
+              AND json_extract(e.metadata_json, '$.methodName') = 'asSite'
+              AND json_extract(e.metadata_json, '$.callKind') = 'FIELD_METHOD_REFERENCE'
+            """
+        ).fetchone()
+        assert edge is not None
+        assert edge["resolution_status"] == "RESOLVED"
+        assert edge["target_name"] == "asSite"
+        assert edge["argument_count"] is None
+        assert edge["unresolved_target_json"] is None
+        assert edge["line_start"] == 11
+        assert edge["excerpt"] == "this.siteInfraMapper::asSite"
+        metadata = json.loads(edge["metadata_json"])
+        assert metadata["receiverText"] == "this.siteInfraMapper"
+        assert metadata["receiverTypeHint"] == "SiteInfraMapper"
+        assert metadata["targetTypeText"] == "SiteInfraMapper"
+        assert metadata["resolutionReason"] == "FIELD_TYPE_HINT"
+        assert "unresolvedReason" not in metadata
 
 
 def test_resolver_does_not_fake_success_for_same_arity_overloads(tmp_path):
