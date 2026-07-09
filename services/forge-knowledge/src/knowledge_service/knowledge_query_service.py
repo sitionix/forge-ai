@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from knowledge_service.knowledge_search import (
     QueryNormalizer,
     SearchConfig,
     SearchDocument,
+    compact_identifier,
 )
 from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryCoverage,
@@ -236,6 +238,34 @@ class GraphSliceQueryService:
 NodeKey = Tuple[str, str, str]
 EdgeKey = Tuple[str, str, str]
 
+_FLOW_FROM_TO_RE = re.compile(r"\bfrom\s+(?P<source>.+?)\s+to\s+(?P<target>.+)$", re.IGNORECASE)
+_FLOW_HOW_USE_RE = re.compile(r"\bhow\s+does\s+(?P<source>.+?)\s+use\s+(?P<target>.+)$", re.IGNORECASE)
+_FLOW_STOP_TOKENS = {
+    "show",
+    "flow",
+    "from",
+    "to",
+    "how",
+    "does",
+    "do",
+    "use",
+    "uses",
+    "using",
+    "map",
+    "maps",
+    "mapped",
+}
+
+
+@dataclass(frozen=True)
+class _FlowQuerySpec:
+    source_text: str
+    target_text: str
+    source_tokens: tuple[str, ...]
+    target_tokens: tuple[str, ...]
+    source_compact: str
+    target_compact: str
+
 
 @dataclass(frozen=True)
 class _TraversalPath:
@@ -268,6 +298,8 @@ class _Adjacency:
     edges_by_key: Dict[EdgeKey, Dict[str, Any]]
     incoming: Dict[NodeKey, List[EdgeKey]]
     outgoing: Dict[NodeKey, List[EdgeKey]]
+    structural_incoming: Dict[NodeKey, List[EdgeKey]]
+    structural_outgoing: Dict[NodeKey, List[EdgeKey]]
     evidence: List[Dict[str, Any]]
     store_truncated: bool = False
 
@@ -275,6 +307,7 @@ class _Adjacency:
 class FlowPathExtractor:
     def __init__(self, graph_store: Any | None = None) -> None:
         self.graph_store = graph_store
+        self.normalizer = QueryNormalizer()
 
     def extract(
         self,
@@ -282,14 +315,24 @@ class FlowPathExtractor:
         slice_bundle: Dict[str, List[Dict[str, Any]]],
         evidence: Sequence[Dict[str, Any]],
         policy: KnowledgeQueryPolicy,
+        query: str | None = None,
     ) -> tuple[List[KnowledgeQueryFlowPath], List[KnowledgeQueryDiagnostic], bool, Dict[str, Any]]:
         if not matched_nodes:
             return [], [], False, self._empty_adjacency_bundle()
-        adjacency_bundle = self._load_adjacency(matched_nodes, slice_bundle, evidence, policy)
+        flow_spec = self._flow_query_spec(query)
+        adjacency_bundle = self._load_adjacency(matched_nodes, slice_bundle, evidence, policy, include_structural=flow_spec is not None)
         adjacency = self._build_adjacency(adjacency_bundle)
         flow_paths_by_key: Dict[tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]], KnowledgeQueryFlowPath] = {}
         state = _TraversalState(policy=policy, started_at=time.monotonic())
         stop_reasons: set[str] = set()
+
+        if flow_spec is not None:
+            self._add_direct_flow_query_paths(flow_paths_by_key, matched_nodes, flow_spec, adjacency, state, policy)
+            flow_paths = list(flow_paths_by_key.values())
+            for index, flow_path in enumerate(flow_paths, start=1):
+                flow_path.flowId = f"flow-{index}"
+            diagnostics = self._flow_diagnostics(flow_paths, adjacency, state, stop_reasons, policy)
+            return flow_paths, diagnostics, adjacency.store_truncated or state.truncated, adjacency_bundle
 
         for matched_node in matched_nodes:
             if len(flow_paths_by_key) >= policy.max_flow_paths:
@@ -330,6 +373,17 @@ class FlowPathExtractor:
         for index, flow_path in enumerate(flow_paths, start=1):
             flow_path.flowId = f"flow-{index}"
 
+        diagnostics = self._flow_diagnostics(flow_paths, adjacency, state, stop_reasons, policy)
+        return flow_paths, diagnostics, adjacency.store_truncated or state.truncated, adjacency_bundle
+
+    def _flow_diagnostics(
+        self,
+        flow_paths: Sequence[KnowledgeQueryFlowPath],
+        adjacency: _Adjacency,
+        state: _TraversalState,
+        stop_reasons: set[str],
+        policy: KnowledgeQueryPolicy,
+    ) -> List[KnowledgeQueryDiagnostic]:
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         if not flow_paths:
             diagnostics.append(
@@ -362,7 +416,7 @@ class FlowPathExtractor:
                     severity="INFO",
                 )
             )
-        return flow_paths, diagnostics, adjacency.store_truncated or state.truncated, adjacency_bundle
+        return diagnostics
 
     def _load_adjacency(
         self,
@@ -370,18 +424,24 @@ class FlowPathExtractor:
         slice_bundle: Dict[str, List[Dict[str, Any]]],
         evidence: Sequence[Dict[str, Any]],
         policy: KnowledgeQueryPolicy,
+        include_structural: bool = False,
     ) -> Dict[str, Any]:
         if self.graph_store is not None and hasattr(self.graph_store, "load_call_adjacency_for_sources"):
             return dict(
                 self.graph_store.load_call_adjacency_for_sources(
                     self._source_scopes(matched_nodes),
                     max_edges=policy.max_edges_per_traversal,
-                    max_evidence=policy.max_evidence_refs,
+                    max_evidence=500 if include_structural else policy.max_evidence_refs,
+                    include_structural=include_structural,
                 )
             )
         return {
             "nodes": list(slice_bundle.get("nodes") or []),
-            "edges": [edge for edge in slice_bundle.get("edges") or [] if self._edge_type(edge) == "CALLS"],
+            "edges": [
+                edge
+                for edge in slice_bundle.get("edges") or []
+                if self._edge_type(edge) == "CALLS" or (include_structural and self._edge_type(edge) in {"DECLARES", "USES_FIELD"})
+            ],
             "evidence": list(evidence),
             "unresolved": list(slice_bundle.get("unresolved") or []),
             "external": list(slice_bundle.get("external") or []),
@@ -411,19 +471,24 @@ class FlowPathExtractor:
         edges_by_key: Dict[EdgeKey, Dict[str, Any]] = {}
         incoming: Dict[NodeKey, List[EdgeKey]] = {}
         outgoing: Dict[NodeKey, List[EdgeKey]] = {}
+        structural_incoming: Dict[NodeKey, List[EdgeKey]] = {}
+        structural_outgoing: Dict[NodeKey, List[EdgeKey]] = {}
         for edge in adjacency_bundle.get("edges") or []:
-            if self._edge_type(edge) != "CALLS":
-                continue
             edge_key = self._edge_key(edge)
             from_key = self._edge_from_key(edge)
             if edge_key is None or from_key is None:
                 continue
             edge_copy = dict(edge)
             edges_by_key[edge_key] = edge_copy
-            outgoing.setdefault(from_key, []).append(edge_key)
             to_key = self._edge_to_key(edge)
-            if to_key is not None:
-                incoming.setdefault(to_key, []).append(edge_key)
+            if self._edge_type(edge) == "CALLS":
+                outgoing.setdefault(from_key, []).append(edge_key)
+                if to_key is not None:
+                    incoming.setdefault(to_key, []).append(edge_key)
+            elif self._edge_type(edge) in {"DECLARES", "USES_FIELD"}:
+                structural_outgoing.setdefault(from_key, []).append(edge_key)
+                if to_key is not None:
+                    structural_incoming.setdefault(to_key, []).append(edge_key)
 
         def sort_key(edge_key: EdgeKey) -> tuple[str, str, str]:
             edge = edges_by_key[edge_key]
@@ -433,14 +498,332 @@ class FlowPathExtractor:
             values.sort(key=sort_key)
         for values in outgoing.values():
             values.sort(key=sort_key)
+        for values in structural_incoming.values():
+            values.sort(key=sort_key)
+        for values in structural_outgoing.values():
+            values.sort(key=sort_key)
         return _Adjacency(
             nodes_by_key=nodes_by_key,
             edges_by_key=edges_by_key,
             incoming=incoming,
             outgoing=outgoing,
+            structural_incoming=structural_incoming,
+            structural_outgoing=structural_outgoing,
             evidence=[dict(item) for item in adjacency_bundle.get("evidence") or []],
             store_truncated=bool(adjacency_bundle.get("truncated")),
         )
+
+    def _flow_query_spec(self, query: str | None) -> Optional[_FlowQuerySpec]:
+        raw_query = str(query or "").strip()
+        if not raw_query:
+            return None
+        match = _FLOW_FROM_TO_RE.search(raw_query) or _FLOW_HOW_USE_RE.search(raw_query)
+        if not match:
+            return None
+        source_text = self._clean_flow_fragment(match.group("source"))
+        target_text = self._clean_flow_fragment(match.group("target"))
+        if not source_text or not target_text:
+            return None
+        source_query = self.normalizer.normalize(source_text)
+        target_query = self.normalizer.normalize(target_text)
+        return _FlowQuerySpec(
+            source_text=source_text,
+            target_text=target_text,
+            source_tokens=tuple(self._flow_tokens(source_query.tokens)),
+            target_tokens=tuple(self._flow_tokens(target_query.tokens)),
+            source_compact=source_query.compact,
+            target_compact=target_query.compact,
+        )
+
+    def _clean_flow_fragment(self, value: str) -> str:
+        return str(value or "").strip().strip(" \t\r\n:;,.?!")
+
+    def _flow_tokens(self, tokens: Sequence[str]) -> List[str]:
+        result: List[str] = []
+        seen: set[str] = set()
+        for token in tokens:
+            normalized = str(token or "").lower()
+            if not normalized or normalized in _FLOW_STOP_TOKENS or len(normalized) < 3:
+                continue
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result
+
+    def _add_direct_flow_query_paths(
+        self,
+        flow_paths_by_key: Dict[tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]], KnowledgeQueryFlowPath],
+        matched_nodes: Sequence[KnowledgeQueryMatchedNode],
+        flow_spec: _FlowQuerySpec,
+        adjacency: _Adjacency,
+        state: _TraversalState,
+        policy: KnowledgeQueryPolicy,
+    ) -> None:
+        source_candidates = self._rank_flow_callables(adjacency, flow_spec.source_tokens, flow_spec.source_compact)
+        target_candidates = self._rank_target_callables(adjacency, matched_nodes, flow_spec)
+        if not source_candidates or not target_candidates:
+            return
+
+        source_candidates = self._near_top_flow_candidates(source_candidates, limit=20)
+        target_candidates = self._near_top_flow_candidates(target_candidates, limit=50)
+        path_candidates: List[tuple[float, _TraversalPath, tuple[str, ...]]] = []
+        seen_paths: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+        for source_score, source_key in source_candidates:
+            for target_score, target_key in target_candidates:
+                if len(path_candidates) >= policy.max_flow_paths * 4:
+                    state.truncated = True
+                    break
+                if source_key == target_key:
+                    continue
+                path = self._shortest_call_path(source_key, target_key, adjacency, state, max_depth=max(1, policy.graph_slice_depth + 2))
+                if path is None:
+                    continue
+                dedupe_key = (tuple(node_key[2] for node_key in path.node_keys), tuple(edge_key[2] for edge_key in path.edge_keys))
+                if dedupe_key in seen_paths:
+                    continue
+                seen_paths.add(dedupe_key)
+                path_score = source_score + target_score - (0.25 * len(path.edge_keys))
+                matched_ids = tuple(self._matched_ids_for_direct_path(matched_nodes, path))
+                path_candidates.append((path_score, path, matched_ids))
+            if state.truncated:
+                break
+
+        path_candidates.sort(
+            key=lambda item: (
+                -item[0],
+                len(item[1].edge_keys),
+                self._path_first_line(item[1], adjacency),
+                [node_key[2] for node_key in item[1].node_keys],
+            )
+        )
+        for _, path, matched_ids in path_candidates[: policy.max_flow_paths]:
+            self._add_flow_path(
+                flow_paths_by_key,
+                matched_nodes[0],
+                path,
+                adjacency,
+                policy,
+                matched_node_ids=list(matched_ids),
+            )
+
+    def _near_top_flow_candidates(self, candidates: Sequence[tuple[float, NodeKey]], limit: int) -> List[tuple[float, NodeKey]]:
+        if not candidates:
+            return []
+        top_score = candidates[0][0]
+        threshold = max(1.0, top_score - 4.0) if top_score >= 5.0 else 1.0
+        selected = [candidate for candidate in candidates if candidate[0] >= threshold]
+        return list(selected[:limit] or candidates[:limit])
+
+    def _rank_flow_callables(
+        self,
+        adjacency: _Adjacency,
+        tokens: Sequence[str],
+        compact: str,
+    ) -> List[tuple[float, NodeKey]]:
+        scored: List[tuple[float, NodeKey]] = []
+        for node_key, node in adjacency.nodes_by_key.items():
+            if self._node_kind(node) != "CALLABLE":
+                continue
+            score = self._flow_node_score(node, tokens, compact)
+            if score > 0:
+                scored.append((score, node_key))
+        scored.sort(key=lambda item: (-item[0], self._node_label(adjacency.nodes_by_key[item[1]]), item[1][2]))
+        return scored
+
+    def _path_first_line(self, path: _TraversalPath, adjacency: _Adjacency) -> int:
+        edge_ids = {edge_key[2] for edge_key in path.edge_keys}
+        evidence_lines = [
+            int(item.get("lineStart") or 0)
+            for item in adjacency.evidence
+            if item.get("edgeId") in edge_ids and int(item.get("lineStart") or 0) > 0
+        ]
+        if evidence_lines:
+            return min(evidence_lines)
+        node_lines = [
+            int((adjacency.nodes_by_key.get(node_key) or {}).get("lineStart") or 0)
+            for node_key in path.node_keys[1:]
+            if int((adjacency.nodes_by_key.get(node_key) or {}).get("lineStart") or 0) > 0
+        ]
+        return min(node_lines) if node_lines else 1_000_000
+
+    def _rank_target_callables(
+        self,
+        adjacency: _Adjacency,
+        matched_nodes: Sequence[KnowledgeQueryMatchedNode],
+        flow_spec: _FlowQuerySpec,
+    ) -> List[tuple[float, NodeKey]]:
+        scored_by_key: Dict[NodeKey, float] = {}
+        for score, node_key in self._rank_flow_callables(adjacency, flow_spec.target_tokens, flow_spec.target_compact):
+            if score >= self._minimum_target_score(flow_spec):
+                scored_by_key[node_key] = max(scored_by_key.get(node_key, 0.0), score)
+
+        for matched_node in matched_nodes:
+            matched_key = self._resolve_matched_key(matched_node, adjacency.nodes_by_key)
+            if matched_key is None:
+                continue
+            matched_graph_node = adjacency.nodes_by_key.get(matched_key) or {}
+            matched_score = self._flow_node_score(matched_graph_node, flow_spec.target_tokens, flow_spec.target_compact)
+            if matched_score <= 0:
+                continue
+            if self._node_kind(matched_graph_node) == "TYPE":
+                for child_key in self._declared_callables(matched_key, adjacency):
+                    child_score = self._flow_node_score(adjacency.nodes_by_key.get(child_key) or {}, flow_spec.target_tokens, flow_spec.target_compact)
+                    scored_by_key[child_key] = max(scored_by_key.get(child_key, 0.0), matched_score + max(child_score, 1.0))
+            elif self._node_kind(matched_graph_node) == "FIELD":
+                for child_key in self._field_target_callables(matched_key, adjacency):
+                    child_score = self._flow_node_score(adjacency.nodes_by_key.get(child_key) or {}, flow_spec.target_tokens, flow_spec.target_compact)
+                    scored_by_key[child_key] = max(scored_by_key.get(child_key, 0.0), matched_score + max(child_score, 1.0))
+
+        result = [(score, node_key) for node_key, score in scored_by_key.items() if score > 0]
+        result.sort(key=lambda item: (-item[0], self._node_label(adjacency.nodes_by_key[item[1]]), item[1][2]))
+        return result
+
+    def _minimum_target_score(self, flow_spec: _FlowQuerySpec) -> float:
+        if len(flow_spec.target_compact) >= 6 or len(flow_spec.target_tokens) >= 2:
+            return 4.0
+        return 1.0
+
+    def _declared_callables(self, type_key: NodeKey, adjacency: _Adjacency) -> List[NodeKey]:
+        result: List[NodeKey] = []
+        for edge_key in adjacency.structural_outgoing.get(type_key) or []:
+            edge = adjacency.edges_by_key.get(edge_key) or {}
+            if self._edge_type(edge) != "DECLARES":
+                continue
+            target_key = self._edge_to_key(edge)
+            if target_key is None:
+                continue
+            if self._node_kind(adjacency.nodes_by_key.get(target_key) or {}) == "CALLABLE":
+                result.append(target_key)
+        return result
+
+    def _field_target_callables(self, field_key: NodeKey, adjacency: _Adjacency) -> List[NodeKey]:
+        field_node = adjacency.nodes_by_key.get(field_key) or {}
+        field_name = str(field_node.get("name") or field_node.get("label") or "").strip()
+        result: List[NodeKey] = []
+        seen: set[NodeKey] = set()
+        for edge_key in adjacency.structural_incoming.get(field_key) or []:
+            edge = adjacency.edges_by_key.get(edge_key) or {}
+            if self._edge_type(edge) != "USES_FIELD":
+                continue
+            caller_key = self._edge_from_key(edge)
+            if caller_key is None:
+                continue
+            for call_edge_key in adjacency.outgoing.get(caller_key) or []:
+                call_edge = adjacency.edges_by_key.get(call_edge_key) or {}
+                if not self._call_uses_field(call_edge, field_name):
+                    continue
+                target_key = self._edge_to_key(call_edge)
+                if target_key is None or target_key in seen:
+                    continue
+                if self._node_kind(adjacency.nodes_by_key.get(target_key) or {}) != "CALLABLE":
+                    continue
+                seen.add(target_key)
+                result.append(target_key)
+        return result
+
+    def _call_uses_field(self, edge: Dict[str, Any], field_name: str) -> bool:
+        if not field_name:
+            return True
+        metadata = edge.get("metadata") if isinstance(edge.get("metadata"), dict) else {}
+        receiver_text = str(metadata.get("receiverText") or "")
+        receiver_compact = compact_identifier(receiver_text.rsplit(".", 1)[-1] if receiver_text else receiver_text)
+        return receiver_compact == compact_identifier(field_name)
+
+    def _shortest_call_path(
+        self,
+        source_key: NodeKey,
+        target_key: NodeKey,
+        adjacency: _Adjacency,
+        state: _TraversalState,
+        max_depth: int,
+    ) -> Optional[_TraversalPath]:
+        queue: List[tuple[NodeKey, tuple[NodeKey, ...], tuple[EdgeKey, ...], set[NodeKey]]] = [(source_key, (source_key,), (), {source_key})]
+        while queue:
+            current_key, node_keys, edge_keys, visited = queue.pop(0)
+            if len(edge_keys) >= max_depth:
+                continue
+            if not state.allow_step():
+                return None
+            for edge_key in adjacency.outgoing.get(current_key) or []:
+                edge = adjacency.edges_by_key.get(edge_key) or {}
+                if self._is_external_edge(edge) or self._is_unresolved_edge(edge):
+                    continue
+                next_key = self._edge_to_key(edge)
+                if next_key is None or next_key[0] != current_key[0] or next_key in visited:
+                    continue
+                next_node_keys = (*node_keys, next_key)
+                next_edge_keys = (*edge_keys, edge_key)
+                if next_key == target_key:
+                    return _TraversalPath(
+                        node_keys=next_node_keys,
+                        edge_keys=next_edge_keys,
+                        boundary_edge_keys=(),
+                        stop_reason="TERMINAL_NODE",
+                        complete=True,
+                    )
+                queue.append((next_key, next_node_keys, next_edge_keys, {*visited, next_key}))
+        return None
+
+    def _matched_ids_for_direct_path(self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], path: _TraversalPath) -> List[str]:
+        path_ids = {node_key[2] for node_key in path.node_keys}
+        matched_ids = [matched_node.nodeId for matched_node in matched_nodes if matched_node.nodeId in path_ids]
+        return matched_ids or [path.node_keys[0][2], path.node_keys[-1][2]]
+
+    def _flow_node_score(self, node: Dict[str, Any], tokens: Sequence[str], compact: str) -> float:
+        if not node:
+            return 0.0
+        text_values = [
+            str(node.get("id") or ""),
+            str(node.get("name") or ""),
+            str(node.get("label") or ""),
+            str(node.get("qualifiedName") or ""),
+            str(node.get("relativePath") or ""),
+        ]
+        node_tokens = set(self._flow_tokens(self.normalizer.normalize(" ".join(text_values)).tokens))
+        query_tokens = {token for token in tokens if token}
+        overlap = len(query_tokens.intersection(node_tokens))
+        node_compacts = {
+            "name": compact_identifier(node.get("name") or ""),
+            "label": compact_identifier(node.get("label") or ""),
+            "qualified": compact_identifier(node.get("qualifiedName") or ""),
+            "path": compact_identifier(node.get("relativePath") or ""),
+        }
+        score = float(overlap)
+        compact_matched = False
+        if compact:
+            if node_compacts["name"] == compact or node_compacts["label"] == compact:
+                score += 10.0
+                compact_matched = True
+            elif node_compacts["qualified"].endswith(compact):
+                score += 9.0
+                compact_matched = True
+            elif compact in node_compacts["qualified"]:
+                score += 5.0
+                compact_matched = True
+            elif compact in node_compacts["path"]:
+                score += 2.0
+                compact_matched = True
+        if overlap <= 0 and not compact_matched:
+            return 0.0
+        for token in query_tokens:
+            if token in {node_compacts["name"], node_compacts["label"]}:
+                score += 2.0
+        if self._node_kind(node) == "CALLABLE":
+            score += 1.0
+        if "test" not in query_tokens and self._is_test_node(node):
+            score -= 4.0
+        return max(score, 0.0)
+
+    def _node_kind(self, node: Dict[str, Any]) -> str:
+        return str(node.get("nodeKind") or node.get("node_kind") or "").upper()
+
+    def _node_label(self, node: Dict[str, Any]) -> str:
+        return str(node.get("label") or node.get("name") or node.get("qualifiedName") or node.get("id") or "")
+
+    def _is_test_node(self, node: Dict[str, Any]) -> bool:
+        text = " ".join(str(node.get(field) or "") for field in ("qualifiedName", "relativePath", "label", "name")).lower()
+        return "/test/" in text or "test." in text or text.endswith("test") or "test_" in text
 
     def _upstream_paths(
         self,
@@ -613,16 +996,18 @@ class FlowPathExtractor:
         path: _TraversalPath,
         adjacency: _Adjacency,
         policy: KnowledgeQueryPolicy,
+        matched_node_ids: Optional[List[str]] = None,
     ) -> None:
-        source_id = matched_node.sourceId
+        source_id = path.node_keys[0][0] if path.node_keys else matched_node.sourceId
         node_ids = [node_key[2] for node_key in path.node_keys]
         edge_ids = [edge_key[2] for edge_key in path.edge_keys]
         boundary_edge_ids = [edge_key[2] for edge_key in path.boundary_edge_keys]
         dedupe_key = (source_id, tuple(node_ids), tuple(edge_ids), tuple(boundary_edge_ids))
         existing = flow_paths_by_key.get(dedupe_key)
         if existing is not None:
-            if matched_node.nodeId not in existing.matchedNodeIds:
-                existing.matchedNodeIds.append(matched_node.nodeId)
+            for matched_node_id in matched_node_ids or [matched_node.nodeId]:
+                if matched_node_id not in existing.matchedNodeIds:
+                    existing.matchedNodeIds.append(matched_node_id)
             return
         nodes = [dict(adjacency.nodes_by_key.get(node_key) or self._fallback_node(node_key)) for node_key in path.node_keys]
         edges = [dict(adjacency.edges_by_key[edge_key]) for edge_key in path.edge_keys if edge_key in adjacency.edges_by_key]
@@ -630,7 +1015,7 @@ class FlowPathExtractor:
         flow_paths_by_key[dedupe_key] = KnowledgeQueryFlowPath(
             flowId="flow-pending",
             sourceId=source_id,
-            matchedNodeIds=[matched_node.nodeId],
+            matchedNodeIds=matched_node_ids or [matched_node.nodeId],
             nodeIds=node_ids,
             edgeIds=edge_ids,
             boundaryEdgeIds=boundary_edge_ids,
@@ -801,6 +1186,7 @@ class KnowledgeQueryService:
             slice_bundle,
             slice_bundle.get("evidence") or [],
             self.policy,
+            query=request.query,
         )
         diagnostics.extend(flow_diagnostics)
         response_bundle = self._merge_bundles(slice_bundle, flow_bundle)

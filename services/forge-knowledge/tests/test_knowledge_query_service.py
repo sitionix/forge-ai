@@ -60,7 +60,7 @@ class FakeGraphStore:
             "verifiedPaths": [],
         }
 
-    def load_call_adjacency_for_sources(self, source_scopes, max_edges=2000, max_evidence=25):
+    def load_call_adjacency_for_sources(self, source_scopes, max_edges=2000, max_evidence=25, include_structural=False):
         self.adjacency_loads += 1
         scopes = {(scope["sourceId"], scope.get("graphId") or "graph-a") for scope in source_scopes}
         nodes = [dict(node) for node in self.nodes if (node.get("sourceId"), node.get("graphId")) in scopes]
@@ -365,6 +365,258 @@ def test_flow_path_extractor_batch_loads_adjacency_once():
     service(store).query(KnowledgeQueryRequest(query="CreateUseCase.execute"))
 
     assert store.adjacency_loads == 1
+
+
+def mapper_flow_fixture(*, include_field=True, include_test=False, include_unrelated=False, include_calls=True):
+    nodes = [
+        graph_node(
+            "controller-type",
+            "SiteController",
+            nodeKind="TYPE",
+            name="SiteController",
+            qualifiedName="example.SiteController",
+            relativePath="src/main/java/example/SiteController.java",
+        ),
+        graph_node(
+            "controller-create",
+            "createSite",
+            nodeKind="CALLABLE",
+            name="createSite",
+            qualifiedName="example.SiteController.createSite",
+            relativePath="src/main/java/example/SiteController.java",
+        ),
+        graph_node(
+            "mapper-type",
+            "SiteApiMapper",
+            nodeKind="TYPE",
+            name="SiteApiMapper",
+            qualifiedName="example.SiteApiMapper",
+            relativePath="src/main/java/example/SiteApiMapper.java",
+        ),
+        graph_node(
+            "mapper-command",
+            "asCreateSiteCommand",
+            nodeKind="CALLABLE",
+            name="asCreateSiteCommand",
+            qualifiedName="example.SiteApiMapper.asCreateSiteCommand",
+            relativePath="src/main/java/example/SiteApiMapper.java",
+        ),
+        graph_node(
+            "mapper-response",
+            "asCreateSiteResponseDTO",
+            nodeKind="CALLABLE",
+            name="asCreateSiteResponseDTO",
+            qualifiedName="example.SiteApiMapper.asCreateSiteResponseDTO",
+            relativePath="src/main/java/example/SiteApiMapper.java",
+        ),
+    ]
+    edges = [
+        graph_edge("declares-create", "controller-type", "controller-create", edgeType="DECLARES"),
+        graph_edge("declares-command", "mapper-type", "mapper-command", edgeType="DECLARES"),
+        graph_edge("declares-response", "mapper-type", "mapper-response", edgeType="DECLARES"),
+    ]
+    if include_field:
+        nodes.append(
+            graph_node(
+                "controller-mapper-field",
+                "siteApiMapper",
+                nodeKind="FIELD",
+                name="siteApiMapper",
+                qualifiedName="example.SiteController.siteApiMapper",
+                relativePath="src/main/java/example/SiteController.java",
+            )
+        )
+        edges.extend(
+            [
+                graph_edge("declares-field", "controller-type", "controller-mapper-field", edgeType="DECLARES"),
+                graph_edge("uses-field", "controller-create", "controller-mapper-field", edgeType="USES_FIELD"),
+            ]
+        )
+    if include_calls:
+        edges.extend(
+            [
+                graph_edge(
+                    "calls-command",
+                    "controller-create",
+                    "mapper-command",
+                    metadata={"receiverText": "this.siteApiMapper", "methodName": "asCreateSiteCommand", "callKind": "FIELD_RECEIVER"},
+                ),
+                graph_edge(
+                    "calls-response",
+                    "controller-create",
+                    "mapper-response",
+                    metadata={"receiverText": "this.siteApiMapper", "methodName": "asCreateSiteResponseDTO", "callKind": "FIELD_RECEIVER"},
+                ),
+            ]
+        )
+    if include_test:
+        nodes.append(
+            graph_node(
+                "test-create",
+                "givenCreateSiteRequestDto_whenCreateSite_thenReturnCreatedResponse",
+                name="givenCreateSiteRequestDto_whenCreateSite_thenReturnCreatedResponse",
+                qualifiedName="example.SiteControllerTest.givenCreateSiteRequestDto_whenCreateSite_thenReturnCreatedResponse",
+                relativePath="src/test/java/example/SiteControllerTest.java",
+            )
+        )
+        edges.extend(
+            [
+                graph_edge("test-calls-command", "test-create", "mapper-command", metadata={"receiverText": "this.siteApiMapper"}),
+                graph_edge("test-calls-response", "test-create", "mapper-response", metadata={"receiverText": "this.siteApiMapper"}),
+            ]
+        )
+    if include_unrelated:
+        nodes.extend(
+            [
+                graph_node("publisher", "Publisher.publish", name="publish", qualifiedName="example.Publisher.publish"),
+                graph_node("publisher-mapper", "PublisherMapper.asPayload", name="asPayload", qualifiedName="example.PublisherMapper.asPayload"),
+            ]
+        )
+        edges.append(graph_edge("publisher-calls-mapper", "publisher", "publisher-mapper"))
+    return nodes, edges
+
+
+def mapper_type_candidate():
+    return candidate(
+        id="mapper-type",
+        nodeKind="TYPE",
+        name="SiteApiMapper",
+        label="SiteApiMapper",
+        qualifiedName="example.SiteApiMapper",
+        stableKey="source-a|src/main/java/example/SiteApiMapper.java|TYPE|example.SiteApiMapper",
+        relativePath="src/main/java/example/SiteApiMapper.java",
+    )
+
+
+def mapper_field_candidate():
+    return candidate(
+        id="controller-mapper-field",
+        nodeKind="FIELD",
+        name="siteApiMapper",
+        label="siteApiMapper",
+        qualifiedName="example.SiteController.siteApiMapper",
+        stableKey="source-a|src/main/java/example/SiteController.java|FIELD|example.SiteController|siteApiMapper",
+        relativePath="src/main/java/example/SiteController.java",
+    )
+
+
+def controller_candidate():
+    return candidate(
+        id="controller-create",
+        nodeKind="CALLABLE",
+        name="createSite",
+        label="createSite",
+        qualifiedName="example.SiteController.createSite",
+        stableKey="source-a|src/main/java/example/SiteController.java|CALLABLE|example.SiteController|createSite|createSite(Request)",
+        relativePath="src/main/java/example/SiteController.java",
+    )
+
+
+def test_explicit_flow_query_expands_target_type_to_declared_callables():
+    nodes, edges = mapper_flow_fixture()
+    store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[mapper_type_candidate()])
+
+    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
+        KnowledgeQueryRequest(query="Show flow from SiteController createSite to SiteApiMapper.")
+    )
+
+    assert [flow.nodeIds for flow in response.flowPaths] == [
+        ["controller-create", "mapper-command"],
+        ["controller-create", "mapper-response"],
+    ]
+    assert [edge["id"] for flow in response.flowPaths for edge in flow.edges] == ["calls-command", "calls-response"]
+    assert not any(diagnostic.code == "NO_CALLS_PATH" for diagnostic in response.diagnostics)
+
+
+def test_how_does_use_query_uses_direct_type_expansion():
+    nodes, edges = mapper_flow_fixture(include_test=True)
+    store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[mapper_type_candidate()])
+
+    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
+        KnowledgeQueryRequest(query="How does SiteController use SiteApiMapper?")
+    )
+
+    assert [flow.nodeIds for flow in response.flowPaths] == [
+        ["controller-create", "mapper-command"],
+        ["controller-create", "mapper-response"],
+    ]
+
+
+def test_explicit_flow_query_expands_target_field_to_called_callables():
+    nodes, edges = mapper_flow_fixture()
+    store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[mapper_field_candidate()])
+
+    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
+        KnowledgeQueryRequest(query="Show flow from SiteController createSite to siteApiMapper.")
+    )
+
+    assert sorted(flow.nodeIds for flow in response.flowPaths) == [
+        ["controller-create", "mapper-command"],
+        ["controller-create", "mapper-response"],
+    ]
+
+
+def test_explicit_flow_query_ranks_exact_source_before_test_callers():
+    nodes, edges = mapper_flow_fixture(include_test=True)
+    store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[mapper_type_candidate()])
+
+    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
+        KnowledgeQueryRequest(query="Show flow from SiteController createSite to SiteApiMapper.")
+    )
+
+    assert [flow.nodeIds for flow in response.flowPaths[:2]] == [
+        ["controller-create", "mapper-command"],
+        ["controller-create", "mapper-response"],
+    ]
+
+
+def test_explicit_flow_query_no_path_returns_clear_diagnostic_without_unrelated_paths():
+    nodes, edges = mapper_flow_fixture(include_calls=False, include_unrelated=True)
+    store = FakeGraphStore(nodes=nodes, edges=edges, candidates=[controller_candidate(), mapper_type_candidate()])
+
+    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
+        KnowledgeQueryRequest(query="Show flow from SiteController createSite to SiteApiMapper.")
+    )
+
+    assert response.flowPaths == []
+    assert any(diagnostic.code == "NO_CALLS_PATH" for diagnostic in response.diagnostics)
+
+
+def test_method_reference_query_keeps_field_method_reference_mapper_path():
+    nodes = [
+        graph_node("repository-find", "findById", name="findById", qualifiedName="example.SiteRepositoryImpl.findById"),
+        graph_node("infra-mapper-type", "SiteInfraMapper", nodeKind="TYPE", name="SiteInfraMapper", qualifiedName="example.SiteInfraMapper"),
+        graph_node("infra-as-site", "asSite", name="asSite", qualifiedName="example.SiteInfraMapper.asSite"),
+    ]
+    edges = [
+        graph_edge("declares-as-site", "infra-mapper-type", "infra-as-site", edgeType="DECLARES"),
+        graph_edge(
+            "calls-as-site",
+            "repository-find",
+            "infra-as-site",
+            metadata={"receiverText": "this.siteInfraMapper", "methodName": "asSite", "callKind": "FIELD_METHOD_REFERENCE"},
+        ),
+    ]
+    store = FakeGraphStore(
+        nodes=nodes,
+        edges=edges,
+        candidates=[
+            candidate(
+                id="repository-find",
+                name="findById",
+                label="findById",
+                qualifiedName="example.SiteRepositoryImpl.findById",
+                stableKey="source-a|Repo.java|CALLABLE|example.SiteRepositoryImpl|findById|findById(Id)",
+            )
+        ],
+    )
+
+    response = service(store, KnowledgeQueryPolicy(max_matched_nodes=2, max_flow_paths=4)).query(
+        KnowledgeQueryRequest(query="How does SiteRepositoryImpl.findById map SiteEntity to Site?")
+    )
+
+    assert response.flowPaths[0].nodeIds == ["repository-find", "infra-as-site"]
+    assert response.flowPaths[0].edges[0]["metadata"]["callKind"] == "FIELD_METHOD_REFERENCE"
 
 
 def test_no_candidates_returns_controlled_response():
