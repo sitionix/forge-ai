@@ -69,6 +69,15 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
     }
 
     @Test
+    void currentFileProgressDelegatesToGenericProxyRoute() {
+        this.stub();
+
+        this.controller.analysisCurrentFileProgress(this.headers, this.request);
+
+        verify(this.transport).forward("knowledge.analysis.current-file-progress", Map.of(), null, this.headers, this.request);
+    }
+
+    @Test
     void graphMetadataDelegatesToGenericProxyRoute() {
         this.stub();
 

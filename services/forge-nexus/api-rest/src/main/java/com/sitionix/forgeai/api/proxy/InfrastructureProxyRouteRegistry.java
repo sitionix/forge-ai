@@ -26,6 +26,8 @@ public class InfrastructureProxyRouteRegistry {
         this.knowledge(registered, "knowledge.analysis.job.stop", HttpMethod.POST,
                 vars -> "/api/v1/knowledge/analysis/jobs/" + segment(vars.get("jobId")) + "/stop", true);
         this.knowledge(registered, "knowledge.analysis.status", HttpMethod.GET, "/api/v1/knowledge/analysis/status", false);
+        this.knowledge(registered, "knowledge.analysis.current-file-progress", HttpMethod.GET,
+                "/api/v1/knowledge/analysis/current-file-progress", false);
         this.knowledge(registered, "knowledge.analysis.files", HttpMethod.GET, "/api/v1/knowledge/analysis/files", false);
         this.knowledge(registered, "knowledge.analysis.diagnostics", HttpMethod.GET, "/api/v1/knowledge/analysis/diagnostics", false);
         this.knowledge(registered, "knowledge.graph.metadata", HttpMethod.GET, "/api/v1/knowledge/analysis/graph/metadata", false);

@@ -302,7 +302,8 @@ export function normalizeKnowledgeOverviewPayload(payload) {
   if (Array.isArray(payload?.services)) {
     return {
       ...payload,
-      services: payload.services.map((source) => normalizeKnowledgeOverviewSource(source))
+      services: payload.services.map((source) => normalizeKnowledgeOverviewSource(source)),
+      currentFileProgress: normalizeCurrentFileProgress(payload?.currentFileProgress)
     };
   }
   const sources = Array.isArray(payload?.sources) ? payload.sources : [];
@@ -311,7 +312,8 @@ export function normalizeKnowledgeOverviewPayload(payload) {
     version: payload?.version ?? 0,
     updatedAt: payload?.updatedAt ?? null,
     services,
-    activeJob: payload?.activeJob || null
+    activeJob: payload?.activeJob || null,
+    currentFileProgress: normalizeCurrentFileProgress(payload?.currentFileProgress)
   };
 }
 
@@ -344,7 +346,8 @@ function normalizeKnowledgeOverviewSource(source) {
       activeJobSelectedFileCount: analysis.activeJobSelectedFileCount,
       activeJobProcessedFileCount: analysis.activeJobProcessedFileCount,
       activeJobFailedFileCount: analysis.activeJobFailedFileCount,
-      activeJobCurrentRelativePath: analysis.activeJobCurrentRelativePath
+      activeJobCurrentRelativePath: analysis.activeJobCurrentRelativePath,
+      currentFileProgress: normalizeCurrentFileProgress(analysis.currentFileProgress)
     },
     facts: source.facts || {},
     factsProgress: source.factsProgress || null
@@ -405,6 +408,7 @@ export function renderKnowledgeSources(data, documentRef = document) {
     return;
   }
   const services = data.services || [];
+  applyCurrentFileProgress(services, data.currentFileProgress);
   documentRef.defaultView.__forgeKnowledgeSourceStatus = services;
   if (services.length === 0) {
     body.innerHTML = '<tr><td colspan="5">No services configured.</td></tr>';
@@ -421,6 +425,31 @@ export function renderKnowledgeSources(data, documentRef = document) {
   }
   if (diagnostics) {
     diagnostics.innerHTML = '';
+  }
+}
+
+function applyCurrentFileProgress(services, progress) {
+  const normalized = normalizeCurrentFileProgress(progress);
+  if (!normalized.active) {
+    return;
+  }
+  for (const service of services) {
+    const analysis = service.analysis || {};
+    const matches = normalized.entries.filter((entry) => {
+      if (entry.sourceId !== service.sourceId) {
+        return false;
+      }
+      return !analysis.activeJobId || !entry.jobId || entry.jobId === analysis.activeJobId;
+    });
+    const current = matches[0] || (normalized.current?.sourceId === service.sourceId ? normalized.current : null);
+    if (current) {
+      analysis.currentFileProgress = {
+        active: true,
+        current,
+        entries: matches.length ? matches : [current]
+      };
+      service.analysis = analysis;
+    }
   }
 }
 
@@ -603,6 +632,7 @@ function renderKnowledgeAnalysisProgress(analysis) {
   const semanticWidth = Math.min(factsPercent, clampPercent(analysis.semanticPercent));
   const progressStyle = `--facts-percent:${escapeHtml(formatPercent(factsPercent))}%; --semantic-overlay-percent:${escapeHtml(formatPercent(semanticWidth))}%`;
   const progressTitle = ` title="${escapeHtml(`Facts ${formatPercent(factsPercent)}%, semantic ${formatPercent(semanticWidth)}%`)}"`;
+  const targetProgress = renderCurrentFileTargetProgress(analysis.currentFileProgress);
   return `
     <div class="knowledge-progress">
       <div class="knowledge-service-state">
@@ -617,6 +647,7 @@ function renderKnowledgeAnalysisProgress(analysis) {
         pending ${escapeHtml(metrics.pending)}
         failed ${escapeHtml(metrics.failed)}
       </small>
+      ${targetProgress}
     </div>
   `;
 }
@@ -650,6 +681,72 @@ function formatPercent(value) {
   const clamped = clampPercent(value);
   const rounded = Math.round(clamped * 100) / 100;
   return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
+
+function normalizeCurrentFileProgress(progress) {
+  if (!progress || typeof progress !== 'object') {
+    return { active: false, entries: [] };
+  }
+  const entries = Array.isArray(progress.entries)
+    ? progress.entries.map((entry) => normalizeCurrentFileProgressEntry(entry)).filter(Boolean)
+    : [];
+  const current = normalizeCurrentFileProgressEntry(progress.current) || entries[0] || null;
+  return {
+    active: Boolean(progress.active && (current || entries.length > 0)),
+    current,
+    entries
+  };
+}
+
+function normalizeCurrentFileProgressEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+  const totalTargets = optionalNonNegativeNumber(entry.totalTargets);
+  const completedTargets = optionalNonNegativeNumber(entry.completedTargets) ?? 0;
+  const showTargetProgress = Boolean(entry.showTargetProgress ?? (totalTargets !== null && totalTargets > 1));
+  const percent = showTargetProgress ? clampPercent(entry.percent) : null;
+  return {
+    jobId: String(entry.jobId || ''),
+    sourceId: String(entry.sourceId || ''),
+    relativePath: String(entry.relativePath || ''),
+    totalTargets,
+    completedTargets,
+    percent,
+    showTargetProgress,
+    updatedAt: entry.updatedAt || null
+  };
+}
+
+function renderCurrentFileTargetProgress(progress) {
+  if (!progress?.active || !progress.current) {
+    return '';
+  }
+  const current = progress.current;
+  if (!current.relativePath) {
+    return '';
+  }
+  if (!current.showTargetProgress || !current.totalTargets || current.totalTargets <= 1) {
+    return `
+      <div class="knowledge-current-target-progress">
+        <small title="${escapeHtml(current.relativePath)}">Current file: ${escapeHtml(current.relativePath)}</small>
+      </div>
+    `;
+  }
+  const total = current.totalTargets;
+  const completed = Math.min(current.completedTargets, total);
+  const percent = clampPercent(current.percent);
+  const percentLabel = formatPercent(percent);
+  return `
+    <div class="knowledge-current-target-progress">
+      <small title="${escapeHtml(current.relativePath)}">Current file: ${escapeHtml(current.relativePath)}</small>
+      <div class="knowledge-target-progress-meta">
+        <strong>Targets: ${escapeHtml(completed)} / ${escapeHtml(total)}</strong>
+        <span>Progress: ${escapeHtml(percentLabel)}%</span>
+      </div>
+      <div class="knowledge-target-progress-track" style="--target-percent:${escapeHtml(percentLabel)}%"></div>
+    </div>
+  `;
 }
 
 function knowledgeGraphUrl(params = {}) {

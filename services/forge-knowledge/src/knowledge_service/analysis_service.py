@@ -13,6 +13,7 @@ from knowledge_service.analysis_graph_contract import GraphContractProvider
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_response_parser import MAX_RAW_PREVIEW_CHARS
 from knowledge_service.analysis_runtime_events import AnalysisRuntimeContext, analysis_runtime_context
+from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
@@ -65,10 +66,12 @@ class AnalysisSupervisor:
         self.static_materializer = StaticGraphMaterializer()
         self.anchor_validator = AnchorAwareGraphValidator()
         self.graph_contract_provider = GraphContractProvider()
+        self.target_progress_tracker = CurrentFileTargetProgressTracker()
         self.analyzer_runtime = AnalyzerRuntime(
             self.graph_contract_provider.policy,
             extractor_registry=ExtractorRegistry(self.structural_engine, self.static_materializer),
             anchor_validator=self.anchor_validator,
+            target_progress_tracker=self.target_progress_tracker,
         )
         self._admission_lock: Optional[asyncio.Lock] = None
         self._queue: Optional[asyncio.Queue[tuple[str, AnalysisBuildRequest, AnalysisProvider, Optional[List[Any]], str, bool]]] = None
@@ -122,6 +125,8 @@ class AnalysisSupervisor:
                     selection="FAILED_ONLY",
                 )
             job_id = str(uuid.uuid4())
+            self.target_progress_tracker.clear_sources(sorted(set(request.sourceIds)) if request.sourceIds else None)
+            self.target_progress_tracker.clear_job(job_id)
             now = self._now()
             job = {
                 "jobId": job_id,
@@ -203,6 +208,7 @@ class AnalysisSupervisor:
         running = self._running.get(job_id)
         if running is not None:
             running.cancel()
+        self.target_progress_tracker.clear_job(job_id)
         self._log(
             "stop_requested",
             jobId=job_id,
@@ -229,6 +235,7 @@ class AnalysisSupervisor:
 
     async def shutdown(self) -> None:
         self._stopping = True
+        running_job_ids = list(self._running.keys())
         for task in list(self._running.values()):
             task.cancel()
         for worker in self._workers:
@@ -242,6 +249,8 @@ class AnalysisSupervisor:
         self._workers.clear()
         self._running.clear()
         self.analysis_store.mark_interrupted_jobs()
+        for job_id in running_job_ids:
+            self.target_progress_tracker.clear_job(job_id)
         provider = self.analysis_provider
         close = getattr(provider, "aclose", None)
         if close is not None:
@@ -417,7 +426,7 @@ class AnalysisSupervisor:
                     ):
                         return await self._analyze_with_retry(provider, payload, payload_line_count, job_id=job_id, row=row_data)
 
-                    runtime_result = await self.analyzer_runtime.execute(row_data, metadata, lines, analyzer, analyze_with_retry_for_job)
+                    runtime_result = await self.analyzer_runtime.execute(row_data, metadata, lines, analyzer, analyze_with_retry_for_job, job_id=job_id)
                     if self._stop_requested(job_id):
                         self._mark_job_stopped(job_id, diagnostics)
                         return
@@ -467,6 +476,7 @@ class AnalysisSupervisor:
                     processed += 1
                     self._log("file_completed", jobId=job_id, sourceId=row["source_id"], relativePath=row["relative_path"], processed=processed, failed=failed)
                 except Exception as exc:
+                    self.target_progress_tracker.mark_failed(job_id, str(row["source_id"]), str(row["relative_path"]))
                     if self._stop_requested(job_id):
                         self._mark_job_stopped(job_id, diagnostics)
                         return
@@ -496,6 +506,8 @@ class AnalysisSupervisor:
                         failed=failed,
                         errorCode=diag.get("code"),
                     )
+                finally:
+                    self.target_progress_tracker.clear_file(job_id, str(row["source_id"]), str(row["relative_path"]))
                 self.analysis_store.update_job(
                     job_id,
                     {
@@ -549,6 +561,8 @@ class AnalysisSupervisor:
                 elapsedMs=int((completed_at - started_monotonic).total_seconds() * 1000),
                 errorCode="ANALYSIS_JOB_FAILED",
             )
+        finally:
+            self.target_progress_tracker.clear_job(job_id)
 
     def _stop_requested(self, job_id: str) -> bool:
         return self.analysis_store.stop_requested(job_id)
@@ -556,6 +570,7 @@ class AnalysisSupervisor:
     def _mark_job_stopped(self, job_id: str, diagnostics: Optional[List[Dict[str, Any]]] = None) -> None:
         job = self.analysis_store.job(job_id)
         self.analysis_store.stop_incomplete_job_files(job_id)
+        self.target_progress_tracker.clear_job(job_id)
         merged = [*(job or {}).get("diagnostics", []), *(diagnostics or [])]
         if not any(item.get("code") == "ANALYSIS_JOB_STOPPED" for item in merged):
             merged.append(
@@ -583,6 +598,9 @@ class AnalysisSupervisor:
             failed=job.get("failedFileCount", 0) if job else 0,
             errorCode="ANALYSIS_JOB_STOPPED",
         )
+
+    def current_file_progress(self) -> Dict[str, Any]:
+        return self.target_progress_tracker.snapshot()
 
     def _row_flow_domain(self, row: Any) -> str:
         configured = str(self._row_value(row, "flow_domain") or "").strip().upper()

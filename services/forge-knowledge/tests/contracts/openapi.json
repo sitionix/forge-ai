@@ -292,12 +292,12 @@
       },
       "KnowledgeQueryMatchedNode": {
         "properties": {
-          "graphRevision": {
-            "title": "Graphrevision",
+          "graphId": {
+            "title": "Graphid",
             "type": "string"
           },
-          "nodeKind": {
-            "title": "Nodekind",
+          "graphRevision": {
+            "title": "Graphrevision",
             "type": "string"
           },
           "label": {
@@ -315,6 +315,10 @@
             "title": "Nodeid",
             "type": "string"
           },
+          "nodeKind": {
+            "title": "Nodekind",
+            "type": "string"
+          },
           "qualifiedName": {
             "title": "Qualifiedname",
             "type": "string"
@@ -326,10 +330,6 @@
           "score": {
             "title": "Score",
             "type": "number"
-          },
-          "graphId": {
-            "title": "Graphid",
-            "type": "string"
           },
           "sourceId": {
             "title": "Sourceid",
@@ -658,6 +658,25 @@
               }
             },
             "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/analysis/current-file-progress": {
+      "get": {
+        "parameters": [],
+        "requestBody": null,
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Analysis Current File Progress Api V1 Knowledge Analysis Current File Progress Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
           }
         }
       }

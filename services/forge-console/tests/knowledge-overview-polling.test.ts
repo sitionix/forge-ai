@@ -379,6 +379,136 @@ describe('Knowledge overview modular ownership', () => {
     zeroPage.dispose();
   });
 
+  it('shows current file target progress when overview includes an active entry', async () => {
+    const dom = createOverviewDom();
+    const http = createHttp(() => ({
+      ...statusPayload(2, 'RUNNING', { activeJobId: 'job-1' }),
+      currentFileProgress: {
+        active: true,
+        entries: [
+          {
+            jobId: 'job-1',
+            sourceId: 'ntfssox',
+            relativePath: 'api-rest/src/test/java/SiteControllerTest.java',
+            totalTargets: 16,
+            completedTargets: 5,
+            percent: 31.25,
+            showTargetProgress: true,
+            updatedAt: '2026-07-08T12:00:00Z'
+          }
+        ]
+      }
+    }));
+    const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
+
+    await page.load({ manual: true });
+
+    const row = dom.window.document.querySelector('[data-source-row="ntfssox"]') as HTMLElement;
+    const targetProgress = row.querySelector('.knowledge-current-target-progress') as HTMLElement;
+    const targetTrack = row.querySelector('.knowledge-target-progress-track') as HTMLElement;
+    expect(targetProgress).toBeTruthy();
+    expect(targetProgress.textContent).toContain('Current file: api-rest/src/test/java/SiteControllerTest.java');
+    expect(targetProgress.textContent).toContain('Targets: 5 / 16');
+    expect(targetProgress.textContent).toContain('Progress: 31.25%');
+    expect(targetTrack.style.getPropertyValue('--target-percent').trim()).toBe('31.25%');
+    expect(http.calls).toEqual(['/knowledge/overview']);
+    page.dispose();
+  });
+
+  it('shows only the current file when target progress is hidden and updates when file target counts change', async () => {
+    const dom = createOverviewDom();
+    const payloads = [
+      {
+        ...statusPayload(2, 'RUNNING', { activeJobId: 'job-1' }),
+        currentFileProgress: {
+          active: true,
+          entries: [
+            {
+              jobId: 'job-1',
+              sourceId: 'ntfssox',
+              relativePath: 'src/Planning.java',
+              totalTargets: null,
+              completedTargets: 0,
+              percent: null,
+              showTargetProgress: false,
+              updatedAt: '2026-07-08T12:00:00Z'
+            }
+          ]
+        }
+      },
+      {
+        ...statusPayload(3, 'RUNNING', { activeJobId: 'job-1' }),
+        currentFileProgress: {
+          active: true,
+          entries: [
+            {
+              jobId: 'job-1',
+              sourceId: 'ntfssox',
+              relativePath: 'src/MultiTarget.java',
+              totalTargets: 2,
+              completedTargets: 1,
+              percent: 50,
+              showTargetProgress: true,
+              updatedAt: '2026-07-08T12:00:01Z'
+            }
+          ]
+        }
+      },
+      {
+        ...statusPayload(4, 'RUNNING', { activeJobId: 'job-1' }),
+        currentFileProgress: {
+          active: true,
+          entries: [
+            {
+              jobId: 'job-1',
+              sourceId: 'ntfssox',
+              relativePath: 'src/SmallFile.java',
+              totalTargets: 1,
+              completedTargets: 1,
+              percent: 100,
+              showTargetProgress: false,
+              updatedAt: '2026-07-08T12:00:02Z'
+            }
+          ]
+        }
+      },
+      {
+        ...statusPayload(10, 'COMPLETED'),
+        currentFileProgress: { active: false, entries: [] }
+      }
+    ];
+    const http = createHttp(() => payloads.shift() || statusPayload(10, 'COMPLETED'));
+    const page = new KnowledgeOverviewPage({ document: dom.window.document, window: dom.window, http });
+
+    await page.load({ manual: true });
+    let targetProgress = dom.window.document.querySelector('.knowledge-current-target-progress') as HTMLElement;
+    expect(targetProgress?.textContent).toContain('Current file: src/Planning.java');
+    expect(targetProgress?.textContent).not.toContain('Planning targets');
+    expect(targetProgress?.textContent).not.toContain('Targets:');
+    expect(targetProgress?.textContent).not.toContain('Progress:');
+    expect(dom.window.document.querySelector('.knowledge-target-progress-track')).toBeNull();
+
+    await page.load({ manual: true });
+    targetProgress = dom.window.document.querySelector('.knowledge-current-target-progress') as HTMLElement;
+    expect(targetProgress?.textContent).toContain('Current file: src/MultiTarget.java');
+    expect(targetProgress?.textContent).toContain('Targets: 1 / 2');
+    expect(targetProgress?.textContent).toContain('Progress: 50%');
+    expect((dom.window.document.querySelector('.knowledge-target-progress-track') as HTMLElement).style.getPropertyValue('--target-percent').trim()).toBe('50%');
+
+    await page.load({ manual: true });
+    targetProgress = dom.window.document.querySelector('.knowledge-current-target-progress') as HTMLElement;
+    expect(targetProgress?.textContent).toContain('Current file: src/SmallFile.java');
+    expect(targetProgress?.textContent).not.toContain('1 / 1');
+    expect(targetProgress?.textContent).not.toContain('100%');
+    expect(targetProgress?.textContent).not.toContain('Targets:');
+    expect(targetProgress?.textContent).not.toContain('Progress:');
+    expect(dom.window.document.querySelector('.knowledge-target-progress-track')).toBeNull();
+
+    await page.load({ manual: true });
+    expect(dom.window.document.querySelector('.knowledge-current-target-progress')).toBeNull();
+    page.dispose();
+  });
+
   it('does not render raw semantic details from stale payloads', async () => {
     const dom = createOverviewDom();
     const http = createHttp(() => statusPayload(10, 'COMPLETED', {}, {

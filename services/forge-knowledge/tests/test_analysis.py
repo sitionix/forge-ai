@@ -24,6 +24,7 @@ from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.analysis_graph_contract import GraphContractProvider, contract_payload
 from knowledge_service.analysis_policy import EXTRACTOR_MODE_FILE_ANCHOR_ONLY
 from knowledge_service.analysis_policy_loader import load_analysis_policy
+from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
 from knowledge_service.analyzer_runtime import AnalyzerPolicyRuntimeResolver, AnalyzerRuntime, ExtractorRegistry, ExtractorResult
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_service import AnalysisSupervisor
@@ -3795,12 +3796,72 @@ def test_no_production_domain_hardcoded_synonyms():
     assert all(term not in combined for term in banned)
 
 
+def test_current_file_target_progress_tracker_lifecycle_clamps_and_isolates_entries():
+    tracker = CurrentFileTargetProgressTracker()
+
+    assert tracker.snapshot() == {"active": False, "entries": []}
+
+    tracker.start_file("job-0", "svc-z", "src/Planning.java")
+    planning_entry = tracker.snapshot()["entries"][0]
+    assert planning_entry["totalTargets"] is None
+    assert planning_entry["percent"] is None
+    assert planning_entry["showTargetProgress"] is False
+
+    tracker.set_total_targets("job-0", "svc-z", "src/Planning.java", 0)
+    zero_entry = tracker.snapshot()["entries"][0]
+    assert zero_entry["totalTargets"] == 0
+    assert zero_entry["percent"] is None
+    assert zero_entry["showTargetProgress"] is False
+
+    tracker.set_total_targets("job-0", "svc-z", "src/Planning.java", 1)
+    tracker.increment_completed("job-0", "svc-z", "src/Planning.java")
+    one_entry = tracker.snapshot()["entries"][0]
+    assert one_entry["totalTargets"] == 1
+    assert one_entry["completedTargets"] == 1
+    assert one_entry["percent"] is None
+    assert one_entry["showTargetProgress"] is False
+
+    tracker.clear_job("job-0")
+    tracker.start_file("job-1", "svc-a", "src/A.java")
+    tracker.set_total_targets("job-1", "svc-a", "src/A.java", 3)
+    tracker.increment_completed("job-1", "svc-a", "src/A.java")
+    tracker.increment_completed("job-1", "svc-a", "src/A.java")
+    tracker.increment_completed("job-1", "svc-a", "src/A.java")
+    tracker.increment_completed("job-1", "svc-a", "src/A.java")
+    tracker.start_file("job-2", "svc-b", "src/B.java")
+    tracker.set_total_targets("job-2", "svc-b", "src/B.java", 2)
+    tracker.increment_completed("job-2", "svc-b", "src/B.java")
+
+    snapshot = tracker.snapshot()
+    entries = {(entry["jobId"], entry["sourceId"], entry["relativePath"]): entry for entry in snapshot["entries"]}
+
+    assert snapshot["active"] is True
+    assert entries[("job-1", "svc-a", "src/A.java")]["completedTargets"] == 3
+    assert entries[("job-1", "svc-a", "src/A.java")]["totalTargets"] == 3
+    assert entries[("job-1", "svc-a", "src/A.java")]["percent"] == 100.0
+    assert entries[("job-1", "svc-a", "src/A.java")]["showTargetProgress"] is True
+    assert entries[("job-2", "svc-b", "src/B.java")]["completedTargets"] == 1
+    assert entries[("job-2", "svc-b", "src/B.java")]["percent"] == 50.0
+    assert entries[("job-2", "svc-b", "src/B.java")]["showTargetProgress"] is True
+    assert not any("stableKey" in entry or "prompt" in entry or "targetRef" in entry for entry in snapshot["entries"])
+
+    tracker.clear_file("job-1", "svc-a", "src/A.java")
+    assert [entry["jobId"] for entry in tracker.snapshot()["entries"]] == ["job-2"]
+
+    tracker.start_file("job-3", "svc-c", "src/C.java")
+    tracker.clear_sources(None)
+    assert tracker.snapshot() == {"active": False, "entries": []}
+
+
 class FakeRunner:
     async def start(self, request):
         return {"jobId": "job-1", "status": "QUEUED", "message": "Knowledge analysis job queued"}
 
     async def stop(self, job_id):
         return {"jobId": job_id, "status": "STOP_REQUESTED", "message": "Knowledge analysis stop requested"}
+
+    def current_file_progress(self):
+        return {"active": False, "entries": []}
 
 
 def configure_api(tmp_path, monkeypatch):
@@ -4015,6 +4076,86 @@ def test_analysis_api_stop_job(tmp_path, monkeypatch):
 
     assert result["status"] == 200
     assert result["json"]["status"] == "STOP_REQUESTED"
+
+
+def test_current_file_progress_endpoint_returns_inactive_when_no_progress(tmp_path, monkeypatch):
+    configure_api(tmp_path, monkeypatch)
+
+    result = get_json("/api/v1/knowledge/analysis/current-file-progress")
+
+    assert result["status"] == 200
+    assert result["json"] == {"active": False, "entries": []}
+
+
+def test_current_file_progress_endpoint_returns_sanitized_active_entry_during_analysis(tmp_path, monkeypatch):
+    store = configure_api(tmp_path, monkeypatch)
+    progress = {
+        "active": True,
+        "entries": [
+            {
+                "jobId": "job-1",
+                "sourceId": "edge-gateway",
+                "relativePath": "src/main/java/example/ObjectHandler.java",
+                "totalTargets": 3,
+                "completedTargets": 1,
+                "percent": 33.33,
+                "showTargetProgress": True,
+                "status": "RUNNING",
+                "updatedAt": "2026-07-08T12:00:00+00:00",
+            }
+        ],
+    }
+    progress["current"] = progress["entries"][0]
+
+    class ActiveRunner(FakeRunner):
+        def current_file_progress(self):
+            return progress
+
+    monkeypatch.setattr(main, "analysis_supervisor", ActiveRunner())
+
+    result = get_json("/api/v1/knowledge/analysis/current-file-progress")
+    payload = result["json"]
+
+    assert payload["active"] is True
+    entry = payload["entries"][0]
+    assert entry["jobId"] == "job-1"
+    assert entry["sourceId"] == "edge-gateway"
+    assert entry["relativePath"].endswith("ObjectHandler.java")
+    assert entry["totalTargets"] == 3
+    assert entry["completedTargets"] == 1
+    assert entry["showTargetProgress"] is True
+    assert set(entry) == {
+        "jobId",
+        "sourceId",
+        "relativePath",
+        "totalTargets",
+        "completedTargets",
+        "percent",
+        "showTargetProgress",
+        "status",
+        "updatedAt",
+    }
+    assert "stableKey" not in json.dumps(payload)
+    assert "prompt" not in json.dumps(payload).lower()
+
+
+def test_current_file_progress_clears_after_success_and_failure(tmp_path):
+    store, _, _ = build_inventory(tmp_path)
+    success_runner = SupervisorHarness(store, app_config(tmp_path))
+    wait_job(store, success_runner.start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
+
+    assert success_runner.supervisor.current_file_progress() == {"active": False, "entries": []}
+
+    failing_runner = SupervisorHarness(store, app_config_with_retries(tmp_path, 1))
+    wait_job(
+        store,
+        failing_runner.start(
+            AnalysisBuildRequest(force=True),
+            StubAnalyzer(outcomes=[GraphAnalysisResult(), KnowledgeError("ANALYSIS_AI_INVALID_JSON", "bad target", raw_preview="{bad")]),
+        )["jobId"],
+    )
+
+    assert failing_runner.supervisor.current_file_progress() == {"active": False, "entries": []}
 
 
 def test_status_api_separates_coverage_and_freshness_without_running_ai(tmp_path, monkeypatch):

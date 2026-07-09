@@ -32,6 +32,14 @@ class AnalyzerProvider(Protocol):
     ) -> GraphAnalysisResult | Awaitable[GraphAnalysisResult]: ...
 
 
+class TargetProgressTracker(Protocol):
+    def start_file(self, job_id: str, source_id: str, relative_path: str) -> None: ...
+
+    def set_total_targets(self, job_id: str, source_id: str, relative_path: str, total_targets: int) -> None: ...
+
+    def increment_completed(self, job_id: str, source_id: str, relative_path: str) -> None: ...
+
+
 AnalyzeWithRetry = Callable[
     [AnalyzerProvider, Dict[str, Any], int],
     Awaitable[Tuple[GraphAnalysisResult, List[Dict[str, Any]], Dict[str, Any]]],
@@ -380,6 +388,7 @@ class AnalyzerRuntime:
         target_input_builder: Optional[LlmEnrichmentInputBuilder] = None,
         file_enrichment_merger: Optional[FileEnrichmentMerger] = None,
         target_prompt_renderer: Optional[TargetPromptRenderer] = None,
+        target_progress_tracker: Optional[TargetProgressTracker] = None,
     ) -> None:
         self.policy = policy
         self.policy_resolver = policy_resolver or AnalyzerPolicyRuntimeResolver(policy)
@@ -390,6 +399,7 @@ class AnalyzerRuntime:
         self.target_prompt_renderer = target_prompt_renderer or TargetPromptRenderer(policy=policy)
         self.target_input_builder = target_input_builder or LlmEnrichmentInputBuilder(policy=policy)
         self.file_enrichment_merger = file_enrichment_merger or FileEnrichmentMerger()
+        self.target_progress_tracker = target_progress_tracker
 
     async def execute(
         self,
@@ -398,6 +408,8 @@ class AnalyzerRuntime:
         content_lines: List[str],
         analyzer: AnalyzerProvider,
         analyze_with_retry: AnalyzeWithRetry,
+        *,
+        job_id: Optional[str] = None,
     ) -> AnalyzerRuntimeResult:
         context = self.policy_resolver.resolve(row, metadata, content_lines)
         extractor_result = self.extractor_registry.extract(self.policy, context)
@@ -408,6 +420,10 @@ class AnalyzerRuntime:
         enrichment_result: Optional[GraphAnalysisResult] = None
         llm_called = False
         if self._requires_llm(context):
+            source_id = str(context.row.get("source_id") or "")
+            relative_path = str(context.row.get("relative_path") or "")
+            if job_id and self.target_progress_tracker is not None:
+                self.target_progress_tracker.start_file(job_id, source_id, relative_path)
             self._enforce_llm_input_limits(context)
             budget_chars = int(self.policy.defaults.max_file_chars)
             plan = self.enrichment_planner.plan(
@@ -417,6 +433,8 @@ class AnalyzerRuntime:
                 source_id=context.row.get("source_id"),
                 relative_path=context.row.get("relative_path"),
             )
+            if job_id and self.target_progress_tracker is not None:
+                self.target_progress_tracker.set_total_targets(job_id, source_id, relative_path, len(plan.targets))
             target_results: List[GraphAnalysisResult] = []
             target_attempt_states: List[Dict[str, Any]] = []
             for target in plan.targets:
@@ -438,6 +456,8 @@ class AnalyzerRuntime:
                     relative_path=str(context.row.get("relative_path") or ""),
                     static_graph=extractor_result.graph_result,
                 )
+                if job_id and self.target_progress_tracker is not None:
+                    self.target_progress_tracker.increment_completed(job_id, source_id, relative_path)
                 target_results.append(target_result)
             enrichment_result = self.file_enrichment_merger.merge(target_results)
             self.graph_policy_validator.validate_llm_enrichment(
