@@ -15,8 +15,11 @@ class JarvisQueryService:
 
     async def query(self, request: JarvisQueryRequest) -> JarvisQueryResponse:
         payload = {
-            "query": request.query,
-            "intent": request.intent,
+            "queryText": request.queryText,
+            "intent": request.intent.value,
+            "answerLanguage": request.answerLanguage,
+            "includeTests": request.includeTests,
+            "maxFlows": request.maxFlows,
         }
         bundle = await self.knowledge_gateway.query(payload)
         return JarvisQueryResponse.parse_obj(bundle)

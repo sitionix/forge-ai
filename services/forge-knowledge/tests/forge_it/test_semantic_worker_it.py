@@ -12,6 +12,16 @@ from knowledge_service.semantic_worker import SemanticBuildCoordinator, Semantic
 from semantic_test_support import seed_semantic_graph
 
 
+def query_request(query_text):
+    return KnowledgeQueryRequest(
+        queryText=query_text,
+        intent="UNKNOWN",
+        answerLanguage="en",
+        includeTests=False,
+        maxFlows=10,
+    )
+
+
 def test_analysis_publication_pending_state_is_auto_built_by_worker_run_once(tmp_path):
     _, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_semantic_graph(app_config.store_path)
@@ -95,7 +105,7 @@ def test_query_works_while_semantic_failed_or_pending(tmp_path):
     provider = FakeDeterministicEmbeddingProvider(model="embeddinggemma", dimension=16)
     service = build_knowledge_query_service(deps.analysis_store, app_config, embedding_provider=provider)
 
-    pending = service.query(KnowledgeQueryRequest(query="JarvisQueryService query"))
+    pending = service.query(query_request("JarvisQueryService query"))
     assert pending.status in {"OK", "AMBIGUOUS"}
     assert pending.matchedNodes
 
@@ -108,7 +118,7 @@ def test_query_works_while_semantic_failed_or_pending(tmp_path):
         error="Embedding model is not available in local Ollama: embeddinggemma. Pull or configure an installed embedding model.",
         diagnostics=[{"code": "SEMANTIC_EMBEDDING_MODEL_UNAVAILABLE", "severity": "WARN"}],
     )
-    failed = service.query(KnowledgeQueryRequest(query="JarvisQueryService query"))
+    failed = service.query(query_request("JarvisQueryService query"))
 
     assert failed.status in {"OK", "AMBIGUOUS"}
     assert failed.matchedNodes
@@ -136,7 +146,7 @@ def test_semantic_query_uses_worker_built_ready_index(tmp_path):
     worker.run_once()
 
     service = build_knowledge_query_service(deps.analysis_store, app_config, embedding_provider=provider)
-    response = service.query(KnowledgeQueryRequest(query="Jarvis query Knowledge handoff"))
+    response = service.query(query_request("Jarvis query Knowledge handoff"))
 
     assert SemanticIndexStore(app_config.store_path).status_for_source("semantic-source").status == SemanticIndexStatus.READY
     assert any("SEMANTIC_VECTOR_SIMILARITY" in node.matchReasons for node in response.matchedNodes)

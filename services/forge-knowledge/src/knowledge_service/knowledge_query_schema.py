@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, StrictBool, validator
 
 
 class KnowledgeQueryStatus(str, Enum):
@@ -14,24 +14,64 @@ class KnowledgeQueryStatus(str, Enum):
     QUERY_FAILED = "QUERY_FAILED"
 
 
+class KnowledgeQueryIntent(str, Enum):
+    FLOW_EXPLANATION = "FLOW_EXPLANATION"
+    COMPONENT_USAGE = "COMPONENT_USAGE"
+    COMPONENT_RESPONSIBILITY = "COMPONENT_RESPONSIBILITY"
+    CODE_LOCATION = "CODE_LOCATION"
+    ARCHITECTURE_OVERVIEW = "ARCHITECTURE_OVERVIEW"
+    UNKNOWN = "UNKNOWN"
+
+
 class KnowledgeQueryRequest(BaseModel):
-    query: str = Field(min_length=1)
-    intent: str = "AUTO"
+    queryText: str = Field(..., min_length=1)
+    intent: KnowledgeQueryIntent = KnowledgeQueryIntent.UNKNOWN
+    answerLanguage: str = Field("en", min_length=1)
+    includeTests: StrictBool = False
+    maxFlows: int = Field(10, ge=1, le=10)
 
     class Config:
         extra = "forbid"
 
-    @validator("query")
-    def query_must_not_be_blank(cls, value: str) -> str:
+    @validator("queryText", pre=True)
+    def query_text_must_not_be_blank(cls, value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError("queryText must be a string")
         normalized = value.strip()
         if not normalized:
-            raise ValueError("query must not be empty")
+            raise ValueError("queryText must not be empty")
         return normalized
 
-    @validator("intent")
-    def normalize_intent(cls, value: Optional[str]) -> str:
-        normalized = (value or "AUTO").strip().upper()
-        return normalized or "AUTO"
+    @validator("intent", pre=True, always=True)
+    def default_missing_intent(cls, value: KnowledgeQueryIntent) -> KnowledgeQueryIntent:
+        if value is None:
+            return KnowledgeQueryIntent.UNKNOWN
+        return value
+
+    @validator("answerLanguage", pre=True, always=True)
+    def normalize_answer_language(cls, value: str) -> str:
+        if value is None:
+            return "en"
+        if not isinstance(value, str):
+            raise ValueError("answerLanguage must be a string")
+        normalized = value.strip().lower()
+        if not normalized:
+            return "en"
+        return normalized
+
+    @validator("includeTests", pre=True, always=True)
+    def default_missing_include_tests(cls, value: StrictBool) -> StrictBool:
+        if value is None:
+            return False
+        return value
+
+    @validator("maxFlows", pre=True, always=True)
+    def max_flows_must_be_an_integer(cls, value: int) -> int:
+        if value is None:
+            return 10
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("maxFlows must be an integer")
+        return value
 
 
 class KnowledgeQueryDiagnostic(BaseModel):

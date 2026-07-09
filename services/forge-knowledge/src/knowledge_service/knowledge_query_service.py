@@ -776,13 +776,13 @@ class KnowledgeQueryService:
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         eligible_sources, scope_diagnostics = self.source_scope_resolver.resolve()
         diagnostics.extend(scope_diagnostics)
-        matched_nodes, search_diagnostics, search_truncated = self.anchor_searcher.search(request.query, eligible_sources, self.policy)
+        matched_nodes, search_diagnostics, search_truncated = self.anchor_searcher.search(request.queryText, eligible_sources, self.policy)
         diagnostics.extend(search_diagnostics)
         if not matched_nodes:
             return KnowledgeQueryResponse(
                 queryId=self._query_id(),
                 status=KnowledgeQueryStatus.NO_CANDIDATES,
-                intent=request.intent,
+                intent=request.intent.value,
                 coverage=KnowledgeQueryCoverage(searchedSourceCount=len(eligible_sources), matchedSourceCount=0),
                 diagnostics=[
                     *diagnostics,
@@ -819,7 +819,7 @@ class KnowledgeQueryService:
         return KnowledgeQueryResponse(
             queryId=self._query_id(),
             status=status,
-            intent=request.intent,
+            intent=request.intent.value,
             matchedSources=matched_sources,
             matchedNodes=matched_nodes,
             flowPaths=flow_paths,

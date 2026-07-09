@@ -162,7 +162,7 @@ def knowledge_query_bundle(
     return {
         "queryId": "query-test",
         "status": status,
-        "intent": "AUTO",
+        "intent": "UNKNOWN",
         "matchedSources": [
             {
                 "sourceId": "forge-ai",
@@ -225,6 +225,27 @@ def knowledge_query_bundle(
             "continuationAvailable": False,
         },
         "diagnostics": diagnostics or [],
+    }
+
+
+def query_payload(query_text: str) -> Dict[str, Any]:
+    return {"queryText": query_text}
+
+
+def normalized_query_payload(
+    query_text: str,
+    *,
+    intent: str = "UNKNOWN",
+    answer_language: str = "en",
+    include_tests: bool = False,
+    max_flows: int = 10,
+) -> Dict[str, Any]:
+    return {
+        "queryText": query_text.strip(),
+        "intent": intent,
+        "answerLanguage": answer_language,
+        "includeTests": include_tests,
+        "maxFlows": max_flows,
     }
 
 

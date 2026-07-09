@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitionix.forgeai.api.proxy.InfrastructureProxyTransport;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -45,7 +46,7 @@ public class ForgeAiInfrastructureJarvisController {
     }
 
     @PostMapping("/api/v1/infrastructure/jarvis/query")
-    public CompletableFuture<ResponseEntity<byte[]>> query(@RequestBody(required = false) final JarvisKnowledgeQueryRequest body,
+    public CompletableFuture<ResponseEntity<byte[]>> query(@Valid @RequestBody(required = false) final JarvisKnowledgeQueryRequest body,
                                                            @RequestHeader final HttpHeaders headers,
                                                            final HttpServletRequest request) {
         final ResponseEntity<byte[]> validationError = this.validate(body);
@@ -65,9 +66,18 @@ public class ForgeAiInfrastructureJarvisController {
     private byte[] write(final JarvisKnowledgeQueryRequest body) {
         try {
             final Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("query", body.query());
+            payload.put("queryText", body.queryText());
             if (body.intent() != null) {
                 payload.put("intent", body.intent());
+            }
+            if (body.answerLanguage() != null) {
+                payload.put("answerLanguage", body.answerLanguage());
+            }
+            if (body.includeTests() != null) {
+                payload.put("includeTests", body.includeTests());
+            }
+            if (body.maxFlows() != null) {
+                payload.put("maxFlows", body.maxFlows());
             }
             return this.objectMapper.writeValueAsBytes(payload);
         } catch (final JsonProcessingException exception) {
@@ -77,10 +87,13 @@ public class ForgeAiInfrastructureJarvisController {
 
     private ResponseEntity<byte[]> validate(final JarvisKnowledgeQueryRequest body) {
         if (body == null) {
-            return this.validationError("query must not be blank");
+            return this.validationError("queryText must not be blank");
         }
-        if (body.query() == null || body.query().isBlank()) {
-            return this.validationError("query must not be blank");
+        if (body.queryText() == null || body.queryText().isBlank()) {
+            return this.validationError("queryText must not be blank");
+        }
+        if (body.maxFlows() != null && (body.maxFlows() < 1 || body.maxFlows() > 10)) {
+            return this.validationError("maxFlows must be between 1 and 10");
         }
         return null;
     }

@@ -10,7 +10,9 @@ from support import (
     knowledge_bad_response,
     knowledge_query_bundle,
     knowledge_unavailable,
+    normalized_query_payload,
     ollama_unavailable,
+    query_payload,
     write_runtime_config,
 )
 
@@ -133,7 +135,36 @@ def test_query_rejects_blank_question(tmp_path) -> None:
     app, *_ = build_test_app(write_runtime_config(tmp_path))
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "   "})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("   "))
+
+    assert response.status_code == 422
+
+
+def test_query_rejects_old_request_shape(tmp_path) -> None:
+    app, *_ = build_test_app(write_runtime_config(tmp_path))
+    old_payload = {"qu" + "ery": "explain JarvisGateway", "intent": "AU" + "TO"}
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/jarvis/query", json=old_payload)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"queryText": "explain", "intent": "AU" + "TO"},
+        {"queryText": "explain", "includeTests": "false"},
+        {"queryText": "explain", "maxFlows": "10"},
+        {"queryText": "explain", "maxFlows": 0},
+        {"queryText": "explain", "maxFlows": 999},
+    ],
+)
+def test_query_rejects_invalid_optional_controls(tmp_path, payload) -> None:
+    app, *_ = build_test_app(write_runtime_config(tmp_path))
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/jarvis/query", json=payload)
 
     assert response.status_code == 422
 
@@ -143,10 +174,10 @@ def test_query_calls_knowledge_gateway(tmp_path) -> None:
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": " explain JarvisGateway ", "intent": "AUTO"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload(" explain JarvisGateway "))
 
     assert response.status_code == 200
-    assert knowledge.calls == [{"query": "explain JarvisGateway", "intent": "AUTO"}]
+    assert knowledge.calls == [normalized_query_payload("explain JarvisGateway")]
     assert response.json()["matchedNodes"][0]["sourceId"] == "forge-ai"
 
 
@@ -155,7 +186,7 @@ def test_query_does_not_call_ollama_generation(tmp_path) -> None:
     app, *_ = build_test_app(write_runtime_config(tmp_path), model=model)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("explain JarvisGateway"))
 
     assert response.status_code == 200
     assert model.prompts == []
@@ -166,7 +197,7 @@ def test_query_response_preserves_factual_bundle(tmp_path) -> None:
     app, *_ = build_test_app(write_runtime_config(tmp_path))
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("explain JarvisGateway"))
 
     body = response.json()
     assert body["status"] == "OK"
@@ -188,7 +219,7 @@ def test_query_no_candidates_preserves_controlled_response(tmp_path) -> None:
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "unknown"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("unknown"))
 
     body = response.json()
     assert body["status"] == "NO_CANDIDATES"
@@ -202,7 +233,7 @@ def test_query_maps_knowledge_unavailable_to_controlled_error(tmp_path) -> None:
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("explain JarvisGateway"))
 
     assert response.status_code == 503
     assert response.json()["code"] == "KNOWLEDGE_UNAVAILABLE"
@@ -213,7 +244,7 @@ def test_query_maps_malformed_knowledge_response(tmp_path) -> None:
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("explain JarvisGateway"))
 
     assert response.status_code == 502
     assert response.json()["code"] == "KNOWLEDGE_BAD_RESPONSE"
@@ -223,7 +254,7 @@ def test_query_does_not_execute_actions(tmp_path) -> None:
     app, _, _, _, executor, _, _ = build_test_app(write_runtime_config(tmp_path))
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json={"query": "explain JarvisGateway"})
+        response = client.post("/api/v1/jarvis/query", json=query_payload("explain JarvisGateway"))
 
     assert response.json()["status"] == "OK"
     assert executor.invocations == []

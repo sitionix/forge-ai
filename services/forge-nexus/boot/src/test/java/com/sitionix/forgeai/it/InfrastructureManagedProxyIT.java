@@ -872,6 +872,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
     void itProxy10JarvisQueryPositiveFactualBundlePreservesFields() {
         //given
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryOptionalControls()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryNoCandidates()).createDefault();
 
         //when then
@@ -898,6 +899,12 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.evidenceCount").value(1))
                 .assertDefault();
 
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryOptionalControls())
+                .header("X-Correlation-Id", "corr-jarvis-query-optional")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].nodeId").value("node-a"))
+                .assertDefault();
+
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryNoCandidates())
                 .header("X-Correlation-Id", "corr-jarvis-query-no-candidates")
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("NO_CANDIDATES"))
@@ -911,7 +918,17 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryBlank())
                 .header("X-Correlation-Id", "corr-jarvis-query-blank")
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.title").value("VALIDATION_FAILED"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.details", containsString("query")))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.details", containsString("queryText")))
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryOldRequest())
+                .header("X-Correlation-Id", "corr-jarvis-query-old")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.title").value("VALIDATION_FAILED"))
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryUnknownField())
+                .header("X-Correlation-Id", "corr-jarvis-query-unknown-field")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.title").value("VALIDATION_FAILED"))
                 .assertDefault();
     }
 
