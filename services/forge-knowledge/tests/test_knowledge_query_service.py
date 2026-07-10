@@ -1,5 +1,14 @@
+from pathlib import Path
+
 import pytest
 
+from knowledge_service.anchor_expansion_contract import (
+    AnchorEntrypointHint,
+    AnchorExpansionBundle,
+    AnchorExpansionEdge,
+    AnchorExpansionNode,
+    AnchorExpansionRequest,
+)
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.embedding_provider import EmbeddingProviderError
 from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
@@ -111,7 +120,7 @@ class FakeGraphStore:
         requested = {(source_id, node_id) for source_id, node_id in source_node_pairs}
         hydrated = []
         for item in self.hydration_candidates:
-            source_id = item.get("sourceId") or item.get("source_id")
+            source_id = item.get("sourceId")
             node_id = item.get("id") or item.get("nodeId")
             if (source_id, node_id) not in requested:
                 continue
@@ -121,19 +130,13 @@ class FakeGraphStore:
         return hydrated[:limit]
 
     def query_anchor_expansion(self, source_node_pairs, max_per_anchor=30, max_total=200):
-        self.expansion_queries.append((list(source_node_pairs), max_per_anchor, max_total))
+        requests = tuple(source_node_pairs)
+        self.expansion_queries.append((requests, max_per_anchor, max_total))
         requested = set()
-        for item in source_node_pairs:
-            if isinstance(item, dict):
-                source_id = item.get("sourceId") or item.get("source_id")
-                graph_id = item.get("graphId") or item.get("graph_id") or "graph-a"
-                node_id = item.get("nodeId") or item.get("node_id") or item.get("id")
-            else:
-                source_id = item[0]
-                graph_id = item[1] if len(item) > 2 else "graph-a"
-                node_id = item[2] if len(item) > 2 else item[1]
-            if source_id and node_id:
-                requested.add((str(source_id), str(graph_id or "graph-a"), str(node_id)))
+        for item in requests:
+            assert isinstance(item, AnchorExpansionRequest)
+            if item.source_id and item.graph_id and item.node_id:
+                requested.add((str(item.source_id), str(item.graph_id), str(item.node_id)))
 
         structural_edges = []
         node_keys = set(requested)
@@ -191,7 +194,47 @@ class FakeGraphStore:
                     "claimId": claim.get("id"),
                 }
             )
-        return {"nodes": nodes, "edges": structural_edges, "entrypointHints": entrypoint_hints, "truncated": False}
+        return AnchorExpansionBundle(
+            nodes=tuple(self._anchor_expansion_node(node) for node in nodes),
+            edges=tuple(self._anchor_expansion_edge(edge) for edge in structural_edges),
+            entrypoint_hints=tuple(self._anchor_entrypoint_hint(hint) for hint in entrypoint_hints),
+            truncated=False,
+        )
+
+    def _anchor_expansion_node(self, node):
+        return AnchorExpansionNode(
+            source_id=str(node["sourceId"]),
+            graph_id=str(node["graphId"]),
+            graph_revision=str(node.get("graphRevision") or self.graph_revision),
+            node_id=str(node["id"]),
+            stable_key=str(node.get("stableKey") or node["id"]),
+            node_kind=str(node["nodeKind"]),
+            label=str(node["label"]),
+            parent_node_id=node.get("parentNodeId"),
+            relative_path=node.get("relativePath"),
+            qualified_name=node.get("qualifiedName"),
+            entrypoint=bool(node.get("entrypoint")),
+        )
+
+    def _anchor_expansion_edge(self, edge):
+        return AnchorExpansionEdge(
+            source_id=str(edge["sourceId"]),
+            graph_id=str(edge["graphId"]),
+            graph_revision=str(edge.get("graphRevision") or self.graph_revision),
+            edge_id=str(edge["id"]),
+            edge_type=str(edge["edgeType"]),
+            from_node_id=str(edge["fromNodeId"]),
+            to_node_id=str(edge["toNodeId"]),
+        )
+
+    def _anchor_entrypoint_hint(self, hint):
+        return AnchorEntrypointHint(
+            source_id=str(hint["sourceId"]),
+            graph_id=str(hint["graphId"]),
+            graph_revision=str(hint.get("graphRevision") or self.graph_revision),
+            node_id=str(hint["nodeId"]),
+            claim_id=str(hint["claimId"]),
+        )
 
     def query_graph_slice(self, matched_nodes, depth):
         self.graph_slice_requests.append([dict(node) for node in matched_nodes])
@@ -731,6 +774,18 @@ def test_type_candidate_expands_declared_callables_as_flow_seeds():
 
     response = service(store, KnowledgeQueryPolicy(max_flow_paths=4)).query(query_request("SiteApiMapper"))
 
+    requests, max_per_anchor, max_total = store.expansion_queries[-1]
+    assert all(isinstance(item, AnchorExpansionRequest) for item in requests)
+    assert requests == (
+        AnchorExpansionRequest(
+            source_id="source-a",
+            graph_id="graph-a",
+            graph_revision="graph-a",
+            node_id="site-api-mapper",
+        ),
+    )
+    assert max_per_anchor == 30
+    assert max_total == 200
     assert [node.nodeId for node in response.matchedNodes] == ["site-api-mapper"]
     flow_seed_ids = store.adjacency_source_scopes[-1][0]["nodeIds"]
     assert flow_seed_ids == ["as-create-command", "as-create-response"]
@@ -789,6 +844,67 @@ def test_field_candidate_expands_to_callables_that_use_field():
     slice_anchor_ids = {node["nodeId"] for node in store.graph_slice_requests[-1]}
     assert {"foo-type", "site-repository", "save-site"} <= slice_anchor_ids
     assert store.edges == original_edges
+
+
+class StaticAnchorExpansionStore(FakeGraphStore):
+    def __init__(self, bundle):
+        super().__init__(nodes=[], edges=[])
+        self.bundle = bundle
+
+    def query_anchor_expansion(self, source_node_pairs, max_per_anchor=30, max_total=200):
+        requests = tuple(source_node_pairs)
+        self.expansion_queries.append((requests, max_per_anchor, max_total))
+        assert all(isinstance(item, AnchorExpansionRequest) for item in requests)
+        return self.bundle
+
+
+def test_anchor_expansion_service_consumes_typed_bundle_contract():
+    bundle = AnchorExpansionBundle(
+        nodes=(
+            AnchorExpansionNode(
+                source_id="source-a",
+                graph_id="graph-a",
+                graph_revision="graph-a",
+                node_id="foo-type",
+                stable_key="foo-type",
+                node_kind="TYPE",
+                label="FooType",
+            ),
+            AnchorExpansionNode(
+                source_id="source-a",
+                graph_id="graph-a",
+                graph_revision="graph-a",
+                node_id="do-work",
+                stable_key="do-work",
+                node_kind="CALLABLE",
+                label="FooType.doWork",
+                parent_node_id="foo-type",
+            ),
+        ),
+        edges=(
+            AnchorExpansionEdge(
+                source_id="source-a",
+                graph_id="graph-a",
+                graph_revision="graph-a",
+                edge_id="declares-work",
+                edge_type="DECLARES",
+                from_node_id="foo-type",
+                to_node_id="do-work",
+            ),
+        ),
+    )
+    store = StaticAnchorExpansionStore(bundle)
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+
+    result = AnchorExpansionService(store).expand(
+        [matched_node(id="foo-type", nodeKind="TYPE", name="FooType", label="FooType")],
+        eligible_sources,
+        KnowledgeQueryPolicy(),
+    )
+
+    anchors_by_id = {anchor.node.nodeId: anchor for anchor in result.expanded_anchors}
+    assert AnchorRole.FLOW_SEED in anchors_by_id["do-work"].roles
+    assert AnchorExpansionReason.TYPE_DECLARED_CALLABLE in anchors_by_id["do-work"].reasons
 
 
 def test_callable_candidate_stays_direct_seed_without_call_expansion():
@@ -942,17 +1058,50 @@ def test_analysis_store_query_anchor_expansion_is_targeted_to_current_graph(tmp_
     )
 
     bundle = AnalysisStore(db_path).query_anchor_expansion(
-        [{"sourceId": "source-a", "graphId": graph_id, "nodeId": "foo-type"}],
+        [AnchorExpansionRequest(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_id="foo-type")],
         max_per_anchor=30,
         max_total=200,
     )
 
-    node_ids = {node["id"] for node in bundle["nodes"]}
-    edge_ids = {edge["id"] for edge in bundle["edges"]}
+    assert isinstance(bundle, AnchorExpansionBundle)
+    assert all(isinstance(node, AnchorExpansionNode) for node in bundle.nodes)
+    assert all(isinstance(edge, AnchorExpansionEdge) for edge in bundle.edges)
+    assert all(isinstance(hint, AnchorEntrypointHint) for hint in bundle.entrypoint_hints)
+    node_ids = {node.node_id for node in bundle.nodes}
+    edge_ids = {edge.edge_id for edge in bundle.edges}
     assert {"foo-type", "do-work", "bar-field"} <= node_ids
     assert {"declares-callable", "declares-field"} <= edge_ids
     assert "uses-field" not in edge_ids
-    assert all(node["graphId"] == graph_id for node in bundle["nodes"])
+    assert all(node.graph_id == graph_id for node in bundle.nodes)
+
+
+def test_anchor_expansion_service_has_no_schema_alias_fallbacks():
+    service_path = Path(__file__).parents[1] / "src" / "knowledge_service" / "knowledge_query_service.py"
+    text = service_path.read_text()
+    section = text[text.index("class AnchorExpansionService:") : text.index("class GraphSliceQueryService:")]
+
+    forbidden_fragments = [
+        'get("source' + 'Id") or',
+        'get("source' + '_id")',
+        'get("graph' + 'Id") or',
+        'get("graph' + '_id")',
+        'get("edge' + 'Type") or',
+        'get("edge' + '_type")',
+        'get("from' + 'NodeId") or',
+        'get("from' + '_node_id")',
+        'get("to' + 'NodeId") or',
+        'get("to' + '_node_id")',
+        'get("' + 'id") or',
+        'get("edge' + 'Id")',
+        'get("node' + 'Kind") or',
+        'get("node' + '_kind")',
+        "entrypoint" + "Hints",
+        "bundle" + ".get(",
+        "Dict" + "[str, Any]",
+        "List" + "[Any]",
+    ]
+    for fragment in forbidden_fragments:
+        assert fragment not in section
 
 
 def test_flow_extraction_uses_candidate_after_old_top_five_cutoff():

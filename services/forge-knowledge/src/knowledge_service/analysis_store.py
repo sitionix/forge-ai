@@ -10,8 +10,15 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Sequence, Set
 
+from knowledge_service.anchor_expansion_contract import (
+    AnchorEntrypointHint,
+    AnchorExpansionBundle,
+    AnchorExpansionEdge,
+    AnchorExpansionNode,
+    AnchorExpansionRequest,
+)
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
@@ -2135,11 +2142,16 @@ class AnalysisStore:
             candidates.append(projected)
         return candidates
 
-    def query_anchor_expansion(self, source_node_pairs: List[Any], max_per_anchor: int = 30, max_total: int = 200) -> Dict[str, Any]:
+    def query_anchor_expansion(
+        self,
+        source_node_pairs: Sequence[AnchorExpansionRequest],
+        max_per_anchor: int = 30,
+        max_total: int = 200,
+    ) -> AnchorExpansionBundle:
         self.init()
         requested = self._anchor_expansion_requested_pairs(source_node_pairs)
         if not requested:
-            return {"nodes": [], "edges": [], "entrypointHints": [], "truncated": False}
+            return AnchorExpansionBundle()
         safe_max_total = max(1, min(int(max_total or 1), 1000))
         safe_relation_limit = max(1, min(safe_max_total + max(1, int(max_per_anchor or 1)) * len(requested), 2000))
         grouped: Dict[str, Set[str]] = {}
@@ -2205,9 +2217,7 @@ class AnalysisStore:
                     truncated = True
                     rows = rows[:safe_relation_limit]
                 for row in rows:
-                    edge = self._graph_edge_projection(self._row_dict(row))
-                    edge["sourceId"] = source_id
-                    edges.append(edge)
+                    edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
                     for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
                         if node_id:
                             node_ids_by_source.setdefault(source_id, set()).add(node_id)
@@ -2255,9 +2265,7 @@ class AnalysisStore:
                     rows = rows[:remaining_edges]
                 remaining_edges -= len(rows)
                 for row in rows:
-                    edge = self._graph_edge_projection(self._row_dict(row))
-                    edge["sourceId"] = source_id
-                    edges.append(edge)
+                    edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
                     for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
                         if node_id:
                             node_ids_by_source.setdefault(source_id, set()).add(node_id)
@@ -2266,14 +2274,19 @@ class AnalysisStore:
                 nodes.extend(self._query_anchor_expansion_nodes(conn, source_id, node_ids))
                 entrypoint_hints.extend(self._query_anchor_expansion_entrypoint_hints(conn, source_id, node_ids))
 
-            nodes = self._dedupe_by_id(nodes, "id")
-            edges = self._dedupe_by_id(edges, "id")
+            nodes = self._dedupe_by_id(nodes, "nodeId")
+            edges = self._dedupe_by_id(edges, "edgeId")
             entrypoint_hints = self._dedupe_by_id(entrypoint_hints, "nodeId")
             self._attach_current_graph_identity(conn, nodes)
             self._attach_current_graph_identity(conn, edges)
             self._attach_current_graph_identity(conn, entrypoint_hints)
 
-        return {"nodes": nodes, "edges": edges, "entrypointHints": entrypoint_hints, "truncated": truncated}
+        return AnchorExpansionBundle(
+            nodes=tuple(self._anchor_expansion_node(item) for item in nodes),
+            edges=tuple(self._anchor_expansion_edge(item) for item in edges),
+            entrypoint_hints=tuple(self._anchor_entrypoint_hint(item) for item in entrypoint_hints),
+            truncated=truncated,
+        )
 
     def query_graph_slice(self, anchors: List[Dict[str, Any]], depth: int) -> Dict[str, List[Dict[str, Any]]]:
         self.init()
@@ -2461,27 +2474,22 @@ class AnalysisStore:
             identity = identity_by_source.get(str(item.get("sourceId") or ""))
             if not identity:
                 continue
-            item.setdefault("graphId", identity.get("graphId"))
-            item.setdefault("graphRevision", identity.get("graphRevision"))
+            if not item.get("graphId"):
+                item["graphId"] = identity.get("graphId")
+            if not item.get("graphRevision"):
+                item["graphRevision"] = identity.get("graphRevision")
 
-    def _anchor_expansion_requested_pairs(self, source_node_pairs: List[Any]) -> List[tuple[str, str]]:
+    def _anchor_expansion_requested_pairs(self, source_node_pairs: Sequence[AnchorExpansionRequest]) -> List[tuple[str, str]]:
         requested: List[tuple[str, str]] = []
         seen: Set[tuple[str, str]] = set()
-        for item in source_node_pairs or []:
-            source_id = ""
-            node_id = ""
-            if isinstance(item, dict):
-                source_id = str(item.get("sourceId") or item.get("source_id") or "")
-                node_id = str(item.get("nodeId") or item.get("node_id") or item.get("id") or "")
-            elif isinstance(item, (list, tuple)):
-                if len(item) >= 3:
-                    source_id = str(item[0] or "")
-                    node_id = str(item[2] or "")
-                elif len(item) >= 2:
-                    source_id = str(item[0] or "")
-                    node_id = str(item[1] or "")
+        for item in source_node_pairs or ():
+            if not isinstance(item, AnchorExpansionRequest):
+                continue
+            source_id = str(item.source_id or "")
+            graph_id = str(item.graph_id or "")
+            node_id = str(item.node_id or "")
             key = (source_id, node_id)
-            if not source_id or not node_id or key in seen:
+            if not source_id or not graph_id or not node_id or key in seen:
                 continue
             seen.add(key)
             requested.append(key)
@@ -2548,6 +2556,8 @@ class AnalysisStore:
         return [
             {
                 "sourceId": row["source_id"],
+                "graphId": "",
+                "graphRevision": "",
                 "nodeId": row["node_id"],
                 "claimId": row["id"],
             }
@@ -3981,10 +3991,66 @@ class AnalysisStore:
         }
 
     def _anchor_expansion_node_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        item = self._graph_node_projection(row)
-        item["stableKey"] = row.get("stable_key") or row["id"]
-        item["parentNodeId"] = row.get("parent_node_id")
-        return item
+        return {
+            "sourceId": row["source_id"],
+            "graphId": "",
+            "graphRevision": "",
+            "nodeId": row["id"],
+            "stableKey": row.get("stable_key") or row["id"],
+            "nodeKind": row.get("node_kind"),
+            "label": row.get("display_name") or row.get("qualified_name") or row.get("name") or row["id"],
+            "relativePath": row.get("relative_path"),
+            "qualifiedName": row.get("qualified_name"),
+            "parentNodeId": row.get("parent_node_id"),
+            "entrypoint": bool(row.get("entrypoint")),
+        }
+
+    def _anchor_expansion_edge_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "sourceId": row["source_id"],
+            "graphId": "",
+            "graphRevision": "",
+            "edgeId": row["id"],
+            "edgeType": row["edge_type"],
+            "fromNodeId": row["from_node_id"],
+            "toNodeId": row["to_node_id"],
+        }
+
+    def _anchor_expansion_node(self, item: Dict[str, Any]) -> AnchorExpansionNode:
+        return AnchorExpansionNode(
+            source_id=str(item["sourceId"]),
+            graph_id=str(item["graphId"]),
+            graph_revision=str(item["graphRevision"]) if item.get("graphRevision") else None,
+            node_id=str(item["nodeId"]),
+            stable_key=str(item["stableKey"]),
+            node_kind=str(item["nodeKind"] or ""),
+            label=str(item["label"] or item["nodeId"]),
+            parent_node_id=str(item["parentNodeId"]) if item.get("parentNodeId") else None,
+            relative_path=str(item["relativePath"]) if item.get("relativePath") else None,
+            qualified_name=str(item["qualifiedName"]) if item.get("qualifiedName") else None,
+            entrypoint=bool(item.get("entrypoint")),
+            score=float(item["score"]) if item.get("score") is not None else None,
+        )
+
+    def _anchor_expansion_edge(self, item: Dict[str, Any]) -> AnchorExpansionEdge:
+        return AnchorExpansionEdge(
+            source_id=str(item["sourceId"]),
+            graph_id=str(item["graphId"]),
+            graph_revision=str(item["graphRevision"]) if item.get("graphRevision") else None,
+            edge_id=str(item["edgeId"]),
+            edge_type=str(item["edgeType"]),
+            from_node_id=str(item["fromNodeId"]),
+            to_node_id=str(item["toNodeId"]),
+        )
+
+    def _anchor_entrypoint_hint(self, item: Dict[str, Any]) -> AnchorEntrypointHint:
+        return AnchorEntrypointHint(
+            source_id=str(item["sourceId"]),
+            graph_id=str(item["graphId"]),
+            graph_revision=str(item["graphRevision"]) if item.get("graphRevision") else None,
+            node_id=str(item["nodeId"]),
+            claim_id=str(item["claimId"]),
+        )
 
     def _graph_edge_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
         metadata = self._json_dict(row.get("metadata_json"))

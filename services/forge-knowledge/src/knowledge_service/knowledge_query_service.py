@@ -7,6 +7,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from knowledge_service.anchor_expansion_contract import (
+    AnchorExpansionBundle,
+    AnchorExpansionEdge,
+    AnchorExpansionNode,
+    AnchorExpansionRequest,
+)
 from knowledge_service.knowledge_search import (
     CandidateMerger,
     DeterministicCodeSearchEngine,
@@ -533,23 +539,23 @@ class AnchorExpansionService:
                 legacy_flow_seed=True,
             )
 
-        graph_nodes = self._bundle_nodes(bundle, graph_id_by_source)
-        declares_out, declares_in, uses_field_in = self._structural_edge_indexes(bundle, graph_id_by_source)
-        truncated = bool(bundle.get("truncated"))
+        graph_nodes = self._bundle_nodes(bundle)
+        declares_out, declares_in, uses_field_in = self._structural_edge_indexes(bundle)
+        truncated = bool(bundle.truncated)
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         added_by_origin: Dict[AnchorNodeKey, int] = defaultdict(int)
         expanded_added = 0
 
         def add_expanded(
             origin: KnowledgeQueryMatchedNode,
-            raw_node: Dict[str, Any] | None,
+            raw_node: AnchorExpansionNode | None,
             roles: set[AnchorRole],
             reason: AnchorExpansionReason,
         ) -> None:
             nonlocal expanded_added, truncated
             if not raw_node:
                 return
-            node = self._matched_node_from_graph_node(raw_node, origin, graph_id_by_source, revision_by_source)
+            node = self._matched_node_from_graph_node(raw_node, origin)
             node_key = accumulator.node_key(node)
             origin_key = accumulator.node_key(origin)
             if node_key is None or origin_key is None:
@@ -577,7 +583,7 @@ class AnchorExpansionService:
             if kind == "TYPE":
                 for child_key in declares_out.get(origin_key, []):
                     child = graph_nodes.get(child_key)
-                    child_kind = self._node_kind(self._raw_node_kind(child))
+                    child_kind = self._node_kind(child.node_kind if child else "")
                     if child_kind == "CALLABLE":
                         add_expanded(candidate, child, {AnchorRole.FLOW_SEED}, AnchorExpansionReason.TYPE_DECLARED_CALLABLE)
                     elif child_kind == "FIELD":
@@ -587,7 +593,7 @@ class AnchorExpansionService:
                 type_children: List[AnchorNodeKey] = []
                 for child_key in declares_out.get(origin_key, []):
                     child = graph_nodes.get(child_key)
-                    child_kind = self._node_kind(self._raw_node_kind(child))
+                    child_kind = self._node_kind(child.node_kind if child else "")
                     if child_kind == "TYPE":
                         type_children.append(child_key)
                         add_expanded(candidate, child, {AnchorRole.CONTEXT}, AnchorExpansionReason.FILE_DECLARED_NODE)
@@ -598,18 +604,18 @@ class AnchorExpansionService:
                 for type_child_key in type_children:
                     for contained_key in declares_out.get(type_child_key, []):
                         contained = graph_nodes.get(contained_key)
-                        if self._node_kind(self._raw_node_kind(contained)) == "CALLABLE":
+                        if self._node_kind(contained.node_kind if contained else "") == "CALLABLE":
                             add_expanded(candidate, contained, {AnchorRole.FLOW_SEED}, AnchorExpansionReason.FILE_DECLARED_NODE)
                 continue
             if kind == "FIELD":
                 for callable_key in uses_field_in.get(origin_key, []):
                     callable_node = graph_nodes.get(callable_key)
-                    if self._node_kind(self._raw_node_kind(callable_node)) == "CALLABLE":
+                    if self._node_kind(callable_node.node_kind if callable_node else "") == "CALLABLE":
                         add_expanded(candidate, callable_node, {AnchorRole.FLOW_SEED}, AnchorExpansionReason.FIELD_USED_BY_CALLABLE)
                 for parent_key in self._parent_keys(origin_key, graph_nodes, declares_in):
                     add_expanded(candidate, graph_nodes.get(parent_key), {AnchorRole.CONTEXT}, AnchorExpansionReason.TYPE_DECLARED_FIELD)
 
-        for key in self._entrypoint_keys(bundle, graph_nodes, graph_id_by_source):
+        for key in self._entrypoint_keys(bundle, graph_nodes):
             accumulator.add_role_reason(key, AnchorRole.ENTRYPOINT_CANDIDATE, AnchorExpansionReason.ENTRYPOINT_HINT)
 
         if truncated:
@@ -679,8 +685,8 @@ class AnchorExpansionService:
         candidates: Sequence[KnowledgeQueryMatchedNode],
         graph_id_by_source: Dict[str, str],
         revision_by_source: Dict[str, str],
-    ) -> List[Dict[str, str]]:
-        requested: List[Dict[str, str]] = []
+    ) -> List[AnchorExpansionRequest]:
+        requested: List[AnchorExpansionRequest] = []
         seen: set[AnchorNodeKey] = set()
         for candidate in candidates:
             source_id = str(candidate.sourceId or "")
@@ -697,30 +703,35 @@ class AnchorExpansionService:
             if key in seen:
                 continue
             seen.add(key)
-            requested.append({"sourceId": source_id, "graphId": expected_graph_id, "nodeId": node_id})
+            requested.append(
+                AnchorExpansionRequest(
+                    source_id=source_id,
+                    graph_id=expected_graph_id,
+                    graph_revision=expected_revision or None,
+                    node_id=node_id,
+                )
+            )
         return requested
 
-    def _bundle_nodes(self, bundle: Dict[str, Any], graph_id_by_source: Dict[str, str]) -> Dict[AnchorNodeKey, Dict[str, Any]]:
-        nodes: Dict[AnchorNodeKey, Dict[str, Any]] = {}
-        for raw_node in bundle.get("nodes") or []:
-            node = dict(raw_node)
-            key = self._raw_node_key(node, graph_id_by_source)
+    def _bundle_nodes(self, bundle: AnchorExpansionBundle) -> Dict[AnchorNodeKey, AnchorExpansionNode]:
+        nodes: Dict[AnchorNodeKey, AnchorExpansionNode] = {}
+        for node in bundle.nodes:
+            key = self._node_key(node)
             if key is not None:
                 nodes[key] = node
         return nodes
 
     def _structural_edge_indexes(
         self,
-        bundle: Dict[str, Any],
-        graph_id_by_source: Dict[str, str],
+        bundle: AnchorExpansionBundle,
     ) -> tuple[Dict[AnchorNodeKey, List[AnchorNodeKey]], Dict[AnchorNodeKey, List[AnchorNodeKey]], Dict[AnchorNodeKey, List[AnchorNodeKey]]]:
         declares_out: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
         declares_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
         uses_field_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
-        for edge in sorted((dict(item) for item in bundle.get("edges") or []), key=self._edge_sort_key):
-            edge_type = str(edge.get("edgeType") or edge.get("edge_type") or "").upper()
-            from_key = self._edge_from_key(edge, graph_id_by_source)
-            to_key = self._edge_to_key(edge, graph_id_by_source)
+        for edge in sorted(bundle.edges, key=self._edge_sort_key):
+            edge_type = str(edge.edge_type or "").upper()
+            from_key = self._edge_from_key(edge)
+            to_key = self._edge_to_key(edge)
             if from_key is None or to_key is None:
                 continue
             if edge_type == "DECLARES":
@@ -733,7 +744,7 @@ class AnchorExpansionService:
     def _parent_keys(
         self,
         node_key: AnchorNodeKey,
-        graph_nodes: Dict[AnchorNodeKey, Dict[str, Any]],
+        graph_nodes: Dict[AnchorNodeKey, AnchorExpansionNode],
         declares_in: Dict[AnchorNodeKey, List[AnchorNodeKey]],
     ) -> List[AnchorNodeKey]:
         result: List[AnchorNodeKey] = []
@@ -742,9 +753,9 @@ class AnchorExpansionService:
             if parent_key not in seen:
                 seen.add(parent_key)
                 result.append(parent_key)
-        node = graph_nodes.get(node_key) or {}
-        parent_node_id = str(node.get("parentNodeId") or node.get("parent_node_id") or "")
-        if parent_node_id:
+        node = graph_nodes.get(node_key)
+        if node and node.parent_node_id:
+            parent_node_id = str(node.parent_node_id)
             parent_key = (node_key[0], node_key[1], parent_node_id)
             if parent_key not in seen:
                 result.append(parent_key)
@@ -752,81 +763,70 @@ class AnchorExpansionService:
 
     def _entrypoint_keys(
         self,
-        bundle: Dict[str, Any],
-        graph_nodes: Dict[AnchorNodeKey, Dict[str, Any]],
-        graph_id_by_source: Dict[str, str],
+        bundle: AnchorExpansionBundle,
+        graph_nodes: Dict[AnchorNodeKey, AnchorExpansionNode],
     ) -> set[AnchorNodeKey]:
         keys: set[AnchorNodeKey] = set()
         for key, node in graph_nodes.items():
-            if node.get("entrypoint"):
+            if node.entrypoint:
                 keys.add(key)
-        for hint in bundle.get("entrypointHints") or bundle.get("entrypoint_hints") or []:
-            key = self._raw_node_key(hint, graph_id_by_source)
-            if key is not None:
+        for hint in bundle.entrypoint_hints:
+            if hint.source_id and hint.graph_id and hint.node_id:
+                key = (str(hint.source_id), str(hint.graph_id), str(hint.node_id))
                 keys.add(key)
         return keys
 
     def _matched_node_from_graph_node(
         self,
-        raw_node: Dict[str, Any],
+        node: AnchorExpansionNode,
         origin: KnowledgeQueryMatchedNode,
-        graph_id_by_source: Dict[str, str],
-        revision_by_source: Dict[str, str],
     ) -> KnowledgeQueryMatchedNode:
-        source_id = str(raw_node.get("sourceId") or raw_node.get("source_id") or origin.sourceId)
-        node_id = str(raw_node.get("nodeId") or raw_node.get("id") or "")
-        graph_id = str(raw_node.get("graphId") or raw_node.get("graph_id") or origin.graphId or graph_id_by_source.get(source_id) or "")
-        graph_revision = raw_node.get("graphRevision") or raw_node.get("graph_revision") or origin.graphRevision or revision_by_source.get(source_id)
-        label = str(raw_node.get("label") or raw_node.get("displayName") or raw_node.get("display_name") or raw_node.get("name") or node_id)
-        stable_key = str(raw_node.get("stableKey") or raw_node.get("stable_key") or node_id)
+        label = str(node.label or node.node_id)
         return KnowledgeQueryMatchedNode(
-            sourceId=source_id,
-            nodeId=node_id,
-            stableKey=stable_key,
-            nodeKind=str(raw_node.get("nodeKind") or raw_node.get("node_kind") or ""),
+            sourceId=str(node.source_id),
+            nodeId=str(node.node_id),
+            stableKey=str(node.stable_key or node.node_id),
+            nodeKind=str(node.node_kind or ""),
             label=label,
             score=float(origin.score),
             matchReasons=list(origin.matchReasons),
-            graphId=graph_id or None,
-            graphRevision=str(graph_revision) if graph_revision else None,
-            relativePath=raw_node.get("relativePath") or raw_node.get("relative_path") or origin.relativePath,
-            qualifiedName=raw_node.get("qualifiedName") or raw_node.get("qualified_name") or origin.qualifiedName,
+            graphId=str(node.graph_id) if node.graph_id else None,
+            graphRevision=str(node.graph_revision) if node.graph_revision else None,
+            relativePath=node.relative_path or origin.relativePath,
+            qualifiedName=node.qualified_name or origin.qualifiedName,
         )
 
-    def _raw_node_key(self, raw_node: Dict[str, Any], graph_id_by_source: Dict[str, str]) -> AnchorNodeKey | None:
-        source_id = str(raw_node.get("sourceId") or raw_node.get("source_id") or "")
-        node_id = str(raw_node.get("nodeId") or raw_node.get("id") or "")
-        if not source_id or not node_id:
+    def _node_key(self, node: AnchorExpansionNode) -> AnchorNodeKey | None:
+        source_id = str(node.source_id or "")
+        graph_id = str(node.graph_id or "")
+        node_id = str(node.node_id or "")
+        if not source_id or not graph_id or not node_id:
             return None
-        return (source_id, str(raw_node.get("graphId") or raw_node.get("graph_id") or graph_id_by_source.get(source_id) or ""), node_id)
+        return (source_id, graph_id, node_id)
 
-    def _edge_from_key(self, edge: Dict[str, Any], graph_id_by_source: Dict[str, str]) -> AnchorNodeKey | None:
-        return self._edge_node_key(edge, "fromNodeId", "from_node_id", graph_id_by_source)
+    def _edge_from_key(self, edge: AnchorExpansionEdge) -> AnchorNodeKey | None:
+        return self._edge_node_key(edge, edge.from_node_id)
 
-    def _edge_to_key(self, edge: Dict[str, Any], graph_id_by_source: Dict[str, str]) -> AnchorNodeKey | None:
-        return self._edge_node_key(edge, "toNodeId", "to_node_id", graph_id_by_source)
+    def _edge_to_key(self, edge: AnchorExpansionEdge) -> AnchorNodeKey | None:
+        return self._edge_node_key(edge, edge.to_node_id)
 
-    def _edge_node_key(self, edge: Dict[str, Any], camel_field: str, snake_field: str, graph_id_by_source: Dict[str, str]) -> AnchorNodeKey | None:
-        source_id = str(edge.get("sourceId") or edge.get("source_id") or "")
-        node_id = str(edge.get(camel_field) or edge.get(snake_field) or "")
-        if not source_id or not node_id:
+    def _edge_node_key(self, edge: AnchorExpansionEdge, node_id_value: str) -> AnchorNodeKey | None:
+        source_id = str(edge.source_id or "")
+        graph_id = str(edge.graph_id or "")
+        node_id = str(node_id_value or "")
+        if not source_id or not graph_id or not node_id:
             return None
-        return (source_id, str(edge.get("graphId") or edge.get("graph_id") or graph_id_by_source.get(source_id) or ""), node_id)
+        return (source_id, graph_id, node_id)
 
-    def _edge_sort_key(self, edge: Dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    def _edge_sort_key(self, edge: AnchorExpansionEdge) -> tuple[str, str, str, str, str, str]:
         return (
-            str(edge.get("sourceId") or edge.get("source_id") or ""),
-            str(edge.get("graphId") or edge.get("graph_id") or ""),
-            str(edge.get("edgeType") or edge.get("edge_type") or ""),
-            str(edge.get("fromNodeId") or edge.get("from_node_id") or ""),
-            str(edge.get("toNodeId") or edge.get("to_node_id") or ""),
-            str(edge.get("id") or edge.get("edgeId") or ""),
+            str(edge.source_id or ""),
+            str(edge.graph_id or ""),
+            str(edge.edge_type or ""),
+            str(edge.from_node_id or ""),
+            str(edge.to_node_id or ""),
+            str(edge.edge_id or ""),
         )
-
-    def _raw_node_kind(self, raw_node: Dict[str, Any] | None) -> str:
-        if not raw_node:
-            return ""
-        return str(raw_node.get("nodeKind") or raw_node.get("node_kind") or "")
 
     def _node_kind(self, value: str) -> str:
         return str(value or "").upper()
