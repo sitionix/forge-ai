@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Sequence, Tuple
 
@@ -91,10 +91,50 @@ class FlowStopReason(str, Enum):
 
 
 @dataclass(frozen=True)
+class FlowUnitKey:
+    source_id: str
+    graph_id: str
+    node_ids: tuple[str, ...]
+    edge_ids: tuple[str, ...]
+    boundary_edge_ids: tuple[str, ...]
+    stop_reason: str
+
+
+@dataclass(frozen=True)
+class FlowUnitOrigin:
+    matched_node_id: str
+    source_id: str
+    graph_id: str
+    score: float
+    match_reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FlowUnit:
+    key: FlowUnitKey
+    origins: tuple[FlowUnitOrigin, ...]
+    node_ids: tuple[str, ...]
+    edge_ids: tuple[str, ...]
+    boundary_edge_ids: tuple[str, ...]
+    nodes: tuple[FlowGraphNode, ...]
+    edges: tuple[FlowGraphEdge, ...]
+    boundary_edges: tuple[FlowGraphEdge, ...]
+    evidence: tuple[FlowGraphEvidence, ...]
+    complete: bool
+    stop_reason: FlowStopReason
+    root_stop_reason: FlowStopReason
+    root_node_id: str | None
+    seed_node_ids: tuple[str, ...]
+    score: float
+
+
+@dataclass(frozen=True)
 class FlowBuildResult:
     flow_paths: list[KnowledgeQueryFlowPath]
     diagnostics: list[KnowledgeQueryDiagnostic]
     truncated: bool
+    flow_units: tuple[FlowUnit, ...] = ()
+    exact_duplicate_merge_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -110,8 +150,7 @@ class _TraversalPath:
 @dataclass(frozen=True)
 class _BuiltFlowPath:
     path: _TraversalPath
-    matched_node_ids: tuple[str, ...]
-    seed_score: float
+    origins: tuple[FlowUnitOrigin, ...]
 
 
 @dataclass
@@ -174,40 +213,46 @@ class FlowBuilder:
 
         adjacency = self._build_adjacency(bundle)
         state = _TraversalState(policy=policy, started_at=time.monotonic())
-        paths_by_key: dict[tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]], _BuiltFlowPath] = {}
+        flow_units_by_key: dict[FlowUnitKey, FlowUnit] = {}
+        exact_duplicate_merge_count = 0
         max_paths = max(1, int(getattr(policy, "max_flow_paths", 25) or 25))
 
         for seed in self._ordered_seeds(callable_seeds):
-            if len(paths_by_key) >= max_paths:
-                state.mark_truncated()
-                break
             seed_key = self._seed_key(seed, adjacency.nodes_by_key)
             if seed_key is None:
                 continue
+            origin = self._origin(seed, seed_key)
             upstream_paths = self._upstream_paths(seed_key, adjacency, entrypoint_candidate_node_ids, state, policy, max_paths)
             for upstream_path in upstream_paths:
-                if len(paths_by_key) >= max_paths:
-                    state.mark_truncated()
-                    break
                 if not upstream_path.complete:
-                    self._remember_path(paths_by_key, _BuiltFlowPath(upstream_path, (seed.nodeId,), float(seed.score)), max_paths, state)
+                    exact_duplicate_merge_count += self._remember_flow_unit(
+                        flow_units_by_key,
+                        self._flow_unit(_BuiltFlowPath(upstream_path, (origin,)), adjacency, policy),
+                    )
                     continue
                 downstream_paths = self._downstream_paths(seed_key, upstream_path, adjacency, state, policy, max_paths)
                 for downstream_path in downstream_paths:
                     combined = self._combine_paths(upstream_path, downstream_path)
                     if not combined.edge_keys and not combined.boundary_edge_keys:
                         continue
-                    self._remember_path(paths_by_key, _BuiltFlowPath(combined, (seed.nodeId,), float(seed.score)), max_paths, state)
-                    if len(paths_by_key) >= max_paths:
-                        state.mark_truncated()
-                        break
-                if len(paths_by_key) >= max_paths:
-                    break
+                    exact_duplicate_merge_count += self._remember_flow_unit(
+                        flow_units_by_key,
+                        self._flow_unit(_BuiltFlowPath(combined, (origin,)), adjacency, policy),
+                    )
 
-        built_paths = sorted(paths_by_key.values(), key=self._built_path_sort_key)
-        flow_paths = [self._public_flow_path(index, item, adjacency, policy) for index, item in enumerate(built_paths, start=1)]
+        all_flow_units = sorted(flow_units_by_key.values(), key=self._flow_unit_sort_key)
+        if len(all_flow_units) > max_paths:
+            state.mark_truncated()
+        flow_units = tuple(all_flow_units[:max_paths])
+        flow_paths = [self._public_flow_path(index, item) for index, item in enumerate(flow_units, start=1)]
         diagnostics = self._diagnostics(flow_paths, bundle, state, policy)
-        return FlowBuildResult(flow_paths=flow_paths, diagnostics=diagnostics, truncated=bundle.truncated or state.truncated)
+        return FlowBuildResult(
+            flow_paths=flow_paths,
+            diagnostics=diagnostics,
+            truncated=bundle.truncated or state.truncated,
+            flow_units=flow_units,
+            exact_duplicate_merge_count=exact_duplicate_merge_count,
+        )
 
     def _build_adjacency(self, bundle: FlowGraphBundle) -> _FlowAdjacency:
         nodes_by_key = {self._node_key(node): node for node in bundle.nodes}
@@ -434,29 +479,19 @@ class FlowBuilder:
         visit(seed_key, (seed_key,), (), set(upstream_path.node_keys), 0)
         return sorted(results, key=self._downstream_sort_key)
 
-    def _remember_path(
+    def _remember_flow_unit(
         self,
-        paths_by_key: dict[tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]], _BuiltFlowPath],
-        built_path: _BuiltFlowPath,
-        max_paths: int,
-        state: _TraversalState,
-    ) -> None:
-        if not built_path.path.edge_keys and not built_path.path.boundary_edge_keys:
-            return
-        first_key = built_path.path.node_keys[0]
-        node_ids = tuple(node_key[2] for node_key in built_path.path.node_keys)
-        edge_ids = tuple(edge_key[2] for edge_key in built_path.path.edge_keys)
-        boundary_edge_ids = tuple(edge_key[2] for edge_key in built_path.path.boundary_edge_keys)
-        dedupe_key = (first_key[0], first_key[1], node_ids, edge_ids, boundary_edge_ids)
-        existing = paths_by_key.get(dedupe_key)
+        flow_units_by_key: dict[FlowUnitKey, FlowUnit],
+        flow_unit: FlowUnit,
+    ) -> int:
+        if not flow_unit.edge_ids and not flow_unit.boundary_edge_ids:
+            return 0
+        existing = flow_units_by_key.get(flow_unit.key)
         if existing is not None:
-            merged_ids = tuple(sorted({*existing.matched_node_ids, *built_path.matched_node_ids}))
-            paths_by_key[dedupe_key] = _BuiltFlowPath(existing.path, merged_ids, max(existing.seed_score, built_path.seed_score))
-            return
-        if len(paths_by_key) >= max_paths:
-            state.mark_truncated()
-            return
-        paths_by_key[dedupe_key] = built_path
+            flow_units_by_key[flow_unit.key] = self._merge_flow_units(existing, flow_unit)
+            return 1
+        flow_units_by_key[flow_unit.key] = flow_unit
+        return 0
 
     def _combine_paths(self, upstream_path: _TraversalPath, downstream_path: _TraversalPath) -> _TraversalPath:
         return _TraversalPath(
@@ -468,31 +503,108 @@ class FlowBuilder:
             upstream_stop_reason=upstream_path.upstream_stop_reason,
         )
 
-    def _public_flow_path(
+    def _flow_unit(
         self,
-        index: int,
         built_path: _BuiltFlowPath,
         adjacency: _FlowAdjacency,
         policy: "KnowledgeQueryPolicy",
-    ) -> KnowledgeQueryFlowPath:
+    ) -> FlowUnit:
         path = built_path.path
-        node_ids = [node_key[2] for node_key in path.node_keys]
-        edge_ids = [edge_key[2] for edge_key in path.edge_keys]
-        boundary_edge_ids = [edge_key[2] for edge_key in path.boundary_edge_keys]
-        evidence = self._path_evidence(adjacency.evidence, path, policy)
+        source_id = path.node_keys[0][0] if path.node_keys else ""
+        graph_id = path.node_keys[0][1] if path.node_keys else ""
+        node_ids = tuple(node_key[2] for node_key in path.node_keys)
+        edge_ids = tuple(edge_key[2] for edge_key in path.edge_keys)
+        boundary_edge_ids = tuple(edge_key[2] for edge_key in path.boundary_edge_keys)
+        origins = self._merge_origins(built_path.origins)
+        evidence = tuple(self._copy_evidence(item) for item in self._path_evidence(adjacency.evidence, path, policy))
+        key = FlowUnitKey(
+            source_id=source_id,
+            graph_id=graph_id,
+            node_ids=node_ids,
+            edge_ids=edge_ids,
+            boundary_edge_ids=boundary_edge_ids,
+            stop_reason=path.stop_reason.value,
+        )
+        return FlowUnit(
+            key=key,
+            origins=origins,
+            node_ids=node_ids,
+            edge_ids=edge_ids,
+            boundary_edge_ids=boundary_edge_ids,
+            nodes=tuple(self._copy_node(adjacency.nodes_by_key[node_key]) for node_key in path.node_keys if node_key in adjacency.nodes_by_key),
+            edges=tuple(self._copy_edge(adjacency.edges_by_key[edge_key]) for edge_key in path.edge_keys if edge_key in adjacency.edges_by_key),
+            boundary_edges=tuple(
+                self._copy_edge(adjacency.edges_by_key[edge_key]) for edge_key in path.boundary_edge_keys if edge_key in adjacency.edges_by_key
+            ),
+            evidence=evidence,
+            complete=path.complete,
+            stop_reason=path.stop_reason,
+            root_stop_reason=path.upstream_stop_reason,
+            root_node_id=node_ids[0] if node_ids else None,
+            seed_node_ids=tuple(origin.matched_node_id for origin in origins),
+            score=max((origin.score for origin in origins), default=0.0),
+        )
+
+    def _merge_flow_units(self, existing: FlowUnit, incoming: FlowUnit) -> FlowUnit:
+        origins = self._merge_origins((*existing.origins, *incoming.origins))
+        return replace(
+            existing,
+            origins=origins,
+            seed_node_ids=tuple(origin.matched_node_id for origin in origins),
+            score=max((origin.score for origin in origins), default=0.0),
+        )
+
+    def _merge_origins(self, origins: Sequence[FlowUnitOrigin]) -> tuple[FlowUnitOrigin, ...]:
+        merged: dict[tuple[str, str, str], FlowUnitOrigin] = {}
+        for origin in origins:
+            key = (origin.source_id, origin.graph_id, origin.matched_node_id)
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = FlowUnitOrigin(
+                    matched_node_id=origin.matched_node_id,
+                    source_id=origin.source_id,
+                    graph_id=origin.graph_id,
+                    score=origin.score,
+                    match_reasons=tuple(sorted(set(origin.match_reasons))),
+                )
+                continue
+            merged[key] = FlowUnitOrigin(
+                matched_node_id=origin.matched_node_id,
+                source_id=origin.source_id,
+                graph_id=origin.graph_id,
+                score=max(existing.score, origin.score),
+                match_reasons=tuple(sorted({*existing.match_reasons, *origin.match_reasons})),
+            )
+        return tuple(
+            sorted(
+                merged.values(),
+                key=lambda origin: (
+                    -origin.score,
+                    origin.source_id,
+                    origin.graph_id,
+                    origin.matched_node_id,
+                ),
+            )
+        )
+
+    def _public_flow_path(
+        self,
+        index: int,
+        flow_unit: FlowUnit,
+    ) -> KnowledgeQueryFlowPath:
         return KnowledgeQueryFlowPath(
             flowId=f"flow-{index}",
-            sourceId=path.node_keys[0][0] if path.node_keys else None,
-            matchedNodeIds=list(built_path.matched_node_ids),
-            nodeIds=node_ids,
-            edgeIds=edge_ids,
-            boundaryEdgeIds=boundary_edge_ids,
-            evidenceIds=[item.evidence_id for item in evidence],
-            nodes=[self._public_node(adjacency.nodes_by_key[node_key]) for node_key in path.node_keys if node_key in adjacency.nodes_by_key],
-            edges=[self._public_edge(adjacency.edges_by_key[edge_key]) for edge_key in path.edge_keys if edge_key in adjacency.edges_by_key],
-            evidence=[self._public_evidence(item) for item in evidence],
-            complete=path.complete,
-            stopReason=path.stop_reason.value,
+            sourceId=flow_unit.key.source_id or None,
+            matchedNodeIds=list(flow_unit.seed_node_ids),
+            nodeIds=list(flow_unit.node_ids),
+            edgeIds=list(flow_unit.edge_ids),
+            boundaryEdgeIds=list(flow_unit.boundary_edge_ids),
+            evidenceIds=[item.evidence_id for item in flow_unit.evidence],
+            nodes=[self._public_node(node) for node in flow_unit.nodes],
+            edges=[self._public_edge(edge) for edge in flow_unit.edges],
+            evidence=[self._public_evidence(item) for item in flow_unit.evidence],
+            complete=flow_unit.complete,
+            stopReason=flow_unit.stop_reason.value,
         )
 
     def _path_evidence(
@@ -642,6 +754,15 @@ class FlowBuilder:
             ),
         )
 
+    def _origin(self, seed: KnowledgeQueryMatchedNode, seed_key: FlowNodeKey) -> FlowUnitOrigin:
+        return FlowUnitOrigin(
+            matched_node_id=str(seed.nodeId),
+            source_id=seed_key[0],
+            graph_id=seed_key[1],
+            score=float(seed.score),
+            match_reasons=tuple(sorted(str(reason) for reason in seed.matchReasons)),
+        )
+
     def _upstream_sort_key(self, path: _TraversalPath) -> tuple[int, int, tuple[str, ...], tuple[str, ...]]:
         entry_rank = 0 if path.upstream_stop_reason == FlowStopReason.ENTRYPOINT_REACHED else 1
         return (entry_rank, len(path.edge_keys), tuple(edge_key[2] for edge_key in path.edge_keys), tuple(node_key[2] for node_key in path.node_keys))
@@ -653,16 +774,70 @@ class FlowBuilder:
             path.stop_reason.value,
         )
 
-    def _built_path_sort_key(self, built_path: _BuiltFlowPath) -> tuple[int, float, int, tuple[str, ...], tuple[str, ...]]:
-        path = built_path.path
-        entry_rank = 0 if path.upstream_stop_reason == FlowStopReason.ENTRYPOINT_REACHED else 1
+    def _flow_unit_sort_key(
+        self,
+        flow_unit: FlowUnit,
+    ) -> tuple[int, int, float, int, int, int, tuple[tuple[int, int, str], ...], str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...], str]:
+        root_rank = self._root_rank(flow_unit.root_stop_reason)
+        stop_rank = self._stop_rank(flow_unit)
         return (
-            entry_rank,
-            -built_path.seed_score,
-            len(path.edge_keys),
-            tuple(edge_key[2] for edge_key in (*path.edge_keys, *path.boundary_edge_keys)),
-            tuple(node_key[2] for node_key in path.node_keys),
+            root_rank,
+            stop_rank,
+            -flow_unit.score,
+            -self._origin_reason_count(flow_unit),
+            -(len(flow_unit.edge_ids) + len(flow_unit.boundary_edge_ids)),
+            -len(flow_unit.evidence),
+            self._unit_callsite_order(flow_unit),
+            flow_unit.key.source_id,
+            flow_unit.key.graph_id,
+            flow_unit.key.node_ids,
+            flow_unit.key.edge_ids,
+            flow_unit.key.boundary_edge_ids,
+            flow_unit.key.stop_reason,
         )
+
+    def _root_rank(self, stop_reason: FlowStopReason) -> int:
+        if stop_reason == FlowStopReason.ENTRYPOINT_REACHED:
+            return 0
+        if stop_reason == FlowStopReason.INFERRED_ROOT:
+            return 1
+        if stop_reason == FlowStopReason.TERMINAL_NODE:
+            return 2
+        return 3
+
+    def _stop_rank(self, flow_unit: FlowUnit) -> int:
+        if flow_unit.complete:
+            return 0
+        if flow_unit.stop_reason in {FlowStopReason.EXTERNAL_BOUNDARY, FlowStopReason.UNRESOLVED_BOUNDARY}:
+            return 1
+        if flow_unit.stop_reason == FlowStopReason.CYCLE_DETECTED:
+            return 2
+        if flow_unit.stop_reason in {FlowStopReason.RESULT_LIMIT_REACHED, FlowStopReason.GRAPH_TRUNCATED}:
+            return 3
+        return 2
+
+    def _origin_reason_count(self, flow_unit: FlowUnit) -> int:
+        return len({reason for origin in flow_unit.origins for reason in origin.match_reasons})
+
+    def _unit_callsite_order(self, flow_unit: FlowUnit) -> tuple[tuple[int, int, str], ...]:
+        evidence_by_id = {item.evidence_id: item for item in flow_unit.evidence if item.evidence_id}
+        return tuple(
+            (*self._edge_evidence_order(edge, evidence_by_id), edge.edge_id)
+            for edge in (*flow_unit.edges, *flow_unit.boundary_edges)
+        )
+
+    def _copy_node(self, node: FlowGraphNode) -> FlowGraphNode:
+        return replace(node)
+
+    def _copy_edge(self, edge: FlowGraphEdge) -> FlowGraphEdge:
+        return replace(
+            edge,
+            unresolved_target=dict(edge.unresolved_target) if edge.unresolved_target is not None else None,
+            evidence_ids=tuple(edge.evidence_ids),
+        )
+
+    def _copy_evidence(self, evidence: FlowGraphEvidence) -> FlowGraphEvidence:
+        return replace(evidence)
 
     def _node_key(self, node: FlowGraphNode) -> FlowNodeKey:
         return (node.source_id, node.graph_id, node.node_id)

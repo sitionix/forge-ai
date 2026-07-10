@@ -1263,6 +1263,243 @@ def test_flow_builder_entrypoint_is_graph_fact_driven_not_name_driven():
     ]
 
 
+def test_flow_builder_self_contained_units_preserve_shared_suffix_across_independent_flows():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("api-create", "ApiEntry.create"),
+            flow_graph_node("kafka-consume", "KafkaEntry.consume"),
+            flow_graph_node("job-run", "JobEntry.run"),
+            flow_graph_node("usecase-execute", "UseCase.execute"),
+            flow_graph_node("repository-save", "Repository.save"),
+        ),
+        edges=(
+            flow_graph_edge("edge-api-usecase", "api-create", "usecase-execute"),
+            flow_graph_edge("edge-kafka-usecase", "kafka-consume", "usecase-execute"),
+            flow_graph_edge("edge-job-usecase", "job-run", "usecase-execute"),
+            flow_graph_edge("edge-usecase-save", "usecase-execute", "repository-save"),
+        ),
+    )
+
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="usecase-execute", name="UseCase.execute", label="UseCase.execute")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    assert len(result.flow_units) == 3
+    assert sorted(unit.node_ids for unit in result.flow_units) == [
+        ("api-create", "usecase-execute", "repository-save"),
+        ("job-run", "usecase-execute", "repository-save"),
+        ("kafka-consume", "usecase-execute", "repository-save"),
+    ]
+    assert sum(1 for unit in result.flow_units if "usecase-execute" in unit.node_ids) == 3
+    assert sum(1 for unit in result.flow_units if "repository-save" in unit.node_ids) == 3
+    assert all("same as previous" not in str(flow.dict()).lower() for flow in result.flow_paths)
+
+
+def test_flow_builder_preserves_shared_prefix_side_effect_branches_in_evidence_order():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("usecase-execute", "UseCase.execute"),
+            flow_graph_node("repository-save", "Repository.save"),
+            flow_graph_node("event-publish", "EventPublisher.publish"),
+            flow_graph_node("audit-write", "AuditWriter.write"),
+        ),
+        edges=(
+            flow_graph_edge("edge-audit", "usecase-execute", "audit-write", evidence_ids=("ev-audit",)),
+            flow_graph_edge("edge-publish", "usecase-execute", "event-publish", evidence_ids=("ev-publish",)),
+            flow_graph_edge("edge-save", "usecase-execute", "repository-save", evidence_ids=("ev-save",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-save", None, "edge-save", "src/UseCase.java", 10, 10, "save();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-publish", None, "edge-publish", "src/UseCase.java", 20, 20, "publish();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-audit", None, "edge-audit", "src/UseCase.java", 30, 30, "audit();"),
+        ),
+    )
+
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="usecase-execute", name="UseCase.execute", label="UseCase.execute")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    assert [flow.nodeIds for flow in result.flow_paths] == [
+        ["usecase-execute", "repository-save"],
+        ["usecase-execute", "event-publish"],
+        ["usecase-execute", "audit-write"],
+    ]
+    assert [flow.evidenceIds for flow in result.flow_paths] == [["ev-save"], ["ev-publish"], ["ev-audit"]]
+
+
+def test_flow_builder_exact_duplicate_path_merge_only_keeps_complete_unit():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("controller-create", "Controller.create"),
+            flow_graph_node("usecase-execute", "UseCase.execute"),
+            flow_graph_node("repository-save", "Repository.save"),
+        ),
+        edges=(
+            flow_graph_edge("edge-controller-usecase", "controller-create", "usecase-execute"),
+            flow_graph_edge("edge-usecase-save", "usecase-execute", "repository-save"),
+        ),
+    )
+
+    result = FlowBuilder().build(
+        bundle,
+        [
+            matched_node(id="usecase-execute", name="UseCase.execute", label="UseCase.execute", matchReasons=["EXACT_NAME"]),
+            matched_node(id="repository-save", name="Repository.save", label="Repository.save", matchReasons=["SEMANTIC_VECTOR_SIMILARITY"]),
+        ],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    assert len(result.flow_units) == 1
+    assert result.exact_duplicate_merge_count == 1
+    assert result.flow_units[0].node_ids == ("controller-create", "usecase-execute", "repository-save")
+    assert set(result.flow_paths[0].matchedNodeIds) == {"usecase-execute", "repository-save"}
+    assert result.flow_units[0].edges
+    assert result.flow_units[0].nodes
+
+
+def test_flow_builder_non_exact_suffix_overlap_is_not_merged():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start"),
+            flow_graph_node("d-start", "D.start"),
+            flow_graph_node("b-work", "B.work"),
+            flow_graph_node("c-finish", "C.finish"),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work"),
+            flow_graph_edge("edge-d-b", "d-start", "b-work"),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish"),
+        ),
+    )
+
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="b-work", name="B.work", label="B.work")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    assert len(result.flow_units) == 2
+    assert result.exact_duplicate_merge_count == 0
+    assert sorted(unit.node_ids for unit in result.flow_units) == [
+        ("a-start", "b-work", "c-finish"),
+        ("d-start", "b-work", "c-finish"),
+    ]
+    assert sum(1 for unit in result.flow_units if unit.node_ids[-2:] == ("b-work", "c-finish")) == 2
+
+
+def test_flow_builder_boundary_unit_is_self_contained_with_evidence():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("usecase-execute", "UseCase.execute"),),
+        edges=(
+            flow_graph_edge(
+                "edge-external",
+                "usecase-execute",
+                None,
+                resolution_status="EXTERNAL_TARGET",
+                external=True,
+                unresolved_target={"name": "External.call"},
+                evidence_ids=("ev-external",),
+            ),
+        ),
+        evidence=(FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-external", None, "edge-external", "src/UseCase.java", 40, 40, "call();"),),
+    )
+
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="usecase-execute", name="UseCase.execute", label="UseCase.execute")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    unit = result.flow_units[0]
+    assert unit.node_ids == ("usecase-execute",)
+    assert unit.boundary_edge_ids == ("edge-external",)
+    assert unit.boundary_edges[0].edge_id == "edge-external"
+    assert unit.stop_reason.value == "EXTERNAL_BOUNDARY"
+    assert unit.complete is False
+    assert unit.evidence[0].evidence_id == "ev-external"
+    assert result.flow_paths[0].boundaryEdgeIds == ["edge-external"]
+    assert result.flow_paths[0].evidenceIds == ["ev-external"]
+
+
+def test_flow_builder_dynamic_ordering_uses_generic_graph_facts():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start"),
+            flow_graph_node("d-start", "D.start"),
+            flow_graph_node("b-work", "B.work"),
+            flow_graph_node("c-finish", "C.finish"),
+            flow_graph_node("e-side", "E.side"),
+        ),
+        edges=(
+            flow_graph_edge("edge-d-b", "d-start", "b-work", evidence_ids=("ev-d-b",)),
+            flow_graph_edge("edge-b-e", "b-work", "e-side", evidence_ids=("ev-b-e",)),
+            flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish", evidence_ids=("ev-b-c",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 1, 1, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-d-b", None, "edge-d-b", "src/D.java", 2, 2, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-c", None, "edge-b-c", "src/B.java", 3, 3, "c.finish();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-e", None, "edge-b-e", "src/B.java", 4, 4, "e.side();"),
+        ),
+    )
+
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="b-work", name="B.work", label="B.work")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    assert [flow.nodeIds for flow in result.flow_paths] == [
+        ["a-start", "b-work", "c-finish"],
+        ["a-start", "b-work", "e-side"],
+        ["d-start", "b-work", "c-finish"],
+        ["d-start", "b-work", "e-side"],
+    ]
+
+
+def test_flow_builder_path_scoped_evidence_does_not_leak_between_flows():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("usecase-execute", "UseCase.execute"),
+            flow_graph_node("repository-save", "Repository.save"),
+            flow_graph_node("audit-write", "AuditWriter.write"),
+        ),
+        edges=(
+            flow_graph_edge("edge-save", "usecase-execute", "repository-save", evidence_ids=("ev-save",)),
+            flow_graph_edge("edge-audit", "usecase-execute", "audit-write", evidence_ids=("ev-audit",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-usecase", "usecase-execute", None, "src/UseCase.java", 1, 1, "execute"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-save", None, "edge-save", "src/UseCase.java", 10, 10, "save();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-audit", None, "edge-audit", "src/UseCase.java", 20, 20, "audit();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-other", None, "edge-other", "src/UseCase.java", 30, 30, "other();"),
+        ),
+    )
+
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="usecase-execute", name="UseCase.execute", label="UseCase.execute")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    evidence_by_leaf = {flow.nodeIds[-1]: flow.evidenceIds for flow in result.flow_paths}
+    assert evidence_by_leaf["repository-save"] == ["ev-usecase", "ev-save"]
+    assert evidence_by_leaf["audit-write"] == ["ev-usecase", "ev-audit"]
+    assert all("ev-other" not in evidence_ids for evidence_ids in evidence_by_leaf.values())
+
+
 def test_flow_builder_never_crosses_source_or_graph_boundaries():
     bundle = FlowGraphBundle(
         nodes=(
@@ -1319,6 +1556,16 @@ def test_flow_builder_has_no_loose_graph_contract_fallbacks():
         '.get("to' + 'NodeId"',
         '.get("to' + '_node_id"',
         "bundle" + ".get(",
+        "edge" + ".get(",
+        "Controller",
+        "Consumer",
+        "Scheduler",
+        "Kafka",
+        "Job",
+        "MapStruct",
+        "Mapper",
+        "Repository",
+        "Service",
     ]
     for fragment in forbidden_fragments:
         assert fragment not in section
