@@ -38,7 +38,7 @@ def test_vector_search_ignores_dimension_mismatch_with_diagnostic(tmp_path):
     result = store.search([1.0, 0.0], source_revisions={"source-a": "revision-a"}, embedding_model="fake")
 
     assert result.matches == []
-    assert any(diagnostic["code"] == "SEMANTIC_INDEX_FAILED" for diagnostic in result.diagnostics)
+    assert any(diagnostic["code"] == "SEMANTIC_DIMENSION_MISMATCH" for diagnostic in result.diagnostics)
 
 
 def test_vector_search_reports_scan_guardrail(tmp_path):

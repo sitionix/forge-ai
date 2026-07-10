@@ -1878,6 +1878,132 @@ class AnalysisStore:
             documents.append(projected)
         return documents
 
+    def query_search_documents_by_node_ids(self, source_node_pairs: List[tuple[str, str]], limit: int) -> List[Dict[str, Any]]:
+        self.init()
+        if not source_node_pairs:
+            return []
+        requested: List[tuple[str, str]] = []
+        seen: Set[tuple[str, str]] = set()
+        for source_id, node_id in source_node_pairs:
+            key = (str(source_id or ""), str(node_id or ""))
+            if not key[0] or not key[1] or key in seen:
+                continue
+            seen.add(key)
+            requested.append(key)
+        if not requested:
+            return []
+        safe_limit = max(1, min(int(limit or len(requested) or 1), len(requested), 1000))
+        pair_clauses: List[str] = []
+        pair_params: List[Any] = []
+        for source_id, node_id in requested[:safe_limit]:
+            pair_clauses.append("(n.source_id = ? AND n.id = ?)")
+            pair_params.extend([source_id, node_id])
+        source_ids = sorted({source_id for source_id, _ in requested[:safe_limit]})
+        contract = graph_query_contract()
+        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_claim_text())
+        entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
+            rows = conn.execute(
+                f"""
+                WITH claim AS (
+                    SELECT source_id, node_id, group_concat(summary, ' ') AS summary
+                    FROM analysis_graph_claims
+                    WHERE status IN ({claim_status_sql})
+                    GROUP BY source_id, node_id
+                ),
+                out_degree AS (
+                    SELECT source_id, from_node_id AS node_id, COUNT(*) AS count
+                    FROM analysis_graph_edges
+                    GROUP BY source_id, from_node_id
+                ),
+                in_degree AS (
+                    SELECT source_id, to_node_id AS node_id, COUNT(*) AS count
+                    FROM analysis_graph_edges
+                    WHERE to_node_id IS NOT NULL
+                    GROUP BY source_id, to_node_id
+                ),
+                entry AS (
+                    SELECT source_id, node_id, 1 AS entrypoint
+                    FROM analysis_graph_claims
+                    WHERE claim_kind = ?
+                      AND status IN ({entry_status_sql})
+                    GROUP BY source_id, node_id
+                ),
+                external_target AS (
+                    SELECT source_id,
+                           from_node_id AS node_id,
+                           group_concat(
+                               COALESCE(
+                                   json_extract(unresolved_target_json, '$.name'),
+                                   json_extract(unresolved_target_json, '$.qualifiedName'),
+                                   unresolved_target_json
+                               ),
+                               ' '
+                           ) AS external_target_text
+                    FROM analysis_graph_edges
+                    WHERE resolution_status = ?
+                      AND unresolved_target_json IS NOT NULL
+                    GROUP BY source_id, from_node_id
+                )
+                SELECT n.*,
+                       sources.display_name AS source_display_name,
+                       af.relative_path,
+                       claim.summary,
+                       external_target.external_target_text,
+                       COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
+                       COALESCE(entry.entrypoint, 0) AS entrypoint
+                FROM analysis_graph_nodes n
+                LEFT JOIN sources ON sources.source_id = n.source_id
+                LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
+                LEFT JOIN claim
+                  ON claim.source_id = n.source_id
+                 AND claim.node_id = n.id
+                LEFT JOIN out_degree
+                  ON out_degree.source_id = n.source_id
+                 AND out_degree.node_id = n.id
+                LEFT JOIN in_degree
+                  ON in_degree.source_id = n.source_id
+                 AND in_degree.node_id = n.id
+                LEFT JOIN entry
+                  ON entry.source_id = n.source_id
+                 AND entry.node_id = n.id
+                LEFT JOIN external_target
+                  ON external_target.source_id = n.source_id
+                 AND external_target.node_id = n.id
+                WHERE ({' OR '.join(pair_clauses)})
+                  AND {self._inventory_membership_graph_node_clause("n")}
+                ORDER BY n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
+                LIMIT ?
+                """,
+                [
+                    *claim_status_params,
+                    contract.entrypoint_claim_kind,
+                    *entry_status_params,
+                    contract.external_target_status,
+                    *pair_params,
+                    safe_limit,
+                ],
+            ).fetchall()
+            revision_by_source = self._graph_identity_by_source(conn, source_ids)
+        documents: List[Dict[str, Any]] = []
+        for row in rows:
+            row_dict = self._row_dict(row)
+            projected = self._graph_node_projection(row_dict)
+            projected.update(
+                {
+                    "graphId": revision_by_source.get(row["source_id"], {}).get("graphId"),
+                    "graphRevision": revision_by_source.get(row["source_id"], {}).get("graphRevision"),
+                    "sourceDisplayName": row["source_display_name"] or row["source_id"],
+                    "displayName": row["display_name"],
+                    "stableKey": row["stable_key"],
+                    "summary": row["summary"],
+                    "metadataText": row["external_target_text"],
+                    "degree": int(row["graph_degree"] or 0),
+                }
+            )
+            documents.append(projected)
+        return documents
+
     def query_anchor_candidates(self, tokens: List[str], source_ids: List[str], limit: int) -> List[Dict[str, Any]]:
         self.init()
         if not tokens or not source_ids:

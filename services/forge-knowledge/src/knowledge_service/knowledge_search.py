@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 
 _CAMEL_BOUNDARY_1 = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
@@ -372,6 +372,8 @@ class SearchConfig:
     min_fuzzy_score: float = 0.58
     fuzzy_max_edit_distance: int = 3
     enable_fuzzy_search: bool = True
+    source_revisions: Mapping[str, str] = field(default_factory=dict)
+    document_hydrator: Optional[Callable[[Sequence[Tuple[str, str]]], Sequence[SearchDocument]]] = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -823,7 +825,7 @@ class DeterministicCodeSearchEngine:
 
     def search(self, raw_query: str, documents: Sequence[SearchDocument], config: SearchConfig) -> SearchRunResult:
         query = self.normalizer.normalize(raw_query)
-        if not query.tokens or not documents:
+        if not query.tokens or (not documents and not self.supplemental_providers):
             return SearchRunResult(candidates=[])
 
         all_candidates: List[SearchCandidate] = []
