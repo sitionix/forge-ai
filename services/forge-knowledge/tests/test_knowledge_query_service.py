@@ -12,6 +12,14 @@ from knowledge_service.anchor_expansion_contract import (
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.embedding_provider import EmbeddingProviderError
 from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
+from knowledge_service.flow_builder import (
+    FlowBuilder,
+    FlowGraphBundle,
+    FlowGraphEdge,
+    FlowGraphEvidence,
+    FlowGraphNode,
+    FlowGraphSourceScope,
+)
 from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode, KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import (
     AnchorExpansionReason,
@@ -476,6 +484,41 @@ def graph_edge(edge_id, source, target=None, **overrides):
     }
     value.update(overrides)
     return value
+
+
+def flow_graph_node(node_id, label, **overrides):
+    value = {
+        "source_id": "source-a",
+        "graph_id": "graph-a",
+        "graph_revision": "graph-a",
+        "node_id": node_id,
+        "stable_key": node_id,
+        "node_kind": "CALLABLE",
+        "label": label,
+        "qualified_name": None,
+        "relative_path": None,
+        "entrypoint": False,
+    }
+    value.update(overrides)
+    return FlowGraphNode(**value)
+
+
+def flow_graph_edge(edge_id, source, target=None, **overrides):
+    value = {
+        "source_id": "source-a",
+        "graph_id": "graph-a",
+        "graph_revision": "graph-a",
+        "edge_id": edge_id,
+        "edge_type": "CALLS",
+        "from_node_id": source,
+        "to_node_id": target,
+        "resolution_status": "RESOLVED" if target else "UNRESOLVED",
+        "external": False,
+        "unresolved_target": None,
+        "evidence_ids": (),
+    }
+    value.update(overrides)
+    return FlowGraphEdge(**value)
 
 
 def default_nodes():
@@ -1075,6 +1118,37 @@ def test_analysis_store_query_anchor_expansion_is_targeted_to_current_graph(tmp_
     assert all(node.graph_id == graph_id for node in bundle.nodes)
 
 
+def test_analysis_store_load_call_flow_graph_returns_typed_bundle(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    graph_id = seed_semantic_graph(
+        db_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a-start", "nodeKind": "CALLABLE", "name": "A.start", "path": "src/A.java"},
+            {"id": "b-work", "nodeKind": "CALLABLE", "name": "B.work", "path": "src/B.java"},
+            {"id": "c-finish", "nodeKind": "CALLABLE", "name": "C.finish", "path": "src/C.java"},
+        ],
+        edges=[
+            {"id": "edge-a-b", "fromNodeId": "a-start", "toNodeId": "b-work", "edgeType": "CALLS"},
+            {"id": "edge-b-c", "fromNodeId": "b-work", "toNodeId": "c-finish", "edgeType": "CALLS"},
+        ],
+    )
+
+    bundle = AnalysisStore(db_path).load_call_flow_graph(
+        [FlowGraphSourceScope(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_ids=("b-work",))],
+        max_edges=20,
+        max_evidence=20,
+    )
+
+    assert isinstance(bundle, FlowGraphBundle)
+    assert all(isinstance(node, FlowGraphNode) for node in bundle.nodes)
+    assert all(isinstance(edge, FlowGraphEdge) for edge in bundle.edges)
+    assert all(isinstance(item, FlowGraphEvidence) for item in bundle.evidence)
+    assert {"a-start", "b-work", "c-finish"} <= {node.node_id for node in bundle.nodes}
+    assert {"edge-a-b", "edge-b-c"} <= {edge.edge_id for edge in bundle.edges}
+    assert all(node.graph_id == graph_id for node in bundle.nodes)
+
+
 def test_anchor_expansion_service_has_no_schema_alias_fallbacks():
     service_path = Path(__file__).parents[1] / "src" / "knowledge_service" / "knowledge_query_service.py"
     text = service_path.read_text()
@@ -1099,6 +1173,152 @@ def test_anchor_expansion_service_has_no_schema_alias_fallbacks():
         "bundle" + ".get(",
         "Dict" + "[str, Any]",
         "List" + "[Any]",
+    ]
+    for fragment in forbidden_fragments:
+        assert fragment not in section
+
+
+def test_flow_builder_seed_in_middle_uses_generic_typed_contract():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start"),
+            flow_graph_node("b-work", "B.work"),
+            flow_graph_node("c-finish", "C.finish"),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish", evidence_ids=("ev-b-c",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 10, 10, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-c", None, "edge-b-c", "src/B.java", 20, 20, "c.finish();"),
+        ),
+    )
+
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="b-work", name="B.work", label="B.work")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=4),
+    )
+
+    assert len(result.flow_paths) == 1
+    flow = result.flow_paths[0]
+    assert flow.nodeIds == ["a-start", "b-work", "c-finish"]
+    assert flow.edgeIds == ["edge-a-b", "edge-b-c"]
+    assert flow.evidenceIds == ["ev-a-b", "ev-b-c"]
+    assert flow.complete is True
+    assert flow.stopReason == "TERMINAL_NODE"
+
+
+def test_flow_builder_seed_entrypoint_starts_at_seed():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("entry-start", "Entry.start", entrypoint=True),
+            flow_graph_node("service-run", "Service.run"),
+            flow_graph_node("repository-save", "Repository.save"),
+        ),
+        edges=(
+            flow_graph_edge("edge-entry-service", "entry-start", "service-run"),
+            flow_graph_edge("edge-service-save", "service-run", "repository-save"),
+        ),
+    )
+
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="entry-start", name="Entry.start", label="Entry.start")],
+        {("source-a", "graph-a", "entry-start")},
+        KnowledgeQueryPolicy(max_flow_paths=4),
+    )
+
+    assert [flow.nodeIds for flow in result.flow_paths] == [["entry-start", "service-run", "repository-save"]]
+    assert result.flow_paths[0].edgeIds == ["edge-entry-service", "edge-service-save"]
+
+
+def test_flow_builder_entrypoint_is_graph_fact_driven_not_name_driven():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("site-controller", "SiteController"),
+            flow_graph_node("foo-entry", "Foo", entrypoint=True),
+            flow_graph_node("usecase-execute", "UseCase.execute"),
+            flow_graph_node("repository-save", "Repository.save"),
+        ),
+        edges=(
+            flow_graph_edge("edge-controller-usecase", "site-controller", "usecase-execute"),
+            flow_graph_edge("edge-foo-usecase", "foo-entry", "usecase-execute"),
+            flow_graph_edge("edge-usecase-save", "usecase-execute", "repository-save"),
+        ),
+    )
+
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="usecase-execute", name="UseCase.execute", label="UseCase.execute")],
+        {("source-a", "graph-a", "foo-entry")},
+        KnowledgeQueryPolicy(max_flow_paths=4),
+    )
+
+    assert [flow.nodeIds for flow in result.flow_paths] == [
+        ["foo-entry", "usecase-execute", "repository-save"],
+        ["site-controller", "usecase-execute", "repository-save"],
+    ]
+
+
+def test_flow_builder_never_crosses_source_or_graph_boundaries():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("root", "SourceA.root", source_id="source-a", graph_id="graph-a"),
+            flow_graph_node("shared", "SourceA.shared", source_id="source-a", graph_id="graph-a"),
+            flow_graph_node("leaf", "SourceA.leaf", source_id="source-a", graph_id="graph-a"),
+            flow_graph_node("root", "SourceB.root", source_id="source-b", graph_id="graph-b"),
+            flow_graph_node("shared", "SourceB.shared", source_id="source-b", graph_id="graph-b"),
+            flow_graph_node("leaf", "SourceB.leaf", source_id="source-b", graph_id="graph-b"),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-root-shared", "root", "shared", source_id="source-a", graph_id="graph-a"),
+            flow_graph_edge("edge-a-shared-leaf", "shared", "leaf", source_id="source-a", graph_id="graph-a"),
+            flow_graph_edge("edge-b-root-shared", "root", "shared", source_id="source-b", graph_id="graph-b"),
+            flow_graph_edge("edge-b-shared-leaf", "shared", "leaf", source_id="source-b", graph_id="graph-b"),
+        ),
+    )
+
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="shared", sourceId="source-a", graphId="graph-a", name="SourceA.shared", label="SourceA.shared")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=4),
+    )
+
+    assert [flow.sourceId for flow in result.flow_paths] == ["source-a"]
+    assert [flow.nodeIds for flow in result.flow_paths] == [["root", "shared", "leaf"]]
+    assert result.flow_paths[0].edgeIds == ["edge-a-root-shared", "edge-a-shared-leaf"]
+
+
+def test_no_callable_flow_seeds_returns_clear_diagnostic():
+    store = FakeGraphStore(
+        candidates=[candidate(id="field-only", nodeKind="FIELD", name="fieldOnly", label="fieldOnly")],
+        nodes=[graph_node("field-only", "fieldOnly", nodeKind="FIELD")],
+        edges=[],
+    )
+
+    response = service(store, KnowledgeQueryPolicy(max_flow_paths=4)).query(query_request("fieldOnly"))
+
+    assert response.flowPaths == []
+    assert any(diagnostic.code == "FLOW_BUILDER_NO_FLOW_SEEDS" for diagnostic in response.diagnostics)
+
+
+def test_flow_builder_has_no_loose_graph_contract_fallbacks():
+    builder_path = Path(__file__).parents[1] / "src" / "knowledge_service" / "flow_builder.py"
+    text = builder_path.read_text()
+    section = text[text.index("class FlowBuilder:") :]
+
+    forbidden_fragments = [
+        "Dict" + "[str, Any]",
+        "List" + "[Any]",
+        '.get("from' + 'NodeId"',
+        '.get("from' + '_node_id"',
+        '.get("to' + 'NodeId"',
+        '.get("to' + '_node_id"',
+        "bundle" + ".get(",
     ]
     for fragment in forbidden_fragments:
         assert fragment not in section
@@ -1298,8 +1518,8 @@ def test_flow_path_extractor_stops_on_external_target_edge():
     assert flow.nodeIds == ["controller-create"]
     assert flow.edgeIds == []
     assert flow.boundaryEdgeIds == ["calls-external"]
-    assert flow.stopReason == "EXTERNAL_TARGET"
-    assert flow.complete is True
+    assert flow.stopReason == "EXTERNAL_BOUNDARY"
+    assert flow.complete is False
     assert response.unresolved[0]["unresolvedTarget"]["name"] == "HttpClient.post"
 
 
@@ -1314,8 +1534,8 @@ def test_flow_path_extractor_stops_on_unresolved_edge():
     assert flow.nodeIds == ["controller-create"]
     assert flow.edgeIds == []
     assert flow.boundaryEdgeIds == ["calls-missing"]
-    assert flow.stopReason == "UNRESOLVED_EDGE"
-    assert flow.complete is True
+    assert flow.stopReason == "UNRESOLVED_BOUNDARY"
+    assert flow.complete is False
 
 
 def test_flow_path_extractor_does_not_mutate_graph_facts():
