@@ -68,6 +68,7 @@ class QuerySource:
     source_id: str
     display_name: str
     graph_id: str
+    graph_revision: str
     node_count: int
     edge_count: int
 
@@ -84,6 +85,7 @@ class SourceScopeResolver:
             source_id = str(source.get("sourceId") or "")
             display_name = str(source.get("displayName") or source_id or "unknown")
             graph_id = str(source.get("graphId") or "")
+            graph_revision = str(source.get("graphRevision") or source.get("graph_revision") or graph_id)
             node_count = int(source.get("nodeCount") or 0)
             edge_count = int(source.get("edgeCount") or 0)
             if not source_id:
@@ -108,7 +110,16 @@ class SourceScopeResolver:
                     )
                 )
                 continue
-            eligible.append(QuerySource(source_id=source_id, display_name=display_name, graph_id=graph_id, node_count=node_count, edge_count=edge_count))
+            eligible.append(
+                QuerySource(
+                    source_id=source_id,
+                    display_name=display_name,
+                    graph_id=graph_id,
+                    graph_revision=graph_revision,
+                    node_count=node_count,
+                    edge_count=edge_count,
+                )
+            )
         if not raw_sources:
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
@@ -146,7 +157,7 @@ class UnifiedAnchorSearcher:
             return self._empty_result()
         raw_documents, document_truncated = self._load_search_documents(search_query.tokens, eligible_sources, policy)
         documents = [SearchDocument.from_graph_node(candidate) for candidate in raw_documents if candidate.get("sourceId") or candidate.get("source_id")]
-        result = self.search_engine.search(query, documents, self._search_config(policy))
+        result = self.search_engine.search(query, documents, self._search_config(policy, eligible_sources))
         raw_candidates = list(getattr(result, "raw_candidates", []) or [])
         pools = self._candidate_pools(raw_candidates)
         all_candidates = self._all_candidates(raw_candidates)
@@ -292,14 +303,58 @@ class UnifiedAnchorSearcher:
             raw_documents = raw_documents[: policy.max_search_documents]
         return raw_documents, truncated
 
-    def _search_config(self, policy: KnowledgeQueryPolicy) -> SearchConfig:
+    def _search_config(self, policy: KnowledgeQueryPolicy, eligible_sources: Sequence[QuerySource]) -> SearchConfig:
         return SearchConfig(
             max_candidates_per_provider=policy.max_candidates_per_provider,
             min_lexical_score=policy.min_lexical_score,
             min_fuzzy_score=policy.min_fuzzy_score,
             fuzzy_max_edit_distance=policy.fuzzy_max_edit_distance,
             enable_fuzzy_search=policy.enable_fuzzy_search,
+            source_revisions={
+                source.source_id: source.graph_revision or source.graph_id
+                for source in eligible_sources
+                if source.source_id and (source.graph_revision or source.graph_id)
+            },
+            document_hydrator=lambda source_node_pairs: self._hydrate_search_documents(source_node_pairs, eligible_sources),
         )
+
+    def _hydrate_search_documents(
+        self,
+        source_node_pairs: Sequence[Tuple[str, str]],
+        eligible_sources: Sequence[QuerySource],
+    ) -> List[SearchDocument]:
+        if not source_node_pairs or not hasattr(self.graph_store, "query_search_documents_by_node_ids"):
+            return []
+        expected_revision_by_source = {
+            source.source_id: source.graph_revision or source.graph_id
+            for source in eligible_sources
+            if source.source_id and (source.graph_revision or source.graph_id)
+        }
+        requested: List[Tuple[str, str]] = []
+        requested_keys: set[Tuple[str, str]] = set()
+        for source_id, node_id in source_node_pairs:
+            key = (str(source_id or ""), str(node_id or ""))
+            if not key[0] or not key[1] or key[0] not in expected_revision_by_source:
+                continue
+            if key in requested_keys:
+                continue
+            requested_keys.add(key)
+            requested.append(key)
+        if not requested:
+            return []
+        raw_documents = self.graph_store.query_search_documents_by_node_ids(requested, len(requested))
+        documents: List[SearchDocument] = []
+        for raw_document in raw_documents:
+            document = SearchDocument.from_graph_node(raw_document)
+            key = (document.source_id, document.node_id)
+            if key not in requested_keys:
+                continue
+            expected_revision = expected_revision_by_source.get(document.source_id)
+            actual_revision = document.graph_revision or document.graph_id
+            if expected_revision and actual_revision and actual_revision != expected_revision:
+                continue
+            documents.append(document)
+        return documents
 
 class GraphSliceQueryService:
     def __init__(self, graph_store: Any) -> None:

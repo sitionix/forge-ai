@@ -1,5 +1,7 @@
 import pytest
 
+from knowledge_service.analysis_store import AnalysisStore
+from knowledge_service.embedding_provider import EmbeddingProviderError
 from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import (
@@ -20,7 +22,14 @@ from knowledge_service.knowledge_search import (
     SearchCandidate,
     SearchRunResult,
 )
+from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_index import SemanticIndexStatus, SemanticIndexStore
+from knowledge_service.semantic_search import (
+    SemanticCandidateProvider,
+    SemanticSearchConfig,
+    SemanticVectorMatch,
+    SemanticVectorSearchResult,
+)
 from semantic_test_support import seed_semantic_graph
 
 
@@ -48,25 +57,60 @@ def query_request(query_text, *, intent="UNKNOWN", answer_language="en", include
 
 
 class FakeGraphStore:
-    def __init__(self, *, candidates=None, nodes=None, edges=None, evidence=None, slice_error=False, adjacency_truncated=False):
+    def __init__(
+        self,
+        *,
+        candidates=None,
+        hydration_candidates=None,
+        nodes=None,
+        edges=None,
+        evidence=None,
+        graph_revision="graph-a",
+        slice_error=False,
+        adjacency_truncated=False,
+    ):
         self.candidates = candidates if candidates is not None else []
+        self.hydration_candidates = hydration_candidates if hydration_candidates is not None else self.candidates
         self.nodes = nodes if nodes is not None else default_nodes()
         self.edges = edges if edges is not None else default_edges()
         self.evidence = evidence if evidence is not None else default_evidence()
+        self.graph_revision = graph_revision
         self.slice_error = slice_error
         self.adjacency_truncated = adjacency_truncated
         self.source_searches = []
+        self.hydration_searches = []
         self.adjacency_loads = 0
 
     def query_current_graph_sources(self):
         return [
-            {"sourceId": "source-a", "displayName": "Source A", "graphId": "graph-a", "nodeCount": 3, "edgeCount": 2},
-            {"sourceId": "source-b", "displayName": "Source B", "graphId": "graph-b", "nodeCount": 1, "edgeCount": 0},
+            {
+                "sourceId": "source-a",
+                "displayName": "Source A",
+                "graphId": "graph-a",
+                "graphRevision": self.graph_revision,
+                "nodeCount": 3,
+                "edgeCount": 2,
+            },
+            {"sourceId": "source-b", "displayName": "Source B", "graphId": "graph-b", "graphRevision": "graph-b", "nodeCount": 1, "edgeCount": 0},
         ]
 
     def query_anchor_candidates(self, tokens, source_ids, limit):
         self.source_searches.append((tokens, source_ids, limit))
         return self.candidates
+
+    def query_search_documents_by_node_ids(self, source_node_pairs, limit):
+        self.hydration_searches.append((list(source_node_pairs), limit))
+        requested = {(source_id, node_id) for source_id, node_id in source_node_pairs}
+        hydrated = []
+        for item in self.hydration_candidates:
+            source_id = item.get("sourceId") or item.get("source_id")
+            node_id = item.get("id") or item.get("nodeId")
+            if (source_id, node_id) not in requested:
+                continue
+            projected = dict(item)
+            projected.setdefault("graphRevision", self.graph_revision)
+            hydrated.append(projected)
+        return hydrated[:limit]
 
     def query_graph_slice(self, matched_nodes, depth):
         if self.slice_error:
@@ -143,6 +187,35 @@ class StaticSemanticProvider(CandidateProvider):
         ]
 
 
+class StaticVectorStore:
+    def __init__(self, matches, *, scanned_count=1, diagnostics=None):
+        self.matches = list(matches)
+        self.scanned_count = scanned_count
+        self.diagnostics = list(diagnostics or [])
+        self.searches = []
+
+    def search(self, query_vector, *, source_revisions, embedding_model):
+        self.searches.append(
+            {
+                "queryVector": list(query_vector),
+                "sourceRevisions": dict(source_revisions),
+                "embeddingModel": embedding_model,
+            }
+        )
+        return SemanticVectorSearchResult(
+            matches=list(self.matches),
+            diagnostics=list(self.diagnostics),
+            scanned_count=self.scanned_count,
+        )
+
+
+class FailingEmbeddingProvider:
+    model = "fake-semantic"
+
+    def embed_texts(self, texts):
+        raise EmbeddingProviderError("SEMANTIC_PROVIDER_UNAVAILABLE", "fake embedding failure")
+
+
 class StaticDuplicateSearchEngine:
     def search(self, raw_query, documents, config):
         document = documents[0]
@@ -164,6 +237,33 @@ class StaticDuplicateSearchEngine:
                     score=0.42,
                     confidence="LOW",
                     priority=42,
+                ),
+            ],
+        )
+
+
+class StaticExactSemanticDuplicateSearchEngine:
+    def search(self, raw_query, documents, config):
+        document = documents[0]
+        return SearchRunResult(
+            candidates=[],
+            raw_candidates=[
+                SearchCandidate(
+                    document=document,
+                    provider="ExactCandidateProvider",
+                    reason="EXACT_NAME",
+                    score=0.98,
+                    confidence="HIGH",
+                    priority=10,
+                ),
+                SearchCandidate(
+                    document=document,
+                    provider="SEMANTIC",
+                    reason="SEMANTIC_VECTOR_SIMILARITY",
+                    score=0.86,
+                    confidence="HIGH",
+                    priority=52,
+                    metadata={"semanticDocumentId": "semantic-doc-shared", "similarity": 0.95, "embeddingModel": "fake"},
                 ),
             ],
         )
@@ -412,6 +512,74 @@ def test_candidate_pools_preserve_exact_match_when_semantic_supplements():
     assert "SEMANTIC_VECTOR_SIMILARITY" not in result.all_candidates[0].matchReasons
 
 
+def test_semantic_hit_outside_deterministic_document_set_is_hydrated(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    nodes = [
+        {
+            "id": "aaa-deterministic",
+            "nodeKind": "CALLABLE",
+            "name": "AardvarkAnchor",
+            "qualified": "app.AardvarkAnchor",
+            "path": "src/AardvarkAnchor.java",
+        },
+        {
+            "id": "create-site-service",
+            "nodeKind": "CALLABLE",
+            "name": "CreateSiteService.create",
+            "qualified": "app.CreateSiteService.create",
+            "path": "src/CreateSiteService.java",
+        },
+    ]
+    seed_semantic_graph(db_path, source_id="source-a", nodes=nodes)
+    embedding_provider = FakeDeterministicEmbeddingProvider(model="fake-semantic")
+    SemanticIndexBuilder(db_path, embedding_provider, config=SemanticBuildConfig(embedding_model=embedding_provider.model)).build(["source-a"], force=True)
+    vector_store = StaticVectorStore(
+        [
+            SemanticVectorMatch(
+                source_id="source-a",
+                node_id="create-site-service",
+                document_id="semantic-doc-create-site-service",
+                similarity=0.97,
+                document_type="NODE_CONTEXT",
+            )
+        ]
+    )
+    semantic_provider = SemanticCandidateProvider(
+        db_path,
+        embedding_provider,
+        config=SemanticSearchConfig(min_similarity=0.0),
+        vector_store=vector_store,
+    )
+    store = AnalysisStore(db_path)
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+    searcher = UnifiedAnchorSearcher(
+        store,
+        DeterministicCodeSearchEngine(extra_broad_providers=[semantic_provider]),
+    )
+
+    result = searcher.search("як створюється сайт", eligible_sources, KnowledgeQueryPolicy(max_search_documents=1, max_display_candidates=10))
+
+    assert [document.node_id for document in searcher._hydrate_search_documents([("source-a", "create-site-service")], eligible_sources)] == [
+        "create-site-service"
+    ]
+    assert any(node.nodeId == "create-site-service" for node in result.pools[CandidatePoolKind.SEMANTIC])
+    semantic_candidate = next(node for node in result.all_candidates if node.nodeId == "create-site-service")
+    assert "SEMANTIC_VECTOR_SIMILARITY" in semantic_candidate.matchReasons
+    assert not any(diagnostic.code == "SEMANTIC_HIT_NOT_HYDRATED" for diagnostic in result.diagnostics)
+
+    response = KnowledgeQueryService(
+        SourceScopeResolver(store),
+        searcher,
+        GraphSliceQueryService(store),
+        FlowPathExtractor(store),
+        EvidenceBundleBuilder(),
+        KnowledgeQueryPolicy(max_search_documents=1, max_display_candidates=10),
+    ).query(query_request("як створюється сайт", intent="FLOW_EXPLANATION", answer_language="uk"))
+
+    assert any(node.nodeId == "create-site-service" for node in response.matchedNodes)
+    assert any(node.get("id") == "create-site-service" for node in response.nodes)
+
+
 def test_candidate_pool_dedup_merges_reasons_and_preserves_highest_score():
     store = FakeGraphStore(candidates=[candidate(id="site-controller", name="SiteController", label="SiteController")])
     eligible_sources, _ = SourceScopeResolver(store).resolve()
@@ -423,6 +591,23 @@ def test_candidate_pool_dedup_merges_reasons_and_preserves_highest_score():
     assert {"EXACT_NAME", "NAME_MATCH", "LEXICAL_TOKEN_OVERLAP"} <= set(result.all_candidates[0].matchReasons)
     assert result.pools[CandidatePoolKind.EXACT][0].nodeId == "site-controller"
     assert result.pools[CandidatePoolKind.LEXICAL][0].nodeId == "site-controller"
+
+
+def test_candidate_pool_dedup_merges_exact_and_semantic_same_node():
+    store = FakeGraphStore(candidates=[candidate(id="site-controller", name="SiteController", label="SiteController")])
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+    result = UnifiedAnchorSearcher(store, StaticExactSemanticDuplicateSearchEngine()).search(
+        "SiteController",
+        eligible_sources,
+        KnowledgeQueryPolicy(),
+    )
+
+    assert len(result.all_candidates) == 1
+    assert result.all_candidates[0].nodeId == "site-controller"
+    assert result.all_candidates[0].score >= 0.98
+    assert {"EXACT_NAME", "NAME_MATCH", "SEMANTIC_VECTOR_SIMILARITY"} <= set(result.all_candidates[0].matchReasons)
+    assert result.pools[CandidatePoolKind.EXACT][0].nodeId == "site-controller"
+    assert result.pools[CandidatePoolKind.SEMANTIC][0].nodeId == "site-controller"
 
 
 def test_flow_extraction_uses_candidate_after_old_top_five_cutoff():
@@ -758,3 +943,141 @@ def test_query_uses_deterministic_search_when_semantic_index_failed(tmp_path):
     assert response.status == "OK"
     assert response.matchedNodes
     assert any(diagnostic.code == "SEMANTIC_INDEX_FAILED" for diagnostic in response.diagnostics)
+
+
+def test_query_uses_deterministic_search_when_semantic_provider_unavailable(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _seed_site_graph(db_path)
+    _build_site_semantic_index(db_path, model="fake-semantic")
+
+    response = build_knowledge_query_service(
+        AnalysisStore(db_path),
+        embedding_provider=FailingEmbeddingProvider(),
+    ).query(query_request("SiteController"))
+
+    assert response.status == "OK"
+    assert response.matchedNodes[0].nodeId == "site-controller"
+    assert any(diagnostic.code == "SEMANTIC_PROVIDER_UNAVAILABLE" for diagnostic in response.diagnostics)
+
+
+@pytest.mark.parametrize(
+    "state,expected_code",
+    [
+        ("MISSING", "SEMANTIC_INDEX_NOT_READY"),
+        ("STALE", "SEMANTIC_INDEX_STALE"),
+        ("MODEL_MISMATCH", "SEMANTIC_INDEX_NOT_READY"),
+    ],
+)
+def test_query_falls_back_when_semantic_index_not_ready_stale_or_model_mismatch(tmp_path, state, expected_code):
+    db_path = tmp_path / "knowledge.sqlite"
+    _seed_site_graph(db_path)
+    if state == "STALE":
+        _build_site_semantic_index(db_path, model="fake-semantic")
+        _seed_site_graph(db_path, graph_suffix="new", extra_node=True)
+    elif state == "MODEL_MISMATCH":
+        _build_site_semantic_index(db_path, model="other-semantic")
+
+    response = build_knowledge_query_service(
+        AnalysisStore(db_path),
+        embedding_provider=FakeDeterministicEmbeddingProvider(model="fake-semantic"),
+    ).query(query_request("SiteController"))
+
+    assert response.status == "OK"
+    assert response.matchedNodes[0].nodeId == "site-controller"
+    diagnostic = next(diagnostic for diagnostic in response.diagnostics if diagnostic.code == expected_code)
+    assert diagnostic.sourceId == "source-a"
+    if state == "MODEL_MISMATCH":
+        assert diagnostic.metadata["embeddingModel"] == "other-semantic"
+        assert diagnostic.metadata["expectedEmbeddingModel"] == "fake-semantic"
+
+
+def test_semantic_hit_not_hydrated_reports_diagnostic_and_keeps_deterministic_results(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _seed_site_graph(db_path)
+    embedding_provider = _build_site_semantic_index(db_path, model="fake-semantic")
+    semantic_provider = SemanticCandidateProvider(
+        db_path,
+        embedding_provider,
+        config=SemanticSearchConfig(min_similarity=0.0),
+        vector_store=StaticVectorStore(
+            [
+                SemanticVectorMatch(
+                    source_id="source-a",
+                    node_id="missing-semantic-node",
+                    document_id="semantic-doc-missing",
+                    similarity=0.91,
+                )
+            ]
+        ),
+    )
+    store = AnalysisStore(db_path)
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+
+    result = UnifiedAnchorSearcher(
+        store,
+        DeterministicCodeSearchEngine(extra_broad_providers=[semantic_provider]),
+    ).search("SiteController", eligible_sources, KnowledgeQueryPolicy())
+
+    assert result.all_candidates[0].nodeId == "site-controller"
+    assert all(node.nodeId != "missing-semantic-node" for node in result.all_candidates)
+    diagnostic = next(diagnostic for diagnostic in result.diagnostics if diagnostic.code == "SEMANTIC_HIT_NOT_HYDRATED")
+    assert diagnostic.metadata["unhydratedCount"] == 1
+
+
+def test_semantic_no_candidates_reports_diagnostic_and_keeps_deterministic_results(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _seed_site_graph(db_path)
+    embedding_provider = _build_site_semantic_index(db_path, model="fake-semantic")
+    semantic_provider = SemanticCandidateProvider(
+        db_path,
+        embedding_provider,
+        config=SemanticSearchConfig(min_similarity=0.99),
+        vector_store=StaticVectorStore([], scanned_count=2),
+    )
+    store = AnalysisStore(db_path)
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+
+    result = UnifiedAnchorSearcher(
+        store,
+        DeterministicCodeSearchEngine(extra_broad_providers=[semantic_provider]),
+    ).search("SiteController", eligible_sources, KnowledgeQueryPolicy())
+
+    assert result.all_candidates[0].nodeId == "site-controller"
+    diagnostic = next(diagnostic for diagnostic in result.diagnostics if diagnostic.code == "SEMANTIC_NO_CANDIDATES")
+    assert diagnostic.metadata["scannedCount"] == 2
+
+
+def _seed_site_graph(db_path, *, graph_suffix="one", extra_node=False):
+    nodes = [
+        {
+            "id": "site-controller",
+            "nodeKind": "TYPE",
+            "name": "SiteController",
+            "qualified": "app.SiteController",
+            "path": "src/SiteController.java",
+        },
+        {
+            "id": "create-site-service",
+            "nodeKind": "CALLABLE",
+            "name": "CreateSiteService.create",
+            "qualified": "app.CreateSiteService.create",
+            "path": "src/CreateSiteService.java",
+        },
+    ]
+    if extra_node:
+        nodes.append(
+            {
+                "id": "create-site-flow",
+                "nodeKind": "CALLABLE",
+                "name": "CreateSiteFlow.run",
+                "qualified": "app.CreateSiteFlow.run",
+                "path": "src/CreateSiteFlow.java",
+            }
+        )
+    return seed_semantic_graph(db_path, source_id="source-a", graph_suffix=graph_suffix, nodes=nodes)
+
+
+def _build_site_semantic_index(db_path, *, model):
+    provider = FakeDeterministicEmbeddingProvider(model=model)
+    SemanticIndexBuilder(db_path, provider, config=SemanticBuildConfig(embedding_model=provider.model)).build(["source-a"], force=True)
+    return provider
