@@ -237,14 +237,16 @@ def test_knowledge_query_integration_preserves_external_and_unresolved_boundarie
 
     body = response.json()
     stop_reasons = {flow["stopReason"] for flow in body["flowPaths"]}
-    assert {"EXTERNAL_TARGET", "UNRESOLVED_EDGE"} <= stop_reasons
-    external_flow = next(flow for flow in body["flowPaths"] if flow["stopReason"] == "EXTERNAL_TARGET")
+    assert {"EXTERNAL_BOUNDARY", "UNRESOLVED_BOUNDARY"} <= stop_reasons
+    external_flow = next(flow for flow in body["flowPaths"] if flow["stopReason"] == "EXTERNAL_BOUNDARY")
     assert external_flow["boundaryEdgeIds"] == ["edge-external"]
     assert external_flow["edgeIds"] == []
+    assert external_flow["complete"] is False
     assert body["external"][0]["unresolvedTarget"]["name"] == "HttpClient.post"
-    unresolved_flow = next(flow for flow in body["flowPaths"] if flow["stopReason"] == "UNRESOLVED_EDGE")
+    unresolved_flow = next(flow for flow in body["flowPaths"] if flow["stopReason"] == "UNRESOLVED_BOUNDARY")
     assert unresolved_flow["boundaryEdgeIds"] == ["edge-unresolved"]
     assert unresolved_flow["edgeIds"] == []
+    assert unresolved_flow["complete"] is False
 
 
 def test_knowledge_query_integration_searches_all_sources_for_flow_paths(tmp_path):

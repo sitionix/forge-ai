@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime, timezone
@@ -20,6 +21,14 @@ from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionRequest,
 )
 from knowledge_service.errors import KnowledgeError
+from knowledge_service.flow_builder import (
+    FlowGraphBundle,
+    FlowGraphEdge,
+    FlowGraphEvidence,
+    FlowGraphNode,
+    FlowGraphSourceScope,
+    flow_graph_bundle_to_public_bundle,
+)
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.observability import observed_connect
@@ -2351,24 +2360,28 @@ class AnalysisStore:
         verified_paths = self._verified_paths_from_evidence(evidence)
         return {"nodes": nodes, "edges": edges, "evidence": evidence, "unresolved": unresolved, "external": external, "verifiedPaths": verified_paths}
 
-    def load_call_adjacency_for_sources(
+    def load_call_flow_graph(
         self,
-        source_scopes: List[Dict[str, Any]],
+        source_scopes: Sequence[FlowGraphSourceScope],
         max_edges: int = 2000,
         max_evidence: int = 25,
-    ) -> Dict[str, Any]:
+    ) -> FlowGraphBundle:
         self.init()
         safe_max_edges = max(1, min(int(max_edges or 1), 10000))
         safe_max_evidence = max(0, min(int(max_evidence or 0), 500))
         grouped: Dict[str, Set[str]] = {}
+        requested_graph_by_source: Dict[str, str] = {}
         for scope in source_scopes:
-            source_id = str(scope.get("sourceId") or "")
+            if not isinstance(scope, FlowGraphSourceScope):
+                continue
+            source_id = str(scope.source_id or "")
             if not source_id:
                 continue
-            anchor_ids = {str(node_id) for node_id in scope.get("nodeIds") or [] if str(node_id)}
+            requested_graph_by_source.setdefault(source_id, str(scope.graph_id or ""))
+            anchor_ids = {str(node_id) for node_id in scope.node_ids if str(node_id)}
             grouped.setdefault(source_id, set()).update(anchor_ids)
         if not grouped:
-            return {"nodes": [], "edges": [], "evidence": [], "unresolved": [], "external": [], "verifiedPaths": [], "truncated": False}
+            return FlowGraphBundle()
 
         nodes: List[Dict[str, Any]] = []
         edges: List[Dict[str, Any]] = []
@@ -2377,10 +2390,21 @@ class AnalysisStore:
         contract = graph_query_contract()
         current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
+            identity_by_source = self._graph_identity_by_source(conn, sorted(grouped))
+            active_grouped: Dict[str, Set[str]] = {}
+            for source_id, anchor_ids in grouped.items():
+                identity = identity_by_source.get(source_id) or {}
+                requested_graph_id = requested_graph_by_source.get(source_id) or ""
+                current_graph_id = str(identity.get("graphId") or "")
+                if requested_graph_id and current_graph_id and requested_graph_id != current_graph_id:
+                    continue
+                active_grouped[source_id] = set(anchor_ids)
+            if not active_grouped:
+                return FlowGraphBundle()
             remaining_edges = safe_max_edges + 1
             edge_ids_by_source: Dict[str, Set[str]] = {}
-            node_ids_by_source: Dict[str, Set[str]] = {source_id: set(anchor_ids) for source_id, anchor_ids in grouped.items()}
-            for source_id, anchor_ids in sorted(grouped.items()):
+            node_ids_by_source: Dict[str, Set[str]] = {source_id: set(anchor_ids) for source_id, anchor_ids in active_grouped.items()}
+            for source_id, anchor_ids in sorted(active_grouped.items()):
                 if remaining_edges <= 0:
                     truncated = True
                     break
@@ -2449,21 +2473,139 @@ class AnalysisStore:
                 evidence.extend(scope_evidence)
                 remaining_evidence -= len(scope_evidence)
 
-        nodes = self._dedupe_by_id(nodes, "id")
-        edges = self._dedupe_by_id(edges, "id")
-        evidence = self._dedupe_by_id(evidence, "id")
-        self._attach_current_graph_identity(conn, nodes)
-        self._attach_current_graph_identity(conn, edges)
-        self._attach_current_graph_identity(conn, evidence)
-        unresolved_statuses = {*contract.unresolved_resolution_statuses(), contract.multiple_candidates_status}
-        unresolved = [
+            nodes = self._dedupe_by_id(nodes, "id")
+            edges = self._dedupe_by_id(edges, "id")
+            evidence = self._dedupe_by_id(evidence, "id")
+            self._attach_current_graph_identity(conn, nodes)
+            self._attach_current_graph_identity(conn, edges)
+            self._attach_current_graph_identity(conn, evidence)
+        return self._flow_graph_bundle_from_public_graph(nodes, edges, evidence, truncated)
+
+    def load_call_adjacency_for_sources(
+        self,
+        source_scopes: List[Dict[str, Any]],
+        max_edges: int = 2000,
+        max_evidence: int = 25,
+    ) -> Dict[str, Any]:
+        bundle = self.load_call_flow_graph(
+            self._legacy_flow_graph_source_scopes(source_scopes),
+            max_edges=max_edges,
+            max_evidence=max_evidence,
+        )
+        public_bundle = flow_graph_bundle_to_public_bundle(bundle)
+        return {
+            "nodes": list(public_bundle["nodes"]),
+            "edges": list(public_bundle["edges"]),
+            "evidence": list(public_bundle["evidence"]),
+            "unresolved": list(public_bundle["unresolved"]),
+            "external": list(public_bundle["external"]),
+            "verifiedPaths": list(public_bundle["verifiedPaths"]),
+            "truncated": bool(public_bundle["truncated"]),
+        }
+
+    def _legacy_flow_graph_source_scopes(self, source_scopes: Sequence[Dict[str, Any]]) -> List[FlowGraphSourceScope]:
+        scopes: List[FlowGraphSourceScope] = []
+        for scope in source_scopes:
+            source_id = str(scope.get("sourceId") or "")
+            if not source_id:
+                continue
+            node_ids = tuple(sorted(str(node_id) for node_id in scope.get("nodeIds") or [] if str(node_id)))
+            scopes.append(
+                FlowGraphSourceScope(
+                    source_id=source_id,
+                    graph_id=str(scope.get("graphId") or ""),
+                    graph_revision=str(scope.get("graphRevision")) if scope.get("graphRevision") else None,
+                    node_ids=node_ids,
+                )
+            )
+        return scopes
+
+    def _flow_graph_bundle_from_public_graph(
+        self,
+        nodes: Sequence[Dict[str, Any]],
+        edges: Sequence[Dict[str, Any]],
+        evidence: Sequence[Dict[str, Any]],
+        truncated: bool,
+    ) -> FlowGraphBundle:
+        flow_evidence = tuple(
+            item
+            for item in (self._flow_graph_evidence_from_public_graph(raw) for raw in evidence)
+            if item is not None
+        )
+        evidence_ids_by_edge: Dict[str, List[str]] = defaultdict(list)
+        for item in flow_evidence:
+            if item.edge_id:
+                evidence_ids_by_edge[item.edge_id].append(item.evidence_id)
+        flow_edges = tuple(
             edge
-            for edge in edges
-            if not edge.get("toNodeId") or str(edge.get("resolutionStatus") or "").upper() in unresolved_statuses
-        ]
-        external = [edge for edge in unresolved if edge.get("external")]
-        verified_paths = self._verified_paths_from_evidence(evidence)
-        return {"nodes": nodes, "edges": edges, "evidence": evidence, "unresolved": unresolved, "external": external, "verifiedPaths": verified_paths, "truncated": truncated}
+            for edge in (self._flow_graph_edge_from_public_graph(raw, evidence_ids_by_edge) for raw in edges)
+            if edge is not None
+        )
+        flow_nodes = tuple(
+            node
+            for node in (self._flow_graph_node_from_public_graph(raw) for raw in nodes)
+            if node is not None
+        )
+        return FlowGraphBundle(nodes=flow_nodes, edges=flow_edges, evidence=flow_evidence, truncated=truncated)
+
+    def _flow_graph_node_from_public_graph(self, item: Dict[str, Any]) -> FlowGraphNode | None:
+        node_id = str(item.get("id") or "")
+        source_id = str(item.get("sourceId") or "")
+        graph_id = str(item.get("graphId") or "")
+        if not node_id or not source_id or not graph_id:
+            return None
+        return FlowGraphNode(
+            source_id=source_id,
+            graph_id=graph_id,
+            graph_revision=str(item.get("graphRevision")) if item.get("graphRevision") else None,
+            node_id=node_id,
+            stable_key=str(item.get("stableKey") or node_id),
+            node_kind=str(item.get("nodeKind") or ""),
+            label=str(item.get("label") or item.get("name") or node_id),
+            qualified_name=str(item.get("qualifiedName")) if item.get("qualifiedName") else None,
+            relative_path=str(item.get("relativePath")) if item.get("relativePath") else None,
+            entrypoint=bool(item.get("entrypoint")),
+        )
+
+    def _flow_graph_edge_from_public_graph(self, item: Dict[str, Any], evidence_ids_by_edge: Dict[str, List[str]]) -> FlowGraphEdge | None:
+        edge_id = str(item.get("id") or "")
+        source_id = str(item.get("sourceId") or "")
+        graph_id = str(item.get("graphId") or "")
+        from_node_id = str(item.get("fromNodeId") or "")
+        if not edge_id or not source_id or not graph_id or not from_node_id:
+            return None
+        return FlowGraphEdge(
+            source_id=source_id,
+            graph_id=graph_id,
+            graph_revision=str(item.get("graphRevision")) if item.get("graphRevision") else None,
+            edge_id=edge_id,
+            edge_type=str(item.get("edgeType") or ""),
+            from_node_id=from_node_id,
+            to_node_id=str(item.get("toNodeId")) if item.get("toNodeId") else None,
+            resolution_status=str(item.get("resolutionStatus") or "RESOLVED"),
+            external=bool(item.get("external")) or str(item.get("resolutionStatus") or "").upper() == graph_query_contract().external_target_status,
+            unresolved_target=item.get("unresolvedTarget") if isinstance(item.get("unresolvedTarget"), dict) else None,
+            evidence_ids=tuple(evidence_ids_by_edge.get(edge_id) or ()),
+        )
+
+    def _flow_graph_evidence_from_public_graph(self, item: Dict[str, Any]) -> FlowGraphEvidence | None:
+        evidence_id = str(item.get("id") or "")
+        source_id = str(item.get("sourceId") or "")
+        graph_id = str(item.get("graphId") or "")
+        if not evidence_id or not source_id or not graph_id:
+            return None
+        return FlowGraphEvidence(
+            source_id=source_id,
+            graph_id=graph_id,
+            graph_revision=str(item.get("graphRevision")) if item.get("graphRevision") else None,
+            evidence_id=evidence_id,
+            node_id=str(item.get("nodeId")) if item.get("nodeId") else None,
+            edge_id=str(item.get("edgeId")) if item.get("edgeId") else None,
+            relative_path=str(item.get("relativePath")) if item.get("relativePath") else None,
+            line_start=int(item.get("lineStart")) if item.get("lineStart") is not None else None,
+            line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
+            text=str(item.get("excerpt")) if item.get("excerpt") else None,
+        )
 
     def _attach_current_graph_identity(self, conn: sqlite3.Connection, items: List[Dict[str, Any]]) -> None:
         source_ids = sorted({str(item.get("sourceId") or "") for item in items if item.get("sourceId")})
