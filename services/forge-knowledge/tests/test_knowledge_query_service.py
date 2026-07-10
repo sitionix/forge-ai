@@ -1,10 +1,22 @@
+from pathlib import Path
+
 import pytest
 
+from knowledge_service.anchor_expansion_contract import (
+    AnchorEntrypointHint,
+    AnchorExpansionBundle,
+    AnchorExpansionEdge,
+    AnchorExpansionNode,
+    AnchorExpansionRequest,
+)
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.embedding_provider import EmbeddingProviderError
 from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
-from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
+from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode, KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import (
+    AnchorExpansionReason,
+    AnchorExpansionService,
+    AnchorRole,
     CandidatePoolKind,
     EvidenceBundleBuilder,
     FlowPathExtractor,
@@ -64,6 +76,7 @@ class FakeGraphStore:
         hydration_candidates=None,
         nodes=None,
         edges=None,
+        claims=None,
         evidence=None,
         graph_revision="graph-a",
         slice_error=False,
@@ -73,12 +86,16 @@ class FakeGraphStore:
         self.hydration_candidates = hydration_candidates if hydration_candidates is not None else self.candidates
         self.nodes = nodes if nodes is not None else default_nodes()
         self.edges = edges if edges is not None else default_edges()
+        self.claims = claims if claims is not None else []
         self.evidence = evidence if evidence is not None else default_evidence()
         self.graph_revision = graph_revision
         self.slice_error = slice_error
         self.adjacency_truncated = adjacency_truncated
         self.source_searches = []
         self.hydration_searches = []
+        self.expansion_queries = []
+        self.graph_slice_requests = []
+        self.adjacency_source_scopes = []
         self.adjacency_loads = 0
 
     def query_current_graph_sources(self):
@@ -103,7 +120,7 @@ class FakeGraphStore:
         requested = {(source_id, node_id) for source_id, node_id in source_node_pairs}
         hydrated = []
         for item in self.hydration_candidates:
-            source_id = item.get("sourceId") or item.get("source_id")
+            source_id = item.get("sourceId")
             node_id = item.get("id") or item.get("nodeId")
             if (source_id, node_id) not in requested:
                 continue
@@ -112,7 +129,115 @@ class FakeGraphStore:
             hydrated.append(projected)
         return hydrated[:limit]
 
+    def query_anchor_expansion(self, source_node_pairs, max_per_anchor=30, max_total=200):
+        requests = tuple(source_node_pairs)
+        self.expansion_queries.append((requests, max_per_anchor, max_total))
+        requested = set()
+        for item in requests:
+            assert isinstance(item, AnchorExpansionRequest)
+            if item.source_id and item.graph_id and item.node_id:
+                requested.add((str(item.source_id), str(item.graph_id), str(item.node_id)))
+
+        structural_edges = []
+        node_keys = set(requested)
+        first_hop = set()
+        for edge in sorted(self.edges, key=lambda item: (item.get("edgeType"), item.get("fromNodeId"), item.get("toNodeId") or "", item.get("id"))):
+            if edge.get("edgeType") not in {"DECLARES", "USES_FIELD"}:
+                continue
+            from_key = (edge.get("sourceId"), edge.get("graphId") or "graph-a", edge.get("fromNodeId"))
+            to_key = (edge.get("sourceId"), edge.get("graphId") or "graph-a", edge.get("toNodeId"))
+            if from_key in requested or to_key in requested:
+                structural_edges.append(dict(edge))
+                for key in (from_key, to_key):
+                    if key[2]:
+                        node_keys.add(key)
+                        if key not in requested:
+                            first_hop.add(key)
+
+        for edge in sorted(self.edges, key=lambda item: (item.get("edgeType"), item.get("fromNodeId"), item.get("toNodeId") or "", item.get("id"))):
+            if edge.get("edgeType") != "DECLARES":
+                continue
+            from_key = (edge.get("sourceId"), edge.get("graphId") or "graph-a", edge.get("fromNodeId"))
+            to_key = (edge.get("sourceId"), edge.get("graphId") or "graph-a", edge.get("toNodeId"))
+            if from_key not in first_hop:
+                continue
+            structural_edges.append(dict(edge))
+            for key in (from_key, to_key):
+                if key[2]:
+                    node_keys.add(key)
+
+        by_key = {(node.get("sourceId"), node.get("graphId") or "graph-a", node.get("id")): node for node in self.nodes}
+        nodes = []
+        for key in sorted(node_keys):
+            node = by_key.get(key)
+            if not node:
+                continue
+            projected = dict(node)
+            projected.setdefault("graphId", key[1])
+            projected.setdefault("graphRevision", self.graph_revision)
+            projected.setdefault("stableKey", projected.get("id"))
+            nodes.append(projected)
+
+        entrypoint_hints = []
+        for claim in self.claims:
+            if claim.get("claimKind") != "ENTRYPOINT_HINT":
+                continue
+            key = (claim.get("sourceId") or "source-a", claim.get("graphId") or "graph-a", claim.get("nodeId"))
+            if key not in node_keys:
+                continue
+            entrypoint_hints.append(
+                {
+                    "sourceId": key[0],
+                    "graphId": key[1],
+                    "graphRevision": self.graph_revision,
+                    "nodeId": key[2],
+                    "claimId": claim.get("id"),
+                }
+            )
+        return AnchorExpansionBundle(
+            nodes=tuple(self._anchor_expansion_node(node) for node in nodes),
+            edges=tuple(self._anchor_expansion_edge(edge) for edge in structural_edges),
+            entrypoint_hints=tuple(self._anchor_entrypoint_hint(hint) for hint in entrypoint_hints),
+            truncated=False,
+        )
+
+    def _anchor_expansion_node(self, node):
+        return AnchorExpansionNode(
+            source_id=str(node["sourceId"]),
+            graph_id=str(node["graphId"]),
+            graph_revision=str(node.get("graphRevision") or self.graph_revision),
+            node_id=str(node["id"]),
+            stable_key=str(node.get("stableKey") or node["id"]),
+            node_kind=str(node["nodeKind"]),
+            label=str(node["label"]),
+            parent_node_id=node.get("parentNodeId"),
+            relative_path=node.get("relativePath"),
+            qualified_name=node.get("qualifiedName"),
+            entrypoint=bool(node.get("entrypoint")),
+        )
+
+    def _anchor_expansion_edge(self, edge):
+        return AnchorExpansionEdge(
+            source_id=str(edge["sourceId"]),
+            graph_id=str(edge["graphId"]),
+            graph_revision=str(edge.get("graphRevision") or self.graph_revision),
+            edge_id=str(edge["id"]),
+            edge_type=str(edge["edgeType"]),
+            from_node_id=str(edge["fromNodeId"]),
+            to_node_id=str(edge["toNodeId"]),
+        )
+
+    def _anchor_entrypoint_hint(self, hint):
+        return AnchorEntrypointHint(
+            source_id=str(hint["sourceId"]),
+            graph_id=str(hint["graphId"]),
+            graph_revision=str(hint.get("graphRevision") or self.graph_revision),
+            node_id=str(hint["nodeId"]),
+            claim_id=str(hint["claimId"]),
+        )
+
     def query_graph_slice(self, matched_nodes, depth):
+        self.graph_slice_requests.append([dict(node) for node in matched_nodes])
         if self.slice_error:
             raise RuntimeError("slice failed")
         nodes = list(self.nodes)
@@ -137,6 +262,7 @@ class FakeGraphStore:
 
     def load_call_adjacency_for_sources(self, source_scopes, max_edges=2000, max_evidence=25):
         self.adjacency_loads += 1
+        self.adjacency_source_scopes.append([dict(scope) for scope in source_scopes])
         scopes = {(scope["sourceId"], scope.get("graphId") or "graph-a") for scope in source_scopes}
         nodes = [dict(node) for node in self.nodes if (node.get("sourceId"), node.get("graphId")) in scopes]
         edges = [dict(edge) for edge in self.edges if (edge.get("sourceId"), edge.get("graphId")) in scopes]
@@ -307,11 +433,29 @@ def candidate(**overrides):
     return value
 
 
+def matched_node(**overrides):
+    value = candidate(**overrides)
+    return KnowledgeQueryMatchedNode(
+        sourceId=value["sourceId"],
+        nodeId=value["id"],
+        stableKey=value.get("stableKey") or value["id"],
+        nodeKind=value["nodeKind"],
+        label=value["label"],
+        score=float(value.get("score", 0.98)),
+        matchReasons=list(value.get("matchReasons") or ["EXACT_NAME"]),
+        graphId=value.get("graphId"),
+        graphRevision=value.get("graphRevision"),
+        relativePath=value.get("relativePath"),
+        qualifiedName=value.get("qualifiedName"),
+    )
+
+
 def graph_node(node_id, label, **overrides):
     value = {
         "id": node_id,
         "sourceId": "source-a",
         "graphId": "graph-a",
+        "stableKey": node_id,
         "nodeKind": "CALLABLE",
         "label": label,
         "name": label,
@@ -608,6 +752,356 @@ def test_candidate_pool_dedup_merges_exact_and_semantic_same_node():
     assert {"EXACT_NAME", "NAME_MATCH", "SEMANTIC_VECTOR_SIMILARITY"} <= set(result.all_candidates[0].matchReasons)
     assert result.pools[CandidatePoolKind.EXACT][0].nodeId == "site-controller"
     assert result.pools[CandidatePoolKind.SEMANTIC][0].nodeId == "site-controller"
+
+
+def test_type_candidate_expands_declared_callables_as_flow_seeds():
+    nodes = [
+        graph_node("site-api-mapper", "SiteApiMapper", nodeKind="TYPE"),
+        graph_node("as-create-command", "SiteApiMapper.asCreateSiteCommand", nodeKind="CALLABLE", parentNodeId="site-api-mapper"),
+        graph_node("as-create-response", "SiteApiMapper.asCreateSiteResponseDTO", nodeKind="CALLABLE", parentNodeId="site-api-mapper"),
+        graph_node("repository-save", "Repository.save", nodeKind="CALLABLE"),
+    ]
+    edges = [
+        graph_edge("declares-command", "site-api-mapper", "as-create-command", edgeType="DECLARES"),
+        graph_edge("declares-response", "site-api-mapper", "as-create-response", edgeType="DECLARES"),
+        graph_edge("calls-save", "as-create-command", "repository-save"),
+    ]
+    store = FakeGraphStore(
+        candidates=[candidate(id="site-api-mapper", nodeKind="TYPE", name="SiteApiMapper", label="SiteApiMapper")],
+        nodes=nodes,
+        edges=edges,
+    )
+
+    response = service(store, KnowledgeQueryPolicy(max_flow_paths=4)).query(query_request("SiteApiMapper"))
+
+    requests, max_per_anchor, max_total = store.expansion_queries[-1]
+    assert all(isinstance(item, AnchorExpansionRequest) for item in requests)
+    assert requests == (
+        AnchorExpansionRequest(
+            source_id="source-a",
+            graph_id="graph-a",
+            graph_revision="graph-a",
+            node_id="site-api-mapper",
+        ),
+    )
+    assert max_per_anchor == 30
+    assert max_total == 200
+    assert [node.nodeId for node in response.matchedNodes] == ["site-api-mapper"]
+    flow_seed_ids = store.adjacency_source_scopes[-1][0]["nodeIds"]
+    assert flow_seed_ids == ["as-create-command", "as-create-response"]
+    slice_anchor_ids = {node["nodeId"] for node in store.graph_slice_requests[-1]}
+    assert {"site-api-mapper", "as-create-command", "as-create-response"} <= slice_anchor_ids
+    assert "site-api-mapper" not in flow_seed_ids
+
+
+def test_file_candidate_expands_contained_anchors_without_content_parsing():
+    nodes = [
+        graph_node("site-file", "SiteController.java", nodeKind="FILE"),
+        graph_node("site-controller-type", "SiteController", nodeKind="TYPE", parentNodeId="site-file"),
+        graph_node("create-site", "SiteController.create", nodeKind="CALLABLE", parentNodeId="site-controller-type"),
+        graph_node("repository-save", "Repository.save", nodeKind="CALLABLE"),
+    ]
+    edges = [
+        graph_edge("declares-type", "site-file", "site-controller-type", edgeType="DECLARES"),
+        graph_edge("declares-create", "site-controller-type", "create-site", edgeType="DECLARES"),
+        graph_edge("calls-save", "create-site", "repository-save"),
+    ]
+    store = FakeGraphStore(
+        candidates=[candidate(id="site-file", nodeKind="FILE", name="SiteController.java", label="SiteController.java")],
+        nodes=nodes,
+        edges=edges,
+    )
+
+    response = service(store, KnowledgeQueryPolicy(max_flow_paths=4)).query(query_request("SiteController.java"))
+
+    assert [node.nodeId for node in response.matchedNodes] == ["site-file"]
+    assert store.expansion_queries
+    assert store.adjacency_source_scopes[-1][0]["nodeIds"] == ["create-site"]
+    slice_anchor_ids = {node["nodeId"] for node in store.graph_slice_requests[-1]}
+    assert {"site-file", "site-controller-type", "create-site"} <= slice_anchor_ids
+
+
+def test_field_candidate_expands_to_callables_that_use_field():
+    nodes = [
+        graph_node("foo-type", "FooType", nodeKind="TYPE"),
+        graph_node("site-repository", "siteRepository", nodeKind="FIELD", parentNodeId="foo-type"),
+        graph_node("save-site", "FooType.save", nodeKind="CALLABLE", parentNodeId="foo-type"),
+    ]
+    edges = [
+        graph_edge("declares-field", "foo-type", "site-repository", edgeType="DECLARES"),
+        graph_edge("uses-repository", "save-site", "site-repository", edgeType="USES_FIELD"),
+    ]
+    store = FakeGraphStore(
+        candidates=[candidate(id="site-repository", nodeKind="FIELD", name="siteRepository", label="siteRepository")],
+        nodes=nodes,
+        edges=edges,
+    )
+    original_edges = [dict(edge) for edge in store.edges]
+
+    service(store, KnowledgeQueryPolicy(max_flow_paths=4)).query(query_request("siteRepository"))
+
+    assert store.adjacency_source_scopes[-1][0]["nodeIds"] == ["save-site"]
+    slice_anchor_ids = {node["nodeId"] for node in store.graph_slice_requests[-1]}
+    assert {"foo-type", "site-repository", "save-site"} <= slice_anchor_ids
+    assert store.edges == original_edges
+
+
+class StaticAnchorExpansionStore(FakeGraphStore):
+    def __init__(self, bundle):
+        super().__init__(nodes=[], edges=[])
+        self.bundle = bundle
+
+    def query_anchor_expansion(self, source_node_pairs, max_per_anchor=30, max_total=200):
+        requests = tuple(source_node_pairs)
+        self.expansion_queries.append((requests, max_per_anchor, max_total))
+        assert all(isinstance(item, AnchorExpansionRequest) for item in requests)
+        return self.bundle
+
+
+def test_anchor_expansion_service_consumes_typed_bundle_contract():
+    bundle = AnchorExpansionBundle(
+        nodes=(
+            AnchorExpansionNode(
+                source_id="source-a",
+                graph_id="graph-a",
+                graph_revision="graph-a",
+                node_id="foo-type",
+                stable_key="foo-type",
+                node_kind="TYPE",
+                label="FooType",
+            ),
+            AnchorExpansionNode(
+                source_id="source-a",
+                graph_id="graph-a",
+                graph_revision="graph-a",
+                node_id="do-work",
+                stable_key="do-work",
+                node_kind="CALLABLE",
+                label="FooType.doWork",
+                parent_node_id="foo-type",
+            ),
+        ),
+        edges=(
+            AnchorExpansionEdge(
+                source_id="source-a",
+                graph_id="graph-a",
+                graph_revision="graph-a",
+                edge_id="declares-work",
+                edge_type="DECLARES",
+                from_node_id="foo-type",
+                to_node_id="do-work",
+            ),
+        ),
+    )
+    store = StaticAnchorExpansionStore(bundle)
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+
+    result = AnchorExpansionService(store).expand(
+        [matched_node(id="foo-type", nodeKind="TYPE", name="FooType", label="FooType")],
+        eligible_sources,
+        KnowledgeQueryPolicy(),
+    )
+
+    anchors_by_id = {anchor.node.nodeId: anchor for anchor in result.expanded_anchors}
+    assert AnchorRole.FLOW_SEED in anchors_by_id["do-work"].roles
+    assert AnchorExpansionReason.TYPE_DECLARED_CALLABLE in anchors_by_id["do-work"].reasons
+
+
+def test_callable_candidate_stays_direct_seed_without_call_expansion():
+    nodes = [
+        graph_node("foo-type", "FooType", nodeKind="TYPE"),
+        graph_node("caller", "Caller.call", nodeKind="CALLABLE"),
+        graph_node("do-work", "FooType.doWork", nodeKind="CALLABLE", parentNodeId="foo-type"),
+        graph_node("callee", "Callee.run", nodeKind="CALLABLE"),
+    ]
+    edges = [
+        graph_edge("declares-do-work", "foo-type", "do-work", edgeType="DECLARES"),
+        graph_edge("calls-in", "caller", "do-work"),
+        graph_edge("calls-out", "do-work", "callee"),
+    ]
+    store = FakeGraphStore(
+        candidates=[candidate(id="do-work", nodeKind="CALLABLE", name="FooType.doWork", label="FooType.doWork")],
+        nodes=nodes,
+        edges=edges,
+    )
+
+    service(store, KnowledgeQueryPolicy(max_flow_paths=4)).query(query_request("FooType.doWork"))
+
+    assert store.adjacency_source_scopes[-1][0]["nodeIds"] == ["do-work"]
+    slice_anchor_ids = {node["nodeId"] for node in store.graph_slice_requests[-1]}
+    assert "do-work" in slice_anchor_ids
+    assert "foo-type" in slice_anchor_ids
+    assert "caller" not in slice_anchor_ids
+    assert "callee" not in slice_anchor_ids
+
+
+def test_entrypoint_candidate_role_requires_graph_fact():
+    store = FakeGraphStore(
+        nodes=[graph_node("site-controller", "SiteController", nodeKind="TYPE")],
+        claims=[{"id": "entry-claim", "sourceId": "source-a", "nodeId": "site-controller", "claimKind": "ENTRYPOINT_HINT"}],
+    )
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+    result = AnchorExpansionService(store).expand(
+        [matched_node(id="site-controller", nodeKind="TYPE", name="SiteController", label="SiteController")],
+        eligible_sources,
+        KnowledgeQueryPolicy(),
+    )
+
+    anchor = next(anchor for anchor in result.expanded_anchors if anchor.node.nodeId == "site-controller")
+    assert AnchorRole.ENTRYPOINT_CANDIDATE in anchor.roles
+    assert AnchorExpansionReason.ENTRYPOINT_HINT in anchor.reasons
+
+    no_claim_store = FakeGraphStore(nodes=[graph_node("site-controller", "SiteController", nodeKind="TYPE")])
+    eligible_sources, _ = SourceScopeResolver(no_claim_store).resolve()
+    no_claim_result = AnchorExpansionService(no_claim_store).expand(
+        [matched_node(id="site-controller", nodeKind="TYPE", name="SiteController", label="SiteController")],
+        eligible_sources,
+        KnowledgeQueryPolicy(),
+    )
+    no_claim_anchor = next(anchor for anchor in no_claim_result.expanded_anchors if anchor.node.nodeId == "site-controller")
+    assert AnchorRole.ENTRYPOINT_CANDIDATE not in no_claim_anchor.roles
+
+
+def test_anchor_expansion_uses_generic_graph_facts_not_names():
+    nodes = [
+        graph_node("foo-type", "FooType", nodeKind="TYPE"),
+        graph_node("bar-field", "BarField", nodeKind="FIELD", parentNodeId="foo-type"),
+        graph_node("do-work", "doWork", nodeKind="CALLABLE", parentNodeId="foo-type"),
+    ]
+    edges = [
+        graph_edge("declares-field", "foo-type", "bar-field", edgeType="DECLARES"),
+        graph_edge("declares-work", "foo-type", "do-work", edgeType="DECLARES"),
+    ]
+    store = FakeGraphStore(nodes=nodes, edges=edges)
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+
+    result = AnchorExpansionService(store).expand(
+        [matched_node(id="foo-type", nodeKind="TYPE", name="FooType", label="FooType")],
+        eligible_sources,
+        KnowledgeQueryPolicy(),
+    )
+
+    anchors_by_id = {anchor.node.nodeId: anchor for anchor in result.expanded_anchors}
+    assert AnchorRole.FLOW_SEED in anchors_by_id["do-work"].roles
+    assert AnchorExpansionReason.TYPE_DECLARED_CALLABLE in anchors_by_id["do-work"].reasons
+    assert AnchorRole.CONTEXT in anchors_by_id["bar-field"].roles
+    assert AnchorExpansionReason.TYPE_DECLARED_FIELD in anchors_by_id["bar-field"].reasons
+
+
+def test_anchor_expansion_deduplicates_and_merges_roles_reasons_and_origins():
+    nodes = [
+        graph_node("foo-type", "FooType", nodeKind="TYPE"),
+        graph_node("do-work", "FooType.doWork", nodeKind="CALLABLE", parentNodeId="foo-type"),
+    ]
+    edges = [graph_edge("declares-work", "foo-type", "do-work", edgeType="DECLARES")]
+    store = FakeGraphStore(nodes=nodes, edges=edges)
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+
+    result = AnchorExpansionService(store).expand(
+        [
+            matched_node(id="foo-type", nodeKind="TYPE", name="FooType", label="FooType"),
+            matched_node(id="do-work", nodeKind="CALLABLE", name="FooType.doWork", label="FooType.doWork"),
+        ],
+        eligible_sources,
+        KnowledgeQueryPolicy(),
+    )
+
+    do_work_anchors = [anchor for anchor in result.expanded_anchors if anchor.node.nodeId == "do-work"]
+    assert len(do_work_anchors) == 1
+    anchor = do_work_anchors[0]
+    assert {AnchorRole.ORIGINAL_CANDIDATE, AnchorRole.FLOW_SEED} <= set(anchor.roles)
+    assert {AnchorExpansionReason.ORIGINAL_MATCH, AnchorExpansionReason.TYPE_DECLARED_CALLABLE} <= set(anchor.reasons)
+    assert anchor.originNodeIds == ("do-work", "foo-type")
+
+
+def test_anchor_expansion_safety_cap_preserves_original_and_trims_deterministically():
+    nodes = [graph_node("foo-type", "FooType", nodeKind="TYPE")]
+    edges = []
+    for index in reversed(range(5)):
+        node_id = f"method-{index}"
+        nodes.append(graph_node(node_id, f"method{index}", nodeKind="CALLABLE", parentNodeId="foo-type"))
+        edges.append(graph_edge(f"declares-{index}", "foo-type", node_id, edgeType="DECLARES"))
+    store = FakeGraphStore(nodes=nodes, edges=edges)
+    eligible_sources, _ = SourceScopeResolver(store).resolve()
+
+    result = AnchorExpansionService(store).expand(
+        [matched_node(id="foo-type", nodeKind="TYPE", name="FooType", label="FooType")],
+        eligible_sources,
+        KnowledgeQueryPolicy(max_expanded_anchors=2, max_anchor_expansion_per_candidate=10),
+    )
+
+    assert result.truncated is True
+    assert any(diagnostic.code == "ANCHOR_EXPANSION_LIMIT_REACHED" for diagnostic in result.diagnostics)
+    assert [anchor.node.nodeId for anchor in result.expanded_anchors] == ["foo-type", "method-0", "method-1"]
+    assert [node.nodeId for node in result.flow_seed_nodes] == ["method-0", "method-1"]
+
+
+def test_analysis_store_query_anchor_expansion_is_targeted_to_current_graph(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    graph_id = seed_semantic_graph(
+        db_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "foo-file", "nodeKind": "FILE", "name": "Foo.java", "path": "src/Foo.java"},
+            {"id": "foo-type", "nodeKind": "TYPE", "name": "FooType", "path": "src/Foo.java", "parent": "foo-file"},
+            {"id": "do-work", "nodeKind": "CALLABLE", "name": "doWork", "path": "src/Foo.java", "parent": "foo-type"},
+            {"id": "bar-field", "nodeKind": "FIELD", "name": "barField", "path": "src/Foo.java", "parent": "foo-type"},
+            {"id": "save", "nodeKind": "CALLABLE", "name": "save", "path": "src/Foo.java", "parent": "foo-type"},
+        ],
+        edges=[
+            {"id": "declares-type", "fromNodeId": "foo-file", "toNodeId": "foo-type", "edgeType": "DECLARES"},
+            {"id": "declares-callable", "fromNodeId": "foo-type", "toNodeId": "do-work", "edgeType": "DECLARES"},
+            {"id": "declares-field", "fromNodeId": "foo-type", "toNodeId": "bar-field", "edgeType": "DECLARES"},
+            {"id": "uses-field", "fromNodeId": "save", "toNodeId": "bar-field", "edgeType": "USES_FIELD"},
+        ],
+        claims=[{"id": "entry-work", "node_id": "do-work", "claimKind": "ENTRYPOINT_HINT", "summary": "entry"}],
+    )
+
+    bundle = AnalysisStore(db_path).query_anchor_expansion(
+        [AnchorExpansionRequest(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_id="foo-type")],
+        max_per_anchor=30,
+        max_total=200,
+    )
+
+    assert isinstance(bundle, AnchorExpansionBundle)
+    assert all(isinstance(node, AnchorExpansionNode) for node in bundle.nodes)
+    assert all(isinstance(edge, AnchorExpansionEdge) for edge in bundle.edges)
+    assert all(isinstance(hint, AnchorEntrypointHint) for hint in bundle.entrypoint_hints)
+    node_ids = {node.node_id for node in bundle.nodes}
+    edge_ids = {edge.edge_id for edge in bundle.edges}
+    assert {"foo-type", "do-work", "bar-field"} <= node_ids
+    assert {"declares-callable", "declares-field"} <= edge_ids
+    assert "uses-field" not in edge_ids
+    assert all(node.graph_id == graph_id for node in bundle.nodes)
+
+
+def test_anchor_expansion_service_has_no_schema_alias_fallbacks():
+    service_path = Path(__file__).parents[1] / "src" / "knowledge_service" / "knowledge_query_service.py"
+    text = service_path.read_text()
+    section = text[text.index("class AnchorExpansionService:") : text.index("class GraphSliceQueryService:")]
+
+    forbidden_fragments = [
+        'get("source' + 'Id") or',
+        'get("source' + '_id")',
+        'get("graph' + 'Id") or',
+        'get("graph' + '_id")',
+        'get("edge' + 'Type") or',
+        'get("edge' + '_type")',
+        'get("from' + 'NodeId") or',
+        'get("from' + '_node_id")',
+        'get("to' + 'NodeId") or',
+        'get("to' + '_node_id")',
+        'get("' + 'id") or',
+        'get("edge' + 'Id")',
+        'get("node' + 'Kind") or',
+        'get("node' + '_kind")',
+        "entrypoint" + "Hints",
+        "bundle" + ".get(",
+        "Dict" + "[str, Any]",
+        "List" + "[Any]",
+    ]
+    for fragment in forbidden_fragments:
+        assert fragment not in section
 
 
 def test_flow_extraction_uses_candidate_after_old_top_five_cutoff():

@@ -7,6 +7,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from knowledge_service.anchor_expansion_contract import (
+    AnchorExpansionBundle,
+    AnchorExpansionEdge,
+    AnchorExpansionNode,
+    AnchorExpansionRequest,
+)
 from knowledge_service.knowledge_search import (
     CandidateMerger,
     DeterministicCodeSearchEngine,
@@ -36,6 +42,8 @@ class KnowledgeQueryPolicy:
     max_traversal_nodes: int = 80
     max_flow_paths: int = 25
     max_edges_per_traversal: int = 2000
+    max_expanded_anchors: int = 200
+    max_anchor_expansion_per_candidate: int = 30
     max_execution_ms: int = 250
     max_evidence_refs: int = 25
     min_lexical_score: float = 0.28
@@ -59,6 +67,43 @@ class CandidateRetrievalResult:
     pools: Dict[CandidatePoolKind, List[KnowledgeQueryMatchedNode]]
     all_candidates: List[KnowledgeQueryMatchedNode]
     display_candidates: List[KnowledgeQueryMatchedNode]
+    diagnostics: List[KnowledgeQueryDiagnostic]
+    truncated: bool = False
+
+
+class AnchorRole(str, Enum):
+    ORIGINAL_CANDIDATE = "ORIGINAL_CANDIDATE"
+    FLOW_SEED = "FLOW_SEED"
+    CONTEXT = "CONTEXT"
+    ENTRYPOINT_CANDIDATE = "ENTRYPOINT_CANDIDATE"
+
+
+class AnchorExpansionReason(str, Enum):
+    ORIGINAL_MATCH = "ORIGINAL_MATCH"
+    FILE_DECLARED_NODE = "FILE_DECLARED_NODE"
+    TYPE_DECLARED_CALLABLE = "TYPE_DECLARED_CALLABLE"
+    TYPE_DECLARED_FIELD = "TYPE_DECLARED_FIELD"
+    FIELD_USED_BY_CALLABLE = "FIELD_USED_BY_CALLABLE"
+    CALLABLE_PARENT_CONTEXT = "CALLABLE_PARENT_CONTEXT"
+    CLAIM_ATTACHED_NODE = "CLAIM_ATTACHED_NODE"
+    ENTRYPOINT_HINT = "ENTRYPOINT_HINT"
+
+
+@dataclass(frozen=True)
+class ExpandedAnchor:
+    node: KnowledgeQueryMatchedNode
+    roles: tuple[AnchorRole, ...]
+    reasons: tuple[AnchorExpansionReason, ...]
+    originNodeIds: tuple[str, ...]
+    score: float
+
+
+@dataclass(frozen=True)
+class AnchorExpansionResult:
+    original_candidates: List[KnowledgeQueryMatchedNode]
+    expanded_anchors: List[ExpandedAnchor]
+    flow_seed_nodes: List[KnowledgeQueryMatchedNode]
+    context_nodes: List[KnowledgeQueryMatchedNode]
     diagnostics: List[KnowledgeQueryDiagnostic]
     truncated: bool = False
 
@@ -355,6 +400,436 @@ class UnifiedAnchorSearcher:
                 continue
             documents.append(document)
         return documents
+
+
+AnchorNodeKey = Tuple[str, str, str]
+
+_ANCHOR_ROLE_ORDER = {role: index for index, role in enumerate(AnchorRole)}
+_ANCHOR_REASON_ORDER = {reason: index for index, reason in enumerate(AnchorExpansionReason)}
+
+
+@dataclass
+class _MutableExpandedAnchor:
+    node: KnowledgeQueryMatchedNode
+    roles: set[AnchorRole]
+    reasons: set[AnchorExpansionReason]
+    origin_node_ids: set[str]
+    score: float
+    order: int
+
+
+class _AnchorAccumulator:
+    def __init__(self, graph_id_by_source: Dict[str, str]) -> None:
+        self.graph_id_by_source = graph_id_by_source
+        self.items: Dict[AnchorNodeKey, _MutableExpandedAnchor] = {}
+        self.original_keys: set[AnchorNodeKey] = set()
+        self._next_order = 0
+
+    def add_anchor(
+        self,
+        node: KnowledgeQueryMatchedNode,
+        roles: set[AnchorRole],
+        reasons: set[AnchorExpansionReason],
+        origin_node_id: str,
+        score: float,
+        *,
+        original: bool = False,
+    ) -> tuple[AnchorNodeKey | None, bool]:
+        key = self.node_key(node)
+        if key is None:
+            return None, False
+        existing = self.items.get(key)
+        if existing is None:
+            self.items[key] = _MutableExpandedAnchor(
+                node=node,
+                roles=set(roles),
+                reasons=set(reasons),
+                origin_node_ids={origin_node_id} if origin_node_id else set(),
+                score=float(score),
+                order=self._next_order,
+            )
+            self._next_order += 1
+            if original:
+                self.original_keys.add(key)
+            return key, True
+
+        existing.roles.update(roles)
+        existing.reasons.update(reasons)
+        if origin_node_id:
+            existing.origin_node_ids.add(origin_node_id)
+        if original:
+            self.original_keys.add(key)
+            existing.node = node
+        elif AnchorRole.ORIGINAL_CANDIDATE not in existing.roles and score > existing.score:
+            existing.node = node
+        existing.score = max(existing.score, float(score))
+        return key, False
+
+    def add_role_reason(self, key: AnchorNodeKey, role: AnchorRole, reason: AnchorExpansionReason) -> None:
+        item = self.items.get(key)
+        if item is None:
+            return
+        item.roles.add(role)
+        item.reasons.add(reason)
+
+    def has_key(self, key: AnchorNodeKey | None) -> bool:
+        return key is not None and key in self.items
+
+    def node_key(self, node: KnowledgeQueryMatchedNode) -> AnchorNodeKey | None:
+        source_id = str(node.sourceId or "")
+        node_id = str(node.nodeId or "")
+        if not source_id or not node_id:
+            return None
+        return (source_id, str(node.graphId or self.graph_id_by_source.get(source_id) or ""), node_id)
+
+    def anchors(self) -> List[ExpandedAnchor]:
+        anchors: List[ExpandedAnchor] = []
+        for item in sorted(self.items.values(), key=lambda value: value.order):
+            anchors.append(
+                ExpandedAnchor(
+                    node=item.node,
+                    roles=tuple(sorted(item.roles, key=lambda role: _ANCHOR_ROLE_ORDER[role])),
+                    reasons=tuple(sorted(item.reasons, key=lambda reason: _ANCHOR_REASON_ORDER[reason])),
+                    originNodeIds=tuple(sorted(item.origin_node_ids)),
+                    score=item.score,
+                )
+            )
+        return anchors
+
+
+class AnchorExpansionService:
+    def __init__(self, graph_store: Any | None = None) -> None:
+        self.graph_store = graph_store
+
+    def expand(
+        self,
+        candidates: Sequence[KnowledgeQueryMatchedNode],
+        eligible_sources: Sequence[QuerySource],
+        policy: KnowledgeQueryPolicy,
+    ) -> AnchorExpansionResult:
+        original_candidates = list(candidates)
+        graph_id_by_source = {source.source_id: source.graph_id for source in eligible_sources if source.source_id}
+        revision_by_source = {source.source_id: source.graph_revision for source in eligible_sources if source.source_id}
+        accumulator = _AnchorAccumulator(graph_id_by_source)
+        for candidate in original_candidates:
+            self._add_original_candidate(accumulator, candidate)
+        if not original_candidates:
+            return self._result(original_candidates, accumulator, [], truncated=False)
+        if self.graph_store is None or not hasattr(self.graph_store, "query_anchor_expansion"):
+            return self._result(original_candidates, accumulator, [], truncated=False, legacy_flow_seed=True)
+
+        try:
+            bundle = self.graph_store.query_anchor_expansion(
+                self._source_node_pairs(original_candidates, graph_id_by_source, revision_by_source),
+                max_per_anchor=max(1, int(policy.max_anchor_expansion_per_candidate or 1)),
+                max_total=max(1, int(policy.max_expanded_anchors or 1)),
+            )
+        except Exception:
+            return self._result(
+                original_candidates,
+                accumulator,
+                [
+                    KnowledgeQueryDiagnostic(
+                        code="ANCHOR_EXPANSION_FAILED",
+                        message="Graph anchor expansion failed; graph processing used the original search candidates.",
+                        severity="WARN",
+                    )
+                ],
+                truncated=False,
+                legacy_flow_seed=True,
+            )
+
+        graph_nodes = self._bundle_nodes(bundle)
+        declares_out, declares_in, uses_field_in = self._structural_edge_indexes(bundle)
+        truncated = bool(bundle.truncated)
+        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        added_by_origin: Dict[AnchorNodeKey, int] = defaultdict(int)
+        expanded_added = 0
+
+        def add_expanded(
+            origin: KnowledgeQueryMatchedNode,
+            raw_node: AnchorExpansionNode | None,
+            roles: set[AnchorRole],
+            reason: AnchorExpansionReason,
+        ) -> None:
+            nonlocal expanded_added, truncated
+            if not raw_node:
+                return
+            node = self._matched_node_from_graph_node(raw_node, origin)
+            node_key = accumulator.node_key(node)
+            origin_key = accumulator.node_key(origin)
+            if node_key is None or origin_key is None:
+                return
+            exists = accumulator.has_key(node_key)
+            if not exists:
+                per_anchor_limit = max(1, int(policy.max_anchor_expansion_per_candidate or 1))
+                total_limit = max(1, int(policy.max_expanded_anchors or 1))
+                if added_by_origin[origin_key] >= per_anchor_limit or expanded_added >= total_limit:
+                    truncated = True
+                    return
+                added_by_origin[origin_key] += 1
+                expanded_added += 1
+            accumulator.add_anchor(node, roles, {reason}, origin.nodeId, node.score)
+
+        for candidate in original_candidates:
+            origin_key = accumulator.node_key(candidate)
+            if origin_key is None:
+                continue
+            kind = self._node_kind(candidate.nodeKind)
+            if kind == "CALLABLE":
+                for parent_key in self._parent_keys(origin_key, graph_nodes, declares_in):
+                    add_expanded(candidate, graph_nodes.get(parent_key), {AnchorRole.CONTEXT}, AnchorExpansionReason.CALLABLE_PARENT_CONTEXT)
+                continue
+            if kind == "TYPE":
+                for child_key in declares_out.get(origin_key, []):
+                    child = graph_nodes.get(child_key)
+                    child_kind = self._node_kind(child.node_kind if child else "")
+                    if child_kind == "CALLABLE":
+                        add_expanded(candidate, child, {AnchorRole.FLOW_SEED}, AnchorExpansionReason.TYPE_DECLARED_CALLABLE)
+                    elif child_kind == "FIELD":
+                        add_expanded(candidate, child, {AnchorRole.CONTEXT}, AnchorExpansionReason.TYPE_DECLARED_FIELD)
+                continue
+            if kind == "FILE":
+                type_children: List[AnchorNodeKey] = []
+                for child_key in declares_out.get(origin_key, []):
+                    child = graph_nodes.get(child_key)
+                    child_kind = self._node_kind(child.node_kind if child else "")
+                    if child_kind == "TYPE":
+                        type_children.append(child_key)
+                        add_expanded(candidate, child, {AnchorRole.CONTEXT}, AnchorExpansionReason.FILE_DECLARED_NODE)
+                    elif child_kind == "CALLABLE":
+                        add_expanded(candidate, child, {AnchorRole.FLOW_SEED}, AnchorExpansionReason.FILE_DECLARED_NODE)
+                    elif child_kind == "FIELD":
+                        add_expanded(candidate, child, {AnchorRole.CONTEXT}, AnchorExpansionReason.FILE_DECLARED_NODE)
+                for type_child_key in type_children:
+                    for contained_key in declares_out.get(type_child_key, []):
+                        contained = graph_nodes.get(contained_key)
+                        if self._node_kind(contained.node_kind if contained else "") == "CALLABLE":
+                            add_expanded(candidate, contained, {AnchorRole.FLOW_SEED}, AnchorExpansionReason.FILE_DECLARED_NODE)
+                continue
+            if kind == "FIELD":
+                for callable_key in uses_field_in.get(origin_key, []):
+                    callable_node = graph_nodes.get(callable_key)
+                    if self._node_kind(callable_node.node_kind if callable_node else "") == "CALLABLE":
+                        add_expanded(candidate, callable_node, {AnchorRole.FLOW_SEED}, AnchorExpansionReason.FIELD_USED_BY_CALLABLE)
+                for parent_key in self._parent_keys(origin_key, graph_nodes, declares_in):
+                    add_expanded(candidate, graph_nodes.get(parent_key), {AnchorRole.CONTEXT}, AnchorExpansionReason.TYPE_DECLARED_FIELD)
+
+        for key in self._entrypoint_keys(bundle, graph_nodes):
+            accumulator.add_role_reason(key, AnchorRole.ENTRYPOINT_CANDIDATE, AnchorExpansionReason.ENTRYPOINT_HINT)
+
+        if truncated:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="ANCHOR_EXPANSION_LIMIT_REACHED",
+                    message="Graph anchor expansion reached an internal safety limit.",
+                    severity="INFO",
+                    metadata={
+                        "maxExpandedAnchors": policy.max_expanded_anchors,
+                        "maxAnchorExpansionPerCandidate": policy.max_anchor_expansion_per_candidate,
+                    },
+                )
+            )
+        return self._result(original_candidates, accumulator, diagnostics, truncated=truncated)
+
+    def _add_original_candidate(self, accumulator: _AnchorAccumulator, candidate: KnowledgeQueryMatchedNode) -> None:
+        roles = {AnchorRole.ORIGINAL_CANDIDATE}
+        kind = self._node_kind(candidate.nodeKind)
+        if kind == "CALLABLE":
+            roles.add(AnchorRole.FLOW_SEED)
+        elif kind in {"FILE", "TYPE", "FIELD"}:
+            roles.add(AnchorRole.CONTEXT)
+        accumulator.add_anchor(
+            candidate,
+            roles,
+            {AnchorExpansionReason.ORIGINAL_MATCH},
+            candidate.nodeId,
+            candidate.score,
+            original=True,
+        )
+
+    def _result(
+        self,
+        original_candidates: List[KnowledgeQueryMatchedNode],
+        accumulator: _AnchorAccumulator,
+        diagnostics: List[KnowledgeQueryDiagnostic],
+        *,
+        truncated: bool,
+        legacy_flow_seed: bool = False,
+    ) -> AnchorExpansionResult:
+        expanded_anchors = accumulator.anchors()
+        flow_seed_nodes = [anchor.node for anchor in expanded_anchors if AnchorRole.FLOW_SEED in anchor.roles]
+        if legacy_flow_seed:
+            flow_seed_nodes = list(original_candidates)
+        context_nodes = [anchor.node for anchor in expanded_anchors if AnchorRole.CONTEXT in anchor.roles]
+        if original_candidates and not flow_seed_nodes and not legacy_flow_seed:
+            diagnostics = [
+                *diagnostics,
+                KnowledgeQueryDiagnostic(
+                    code="ANCHOR_EXPANSION_NO_FLOW_SEEDS",
+                    message="Graph anchor expansion did not find callable flow seeds for the matched candidates.",
+                    severity="INFO",
+                ),
+            ]
+        return AnchorExpansionResult(
+            original_candidates=original_candidates,
+            expanded_anchors=expanded_anchors,
+            flow_seed_nodes=flow_seed_nodes,
+            context_nodes=context_nodes,
+            diagnostics=diagnostics,
+            truncated=truncated,
+        )
+
+    def _source_node_pairs(
+        self,
+        candidates: Sequence[KnowledgeQueryMatchedNode],
+        graph_id_by_source: Dict[str, str],
+        revision_by_source: Dict[str, str],
+    ) -> List[AnchorExpansionRequest]:
+        requested: List[AnchorExpansionRequest] = []
+        seen: set[AnchorNodeKey] = set()
+        for candidate in candidates:
+            source_id = str(candidate.sourceId or "")
+            node_id = str(candidate.nodeId or "")
+            expected_graph_id = graph_id_by_source.get(source_id) or ""
+            expected_revision = revision_by_source.get(source_id) or ""
+            if not source_id or not node_id or source_id not in graph_id_by_source:
+                continue
+            if candidate.graphId and expected_graph_id and candidate.graphId != expected_graph_id:
+                continue
+            if candidate.graphRevision and expected_revision and candidate.graphRevision != expected_revision:
+                continue
+            key = (source_id, expected_graph_id, node_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            requested.append(
+                AnchorExpansionRequest(
+                    source_id=source_id,
+                    graph_id=expected_graph_id,
+                    graph_revision=expected_revision or None,
+                    node_id=node_id,
+                )
+            )
+        return requested
+
+    def _bundle_nodes(self, bundle: AnchorExpansionBundle) -> Dict[AnchorNodeKey, AnchorExpansionNode]:
+        nodes: Dict[AnchorNodeKey, AnchorExpansionNode] = {}
+        for node in bundle.nodes:
+            key = self._node_key(node)
+            if key is not None:
+                nodes[key] = node
+        return nodes
+
+    def _structural_edge_indexes(
+        self,
+        bundle: AnchorExpansionBundle,
+    ) -> tuple[Dict[AnchorNodeKey, List[AnchorNodeKey]], Dict[AnchorNodeKey, List[AnchorNodeKey]], Dict[AnchorNodeKey, List[AnchorNodeKey]]]:
+        declares_out: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
+        declares_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
+        uses_field_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
+        for edge in sorted(bundle.edges, key=self._edge_sort_key):
+            edge_type = str(edge.edge_type or "").upper()
+            from_key = self._edge_from_key(edge)
+            to_key = self._edge_to_key(edge)
+            if from_key is None or to_key is None:
+                continue
+            if edge_type == "DECLARES":
+                declares_out[from_key].append(to_key)
+                declares_in[to_key].append(from_key)
+            elif edge_type == "USES_FIELD":
+                uses_field_in[to_key].append(from_key)
+        return declares_out, declares_in, uses_field_in
+
+    def _parent_keys(
+        self,
+        node_key: AnchorNodeKey,
+        graph_nodes: Dict[AnchorNodeKey, AnchorExpansionNode],
+        declares_in: Dict[AnchorNodeKey, List[AnchorNodeKey]],
+    ) -> List[AnchorNodeKey]:
+        result: List[AnchorNodeKey] = []
+        seen: set[AnchorNodeKey] = set()
+        for parent_key in declares_in.get(node_key, []):
+            if parent_key not in seen:
+                seen.add(parent_key)
+                result.append(parent_key)
+        node = graph_nodes.get(node_key)
+        if node and node.parent_node_id:
+            parent_node_id = str(node.parent_node_id)
+            parent_key = (node_key[0], node_key[1], parent_node_id)
+            if parent_key not in seen:
+                result.append(parent_key)
+        return result
+
+    def _entrypoint_keys(
+        self,
+        bundle: AnchorExpansionBundle,
+        graph_nodes: Dict[AnchorNodeKey, AnchorExpansionNode],
+    ) -> set[AnchorNodeKey]:
+        keys: set[AnchorNodeKey] = set()
+        for key, node in graph_nodes.items():
+            if node.entrypoint:
+                keys.add(key)
+        for hint in bundle.entrypoint_hints:
+            if hint.source_id and hint.graph_id and hint.node_id:
+                key = (str(hint.source_id), str(hint.graph_id), str(hint.node_id))
+                keys.add(key)
+        return keys
+
+    def _matched_node_from_graph_node(
+        self,
+        node: AnchorExpansionNode,
+        origin: KnowledgeQueryMatchedNode,
+    ) -> KnowledgeQueryMatchedNode:
+        label = str(node.label or node.node_id)
+        return KnowledgeQueryMatchedNode(
+            sourceId=str(node.source_id),
+            nodeId=str(node.node_id),
+            stableKey=str(node.stable_key or node.node_id),
+            nodeKind=str(node.node_kind or ""),
+            label=label,
+            score=float(origin.score),
+            matchReasons=list(origin.matchReasons),
+            graphId=str(node.graph_id) if node.graph_id else None,
+            graphRevision=str(node.graph_revision) if node.graph_revision else None,
+            relativePath=node.relative_path or origin.relativePath,
+            qualifiedName=node.qualified_name or origin.qualifiedName,
+        )
+
+    def _node_key(self, node: AnchorExpansionNode) -> AnchorNodeKey | None:
+        source_id = str(node.source_id or "")
+        graph_id = str(node.graph_id or "")
+        node_id = str(node.node_id or "")
+        if not source_id or not graph_id or not node_id:
+            return None
+        return (source_id, graph_id, node_id)
+
+    def _edge_from_key(self, edge: AnchorExpansionEdge) -> AnchorNodeKey | None:
+        return self._edge_node_key(edge, edge.from_node_id)
+
+    def _edge_to_key(self, edge: AnchorExpansionEdge) -> AnchorNodeKey | None:
+        return self._edge_node_key(edge, edge.to_node_id)
+
+    def _edge_node_key(self, edge: AnchorExpansionEdge, node_id_value: str) -> AnchorNodeKey | None:
+        source_id = str(edge.source_id or "")
+        graph_id = str(edge.graph_id or "")
+        node_id = str(node_id_value or "")
+        if not source_id or not graph_id or not node_id:
+            return None
+        return (source_id, graph_id, node_id)
+
+    def _edge_sort_key(self, edge: AnchorExpansionEdge) -> tuple[str, str, str, str, str, str]:
+        return (
+            str(edge.source_id or ""),
+            str(edge.graph_id or ""),
+            str(edge.edge_type or ""),
+            str(edge.from_node_id or ""),
+            str(edge.to_node_id or ""),
+            str(edge.edge_id or ""),
+        )
+
+    def _node_kind(self, value: str) -> str:
+        return str(value or "").upper()
 
 class GraphSliceQueryService:
     def __init__(self, graph_store: Any) -> None:
@@ -921,6 +1396,7 @@ class KnowledgeQueryService:
         flow_path_extractor: FlowPathExtractor,
         evidence_builder: EvidenceBundleBuilder,
         policy: KnowledgeQueryPolicy | None = None,
+        anchor_expander: AnchorExpansionService | None = None,
     ) -> None:
         self.source_scope_resolver = source_scope_resolver
         self.anchor_searcher = anchor_searcher
@@ -928,6 +1404,7 @@ class KnowledgeQueryService:
         self.flow_path_extractor = flow_path_extractor
         self.evidence_builder = evidence_builder
         self.policy = policy or KnowledgeQueryPolicy()
+        self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(graph_slice_service, "graph_store", None))
 
     def query(self, request: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
         diagnostics: List[KnowledgeQueryDiagnostic] = []
@@ -953,10 +1430,14 @@ class KnowledgeQueryService:
 
         matched_nodes = candidate_result.all_candidates
         display_matched_nodes = candidate_result.display_candidates
-        slice_bundle, slice_diagnostics = self.graph_slice_service.build(matched_nodes, self.policy)
+        anchor_result = self.anchor_expander.expand(matched_nodes, eligible_sources, self.policy)
+        diagnostics.extend(anchor_result.diagnostics)
+        slice_anchor_nodes = [anchor.node for anchor in anchor_result.expanded_anchors] or matched_nodes
+        flow_seed_nodes = anchor_result.flow_seed_nodes
+        slice_bundle, slice_diagnostics = self.graph_slice_service.build(slice_anchor_nodes, self.policy)
         diagnostics.extend(slice_diagnostics)
         flow_paths, flow_diagnostics, flow_truncated, flow_bundle = self.flow_path_extractor.extract(
-            matched_nodes,
+            flow_seed_nodes,
             slice_bundle,
             slice_bundle.get("evidence") or [],
             self.policy,
@@ -996,8 +1477,8 @@ class KnowledgeQueryService:
                 nodeCount=len(response_bundle["nodes"]),
                 edgeCount=len(response_bundle["edges"]),
                 evidenceCount=len(evidence_bundle["evidence"]),
-                truncated=candidate_result.truncated or flow_truncated,
-                continuationAvailable=candidate_result.truncated or flow_truncated,
+                truncated=candidate_result.truncated or anchor_result.truncated or flow_truncated,
+                continuationAvailable=candidate_result.truncated or anchor_result.truncated or flow_truncated,
             ),
             diagnostics=diagnostics,
         )
@@ -1057,6 +1538,7 @@ def build_knowledge_query_service(graph_store: Any, app_config: Any | None = Non
         graph_slice_service=GraphSliceQueryService(graph_store),
         flow_path_extractor=FlowPathExtractor(graph_store),
         evidence_builder=EvidenceBundleBuilder(),
+        anchor_expander=AnchorExpansionService(graph_store),
     )
 
 

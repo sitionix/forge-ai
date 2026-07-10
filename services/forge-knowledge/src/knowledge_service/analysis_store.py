@@ -10,8 +10,15 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Sequence, Set
 
+from knowledge_service.anchor_expansion_contract import (
+    AnchorEntrypointHint,
+    AnchorExpansionBundle,
+    AnchorExpansionEdge,
+    AnchorExpansionNode,
+    AnchorExpansionRequest,
+)
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
@@ -2135,6 +2142,152 @@ class AnalysisStore:
             candidates.append(projected)
         return candidates
 
+    def query_anchor_expansion(
+        self,
+        source_node_pairs: Sequence[AnchorExpansionRequest],
+        max_per_anchor: int = 30,
+        max_total: int = 200,
+    ) -> AnchorExpansionBundle:
+        self.init()
+        requested = self._anchor_expansion_requested_pairs(source_node_pairs)
+        if not requested:
+            return AnchorExpansionBundle()
+        safe_max_total = max(1, min(int(max_total or 1), 1000))
+        safe_relation_limit = max(1, min(safe_max_total + max(1, int(max_per_anchor or 1)) * len(requested), 2000))
+        grouped: Dict[str, Set[str]] = {}
+        for source_id, node_id in requested:
+            grouped.setdefault(source_id, set()).add(node_id)
+
+        nodes: List[Dict[str, Any]] = []
+        edges: List[Dict[str, Any]] = []
+        entrypoint_hints: List[Dict[str, Any]] = []
+        truncated = False
+        contract = graph_query_contract()
+        declares_edge_type = contract.required_edge_type("DECLARES")
+        uses_field_edge_type = contract.required_edge_type("USES_FIELD")
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+
+        with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
+            node_ids_by_source: Dict[str, Set[str]] = {source_id: set(ids) for source_id, ids in grouped.items()}
+            first_hop_ids_by_source: Dict[str, Set[str]] = {source_id: set() for source_id in grouped}
+
+            for source_id, anchor_ids in sorted(grouped.items()):
+                anchor_nodes = self._query_anchor_expansion_nodes(conn, source_id, anchor_ids)
+                nodes.extend(anchor_nodes)
+                for node in anchor_nodes:
+                    parent_node_id = str(node.get("parentNodeId") or "")
+                    if parent_node_id:
+                        node_ids_by_source.setdefault(source_id, set()).add(parent_node_id)
+
+                ids = sorted(anchor_ids)
+                placeholders = ",".join("?" for _ in ids)
+                rows = conn.execute(
+                    f"""
+                    SELECT e.*,
+                           fn.display_name AS from_display_name,
+                           fn.qualified_name AS from_qualified_name,
+                           fn.name AS from_name,
+                           tn.display_name AS to_display_name,
+                           tn.qualified_name AS to_qualified_name,
+                           tn.name AS to_name
+                    FROM analysis_graph_edges e
+                    LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+                    LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                    WHERE e.source_id = ?
+                      AND e.edge_type IN (?, ?)
+                      AND e.status IN ({current_status_sql})
+                      AND e.resolution_status = ?
+                      AND {self._inventory_membership_graph_edge_clause("e")}
+                      AND (e.from_node_id IN ({placeholders}) OR e.to_node_id IN ({placeholders}))
+                    ORDER BY e.edge_type, e.from_node_id, e.to_node_id, e.id
+                    LIMIT ?
+                    """,
+                    [
+                        source_id,
+                        declares_edge_type,
+                        uses_field_edge_type,
+                        *current_status_params,
+                        contract.resolved_status,
+                        *ids,
+                        *ids,
+                        safe_relation_limit + 1,
+                    ],
+                ).fetchall()
+                if len(rows) > safe_relation_limit:
+                    truncated = True
+                    rows = rows[:safe_relation_limit]
+                for row in rows:
+                    edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
+                    for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
+                        if node_id:
+                            node_ids_by_source.setdefault(source_id, set()).add(node_id)
+                            if node_id not in anchor_ids:
+                                first_hop_ids_by_source.setdefault(source_id, set()).add(node_id)
+
+            remaining_edges = max(0, safe_relation_limit - len(edges))
+            for source_id, first_hop_ids in sorted(first_hop_ids_by_source.items()):
+                if remaining_edges <= 0 or not first_hop_ids:
+                    break
+                ids = sorted(first_hop_ids)
+                placeholders = ",".join("?" for _ in ids)
+                rows = conn.execute(
+                    f"""
+                    SELECT e.*,
+                           fn.display_name AS from_display_name,
+                           fn.qualified_name AS from_qualified_name,
+                           fn.name AS from_name,
+                           tn.display_name AS to_display_name,
+                           tn.qualified_name AS to_qualified_name,
+                           tn.name AS to_name
+                    FROM analysis_graph_edges e
+                    LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+                    LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                    WHERE e.source_id = ?
+                      AND e.edge_type = ?
+                      AND e.status IN ({current_status_sql})
+                      AND e.resolution_status = ?
+                      AND {self._inventory_membership_graph_edge_clause("e")}
+                      AND e.from_node_id IN ({placeholders})
+                    ORDER BY e.edge_type, e.from_node_id, e.to_node_id, e.id
+                    LIMIT ?
+                    """,
+                    [
+                        source_id,
+                        declares_edge_type,
+                        *current_status_params,
+                        contract.resolved_status,
+                        *ids,
+                        remaining_edges + 1,
+                    ],
+                ).fetchall()
+                if len(rows) > remaining_edges:
+                    truncated = True
+                    rows = rows[:remaining_edges]
+                remaining_edges -= len(rows)
+                for row in rows:
+                    edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
+                    for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
+                        if node_id:
+                            node_ids_by_source.setdefault(source_id, set()).add(node_id)
+
+            for source_id, node_ids in sorted(node_ids_by_source.items()):
+                nodes.extend(self._query_anchor_expansion_nodes(conn, source_id, node_ids))
+                entrypoint_hints.extend(self._query_anchor_expansion_entrypoint_hints(conn, source_id, node_ids))
+
+            nodes = self._dedupe_by_id(nodes, "nodeId")
+            edges = self._dedupe_by_id(edges, "edgeId")
+            entrypoint_hints = self._dedupe_by_id(entrypoint_hints, "nodeId")
+            self._attach_current_graph_identity(conn, nodes)
+            self._attach_current_graph_identity(conn, edges)
+            self._attach_current_graph_identity(conn, entrypoint_hints)
+
+        return AnchorExpansionBundle(
+            nodes=tuple(self._anchor_expansion_node(item) for item in nodes),
+            edges=tuple(self._anchor_expansion_edge(item) for item in edges),
+            entrypoint_hints=tuple(self._anchor_entrypoint_hint(item) for item in entrypoint_hints),
+            truncated=truncated,
+        )
+
     def query_graph_slice(self, anchors: List[Dict[str, Any]], depth: int) -> Dict[str, List[Dict[str, Any]]]:
         self.init()
         safe_depth = max(1, min(int(depth or 1), 4))
@@ -2321,8 +2474,95 @@ class AnalysisStore:
             identity = identity_by_source.get(str(item.get("sourceId") or ""))
             if not identity:
                 continue
-            item.setdefault("graphId", identity.get("graphId"))
-            item.setdefault("graphRevision", identity.get("graphRevision"))
+            if not item.get("graphId"):
+                item["graphId"] = identity.get("graphId")
+            if not item.get("graphRevision"):
+                item["graphRevision"] = identity.get("graphRevision")
+
+    def _anchor_expansion_requested_pairs(self, source_node_pairs: Sequence[AnchorExpansionRequest]) -> List[tuple[str, str]]:
+        requested: List[tuple[str, str]] = []
+        seen: Set[tuple[str, str]] = set()
+        for item in source_node_pairs or ():
+            if not isinstance(item, AnchorExpansionRequest):
+                continue
+            source_id = str(item.source_id or "")
+            graph_id = str(item.graph_id or "")
+            node_id = str(item.node_id or "")
+            key = (source_id, node_id)
+            if not source_id or not graph_id or not node_id or key in seen:
+                continue
+            seen.add(key)
+            requested.append(key)
+        return requested
+
+    def _query_anchor_expansion_nodes(self, conn: sqlite3.Connection, source_id: str, node_ids: Set[str]) -> List[Dict[str, Any]]:
+        if not node_ids:
+            return []
+        ids = sorted(node_ids)
+        placeholders = ",".join("?" for _ in ids)
+        contract = graph_query_contract()
+        entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT n.*, af.relative_path,
+                   COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
+                   CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint
+            FROM analysis_graph_nodes n
+            LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
+            LEFT JOIN (
+                SELECT source_id, from_node_id AS node_id, COUNT(*) AS count
+                FROM analysis_graph_edges
+                GROUP BY source_id, from_node_id
+            ) out_degree ON out_degree.source_id = n.source_id AND out_degree.node_id = n.id
+            LEFT JOIN (
+                SELECT source_id, to_node_id AS node_id, COUNT(*) AS count
+                FROM analysis_graph_edges
+                WHERE to_node_id IS NOT NULL
+                GROUP BY source_id, to_node_id
+            ) in_degree ON in_degree.source_id = n.source_id AND in_degree.node_id = n.id
+            LEFT JOIN analysis_graph_claims entry
+              ON entry.source_id = n.source_id
+             AND entry.node_id = n.id
+             AND entry.claim_kind = ?
+             AND entry.status IN ({entry_status_sql})
+            WHERE n.source_id = ?
+              AND n.id IN ({placeholders})
+              AND {self._inventory_membership_graph_node_clause("n")}
+            ORDER BY n.id
+            """,
+            [contract.entrypoint_claim_kind, *entry_status_params, source_id, *ids],
+        ).fetchall()
+        return [self._anchor_expansion_node_projection(self._row_dict(row)) for row in rows]
+
+    def _query_anchor_expansion_entrypoint_hints(self, conn: sqlite3.Connection, source_id: str, node_ids: Set[str]) -> List[Dict[str, Any]]:
+        if not node_ids:
+            return []
+        ids = sorted(node_ids)
+        placeholders = ",".join("?" for _ in ids)
+        contract = graph_query_contract()
+        entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT source_id, node_id, id
+            FROM analysis_graph_claims
+            WHERE source_id = ?
+              AND node_id IN ({placeholders})
+              AND claim_kind = ?
+              AND status IN ({entry_status_sql})
+            ORDER BY node_id, id
+            """,
+            [source_id, *ids, contract.entrypoint_claim_kind, *entry_status_params],
+        ).fetchall()
+        return [
+            {
+                "sourceId": row["source_id"],
+                "graphId": "",
+                "graphRevision": "",
+                "nodeId": row["node_id"],
+                "claimId": row["id"],
+            }
+            for row in rows
+        ]
 
     def _query_slice_nodes(self, conn: sqlite3.Connection, source_id: str, node_ids: Set[str]) -> List[Dict[str, Any]]:
         if not node_ids:
@@ -3749,6 +3989,68 @@ class AnalysisStore:
             "degree": int(row.get("graph_degree") or 0),
             "entrypoint": bool(row.get("entrypoint")),
         }
+
+    def _anchor_expansion_node_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "sourceId": row["source_id"],
+            "graphId": "",
+            "graphRevision": "",
+            "nodeId": row["id"],
+            "stableKey": row.get("stable_key") or row["id"],
+            "nodeKind": row.get("node_kind"),
+            "label": row.get("display_name") or row.get("qualified_name") or row.get("name") or row["id"],
+            "relativePath": row.get("relative_path"),
+            "qualifiedName": row.get("qualified_name"),
+            "parentNodeId": row.get("parent_node_id"),
+            "entrypoint": bool(row.get("entrypoint")),
+        }
+
+    def _anchor_expansion_edge_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "sourceId": row["source_id"],
+            "graphId": "",
+            "graphRevision": "",
+            "edgeId": row["id"],
+            "edgeType": row["edge_type"],
+            "fromNodeId": row["from_node_id"],
+            "toNodeId": row["to_node_id"],
+        }
+
+    def _anchor_expansion_node(self, item: Dict[str, Any]) -> AnchorExpansionNode:
+        return AnchorExpansionNode(
+            source_id=str(item["sourceId"]),
+            graph_id=str(item["graphId"]),
+            graph_revision=str(item["graphRevision"]) if item.get("graphRevision") else None,
+            node_id=str(item["nodeId"]),
+            stable_key=str(item["stableKey"]),
+            node_kind=str(item["nodeKind"] or ""),
+            label=str(item["label"] or item["nodeId"]),
+            parent_node_id=str(item["parentNodeId"]) if item.get("parentNodeId") else None,
+            relative_path=str(item["relativePath"]) if item.get("relativePath") else None,
+            qualified_name=str(item["qualifiedName"]) if item.get("qualifiedName") else None,
+            entrypoint=bool(item.get("entrypoint")),
+            score=float(item["score"]) if item.get("score") is not None else None,
+        )
+
+    def _anchor_expansion_edge(self, item: Dict[str, Any]) -> AnchorExpansionEdge:
+        return AnchorExpansionEdge(
+            source_id=str(item["sourceId"]),
+            graph_id=str(item["graphId"]),
+            graph_revision=str(item["graphRevision"]) if item.get("graphRevision") else None,
+            edge_id=str(item["edgeId"]),
+            edge_type=str(item["edgeType"]),
+            from_node_id=str(item["fromNodeId"]),
+            to_node_id=str(item["toNodeId"]),
+        )
+
+    def _anchor_entrypoint_hint(self, item: Dict[str, Any]) -> AnchorEntrypointHint:
+        return AnchorEntrypointHint(
+            source_id=str(item["sourceId"]),
+            graph_id=str(item["graphId"]),
+            graph_revision=str(item["graphRevision"]) if item.get("graphRevision") else None,
+            node_id=str(item["nodeId"]),
+            claim_id=str(item["claimId"]),
+        )
 
     def _graph_edge_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
         metadata = self._json_dict(row.get("metadata_json"))
