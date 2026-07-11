@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+import asyncio
 from urllib.parse import quote
 
+import httpx
 import pytest
 from semantic_test_support import seed_semantic_graph
 from support import AsgiTestClient as TestClient
@@ -13,6 +15,30 @@ from knowledge_service.inventory_store import InventoryStore
 
 
 pytestmark = pytest.mark.forge_it
+
+
+async def await_with_wakeup(awaitable, *, timeout=2.0, interval=0.01):
+    task = asyncio.create_task(awaitable)
+    deadline = asyncio.get_running_loop().time() + timeout
+    try:
+        while not task.done():
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                task.cancel()
+                raise asyncio.TimeoutError()
+            await asyncio.sleep(min(interval, remaining))
+        return await task
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+def get_threadpool_route(app, path):
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+            return await await_with_wakeup(client.get(path))
+
+    return asyncio.run(exercise())
 
 
 def test_it_graph_01_fresh_database_schema_is_current_state_only(tmp_path):
@@ -80,7 +106,7 @@ def test_it_graph_03_manifest_pages_details_and_view_use_graph_id(tmp_path):
         edge_detail = client.get(
             f"/api/v1/knowledge/analysis/graph/edge/{quote(edges[0]['id'])}?sourceId=forge-ai&graphRevision={quote(manifest['graphRevision'])}"
         ).json()
-        view = client.get("/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&maxNodes=10").json()
+        view = get_threadpool_route(app, "/api/v1/knowledge/analysis/graph/view?sourceId=forge-ai&flowDomain=CODE&maxNodes=10").json()
 
     assert manifest["graphId"]
     assert manifest["totalNodeCount"] == 6

@@ -87,6 +87,265 @@
         "title": "ContextRequest",
         "type": "object"
       },
+      "FlowExplanation": {
+        "properties": {
+          "boundaries": {
+            "items": {
+              "$ref": "#/components/schemas/FlowExplanationBoundary"
+            },
+            "title": "Boundaries",
+            "type": "array"
+          },
+          "flowIndex": {
+            "title": "Flowindex",
+            "type": "integer"
+          },
+          "narrative": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Narrative",
+            "type": "array"
+          },
+          "status": {
+            "default": "OK",
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/FlowExplanationStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flowIndex"
+        ],
+        "title": "FlowExplanation",
+        "type": "object"
+      },
+      "FlowExplanationBoundary": {
+        "properties": {
+          "evidenceRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FlowExplanationBoundary",
+        "type": "object"
+      },
+      "FlowExplanationStep": {
+        "properties": {
+          "evidenceRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "nodeLabel": {
+            "title": "Nodelabel",
+            "type": "string"
+          },
+          "order": {
+            "title": "Order",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "order",
+          "nodeLabel"
+        ],
+        "title": "FlowExplanationStep",
+        "type": "object"
+      },
+      "FlowToolAddress": {
+        "properties": {
+          "lineEnd": {
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "relativePath": {
+            "title": "Relativepath",
+            "type": "string"
+          },
+          "service": {
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "title": "FlowToolAddress",
+        "type": "object"
+      },
+      "FlowToolBoundary": {
+        "properties": {
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FlowToolBoundary",
+        "type": "object"
+      },
+      "FlowToolContext": {
+        "properties": {
+          "boundaries": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolBoundary"
+            },
+            "title": "Boundaries",
+            "type": "array"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "flowIndex": {
+            "title": "Flowindex",
+            "type": "integer"
+          },
+          "narrative": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Narrative",
+            "type": "array"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flowIndex"
+        ],
+        "title": "FlowToolContext",
+        "type": "object"
+      },
+      "FlowToolEvidence": {
+        "properties": {
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "lineEnd": {
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          },
+          "relativePath": {
+            "title": "Relativepath",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "title": "FlowToolEvidence",
+        "type": "object"
+      },
+      "FlowToolStep": {
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/FlowToolAddress"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "order": {
+            "title": "Order",
+            "type": "integer"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order",
+          "symbol",
+          "kind"
+        ],
+        "title": "FlowToolStep",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -205,6 +464,108 @@
           "message"
         ],
         "title": "KnowledgeQueryDiagnostic",
+        "type": "object"
+      },
+      "KnowledgeQueryFlowExplanationResponse": {
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/KnowledgeQueryCoverage"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "edges": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "external": {
+            "items": {
+              "type": "object"
+            },
+            "title": "External",
+            "type": "array"
+          },
+          "flowExplanations": {
+            "items": {
+              "$ref": "#/components/schemas/FlowExplanation"
+            },
+            "title": "Flowexplanations",
+            "type": "array"
+          },
+          "flowPaths": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryFlowPath"
+            },
+            "title": "Flowpaths",
+            "type": "array"
+          },
+          "intent": {
+            "title": "Intent",
+            "type": "string"
+          },
+          "matchedNodes": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryMatchedNode"
+            },
+            "title": "Matchednodes",
+            "type": "array"
+          },
+          "matchedSources": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryMatchedSource"
+            },
+            "title": "Matchedsources",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "queryId": {
+            "title": "Queryid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/KnowledgeQueryStatus"
+          },
+          "unresolved": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Unresolved",
+            "type": "array"
+          },
+          "verifiedPaths": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Verifiedpaths",
+            "type": "array"
+          }
+        },
+        "required": [
+          "queryId",
+          "status",
+          "intent"
+        ],
+        "title": "KnowledgeQueryFlowExplanationResponse",
         "type": "object"
       },
       "KnowledgeQueryFlowPath": {
@@ -534,6 +895,42 @@
         ],
         "title": "KnowledgeQueryStatus",
         "type": "string"
+      },
+      "KnowledgeQueryToolContextResponse": {
+        "properties": {
+          "answerLanguage": {
+            "title": "Answerlanguage",
+            "type": "string"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "flows": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolContext"
+            },
+            "title": "Flows",
+            "type": "array"
+          },
+          "queryText": {
+            "title": "Querytext",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/KnowledgeQueryStatus"
+          }
+        },
+        "required": [
+          "queryText",
+          "answerLanguage",
+          "status"
+        ],
+        "title": "KnowledgeQueryToolContextResponse",
+        "type": "object"
       },
       "RetryFailedAnalysisRequest": {
         "additionalProperties": false,
@@ -1881,6 +2278,80 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/KnowledgeQueryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/query/flow-explanations": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeQueryFlowExplanationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/query/tool-context": {
+      "post": {
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeQueryToolContextResponse"
                 }
               }
             },

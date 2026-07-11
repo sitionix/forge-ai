@@ -38,6 +38,7 @@ from knowledge_service.flow_builder import (
     FlowGraphEvidence,
     FlowGraphNode,
     FlowGraphSourceScope,
+    FlowUnit,
     FlowNodeKey,
     flow_graph_bundle_to_public_bundle,
 )
@@ -128,6 +129,12 @@ class QuerySource:
     graph_revision: str
     node_count: int
     edge_count: int
+
+
+@dataclass(frozen=True)
+class KnowledgeQueryExecutionResult:
+    response: KnowledgeQueryResponse
+    flow_units: tuple[FlowUnit, ...] = ()
 
 
 class SourceScopeResolver:
@@ -889,7 +896,7 @@ class FlowPathExtractor:
         evidence: Sequence[Dict[str, Any]],
         policy: KnowledgeQueryPolicy,
         entrypoint_candidate_node_ids: set[FlowNodeKey] | None = None,
-    ) -> tuple[List[KnowledgeQueryFlowPath], List[KnowledgeQueryDiagnostic], bool, Dict[str, Any]]:
+    ) -> tuple[List[KnowledgeQueryFlowPath], List[KnowledgeQueryDiagnostic], bool, Dict[str, Any], tuple[FlowUnit, ...]]:
         graph_bundle = self._load_flow_graph(matched_nodes, slice_bundle, evidence, policy)
         result = self.flow_builder.build(graph_bundle, matched_nodes, entrypoint_candidate_node_ids or set(), policy)
         return (
@@ -897,6 +904,7 @@ class FlowPathExtractor:
             result.diagnostics,
             result.truncated,
             flow_graph_bundle_to_public_bundle(graph_bundle),
+            result.flow_units,
         )
 
     def _load_flow_graph(
@@ -1016,6 +1024,7 @@ class FlowPathExtractor:
             label=str(item.get("label") or item.get("name") or node_id),
             qualified_name=str(item.get("qualifiedName")) if item.get("qualifiedName") else None,
             relative_path=str(item.get("relativePath")) if item.get("relativePath") else None,
+            summary=str(item.get("summary")) if item.get("summary") else None,
             entrypoint=bool(item.get("entrypoint")),
         )
 
@@ -1098,25 +1107,30 @@ class KnowledgeQueryService:
         self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(graph_slice_service, "graph_store", None))
 
     def query(self, request: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
+        return self.query_with_flow_units(request).response
+
+    def query_with_flow_units(self, request: KnowledgeQueryRequest) -> KnowledgeQueryExecutionResult:
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         eligible_sources, scope_diagnostics = self.source_scope_resolver.resolve()
         diagnostics.extend(scope_diagnostics)
         candidate_result = self.anchor_searcher.search(request.queryText, eligible_sources, self.policy)
         diagnostics.extend(candidate_result.diagnostics)
         if not candidate_result.all_candidates:
-            return KnowledgeQueryResponse(
-                queryId=self._query_id(),
-                status=KnowledgeQueryStatus.NO_CANDIDATES,
-                intent=request.intent.value,
-                coverage=KnowledgeQueryCoverage(searchedSourceCount=len(eligible_sources), matchedSourceCount=0),
-                diagnostics=[
-                    *diagnostics,
-                    KnowledgeQueryDiagnostic(
-                        code="NO_GRAPH_CANDIDATES",
-                        message="No graph nodes matched the query across eligible analyzed sources.",
-                        severity="INFO",
-                    ),
-                ],
+            return KnowledgeQueryExecutionResult(
+                response=KnowledgeQueryResponse(
+                    queryId=self._query_id(),
+                    status=KnowledgeQueryStatus.NO_CANDIDATES,
+                    intent=request.intent.value,
+                    coverage=KnowledgeQueryCoverage(searchedSourceCount=len(eligible_sources), matchedSourceCount=0),
+                    diagnostics=[
+                        *diagnostics,
+                        KnowledgeQueryDiagnostic(
+                            code="NO_GRAPH_CANDIDATES",
+                            message="No graph nodes matched the query across eligible analyzed sources.",
+                            severity="INFO",
+                        ),
+                    ],
+                )
             )
 
         matched_nodes = candidate_result.all_candidates
@@ -1128,14 +1142,32 @@ class KnowledgeQueryService:
         entrypoint_candidate_node_ids = self._entrypoint_candidate_node_ids(anchor_result.expanded_anchors)
         slice_bundle, slice_diagnostics = self.graph_slice_service.build(slice_anchor_nodes, self.policy)
         diagnostics.extend(slice_diagnostics)
-        flow_paths, flow_diagnostics, flow_truncated, flow_bundle = self.flow_path_extractor.extract(
+        flow_paths, flow_diagnostics, flow_truncated, flow_bundle, flow_units = self.flow_path_extractor.extract(
             flow_seed_nodes,
             slice_bundle,
             slice_bundle.get("evidence") or [],
             self.policy,
             entrypoint_candidate_node_ids,
         )
+        request_flow_limit = max(1, min(int(request.maxFlows or 10), int(self.policy.max_flow_paths or 25)))
+        available_flow_count = len(flow_units)
+        request_flow_truncated = available_flow_count > request_flow_limit
+        flow_paths = flow_paths[:request_flow_limit]
+        flow_units = flow_units[:request_flow_limit]
         diagnostics.extend(flow_diagnostics)
+        if request_flow_truncated:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="FLOW_QUERY_MAX_FLOWS_REACHED",
+                    message="Flow response was truncated by the request maxFlows limit.",
+                    severity="INFO",
+                    metadata={
+                        "returnedFlowCount": len(flow_units),
+                        "availableFlowCount": available_flow_count,
+                        "maxFlows": request_flow_limit,
+                    },
+                )
+            )
         response_bundle = self._merge_bundles(slice_bundle, flow_bundle)
         evidence_bundle = self.evidence_builder.build(response_bundle)
         matched_sources = self._matched_sources(matched_nodes, eligible_sources)
@@ -1149,31 +1181,34 @@ class KnowledgeQueryService:
                     severity="INFO",
                 )
             )
-        return KnowledgeQueryResponse(
-            queryId=self._query_id(),
-            status=status,
-            intent=request.intent.value,
-            matchedSources=matched_sources,
-            matchedNodes=display_matched_nodes,
-            flowPaths=flow_paths,
-            nodes=response_bundle["nodes"],
-            edges=response_bundle["edges"],
-            verifiedPaths=evidence_bundle["verifiedPaths"],
-            evidence=evidence_bundle["evidence"],
-            unresolved=response_bundle["unresolved"],
-            external=response_bundle["external"],
-            coverage=KnowledgeQueryCoverage(
-                searchedSourceCount=len(eligible_sources),
-                matchedSourceCount=len(matched_sources),
-                matchedNodeCount=len(matched_nodes),
-                flowPathCount=len(flow_paths),
-                nodeCount=len(response_bundle["nodes"]),
-                edgeCount=len(response_bundle["edges"]),
-                evidenceCount=len(evidence_bundle["evidence"]),
-                truncated=candidate_result.truncated or anchor_result.truncated or flow_truncated,
-                continuationAvailable=candidate_result.truncated or anchor_result.truncated or flow_truncated,
+        return KnowledgeQueryExecutionResult(
+            response=KnowledgeQueryResponse(
+                queryId=self._query_id(),
+                status=status,
+                intent=request.intent.value,
+                matchedSources=matched_sources,
+                matchedNodes=display_matched_nodes,
+                flowPaths=flow_paths,
+                nodes=response_bundle["nodes"],
+                edges=response_bundle["edges"],
+                verifiedPaths=evidence_bundle["verifiedPaths"],
+                evidence=evidence_bundle["evidence"],
+                unresolved=response_bundle["unresolved"],
+                external=response_bundle["external"],
+                coverage=KnowledgeQueryCoverage(
+                    searchedSourceCount=len(eligible_sources),
+                    matchedSourceCount=len(matched_sources),
+                    matchedNodeCount=len(matched_nodes),
+                    flowPathCount=len(flow_paths),
+                    nodeCount=len(response_bundle["nodes"]),
+                    edgeCount=len(response_bundle["edges"]),
+                    evidenceCount=len(evidence_bundle["evidence"]),
+                    truncated=candidate_result.truncated or anchor_result.truncated or flow_truncated or request_flow_truncated,
+                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or flow_truncated or request_flow_truncated,
+                ),
+                diagnostics=diagnostics,
             ),
-            diagnostics=diagnostics,
+            flow_units=flow_units,
         )
 
     def _matched_sources(

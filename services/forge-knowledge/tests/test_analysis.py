@@ -4017,6 +4017,8 @@ def configure_api(tmp_path, monkeypatch):
 def post_json(path, payload):
     import asyncio
 
+    if path == "/api/v1/knowledge/query":
+        return asyncio.run(asgi_threadpool_json("POST", path, payload))
     return asyncio.run(asgi_json("POST", path, payload))
 
 
@@ -4024,6 +4026,29 @@ def get_json(path):
     import asyncio
 
     return asyncio.run(asgi_json("GET", path, None))
+
+
+async def asgi_threadpool_json(method, path, payload):
+    import httpx
+
+    async def await_with_wakeup(awaitable, *, timeout=2.0, interval=0.01):
+        task = asyncio.create_task(awaitable)
+        deadline = asyncio.get_running_loop().time() + timeout
+        try:
+            while not task.done():
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    task.cancel()
+                    raise asyncio.TimeoutError()
+                await asyncio.sleep(min(interval, remaining))
+            return await task
+        finally:
+            if not task.done():
+                task.cancel()
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://testserver") as client:
+        response = await await_with_wakeup(client.request(method, path, json=payload or {}))
+        return {"status": response.status_code, "json": response.json()}
 
 
 def assert_node_closed_graph_response(body):

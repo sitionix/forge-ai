@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.api.proxy;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.HttpMethod;
@@ -11,14 +12,31 @@ public class InfrastructureProxyRouteRegistry {
 
     private final Map<String, InfrastructureProxyRoute> routes;
 
-    public InfrastructureProxyRouteRegistry() {
+    public InfrastructureProxyRouteRegistry(final InfrastructureProxyProperties properties) {
         final Map<String, InfrastructureProxyRoute> registered = new LinkedHashMap<>();
+        final var explanationReadTimeout = properties.getProxy().knowledgeExplanationReadTimeout();
         this.knowledge(registered, "knowledge.status", HttpMethod.GET, "/api/v1/knowledge/status", false);
         this.knowledge(registered, "knowledge.sources", HttpMethod.GET, "/api/v1/knowledge/sources", false);
         this.knowledge(registered, "knowledge.overview", HttpMethod.GET, "/api/v1/knowledge/overview", false);
         this.knowledge(registered, "knowledge.inventory.build", HttpMethod.POST, "/api/v1/knowledge/inventory/build", true);
         this.knowledge(registered, "knowledge.inventory.status", HttpMethod.GET, "/api/v1/knowledge/inventory/status", false);
         this.knowledge(registered, "knowledge.inventory.files", HttpMethod.GET, "/api/v1/knowledge/inventory/files", false);
+        this.knowledge(
+                registered,
+                "knowledge.query.flow-explanations",
+                HttpMethod.POST,
+                "/api/v1/knowledge/query/flow-explanations",
+                true,
+                explanationReadTimeout
+        );
+        this.knowledge(
+                registered,
+                "knowledge.query.tool-context",
+                HttpMethod.POST,
+                "/api/v1/knowledge/query/tool-context",
+                true,
+                explanationReadTimeout
+        );
         this.knowledge(registered, "knowledge.analysis.build", HttpMethod.POST, "/api/v1/knowledge/analysis/build", true);
         this.knowledge(registered, "knowledge.analysis.retry-failed", HttpMethod.POST, "/api/v1/knowledge/analysis/retry-failed", true);
         this.knowledge(registered, "knowledge.analysis.job", HttpMethod.GET,
@@ -60,7 +78,16 @@ public class InfrastructureProxyRouteRegistry {
                            final HttpMethod method,
                            final String upstreamPath,
                            final boolean requestBodyAllowed) {
-        this.knowledge(registered, key, method, ignored -> upstreamPath, requestBodyAllowed);
+        this.knowledge(registered, key, method, ignored -> upstreamPath, requestBodyAllowed, null);
+    }
+
+    private void knowledge(final Map<String, InfrastructureProxyRoute> registered,
+                           final String key,
+                           final HttpMethod method,
+                           final String upstreamPath,
+                           final boolean requestBodyAllowed,
+                           final Duration readTimeout) {
+        this.knowledge(registered, key, method, ignored -> upstreamPath, requestBodyAllowed, readTimeout);
     }
 
     private void knowledge(final Map<String, InfrastructureProxyRoute> registered,
@@ -68,7 +95,24 @@ public class InfrastructureProxyRouteRegistry {
                            final HttpMethod method,
                            final java.util.function.Function<Map<String, String>, String> upstreamPath,
                            final boolean requestBodyAllowed) {
-        registered.put(key, new InfrastructureProxyRoute(key, InfrastructureProxyService.KNOWLEDGE, method, upstreamPath, requestBodyAllowed, true));
+        this.knowledge(registered, key, method, upstreamPath, requestBodyAllowed, null);
+    }
+
+    private void knowledge(final Map<String, InfrastructureProxyRoute> registered,
+                           final String key,
+                           final HttpMethod method,
+                           final java.util.function.Function<Map<String, String>, String> upstreamPath,
+                           final boolean requestBodyAllowed,
+                           final Duration readTimeout) {
+        registered.put(key, new InfrastructureProxyRoute(
+                key,
+                InfrastructureProxyService.KNOWLEDGE,
+                method,
+                upstreamPath,
+                requestBodyAllowed,
+                true,
+                readTimeout
+        ));
     }
 
     private void jarvis(final Map<String, InfrastructureProxyRoute> registered,
@@ -76,7 +120,7 @@ public class InfrastructureProxyRouteRegistry {
                         final HttpMethod method,
                         final String upstreamPath,
                         final boolean requestBodyAllowed) {
-        registered.put(key, new InfrastructureProxyRoute(key, InfrastructureProxyService.JARVIS, method, ignored -> upstreamPath, requestBodyAllowed, true));
+        registered.put(key, new InfrastructureProxyRoute(key, InfrastructureProxyService.JARVIS, method, ignored -> upstreamPath, requestBodyAllowed, true, null));
     }
 
     private static String segment(final String value) {

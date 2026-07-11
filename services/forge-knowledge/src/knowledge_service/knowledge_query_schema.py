@@ -144,3 +144,77 @@ class KnowledgeQueryResponse(BaseModel):
     external: List[Dict[str, Any]] = Field(default_factory=list)
     coverage: KnowledgeQueryCoverage = Field(default_factory=KnowledgeQueryCoverage)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
+
+
+class FlowExplanationStep(BaseModel):
+    order: int
+    nodeLabel: str
+    explanation: Optional[str] = None
+    evidenceRefs: List[str] = Field(default_factory=list)
+
+
+class FlowExplanationBoundary(BaseModel):
+    kind: str
+    explanation: Optional[str] = None
+    evidenceRefs: List[str] = Field(default_factory=list)
+
+
+class FlowExplanation(BaseModel):
+    flowIndex: int
+    title: str = ""
+    narrative: List[str] = Field(default_factory=list)
+    steps: List[FlowExplanationStep] = Field(default_factory=list)
+    boundaries: List[FlowExplanationBoundary] = Field(default_factory=list)
+    status: str = "OK"
+
+
+class KnowledgeQueryFlowExplanationResponse(KnowledgeQueryResponse):
+    flowExplanations: List[FlowExplanation] = Field(default_factory=list)
+
+
+class FlowToolAddress(BaseModel):
+    service: Optional[str] = None
+    relativePath: Optional[str] = None
+    lineStart: Optional[int] = None
+    lineEnd: Optional[int] = None
+
+
+class FlowToolEvidence(BaseModel):
+    ref: str
+    relativePath: Optional[str] = None
+    lineStart: Optional[int] = None
+    lineEnd: Optional[int] = None
+    excerpt: Optional[str] = None
+
+
+class FlowToolStep(BaseModel):
+    order: int
+    symbol: str
+    kind: str
+    address: FlowToolAddress = Field(default_factory=FlowToolAddress)
+    explanation: Optional[str] = None
+    evidence: List[FlowToolEvidence] = Field(default_factory=list)
+
+
+class FlowToolBoundary(BaseModel):
+    kind: str
+    target: Optional[str] = None
+    explanation: Optional[str] = None
+    evidence: List[FlowToolEvidence] = Field(default_factory=list)
+
+
+class FlowToolContext(BaseModel):
+    flowIndex: int
+    title: str = ""
+    narrative: List[str] = Field(default_factory=list)
+    steps: List[FlowToolStep] = Field(default_factory=list)
+    boundaries: List[FlowToolBoundary] = Field(default_factory=list)
+    diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
+
+
+class KnowledgeQueryToolContextResponse(BaseModel):
+    queryText: str
+    answerLanguage: str
+    status: KnowledgeQueryStatus
+    flows: List[FlowToolContext] = Field(default_factory=list)
+    diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)

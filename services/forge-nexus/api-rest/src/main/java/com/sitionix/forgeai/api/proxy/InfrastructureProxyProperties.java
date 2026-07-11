@@ -119,6 +119,8 @@ public class InfrastructureProxyProperties {
     public static class ProxyProperties {
         private int maxRequestBodyBytes = 1024 * 1024;
         private int maxResponseBodyBytes = 5 * 1024 * 1024;
+        private Duration knowledgeExplanationRequestDeadline = Duration.ofSeconds(90);
+        private Duration knowledgeExplanationTransportGrace = Duration.ofSeconds(5);
 
         public int getMaxRequestBodyBytes() {
             return this.maxRequestBodyBytes;
@@ -134,6 +136,32 @@ public class InfrastructureProxyProperties {
 
         public void setMaxResponseBodyBytes(final int maxResponseBodyBytes) {
             this.maxResponseBodyBytes = maxResponseBodyBytes;
+        }
+
+        public Duration getKnowledgeExplanationRequestDeadline() {
+            return this.knowledgeExplanationRequestDeadline;
+        }
+
+        public void setKnowledgeExplanationRequestDeadline(final Duration knowledgeExplanationRequestDeadline) {
+            this.knowledgeExplanationRequestDeadline = knowledgeExplanationRequestDeadline;
+        }
+
+        public Duration getKnowledgeExplanationTransportGrace() {
+            return this.knowledgeExplanationTransportGrace;
+        }
+
+        public void setKnowledgeExplanationTransportGrace(final Duration knowledgeExplanationTransportGrace) {
+            this.knowledgeExplanationTransportGrace = knowledgeExplanationTransportGrace;
+        }
+
+        Duration knowledgeExplanationReadTimeout() {
+            final Duration deadline = this.knowledgeExplanationRequestDeadline == null
+                    ? Duration.ofSeconds(90)
+                    : this.knowledgeExplanationRequestDeadline;
+            final Duration grace = this.knowledgeExplanationTransportGrace == null
+                    ? Duration.ofSeconds(5)
+                    : this.knowledgeExplanationTransportGrace;
+            return deadline.plus(grace);
         }
     }
 }

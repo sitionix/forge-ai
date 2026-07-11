@@ -1,7 +1,11 @@
+import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
+import knowledge_service.analysis_store as analysis_store_module
 from knowledge_service.anchor_expansion_contract import (
     AnchorEntrypointHint,
     AnchorExpansionBundle,
@@ -20,7 +24,21 @@ from knowledge_service.flow_builder import (
     FlowGraphNode,
     FlowGraphSourceScope,
 )
-from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode, KnowledgeQueryRequest
+from knowledge_service.flow_explanations import (
+    FLOW_EXPLANATION_LIMIT_REACHED,
+    FLOW_EXPLANATION_VALIDATION_FAILED,
+    FlowExplanationProviderResult,
+    FlowExplanationService,
+    FlowExplanationValidator,
+    PackedFlowContext,
+)
+from knowledge_service.knowledge_query_schema import (
+    KnowledgeQueryMatchedNode,
+    KnowledgeQueryMatchedSource,
+    KnowledgeQueryRequest,
+    KnowledgeQueryResponse,
+    KnowledgeQueryStatus,
+)
 from knowledge_service.knowledge_query_service import (
     AnchorExpansionReason,
     AnchorExpansionService,
@@ -29,6 +47,7 @@ from knowledge_service.knowledge_query_service import (
     EvidenceBundleBuilder,
     FlowPathExtractor,
     GraphSliceQueryService,
+    KnowledgeQueryExecutionResult,
     KnowledgeQueryPolicy,
     KnowledgeQueryService,
     SourceScopeResolver,
@@ -422,6 +441,103 @@ class RankedPreviewOnlySearchEngine:
         )
 
 
+class RecordingFlowExplanationProvider:
+    def __init__(self, responses=None, delay_seconds=0.0):
+        self.responses = list(responses or [])
+        self.delay_seconds = delay_seconds
+        self.calls = []
+
+    def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+        self.calls.append(
+            {
+                "llmInput": dict(llm_input),
+                "validationErrors": list(validation_errors or []),
+                "timeoutSeconds": timeout_seconds,
+            }
+        )
+        if self.delay_seconds:
+            time.sleep(self.delay_seconds)
+        if self.responses:
+            response = self.responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            if callable(response):
+                response = response(llm_input, validation_errors)
+        else:
+            response = valid_flow_explanation(llm_input)
+        return FlowExplanationProviderResult(raw_text=json.dumps(response, ensure_ascii=False), prompt_char_length=len(json.dumps(llm_input)))
+
+
+def valid_flow_explanation(llm_input, validation_errors=None):
+    def code(value):
+        return f"`{value}`"
+
+    step_refs = [step["stepRef"] for step in llm_input.get("steps", [])]
+    transition_refs = [transition["transitionRef"] for transition in llm_input.get("transitions", [])]
+    boundary_refs = [boundary["boundaryRef"] for boundary in llm_input.get("boundaries", [])]
+    steps = [
+        {
+            "stepRef": step["stepRef"],
+            "order": step["order"],
+            "explanation": f"{code(step['symbol'])} moves the flow forward using the provided evidence.",
+            "transitionRefs": [step["callToNext"]["transitionRef"]] if step.get("callToNext") else [],
+            "evidenceRefs": [item["ref"] for item in step.get("evidence", [])],
+        }
+        for step in llm_input.get("steps", [])
+    ]
+    transitions = [
+        {
+            "transitionRef": transition["transitionRef"],
+            "explanation": f"{code(transition['fromSymbol'])} leads to {code(transition['toSymbol'])} through this ordered transition.",
+            "evidenceRefs": [item["ref"] for item in transition.get("evidence", [])],
+        }
+        for transition in llm_input.get("transitions", [])
+    ]
+    boundaries = [
+        {
+            "boundaryRef": boundary["boundaryRef"],
+            "kind": boundary["kind"],
+            "explanation": f"The flow stops at {boundary['kind']} using only the provided boundary fact.",
+            "evidenceRefs": [item["ref"] for item in boundary.get("evidence", [])],
+        }
+        for boundary in llm_input.get("boundaries", [])
+    ]
+    symbols = [step["symbol"] for step in llm_input.get("steps", [])]
+    return {
+        "title": " -> ".join(symbols[:2]) or "Flow",
+        "narrative": [
+            {
+                "text": "This flow is explained as an independent ordered path using only the packed facts.",
+                "stepRefs": step_refs,
+                "transitionRefs": transition_refs,
+                "boundaryRefs": boundary_refs,
+            },
+            {
+                "text": "The explanation follows the ordered transitions and repeated self-contained flow context without relying on another flow.",
+                "stepRefs": step_refs,
+                "transitionRefs": transition_refs,
+                "boundaryRefs": boundary_refs,
+            },
+        ],
+        "steps": steps,
+        "transitions": transitions,
+        "boundaries": boundaries,
+    }
+
+
+def execution_from_flow_result(result):
+    return KnowledgeQueryExecutionResult(
+        response=KnowledgeQueryResponse(
+            queryId="query-test",
+            status=KnowledgeQueryStatus.OK,
+            intent="FLOW_EXPLANATION",
+            matchedSources=[KnowledgeQueryMatchedSource(sourceId="source-a", displayName="Source A", score=1.0)],
+            flowPaths=result.flow_paths,
+        ),
+        flow_units=result.flow_units,
+    )
+
+
 def candidate(**overrides):
     value = {
         "id": "node-gateway",
@@ -765,6 +881,47 @@ def test_semantic_hit_outside_deterministic_document_set_is_hydrated(tmp_path):
 
     assert any(node.nodeId == "create-site-service" for node in response.matchedNodes)
     assert any(node.get("id") == "create-site-service" for node in response.nodes)
+
+
+def test_claim_hydration_scopes_claims_to_requested_source_and_nodes(tmp_path, monkeypatch):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_semantic_graph(
+        db_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "requested-node", "nodeKind": "CALLABLE", "name": "Requested.run", "qualified": "Requested.run"},
+            {"id": "other-node", "nodeKind": "CALLABLE", "name": "Other.run", "qualified": "Other.run"},
+        ],
+        claims=[
+            {"id": "claim-requested", "node_id": "requested-node", "summary": "Requested responsibility."},
+            {"id": "claim-other", "node_id": "other-node", "summary": "Other responsibility."},
+        ],
+    )
+    seed_semantic_graph(
+        db_path,
+        source_id="source-b",
+        nodes=[{"id": "foreign-node", "nodeKind": "CALLABLE", "name": "Foreign.run", "qualified": "Foreign.run"}],
+        claims=[{"id": "claim-foreign", "node_id": "foreign-node", "summary": "Foreign responsibility."}],
+    )
+    statements = []
+    original_connect = analysis_store_module.observed_connect
+
+    def traced_connect(path, *, timeout):
+        conn = original_connect(path, timeout=timeout)
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(analysis_store_module, "observed_connect", traced_connect)
+
+    documents = AnalysisStore(db_path).query_search_documents_by_node_ids([("source-a", "requested-node")], 1)
+
+    assert documents[0]["summary"] == "Requested responsibility."
+    claim_statements = [statement for statement in statements if "WITH claim AS" in statement]
+    assert any("source_id IN ('source-a')" in statement for statement in claim_statements)
+    assert any("node_id IN ('requested-node')" in statement for statement in claim_statements)
+    assert any("claim_kind = 'RESPONSIBILITY'" in statement for statement in claim_statements)
+    assert not any("other-node" in statement for statement in claim_statements)
+    assert not any("source-b" in statement for statement in claim_statements)
 
 
 def test_candidate_pool_dedup_merges_reasons_and_preserves_highest_score():
@@ -1296,6 +1453,997 @@ def test_flow_builder_self_contained_units_preserve_shared_suffix_across_indepen
     assert sum(1 for unit in result.flow_units if "usecase-execute" in unit.node_ids) == 3
     assert sum(1 for unit in result.flow_units if "repository-save" in unit.node_ids) == 3
     assert all("same as previous" not in str(flow.dict()).lower() for flow in result.flow_paths)
+
+
+def test_flow_explanation_llm_receives_one_flow_only_with_shared_suffix_repeated():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start"),
+            flow_graph_node("d-start", "D.start"),
+            flow_graph_node("b-work", "B.work"),
+            flow_graph_node("c-finish", "C.finish"),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),
+            flow_graph_edge("edge-d-b", "d-start", "b-work", evidence_ids=("ev-d-b",)),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish", evidence_ids=("ev-b-c",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 10, 10, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-d-b", None, "edge-d-b", "src/D.java", 12, 12, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-c", None, "edge-b-c", "src/B.java", 20, 20, "c.finish();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="b-work", name="B.work", label="B.work")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    provider = RecordingFlowExplanationProvider()
+
+    FlowExplanationService(provider).explain(query_request("B.work"), execution_from_flow_result(result))
+
+    assert len(provider.calls) == 2
+    first_symbols = [step["symbol"] for step in provider.calls[0]["llmInput"]["steps"]]
+    second_symbols = [step["symbol"] for step in provider.calls[1]["llmInput"]["steps"]]
+    assert first_symbols == ["A.start", "B.work", "C.finish"]
+    assert second_symbols == ["D.start", "B.work", "C.finish"]
+    assert "B.work" in first_symbols and "B.work" in second_symbols
+    assert "C.finish" in first_symbols and "C.finish" in second_symbols
+    assert "D.start" not in json.dumps(provider.calls[0]["llmInput"])
+    assert "A.start" not in json.dumps(provider.calls[1]["llmInput"])
+    assert "previous flow" not in json.dumps(provider.calls, ensure_ascii=False).lower()
+
+
+def test_query_max_flows_truncation_updates_coverage_and_diagnostics():
+    nodes = [
+        graph_node("a-start", "A.start"),
+        graph_node("d-start", "D.start"),
+        graph_node("b-work", "B.work"),
+    ]
+    edges = [
+        graph_edge("edge-a-b", "a-start", "b-work"),
+        graph_edge("edge-d-b", "d-start", "b-work"),
+    ]
+    store = FakeGraphStore(
+        candidates=[candidate(id="b-work", name="B.work", label="B.work")],
+        nodes=nodes,
+        edges=edges,
+    )
+
+    response = service(store, KnowledgeQueryPolicy(max_flow_paths=10)).query(query_request("B.work", max_flows=1))
+
+    assert len(response.flowPaths) == 1
+    assert response.coverage.truncated is True
+    assert response.coverage.continuationAvailable is True
+    diagnostic = next(item for item in response.diagnostics if item.code == "FLOW_QUERY_MAX_FLOWS_REACHED")
+    assert diagnostic.metadata["returnedFlowCount"] == 1
+    assert diagnostic.metadata["availableFlowCount"] == 2
+
+
+def test_ui_flow_explanation_response_preserves_flow_paths_and_deep_narrative():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start"),
+            flow_graph_node("b-work", "B.work"),
+            flow_graph_node("c-finish", "C.finish"),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish", evidence_ids=("ev-b-c",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 10, 10, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-c", None, "edge-b-c", "src/B.java", 20, 20, "c.finish();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    run = service_under_test.explain(query_request("A.start"), execution_from_flow_result(result))
+    response = service_under_test.to_ui_response(run)
+
+    assert response.flowPaths
+    assert response.flowExplanations
+    explanation = response.flowExplanations[0]
+    assert explanation.flowIndex == 1
+    assert len(explanation.narrative) == 2
+    assert [step.order for step in explanation.steps] == [1, 2, 3]
+    assert "answer" not in response.dict()
+
+
+def test_codex_tool_response_excludes_internal_ids_and_includes_addresses_and_evidence():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java"),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java"),
+            flow_graph_node("c-finish", "C.finish", relative_path="src/C.java"),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish", evidence_ids=("ev-b-c",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-node", "a-start", None, "src/A.java", 10, 11, "class A { }"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 10, 11, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-c", None, "edge-b-c", "src/B.java", 20, 21, "c.finish();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    request = query_request("A.start", answer_language="uk")
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    run = service_under_test.explain(request, execution_from_flow_result(result))
+    response = service_under_test.to_tool_response(request, run)
+    payload = response.dict()
+    serialized = json.dumps(payload)
+
+    assert "graphId" not in serialized
+    assert "nodeId" not in serialized
+    assert "edgeId" not in serialized
+    assert "vector" not in serialized.lower()
+    assert payload["queryText"] == "A.start"
+    assert payload["answerLanguage"] == "uk"
+    step = payload["flows"][0]["steps"][0]
+    assert step["symbol"] == "A.start"
+    assert step["address"]["service"] == "Source A"
+    assert step["address"]["relativePath"] == "src/A.java"
+    assert step["address"]["lineStart"] == 10
+    assert step["evidence"][0]["excerpt"] == "class A { }"
+    assert payload["flows"][0]["narrative"]
+
+
+def test_step_evidence_from_another_step_is_rejected_and_cannot_change_tool_address():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java"),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java"),
+        ),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work"),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-node", "a-start", None, "src/A.java", 10, 12, "class A { }"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-node", "b-work", None, "src/B.java", 40, 44, "class B { }"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+    packed = service_under_test.packer.pack(
+        request=query_request("A.start"),
+        flow_unit=result.flow_units[0],
+        flow_index=1,
+        source_display_name="Source A",
+    )
+    step_1_ref = packed.llm_input["steps"][0]["evidence"][0]["ref"]
+    step_2_ref = packed.llm_input["steps"][1]["evidence"][0]["ref"]
+    assert step_1_ref != step_2_ref
+
+    def wrong_step_evidence(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["steps"][0]["evidenceRefs"] = [step_2_ref]
+        return response
+
+    provider = RecordingFlowExplanationProvider([wrong_step_evidence, wrong_step_evidence])
+    service_under_test = FlowExplanationService(provider)
+    request = query_request("A.start")
+
+    run = service_under_test.explain(request, execution_from_flow_result(result))
+    response = service_under_test.to_tool_response(request, run).dict()
+
+    assert len(provider.calls) == 2
+    assert any(f"evidence ref {step_2_ref} is not valid for stepRef s1" in error for error in provider.calls[1]["validationErrors"])
+    assert run.results[0].ok is False
+    step = response["flows"][0]["steps"][0]
+    assert step["address"]["relativePath"] == "src/A.java"
+    assert step["address"]["lineStart"] == 10
+    assert step["address"]["lineEnd"] == 12
+    assert step["evidence"][0]["ref"] == step_1_ref
+
+
+def test_flow_explanation_validator_rejects_invented_symbol_and_retry_can_recover():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work")),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-node", "a-start", None, "src/A.java", 9, 9, "class A { }"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 10, 10, "b.work();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    def invented(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["title"] = "`A.start` calls `Z.missing`"
+        response["narrative"][0]["text"] = "`A.start` calls `Z.missing` even though that target is not in the flow."
+        response["steps"][0]["explanation"] = "`A.start` calls `Z.missing`."
+        return response
+
+    provider = RecordingFlowExplanationProvider([invented, valid_flow_explanation])
+
+    run = FlowExplanationService(provider).explain(query_request("A.start"), execution_from_flow_result(result))
+
+    assert len(provider.calls) == 2
+    assert provider.calls[1]["validationErrors"]
+    assert run.results[0].ok is True
+    assert any(diagnostic.code == FLOW_EXPLANATION_VALIDATION_FAILED for diagnostic in run.diagnostics)
+
+
+def test_flow_explanation_boundary_validation_requires_present_boundary():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"),),
+        edges=(
+            flow_graph_edge(
+                "edge-external",
+                "a-start",
+                None,
+                resolution_status="EXTERNAL_TARGET",
+                external=True,
+                unresolved_target={"name": "Remote.call"},
+                evidence_ids=("ev-external",),
+            ),
+        ),
+        evidence=(FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-external", None, "edge-external", "src/A.java", 30, 30, "remote.call();"),),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    def missing_boundary(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["boundaries"] = []
+        return response
+
+    provider = RecordingFlowExplanationProvider([missing_boundary, valid_flow_explanation])
+
+    run = FlowExplanationService(provider).explain(query_request("A.start"), execution_from_flow_result(result))
+
+    assert len(provider.calls) == 2
+    assert "boundary refs must cover every input boundary; missing ['b1']" in provider.calls[1]["validationErrors"]
+    assert run.results[0].ok is True
+    assert run.results[0].explanation["boundaries"][0]["kind"] == "EXTERNAL_BOUNDARY"
+
+
+def test_flow_explanation_validator_rejects_unknown_evidence_ref():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work")),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-node", "a-start", None, "src/A.java", 9, 9, "class A { }"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 10, 10, "b.work();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+    packed = service_under_test.packer.pack(
+        request=query_request("A.start"),
+        flow_unit=result.flow_units[0],
+        flow_index=1,
+        source_display_name="Source A",
+    )
+    raw = json.dumps(
+        {
+            "title": "`A.start` to `B.work`",
+            "narrative": [
+                {
+                    "text": "`A.start` and `B.work` are explained from this packed flow context.",
+                    "stepRefs": ["s1", "s2"],
+                    "transitionRefs": ["t1"],
+                    "boundaryRefs": [],
+                },
+                {
+                    "text": "The ordered transition is grounded by the context and evidence refs.",
+                    "stepRefs": ["s1", "s2"],
+                    "transitionRefs": ["t1"],
+                    "boundaryRefs": [],
+                },
+            ],
+            "steps": [
+                {"stepRef": "s1", "order": 1, "explanation": "`A.start` prepares the next transition.", "transitionRefs": ["t1"], "evidenceRefs": ["e999"]},
+                {"stepRef": "s2", "order": 2, "explanation": "`B.work` runs.", "transitionRefs": [], "evidenceRefs": []},
+            ],
+            "transitions": [{"transitionRef": "t1", "explanation": "`A.start` leads to `B.work`.", "evidenceRefs": ["e999"]}],
+            "boundaries": [],
+        }
+    )
+
+    parsed, errors, code = FlowExplanationValidator().validate(raw, packed)
+
+    assert parsed is None
+    assert code == FLOW_EXPLANATION_VALIDATION_FAILED
+    assert any("e999" in error for error in errors)
+
+
+def test_flow_explanation_validator_rejects_ukrainian_invented_non_adjacent_call_by_transition_ref():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work"), flow_graph_node("c-finish", "C.finish")),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work"),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    def invented_transition(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["transitions"][0]["explanation"] = "`A.start` викликає `C.finish` напряму."
+        return response
+
+    provider = RecordingFlowExplanationProvider([invented_transition, valid_flow_explanation])
+
+    run = FlowExplanationService(provider).explain(query_request("A.start", answer_language="uk"), execution_from_flow_result(result))
+
+    assert len(provider.calls) == 2
+    assert any("C.finish" in error and "not grounded by refs" in error for error in provider.calls[1]["validationErrors"])
+    assert run.results[0].ok is True
+
+
+def test_flow_explanation_validator_rejects_invented_non_dotted_symbol():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work")),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work"),),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    def invented_class(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["steps"][0]["explanation"] = "`MissingWorker` handles this step."
+        return response
+
+    provider = RecordingFlowExplanationProvider([invented_class, valid_flow_explanation])
+
+    run = FlowExplanationService(provider).explain(query_request("A.start"), execution_from_flow_result(result))
+
+    assert len(provider.calls) == 2
+    assert any("MissingWorker" in error for error in provider.calls[1]["validationErrors"])
+    assert run.results[0].ok is True
+
+
+def test_flow_explanation_validator_rejects_backticked_lowercase_invented_method():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work")),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work"),),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    def invented_lowercase_method(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["steps"][0]["explanation"] = "`save` persists this step even though the method is not in context."
+        return response
+
+    provider = RecordingFlowExplanationProvider([invented_lowercase_method, valid_flow_explanation])
+
+    run = FlowExplanationService(provider).explain(query_request("A.start"), execution_from_flow_result(result))
+
+    assert len(provider.calls) == 2
+    assert any("save" in error for error in provider.calls[1]["validationErrors"])
+    assert run.results[0].ok is True
+
+
+def test_flow_explanation_validator_does_not_reject_latin_language_prose():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work")),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work"),),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    def multilingual_prose(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["narrative"][0]["text"] = (
+            "Le flux explique la premiere etape avec un contexte precis sans mentionner un symbole de code explicite."
+        )
+        response["narrative"][1]["text"] = (
+            "Die zweite Beschreibung bleibt fachlich und Espanol tambien funciona porque no hay identificadores marcados."
+        )
+        return response
+
+    provider = RecordingFlowExplanationProvider([multilingual_prose])
+
+    run = FlowExplanationService(provider).explain(query_request("A.start", answer_language="fr"), execution_from_flow_result(result))
+
+    assert len(provider.calls) == 1
+    assert run.results[0].ok is True
+
+
+def test_flow_explanation_validator_rejects_step_referencing_another_steps_transition():
+    context = PackedFlowContext(
+        flow_index=1,
+        llm_input={
+            "steps": [
+                {"stepRef": "s1", "order": 1, "symbol": "A.start", "nodeLabel": "A.start", "qualifiedName": None},
+                {"stepRef": "s2", "order": 2, "symbol": "B.work", "nodeLabel": "B.work", "qualifiedName": None},
+                {"stepRef": "s3", "order": 3, "symbol": "C.finish", "nodeLabel": "C.finish", "qualifiedName": None},
+            ],
+            "transitions": [
+                {"transitionRef": "t1", "fromStepRef": "s1", "toStepRef": "s2"},
+                {"transitionRef": "t2", "fromStepRef": "s2", "toStepRef": "s3"},
+            ],
+            "boundaries": [],
+        },
+        evidence_by_ref={},
+        evidence_id_by_ref={},
+    )
+    response = {
+        "title": "`A.start` to `C.finish`",
+        "narrative": [
+            {
+                "text": "`A.start` begins the flow and the ordered steps remain grounded in explicit references.",
+                "stepRefs": ["s1", "s2", "s3"],
+                "transitionRefs": ["t1", "t2"],
+                "boundaryRefs": [],
+            },
+            {
+                "text": "`B.work` continues to `C.finish` only through the recorded transitions from the context.",
+                "stepRefs": ["s1", "s2", "s3"],
+                "transitionRefs": ["t1", "t2"],
+                "boundaryRefs": [],
+            },
+        ],
+        "steps": [
+            {"stepRef": "s1", "order": 1, "explanation": "`A.start` incorrectly references another transition.", "transitionRefs": ["t2"], "evidenceRefs": []},
+            {"stepRef": "s2", "order": 2, "explanation": "`B.work` references its outgoing transition.", "transitionRefs": ["t2"], "evidenceRefs": []},
+            {"stepRef": "s3", "order": 3, "explanation": "`C.finish` is terminal.", "transitionRefs": [], "evidenceRefs": []},
+        ],
+        "transitions": [
+            {"transitionRef": "t1", "explanation": "`A.start` leads to `B.work`.", "evidenceRefs": []},
+            {"transitionRef": "t2", "explanation": "`B.work` leads to `C.finish`.", "evidenceRefs": []},
+        ],
+        "boundaries": [],
+    }
+
+    parsed, errors, code = FlowExplanationValidator().validate(json.dumps(response), context)
+
+    assert parsed is None
+    assert code == FLOW_EXPLANATION_VALIDATION_FAILED
+    assert any("stepRef s1 references another step's transition refs ['t2']" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "mutator,expected",
+    [
+        (lambda response: response["transitions"].reverse(), "transition refs must preserve input order"),
+        (lambda response: response["transitions"].append(dict(response["transitions"][0])), "transition refs must be unique"),
+        (
+            lambda response: response["transitions"].append(
+                {"transitionRef": "t999", "explanation": "Extra transition.", "evidenceRefs": []}
+            ),
+            "transition refs are not present in the input flow",
+        ),
+        (lambda response: response["transitions"].pop(), "transition refs must cover every input transition"),
+        (lambda response: response["steps"][0].update({"transitionRefs": ["t999"]}), "references unknown transitions"),
+        (lambda response: response["steps"][0].update({"transitionRefs": []}), "must reference its exact outgoing transition refs"),
+        (lambda response: response["steps"][2].update({"transitionRefs": ["t2"]}), "terminal stepRef s3 must not reference transitions"),
+    ],
+)
+def test_flow_explanation_transition_refs_reject_reordered_duplicate_extra_missing_unknown_and_terminal(mutator, expected):
+    context = PackedFlowContext(
+        flow_index=1,
+        llm_input={
+            "steps": [
+                {"stepRef": "s1", "order": 1, "symbol": "A.start", "nodeLabel": "A.start", "qualifiedName": None},
+                {"stepRef": "s2", "order": 2, "symbol": "B.work", "nodeLabel": "B.work", "qualifiedName": None},
+                {"stepRef": "s3", "order": 3, "symbol": "C.finish", "nodeLabel": "C.finish", "qualifiedName": None},
+            ],
+            "transitions": [
+                {"transitionRef": "t1", "fromStepRef": "s1", "toStepRef": "s2", "evidence": []},
+                {"transitionRef": "t2", "fromStepRef": "s2", "toStepRef": "s3", "evidence": []},
+            ],
+            "boundaries": [],
+        },
+        evidence_by_ref={},
+        evidence_id_by_ref={},
+    )
+    response = {
+        "title": "`A.start` to `C.finish`",
+        "narrative": [
+            {
+                "text": "`A.start` begins the flow and the ordered steps remain grounded in explicit references.",
+                "stepRefs": ["s1", "s2", "s3"],
+                "transitionRefs": ["t1", "t2"],
+                "boundaryRefs": [],
+            },
+            {
+                "text": "`B.work` continues to `C.finish` only through the recorded transitions from the context.",
+                "stepRefs": ["s1", "s2", "s3"],
+                "transitionRefs": ["t1", "t2"],
+                "boundaryRefs": [],
+            },
+        ],
+        "steps": [
+            {"stepRef": "s1", "order": 1, "explanation": "`A.start` references its outgoing transition.", "transitionRefs": ["t1"], "evidenceRefs": []},
+            {"stepRef": "s2", "order": 2, "explanation": "`B.work` references its outgoing transition.", "transitionRefs": ["t2"], "evidenceRefs": []},
+            {"stepRef": "s3", "order": 3, "explanation": "`C.finish` is terminal.", "transitionRefs": [], "evidenceRefs": []},
+        ],
+        "transitions": [
+            {"transitionRef": "t1", "explanation": "`A.start` leads to `B.work`.", "evidenceRefs": []},
+            {"transitionRef": "t2", "explanation": "`B.work` leads to `C.finish`.", "evidenceRefs": []},
+        ],
+        "boundaries": [],
+    }
+    mutator(response)
+
+    parsed, errors, code = FlowExplanationValidator().validate(json.dumps(response), context)
+
+    assert parsed is None
+    assert code == FLOW_EXPLANATION_VALIDATION_FAILED
+    assert any(expected in error for error in errors)
+
+
+def test_flow_explanation_validator_accepts_valid_boundary_target_mention():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"),),
+        edges=(
+            flow_graph_edge(
+                "edge-external",
+                "a-start",
+                None,
+                resolution_status="EXTERNAL_TARGET",
+                external=True,
+                unresolved_target={"name": "Remote.call"},
+            ),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    def mentions_target(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["boundaries"][0]["explanation"] = "The flow reaches the allowed `Remote.call` external target."
+        response["narrative"][1]["text"] = "The ordered path ends at `Remote.call` because the boundary fact is present in this flow."
+        response["narrative"][1]["boundaryRefs"] = ["b1"]
+        return response
+
+    provider = RecordingFlowExplanationProvider([mentions_target])
+
+    run = FlowExplanationService(provider).explain(query_request("A.start"), execution_from_flow_result(result))
+
+    assert len(provider.calls) == 1
+    assert run.results[0].ok is True
+
+
+@pytest.mark.parametrize(
+    "mutator,expected",
+    [
+        (lambda response: response["boundaries"].reverse(), "boundary refs must preserve input order"),
+        (lambda response: response["boundaries"].append(dict(response["boundaries"][0])), "boundary refs must be unique"),
+        (
+            lambda response: response["boundaries"].append(
+                {"boundaryRef": "b999", "kind": "EXTERNAL_BOUNDARY", "explanation": "Extra boundary.", "evidenceRefs": []}
+            ),
+            "boundary refs are not present in the input flow",
+        ),
+        (lambda response: response["boundaries"].pop(), "boundary refs must cover every input boundary"),
+    ],
+)
+def test_flow_explanation_boundary_refs_reject_reordered_duplicate_extra_and_missing(mutator, expected):
+    context = PackedFlowContext(
+        flow_index=1,
+        llm_input={
+            "steps": [{"stepRef": "s1", "order": 1, "symbol": "A.start", "nodeLabel": "A.start", "qualifiedName": None}],
+            "transitions": [],
+            "boundaries": [
+                {"boundaryRef": "b1", "kind": "EXTERNAL_BOUNDARY", "target": "Remote.one", "evidence": []},
+                {"boundaryRef": "b2", "kind": "UNRESOLVED_BOUNDARY", "target": "Remote.two", "evidence": []},
+            ],
+        },
+        evidence_by_ref={},
+        evidence_id_by_ref={},
+    )
+    response = {
+        "title": "`A.start` boundaries",
+        "narrative": [
+            {
+                "text": "`A.start` reaches the first boundary and then the second boundary from explicit facts.",
+                "stepRefs": ["s1"],
+                "transitionRefs": [],
+                "boundaryRefs": ["b1", "b2"],
+            },
+            {
+                "text": "`Remote.one` and `Remote.two` are allowed targets because both are present in the packed context.",
+                "stepRefs": ["s1"],
+                "transitionRefs": [],
+                "boundaryRefs": ["b1", "b2"],
+            },
+        ],
+        "steps": [{"stepRef": "s1", "order": 1, "explanation": "`A.start` reaches boundaries.", "transitionRefs": [], "evidenceRefs": []}],
+        "transitions": [],
+        "boundaries": [
+            {"boundaryRef": "b1", "kind": "EXTERNAL_BOUNDARY", "explanation": "`Remote.one` is external.", "evidenceRefs": []},
+            {"boundaryRef": "b2", "kind": "UNRESOLVED_BOUNDARY", "explanation": "`Remote.two` is unresolved.", "evidenceRefs": []},
+        ],
+    }
+    mutator(response)
+
+    parsed, errors, code = FlowExplanationValidator().validate(json.dumps(response), context)
+
+    assert parsed is None
+    assert code == FLOW_EXPLANATION_VALIDATION_FAILED
+    assert any(expected in error for error in errors)
+
+
+def test_ui_flow_explanation_evidence_refs_resolve_to_same_response_evidence():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work")),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-node", "a-start", None, "src/A.java", 9, 9, "class A { }"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 10, 10, "b.work();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    response = service_under_test.to_ui_response(service_under_test.explain(query_request("A.start"), execution_from_flow_result(result)))
+
+    evidence_ids = {item["id"] for item in response.dict()["evidence"]}
+    refs = {ref for explanation in response.flowExplanations for step in explanation.steps for ref in step.evidenceRefs}
+    assert refs
+    assert refs <= evidence_ids
+
+
+def test_tool_context_boundary_target_does_not_expose_unresolved_target_metadata():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"),),
+        edges=(
+            flow_graph_edge(
+                "edge-external",
+                "a-start",
+                None,
+                resolution_status="EXTERNAL_TARGET",
+                external=True,
+                unresolved_target={
+                    "name": "Remote.call",
+                    "graphId": "leaked-graph",
+                    "nodeId": "leaked-node",
+                    "databaseId": "leaked-db",
+                    "vectorId": "leaked-vector",
+                },
+            ),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    request = query_request("A.start")
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    payload = service_under_test.to_tool_response(request, service_under_test.explain(request, execution_from_flow_result(result))).dict()
+    serialized = json.dumps(payload)
+
+    assert payload["flows"][0]["boundaries"][0]["target"] == "Remote.call"
+    assert "leaked-graph" not in serialized
+    assert "leaked-node" not in serialized
+    assert "leaked-db" not in serialized
+    assert "leaked-vector" not in serialized
+
+
+def test_total_explanation_deadline_stops_remaining_flow_calls():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start"),
+            flow_graph_node("d-start", "D.start"),
+            flow_graph_node("b-work", "B.work"),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work"),
+            flow_graph_edge("edge-d-b", "d-start", "b-work"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="b-work", name="B.work", label="B.work")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    provider = RecordingFlowExplanationProvider(delay_seconds=0.02)
+
+    run = FlowExplanationService(provider, request_deadline_seconds=0.03).explain(query_request("B.work"), execution_from_flow_result(result))
+
+    assert len(provider.calls) == 1
+    assert [item.ok for item in run.results] == [True, False]
+    assert any(diagnostic.code == FLOW_EXPLANATION_LIMIT_REACHED and diagnostic.metadata["flowIndex"] == 2 for diagnostic in run.diagnostics)
+
+
+def test_invalid_first_response_consumes_budget_and_retry_is_not_started():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work")),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work"),),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    def invalid_one_line(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["narrative"] = [{"text": "Too short.", "stepRefs": ["s1"], "transitionRefs": [], "boundaryRefs": []}]
+        return response
+
+    provider = RecordingFlowExplanationProvider([invalid_one_line], delay_seconds=0.02)
+
+    run = FlowExplanationService(provider, request_deadline_seconds=0.028).explain(
+        query_request("A.start"),
+        execution_from_flow_result(result),
+    )
+
+    assert len(provider.calls) == 1
+    assert provider.calls[0]["timeoutSeconds"] is not None
+    assert run.results[0].ok is False
+    assert any(diagnostic.code == FLOW_EXPLANATION_LIMIT_REACHED for diagnostic in run.results[0].diagnostics)
+
+
+def test_in_progress_llm_call_is_bounded_by_remaining_timeout():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work")),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work"),),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    class TimeoutProvider:
+        def __init__(self):
+            self.calls = []
+
+        def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+            self.calls.append({"timeoutSeconds": timeout_seconds, "validationErrors": list(validation_errors or [])})
+            raise TimeoutError("simulated provider timeout")
+
+    provider = TimeoutProvider()
+
+    started = time.monotonic()
+    run = FlowExplanationService(provider, request_deadline_seconds=0.05).explain(
+        query_request("A.start"),
+        execution_from_flow_result(result),
+    )
+    elapsed = time.monotonic() - started
+
+    assert len(provider.calls) == 1
+    assert 0 < provider.calls[0]["timeoutSeconds"] <= 0.05
+    assert elapsed < 0.05
+    assert run.results[0].ok is False
+    assert any(diagnostic.code == FLOW_EXPLANATION_LIMIT_REACHED for diagnostic in run.results[0].diagnostics)
+
+
+def test_cancellation_event_stops_subsequent_flow_calls():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start"),
+            flow_graph_node("d-start", "D.start"),
+            flow_graph_node("b-work", "B.work"),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work"),
+            flow_graph_edge("edge-d-b", "d-start", "b-work"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="b-work", name="B.work", label="B.work")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    cancel_event = threading.Event()
+
+    def cancel_after_first_call(llm_input, validation_errors=None):
+        cancel_event.set()
+        return valid_flow_explanation(llm_input)
+
+    provider = RecordingFlowExplanationProvider([cancel_after_first_call, valid_flow_explanation])
+
+    run = FlowExplanationService(provider, cancel_event=cancel_event).explain(
+        query_request("B.work"),
+        execution_from_flow_result(result),
+    )
+
+    assert len(provider.calls) == 1
+    assert [item.ok for item in run.results] == [False, False]
+    assert all(
+        any(diagnostic.code == FLOW_EXPLANATION_LIMIT_REACHED for diagnostic in result.diagnostics)
+        for result in run.results
+    )
+
+
+def test_one_line_narrative_is_rejected_and_retried_once():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work")),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work"),),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    def one_line(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["narrative"] = [{"text": "A.start flows.", "stepRefs": ["s1"], "transitionRefs": [], "boundaryRefs": []}]
+        return response
+
+    provider = RecordingFlowExplanationProvider([one_line, valid_flow_explanation])
+
+    run = FlowExplanationService(provider).explain(query_request("A.start"), execution_from_flow_result(result))
+
+    assert len(provider.calls) == 2
+    assert any("at least two grounded blocks" in error for error in provider.calls[1]["validationErrors"])
+    assert run.results[0].ok is True
+
+
+def test_one_long_narrative_block_is_rejected_and_retried_once():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work")),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work"),),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    def one_long_block(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["narrative"] = [
+            {
+                "text": (
+                    "This detailed paragraph describes the ordered flow, explains the grounded transition, "
+                    "connects the first step to the second step, and still remains a single narrative block."
+                ),
+                "stepRefs": ["s1", "s2"],
+                "transitionRefs": ["t1"],
+                "boundaryRefs": [],
+            }
+        ]
+        return response
+
+    provider = RecordingFlowExplanationProvider([one_long_block, valid_flow_explanation])
+
+    run = FlowExplanationService(provider).explain(query_request("A.start"), execution_from_flow_result(result))
+
+    assert len(provider.calls) == 2
+    assert any("at least two grounded blocks" in error for error in provider.calls[1]["validationErrors"])
+    assert run.results[0].ok is True
+
+
+def test_one_failed_flow_does_not_kill_other_flow_tool_context():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start"),
+            flow_graph_node("d-start", "D.start"),
+            flow_graph_node("b-work", "B.work"),
+            flow_graph_node("c-finish", "C.finish"),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),
+            flow_graph_edge("edge-d-b", "d-start", "b-work", evidence_ids=("ev-d-b",)),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish", evidence_ids=("ev-b-c",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 10, 10, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-d-b", None, "edge-d-b", "src/D.java", 12, 12, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-c", None, "edge-b-c", "src/B.java", 20, 20, "c.finish();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="b-work", name="B.work", label="B.work")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    def invalid(llm_input, validation_errors=None):
+        response = valid_flow_explanation(llm_input)
+        response["title"] = "`A.start` calls `Z.missing`"
+        response["steps"][0]["explanation"] = "`A.start` calls `Z.missing`."
+        return response
+
+    provider = RecordingFlowExplanationProvider([valid_flow_explanation, invalid, invalid])
+    request = query_request("B.work")
+    service_under_test = FlowExplanationService(provider)
+
+    run = service_under_test.explain(request, execution_from_flow_result(result))
+    response = service_under_test.to_tool_response(request, run)
+
+    assert [flow.ok for flow in run.results] == [True, False]
+    assert response.status == KnowledgeQueryStatus.OK
+    assert response.flows[0].narrative
+    assert response.flows[1].narrative == []
+    assert response.flows[1].steps
+    assert any(diagnostic.code == FLOW_EXPLANATION_VALIDATION_FAILED for diagnostic in response.flows[1].diagnostics)
+
+
+def test_flow_explanation_context_excludes_unrelated_flows_and_raw_debug_fields():
+    bundle = FlowGraphBundle(
+        nodes=(flow_graph_node("a-start", "A.start"), flow_graph_node("b-work", "B.work"), flow_graph_node("c-finish", "C.finish")),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish", evidence_ids=("ev-b-c",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 10, 10, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-c", None, "edge-b-c", "src/B.java", 20, 20, "c.finish();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    provider = RecordingFlowExplanationProvider()
+
+    FlowExplanationService(provider).explain(query_request("A.start"), execution_from_flow_result(result))
+    packed_context = provider.calls[0]["llmInput"]
+    serialized = json.dumps(packed_context)
+
+    assert "graphId" not in serialized
+    assert "nodeId" not in serialized
+    assert "edgeId" not in serialized
+    assert "vector" not in serialized.lower()
+    assert "debug" not in serialized.lower()
+    assert [step["symbol"] for step in packed_context["steps"]] == ["A.start", "B.work", "C.finish"]
 
 
 def test_flow_builder_preserves_shared_prefix_side_effect_branches_in_evidence_order():
