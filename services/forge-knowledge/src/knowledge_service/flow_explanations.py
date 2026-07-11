@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import urllib.parse
 from collections import Counter
 from dataclasses import dataclass, field
@@ -34,7 +35,39 @@ FLOW_EXPLANATION_LIMIT_REACHED = "FLOW_EXPLANATION_LIMIT_REACHED"
 FLOW_EXPLANATION_SKIPPED_NO_FLOW = "FLOW_EXPLANATION_SKIPPED_NO_FLOW"
 
 _DOTTED_SYMBOL_RE = re.compile(r"\b[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+\b")
-_CALL_WORD_RE = re.compile(r"\b(?:calls?|invokes?|delegates?\s+to|forwards?\s+to)\b", re.IGNORECASE)
+_BACKTICK_TOKEN_RE = re.compile(r"`([^`]+)`")
+_CODE_TOKEN_RE = re.compile(r"\b[A-Za-z_$][A-Za-z0-9_$]{2,}\b")
+_COMMON_NARRATIVE_TOKENS = {
+    "The",
+    "This",
+    "That",
+    "These",
+    "Those",
+    "Flow",
+    "Step",
+    "When",
+    "Then",
+    "Because",
+    "Using",
+    "Provided",
+    "Evidence",
+    "Boundary",
+    "External",
+    "Unresolved",
+    "Target",
+    "Source",
+    "Each",
+    "Ordered",
+    "Path",
+    "Input",
+    "Output",
+    "Request",
+    "Response",
+    "First",
+    "Second",
+    "Finally",
+    "Narrative",
+}
 
 
 @dataclass(frozen=True)
@@ -48,6 +81,7 @@ class PackedFlowContext:
     flow_index: int
     llm_input: Dict[str, Any]
     evidence_by_ref: Dict[str, FlowGraphEvidence]
+    evidence_id_by_ref: Dict[str, str]
 
     @property
     def evidence_refs(self) -> set[str]:
@@ -92,10 +126,14 @@ class FlowExplanationPromptRenderer:
         return (
             "You explain exactly one code flow using only the provided flow facts.\n"
             "Return strict JSON only. Do not use Markdown. Do not invent calls, symbols, classes, methods, side effects, or boundaries.\n"
-            "The response shape is: {\"title\":\"string\",\"narrative\":[\"string\"],"
-            "\"steps\":[{\"order\":1,\"explanation\":\"string\",\"evidenceRefs\":[\"e1\"]}],"
-            "\"boundaries\":[{\"kind\":\"EXTERNAL_BOUNDARY\",\"explanation\":\"string\",\"evidenceRefs\":[\"e3\"]}]}.\n"
-            "The steps array must cover every input step order. Boundary explanations are required when input boundaries exist.\n"
+            "The response shape is: {\"title\":\"string\","
+            "\"narrative\":[{\"text\":\"string\",\"stepRefs\":[\"s1\"],\"transitionRefs\":[\"t1\"],\"boundaryRefs\":[\"b1\"]}],"
+            "\"steps\":[{\"stepRef\":\"s1\",\"order\":1,\"explanation\":\"string\",\"transitionRefs\":[\"t1\"],\"evidenceRefs\":[\"e1\"]}],"
+            "\"transitions\":[{\"transitionRef\":\"t1\",\"explanation\":\"string\",\"evidenceRefs\":[\"e1\"]}],"
+            "\"boundaries\":[{\"boundaryRef\":\"b1\",\"kind\":\"EXTERNAL_BOUNDARY\",\"explanation\":\"string\",\"evidenceRefs\":[\"e3\"]}]}.\n"
+            "The steps array must cover every input stepRef/order. The transitions array must cover every input transitionRef. "
+            "Boundary explanations are required for every input boundaryRef when input boundaries exist.\n"
+            "Use stepRefs, transitionRefs, and boundaryRefs to ground each sentence in the exact input facts it explains.\n"
             "Use the requested answerLanguage. Shared nodes are repeated here because this is a self-contained flow.\n"
             f"{validation_block}"
             "BEGIN_FLOW_CONTEXT_JSON\n"
@@ -161,19 +199,24 @@ class FlowExplanationContextPacker:
     ) -> PackedFlowContext:
         evidence_by_ref: Dict[str, FlowGraphEvidence] = {}
         evidence_ref_by_id: Dict[str, str] = {}
+        evidence_id_by_ref: Dict[str, str] = {}
         for index, evidence in enumerate(flow_unit.evidence, start=1):
             ref = f"e{index}"
             evidence_by_ref[ref] = evidence
             evidence_ref_by_id[evidence.evidence_id] = ref
+            evidence_id_by_ref[ref] = evidence.evidence_id
 
         nodes = list(flow_unit.nodes)
         edges_by_from_to = self._edges_by_from_to(flow_unit.edges)
         steps: List[Dict[str, Any]] = []
+        transitions: List[Dict[str, Any]] = []
         for order, node in enumerate(nodes, start=1):
             next_node = nodes[order] if order < len(nodes) else None
             call_edge = edges_by_from_to.get((node.node_id, next_node.node_id)) if next_node else None
+            step_ref = f"s{order}"
             step_refs = self._step_refs(node, call_edge, flow_unit.evidence, evidence_ref_by_id)
             step: Dict[str, Any] = {
+                "stepRef": step_ref,
                 "order": order,
                 "symbol": self._symbol(node),
                 "nodeLabel": node.label,
@@ -186,17 +229,34 @@ class FlowExplanationContextPacker:
             }
             if next_node and call_edge:
                 call_refs = self._edge_refs(call_edge, flow_unit.evidence, evidence_ref_by_id)
+                transition_ref = f"t{order}"
                 step["callToNext"] = {
+                    "transitionRef": transition_ref,
+                    "fromStepRef": step_ref,
+                    "toStepRef": f"s{order + 1}",
                     "order": order + 1,
                     "symbol": self._symbol(next_node),
                     "evidenceRefs": call_refs,
                     "evidence": [self._evidence_item(ref, evidence_by_ref[ref]) for ref in call_refs],
                 }
+                transitions.append(
+                    {
+                        "transitionRef": transition_ref,
+                        "fromStepRef": step_ref,
+                        "toStepRef": f"s{order + 1}",
+                        "fromOrder": order,
+                        "toOrder": order + 1,
+                        "fromSymbol": self._symbol(node),
+                        "toSymbol": self._symbol(next_node),
+                        "evidenceRefs": call_refs,
+                        "evidence": [self._evidence_item(ref, evidence_by_ref[ref]) for ref in call_refs],
+                    }
+                )
             steps.append(step)
 
         boundaries = [
-            self._boundary_item(edge, flow_unit.evidence, evidence_ref_by_id, evidence_by_ref)
-            for edge in flow_unit.boundary_edges
+            self._boundary_item(index, edge, flow_unit.evidence, evidence_ref_by_id, evidence_by_ref)
+            for index, edge in enumerate(flow_unit.boundary_edges, start=1)
         ]
         llm_input: Dict[str, Any] = {
             "queryText": request.queryText,
@@ -204,9 +264,15 @@ class FlowExplanationContextPacker:
             "flowIndex": flow_index,
             "source": source_display_name,
             "steps": steps,
+            "transitions": transitions,
             "boundaries": boundaries,
         }
-        return PackedFlowContext(flow_index=flow_index, llm_input=llm_input, evidence_by_ref=evidence_by_ref)
+        return PackedFlowContext(
+            flow_index=flow_index,
+            llm_input=llm_input,
+            evidence_by_ref=evidence_by_ref,
+            evidence_id_by_ref=evidence_id_by_ref,
+        )
 
     def _edges_by_from_to(self, edges: Sequence[FlowGraphEdge]) -> Dict[tuple[str, str], FlowGraphEdge]:
         result: Dict[tuple[str, str], FlowGraphEdge] = {}
@@ -247,6 +313,7 @@ class FlowExplanationContextPacker:
 
     def _boundary_item(
         self,
+        index: int,
         edge: FlowGraphEdge,
         evidence: Sequence[FlowGraphEvidence],
         evidence_ref_by_id: Mapping[str, str],
@@ -254,6 +321,7 @@ class FlowExplanationContextPacker:
     ) -> Dict[str, Any]:
         refs = self._edge_refs(edge, evidence, evidence_ref_by_id)
         return {
+            "boundaryRef": f"b{index}",
             "kind": self._boundary_kind(edge),
             "target": self._boundary_target(edge),
             "evidence": [self._evidence_item(ref, evidence_by_ref[ref]) for ref in refs],
@@ -282,12 +350,10 @@ class FlowExplanationContextPacker:
 
     def _boundary_target(self, edge: FlowGraphEdge) -> str | None:
         target = edge.unresolved_target or {}
-        for key in ("name", "qualifiedName", "target", "kindHint"):
+        for key in ("name", "qualifiedName", "target", "kindHint", "displayName", "label", "symbol"):
             value = target.get(key) if isinstance(target, dict) else None
-            if value:
-                return str(value)
-        if isinstance(target, dict) and target:
-            return json.dumps(target, ensure_ascii=False, sort_keys=True)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
         return None
 
 
@@ -314,9 +380,27 @@ class FlowExplanationValidator:
         title = parsed.get("title")
         if not isinstance(title, str) or not title.strip():
             errors.append("title must be a non-empty string")
+
         narrative = parsed.get("narrative")
-        if not isinstance(narrative, list) or not narrative or not all(isinstance(item, str) and item.strip() for item in narrative):
-            errors.append("narrative must be a non-empty list of non-empty strings")
+        normalized_narrative: List[Dict[str, Any]] = []
+        if not isinstance(narrative, list) or not narrative:
+            errors.append("narrative must be a non-empty list")
+        else:
+            for index, item in enumerate(narrative, start=1):
+                if not isinstance(item, dict):
+                    errors.append(f"narrative[{index}] must be an object")
+                    continue
+                text = item.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    errors.append(f"narrative[{index}].text must be a non-empty string")
+                normalized_narrative.append(
+                    {
+                        "text": str(text or "").strip(),
+                        "stepRefs": self._string_list(item.get("stepRefs")),
+                        "transitionRefs": self._string_list(item.get("transitionRefs")),
+                        "boundaryRefs": self._string_list(item.get("boundaryRefs")),
+                    }
+                )
 
         steps: List[Dict[str, Any]] = []
         raw_steps = parsed.get("steps")
@@ -327,6 +411,9 @@ class FlowExplanationValidator:
                 if not isinstance(item, dict):
                     errors.append(f"steps[{index}] must be an object")
                     continue
+                step_ref = item.get("stepRef")
+                if not isinstance(step_ref, str) or not step_ref.strip():
+                    errors.append(f"steps[{index}].stepRef must be a non-empty string")
                 order = item.get("order")
                 if isinstance(order, bool) or not isinstance(order, int):
                     errors.append(f"steps[{index}].order must be an integer")
@@ -336,7 +423,32 @@ class FlowExplanationValidator:
                     errors.append(f"steps[{index}].explanation must be a non-empty string")
                 steps.append(
                     {
+                        "stepRef": str(step_ref or "").strip(),
                         "order": order,
+                        "explanation": str(explanation or ""),
+                        "transitionRefs": self._string_list(item.get("transitionRefs")),
+                        "evidenceRefs": self._string_list(item.get("evidenceRefs")),
+                    }
+                )
+
+        transitions: List[Dict[str, Any]] = []
+        raw_transitions = parsed.get("transitions", [])
+        if not isinstance(raw_transitions, list):
+            errors.append("transitions must be a list")
+        else:
+            for index, item in enumerate(raw_transitions, start=1):
+                if not isinstance(item, dict):
+                    errors.append(f"transitions[{index}] must be an object")
+                    continue
+                transition_ref = item.get("transitionRef")
+                explanation = item.get("explanation")
+                if not isinstance(transition_ref, str) or not transition_ref.strip():
+                    errors.append(f"transitions[{index}].transitionRef must be a non-empty string")
+                if not isinstance(explanation, str) or not explanation.strip():
+                    errors.append(f"transitions[{index}].explanation must be a non-empty string")
+                transitions.append(
+                    {
+                        "transitionRef": str(transition_ref or "").strip(),
                         "explanation": str(explanation or ""),
                         "evidenceRefs": self._string_list(item.get("evidenceRefs")),
                     }
@@ -351,14 +463,18 @@ class FlowExplanationValidator:
                 if not isinstance(item, dict):
                     errors.append(f"boundaries[{index}] must be an object")
                     continue
+                boundary_ref = item.get("boundaryRef")
                 kind = item.get("kind")
                 explanation = item.get("explanation")
+                if not isinstance(boundary_ref, str) or not boundary_ref.strip():
+                    errors.append(f"boundaries[{index}].boundaryRef must be a non-empty string")
                 if not isinstance(kind, str) or not kind.strip():
                     errors.append(f"boundaries[{index}].kind must be a non-empty string")
                 if not isinstance(explanation, str) or not explanation.strip():
                     errors.append(f"boundaries[{index}].explanation must be a non-empty string")
                 boundaries.append(
                     {
+                        "boundaryRef": str(boundary_ref or "").strip(),
                         "kind": str(kind or ""),
                         "explanation": str(explanation or ""),
                         "evidenceRefs": self._string_list(item.get("evidenceRefs")),
@@ -366,48 +482,104 @@ class FlowExplanationValidator:
                 )
         if errors:
             return {}, errors
-        return {"title": title.strip(), "narrative": [item.strip() for item in narrative], "steps": steps, "boundaries": boundaries}, []
+        return {
+            "title": title.strip(),
+            "narrative": normalized_narrative,
+            "steps": steps,
+            "transitions": transitions,
+            "boundaries": boundaries,
+        }, []
 
     def _validate_grounding(self, explanation: Mapping[str, Any], context: PackedFlowContext) -> List[str]:
         errors: List[str] = []
         input_steps = context.llm_input.get("steps") if isinstance(context.llm_input.get("steps"), list) else []
-        input_orders = {int(step["order"]) for step in input_steps if isinstance(step, dict) and isinstance(step.get("order"), int)}
-        returned_orders = [int(step["order"]) for step in explanation.get("steps", [])]
-        returned_order_set = set(returned_orders)
-        outside_orders = sorted(returned_order_set - input_orders)
-        if outside_orders:
-            errors.append(f"step orders are outside the input flow: {outside_orders}")
-        missing_orders = sorted(input_orders - returned_order_set)
-        if missing_orders:
-            errors.append(f"steps must cover every input flow step; missing {missing_orders}")
+        input_transitions = context.llm_input.get("transitions") if isinstance(context.llm_input.get("transitions"), list) else []
+        input_boundaries = context.llm_input.get("boundaries") if isinstance(context.llm_input.get("boundaries"), list) else []
+
+        input_step_by_ref = {
+            str(step.get("stepRef")): step
+            for step in input_steps
+            if isinstance(step, dict) and isinstance(step.get("stepRef"), str) and isinstance(step.get("order"), int)
+        }
+        input_step_ref_by_order = {int(step["order"]): ref for ref, step in input_step_by_ref.items()}
+        input_transition_by_ref = {
+            str(item.get("transitionRef")): item
+            for item in input_transitions
+            if isinstance(item, dict) and isinstance(item.get("transitionRef"), str)
+        }
+        input_boundary_by_ref = {
+            str(item.get("boundaryRef")): item
+            for item in input_boundaries
+            if isinstance(item, dict) and isinstance(item.get("boundaryRef"), str)
+        }
+
+        output_steps = [item for item in explanation.get("steps", []) if isinstance(item, dict)]
+        output_step_refs = [str(step.get("stepRef") or "") for step in output_steps]
+        self._extend_ref_set_errors(errors, "step", set(input_step_by_ref), output_step_refs)
+        returned_orders = [int(step["order"]) for step in output_steps if isinstance(step.get("order"), int)]
         duplicate_orders = sorted(order for order, count in Counter(returned_orders).items() if count > 1)
         if duplicate_orders:
             errors.append(f"step orders must be unique; duplicates {duplicate_orders}")
+        for step in output_steps:
+            step_ref = str(step.get("stepRef") or "")
+            order = int(step.get("order") or 0)
+            expected_ref = input_step_ref_by_order.get(order)
+            if expected_ref is None:
+                errors.append(f"step order {order} is outside the input flow")
+            elif expected_ref != step_ref:
+                errors.append(f"stepRef {step_ref} does not match input order {order}")
 
-        input_boundary_kinds = [str(item.get("kind") or "") for item in context.llm_input.get("boundaries", []) if isinstance(item, dict)]
-        output_boundary_kinds = [str(item.get("kind") or "") for item in explanation.get("boundaries", []) if isinstance(item, dict)]
-        input_boundary_counts = Counter(kind for kind in input_boundary_kinds if kind)
-        output_boundary_counts = Counter(kind for kind in output_boundary_kinds if kind)
-        for kind, count in input_boundary_counts.items():
-            if output_boundary_counts[kind] < count:
-                errors.append(f"boundary kind {kind} must be represented")
-        for kind in output_boundary_counts:
-            if kind not in input_boundary_counts:
-                errors.append(f"boundary kind {kind} is not present in the input flow")
+        output_transition_refs = [
+            str(item.get("transitionRef") or "")
+            for item in explanation.get("transitions", [])
+            if isinstance(item, dict)
+        ]
+        self._extend_ref_set_errors(errors, "transition", set(input_transition_by_ref), output_transition_refs)
+
+        output_boundaries = [item for item in explanation.get("boundaries", []) if isinstance(item, dict)]
+        output_boundary_refs = [str(item.get("boundaryRef") or "") for item in output_boundaries]
+        self._extend_ref_set_errors(errors, "boundary", set(input_boundary_by_ref), output_boundary_refs)
+        input_boundary_refs = list(input_boundary_by_ref)
+        if set(input_boundary_refs) == set(output_boundary_refs) and input_boundary_refs != output_boundary_refs:
+            errors.append("boundary refs must preserve input order")
+        for item in output_boundaries:
+            boundary_ref = str(item.get("boundaryRef") or "")
+            input_boundary = input_boundary_by_ref.get(boundary_ref)
+            if input_boundary is not None and str(item.get("kind") or "") != str(input_boundary.get("kind") or ""):
+                errors.append(f"boundaryRef {boundary_ref} kind does not match the input boundary")
 
         for ref in self._output_evidence_refs(explanation):
             if ref not in context.evidence_refs:
                 errors.append(f"evidence ref {ref} is not present in the packed flow context")
+        for item in output_steps:
+            unknown_transition_refs = sorted(set(item.get("transitionRefs") or []) - set(input_transition_by_ref))
+            if unknown_transition_refs:
+                errors.append(f"stepRef {item.get('stepRef')} references unknown transitions {unknown_transition_refs}")
 
-        text = self._explanation_text(explanation)
-        allowed_aliases_by_order = self._allowed_aliases_by_order(input_steps)
-        allowed_symbols = {alias for aliases in allowed_aliases_by_order.values() for alias in aliases}
-        for symbol in sorted(_DOTTED_SYMBOL_RE.findall(text)):
-            if symbol not in allowed_symbols:
-                errors.append(f"symbol {symbol} is not present in the input flow context")
-
-        errors.extend(self._call_errors(text, allowed_aliases_by_order))
+        errors.extend(self._narrative_errors(explanation, input_step_by_ref, input_transition_by_ref, input_boundary_by_ref))
+        aliases_by_step_ref = self._allowed_aliases_by_step_ref(input_steps)
+        aliases_by_boundary_ref = self._allowed_boundary_aliases_by_ref(input_boundaries)
+        errors.extend(
+            self._symbol_grounding_errors(
+                explanation,
+                aliases_by_step_ref,
+                input_transition_by_ref,
+                aliases_by_boundary_ref,
+            )
+        )
         return errors
+
+    def _extend_ref_set_errors(self, errors: List[str], label: str, input_refs: set[str], output_refs: Sequence[str]) -> None:
+        output_counts = Counter(ref for ref in output_refs if ref)
+        missing = sorted(input_refs - set(output_counts))
+        extra = sorted(set(output_counts) - input_refs)
+        duplicates = sorted(ref for ref, count in output_counts.items() if count > 1)
+        if missing:
+            errors.append(f"{label} refs must cover every input {label}; missing {missing}")
+        if extra:
+            errors.append(f"{label} refs are not present in the input flow: {extra}")
+        if duplicates:
+            errors.append(f"{label} refs must be unique; duplicates {duplicates}")
 
     def _string_list(self, value: Any) -> List[str]:
         if not isinstance(value, list):
@@ -416,7 +588,7 @@ class FlowExplanationValidator:
 
     def _output_evidence_refs(self, explanation: Mapping[str, Any]) -> List[str]:
         refs: List[str] = []
-        for section in ("steps", "boundaries"):
+        for section in ("steps", "transitions", "boundaries"):
             items = explanation.get(section)
             if not isinstance(items, list):
                 continue
@@ -427,57 +599,185 @@ class FlowExplanationValidator:
 
     def _explanation_text(self, explanation: Mapping[str, Any]) -> str:
         parts: List[str] = [str(explanation.get("title") or "")]
-        parts.extend(str(item) for item in explanation.get("narrative", []) if isinstance(item, str))
-        for section in ("steps", "boundaries"):
+        parts.extend(str(item.get("text") or "") for item in explanation.get("narrative", []) if isinstance(item, dict))
+        for section in ("steps", "transitions", "boundaries"):
             items = explanation.get(section)
             if isinstance(items, list):
                 parts.extend(str(item.get("explanation") or "") for item in items if isinstance(item, dict))
         return "\n".join(parts)
 
-    def _allowed_aliases_by_order(self, input_steps: Sequence[Any]) -> Dict[int, set[str]]:
-        result: Dict[int, set[str]] = {}
+    def _narrative_errors(
+        self,
+        explanation: Mapping[str, Any],
+        input_step_by_ref: Mapping[str, Any],
+        input_transition_by_ref: Mapping[str, Any],
+        input_boundary_by_ref: Mapping[str, Any],
+    ) -> List[str]:
+        errors: List[str] = []
+        narrative = [item for item in explanation.get("narrative", []) if isinstance(item, dict)]
+        texts = [str(item.get("text") or "") for item in narrative]
+        total_words = sum(len(re.findall(r"\w+", text, flags=re.UNICODE)) for text in texts)
+        if len(narrative) < 2 and total_words < 24:
+            errors.append("narrative must be more than a one-line or trivial summary")
+        known_step_refs = set(input_step_by_ref)
+        known_transition_refs = set(input_transition_by_ref)
+        known_boundary_refs = set(input_boundary_by_ref)
+        for index, item in enumerate(narrative, start=1):
+            step_refs = set(item.get("stepRefs") or [])
+            transition_refs = set(item.get("transitionRefs") or [])
+            boundary_refs = set(item.get("boundaryRefs") or [])
+            if not step_refs and not transition_refs and not boundary_refs:
+                errors.append(f"narrative[{index}] must include at least one grounding ref")
+            unknown_steps = sorted(step_refs - known_step_refs)
+            unknown_transitions = sorted(transition_refs - known_transition_refs)
+            unknown_boundaries = sorted(boundary_refs - known_boundary_refs)
+            if unknown_steps:
+                errors.append(f"narrative[{index}] references unknown steps {unknown_steps}")
+            if unknown_transitions:
+                errors.append(f"narrative[{index}] references unknown transitions {unknown_transitions}")
+            if unknown_boundaries:
+                errors.append(f"narrative[{index}] references unknown boundaries {unknown_boundaries}")
+        return errors
+
+    def _allowed_aliases_by_step_ref(self, input_steps: Sequence[Any]) -> Dict[str, set[str]]:
+        result: Dict[str, set[str]] = {}
         for item in input_steps:
-            if not isinstance(item, dict) or not isinstance(item.get("order"), int):
+            if not isinstance(item, dict) or not isinstance(item.get("stepRef"), str):
                 continue
             aliases: set[str] = set()
             for key in ("symbol", "nodeLabel", "qualifiedName"):
                 value = item.get(key)
                 if isinstance(value, str) and value:
-                    aliases.add(value)
-                    aliases.update(self._suffix_aliases(value))
-            result[int(item["order"])] = aliases
+                    aliases.update(self._aliases(value))
+            result[str(item["stepRef"])] = aliases
         return result
 
-    def _suffix_aliases(self, value: str) -> set[str]:
+    def _allowed_boundary_aliases_by_ref(self, input_boundaries: Sequence[Any]) -> Dict[str, set[str]]:
+        result: Dict[str, set[str]] = {}
+        for item in input_boundaries:
+            if not isinstance(item, dict) or not isinstance(item.get("boundaryRef"), str):
+                continue
+            aliases: set[str] = set()
+            target = item.get("target")
+            if isinstance(target, str) and target:
+                aliases.update(self._aliases(target))
+            kind = item.get("kind")
+            if isinstance(kind, str) and kind:
+                aliases.add(kind)
+            result[str(item["boundaryRef"])] = aliases
+        return result
+
+    def _aliases(self, value: str) -> set[str]:
         parts = [part for part in value.split(".") if part]
-        aliases: set[str] = set()
+        aliases: set[str] = {value}
+        aliases.update(part for part in parts if part)
         for index in range(0, max(0, len(parts) - 1)):
             alias = ".".join(parts[index:])
             if "." in alias:
                 aliases.add(alias)
         return aliases
 
-    def _call_errors(self, text: str, aliases_by_order: Mapping[int, set[str]]) -> List[str]:
+    def _symbol_grounding_errors(
+        self,
+        explanation: Mapping[str, Any],
+        aliases_by_step_ref: Mapping[str, set[str]],
+        input_transition_by_ref: Mapping[str, Any],
+        aliases_by_boundary_ref: Mapping[str, set[str]],
+    ) -> List[str]:
         errors: List[str] = []
-        alias_to_order = {alias: order for order, aliases in aliases_by_order.items() for alias in aliases}
-        ordered_aliases = sorted(alias_to_order, key=len, reverse=True)
-        allowed_pairs = {(order, order + 1) for order in aliases_by_order if order + 1 in aliases_by_order}
-        segments = [segment for segment in re.split(r"[\n.;]+", text) if _CALL_WORD_RE.search(segment)]
-        for segment in segments:
-            for source in ordered_aliases:
-                for target in ordered_aliases:
-                    if source == target:
-                        continue
-                    pattern = re.compile(
-                        rf"{re.escape(source)}.{{0,80}}{_CALL_WORD_RE.pattern}.{{0,80}}{re.escape(target)}",
-                        re.IGNORECASE,
-                    )
-                    if not pattern.search(segment):
-                        continue
-                    pair = (alias_to_order[source], alias_to_order[target])
-                    if pair not in allowed_pairs:
-                        errors.append(f"described call {source} -> {target} is not an ordered CALLS edge in this flow")
+        all_aliases = set().union(*aliases_by_step_ref.values(), *aliases_by_boundary_ref.values()) if aliases_by_step_ref or aliases_by_boundary_ref else set()
+
+        for symbol in sorted(self._code_symbols(str(explanation.get("title") or ""))):
+            if symbol not in all_aliases:
+                errors.append(f"symbol {symbol} is not present in the input flow context")
+
+        for text, step_refs, transition_refs, boundary_refs in self._grounded_texts(explanation):
+            selected_aliases = self._selected_aliases(
+                step_refs,
+                transition_refs,
+                boundary_refs,
+                aliases_by_step_ref,
+                input_transition_by_ref,
+                aliases_by_boundary_ref,
+            )
+            for symbol in sorted(self._code_symbols(text)):
+                if symbol not in all_aliases:
+                    errors.append(f"symbol {symbol} is not present in the input flow context")
+                elif selected_aliases and symbol not in selected_aliases:
+                    errors.append(f"symbol {symbol} is not grounded by refs for this text")
         return sorted(set(errors))
+
+    def _grounded_texts(self, explanation: Mapping[str, Any]) -> List[tuple[str, set[str], set[str], set[str]]]:
+        items: List[tuple[str, set[str], set[str], set[str]]] = []
+        for item in explanation.get("narrative", []):
+            if isinstance(item, dict):
+                items.append(
+                    (
+                        str(item.get("text") or ""),
+                        set(item.get("stepRefs") or []),
+                        set(item.get("transitionRefs") or []),
+                        set(item.get("boundaryRefs") or []),
+                    )
+                )
+        for item in explanation.get("steps", []):
+            if isinstance(item, dict):
+                items.append(
+                    (
+                        str(item.get("explanation") or ""),
+                        {str(item.get("stepRef") or "")},
+                        set(item.get("transitionRefs") or []),
+                        set(),
+                    )
+                )
+        for item in explanation.get("transitions", []):
+            if isinstance(item, dict):
+                items.append((str(item.get("explanation") or ""), set(), {str(item.get("transitionRef") or "")}, set()))
+        for item in explanation.get("boundaries", []):
+            if isinstance(item, dict):
+                items.append((str(item.get("explanation") or ""), set(), set(), {str(item.get("boundaryRef") or "")}))
+        return items
+
+    def _selected_aliases(
+        self,
+        step_refs: set[str],
+        transition_refs: set[str],
+        boundary_refs: set[str],
+        aliases_by_step_ref: Mapping[str, set[str]],
+        input_transition_by_ref: Mapping[str, Any],
+        aliases_by_boundary_ref: Mapping[str, set[str]],
+    ) -> set[str]:
+        selected: set[str] = set()
+        for ref in step_refs:
+            selected.update(aliases_by_step_ref.get(ref, set()))
+        for ref in transition_refs:
+            transition = input_transition_by_ref.get(ref)
+            if not isinstance(transition, dict):
+                continue
+            selected.update(aliases_by_step_ref.get(str(transition.get("fromStepRef") or ""), set()))
+            selected.update(aliases_by_step_ref.get(str(transition.get("toStepRef") or ""), set()))
+        for ref in boundary_refs:
+            selected.update(aliases_by_boundary_ref.get(ref, set()))
+        return selected
+
+    def _code_symbols(self, text: str) -> set[str]:
+        symbols = set(_DOTTED_SYMBOL_RE.findall(text))
+        for raw in _BACKTICK_TOKEN_RE.findall(text):
+            token = raw.strip()
+            if token:
+                symbols.add(token)
+        for token in _CODE_TOKEN_RE.findall(text):
+            if self._looks_like_code_token(token):
+                symbols.add(token)
+        return symbols
+
+    def _looks_like_code_token(self, token: str) -> bool:
+        if token in _COMMON_NARRATIVE_TOKENS:
+            return False
+        if "_" in token or "$" in token:
+            return True
+        if re.search(r"[a-z][A-Z]", token):
+            return True
+        return token[:1].isupper() and any(char.islower() for char in token[1:]) and len(token) >= 4
 
 
 class FlowExplanationService:
@@ -486,12 +786,14 @@ class FlowExplanationService:
         provider: Any,
         *,
         max_prompt_chars: int = 32768,
+        request_deadline_seconds: float = 90.0,
         packer: FlowExplanationContextPacker | None = None,
         validator: FlowExplanationValidator | None = None,
         renderer: FlowExplanationPromptRenderer | None = None,
     ) -> None:
         self.provider = provider
         self.max_prompt_chars = max(4096, int(max_prompt_chars or 32768))
+        self.request_deadline_seconds = max(0.001, float(request_deadline_seconds or 90.0))
         self.packer = packer or FlowExplanationContextPacker()
         self.validator = validator or FlowExplanationValidator()
         self.renderer = renderer or FlowExplanationPromptRenderer()
@@ -510,6 +812,7 @@ class FlowExplanationService:
             )
             return FlowExplanationRun(query_response=query_response, results=[], diagnostics=[diagnostic])
 
+        deadline_at = time.monotonic() + self.request_deadline_seconds
         for flow_index, flow_unit in enumerate(flow_units, start=1):
             source_display_name = source_names.get(flow_unit.key.source_id) or flow_unit.key.source_id or None
             packed = self.packer.pack(
@@ -519,6 +822,26 @@ class FlowExplanationService:
                 source_display_name=source_display_name,
             )
             prompt_len = len(self.renderer.render(packed.llm_input))
+            if self._deadline_reached(deadline_at):
+                diagnostic = self._diagnostic(
+                    FLOW_EXPLANATION_LIMIT_REACHED,
+                    "Flow explanation request deadline was reached before this flow could be explained.",
+                    flow_index,
+                    severity="WARN",
+                    metadata={"requestDeadlineSeconds": self.request_deadline_seconds},
+                )
+                diagnostics.append(diagnostic)
+                results.append(
+                    PerFlowExplanationResult(
+                        flow_index=flow_index,
+                        flow_unit=flow_unit,
+                        context=packed,
+                        explanation=None,
+                        diagnostics=[diagnostic],
+                        attempt=FlowExplanationAttempt(prompt_char_length=prompt_len),
+                    )
+                )
+                continue
             if prompt_len > self.max_prompt_chars:
                 diagnostic = self._diagnostic(
                     FLOW_EXPLANATION_LIMIT_REACHED,
@@ -539,13 +862,14 @@ class FlowExplanationService:
                     )
                 )
                 continue
-            result = self._explain_one(flow_unit, packed)
+            result = self._explain_one(flow_unit, packed, deadline_at)
             diagnostics.extend(result.diagnostics)
             results.append(result)
         return FlowExplanationRun(query_response=query_response, results=results, diagnostics=diagnostics)
 
     def to_ui_response(self, run: FlowExplanationRun) -> KnowledgeQueryFlowExplanationResponse:
         base = run.query_response.dict()
+        base["evidence"] = self._merge_ui_evidence_catalog(base.get("evidence", []), run.results)
         base["flowExplanations"] = [self._ui_explanation(result) for result in run.results]
         base["diagnostics"] = [*base.get("diagnostics", []), *[diagnostic.dict() for diagnostic in run.diagnostics]]
         return KnowledgeQueryFlowExplanationResponse(**base)
@@ -560,7 +884,7 @@ class FlowExplanationService:
             diagnostics=compact_diagnostics,
         )
 
-    def _explain_one(self, flow_unit: FlowUnit, context: PackedFlowContext) -> PerFlowExplanationResult:
+    def _explain_one(self, flow_unit: FlowUnit, context: PackedFlowContext, deadline_at: float) -> PerFlowExplanationResult:
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         try:
             first = self.provider.complete(context.llm_input)
@@ -587,6 +911,25 @@ class FlowExplanationService:
                 context=context,
                 explanation=explanation,
                 diagnostics=[],
+                attempt=FlowExplanationAttempt(prompt_char_length=first.prompt_char_length),
+            )
+
+        if self._deadline_reached(deadline_at):
+            diagnostics.append(
+                self._diagnostic(
+                    FLOW_EXPLANATION_LIMIT_REACHED,
+                    "Flow explanation request deadline was reached before validation retry could start.",
+                    context.flow_index,
+                    severity="WARN",
+                    metadata={"requestDeadlineSeconds": self.request_deadline_seconds, "validationErrors": errors[:10]},
+                )
+            )
+            return PerFlowExplanationResult(
+                flow_index=context.flow_index,
+                flow_unit=flow_unit,
+                context=context,
+                explanation=None,
+                diagnostics=diagnostics,
                 attempt=FlowExplanationAttempt(prompt_char_length=first.prompt_char_length),
             )
 
@@ -649,31 +992,36 @@ class FlowExplanationService:
             attempt=FlowExplanationAttempt(prompt_char_length=second.prompt_char_length, retried=True),
         )
 
+    def _deadline_reached(self, deadline_at: float) -> bool:
+        return time.monotonic() >= deadline_at
+
     def _ui_explanation(self, result: PerFlowExplanationResult) -> FlowExplanation:
         steps_by_order = self._step_explanations(result.explanation)
-        boundaries = self._boundary_explanations(result.explanation)
+        boundaries_by_ref = self._boundary_explanations(result.explanation)
         input_steps = result.context.llm_input.get("steps") or []
+        input_boundaries = [item for item in result.context.llm_input.get("boundaries", []) if isinstance(item, dict)]
         return FlowExplanation(
             flowIndex=result.flow_index,
             title=str(result.explanation.get("title") if result.explanation else ""),
-            narrative=list(result.explanation.get("narrative") if result.explanation else []),
+            narrative=self._public_narrative(result.explanation),
             steps=[
                 FlowExplanationStep(
                     order=int(step["order"]),
                     nodeLabel=str(step.get("nodeLabel") or step.get("symbol") or ""),
                     explanation=steps_by_order.get(int(step["order"]), {}).get("explanation"),
-                    evidenceRefs=steps_by_order.get(int(step["order"]), {}).get("evidenceRefs", []),
+                    evidenceRefs=self._ui_evidence_refs(result, steps_by_order.get(int(step["order"]), {}).get("evidenceRefs", [])),
                 )
                 for step in input_steps
                 if isinstance(step, dict) and isinstance(step.get("order"), int)
             ],
             boundaries=[
                 FlowExplanationBoundary(
-                    kind=str(item.get("kind") or ""),
-                    explanation=str(item.get("explanation") or "") if result.explanation else None,
-                    evidenceRefs=list(item.get("evidenceRefs") or []),
+                    kind=str(input_boundary.get("kind") or ""),
+                    explanation=str(item.get("explanation") or "") if item else None,
+                    evidenceRefs=self._ui_evidence_refs(result, item.get("evidenceRefs") or []),
                 )
-                for item in boundaries
+                for input_boundary in input_boundaries
+                for item in [boundaries_by_ref.get(str(input_boundary.get("boundaryRef") or ""), {})]
             ],
             status="OK" if result.ok else "FAILED",
         )
@@ -685,13 +1033,13 @@ class FlowExplanationService:
         return FlowToolContext(
             flowIndex=result.flow_index,
             title=str(result.explanation.get("title") if result.explanation else ""),
-            narrative=list(result.explanation.get("narrative") if result.explanation else []),
+            narrative=self._public_narrative(result.explanation),
             steps=[
                 self._tool_step(result, step, steps_by_order.get(int(step["order"]), {}))
                 for step in input_steps
                 if isinstance(step.get("order"), int)
             ],
-            boundaries=[self._tool_boundary(result, item, index) for index, item in enumerate(input_boundaries)],
+            boundaries=[self._tool_boundary(result, item) for item in input_boundaries],
             diagnostics=[self._compact_diagnostic(diagnostic) for diagnostic in result.diagnostics],
         )
 
@@ -713,9 +1061,9 @@ class FlowExplanationService:
             evidence=[item for item in evidence if item is not None],
         )
 
-    def _tool_boundary(self, result: PerFlowExplanationResult, item: Mapping[str, Any], index: int) -> FlowToolBoundary:
+    def _tool_boundary(self, result: PerFlowExplanationResult, item: Mapping[str, Any]) -> FlowToolBoundary:
         explanations = self._boundary_explanations(result.explanation)
-        explanation_item = explanations[index] if index < len(explanations) else {}
+        explanation_item = explanations.get(str(item.get("boundaryRef") or ""), {})
         evidence_refs = list(explanation_item.get("evidenceRefs") or []) or [
             evidence["ref"] for evidence in item.get("evidence", []) if isinstance(evidence, dict)
         ]
@@ -756,10 +1104,47 @@ class FlowExplanationService:
             return {}
         return {int(item["order"]): dict(item) for item in explanation.get("steps", []) if isinstance(item, dict) and isinstance(item.get("order"), int)}
 
-    def _boundary_explanations(self, explanation: Mapping[str, Any] | None) -> List[Dict[str, Any]]:
+    def _boundary_explanations(self, explanation: Mapping[str, Any] | None) -> Dict[str, Dict[str, Any]]:
+        if not explanation:
+            return {}
+        return {
+            str(item.get("boundaryRef")): dict(item)
+            for item in explanation.get("boundaries", [])
+            if isinstance(item, dict) and isinstance(item.get("boundaryRef"), str)
+        }
+
+    def _public_narrative(self, explanation: Mapping[str, Any] | None) -> List[str]:
         if not explanation:
             return []
-        return [dict(item) for item in explanation.get("boundaries", []) if isinstance(item, dict)]
+        return [str(item.get("text") or "") for item in explanation.get("narrative", []) if isinstance(item, dict)]
+
+    def _ui_evidence_refs(self, result: PerFlowExplanationResult, refs: Sequence[str]) -> List[str]:
+        public_refs: List[str] = []
+        for ref in refs:
+            evidence_id = result.context.evidence_id_by_ref.get(str(ref))
+            if evidence_id and evidence_id not in public_refs:
+                public_refs.append(evidence_id)
+        return public_refs
+
+    def _merge_ui_evidence_catalog(self, existing: Sequence[Mapping[str, Any]], results: Sequence[PerFlowExplanationResult]) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = [dict(item) for item in existing if isinstance(item, Mapping)]
+        seen = {str(item.get("id") or "") for item in merged}
+        for result in results:
+            for evidence in result.context.evidence_by_ref.values():
+                if not evidence.evidence_id or evidence.evidence_id in seen:
+                    continue
+                merged.append(
+                    {
+                        "id": evidence.evidence_id,
+                        "sourceId": evidence.source_id,
+                        "relativePath": evidence.relative_path,
+                        "lineStart": evidence.line_start,
+                        "lineEnd": evidence.line_end,
+                        "excerpt": evidence.text,
+                    }
+                )
+                seen.add(evidence.evidence_id)
+        return merged
 
     def _diagnostic(
         self,

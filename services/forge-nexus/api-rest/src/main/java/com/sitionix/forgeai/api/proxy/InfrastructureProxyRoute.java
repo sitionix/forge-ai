@@ -1,5 +1,6 @@
 package com.sitionix.forgeai.api.proxy;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.function.Function;
 import org.springframework.http.HttpMethod;
@@ -10,6 +11,7 @@ record InfrastructureProxyRoute(
         HttpMethod method,
         Function<Map<String, String>, String> upstreamPath,
         boolean requestBodyAllowed,
-        boolean jsonExpected
+        boolean jsonExpected,
+        Duration readTimeout
 ) {
 }

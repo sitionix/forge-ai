@@ -34,9 +34,15 @@ class AsgiTestClient:
         self.app = app
         self._lifespan = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._previous_loop: Optional[asyncio.AbstractEventLoop] = None
 
     def __enter__(self) -> "AsgiTestClient":
+        try:
+            self._previous_loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self._previous_loop = None
         self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
         self._lifespan = self.app.router.lifespan_context(self.app)
         self._loop.run_until_complete(self._lifespan.__aenter__())
         return self
@@ -48,6 +54,8 @@ class AsgiTestClient:
         if self._loop is not None:
             self._loop.close()
             self._loop = None
+        asyncio.set_event_loop(self._previous_loop)
+        self._previous_loop = None
         return None
 
     def get(self, path: str, headers: Optional[Dict[str, str]] = None) -> AsgiResponse:

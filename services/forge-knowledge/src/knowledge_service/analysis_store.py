@@ -1790,15 +1790,22 @@ class AnalysisStore:
         safe_limit = max(1, min(int(limit or 100), 10000))
         source_placeholders = ",".join("?" for _ in source_ids)
         contract = graph_query_contract()
-        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_claim_text())
+        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_responsibility_summary())
         entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             rows = conn.execute(
                 f"""
                 WITH claim AS (
                     SELECT source_id, node_id, group_concat(summary, ' ') AS summary
-                    FROM analysis_graph_claims
-                    WHERE status IN ({claim_status_sql})
+                    FROM (
+                        SELECT source_id, node_id, summary
+                        FROM analysis_graph_claims
+                        WHERE source_id IN ({source_placeholders})
+                          AND claim_kind = ?
+                          AND status IN ({claim_status_sql})
+                          AND rejection_reason IS NULL
+                        ORDER BY source_id, node_id, status, confidence DESC, id
+                    )
                     GROUP BY source_id, node_id
                 ),
                 out_degree AS (
@@ -1866,6 +1873,8 @@ class AnalysisStore:
                 LIMIT ?
                 """,
                 [
+                    *source_ids,
+                    contract.responsibility_claim_kind,
                     *claim_status_params,
                     contract.entrypoint_claim_kind,
                     *entry_status_params,
@@ -1915,16 +1924,27 @@ class AnalysisStore:
             pair_clauses.append("(n.source_id = ? AND n.id = ?)")
             pair_params.extend([source_id, node_id])
         source_ids = sorted({source_id for source_id, _ in requested[:safe_limit]})
+        node_ids = sorted({node_id for _, node_id in requested[:safe_limit]})
+        source_placeholders = ",".join("?" for _ in source_ids)
+        node_placeholders = ",".join("?" for _ in node_ids)
         contract = graph_query_contract()
-        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_claim_text())
+        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_responsibility_summary())
         entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             rows = conn.execute(
                 f"""
                 WITH claim AS (
                     SELECT source_id, node_id, group_concat(summary, ' ') AS summary
-                    FROM analysis_graph_claims
-                    WHERE status IN ({claim_status_sql})
+                    FROM (
+                        SELECT source_id, node_id, summary
+                        FROM analysis_graph_claims
+                        WHERE source_id IN ({source_placeholders})
+                          AND node_id IN ({node_placeholders})
+                          AND claim_kind = ?
+                          AND status IN ({claim_status_sql})
+                          AND rejection_reason IS NULL
+                        ORDER BY source_id, node_id, status, confidence DESC, id
+                    )
                     GROUP BY source_id, node_id
                 ),
                 out_degree AS (
@@ -1992,6 +2012,9 @@ class AnalysisStore:
                 LIMIT ?
                 """,
                 [
+                    *source_ids,
+                    *node_ids,
+                    contract.responsibility_claim_kind,
                     *claim_status_params,
                     contract.entrypoint_claim_kind,
                     *entry_status_params,
@@ -2027,7 +2050,7 @@ class AnalysisStore:
         safe_limit = max(1, min(int(limit or 100), 1000))
         source_placeholders = ",".join("?" for _ in source_ids)
         contract = graph_query_contract()
-        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_claim_text())
+        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_responsibility_summary())
         entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
         token_clauses: List[str] = []
         token_params: List[Any] = []
@@ -2052,8 +2075,15 @@ class AnalysisStore:
                 f"""
                 WITH claim AS (
                     SELECT source_id, node_id, group_concat(summary, ' ') AS summary
-                    FROM analysis_graph_claims
-                    WHERE status IN ({claim_status_sql})
+                    FROM (
+                        SELECT source_id, node_id, summary
+                        FROM analysis_graph_claims
+                        WHERE source_id IN ({source_placeholders})
+                          AND claim_kind = ?
+                          AND status IN ({claim_status_sql})
+                          AND rejection_reason IS NULL
+                        ORDER BY source_id, node_id, status, confidence DESC, id
+                    )
                     GROUP BY source_id, node_id
                 ),
                 out_degree AS (
@@ -2122,6 +2152,8 @@ class AnalysisStore:
                 LIMIT ?
                 """,
                 [
+                    *source_ids,
+                    contract.responsibility_claim_kind,
                     *claim_status_params,
                     contract.entrypoint_claim_kind,
                     *entry_status_params,
@@ -2714,13 +2746,21 @@ class AnalysisStore:
         placeholders = ",".join("?" for _ in ids)
         contract = graph_query_contract()
         entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
-        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_claim_text())
+        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_responsibility_summary())
         rows = conn.execute(
             f"""
             WITH claim AS (
                 SELECT source_id, node_id, group_concat(summary, ' ') AS summary
-                FROM analysis_graph_claims
-                WHERE status IN ({claim_status_sql})
+                FROM (
+                    SELECT source_id, node_id, summary
+                    FROM analysis_graph_claims
+                    WHERE source_id = ?
+                      AND node_id IN ({placeholders})
+                      AND claim_kind = ?
+                      AND status IN ({claim_status_sql})
+                      AND rejection_reason IS NULL
+                    ORDER BY source_id, node_id, status, confidence DESC, id
+                )
                 GROUP BY source_id, node_id
             )
             SELECT n.*, af.relative_path,
@@ -2752,7 +2792,7 @@ class AnalysisStore:
               AND n.id IN ({placeholders})
             ORDER BY n.id
             """,
-            [*claim_status_params, contract.entrypoint_claim_kind, *entry_status_params, source_id, *ids],
+            [source_id, *ids, contract.responsibility_claim_kind, *claim_status_params, contract.entrypoint_claim_kind, *entry_status_params, source_id, *ids],
         ).fetchall()
         return [self._graph_node_projection(self._row_dict(row)) for row in rows]
 

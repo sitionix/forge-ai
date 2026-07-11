@@ -143,9 +143,10 @@ public class InfrastructureProxyTransport {
                                         final InfrastructureProxyProperties.ServiceProperties service,
                                         final String correlationId) {
         final URI uri = service.getBaseUrl().resolve(this.pathAndQuery(route, pathVariables, servletRequest));
+        final Duration readTimeout = route.readTimeout() == null ? service.getReadTimeout() : route.readTimeout();
         final HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
                 .version(HttpClient.Version.HTTP_1_1)
-                .timeout(service.getReadTimeout())
+                .timeout(readTimeout)
                 .header("Accept", APPLICATION_JSON)
                 .header(CORRELATION_HEADER, correlationId);
         final String ifNoneMatch = incomingHeaders.getFirst("If-None-Match");

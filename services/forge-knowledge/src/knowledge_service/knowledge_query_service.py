@@ -1150,9 +1150,24 @@ class KnowledgeQueryService:
             entrypoint_candidate_node_ids,
         )
         request_flow_limit = max(1, min(int(request.maxFlows or 10), int(self.policy.max_flow_paths or 25)))
+        available_flow_count = len(flow_units)
+        request_flow_truncated = available_flow_count > request_flow_limit
         flow_paths = flow_paths[:request_flow_limit]
         flow_units = flow_units[:request_flow_limit]
         diagnostics.extend(flow_diagnostics)
+        if request_flow_truncated:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="FLOW_QUERY_MAX_FLOWS_REACHED",
+                    message="Flow response was truncated by the request maxFlows limit.",
+                    severity="INFO",
+                    metadata={
+                        "returnedFlowCount": len(flow_units),
+                        "availableFlowCount": available_flow_count,
+                        "maxFlows": request_flow_limit,
+                    },
+                )
+            )
         response_bundle = self._merge_bundles(slice_bundle, flow_bundle)
         evidence_bundle = self.evidence_builder.build(response_bundle)
         matched_sources = self._matched_sources(matched_nodes, eligible_sources)
@@ -1188,8 +1203,8 @@ class KnowledgeQueryService:
                     nodeCount=len(response_bundle["nodes"]),
                     edgeCount=len(response_bundle["edges"]),
                     evidenceCount=len(evidence_bundle["evidence"]),
-                    truncated=candidate_result.truncated or anchor_result.truncated or flow_truncated,
-                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or flow_truncated,
+                    truncated=candidate_result.truncated or anchor_result.truncated or flow_truncated or request_flow_truncated,
+                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or flow_truncated or request_flow_truncated,
                 ),
                 diagnostics=diagnostics,
             ),

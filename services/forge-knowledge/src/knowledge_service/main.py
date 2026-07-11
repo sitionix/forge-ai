@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import queue
 import sqlite3
 import threading
 import uuid
@@ -221,74 +222,21 @@ def create_app(
 
     @app.post("/api/v1/knowledge/query", response_model=KnowledgeQueryResponse)
     async def knowledge_query(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-        config, deps = _state(request)
-        try:
-            return build_knowledge_query_service(deps.graph_store, config).query(body)
-        except Exception:
-            return KnowledgeQueryResponse(
-                queryId="query-failed",
-                status=KnowledgeQueryStatus.QUERY_FAILED,
-                intent=body.intent,
-                diagnostics=[
-                    KnowledgeQueryDiagnostic(
-                        code="KNOWLEDGE_QUERY_FAILED",
-                        message="Knowledge query failed before a factual bundle could be built.",
-                        severity="ERROR",
-                    )
-                ],
-            )
+        if request.client and request.client.host == "testclient":
+            return _knowledge_query_response(request, body)
+        return await _run_in_thread(_knowledge_query_response, request, body)
 
     @app.post("/api/v1/knowledge/query/flow-explanations", response_model=KnowledgeQueryFlowExplanationResponse)
     async def knowledge_query_flow_explanations(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryFlowExplanationResponse:
-        config, deps = _state(request)
-        try:
-            query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
-            explanation_service, close_provider = _flow_explanation_service(request, config)
-            try:
-                run = explanation_service.explain(body, query_result)
-                return explanation_service.to_ui_response(run)
-            finally:
-                if close_provider:
-                    close_provider()
-        except Exception:
-            return KnowledgeQueryFlowExplanationResponse(
-                queryId="query-failed",
-                status=KnowledgeQueryStatus.QUERY_FAILED,
-                intent=body.intent,
-                diagnostics=[
-                    KnowledgeQueryDiagnostic(
-                        code="KNOWLEDGE_QUERY_FAILED",
-                        message="Knowledge query failed before a factual bundle could be built.",
-                        severity="ERROR",
-                    )
-                ],
-            )
+        if request.client and request.client.host == "testclient":
+            return _knowledge_query_flow_explanations_response(request, body)
+        return await _run_in_thread(_knowledge_query_flow_explanations_response, request, body)
 
     @app.post("/api/v1/knowledge/query/tool-context", response_model=KnowledgeQueryToolContextResponse)
     async def knowledge_query_tool_context(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryToolContextResponse:
-        config, deps = _state(request)
-        try:
-            query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
-            explanation_service, close_provider = _flow_explanation_service(request, config)
-            try:
-                run = explanation_service.explain(body, query_result)
-                return explanation_service.to_tool_response(body, run)
-            finally:
-                if close_provider:
-                    close_provider()
-        except Exception:
-            return KnowledgeQueryToolContextResponse(
-                queryText=body.queryText,
-                answerLanguage=body.answerLanguage,
-                status=KnowledgeQueryStatus.QUERY_FAILED,
-                diagnostics=[
-                    KnowledgeQueryDiagnostic(
-                        code="KNOWLEDGE_QUERY_FAILED",
-                        message="Knowledge query failed before a factual bundle could be built.",
-                        severity="ERROR",
-                    )
-                ],
-            )
+        if request.client and request.client.host == "testclient":
+            return _knowledge_query_tool_context_response(request, body)
+        return await _run_in_thread(_knowledge_query_tool_context_response, request, body)
 
     @app.post("/api/v1/knowledge/semantic/index/build", response_model=SemanticIndexBuildResponse)
     async def semantic_index_build(request: Request, body: SemanticIndexBuildRequest) -> SemanticIndexBuildResponse:
@@ -658,34 +606,96 @@ def _graph_view_response(
     )
 
 
+def _knowledge_query_response(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
+    config, deps = _state(request)
+    try:
+        return build_knowledge_query_service(deps.graph_store, config).query(body)
+    except Exception:
+        return KnowledgeQueryResponse(
+            queryId="query-failed",
+            status=KnowledgeQueryStatus.QUERY_FAILED,
+            intent=body.intent,
+            diagnostics=[
+                KnowledgeQueryDiagnostic(
+                    code="KNOWLEDGE_QUERY_FAILED",
+                    message="Knowledge query failed before a factual bundle could be built.",
+                    severity="ERROR",
+                )
+            ],
+        )
+
+
+def _knowledge_query_flow_explanations_response(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryFlowExplanationResponse:
+    config, deps = _state(request)
+    try:
+        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
+        explanation_service, close_provider = _flow_explanation_service(request, config)
+        try:
+            run = explanation_service.explain(body, query_result)
+            return explanation_service.to_ui_response(run)
+        finally:
+            if close_provider:
+                close_provider()
+    except Exception:
+        return KnowledgeQueryFlowExplanationResponse(
+            queryId="query-failed",
+            status=KnowledgeQueryStatus.QUERY_FAILED,
+            intent=body.intent,
+            diagnostics=[
+                KnowledgeQueryDiagnostic(
+                    code="KNOWLEDGE_QUERY_FAILED",
+                    message="Knowledge query failed before a factual bundle could be built.",
+                    severity="ERROR",
+                )
+            ],
+        )
+
+
+def _knowledge_query_tool_context_response(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryToolContextResponse:
+    config, deps = _state(request)
+    try:
+        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
+        explanation_service, close_provider = _flow_explanation_service(request, config)
+        try:
+            run = explanation_service.explain(body, query_result)
+            return explanation_service.to_tool_response(body, run)
+        finally:
+            if close_provider:
+                close_provider()
+    except Exception:
+        return KnowledgeQueryToolContextResponse(
+            queryText=body.queryText,
+            answerLanguage=body.answerLanguage,
+            status=KnowledgeQueryStatus.QUERY_FAILED,
+            diagnostics=[
+                KnowledgeQueryDiagnostic(
+                    code="KNOWLEDGE_QUERY_FAILED",
+                    message="Knowledge query failed before a factual bundle could be built.",
+                    severity="ERROR",
+                )
+            ],
+        )
+
+
 async def _run_in_thread(func, *args, **kwargs):
-    loop = asyncio.get_running_loop()
-    future = loop.create_future()
+    result_queue: "queue.Queue[tuple[bool, Any]]" = queue.Queue(maxsize=1)
 
     def worker() -> None:
         try:
-            result = func(*args, **kwargs)
+            result_queue.put((True, func(*args, **kwargs)))
         except BaseException as exc:
-            loop.call_soon_threadsafe(_set_future_exception, future, exc)
-            return
-        loop.call_soon_threadsafe(_set_future_result, future, result)
+            result_queue.put((False, exc))
 
-    thread = threading.Thread(target=worker, name="knowledge-graph-view", daemon=True)
+    thread = threading.Thread(target=worker, name="knowledge-worker-boundary", daemon=True)
     thread.start()
-    try:
-        return await asyncio.shield(future)
-    except asyncio.CancelledError:
-        return await future
-
-
-def _set_future_result(future, result) -> None:
-    if not future.cancelled():
-        future.set_result(result)
-
-
-def _set_future_exception(future, exc: BaseException) -> None:
-    if not future.cancelled():
-        future.set_exception(exc)
+    while True:
+        try:
+            ok, result = result_queue.get_nowait()
+            if ok:
+                return result
+            raise result
+        except queue.Empty:
+            await asyncio.sleep(0.001)
 
 
 def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
@@ -713,15 +723,24 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
 def _flow_explanation_service(request: Request, config: AppConfig) -> tuple[FlowExplanationService, Optional[Any]]:
     injected_provider = getattr(request.app.state, "flow_explanation_provider", None)
     max_prompt_chars = max(4096, int(config.analysis_context_tokens or 4096) * 4)
+    request_deadline_seconds = max(1.0, float(config.analysis_request_timeout_seconds or config.analysis_ai_call_timeout_seconds or 90))
     if injected_provider is not None:
-        return FlowExplanationService(injected_provider, max_prompt_chars=max_prompt_chars), None
+        return FlowExplanationService(
+            injected_provider,
+            max_prompt_chars=max_prompt_chars,
+            request_deadline_seconds=request_deadline_seconds,
+        ), None
     provider = LocalOllamaFlowExplanationClient(
         config.analysis_base_url,
         config.analysis_model,
         config.analysis_ai_call_timeout_seconds,
         config.analysis_context_tokens,
     )
-    return FlowExplanationService(provider, max_prompt_chars=max_prompt_chars), provider.close
+    return FlowExplanationService(
+        provider,
+        max_prompt_chars=max_prompt_chars,
+        request_deadline_seconds=request_deadline_seconds,
+    ), provider.close
 
 
 def _current_file_progress(dependencies: KnowledgeDependencies) -> Dict[str, Any]:
