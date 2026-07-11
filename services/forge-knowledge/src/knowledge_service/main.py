@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import queue
+import functools
 import sqlite3
 import threading
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
+import anyio
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -222,21 +223,29 @@ def create_app(
 
     @app.post("/api/v1/knowledge/query", response_model=KnowledgeQueryResponse)
     async def knowledge_query(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-        if request.client and request.client.host == "testclient":
-            return _knowledge_query_response(request, body)
         return await _run_in_thread(_knowledge_query_response, request, body)
 
     @app.post("/api/v1/knowledge/query/flow-explanations", response_model=KnowledgeQueryFlowExplanationResponse)
     async def knowledge_query_flow_explanations(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryFlowExplanationResponse:
-        if request.client and request.client.host == "testclient":
-            return _knowledge_query_flow_explanations_response(request, body)
-        return await _run_in_thread(_knowledge_query_flow_explanations_response, request, body)
+        cancel_event = threading.Event()
+        return await _run_in_thread(
+            _knowledge_query_flow_explanations_response,
+            request,
+            body,
+            cancel_event,
+            request_cancel_event=cancel_event,
+        )
 
     @app.post("/api/v1/knowledge/query/tool-context", response_model=KnowledgeQueryToolContextResponse)
     async def knowledge_query_tool_context(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryToolContextResponse:
-        if request.client and request.client.host == "testclient":
-            return _knowledge_query_tool_context_response(request, body)
-        return await _run_in_thread(_knowledge_query_tool_context_response, request, body)
+        cancel_event = threading.Event()
+        return await _run_in_thread(
+            _knowledge_query_tool_context_response,
+            request,
+            body,
+            cancel_event,
+            request_cancel_event=cancel_event,
+        )
 
     @app.post("/api/v1/knowledge/semantic/index/build", response_model=SemanticIndexBuildResponse)
     async def semantic_index_build(request: Request, body: SemanticIndexBuildRequest) -> SemanticIndexBuildResponse:
@@ -432,20 +441,6 @@ def create_app(
         maxNodes: int = Query(80, ge=0, le=5000),
     ) -> JSONResponse:
         _, deps = _state(request)
-        if request.client and request.client.host == "testclient":
-            return _graph_view_response(
-                deps.analysis_store,
-                sourceId,
-                flowDomain,
-                factOrigin,
-                nodeKind,
-                edgeType,
-                includeExternal,
-                includeUnresolved,
-                includeIsolated,
-                search,
-                maxNodes,
-            )
         return await _run_in_thread(
             _graph_view_response,
             deps.analysis_store,
@@ -625,11 +620,15 @@ def _knowledge_query_response(request: Request, body: KnowledgeQueryRequest) -> 
         )
 
 
-def _knowledge_query_flow_explanations_response(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryFlowExplanationResponse:
+def _knowledge_query_flow_explanations_response(
+    request: Request,
+    body: KnowledgeQueryRequest,
+    cancel_event: threading.Event | None = None,
+) -> KnowledgeQueryFlowExplanationResponse:
     config, deps = _state(request)
     try:
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
-        explanation_service, close_provider = _flow_explanation_service(request, config)
+        explanation_service, close_provider = _flow_explanation_service(request, config, cancel_event)
         try:
             run = explanation_service.explain(body, query_result)
             return explanation_service.to_ui_response(run)
@@ -651,11 +650,15 @@ def _knowledge_query_flow_explanations_response(request: Request, body: Knowledg
         )
 
 
-def _knowledge_query_tool_context_response(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryToolContextResponse:
+def _knowledge_query_tool_context_response(
+    request: Request,
+    body: KnowledgeQueryRequest,
+    cancel_event: threading.Event | None = None,
+) -> KnowledgeQueryToolContextResponse:
     config, deps = _state(request)
     try:
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
-        explanation_service, close_provider = _flow_explanation_service(request, config)
+        explanation_service, close_provider = _flow_explanation_service(request, config, cancel_event)
         try:
             run = explanation_service.explain(body, query_result)
             return explanation_service.to_tool_response(body, run)
@@ -677,25 +680,13 @@ def _knowledge_query_tool_context_response(request: Request, body: KnowledgeQuer
         )
 
 
-async def _run_in_thread(func, *args, **kwargs):
-    result_queue: "queue.Queue[tuple[bool, Any]]" = queue.Queue(maxsize=1)
-
-    def worker() -> None:
-        try:
-            result_queue.put((True, func(*args, **kwargs)))
-        except BaseException as exc:
-            result_queue.put((False, exc))
-
-    thread = threading.Thread(target=worker, name="knowledge-worker-boundary", daemon=True)
-    thread.start()
-    while True:
-        try:
-            ok, result = result_queue.get_nowait()
-            if ok:
-                return result
-            raise result
-        except queue.Empty:
-            await asyncio.sleep(0.001)
+async def _run_in_thread(func, *args, request_cancel_event: threading.Event | None = None, **kwargs):
+    try:
+        return await anyio.to_thread.run_sync(functools.partial(func, *args, **kwargs), abandon_on_cancel=True)
+    except asyncio.CancelledError:
+        if request_cancel_event is not None:
+            request_cancel_event.set()
+        raise
 
 
 def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
@@ -720,7 +711,11 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
     raise RuntimeError("Knowledge app dependencies are not initialized")
 
 
-def _flow_explanation_service(request: Request, config: AppConfig) -> tuple[FlowExplanationService, Optional[Any]]:
+def _flow_explanation_service(
+    request: Request,
+    config: AppConfig,
+    cancel_event: threading.Event | None = None,
+) -> tuple[FlowExplanationService, Optional[Any]]:
     injected_provider = getattr(request.app.state, "flow_explanation_provider", None)
     max_prompt_chars = max(4096, int(config.analysis_context_tokens or 4096) * 4)
     request_deadline_seconds = max(1.0, float(config.analysis_request_timeout_seconds or config.analysis_ai_call_timeout_seconds or 90))
@@ -729,6 +724,7 @@ def _flow_explanation_service(request: Request, config: AppConfig) -> tuple[Flow
             injected_provider,
             max_prompt_chars=max_prompt_chars,
             request_deadline_seconds=request_deadline_seconds,
+            cancel_event=cancel_event,
         ), None
     provider = LocalOllamaFlowExplanationClient(
         config.analysis_base_url,
@@ -740,6 +736,7 @@ def _flow_explanation_service(request: Request, config: AppConfig) -> tuple[Flow
         provider,
         max_prompt_chars=max_prompt_chars,
         request_deadline_seconds=request_deadline_seconds,
+        cancel_event=cancel_event,
     ), provider.close
 
 

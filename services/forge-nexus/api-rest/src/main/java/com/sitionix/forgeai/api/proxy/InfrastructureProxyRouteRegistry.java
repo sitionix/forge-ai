@@ -10,12 +10,11 @@ import org.springframework.web.util.UriUtils;
 @Component
 public class InfrastructureProxyRouteRegistry {
 
-    static final Duration KNOWLEDGE_EXPLANATION_READ_TIMEOUT = Duration.ofSeconds(95);
-
     private final Map<String, InfrastructureProxyRoute> routes;
 
-    public InfrastructureProxyRouteRegistry() {
+    public InfrastructureProxyRouteRegistry(final InfrastructureProxyProperties properties) {
         final Map<String, InfrastructureProxyRoute> registered = new LinkedHashMap<>();
+        final var explanationReadTimeout = properties.getProxy().knowledgeExplanationReadTimeout();
         this.knowledge(registered, "knowledge.status", HttpMethod.GET, "/api/v1/knowledge/status", false);
         this.knowledge(registered, "knowledge.sources", HttpMethod.GET, "/api/v1/knowledge/sources", false);
         this.knowledge(registered, "knowledge.overview", HttpMethod.GET, "/api/v1/knowledge/overview", false);
@@ -28,7 +27,7 @@ public class InfrastructureProxyRouteRegistry {
                 HttpMethod.POST,
                 "/api/v1/knowledge/query/flow-explanations",
                 true,
-                KNOWLEDGE_EXPLANATION_READ_TIMEOUT
+                explanationReadTimeout
         );
         this.knowledge(
                 registered,
@@ -36,7 +35,7 @@ public class InfrastructureProxyRouteRegistry {
                 HttpMethod.POST,
                 "/api/v1/knowledge/query/tool-context",
                 true,
-                KNOWLEDGE_EXPLANATION_READ_TIMEOUT
+                explanationReadTimeout
         );
         this.knowledge(registered, "knowledge.analysis.build", HttpMethod.POST, "/api/v1/knowledge/analysis/build", true);
         this.knowledge(registered, "knowledge.analysis.retry-failed", HttpMethod.POST, "/api/v1/knowledge/analysis/retry-failed", true);

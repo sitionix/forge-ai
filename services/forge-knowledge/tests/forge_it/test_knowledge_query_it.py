@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import asyncio
 
+import httpx
 import pytest
 from semantic_test_support import seed_semantic_graph
-from support import AsgiTestClient as TestClient
 from support import build_test_app, write_runtime_config
 
 
@@ -15,13 +16,36 @@ def query_payload(query_text):
     return {"queryText": query_text}
 
 
+async def await_with_wakeup(awaitable, *, timeout=2.0, interval=0.01):
+    task = asyncio.create_task(awaitable)
+    deadline = asyncio.get_running_loop().time() + timeout
+    try:
+        while not task.done():
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                task.cancel()
+                raise asyncio.TimeoutError()
+            await asyncio.sleep(min(interval, remaining))
+        return await task
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+def post_query(app, payload):
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+            return await await_with_wakeup(client.post("/api/v1/knowledge/query", json=payload))
+
+    return asyncio.run(exercise())
+
+
 def test_knowledge_query_rejects_old_request_shape(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_query_graph(app_config.store_path)
     old_payload = {"qu" + "ery": "SiteController createSite", "intent": "AU" + "TO"}
 
-    with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json=old_payload)
+    response = post_query(app, old_payload)
 
     assert response.status_code == 422
 
@@ -30,12 +54,8 @@ def test_knowledge_query_searches_all_current_graph_sources_without_source_id(tm
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_query_graph(app_config.store_path)
 
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/v1/knowledge/query",
-            json=query_payload("поясни як працює JarvisGateway"),
-        )
-        no_candidates = client.post("/api/v1/knowledge/query", json=query_payload("does-not-exist"))
+    response = post_query(app, query_payload("поясни як працює JarvisGateway"))
+    no_candidates = post_query(app, query_payload("does-not-exist"))
 
     assert response.status_code == 200
     body = response.json()
@@ -90,8 +110,7 @@ def test_knowledge_query_integration_extracts_linear_calls_path(tmp_path):
         ],
     )
 
-    with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json=query_payload("UseCase.execute"))
+    response = post_query(app, query_payload("UseCase.execute"))
 
     assert response.status_code == 200
     body = response.json()
@@ -121,8 +140,7 @@ def test_knowledge_query_integration_bounds_adjacency_around_matched_node(tmp_pa
         edges.append({"id": f"aaa-noise-{index:04d}", "fromNodeId": f"noise-from-{index}", "toNodeId": f"noise-to-{index}"})
     seed_flow_graph(app_config.store_path, "flow-large-source", nodes, edges)
 
-    with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json=query_payload("Anchor.execute"))
+    response = post_query(app, query_payload("Anchor.execute"))
 
     assert response.status_code == 200
     body = response.json()
@@ -151,8 +169,7 @@ def test_knowledge_query_integration_extracts_multiple_entrypoints(tmp_path):
         ],
     )
 
-    with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json=query_payload("UseCase.execute"))
+    response = post_query(app, query_payload("UseCase.execute"))
 
     body = response.json()
     assert sorted(flow["nodeIds"] for flow in body["flowPaths"]) == [
@@ -179,8 +196,7 @@ def test_knowledge_query_integration_extracts_downstream_branches(tmp_path):
         ],
     )
 
-    with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json=query_payload("UseCase.execute"))
+    response = post_query(app, query_payload("UseCase.execute"))
 
     body = response.json()
     assert sorted(flow["nodeIds"] for flow in body["flowPaths"]) == [
@@ -204,8 +220,7 @@ def test_knowledge_query_integration_detects_calls_cycle(tmp_path):
         ],
     )
 
-    with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json=query_payload("Alpha"))
+    response = post_query(app, query_payload("Alpha"))
 
     body = response.json()
     assert any(flow["stopReason"] == "CYCLE_DETECTED" and flow["complete"] is False for flow in body["flowPaths"])
@@ -232,8 +247,7 @@ def test_knowledge_query_integration_preserves_external_and_unresolved_boundarie
         ],
     )
 
-    with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json=query_payload("Controller.create"))
+    response = post_query(app, query_payload("Controller.create"))
 
     body = response.json()
     stop_reasons = {flow["stopReason"] for flow in body["flowPaths"]}
@@ -266,8 +280,7 @@ def test_knowledge_query_integration_searches_all_sources_for_flow_paths(tmp_pat
             ],
         )
 
-    with TestClient(app) as client:
-        response = client.post("/api/v1/knowledge/query", json=query_payload("SharedUseCase.execute"))
+    response = post_query(app, query_payload("SharedUseCase.execute"))
 
     body = response.json()
     assert {flow["sourceId"] for flow in body["flowPaths"]} == {"source-one", "source-two"}
@@ -278,22 +291,18 @@ def test_knowledge_query_stage3_code_aware_search_hardening(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_stage3_search_graph(app_config.store_path)
 
-    with TestClient(app) as client:
-        exact_file = client.post("/api/v1/knowledge/query", json=query_payload("jarvis.html")).json()
-        exact_callable = client.post("/api/v1/knowledge/query", json=query_payload("submitJarvisQuery")).json()
-        path_query = client.post("/api/v1/knowledge/query", json=query_payload("static/operator/jarvis.html")).json()
-        qualified_full = client.post(
-            "/api/v1/knowledge/query",
-            json=query_payload("com.sitionix.forgeai.api.ForgeAiInfrastructureJarvisController"),
-        ).json()
-        qualified_suffix = client.post("/api/v1/knowledge/query", json=query_payload("ForgeAiInfrastructureJarvisController")).json()
-        endpoint_query = client.post("/api/v1/knowledge/query", json=query_payload("/api/v1/knowledge/query")).json()
-        lexical_query = client.post("/api/v1/knowledge/query", json=query_payload("jarvis query knowledge")).json()
-        typo_query = client.post("/api/v1/knowledge/query", json=query_payload("AgetnChatPage")).json()
-        exact_typo_baseline = client.post("/api/v1/knowledge/query", json=query_payload("AgentChatPage")).json()
-        multi_source = client.post("/api/v1/knowledge/query", json=query_payload("SharedJarvisQuery")).json()
-        no_candidates = client.post("/api/v1/knowledge/query", json=query_payload("definitely-no-such-node-xyz")).json()
-        flow_integration = client.post("/api/v1/knowledge/query", json=query_payload("JarvisQueryService.query")).json()
+    exact_file = post_query(app, query_payload("jarvis.html")).json()
+    exact_callable = post_query(app, query_payload("submitJarvisQuery")).json()
+    path_query = post_query(app, query_payload("static/operator/jarvis.html")).json()
+    qualified_full = post_query(app, query_payload("com.sitionix.forgeai.api.ForgeAiInfrastructureJarvisController")).json()
+    qualified_suffix = post_query(app, query_payload("ForgeAiInfrastructureJarvisController")).json()
+    endpoint_query = post_query(app, query_payload("/api/v1/knowledge/query")).json()
+    lexical_query = post_query(app, query_payload("jarvis query knowledge")).json()
+    typo_query = post_query(app, query_payload("AgetnChatPage")).json()
+    exact_typo_baseline = post_query(app, query_payload("AgentChatPage")).json()
+    multi_source = post_query(app, query_payload("SharedJarvisQuery")).json()
+    no_candidates = post_query(app, query_payload("definitely-no-such-node-xyz")).json()
+    flow_integration = post_query(app, query_payload("JarvisQueryService.query")).json()
 
     assert exact_file["matchedNodes"][0]["nodeId"] == "console-file-jarvis-html"
     assert exact_file["matchedNodes"][0]["sourceId"] == "forge-console-test"

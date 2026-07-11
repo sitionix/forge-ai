@@ -34,40 +34,11 @@ FLOW_EXPLANATION_VALIDATION_FAILED = "FLOW_EXPLANATION_VALIDATION_FAILED"
 FLOW_EXPLANATION_LIMIT_REACHED = "FLOW_EXPLANATION_LIMIT_REACHED"
 FLOW_EXPLANATION_SKIPPED_NO_FLOW = "FLOW_EXPLANATION_SKIPPED_NO_FLOW"
 
-_DOTTED_SYMBOL_RE = re.compile(r"\b[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+\b")
 _BACKTICK_TOKEN_RE = re.compile(r"`([^`]+)`")
-_CODE_TOKEN_RE = re.compile(r"\b[A-Za-z_$][A-Za-z0-9_$]{2,}\b")
-_COMMON_NARRATIVE_TOKENS = {
-    "The",
-    "This",
-    "That",
-    "These",
-    "Those",
-    "Flow",
-    "Step",
-    "When",
-    "Then",
-    "Because",
-    "Using",
-    "Provided",
-    "Evidence",
-    "Boundary",
-    "External",
-    "Unresolved",
-    "Target",
-    "Source",
-    "Each",
-    "Ordered",
-    "Path",
-    "Input",
-    "Output",
-    "Request",
-    "Response",
-    "First",
-    "Second",
-    "Finally",
-    "Narrative",
-}
+_MIN_MEANINGFUL_NARRATIVE_WORDS = 24
+_MIN_DISTINCT_MEANINGFUL_NARRATIVE_WORDS = 12
+_DEFAULT_MIN_CALL_TIMEOUT_SECONDS = 0.01
+_DEADLINE_COMPLETION_GRACE_SECONDS = 0.005
 
 
 @dataclass(frozen=True)
@@ -115,6 +86,10 @@ class FlowExplanationRun:
     diagnostics: List[KnowledgeQueryDiagnostic]
 
 
+class FlowExplanationDeadlineExceeded(Exception):
+    pass
+
+
 class FlowExplanationPromptRenderer:
     def render(self, llm_input: Mapping[str, Any], validation_errors: Sequence[str] | None = None) -> str:
         validation_block = ""
@@ -134,6 +109,8 @@ class FlowExplanationPromptRenderer:
             "The steps array must cover every input stepRef/order. The transitions array must cover every input transitionRef. "
             "Boundary explanations are required for every input boundaryRef when input boundaries exist.\n"
             "Use stepRefs, transitionRefs, and boundaryRefs to ground each sentence in the exact input facts it explains.\n"
+            "When mentioning a code identifier, symbol, method, class, or boundary target in prose, wrap the exact identifier in backticks. "
+            "Do not wrap ordinary natural-language words.\n"
             "Use the requested answerLanguage. Shared nodes are repeated here because this is a self-contained flow.\n"
             f"{validation_block}"
             "BEGIN_FLOW_CONTEXT_JSON\n"
@@ -159,8 +136,14 @@ class LocalOllamaFlowExplanationClient:
         self.renderer = renderer or FlowExplanationPromptRenderer()
         self._client = http_client or httpx.Client(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 
-    def complete(self, llm_input: Mapping[str, Any], validation_errors: Sequence[str] | None = None) -> FlowExplanationProviderResult:
+    def complete(
+        self,
+        llm_input: Mapping[str, Any],
+        validation_errors: Sequence[str] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> FlowExplanationProviderResult:
         prompt = self.renderer.render(llm_input, validation_errors)
+        call_timeout = self._call_timeout(timeout_seconds)
         response = self._client.post(
             f"{self.base_url}/api/generate",
             json={
@@ -170,6 +153,7 @@ class LocalOllamaFlowExplanationClient:
                 "format": "json",
                 "options": {"num_ctx": self.context_tokens},
             },
+            timeout=httpx.Timeout(call_timeout, connect=min(5.0, call_timeout)),
         )
         response.raise_for_status()
         raw = response.json()
@@ -186,6 +170,12 @@ class LocalOllamaFlowExplanationClient:
         if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
             raise ValueError("Flow explanation LLM base URL must point to localhost")
         return base_url
+
+    def _call_timeout(self, timeout_seconds: float | None) -> float:
+        configured = max(0.001, float(self.timeout_seconds or 0.001))
+        if timeout_seconds is None:
+            return configured
+        return max(0.001, min(configured, float(timeout_seconds)))
 
 
 class FlowExplanationContextPacker:
@@ -214,7 +204,7 @@ class FlowExplanationContextPacker:
             next_node = nodes[order] if order < len(nodes) else None
             call_edge = edges_by_from_to.get((node.node_id, next_node.node_id)) if next_node else None
             step_ref = f"s{order}"
-            step_refs = self._step_refs(node, call_edge, flow_unit.evidence, evidence_ref_by_id)
+            step_refs = self._step_refs(node, flow_unit.evidence, evidence_ref_by_id)
             step: Dict[str, Any] = {
                 "stepRef": step_ref,
                 "order": order,
@@ -284,7 +274,6 @@ class FlowExplanationContextPacker:
     def _step_refs(
         self,
         node: FlowGraphNode,
-        call_edge: FlowGraphEdge | None,
         evidence: Sequence[FlowGraphEvidence],
         evidence_ref_by_id: Mapping[str, str],
     ) -> List[str]:
@@ -292,9 +281,6 @@ class FlowExplanationContextPacker:
         for item in evidence:
             if item.node_id == node.node_id:
                 self._append_ref(refs, evidence_ref_by_id.get(item.evidence_id))
-        if call_edge is not None:
-            for ref in self._edge_refs(call_edge, evidence, evidence_ref_by_id):
-                self._append_ref(refs, ref)
         return refs
 
     def _edge_refs(
@@ -535,6 +521,9 @@ class FlowExplanationValidator:
             if isinstance(item, dict)
         ]
         self._extend_ref_set_errors(errors, "transition", set(input_transition_by_ref), output_transition_refs)
+        input_transition_refs = list(input_transition_by_ref)
+        if set(input_transition_refs) == set(output_transition_refs) and input_transition_refs != output_transition_refs:
+            errors.append("transition refs must preserve input order")
 
         output_boundaries = [item for item in explanation.get("boundaries", []) if isinstance(item, dict)]
         output_boundary_refs = [str(item.get("boundaryRef") or "") for item in output_boundaries]
@@ -551,10 +540,12 @@ class FlowExplanationValidator:
         for ref in self._output_evidence_refs(explanation):
             if ref not in context.evidence_refs:
                 errors.append(f"evidence ref {ref} is not present in the packed flow context")
+        errors.extend(self._evidence_ownership_errors(explanation, input_steps, input_transitions, input_boundaries))
         for item in output_steps:
             unknown_transition_refs = sorted(set(item.get("transitionRefs") or []) - set(input_transition_by_ref))
             if unknown_transition_refs:
                 errors.append(f"stepRef {item.get('stepRef')} references unknown transitions {unknown_transition_refs}")
+        errors.extend(self._step_transition_ownership_errors(output_steps, input_transition_by_ref))
 
         errors.extend(self._narrative_errors(explanation, input_step_by_ref, input_transition_by_ref, input_boundary_by_ref))
         aliases_by_step_ref = self._allowed_aliases_by_step_ref(input_steps)
@@ -581,10 +572,110 @@ class FlowExplanationValidator:
         if duplicates:
             errors.append(f"{label} refs must be unique; duplicates {duplicates}")
 
+    def _step_transition_ownership_errors(
+        self,
+        output_steps: Sequence[Mapping[str, Any]],
+        input_transition_by_ref: Mapping[str, Any],
+    ) -> List[str]:
+        errors: List[str] = []
+        expected_by_step_ref: Dict[str, List[str]] = {}
+        for transition_ref, transition in input_transition_by_ref.items():
+            if not isinstance(transition, dict):
+                continue
+            from_step_ref = str(transition.get("fromStepRef") or "")
+            if from_step_ref:
+                expected_by_step_ref.setdefault(from_step_ref, []).append(str(transition_ref))
+
+        for step in output_steps:
+            step_ref = str(step.get("stepRef") or "")
+            actual_refs = list(step.get("transitionRefs") or [])
+            actual = set(actual_refs)
+            expected = set(expected_by_step_ref.get(step_ref, []))
+            duplicates = sorted(ref for ref, count in Counter(actual_refs).items() if count > 1)
+            if duplicates:
+                errors.append(f"stepRef {step_ref} transitionRefs must be unique; duplicates {duplicates}")
+            if expected and actual != expected:
+                errors.append(f"stepRef {step_ref} must reference its exact outgoing transition refs {sorted(expected)}")
+            if not expected and actual:
+                errors.append(f"terminal stepRef {step_ref} must not reference transitions")
+            wrong_owner = sorted(
+                ref
+                for ref in actual
+                if ref in input_transition_by_ref
+                and str(input_transition_by_ref[ref].get("fromStepRef") or "") != step_ref
+            )
+            if wrong_owner:
+                errors.append(f"stepRef {step_ref} references another step's transition refs {wrong_owner}")
+        return errors
+
     def _string_list(self, value: Any) -> List[str]:
         if not isinstance(value, list):
             return []
         return [str(item) for item in value if isinstance(item, str) and item]
+
+    def _evidence_ownership_errors(
+        self,
+        explanation: Mapping[str, Any],
+        input_steps: Sequence[Any],
+        input_transitions: Sequence[Any],
+        input_boundaries: Sequence[Any],
+    ) -> List[str]:
+        errors: List[str] = []
+        allowed_by_step = {
+            str(item.get("stepRef")): self._context_evidence_refs(item)
+            for item in input_steps
+            if isinstance(item, dict) and isinstance(item.get("stepRef"), str)
+        }
+        allowed_by_transition = {
+            str(item.get("transitionRef")): self._context_evidence_refs(item)
+            for item in input_transitions
+            if isinstance(item, dict) and isinstance(item.get("transitionRef"), str)
+        }
+        allowed_by_boundary = {
+            str(item.get("boundaryRef")): self._context_evidence_refs(item)
+            for item in input_boundaries
+            if isinstance(item, dict) and isinstance(item.get("boundaryRef"), str)
+        }
+        for item in explanation.get("steps", []):
+            if not isinstance(item, dict):
+                continue
+            step_ref = str(item.get("stepRef") or "")
+            allowed = allowed_by_step.get(step_ref)
+            if allowed is None:
+                continue
+            for ref in item.get("evidenceRefs", []):
+                if isinstance(ref, str) and ref not in allowed:
+                    errors.append(f"evidence ref {ref} is not valid for stepRef {step_ref}")
+        for item in explanation.get("transitions", []):
+            if not isinstance(item, dict):
+                continue
+            transition_ref = str(item.get("transitionRef") or "")
+            allowed = allowed_by_transition.get(transition_ref)
+            if allowed is None:
+                continue
+            for ref in item.get("evidenceRefs", []):
+                if isinstance(ref, str) and ref not in allowed:
+                    errors.append(f"evidence ref {ref} is not valid for transitionRef {transition_ref}")
+        for item in explanation.get("boundaries", []):
+            if not isinstance(item, dict):
+                continue
+            boundary_ref = str(item.get("boundaryRef") or "")
+            allowed = allowed_by_boundary.get(boundary_ref)
+            if allowed is None:
+                continue
+            for ref in item.get("evidenceRefs", []):
+                if isinstance(ref, str) and ref not in allowed:
+                    errors.append(f"evidence ref {ref} is not valid for boundaryRef {boundary_ref}")
+        return errors
+
+    def _context_evidence_refs(self, item: Mapping[str, Any]) -> set[str]:
+        refs = {str(ref) for ref in item.get("evidenceRefs", []) if isinstance(ref, str)}
+        evidence = item.get("evidence", [])
+        if isinstance(evidence, list):
+            for evidence_item in evidence:
+                if isinstance(evidence_item, dict) and isinstance(evidence_item.get("ref"), str):
+                    refs.add(str(evidence_item["ref"]))
+        return refs
 
     def _output_evidence_refs(self, explanation: Mapping[str, Any]) -> List[str]:
         refs: List[str] = []
@@ -616,9 +707,12 @@ class FlowExplanationValidator:
         errors: List[str] = []
         narrative = [item for item in explanation.get("narrative", []) if isinstance(item, dict)]
         texts = [str(item.get("text") or "") for item in narrative]
-        total_words = sum(len(re.findall(r"\w+", text, flags=re.UNICODE)) for text in texts)
-        if len(narrative) < 2 and total_words < 24:
-            errors.append("narrative must be more than a one-line or trivial summary")
+        words = [word for text in texts for word in re.findall(r"\w+", text, flags=re.UNICODE)]
+        meaningful_words = [word.lower() for word in words if len(word) >= 3]
+        if len(narrative) < 2:
+            errors.append("narrative must contain at least two grounded blocks")
+        if len(words) < _MIN_MEANINGFUL_NARRATIVE_WORDS or len(set(meaningful_words)) < _MIN_DISTINCT_MEANINGFUL_NARRATIVE_WORDS:
+            errors.append("narrative must contain meaningful explanatory detail")
         known_step_refs = set(input_step_by_ref)
         known_transition_refs = set(input_transition_by_ref)
         known_boundary_refs = set(input_boundary_by_ref)
@@ -760,24 +854,12 @@ class FlowExplanationValidator:
         return selected
 
     def _code_symbols(self, text: str) -> set[str]:
-        symbols = set(_DOTTED_SYMBOL_RE.findall(text))
+        symbols: set[str] = set()
         for raw in _BACKTICK_TOKEN_RE.findall(text):
             token = raw.strip()
             if token:
                 symbols.add(token)
-        for token in _CODE_TOKEN_RE.findall(text):
-            if self._looks_like_code_token(token):
-                symbols.add(token)
         return symbols
-
-    def _looks_like_code_token(self, token: str) -> bool:
-        if token in _COMMON_NARRATIVE_TOKENS:
-            return False
-        if "_" in token or "$" in token:
-            return True
-        if re.search(r"[a-z][A-Z]", token):
-            return True
-        return token[:1].isupper() and any(char.islower() for char in token[1:]) and len(token) >= 4
 
 
 class FlowExplanationService:
@@ -787,16 +869,20 @@ class FlowExplanationService:
         *,
         max_prompt_chars: int = 32768,
         request_deadline_seconds: float = 90.0,
+        min_call_timeout_seconds: float = _DEFAULT_MIN_CALL_TIMEOUT_SECONDS,
         packer: FlowExplanationContextPacker | None = None,
         validator: FlowExplanationValidator | None = None,
         renderer: FlowExplanationPromptRenderer | None = None,
+        cancel_event: Any | None = None,
     ) -> None:
         self.provider = provider
         self.max_prompt_chars = max(4096, int(max_prompt_chars or 32768))
         self.request_deadline_seconds = max(0.001, float(request_deadline_seconds or 90.0))
+        self.min_call_timeout_seconds = max(0.001, float(min_call_timeout_seconds or _DEFAULT_MIN_CALL_TIMEOUT_SECONDS))
         self.packer = packer or FlowExplanationContextPacker()
         self.validator = validator or FlowExplanationValidator()
         self.renderer = renderer or FlowExplanationPromptRenderer()
+        self.cancel_event = cancel_event
 
     def explain(self, request: KnowledgeQueryRequest, execution: Any) -> FlowExplanationRun:
         query_response = execution.response
@@ -822,13 +908,10 @@ class FlowExplanationService:
                 source_display_name=source_display_name,
             )
             prompt_len = len(self.renderer.render(packed.llm_input))
-            if self._deadline_reached(deadline_at):
-                diagnostic = self._diagnostic(
-                    FLOW_EXPLANATION_LIMIT_REACHED,
+            if not self._can_start_call(deadline_at):
+                diagnostic = self._deadline_diagnostic(
                     "Flow explanation request deadline was reached before this flow could be explained.",
                     flow_index,
-                    severity="WARN",
-                    metadata={"requestDeadlineSeconds": self.request_deadline_seconds},
                 )
                 diagnostics.append(diagnostic)
                 results.append(
@@ -887,7 +970,19 @@ class FlowExplanationService:
     def _explain_one(self, flow_unit: FlowUnit, context: PackedFlowContext, deadline_at: float) -> PerFlowExplanationResult:
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         try:
-            first = self.provider.complete(context.llm_input)
+            first = self._complete_with_deadline(context.llm_input, deadline_at)
+        except FlowExplanationDeadlineExceeded:
+            diagnostic = self._deadline_diagnostic(
+                "Flow explanation request deadline was reached before this flow could be explained.",
+                context.flow_index,
+            )
+            return PerFlowExplanationResult(
+                flow_index=context.flow_index,
+                flow_unit=flow_unit,
+                context=context,
+                explanation=None,
+                diagnostics=[diagnostic],
+            )
         except Exception as exc:
             diagnostic = self._diagnostic(
                 FLOW_EXPLANATION_LLM_FAILED,
@@ -914,7 +1009,7 @@ class FlowExplanationService:
                 attempt=FlowExplanationAttempt(prompt_char_length=first.prompt_char_length),
             )
 
-        if self._deadline_reached(deadline_at):
+        if not self._can_start_call(deadline_at):
             diagnostics.append(
                 self._diagnostic(
                     FLOW_EXPLANATION_LIMIT_REACHED,
@@ -934,7 +1029,25 @@ class FlowExplanationService:
             )
 
         try:
-            second = self.provider.complete(context.llm_input, errors)
+            second = self._complete_with_deadline(context.llm_input, deadline_at, errors)
+        except FlowExplanationDeadlineExceeded:
+            diagnostics.append(
+                self._diagnostic(
+                    FLOW_EXPLANATION_LIMIT_REACHED,
+                    "Flow explanation request deadline was reached before validation retry could complete.",
+                    context.flow_index,
+                    severity="WARN",
+                    metadata={"requestDeadlineSeconds": self.request_deadline_seconds, "validationErrors": errors[:10]},
+                )
+            )
+            return PerFlowExplanationResult(
+                flow_index=context.flow_index,
+                flow_unit=flow_unit,
+                context=context,
+                explanation=None,
+                diagnostics=diagnostics,
+                attempt=FlowExplanationAttempt(prompt_char_length=first.prompt_char_length),
+            )
         except Exception as exc:
             diagnostics.append(
                 self._diagnostic(
@@ -992,8 +1105,44 @@ class FlowExplanationService:
             attempt=FlowExplanationAttempt(prompt_char_length=second.prompt_char_length, retried=True),
         )
 
-    def _deadline_reached(self, deadline_at: float) -> bool:
-        return time.monotonic() >= deadline_at
+    def _remaining_seconds(self, deadline_at: float) -> float:
+        return max(0.0, deadline_at - time.monotonic())
+
+    def _can_start_call(self, deadline_at: float) -> bool:
+        return not self._cancelled() and self._remaining_seconds(deadline_at) > self.min_call_timeout_seconds
+
+    def _complete_with_deadline(
+        self,
+        llm_input: Mapping[str, Any],
+        deadline_at: float,
+        validation_errors: Sequence[str] | None = None,
+    ) -> FlowExplanationProviderResult:
+        if self._cancelled():
+            raise FlowExplanationDeadlineExceeded()
+        remaining = self._remaining_seconds(deadline_at)
+        if remaining <= self.min_call_timeout_seconds:
+            raise FlowExplanationDeadlineExceeded()
+        try:
+            result = self.provider.complete(llm_input, validation_errors, timeout_seconds=remaining)
+        except (TimeoutError, httpx.TimeoutException) as exc:
+            raise FlowExplanationDeadlineExceeded() from exc
+        if self._cancelled():
+            raise FlowExplanationDeadlineExceeded()
+        if time.monotonic() > deadline_at + _DEADLINE_COMPLETION_GRACE_SECONDS:
+            raise FlowExplanationDeadlineExceeded()
+        return result
+
+    def _cancelled(self) -> bool:
+        return bool(self.cancel_event is not None and getattr(self.cancel_event, "is_set", lambda: False)())
+
+    def _deadline_diagnostic(self, message: str, flow_index: int) -> KnowledgeQueryDiagnostic:
+        return self._diagnostic(
+            FLOW_EXPLANATION_LIMIT_REACHED,
+            message,
+            flow_index,
+            severity="WARN",
+            metadata={"requestDeadlineSeconds": self.request_deadline_seconds},
+        )
 
     def _ui_explanation(self, result: PerFlowExplanationResult) -> FlowExplanation:
         steps_by_order = self._step_explanations(result.explanation)
