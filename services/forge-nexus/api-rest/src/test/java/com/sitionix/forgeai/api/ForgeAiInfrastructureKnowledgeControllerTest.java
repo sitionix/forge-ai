@@ -42,6 +42,26 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
     }
 
     @Test
+    void queryFlowExplanationsDelegatesRawBodyToGenericProxyRoute() {
+        this.stub();
+        final byte[] body = "{\"queryText\":\"A.start\"}".getBytes(StandardCharsets.UTF_8);
+
+        this.controller.queryFlowExplanations(body, this.headers, this.request);
+
+        verify(this.transport).forward("knowledge.query.flow-explanations", Map.of(), body, this.headers, this.request);
+    }
+
+    @Test
+    void queryToolContextDelegatesRawBodyToGenericProxyRoute() {
+        this.stub();
+        final byte[] body = "{\"queryText\":\"A.start\"}".getBytes(StandardCharsets.UTF_8);
+
+        this.controller.queryToolContext(body, this.headers, this.request);
+
+        verify(this.transport).forward("knowledge.query.tool-context", Map.of(), body, this.headers, this.request);
+    }
+
+    @Test
     void analysisJobPathVariableDelegatesToGenericProxyRoute() {
         this.stub();
 

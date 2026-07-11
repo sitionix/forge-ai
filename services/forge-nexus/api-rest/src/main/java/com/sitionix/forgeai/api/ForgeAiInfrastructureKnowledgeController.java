@@ -57,6 +57,20 @@ public class ForgeAiInfrastructureKnowledgeController {
         return this.proxy("knowledge.inventory.files", Map.of(), null, headers, request);
     }
 
+    @PostMapping("/api/v1/infrastructure/knowledge/query/flow-explanations")
+    public CompletableFuture<ResponseEntity<byte[]>> queryFlowExplanations(@RequestBody(required = false) final byte[] body,
+                                                                           @RequestHeader final HttpHeaders headers,
+                                                                           final HttpServletRequest request) {
+        return this.proxy("knowledge.query.flow-explanations", Map.of(), body, headers, request);
+    }
+
+    @PostMapping("/api/v1/infrastructure/knowledge/query/tool-context")
+    public CompletableFuture<ResponseEntity<byte[]>> queryToolContext(@RequestBody(required = false) final byte[] body,
+                                                                      @RequestHeader final HttpHeaders headers,
+                                                                      final HttpServletRequest request) {
+        return this.proxy("knowledge.query.tool-context", Map.of(), body, headers, request);
+    }
+
     @PostMapping("/api/v1/infrastructure/knowledge/analysis/build")
     public CompletableFuture<ResponseEntity<byte[]>> buildAnalysis(@RequestBody(required = false) final byte[] body,
                                                                    @RequestHeader final HttpHeaders headers,

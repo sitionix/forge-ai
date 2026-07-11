@@ -2564,6 +2564,7 @@ class AnalysisStore:
             label=str(item.get("label") or item.get("name") or node_id),
             qualified_name=str(item.get("qualifiedName")) if item.get("qualifiedName") else None,
             relative_path=str(item.get("relativePath")) if item.get("relativePath") else None,
+            summary=str(item.get("summary")) if item.get("summary") else None,
             entrypoint=bool(item.get("entrypoint")),
         )
 
@@ -2713,11 +2714,19 @@ class AnalysisStore:
         placeholders = ",".join("?" for _ in ids)
         contract = graph_query_contract()
         entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_claim_text())
         rows = conn.execute(
             f"""
+            WITH claim AS (
+                SELECT source_id, node_id, group_concat(summary, ' ') AS summary
+                FROM analysis_graph_claims
+                WHERE status IN ({claim_status_sql})
+                GROUP BY source_id, node_id
+            )
             SELECT n.*, af.relative_path,
                    COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
-                   CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint
+                   CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint,
+                   claim.summary AS summary
             FROM analysis_graph_nodes n
             LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
             LEFT JOIN (
@@ -2736,11 +2745,14 @@ class AnalysisStore:
              AND entry.node_id = n.id
              AND entry.claim_kind = ?
              AND entry.status IN ({entry_status_sql})
+            LEFT JOIN claim
+              ON claim.source_id = n.source_id
+             AND claim.node_id = n.id
             WHERE n.source_id = ?
               AND n.id IN ({placeholders})
             ORDER BY n.id
             """,
-            [contract.entrypoint_claim_kind, *entry_status_params, source_id, *ids],
+            [*claim_status_params, contract.entrypoint_claim_kind, *entry_status_params, source_id, *ids],
         ).fetchall()
         return [self._graph_node_projection(self._row_dict(row)) for row in rows]
 
@@ -4126,6 +4138,7 @@ class AnalysisStore:
             "factOrigin": row.get("fact_origin"),
             "lineStart": row.get("line_start"),
             "lineEnd": row.get("line_end"),
+            "summary": row.get("summary"),
             "status": row.get("status"),
             "confidence": row.get("confidence"),
             "degree": int(row.get("graph_degree") or 0),

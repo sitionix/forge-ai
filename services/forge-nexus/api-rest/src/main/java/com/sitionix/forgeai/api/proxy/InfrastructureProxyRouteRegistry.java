@@ -19,6 +19,8 @@ public class InfrastructureProxyRouteRegistry {
         this.knowledge(registered, "knowledge.inventory.build", HttpMethod.POST, "/api/v1/knowledge/inventory/build", true);
         this.knowledge(registered, "knowledge.inventory.status", HttpMethod.GET, "/api/v1/knowledge/inventory/status", false);
         this.knowledge(registered, "knowledge.inventory.files", HttpMethod.GET, "/api/v1/knowledge/inventory/files", false);
+        this.knowledge(registered, "knowledge.query.flow-explanations", HttpMethod.POST, "/api/v1/knowledge/query/flow-explanations", true);
+        this.knowledge(registered, "knowledge.query.tool-context", HttpMethod.POST, "/api/v1/knowledge/query/tool-context", true);
         this.knowledge(registered, "knowledge.analysis.build", HttpMethod.POST, "/api/v1/knowledge/analysis/build", true);
         this.knowledge(registered, "knowledge.analysis.retry-failed", HttpMethod.POST, "/api/v1/knowledge/analysis/retry-failed", true);
         this.knowledge(registered, "knowledge.analysis.job", HttpMethod.GET,

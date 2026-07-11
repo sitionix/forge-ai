@@ -19,11 +19,19 @@ from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
+from knowledge_service.flow_explanations import FlowExplanationService, LocalOllamaFlowExplanationClient
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_schema import InventoryBuildRequest
 from knowledge_service.inventory_store import InventoryStore
-from knowledge_service.knowledge_query_schema import KnowledgeQueryDiagnostic, KnowledgeQueryRequest, KnowledgeQueryResponse, KnowledgeQueryStatus
+from knowledge_service.knowledge_query_schema import (
+    KnowledgeQueryDiagnostic,
+    KnowledgeQueryFlowExplanationResponse,
+    KnowledgeQueryRequest,
+    KnowledgeQueryResponse,
+    KnowledgeQueryStatus,
+    KnowledgeQueryToolContextResponse,
+)
 from knowledge_service.knowledge_query_service import build_knowledge_query_service
 from knowledge_service.observability import (
     CORRELATION_HEADER,
@@ -221,6 +229,58 @@ def create_app(
                 queryId="query-failed",
                 status=KnowledgeQueryStatus.QUERY_FAILED,
                 intent=body.intent,
+                diagnostics=[
+                    KnowledgeQueryDiagnostic(
+                        code="KNOWLEDGE_QUERY_FAILED",
+                        message="Knowledge query failed before a factual bundle could be built.",
+                        severity="ERROR",
+                    )
+                ],
+            )
+
+    @app.post("/api/v1/knowledge/query/flow-explanations", response_model=KnowledgeQueryFlowExplanationResponse)
+    async def knowledge_query_flow_explanations(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryFlowExplanationResponse:
+        config, deps = _state(request)
+        try:
+            query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
+            explanation_service, close_provider = _flow_explanation_service(request, config)
+            try:
+                run = explanation_service.explain(body, query_result)
+                return explanation_service.to_ui_response(run)
+            finally:
+                if close_provider:
+                    close_provider()
+        except Exception:
+            return KnowledgeQueryFlowExplanationResponse(
+                queryId="query-failed",
+                status=KnowledgeQueryStatus.QUERY_FAILED,
+                intent=body.intent,
+                diagnostics=[
+                    KnowledgeQueryDiagnostic(
+                        code="KNOWLEDGE_QUERY_FAILED",
+                        message="Knowledge query failed before a factual bundle could be built.",
+                        severity="ERROR",
+                    )
+                ],
+            )
+
+    @app.post("/api/v1/knowledge/query/tool-context", response_model=KnowledgeQueryToolContextResponse)
+    async def knowledge_query_tool_context(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryToolContextResponse:
+        config, deps = _state(request)
+        try:
+            query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
+            explanation_service, close_provider = _flow_explanation_service(request, config)
+            try:
+                run = explanation_service.explain(body, query_result)
+                return explanation_service.to_tool_response(body, run)
+            finally:
+                if close_provider:
+                    close_provider()
+        except Exception:
+            return KnowledgeQueryToolContextResponse(
+                queryText=body.queryText,
+                answerLanguage=body.answerLanguage,
+                status=KnowledgeQueryStatus.QUERY_FAILED,
                 diagnostics=[
                     KnowledgeQueryDiagnostic(
                         code="KNOWLEDGE_QUERY_FAILED",
@@ -648,6 +708,20 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
             storage_operations=StorageOperations(store.db_path),
         )
     raise RuntimeError("Knowledge app dependencies are not initialized")
+
+
+def _flow_explanation_service(request: Request, config: AppConfig) -> tuple[FlowExplanationService, Optional[Any]]:
+    injected_provider = getattr(request.app.state, "flow_explanation_provider", None)
+    max_prompt_chars = max(4096, int(config.analysis_context_tokens or 4096) * 4)
+    if injected_provider is not None:
+        return FlowExplanationService(injected_provider, max_prompt_chars=max_prompt_chars), None
+    provider = LocalOllamaFlowExplanationClient(
+        config.analysis_base_url,
+        config.analysis_model,
+        config.analysis_ai_call_timeout_seconds,
+        config.analysis_context_tokens,
+    )
+    return FlowExplanationService(provider, max_prompt_chars=max_prompt_chars), provider.close
 
 
 def _current_file_progress(dependencies: KnowledgeDependencies) -> Dict[str, Any]:

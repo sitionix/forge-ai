@@ -40,7 +40,9 @@ class ForgeAiInfrastructureRouteContractTest {
                         "POST /api/v1/infrastructure/knowledge/analysis/build",
                         "POST /api/v1/infrastructure/knowledge/analysis/jobs/{jobId}/stop",
                         "POST /api/v1/infrastructure/knowledge/analysis/retry-failed",
-                        "POST /api/v1/infrastructure/knowledge/inventory/build"
+                        "POST /api/v1/infrastructure/knowledge/inventory/build",
+                        "POST /api/v1/infrastructure/knowledge/query/flow-explanations",
+                        "POST /api/v1/infrastructure/knowledge/query/tool-context"
                 );
     }
 

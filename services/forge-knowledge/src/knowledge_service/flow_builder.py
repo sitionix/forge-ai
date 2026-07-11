@@ -39,6 +39,7 @@ class FlowGraphNode:
     label: str
     qualified_name: str | None = None
     relative_path: str | None = None
+    summary: str | None = None
     entrypoint: bool = False
 
 
@@ -891,6 +892,7 @@ class FlowBuilder:
             "label": node.label,
             "qualifiedName": node.qualified_name,
             "relativePath": node.relative_path,
+            "summary": node.summary,
             "entrypoint": node.entrypoint,
         }
 
