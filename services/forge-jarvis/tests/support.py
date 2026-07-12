@@ -285,15 +285,17 @@ forge:
       console-enabled: false
       file-enabled: false
       directory: "{runtime_dir / "logs"}"
+    generative:
+      provider: ollama
+      base-url: http://localhost:11434
+      model: qwen2.5-coder:14b
+      context-tokens: 32768
     services:
       jarvis:
         host: 127.0.0.1
         port: 7071
         knowledge-base-url: http://127.0.0.1:7081
         model-runtime:
-          provider: ollama
-          base-url: http://localhost:11434
-          model: qwen2.5-coder:14b
           request-timeout-seconds: 120
         knowledge:
           request-timeout-seconds: 120

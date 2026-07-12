@@ -9,6 +9,11 @@ forge:
       console-enabled: true
       file-enabled: true
       directory: ${FORGE_RUNTIME_DIR:./var}/logs
+    generative:
+      provider: ollama
+      base-url: http://localhost:11434
+      model: qwen2.5-coder:14b
+      context-tokens: 32768
     launcher:
       default-base-url: ${FORGE_NEXUS_BASE_URL:http://127.0.0.1:9099/fgaisox}
       services-config-resource: ${FORGE_SERVICES_CONFIG_RESOURCE:classpath:services.yaml}
@@ -40,11 +45,7 @@ forge:
           auto-refresh-interval-seconds: 60
         analysis:
           enabled: true
-          provider: ollama
-          base-url: http://localhost:11434
-          model: qwen2.5-coder:14b
           request-timeout-seconds: 180
-          context-tokens: 32768
           max-file-chars: 60000
           max-chunk-chars: 20000
           concurrency: 1
@@ -57,9 +58,6 @@ forge:
         port: 7071
         knowledge-base-url: http://127.0.0.1:7081
         model-runtime:
-          provider: ollama
-          base-url: http://localhost:11434
-          model: qwen2.5-coder:14b
           request-timeout-seconds: 120
         knowledge:
           request-timeout-seconds: 120

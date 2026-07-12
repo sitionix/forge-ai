@@ -1024,6 +1024,8 @@ class FlowPathExtractor:
             label=str(item.get("label") or item.get("name") or node_id),
             qualified_name=str(item.get("qualifiedName")) if item.get("qualifiedName") else None,
             relative_path=str(item.get("relativePath")) if item.get("relativePath") else None,
+            line_start=int(item.get("lineStart")) if item.get("lineStart") is not None else None,
+            line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
             summary=str(item.get("summary")) if item.get("summary") else None,
             entrypoint=bool(item.get("entrypoint")),
         )

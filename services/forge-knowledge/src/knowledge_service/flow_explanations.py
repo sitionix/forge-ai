@@ -1194,6 +1194,7 @@ class FlowExplanationService:
         input_boundaries = [item for item in result.context.llm_input.get("boundaries", []) if isinstance(item, dict)]
         return FlowToolContext(
             flowIndex=result.flow_index,
+            status="OK" if result.ok else "FAILED",
             title=str(result.explanation.get("title") if result.explanation else ""),
             narrative=self._public_narrative(result.explanation),
             steps=[
@@ -1241,28 +1242,14 @@ class FlowExplanationService:
             evidence["ref"] for evidence in item.get("evidence", []) if isinstance(evidence, dict)
         ]
         evidence = [self._tool_evidence(ref, result.context.evidence_by_ref.get(ref)) for ref in evidence_refs]
-        explanation = str(explanation_item.get("explanation") or "") if explanation_item else ""
-        if not explanation:
-            explanation = self._fallback_transition_explanation(item)
         return FlowToolTransition(
             fromOrder=int(item["fromOrder"]),
             toOrder=int(item["toOrder"]),
             fromSymbol=str(item.get("fromSymbol") or ""),
             toSymbol=str(item.get("toSymbol") or ""),
-            explanation=explanation,
+            explanation=str(explanation_item.get("explanation") or "") if explanation_item else None,
             evidence=[entry for entry in evidence if entry is not None],
         )
-
-    def _fallback_transition_explanation(self, item: Mapping[str, Any]) -> str:
-        from_symbol = str(item.get("fromSymbol") or "").strip()
-        to_symbol = str(item.get("toSymbol") or "").strip()
-        if from_symbol and to_symbol:
-            return f"{from_symbol} calls {to_symbol}."
-        if from_symbol:
-            return f"{from_symbol} continues to the next flow step."
-        if to_symbol:
-            return f"The flow continues to {to_symbol}."
-        return "The flow continues to the next ordered step."
 
     def _tool_boundary(self, result: PerFlowExplanationResult, item: Mapping[str, Any]) -> FlowToolBoundary:
         explanations = self._boundary_explanations(result.explanation)

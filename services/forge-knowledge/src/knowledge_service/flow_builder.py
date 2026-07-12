@@ -900,6 +900,8 @@ class FlowBuilder:
             "label": node.label,
             "qualifiedName": node.qualified_name,
             "relativePath": node.relative_path,
+            "lineStart": node.line_start,
+            "lineEnd": node.line_end,
             "summary": node.summary,
             "entrypoint": node.entrypoint,
         }

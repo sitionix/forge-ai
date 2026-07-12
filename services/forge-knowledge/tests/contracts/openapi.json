@@ -261,6 +261,11 @@
             "title": "Narrative",
             "type": "array"
           },
+          "status": {
+            "default": "OK",
+            "title": "Status",
+            "type": "string"
+          },
           "steps": {
             "items": {
               "$ref": "#/components/schemas/FlowToolStep"

@@ -49,7 +49,43 @@ def test_analyzer_and_flow_explanations_resolve_same_generative_model_and_contex
         flow.close()
 
 
-def _minimal_forge_config(tmp_path: Path) -> Path:
+def test_root_generative_config_changes_knowledge_analyzer_and_flow_explanations(tmp_path):
+    config_file = _minimal_forge_config(
+        tmp_path,
+        generative_model="root-shared-model",
+        generative_context_tokens=4096,
+    )
+    settings = load_forge_settings(config_file=config_file, environ=_env(tmp_path, config_file))
+    config = AppConfig.from_forge_settings(settings)
+
+    analyzer = OllamaAnalysisClient(
+        config.analysis_base_url,
+        config.analysis_model,
+        config.analysis_ai_call_timeout_seconds,
+        config.analysis_context_tokens,
+    )
+    flow = LocalOllamaFlowExplanationClient(
+        config.analysis_base_url,
+        config.analysis_model,
+        config.analysis_ai_call_timeout_seconds,
+        config.analysis_context_tokens,
+    )
+    try:
+        assert config.analysis_model == "root-shared-model"
+        assert config.analysis_context_tokens == 4096
+        assert analyzer.model == flow.model == "root-shared-model"
+        assert analyzer.context_tokens == flow.context_tokens == 4096
+    finally:
+        asyncio.run(analyzer.aclose())
+        flow.close()
+
+
+def _minimal_forge_config(
+    tmp_path: Path,
+    *,
+    generative_model: str = DEFAULT_GENERATIVE_MODEL,
+    generative_context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS,
+) -> Path:
     config_dir = tmp_path / "config"
     runtime_dir = tmp_path / "var"
     workspace = tmp_path / "workspace"
@@ -70,6 +106,11 @@ forge:
       console-enabled: false
       file-enabled: false
       directory: "{runtime_dir / "logs"}"
+    generative:
+      provider: ollama
+      base-url: http://localhost:11434
+      model: {generative_model}
+      context-tokens: {generative_context_tokens}
     services:
       knowledge:
         host: 127.0.0.1

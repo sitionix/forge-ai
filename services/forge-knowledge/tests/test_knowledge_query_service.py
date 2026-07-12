@@ -23,6 +23,7 @@ from knowledge_service.flow_builder import (
     FlowGraphEvidence,
     FlowGraphNode,
     FlowGraphSourceScope,
+    flow_graph_bundle_to_public_bundle,
 )
 from knowledge_service.flow_explanations import (
     FLOW_EXPLANATION_LIMIT_REACHED,
@@ -1705,6 +1706,27 @@ def test_tool_step_address_line_information_stays_null_without_node_or_declarati
     assert payload["flows"][0]["transitions"][0]["evidence"][0]["lineStart"] == 40
 
 
+def test_public_flow_bundle_round_trips_node_line_ranges_through_fallback_typed_node():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java", line_start=7, line_end=9),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java", line_start=20, line_end=22),
+        ),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+        ),
+    )
+    public_bundle = flow_graph_bundle_to_public_bundle(bundle)
+
+    typed_bundle = FlowPathExtractor()._typed_bundle_from_public_graph(public_bundle)
+
+    assert [(node.node_id, node.line_start, node.line_end) for node in typed_bundle.nodes] == [
+        ("a-start", 7, 9),
+        ("b-work", 20, 22),
+    ]
+
+
 def test_tool_transition_evidence_is_exact_callsite_and_internal_ids_are_not_serialized():
     bundle = FlowGraphBundle(
         nodes=(
@@ -2593,10 +2615,13 @@ def test_one_failed_flow_does_not_kill_other_flow_tool_context():
     assert [flow.ok for flow in run.results] == [True, False]
     assert response.status == KnowledgeQueryStatus.OK
     assert response.flows[0].narrative
+    assert response.flows[0].status == "OK"
+    assert response.flows[1].status == "FAILED"
     assert response.flows[1].narrative == []
     assert response.flows[1].steps
     assert response.flows[1].transitions
-    assert all(transition.explanation for transition in response.flows[1].transitions)
+    assert all(transition.explanation is None for transition in response.flows[1].transitions)
+    assert all(transition.evidence for transition in response.flows[1].transitions)
     assert any(diagnostic.code == FLOW_EXPLANATION_VALIDATION_FAILED for diagnostic in response.flows[1].diagnostics)
 
 

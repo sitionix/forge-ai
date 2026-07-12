@@ -3,13 +3,15 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 from urllib.parse import urlparse
 
 import yaml
 from pydantic import AnyHttpUrl, BaseModel, Field, root_validator, validator
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
+DEFAULT_GENERATIVE_MODEL = "qwen2.5-coder:14b"
+DEFAULT_GENERATIVE_CONTEXT_TOKENS = 32768
 
 
 class LoggingSettings(BaseModel):
@@ -27,18 +29,22 @@ class LoggingSettings(BaseModel):
         return normalized
 
 
-class ModelRuntimeSettings(BaseModel):
+class GenerativeSettings(BaseModel):
     provider: str = "ollama"
-    base_url: AnyHttpUrl
-    model: str = Field(min_length=1)
-    request_timeout_seconds: int = Field(default=120, ge=1)
+    base_url: AnyHttpUrl = "http://localhost:11434"
+    model: str = Field(default=DEFAULT_GENERATIVE_MODEL, min_length=1)
+    context_tokens: int = Field(default=DEFAULT_GENERATIVE_CONTEXT_TOKENS, ge=1)
 
     @validator("base_url")
-    def require_local_model_runtime(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+    def require_local_generative_runtime(cls, value: AnyHttpUrl) -> AnyHttpUrl:
         parsed = urlparse(str(value))
         if (parsed.hostname or "").lower() not in {"127.0.0.1", "localhost", "::1"}:
-            raise ValueError("jarvis model runtime base_url must point to localhost")
+            raise ValueError("generative base_url must point to localhost")
         return value
+
+
+class ModelRuntimeSettings(BaseModel):
+    request_timeout_seconds: int = Field(default=120, ge=1)
 
 
 class JarvisKnowledgeSettings(BaseModel):
@@ -72,6 +78,7 @@ class ForgeSettings(BaseModel):
     runtime_dir: Path
     workspace_root: Optional[Path]
     logging: LoggingSettings
+    generative: GenerativeSettings = Field(default_factory=GenerativeSettings)
     services: ServicesSettings
 
     @root_validator
@@ -89,6 +96,7 @@ class ForgeSettings(BaseModel):
 class ModelConfig(BaseModel):
     default_model: str
     ollama_base_url: str
+    context_tokens: int
     request_timeout_seconds: int
 
 
@@ -126,8 +134,9 @@ class AppConfig(BaseModel):
             host=jarvis.host,
             port=jarvis.port,
             model=ModelConfig(
-                default_model=jarvis.model_runtime.model,
-                ollama_base_url=str(jarvis.model_runtime.base_url).rstrip("/"),
+                default_model=settings.generative.model,
+                ollama_base_url=str(settings.generative.base_url).rstrip("/"),
+                context_tokens=settings.generative.context_tokens,
                 request_timeout_seconds=jarvis.model_runtime.request_timeout_seconds,
             ),
             knowledge=KnowledgeConfig(
@@ -252,6 +261,7 @@ def _jarvis_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]
     services = _mapping_field(forge_ai, "services")
     jarvis = _mapping_field(services, "jarvis")
     logging = _mapping_field(forge_ai, "logging")
+    generative = _mapping_field(forge_ai, "generative")
     model = _mapping_field(jarvis, "model-runtime", "model_runtime")
     knowledge = _mapping_field(jarvis, "knowledge")
     legacy_config_dir = env.get("JARVIS_CONFIG_DIR")
@@ -267,15 +277,22 @@ def _jarvis_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]
             "file_enabled": logging.get("file-enabled", logging.get("file_enabled", True)),
             "directory": _path(str(logging.get("directory") or "${FORGE_RUNTIME_DIR}/logs"), env),
         },
+        "generative": {
+            "provider": str(generative.get("provider") or "ollama"),
+            "base_url": str(generative.get("base-url") or generative.get("base_url") or "http://localhost:11434"),
+            "model": str(generative.get("model") or DEFAULT_GENERATIVE_MODEL),
+            "context_tokens": int(
+                generative.get("context-tokens")
+                or generative.get("context_tokens")
+                or DEFAULT_GENERATIVE_CONTEXT_TOKENS
+            ),
+        },
         "services": {
             "jarvis": {
                 "host": str(jarvis.get("host") or "127.0.0.1"),
                 "port": int(jarvis.get("port") or 7071),
                 "knowledge_base_url": str(jarvis.get("knowledge-base-url") or jarvis.get("knowledge_base_url") or "http://127.0.0.1:7081"),
                 "model_runtime": {
-                    "provider": str(model.get("provider") or "ollama"),
-                    "base_url": str(model.get("base-url") or model.get("base_url") or "http://localhost:11434"),
-                    "model": str(model.get("model") or "qwen2.5-coder:14b"),
                     "request_timeout_seconds": int(model.get("request-timeout-seconds") or model.get("request_timeout_seconds") or 120),
                 },
                 "knowledge": {
@@ -289,6 +306,17 @@ def _jarvis_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]
 
 
 def _apply_jarvis_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) -> None:
+    generative = raw["generative"]
+    generative_env_map: Dict[str, Tuple[str, Callable[[str], object]]] = {
+        "FORGE_GENERATIVE_PROVIDER": ("provider", str),
+        "FORGE_GENERATIVE_BASE_URL": ("base_url", str),
+        "FORGE_GENERATIVE_MODEL": ("model", str),
+        "FORGE_GENERATIVE_CONTEXT_TOKENS": ("context_tokens", int),
+    }
+    for name, (field, converter) in generative_env_map.items():
+        if env.get(name):
+            generative[field] = converter(env[name])
+
     jarvis = raw["services"]["jarvis"]
     if env.get("JARVIS_CONFIG_DIR"):
         config_dir = _path(env["JARVIS_CONFIG_DIR"], env)
@@ -300,10 +328,6 @@ def _apply_jarvis_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) -> 
         jarvis["port"] = int(env["JARVIS_PORT"])
     if env.get("JARVIS_KNOWLEDGE_BASE_URL"):
         jarvis["knowledge_base_url"] = env["JARVIS_KNOWLEDGE_BASE_URL"]
-    if env.get("JARVIS_MODEL"):
-        jarvis["model_runtime"]["model"] = env["JARVIS_MODEL"]
-    if env.get("JARVIS_OLLAMA_BASE_URL"):
-        jarvis["model_runtime"]["base_url"] = env["JARVIS_OLLAMA_BASE_URL"]
     if env.get("JARVIS_REQUEST_TIMEOUT_SECONDS"):
         jarvis["model_runtime"]["request_timeout_seconds"] = int(env["JARVIS_REQUEST_TIMEOUT_SECONDS"])
 

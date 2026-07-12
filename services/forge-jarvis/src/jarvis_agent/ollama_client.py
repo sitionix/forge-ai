@@ -15,9 +15,10 @@ class OllamaBadResponseError(ValueError):
 
 
 class OllamaClient:
-    def __init__(self, base_url: str, model: str, timeout_seconds: int) -> None:
+    def __init__(self, base_url: str, model: str, context_tokens: int, timeout_seconds: int) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.context_tokens = max(1024, int(context_tokens))
         self.timeout_seconds = timeout_seconds
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 
@@ -35,7 +36,7 @@ class OllamaClient:
             "prompt": prompt,
             "stream": False,
             "format": "json",
-            "options": {"temperature": 0},
+            "options": {"temperature": 0, "num_ctx": self.context_tokens},
         }
         try:
             response = await self._client.post(f"{self.base_url}/api/generate", json=payload)
@@ -51,7 +52,7 @@ class OllamaClient:
             "model": self.model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": 0},
+            "options": {"temperature": 0, "num_ctx": self.context_tokens},
         }
         try:
             response = await self._client.post(f"{self.base_url}/api/generate", json=payload)

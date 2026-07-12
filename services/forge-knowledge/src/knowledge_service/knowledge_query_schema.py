@@ -214,6 +214,7 @@ class FlowToolBoundary(BaseModel):
 
 class FlowToolContext(BaseModel):
     flowIndex: int
+    status: str = "OK"
     title: str = ""
     narrative: List[str] = Field(default_factory=list)
     steps: List[FlowToolStep] = Field(default_factory=list)
