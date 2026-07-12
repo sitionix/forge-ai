@@ -49,7 +49,14 @@ class GenerativeSettings(BaseModel):
     provider: str = "ollama"
     base_url: AnyHttpUrl = "http://localhost:11434"
     model: str = Field(default=DEFAULT_GENERATIVE_MODEL, min_length=1)
-    context_tokens: int = Field(default=DEFAULT_GENERATIVE_CONTEXT_TOKENS, ge=1)
+    context_tokens: int = Field(default=DEFAULT_GENERATIVE_CONTEXT_TOKENS, ge=1024)
+
+    @validator("provider")
+    def require_ollama_provider(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized != "ollama":
+            raise ValueError("generative provider must be ollama")
+        return normalized
 
     @validator("base_url")
     def require_local_model_runtime(cls, value: AnyHttpUrl) -> AnyHttpUrl:
@@ -109,6 +116,14 @@ class KnowledgeSettings(BaseModel):
     semantic: SemanticSettings = Field(default_factory=SemanticSettings)
 
 
+class FlowExplanationQuerySettings(BaseModel):
+    request_timeout_seconds: int = Field(default=DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS, ge=1)
+
+
+class QuerySettings(BaseModel):
+    flow_explanation: FlowExplanationQuerySettings = Field(default_factory=FlowExplanationQuerySettings)
+
+
 class ServicesSettings(BaseModel):
     knowledge: KnowledgeSettings
 
@@ -120,6 +135,7 @@ class ForgeSettings(BaseModel):
     workspace_root: Optional[Path]
     logging: LoggingSettings
     generative: GenerativeSettings = Field(default_factory=GenerativeSettings)
+    query: QuerySettings = Field(default_factory=QuerySettings)
     services: ServicesSettings
 
     @root_validator
@@ -148,6 +164,7 @@ class AppConfig(BaseModel):
     analysis_model: str = DEFAULT_GENERATIVE_MODEL
     analysis_request_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
     analysis_ai_call_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
+    flow_explanation_request_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
     analysis_per_file_timeout_seconds: int = 120
     analysis_stall_threshold_seconds: int = 300
     analysis_context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS
@@ -230,6 +247,7 @@ class AppConfig(BaseModel):
             analysis_model=generative.model,
             analysis_request_timeout_seconds=analysis.request_timeout_seconds,
             analysis_ai_call_timeout_seconds=analysis.ai_call_timeout_seconds or analysis.request_timeout_seconds,
+            flow_explanation_request_timeout_seconds=settings.query.flow_explanation.request_timeout_seconds,
             analysis_per_file_timeout_seconds=analysis.per_file_timeout_seconds,
             analysis_stall_threshold_seconds=analysis.stall_threshold_seconds,
             analysis_context_tokens=generative.context_tokens,
@@ -383,6 +401,8 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
     knowledge = _mapping_field(services, "knowledge")
     logging = _mapping_field(forge_ai, "logging")
     generative = _mapping_field(forge_ai, "generative")
+    query = _mapping_field(forge_ai, "query")
+    flow_explanation = _mapping_field(query, "flow-explanation", "flow_explanation")
     inventory = _mapping_field(knowledge, "inventory")
     storage = _mapping_field(knowledge, "storage")
     analysis = _mapping_field(knowledge, "analysis")
@@ -399,14 +419,25 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
             "directory": _path(str(logging.get("directory") or "${FORGE_RUNTIME_DIR}/logs"), env),
         },
         "generative": {
-            "provider": str(generative.get("provider") or "ollama"),
+            "provider": str(generative.get("provider")) if "provider" in generative else "ollama",
             "base_url": str(generative.get("base-url") or generative.get("base_url") or "http://localhost:11434"),
             "model": str(generative.get("model") or DEFAULT_GENERATIVE_MODEL),
-            "context_tokens": int(
+            "context_tokens": _int_config(
                 generative.get("context-tokens")
-                or generative.get("context_tokens")
-                or DEFAULT_GENERATIVE_CONTEXT_TOKENS
+                or generative.get("context_tokens"),
+                env,
+                DEFAULT_GENERATIVE_CONTEXT_TOKENS,
             ),
+        },
+        "query": {
+            "flow_explanation": {
+                "request_timeout_seconds": _int_config(
+                    flow_explanation.get("request-timeout-seconds")
+                    or flow_explanation.get("request_timeout_seconds"),
+                    env,
+                    DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
+                )
+            }
         },
         "services": {
             "knowledge": {
@@ -507,6 +538,8 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
     for name, (field, converter) in generative_env_map.items():
         if env.get(name):
             generative[field] = converter(env[name])
+    if env.get("FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS"):
+        raw["query"]["flow_explanation"]["request_timeout_seconds"] = int(env["FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS"])
 
     knowledge = raw["services"]["knowledge"]
     if env.get("KNOWLEDGE_HOST"):
@@ -572,3 +605,11 @@ def _bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() not in {"0", "false", "no", "off"}
     return bool(value)
+
+
+def _int_config(value: Any, env: Mapping[str, str], default: int) -> int:
+    if value is None or value == "":
+        return int(default)
+    if isinstance(value, int):
+        return value
+    return int(_expand(str(value), env))

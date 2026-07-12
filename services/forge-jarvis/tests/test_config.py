@@ -1,3 +1,5 @@
+import pytest
+
 from jarvis_agent.config import load_app_config
 from support import write_runtime_config
 
@@ -62,3 +64,38 @@ def test_root_generative_config_changes_jarvis_model_and_context(tmp_path) -> No
 
     assert config.model.default_model == "root-shared-model"
     assert config.model.context_tokens == 4096
+
+
+@pytest.mark.parametrize("provider", ["openai", "custom", ""])
+def test_jarvis_generative_provider_must_be_ollama(tmp_path, provider) -> None:
+    config_file = write_runtime_config(tmp_path)
+    original = config_file.read_text(encoding="utf-8")
+    config_file.write_text(original.replace("provider: ollama", f"provider: {provider}"), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="generative provider must be ollama"):
+        load_app_config(
+            config_file=config_file,
+            environ={
+                "FORGE_AI_HOME": str(tmp_path),
+                "FORGE_CONFIG_DIR": str(tmp_path / "config"),
+                "FORGE_RUNTIME_DIR": str(tmp_path / "var"),
+                "FORGE_WORKSPACE_ROOT": str(tmp_path / "workspace"),
+            },
+        )
+
+
+def test_jarvis_generative_context_below_minimum_fails_loading(tmp_path) -> None:
+    config_file = write_runtime_config(tmp_path)
+    original = config_file.read_text(encoding="utf-8")
+    config_file.write_text(original.replace("context-tokens: 32768", "context-tokens: 512"), encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        load_app_config(
+            config_file=config_file,
+            environ={
+                "FORGE_AI_HOME": str(tmp_path),
+                "FORGE_CONFIG_DIR": str(tmp_path / "config"),
+                "FORGE_RUNTIME_DIR": str(tmp_path / "var"),
+                "FORGE_WORKSPACE_ROOT": str(tmp_path / "workspace"),
+            },
+        )

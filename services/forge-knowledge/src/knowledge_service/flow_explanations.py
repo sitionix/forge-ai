@@ -23,6 +23,7 @@ from knowledge_service.knowledge_query_schema import (
     FlowToolBoundary,
     FlowToolContext,
     FlowToolEvidence,
+    FlowToolStatus,
     FlowToolStep,
     FlowToolTransition,
     KnowledgeQueryDiagnostic,
@@ -137,7 +138,9 @@ class LocalOllamaFlowExplanationClient:
         self.base_url = self._require_localhost(base_url.rstrip("/"))
         self.model = model
         self.timeout_seconds = timeout_seconds
-        self.context_tokens = max(1024, int(context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS))
+        self.context_tokens = int(context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS)
+        if self.context_tokens < 1024:
+            raise ValueError("Flow explanation context_tokens must be at least 1024")
         self.renderer = renderer or FlowExplanationPromptRenderer()
         self._client = http_client or httpx.Client(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 
@@ -1183,7 +1186,7 @@ class FlowExplanationService:
                 for input_boundary in input_boundaries
                 for item in [boundaries_by_ref.get(str(input_boundary.get("boundaryRef") or ""), {})]
             ],
-            status="OK" if result.ok else "FAILED",
+            status=FlowToolStatus.OK if result.ok else FlowToolStatus.FAILED,
         )
 
     def _tool_flow(self, result: PerFlowExplanationResult) -> FlowToolContext:
@@ -1194,7 +1197,7 @@ class FlowExplanationService:
         input_boundaries = [item for item in result.context.llm_input.get("boundaries", []) if isinstance(item, dict)]
         return FlowToolContext(
             flowIndex=result.flow_index,
-            status="OK" if result.ok else "FAILED",
+            status=FlowToolStatus.OK if result.ok else FlowToolStatus.FAILED,
             title=str(result.explanation.get("title") if result.explanation else ""),
             narrative=self._public_narrative(result.explanation),
             steps=[

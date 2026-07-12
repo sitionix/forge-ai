@@ -1,7 +1,9 @@
 import json
+import sqlite3
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,6 +25,10 @@ from knowledge_service.flow_builder import (
     FlowGraphEvidence,
     FlowGraphNode,
     FlowGraphSourceScope,
+    FlowStopReason,
+    FlowUnit,
+    FlowUnitKey,
+    FlowUnitOrigin,
     flow_graph_bundle_to_public_bundle,
 )
 from knowledge_service.flow_explanations import (
@@ -658,6 +664,61 @@ def default_evidence():
         {"id": "ev-1", "sourceId": "source-a", "edgeId": "calls-1", "relativePath": "src/Controller.java", "lineStart": 10, "lineEnd": 10},
         {"id": "ev-2", "sourceId": "source-a", "edgeId": "calls-2", "relativePath": "src/UseCase.java", "lineStart": 20, "lineEnd": 20},
     ]
+
+
+def add_edge_evidence(
+    db_path: Path,
+    *,
+    source_id: str,
+    edge_id: str,
+    evidence_id: str,
+    relative_path: str,
+    line_start: int,
+    line_end=None,
+    excerpt=None,
+) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        template = conn.execute(
+            """
+            SELECT job_id, inventory_file_id, analysis_file_id, file_id, content_hash, created_at, updated_at
+            FROM analysis_graph_evidence
+            WHERE source_id = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (source_id,),
+        ).fetchone()
+        assert template is not None
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_evidence(
+                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                line_start, line_end, excerpt, excerpt_hash, evidence_kind, created_at, updated_at, fact_origin, flow_domain
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EDGE', ?, ?, 'STATIC', 'CODE')
+            """,
+            (
+                evidence_id,
+                template["job_id"],
+                source_id,
+                template["inventory_file_id"],
+                template["analysis_file_id"],
+                template["file_id"],
+                relative_path,
+                template["content_hash"],
+                line_start,
+                line_end if line_end is not None else line_start,
+                excerpt or f"excerpt-{evidence_id}",
+                excerpt or f"excerpt-{evidence_id}",
+                template["created_at"],
+                template["updated_at"],
+            ),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO analysis_graph_edge_evidence(edge_id, evidence_id) VALUES (?, ?)",
+            (edge_id, evidence_id),
+        )
 
 
 def test_valid_query_plan_v2_request_passes():
@@ -1309,6 +1370,201 @@ def test_analysis_store_load_call_flow_graph_returns_typed_bundle(tmp_path):
     assert node_by_id["a-start"].relative_path == "src/A.java"
     assert node_by_id["a-start"].line_start == 1
     assert node_by_id["a-start"].line_end == 1
+
+
+def test_call_flow_graph_edge_evidence_representatives_are_fair_by_edge(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    graph_id = seed_semantic_graph(
+        db_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a", "nodeKind": "CALLABLE", "name": "A.run", "path": "src/A.java"},
+            {"id": "b", "nodeKind": "CALLABLE", "name": "B.run", "path": "src/B.java"},
+            {"id": "c", "nodeKind": "CALLABLE", "name": "C.run", "path": "src/C.java"},
+            {"id": "d", "nodeKind": "CALLABLE", "name": "D.run", "path": "src/D.java"},
+        ],
+        edges=[
+            {"id": "edge-1", "fromNodeId": "a", "toNodeId": "b", "edgeType": "CALLS", "evidence_id": "e1"},
+            {"id": "edge-2", "fromNodeId": "b", "toNodeId": "c", "edgeType": "CALLS", "evidence_id": "e3"},
+            {"id": "edge-3", "fromNodeId": "c", "toNodeId": "d", "edgeType": "CALLS", "evidence_id": "e4"},
+        ],
+    )
+    add_edge_evidence(db_path, source_id="source-a", edge_id="edge-1", evidence_id="e2", relative_path="src/A.java", line_start=2)
+    add_edge_evidence(db_path, source_id="source-a", edge_id="edge-3", evidence_id="e5", relative_path="src/C.java", line_start=5)
+
+    bundle = AnalysisStore(db_path).load_call_flow_graph(
+        [FlowGraphSourceScope(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_ids=("a",))],
+        max_edges=10,
+        max_evidence=3,
+    )
+
+    evidence_by_edge = {item.edge_id: item.evidence_id for item in bundle.evidence}
+    assert len(bundle.evidence) == 3
+    assert evidence_by_edge == {"edge-1": "e1", "edge-2": "e3", "edge-3": "e4"}
+
+
+def test_call_flow_graph_evidence_budget_is_not_exceeded_and_truncates_honestly(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    graph_id = seed_semantic_graph(
+        db_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a", "nodeKind": "CALLABLE", "name": "A.run"},
+            {"id": "b", "nodeKind": "CALLABLE", "name": "B.run"},
+            {"id": "c", "nodeKind": "CALLABLE", "name": "C.run"},
+            {"id": "d", "nodeKind": "CALLABLE", "name": "D.run"},
+        ],
+        edges=[
+            {"id": "edge-1", "fromNodeId": "a", "toNodeId": "b", "edgeType": "CALLS", "evidence_id": "e1"},
+            {"id": "edge-2", "fromNodeId": "b", "toNodeId": "c", "edgeType": "CALLS", "evidence_id": "e2"},
+            {"id": "edge-3", "fromNodeId": "c", "toNodeId": "d", "edgeType": "CALLS", "evidence_id": "e3"},
+        ],
+    )
+
+    bundle = AnalysisStore(db_path).load_call_flow_graph(
+        [FlowGraphSourceScope(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_ids=("a",))],
+        max_edges=10,
+        max_evidence=2,
+    )
+
+    assert len(bundle.evidence) == 2
+    assert bundle.truncated is True
+
+
+def test_returned_flow_unit_hydration_loads_only_returned_edge_evidence(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    graph_id = seed_semantic_graph(
+        db_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a", "nodeKind": "CALLABLE", "name": "A.start"},
+            {"id": "b", "nodeKind": "CALLABLE", "name": "B.work"},
+            {"id": "c", "nodeKind": "CALLABLE", "name": "C.finish"},
+            {"id": "x", "nodeKind": "CALLABLE", "name": "X.start"},
+            {"id": "y", "nodeKind": "CALLABLE", "name": "Y.work"},
+        ],
+        edges=[
+            {"id": "edge-a-b", "fromNodeId": "a", "toNodeId": "b", "edgeType": "CALLS", "evidence_id": "ev-a-b"},
+            {"id": "edge-b-c", "fromNodeId": "b", "toNodeId": "c", "edgeType": "CALLS", "evidence_id": "ev-b-c"},
+            {"id": "edge-x-y", "fromNodeId": "x", "toNodeId": "y", "edgeType": "CALLS", "evidence_id": "ev-x-y"},
+        ],
+    )
+    store = AnalysisStore(db_path)
+    bundle = store.load_call_flow_graph(
+        [
+            FlowGraphSourceScope(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_ids=("a",)),
+            FlowGraphSourceScope(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_ids=("x",)),
+        ],
+        max_edges=10,
+        max_evidence=0,
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [
+            SimpleNamespace(sourceId="source-a", graphId=graph_id, graphRevision=graph_id, nodeId="a", nodeKind="CALLABLE", score=1.0, matchReasons=("EXACT_NAME",)),
+            SimpleNamespace(sourceId="source-a", graphId=graph_id, graphRevision=graph_id, nodeId="x", nodeKind="CALLABLE", score=0.9, matchReasons=("EXACT_NAME",)),
+        ],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    returned_unit = next(unit for unit in result.flow_units if "edge-a-b" in unit.edge_ids)
+
+    hydration = store.hydrate_flow_unit_evidence((returned_unit,), max_evidence_refs=10)
+    hydrated = hydration.flow_units[0]
+
+    assert hydration.truncated is False
+    assert set(hydrated.edge_ids) == {"edge-a-b", "edge-b-c"}
+    assert {item.edge_id for item in hydrated.evidence} == {"edge-a-b", "edge-b-c"}
+    assert "edge-x-y" not in {item.edge_id for item in hydrated.evidence}
+    assert all(edge.evidence_ids for edge in hydrated.edges)
+
+
+def test_returned_flow_unit_hydration_preserves_evidence_ownership(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    graph_id = seed_semantic_graph(
+        db_path,
+        source_id="source-a",
+        evidence_ids=["node-a-evidence"],
+        nodes=[
+            {"id": "a", "nodeKind": "CALLABLE", "name": "A.start"},
+            {"id": "b", "nodeKind": "CALLABLE", "name": "B.work"},
+            {"id": "c", "nodeKind": "CALLABLE", "name": "C.finish"},
+        ],
+        edges=[
+            {"id": "edge-a-b", "fromNodeId": "a", "toNodeId": "b", "edgeType": "CALLS", "evidence_id": "ev-a-b"},
+            {"id": "edge-b-c", "fromNodeId": "b", "toNodeId": "c", "edgeType": "CALLS", "evidence_id": "ev-b-c"},
+        ],
+        claims=[{"id": "claim-a", "node_id": "a", "summary": "A starts the flow.", "evidence_ids": ["node-a-evidence"]}],
+    )
+    store = AnalysisStore(db_path)
+    bundle = store.load_call_flow_graph(
+        [FlowGraphSourceScope(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_ids=("a",))],
+        max_edges=10,
+        max_evidence=0,
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [SimpleNamespace(sourceId="source-a", graphId=graph_id, graphRevision=graph_id, nodeId="a", nodeKind="CALLABLE", score=1.0, matchReasons=("EXACT_NAME",))],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    hydrated = store.hydrate_flow_unit_evidence(result.flow_units[:1], max_evidence_refs=10).flow_units[0]
+
+    evidence_ids_by_edge = {edge.edge_id: edge.evidence_ids for edge in hydrated.edges}
+    assert evidence_ids_by_edge["edge-a-b"] == ("ev-a-b",)
+    assert evidence_ids_by_edge["edge-b-c"] == ("ev-b-c",)
+    assert "node-a-evidence" not in evidence_ids_by_edge["edge-a-b"]
+    assert any(item.node_id == "a" and item.evidence_id == "node-a-evidence" for item in hydrated.evidence)
+
+
+def test_hydrated_flow_bundle_deduplication_keeps_source_identity_for_same_evidence_id():
+    node_a = flow_graph_node("a", "A.start")
+    node_b = flow_graph_node("b", "B.work", source_id="source-b", graph_id="graph-b", graph_revision="graph-b")
+    evidence_a = FlowGraphEvidence("source-a", "graph-a", "graph-a", "shared-evidence", "a", None, "src/A.java", 1, 1, "A")
+    evidence_b = FlowGraphEvidence("source-b", "graph-b", "graph-b", "shared-evidence", "b", None, "src/B.java", 2, 2, "B")
+    unit_a = FlowUnit(
+        key=FlowUnitKey("source-a", "graph-a", ("a",), (), (), "TERMINAL_NODE"),
+        origins=(FlowUnitOrigin("a", "source-a", "graph-a", 1.0, ("EXACT_NAME",)),),
+        node_ids=("a",),
+        edge_ids=(),
+        boundary_edge_ids=(),
+        nodes=(node_a,),
+        edges=(),
+        boundary_edges=(),
+        evidence=(evidence_a,),
+        complete=True,
+        stop_reason=FlowStopReason.TERMINAL_NODE,
+        root_stop_reason=FlowStopReason.TERMINAL_NODE,
+        root_node_id="a",
+        seed_node_ids=("a",),
+        score=1.0,
+    )
+    unit_b = FlowUnit(
+        key=FlowUnitKey("source-b", "graph-b", ("b",), (), (), "TERMINAL_NODE"),
+        origins=(FlowUnitOrigin("b", "source-b", "graph-b", 1.0, ("EXACT_NAME",)),),
+        node_ids=("b",),
+        edge_ids=(),
+        boundary_edge_ids=(),
+        nodes=(node_b,),
+        edges=(),
+        boundary_edges=(),
+        evidence=(evidence_b,),
+        complete=True,
+        stop_reason=FlowStopReason.TERMINAL_NODE,
+        root_stop_reason=FlowStopReason.TERMINAL_NODE,
+        root_node_id="b",
+        seed_node_ids=("b",),
+        score=1.0,
+    )
+
+    bundle = service(FakeGraphStore())._flow_bundle_from_units((unit_a, unit_b))
+
+    assert len(bundle["evidence"]) == 2
+    assert {(item["sourceId"], item["id"]) for item in bundle["evidence"]} == {
+        ("source-a", "shared-evidence"),
+        ("source-b", "shared-evidence"),
+    }
 
 
 def test_anchor_expansion_service_has_no_schema_alias_fallbacks():

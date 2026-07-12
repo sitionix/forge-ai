@@ -27,7 +27,7 @@ from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
-from knowledge_service.flow_explanations import FlowExplanationService, LocalOllamaFlowExplanationClient
+from knowledge_service.flow_explanations import FLOW_EXPLANATION_LIMIT_REACHED, FlowExplanationService, LocalOllamaFlowExplanationClient
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_schema import InventoryBuildRequest
@@ -168,6 +168,12 @@ def create_app(
                 "completedAt": analysis.get("lastCompletedAt"),
             },
             "freshness": freshness,
+            "generative": {
+                "provider": config.analysis_provider,
+                "model": config.analysis_model,
+                "contextTokens": config.analysis_context_tokens,
+                "flowExplanationRequestTimeoutSeconds": config.flow_explanation_request_timeout_seconds,
+            },
             "semantic": _semantic_status(request.app, config),
         }
         if source_config is None:
@@ -233,23 +239,29 @@ def create_app(
 
     @app.post("/api/v1/knowledge/query/flow-explanations", response_model=KnowledgeQueryFlowExplanationResponse)
     async def knowledge_query_flow_explanations(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryFlowExplanationResponse:
+        config, _ = _state(request)
+        deadline_at = time.monotonic() + _flow_explanation_request_deadline_seconds(config)
         cancel_event = threading.Event()
         return await _run_in_thread(
             _knowledge_query_flow_explanations_response,
             request,
             body,
             cancel_event,
+            deadline_at,
             request_cancel_event=cancel_event,
         )
 
     @app.post("/api/v1/knowledge/query/tool-context", response_model=KnowledgeQueryToolContextResponse)
     async def knowledge_query_tool_context(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryToolContextResponse:
+        config, _ = _state(request)
+        deadline_at = time.monotonic() + _flow_explanation_request_deadline_seconds(config)
         cancel_event = threading.Event()
         return await _run_in_thread(
             _knowledge_query_tool_context_response,
             request,
             body,
             cancel_event,
+            deadline_at,
             request_cancel_event=cancel_event,
         )
 
@@ -630,10 +642,13 @@ def _knowledge_query_flow_explanations_response(
     request: Request,
     body: KnowledgeQueryRequest,
     cancel_event: threading.Event | None = None,
+    deadline_at: float | None = None,
 ) -> KnowledgeQueryFlowExplanationResponse:
     config, deps = _state(request)
     request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
-    deadline_at = time.monotonic() + request_deadline_seconds
+    deadline_at = deadline_at if deadline_at is not None else time.monotonic() + request_deadline_seconds
+    if time.monotonic() >= deadline_at:
+        return _expired_flow_explanation_response(body)
     try:
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
         explanation_service, close_provider = _flow_explanation_service(request, config, cancel_event)
@@ -662,10 +677,13 @@ def _knowledge_query_tool_context_response(
     request: Request,
     body: KnowledgeQueryRequest,
     cancel_event: threading.Event | None = None,
+    deadline_at: float | None = None,
 ) -> KnowledgeQueryToolContextResponse:
     config, deps = _state(request)
     request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
-    deadline_at = time.monotonic() + request_deadline_seconds
+    deadline_at = deadline_at if deadline_at is not None else time.monotonic() + request_deadline_seconds
+    if time.monotonic() >= deadline_at:
+        return _expired_tool_context_response(body)
     try:
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
         explanation_service, close_provider = _flow_explanation_service(request, config, cancel_event)
@@ -688,6 +706,33 @@ def _knowledge_query_tool_context_response(
                 )
             ],
         )
+
+
+def _deadline_exhausted_diagnostic() -> KnowledgeQueryDiagnostic:
+    return KnowledgeQueryDiagnostic(
+        code=FLOW_EXPLANATION_LIMIT_REACHED,
+        message="Flow explanation request deadline was exhausted before flow explanation work could start.",
+        severity="WARN",
+        metadata={"stage": "BEFORE_QUERY"},
+    )
+
+
+def _expired_flow_explanation_response(body: KnowledgeQueryRequest) -> KnowledgeQueryFlowExplanationResponse:
+    return KnowledgeQueryFlowExplanationResponse(
+        queryId="query-deadline-exhausted",
+        status=KnowledgeQueryStatus.OK,
+        intent=body.intent,
+        diagnostics=[_deadline_exhausted_diagnostic()],
+    )
+
+
+def _expired_tool_context_response(body: KnowledgeQueryRequest) -> KnowledgeQueryToolContextResponse:
+    return KnowledgeQueryToolContextResponse(
+        queryText=body.queryText,
+        answerLanguage=body.answerLanguage,
+        status=KnowledgeQueryStatus.OK,
+        diagnostics=[_deadline_exhausted_diagnostic()],
+    )
 
 
 async def _run_in_thread(func, *args, request_cancel_event: threading.Event | None = None, **kwargs):
@@ -754,7 +799,7 @@ def _flow_explanation_service(
 
 
 def _flow_explanation_request_deadline_seconds(config: AppConfig) -> float:
-    return max(0.001, float(config.analysis_request_timeout_seconds))
+    return max(0.001, float(config.flow_explanation_request_timeout_seconds))
 
 
 def _current_file_progress(dependencies: KnowledgeDependencies) -> Dict[str, Any]:

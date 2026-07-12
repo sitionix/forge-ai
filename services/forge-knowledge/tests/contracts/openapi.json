@@ -262,9 +262,12 @@
             "type": "array"
           },
           "status": {
-            "default": "OK",
-            "title": "Status",
-            "type": "string"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FlowToolStatus"
+              }
+            ],
+            "default": "OK"
           },
           "steps": {
             "items": {
@@ -320,6 +323,15 @@
         ],
         "title": "FlowToolEvidence",
         "type": "object"
+      },
+      "FlowToolStatus": {
+        "description": "An enumeration.",
+        "enum": [
+          "OK",
+          "FAILED"
+        ],
+        "title": "FlowToolStatus",
+        "type": "string"
       },
       "FlowToolStep": {
         "properties": {

@@ -34,7 +34,9 @@ class OllamaAnalysisClient:
         self.base_url = self._require_localhost(base_url.rstrip("/"))
         self.model = model
         self.timeout_seconds = timeout_seconds
-        self.context_tokens = max(1024, context_tokens)
+        self.context_tokens = int(context_tokens)
+        if self.context_tokens < 1024:
+            raise ValueError("Ollama analysis context_tokens must be at least 1024")
         self.contract_provider = GraphContractProvider(policy=policy, policy_path=policy_path)
         self.target_prompt_renderer = TargetPromptRenderer(policy=self.contract_provider.policy)
         self.target_parser = TargetResponseParserValidator()

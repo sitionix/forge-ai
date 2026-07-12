@@ -240,7 +240,7 @@ forge:
       file-enabled: false
       directory: "{runtime_dir / "logs"}"
     generative:
-      provider: deterministic
+      provider: ollama
       base-url: http://localhost:11434
       model: deterministic
       context-tokens: 1024

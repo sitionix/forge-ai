@@ -172,6 +172,11 @@ class KnowledgeQueryFlowExplanationResponse(KnowledgeQueryResponse):
     flowExplanations: List[FlowExplanation] = Field(default_factory=list)
 
 
+class FlowToolStatus(str, Enum):
+    OK = "OK"
+    FAILED = "FAILED"
+
+
 class FlowToolAddress(BaseModel):
     service: Optional[str] = None
     relativePath: Optional[str] = None
@@ -214,7 +219,7 @@ class FlowToolBoundary(BaseModel):
 
 class FlowToolContext(BaseModel):
     flowIndex: int
-    status: str = "OK"
+    status: FlowToolStatus = FlowToolStatus.OK
     title: str = ""
     narrative: List[str] = Field(default_factory=list)
     steps: List[FlowToolStep] = Field(default_factory=list)

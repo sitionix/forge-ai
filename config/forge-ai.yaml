@@ -14,12 +14,14 @@ forge:
       base-url: http://localhost:11434
       model: qwen2.5-coder:14b
       context-tokens: 32768
+    query:
+      flow-explanation:
+        request-timeout-seconds: ${FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS:180}
     launcher:
       default-base-url: ${FORGE_NEXUS_BASE_URL:http://127.0.0.1:9099/fgaisox}
       services-config-resource: ${FORGE_SERVICES_CONFIG_RESOURCE:classpath:services.yaml}
     infrastructure:
       proxy:
-        knowledge-explanation-request-deadline: ${forge.ai.services.knowledge.analysis.request-timeout-seconds:180}s
         knowledge-explanation-transport-grace: 5s
       jarvis:
         enabled: true

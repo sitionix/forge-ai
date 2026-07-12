@@ -193,6 +193,9 @@ class _FlowAdjacency:
 
 
 class FlowBuilder:
+    def public_flow_paths(self, flow_units: Sequence[FlowUnit]) -> list[KnowledgeQueryFlowPath]:
+        return [self._public_flow_path(index, item) for index, item in enumerate(flow_units, start=1)]
+
     def build(
         self,
         bundle: FlowGraphBundle,
@@ -247,7 +250,7 @@ class FlowBuilder:
         if len(all_flow_units) > max_paths:
             state.mark_truncated()
         flow_units = tuple(all_flow_units[:max_paths])
-        flow_paths = [self._public_flow_path(index, item) for index, item in enumerate(flow_units, start=1)]
+        flow_paths = self.public_flow_paths(flow_units)
         diagnostics = self._diagnostics(flow_paths, bundle, state, policy)
         return FlowBuildResult(
             flow_paths=flow_paths,

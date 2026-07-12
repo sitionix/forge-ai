@@ -10,7 +10,10 @@ class InfrastructureProxyRouteRegistryTest {
     @Test
     void explanationRoutesUseSynchronousExplanationReadTimeoutContract() {
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(properties);
+        final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(
+                properties,
+                new ForgeAiFlowExplanationProperties()
+        );
 
         assertThat(registry.require("knowledge.query.flow-explanations").readTimeout())
                 .isEqualTo(Duration.ofSeconds(185));
@@ -22,10 +25,14 @@ class InfrastructureProxyRouteRegistryTest {
     @Test
     void explanationRouteTimeoutTracksConfiguredKnowledgeDeadlineAndTransportGrace() {
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        properties.getProxy().setKnowledgeExplanationRequestDeadline(Duration.ofSeconds(42));
         properties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofSeconds(7));
+        final ForgeAiFlowExplanationProperties flowExplanationProperties = new ForgeAiFlowExplanationProperties();
+        flowExplanationProperties.setRequestTimeoutSeconds(42);
 
-        final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(properties);
+        final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(
+                properties,
+                flowExplanationProperties
+        );
 
         assertThat(registry.require("knowledge.query.flow-explanations").readTimeout())
                 .isEqualTo(Duration.ofSeconds(49));

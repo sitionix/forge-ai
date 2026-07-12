@@ -765,7 +765,7 @@ def _capturing_ollama_client(captured, response_factory):
     return OllamaAnalysisClient(
         "http://127.0.0.1:11434",
         "model",
-        1,
+        32768,
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
 
@@ -1789,7 +1789,7 @@ def wait_job(store, job_id):
 
 def test_non_localhost_ollama_base_url_rejected(tmp_path):
     with pytest.raises(Exception):
-        OllamaAnalysisClient("http://example.com:11434", "model", 1)
+        OllamaAnalysisClient("http://example.com:11434", "model", 32768)
 
 
 def test_ollama_prompt_renders_minimal_target_input_only():
@@ -1822,7 +1822,7 @@ def test_ollama_prompt_renders_minimal_target_input_only():
         "analysisPolicy": contract_payload(contract),
         "llmInput": llm_input,
     }
-    client = OllamaAnalysisClient("http://127.0.0.1:11434", "model", 1)
+    client = OllamaAnalysisClient("http://127.0.0.1:11434", "model", 32768)
     try:
         prompt = client._prompt(payload, contract=contract)
     finally:

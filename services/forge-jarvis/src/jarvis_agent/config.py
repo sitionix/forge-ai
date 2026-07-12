@@ -33,7 +33,14 @@ class GenerativeSettings(BaseModel):
     provider: str = "ollama"
     base_url: AnyHttpUrl = "http://localhost:11434"
     model: str = Field(default=DEFAULT_GENERATIVE_MODEL, min_length=1)
-    context_tokens: int = Field(default=DEFAULT_GENERATIVE_CONTEXT_TOKENS, ge=1)
+    context_tokens: int = Field(default=DEFAULT_GENERATIVE_CONTEXT_TOKENS, ge=1024)
+
+    @validator("provider")
+    def require_ollama_provider(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized != "ollama":
+            raise ValueError("generative provider must be ollama")
+        return normalized
 
     @validator("base_url")
     def require_local_generative_runtime(cls, value: AnyHttpUrl) -> AnyHttpUrl:
@@ -278,7 +285,7 @@ def _jarvis_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]
             "directory": _path(str(logging.get("directory") or "${FORGE_RUNTIME_DIR}/logs"), env),
         },
         "generative": {
-            "provider": str(generative.get("provider") or "ollama"),
+            "provider": str(generative.get("provider")) if "provider" in generative else "ollama",
             "base_url": str(generative.get("base-url") or generative.get("base_url") or "http://localhost:11434"),
             "model": str(generative.get("model") or DEFAULT_GENERATIVE_MODEL),
             "context_tokens": int(

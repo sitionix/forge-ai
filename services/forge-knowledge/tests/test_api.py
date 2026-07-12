@@ -12,7 +12,7 @@ from knowledge_service.flow_builder import FlowBuilder, FlowGraphBundle, FlowGra
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest, KnowledgeQueryResponse, KnowledgeQueryStatus
 from knowledge_service.knowledge_query_service import KnowledgeQueryPolicy
 from support import build_test_app, write_runtime_config
-from knowledge_service.flow_explanations import FlowExplanationProviderResult
+from knowledge_service.flow_explanations import FLOW_EXPLANATION_LIMIT_REACHED, FlowExplanationProviderResult
 from semantic_test_support import seed_semantic_graph
 
 
@@ -187,8 +187,8 @@ def test_slow_flow_explanation_does_not_block_concurrent_health_request(tmp_path
 
 def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tmp_path, monkeypatch):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
-    app_config.analysis_request_timeout_seconds = 0.2
-    app.state.app_config.analysis_request_timeout_seconds = 0.2
+    app_config.flow_explanation_request_timeout_seconds = 0.2
+    app.state.app_config.flow_explanation_request_timeout_seconds = 0.2
     flow_result = FlowBuilder().build(
         FlowGraphBundle(
             nodes=(
@@ -227,14 +227,61 @@ def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tm
     provider = FakeFlowExplanationProvider()
     app.state.flow_explanation_provider = provider
 
+    deadline_at = time.monotonic() + 0.2
+    time.sleep(0.03)
+
     response = knowledge_main._knowledge_query_flow_explanations_response(
         SimpleNamespace(app=app),
         KnowledgeQueryRequest(queryText="A.start"),
+        deadline_at=deadline_at,
     )
 
     assert response.status == KnowledgeQueryStatus.OK
     assert provider.calls
-    assert 0 < provider.calls[0]["timeoutSeconds"] < 0.2
+    assert 0 < provider.calls[0]["timeoutSeconds"] < 0.17
+
+
+def test_expired_flow_explanation_deadline_before_worker_returns_controlled_response(tmp_path, monkeypatch):
+    app, _, _, _ = build_test_app(write_runtime_config(tmp_path))
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("query service should not be built after deadline expiry")
+
+    monkeypatch.setattr(knowledge_main, "build_knowledge_query_service", fail_if_called)
+    provider = FakeFlowExplanationProvider()
+    app.state.flow_explanation_provider = provider
+
+    response = knowledge_main._knowledge_query_flow_explanations_response(
+        SimpleNamespace(app=app),
+        KnowledgeQueryRequest(queryText="A.start"),
+        deadline_at=time.monotonic() - 0.001,
+    )
+
+    assert response.status == KnowledgeQueryStatus.OK
+    assert response.diagnostics
+    assert response.diagnostics[0].code == FLOW_EXPLANATION_LIMIT_REACHED
+    assert response.diagnostics[0].metadata["stage"] == "BEFORE_QUERY"
+    assert provider.calls == []
+
+
+def test_expired_tool_context_deadline_before_worker_returns_controlled_response(tmp_path, monkeypatch):
+    app, _, _, _ = build_test_app(write_runtime_config(tmp_path))
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("query service should not be built after deadline expiry")
+
+    monkeypatch.setattr(knowledge_main, "build_knowledge_query_service", fail_if_called)
+
+    response = knowledge_main._knowledge_query_tool_context_response(
+        SimpleNamespace(app=app),
+        KnowledgeQueryRequest(queryText="A.start"),
+        deadline_at=time.monotonic() - 0.001,
+    )
+
+    assert response.status == KnowledgeQueryStatus.OK
+    assert response.diagnostics
+    assert response.diagnostics[0].code == FLOW_EXPLANATION_LIMIT_REACHED
+    assert response.diagnostics[0].metadata["stage"] == "BEFORE_QUERY"
 
 
 def test_cancelled_flow_explanation_request_does_not_start_subsequent_flow_calls(tmp_path):

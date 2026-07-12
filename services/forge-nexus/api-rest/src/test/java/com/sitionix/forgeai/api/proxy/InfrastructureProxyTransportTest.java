@@ -36,12 +36,13 @@ class InfrastructureProxyTransportTest {
                 .thenReturn(upstream);
 
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        properties.getProxy().setKnowledgeExplanationRequestDeadline(Duration.ofSeconds(42));
         properties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofSeconds(7));
+        final ForgeAiFlowExplanationProperties flowExplanationProperties = new ForgeAiFlowExplanationProperties();
+        flowExplanationProperties.setRequestTimeoutSeconds(42);
         final ObjectMapper objectMapper = new ObjectMapper();
         final InfrastructureProxyTransport transport = new InfrastructureProxyTransport(
                 httpClient,
-                new InfrastructureProxyRouteRegistry(properties),
+                new InfrastructureProxyRouteRegistry(properties, flowExplanationProperties),
                 properties,
                 new InfrastructureProxyResponseMapper(objectMapper),
                 objectMapper
@@ -81,12 +82,13 @@ class InfrastructureProxyTransportTest {
                 });
 
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        properties.getProxy().setKnowledgeExplanationRequestDeadline(Duration.ofMillis(20));
         properties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofMillis(20));
+        final ForgeAiFlowExplanationProperties flowExplanationProperties = new ForgeAiFlowExplanationProperties();
+        flowExplanationProperties.setRequestTimeoutSeconds(1);
         final ObjectMapper objectMapper = new ObjectMapper();
         final InfrastructureProxyTransport transport = new InfrastructureProxyTransport(
                 httpClient,
-                new InfrastructureProxyRouteRegistry(properties),
+                new InfrastructureProxyRouteRegistry(properties, flowExplanationProperties),
                 properties,
                 new InfrastructureProxyResponseMapper(objectMapper),
                 objectMapper

@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 from jarvis_agent.ollama_client import OllamaClient
 
 
@@ -39,3 +40,13 @@ def test_jarvis_generate_payloads_include_shared_num_ctx() -> None:
 
     assert [post["json"]["options"]["num_ctx"] for post in recorder.posts] == [32768, 32768]
     assert [post["json"]["model"] for post in recorder.posts] == ["qwen2.5-coder:14b", "qwen2.5-coder:14b"]
+
+
+def test_jarvis_ollama_client_rejects_context_below_minimum() -> None:
+    with pytest.raises(ValueError, match="context_tokens must be at least 1024"):
+        OllamaClient(
+            base_url="http://localhost:11434",
+            model="qwen2.5-coder:14b",
+            context_tokens=512,
+            timeout_seconds=120,
+        )

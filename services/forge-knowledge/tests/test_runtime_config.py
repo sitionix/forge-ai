@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
 from knowledge_service.analysis_client import OllamaAnalysisClient
 from knowledge_service.config import (
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
@@ -11,6 +12,26 @@ from knowledge_service.config import (
     load_forge_settings,
 )
 from knowledge_service.flow_explanations import LocalOllamaFlowExplanationClient
+
+
+class RecordingFlowHttpClient:
+    def __init__(self):
+        self.posts = []
+
+    def post(self, url, *, json, timeout):
+        self.posts.append({"url": url, "json": json, "timeout": timeout})
+        return RecordingFlowResponse()
+
+    def close(self):
+        return None
+
+
+class RecordingFlowResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"response": "{}"}
 
 
 def test_knowledge_generative_defaults_are_canonical_when_not_overridden(tmp_path):
@@ -22,6 +43,7 @@ def test_knowledge_generative_defaults_are_canonical_when_not_overridden(tmp_pat
     assert config.analysis_model == DEFAULT_GENERATIVE_MODEL
     assert config.analysis_context_tokens == DEFAULT_GENERATIVE_CONTEXT_TOKENS
     assert config.analysis_request_timeout_seconds == 180
+    assert config.flow_explanation_request_timeout_seconds == 180
 
 
 def test_analyzer_and_flow_explanations_resolve_same_generative_model_and_context(tmp_path):
@@ -80,11 +102,86 @@ def test_root_generative_config_changes_knowledge_analyzer_and_flow_explanations
         flow.close()
 
 
+def test_root_flow_explanation_timeout_changes_knowledge_deadline(tmp_path):
+    config_file = _minimal_forge_config(tmp_path, flow_explanation_timeout_seconds=42)
+
+    settings = load_forge_settings(config_file=config_file, environ=_env(tmp_path, config_file))
+    config = AppConfig.from_forge_settings(settings)
+
+    assert config.flow_explanation_request_timeout_seconds == 42
+
+
+def test_shared_flow_explanation_timeout_env_override_changes_knowledge_deadline(tmp_path):
+    config_file = _minimal_forge_config(tmp_path)
+    environ = _env(tmp_path, config_file)
+    environ["FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS"] = "73"
+
+    settings = load_forge_settings(config_file=config_file, environ=environ)
+    config = AppConfig.from_forge_settings(settings)
+
+    assert config.flow_explanation_request_timeout_seconds == 73
+
+
+def test_analyzer_timeout_env_override_does_not_change_flow_explanation_deadline(tmp_path):
+    config_file = _minimal_forge_config(tmp_path, flow_explanation_timeout_seconds=42)
+    environ = _env(tmp_path, config_file)
+    environ["KNOWLEDGE_ANALYSIS_REQUEST_TIMEOUT_SECONDS"] = "300"
+
+    settings = load_forge_settings(config_file=config_file, environ=environ)
+    config = AppConfig.from_forge_settings(settings)
+
+    assert config.analysis_request_timeout_seconds == 300
+    assert config.flow_explanation_request_timeout_seconds == 42
+
+
+@pytest.mark.parametrize("provider", ["openai", "custom", ""])
+def test_generative_provider_must_be_ollama(tmp_path, provider):
+    config_file = _minimal_forge_config(tmp_path, generative_provider=provider)
+
+    with pytest.raises(ValueError, match="generative provider must be ollama"):
+        load_forge_settings(config_file=config_file, environ=_env(tmp_path, config_file))
+
+
+def test_generative_context_below_minimum_fails_loading(tmp_path):
+    config_file = _minimal_forge_config(tmp_path, generative_context_tokens=512)
+
+    with pytest.raises(ValueError):
+        load_forge_settings(config_file=config_file, environ=_env(tmp_path, config_file))
+
+
+def test_knowledge_ollama_clients_reject_context_below_minimum():
+    with pytest.raises(ValueError, match="context_tokens must be at least 1024"):
+        OllamaAnalysisClient("http://127.0.0.1:11434", "model", 120, 512)
+    with pytest.raises(ValueError, match="context_tokens must be at least 1024"):
+        LocalOllamaFlowExplanationClient("http://127.0.0.1:11434", "model", 120, 512)
+
+
+def test_flow_explanation_ollama_payload_uses_exact_loaded_context():
+    recorder = RecordingFlowHttpClient()
+    client = LocalOllamaFlowExplanationClient(
+        "http://127.0.0.1:11434",
+        "qwen2.5-coder:14b",
+        120,
+        32768,
+        http_client=recorder,
+    )
+    try:
+        result = client.complete({"flowIndex": 1, "steps": [], "transitions": [], "boundaries": []})
+    finally:
+        client.close()
+
+    assert result.raw_text == "{}"
+    assert recorder.posts[0]["json"]["model"] == "qwen2.5-coder:14b"
+    assert recorder.posts[0]["json"]["options"]["num_ctx"] == 32768
+
+
 def _minimal_forge_config(
     tmp_path: Path,
     *,
+    generative_provider: str = "ollama",
     generative_model: str = DEFAULT_GENERATIVE_MODEL,
     generative_context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS,
+    flow_explanation_timeout_seconds: int = 180,
 ) -> Path:
     config_dir = tmp_path / "config"
     runtime_dir = tmp_path / "var"
@@ -107,10 +204,13 @@ forge:
       file-enabled: false
       directory: "{runtime_dir / "logs"}"
     generative:
-      provider: ollama
+      provider: {generative_provider}
       base-url: http://localhost:11434
       model: {generative_model}
       context-tokens: {generative_context_tokens}
+    query:
+      flow-explanation:
+        request-timeout-seconds: {flow_explanation_timeout_seconds}
     services:
       knowledge:
         host: 127.0.0.1

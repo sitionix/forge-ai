@@ -237,7 +237,7 @@ def test_target_prompt_renderer_uses_policy_selected_prompt_id_without_code_chan
     client = OllamaAnalysisClient(
         "http://127.0.0.1:11434",
         "model",
-        1,
+        32768,
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         policy=custom_policy,
     )
@@ -820,7 +820,7 @@ def test_rendered_prompt_budget_uses_actual_prompt_and_blocks_http_dispatch():
     client = OllamaAnalysisClient(
         "http://127.0.0.1:11434",
         "model",
-        1,
+        32768,
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     try:
@@ -891,7 +891,7 @@ def test_ollama_client_captures_outer_request_with_minimal_marked_input_json():
     client = OllamaAnalysisClient(
         "http://127.0.0.1:11434",
         "model",
-        1,
+        32768,
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     try:
@@ -915,7 +915,7 @@ def test_ollama_client_captures_outer_request_with_minimal_marked_input_json():
 
 def test_ollama_client_has_no_legacy_prompt_renderer_or_response_parser_and_rejects_non_target_payload():
     contract = _contract("src/Foo.java")
-    client = OllamaAnalysisClient("http://127.0.0.1:11434", "model", 1)
+    client = OllamaAnalysisClient("http://127.0.0.1:11434", "model", 32768)
     try:
         assert not hasattr(client, "prompt_renderer")
         assert not hasattr(client, "parser")

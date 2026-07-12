@@ -3,6 +3,7 @@ package com.sitionix.forgeai.api.proxy;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriUtils;
@@ -12,9 +13,12 @@ public class InfrastructureProxyRouteRegistry {
 
     private final Map<String, InfrastructureProxyRoute> routes;
 
-    public InfrastructureProxyRouteRegistry(final InfrastructureProxyProperties properties) {
+    @Autowired
+    public InfrastructureProxyRouteRegistry(final InfrastructureProxyProperties properties,
+                                            final ForgeAiFlowExplanationProperties flowExplanationProperties) {
         final Map<String, InfrastructureProxyRoute> registered = new LinkedHashMap<>();
-        final var explanationReadTimeout = properties.getProxy().knowledgeExplanationReadTimeout();
+        final var explanationReadTimeout = properties.getProxy()
+                .knowledgeExplanationReadTimeout(flowExplanationProperties.requestTimeout());
         this.knowledge(registered, "knowledge.status", HttpMethod.GET, "/api/v1/knowledge/status", false);
         this.knowledge(registered, "knowledge.sources", HttpMethod.GET, "/api/v1/knowledge/sources", false);
         this.knowledge(registered, "knowledge.overview", HttpMethod.GET, "/api/v1/knowledge/overview", false);
@@ -63,6 +67,10 @@ public class InfrastructureProxyRouteRegistry {
         this.jarvis(registered, "jarvis.command", HttpMethod.POST, "/api/v1/jarvis/command", true);
         this.jarvis(registered, "jarvis.query", HttpMethod.POST, "/api/v1/jarvis/query", true);
         this.routes = Map.copyOf(registered);
+    }
+
+    InfrastructureProxyRouteRegistry(final InfrastructureProxyProperties properties) {
+        this(properties, new ForgeAiFlowExplanationProperties());
     }
 
     public InfrastructureProxyRoute require(final String key) {
