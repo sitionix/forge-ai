@@ -239,6 +239,11 @@ forge:
       console-enabled: false
       file-enabled: false
       directory: "{runtime_dir / "logs"}"
+    generative:
+      provider: ollama
+      base-url: http://localhost:11434
+      model: deterministic
+      context-tokens: 1024
     services:
       knowledge:
         host: 127.0.0.1
@@ -252,11 +257,7 @@ forge:
           auto-refresh-interval-seconds: 60
         analysis:
           enabled: true
-          provider: deterministic
-          base-url: http://localhost:11434
-          model: deterministic
           request-timeout-seconds: 5
-          context-tokens: 1024
           max-file-chars: 60000
           max-chunk-chars: 20000
           concurrency: 1

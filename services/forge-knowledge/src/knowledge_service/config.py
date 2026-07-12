@@ -10,6 +10,9 @@ import yaml
 from pydantic import AnyHttpUrl, BaseModel, Field, root_validator, validator
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
+DEFAULT_GENERATIVE_MODEL = "qwen2.5-coder:14b"
+DEFAULT_GENERATIVE_CONTEXT_TOKENS = 32768
+DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS = 180
 
 
 class LoggingSettings(BaseModel):
@@ -42,16 +45,33 @@ class InventorySettings(BaseModel):
     auto_refresh_interval_seconds: int = Field(default=60, ge=1)
 
 
+class GenerativeSettings(BaseModel):
+    provider: str = "ollama"
+    base_url: AnyHttpUrl = "http://localhost:11434"
+    model: str = Field(default=DEFAULT_GENERATIVE_MODEL, min_length=1)
+    context_tokens: int = Field(default=DEFAULT_GENERATIVE_CONTEXT_TOKENS, ge=1024)
+
+    @validator("provider")
+    def require_ollama_provider(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized != "ollama":
+            raise ValueError("generative provider must be ollama")
+        return normalized
+
+    @validator("base_url")
+    def require_local_model_runtime(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        parsed = urlparse(str(value))
+        if (parsed.hostname or "").lower() not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("generative base_url must point to localhost")
+        return value
+
+
 class AnalysisSettings(BaseModel):
     enabled: bool = True
-    provider: str = "ollama"
-    base_url: AnyHttpUrl
-    model: str = Field(min_length=1)
-    request_timeout_seconds: int = Field(default=90, ge=1)
+    request_timeout_seconds: int = Field(default=DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS, ge=1)
     ai_call_timeout_seconds: Optional[int] = Field(default=None, ge=1)
     per_file_timeout_seconds: int = Field(default=120, ge=1)
     stall_threshold_seconds: int = Field(default=300, ge=1)
-    context_tokens: int = Field(default=8192, ge=1)
     max_file_chars: int = Field(default=60000, ge=1)
     max_chunk_chars: int = Field(default=20000, ge=1)
     concurrency: int = Field(default=1, ge=1)
@@ -59,14 +79,6 @@ class AnalysisSettings(BaseModel):
     shutdown_grace_seconds: float = Field(default=5.0, ge=0.1)
     max_attempts_per_file: int = Field(default=3, ge=1)
     repair_attempts_per_file: int = Field(default=1, ge=0)
-
-    @validator("base_url")
-    def require_local_model_runtime(cls, value: AnyHttpUrl) -> AnyHttpUrl:
-        parsed = urlparse(str(value))
-        if (parsed.hostname or "").lower() not in {"127.0.0.1", "localhost", "::1"}:
-            raise ValueError("knowledge analysis base_url must point to localhost")
-        return value
-
 
 class SemanticSettings(BaseModel):
     enabled: bool = True
@@ -104,6 +116,14 @@ class KnowledgeSettings(BaseModel):
     semantic: SemanticSettings = Field(default_factory=SemanticSettings)
 
 
+class FlowExplanationQuerySettings(BaseModel):
+    request_timeout_seconds: int = Field(default=DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS, ge=1)
+
+
+class QuerySettings(BaseModel):
+    flow_explanation: FlowExplanationQuerySettings = Field(default_factory=FlowExplanationQuerySettings)
+
+
 class ServicesSettings(BaseModel):
     knowledge: KnowledgeSettings
 
@@ -114,6 +134,8 @@ class ForgeSettings(BaseModel):
     runtime_dir: Path
     workspace_root: Optional[Path]
     logging: LoggingSettings
+    generative: GenerativeSettings = Field(default_factory=GenerativeSettings)
+    query: QuerySettings = Field(default_factory=QuerySettings)
     services: ServicesSettings
 
     @root_validator
@@ -139,12 +161,13 @@ class AppConfig(BaseModel):
     analysis_enabled: bool = True
     analysis_provider: str = "ollama"
     analysis_base_url: str = "http://localhost:11434"
-    analysis_model: str = "qwen2.5-coder:14b"
-    analysis_request_timeout_seconds: int = 90
-    analysis_ai_call_timeout_seconds: int = 90
+    analysis_model: str = DEFAULT_GENERATIVE_MODEL
+    analysis_request_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
+    analysis_ai_call_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
+    flow_explanation_request_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
     analysis_per_file_timeout_seconds: int = 120
     analysis_stall_threshold_seconds: int = 300
-    analysis_context_tokens: int = 8192
+    analysis_context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS
     analysis_max_file_chars: int = 60000
     analysis_max_chunk_chars: int = 20000
     analysis_concurrency: int = 1
@@ -207,6 +230,7 @@ class AppConfig(BaseModel):
     @classmethod
     def from_forge_settings(cls, settings: ForgeSettings, module_dir: Optional[Path] = None) -> "AppConfig":
         knowledge = settings.services.knowledge
+        generative = settings.generative
         analysis = knowledge.analysis
         semantic = knowledge.semantic
         return cls(
@@ -218,14 +242,15 @@ class AppConfig(BaseModel):
             inventory_auto_refresh_enabled=knowledge.inventory.auto_refresh_enabled,
             inventory_auto_refresh_interval_seconds=knowledge.inventory.auto_refresh_interval_seconds,
             analysis_enabled=analysis.enabled,
-            analysis_provider=analysis.provider,
-            analysis_base_url=str(analysis.base_url).rstrip("/"),
-            analysis_model=analysis.model,
+            analysis_provider=generative.provider,
+            analysis_base_url=str(generative.base_url).rstrip("/"),
+            analysis_model=generative.model,
             analysis_request_timeout_seconds=analysis.request_timeout_seconds,
             analysis_ai_call_timeout_seconds=analysis.ai_call_timeout_seconds or analysis.request_timeout_seconds,
+            flow_explanation_request_timeout_seconds=settings.query.flow_explanation.request_timeout_seconds,
             analysis_per_file_timeout_seconds=analysis.per_file_timeout_seconds,
             analysis_stall_threshold_seconds=analysis.stall_threshold_seconds,
-            analysis_context_tokens=analysis.context_tokens,
+            analysis_context_tokens=generative.context_tokens,
             analysis_max_file_chars=analysis.max_file_chars,
             analysis_max_chunk_chars=analysis.max_chunk_chars,
             analysis_concurrency=analysis.concurrency,
@@ -375,6 +400,9 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
     services = _mapping_field(forge_ai, "services")
     knowledge = _mapping_field(services, "knowledge")
     logging = _mapping_field(forge_ai, "logging")
+    generative = _mapping_field(forge_ai, "generative")
+    query = _mapping_field(forge_ai, "query")
+    flow_explanation = _mapping_field(query, "flow-explanation", "flow_explanation")
     inventory = _mapping_field(knowledge, "inventory")
     storage = _mapping_field(knowledge, "storage")
     analysis = _mapping_field(knowledge, "analysis")
@@ -389,6 +417,27 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
             "console_enabled": logging.get("console-enabled", logging.get("console_enabled", True)),
             "file_enabled": logging.get("file-enabled", logging.get("file_enabled", True)),
             "directory": _path(str(logging.get("directory") or "${FORGE_RUNTIME_DIR}/logs"), env),
+        },
+        "generative": {
+            "provider": str(generative.get("provider")) if "provider" in generative else "ollama",
+            "base_url": str(generative.get("base-url") or generative.get("base_url") or "http://localhost:11434"),
+            "model": str(generative.get("model") or DEFAULT_GENERATIVE_MODEL),
+            "context_tokens": _int_config(
+                generative.get("context-tokens")
+                or generative.get("context_tokens"),
+                env,
+                DEFAULT_GENERATIVE_CONTEXT_TOKENS,
+            ),
+        },
+        "query": {
+            "flow_explanation": {
+                "request_timeout_seconds": _int_config(
+                    flow_explanation.get("request-timeout-seconds")
+                    or flow_explanation.get("request_timeout_seconds"),
+                    env,
+                    DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
+                )
+            }
         },
         "services": {
             "knowledge": {
@@ -418,20 +467,20 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                 },
                 "analysis": {
                     "enabled": _bool(analysis.get("enabled", True)),
-                    "provider": str(analysis.get("provider") or "ollama"),
-                    "base_url": str(analysis.get("base-url") or analysis.get("base_url") or "http://localhost:11434"),
-                    "model": str(analysis.get("model") or "qwen2.5-coder:14b"),
-                    "request_timeout_seconds": int(analysis.get("request-timeout-seconds") or analysis.get("request_timeout_seconds") or 90),
+                    "request_timeout_seconds": int(
+                        analysis.get("request-timeout-seconds")
+                        or analysis.get("request_timeout_seconds")
+                        or DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
+                    ),
                     "ai_call_timeout_seconds": int(
                         analysis.get("ai-call-timeout-seconds")
                         or analysis.get("ai_call_timeout_seconds")
                         or analysis.get("request-timeout-seconds")
                         or analysis.get("request_timeout_seconds")
-                        or 90
+                        or DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
                     ),
                     "per_file_timeout_seconds": int(analysis.get("per-file-timeout-seconds") or analysis.get("per_file_timeout_seconds") or 120),
                     "stall_threshold_seconds": int(analysis.get("stall-threshold-seconds") or analysis.get("stall_threshold_seconds") or 300),
-                    "context_tokens": int(analysis.get("context-tokens") or analysis.get("context_tokens") or 8192),
                     "max_file_chars": int(analysis.get("max-file-chars") or analysis.get("max_file_chars") or 60000),
                     "max_chunk_chars": int(analysis.get("max-chunk-chars") or analysis.get("max_chunk_chars") or 20000),
                     "concurrency": int(analysis.get("concurrency") or 1),
@@ -479,6 +528,19 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
 
 
 def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) -> None:
+    generative = raw["generative"]
+    generative_env_map: Dict[str, Tuple[str, Callable[[str], object]]] = {
+        "FORGE_GENERATIVE_PROVIDER": ("provider", str),
+        "FORGE_GENERATIVE_BASE_URL": ("base_url", str),
+        "FORGE_GENERATIVE_MODEL": ("model", str),
+        "FORGE_GENERATIVE_CONTEXT_TOKENS": ("context_tokens", int),
+    }
+    for name, (field, converter) in generative_env_map.items():
+        if env.get(name):
+            generative[field] = converter(env[name])
+    if env.get("FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS"):
+        raw["query"]["flow_explanation"]["request_timeout_seconds"] = int(env["FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS"])
+
     knowledge = raw["services"]["knowledge"]
     if env.get("KNOWLEDGE_HOST"):
         knowledge["host"] = env["KNOWLEDGE_HOST"]
@@ -496,14 +558,10 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
     analysis = knowledge["analysis"]
     env_map: Dict[str, Tuple[str, Callable[[str], object]]] = {
         "KNOWLEDGE_ANALYSIS_ENABLED": ("enabled", lambda value: value.lower() != "false"),
-        "KNOWLEDGE_ANALYSIS_PROVIDER": ("provider", str),
-        "KNOWLEDGE_ANALYSIS_BASE_URL": ("base_url", str),
-        "KNOWLEDGE_ANALYSIS_MODEL": ("model", str),
         "KNOWLEDGE_ANALYSIS_REQUEST_TIMEOUT_SECONDS": ("request_timeout_seconds", int),
         "KNOWLEDGE_ANALYSIS_AI_CALL_TIMEOUT_SECONDS": ("ai_call_timeout_seconds", int),
         "KNOWLEDGE_ANALYSIS_PER_FILE_TIMEOUT_SECONDS": ("per_file_timeout_seconds", int),
         "KNOWLEDGE_ANALYSIS_STALL_THRESHOLD_SECONDS": ("stall_threshold_seconds", int),
-        "KNOWLEDGE_ANALYSIS_CONTEXT_TOKENS": ("context_tokens", int),
         "KNOWLEDGE_ANALYSIS_MAX_FILE_CHARS": ("max_file_chars", int),
         "KNOWLEDGE_ANALYSIS_MAX_CHARS": ("max_chunk_chars", int),
         "KNOWLEDGE_ANALYSIS_CONCURRENCY": ("concurrency", int),
@@ -547,3 +605,11 @@ def _bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() not in {"0", "false", "no", "off"}
     return bool(value)
+
+
+def _int_config(value: Any, env: Mapping[str, str], default: int) -> int:
+    if value is None or value == "":
+        return int(default)
+    if isinstance(value, int):
+        return value
+    return int(_expand(str(value), env))

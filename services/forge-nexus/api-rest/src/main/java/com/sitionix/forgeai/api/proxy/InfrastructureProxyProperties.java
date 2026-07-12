@@ -117,10 +117,11 @@ public class InfrastructureProxyProperties {
     }
 
     public static class ProxyProperties {
+        private static final Duration DEFAULT_KNOWLEDGE_EXPLANATION_TRANSPORT_GRACE = Duration.ofSeconds(5);
+
         private int maxRequestBodyBytes = 1024 * 1024;
         private int maxResponseBodyBytes = 5 * 1024 * 1024;
-        private Duration knowledgeExplanationRequestDeadline = Duration.ofSeconds(90);
-        private Duration knowledgeExplanationTransportGrace = Duration.ofSeconds(5);
+        private Duration knowledgeExplanationTransportGrace = DEFAULT_KNOWLEDGE_EXPLANATION_TRANSPORT_GRACE;
 
         public int getMaxRequestBodyBytes() {
             return this.maxRequestBodyBytes;
@@ -138,14 +139,6 @@ public class InfrastructureProxyProperties {
             this.maxResponseBodyBytes = maxResponseBodyBytes;
         }
 
-        public Duration getKnowledgeExplanationRequestDeadline() {
-            return this.knowledgeExplanationRequestDeadline;
-        }
-
-        public void setKnowledgeExplanationRequestDeadline(final Duration knowledgeExplanationRequestDeadline) {
-            this.knowledgeExplanationRequestDeadline = knowledgeExplanationRequestDeadline;
-        }
-
         public Duration getKnowledgeExplanationTransportGrace() {
             return this.knowledgeExplanationTransportGrace;
         }
@@ -154,14 +147,14 @@ public class InfrastructureProxyProperties {
             this.knowledgeExplanationTransportGrace = knowledgeExplanationTransportGrace;
         }
 
-        Duration knowledgeExplanationReadTimeout() {
-            final Duration deadline = this.knowledgeExplanationRequestDeadline == null
-                    ? Duration.ofSeconds(90)
-                    : this.knowledgeExplanationRequestDeadline;
+        Duration knowledgeExplanationReadTimeout(final Duration requestDeadline) {
+            if (requestDeadline == null) {
+                throw new IllegalArgumentException("Flow explanation request deadline is required");
+            }
             final Duration grace = this.knowledgeExplanationTransportGrace == null
-                    ? Duration.ofSeconds(5)
+                    ? DEFAULT_KNOWLEDGE_EXPLANATION_TRANSPORT_GRACE
                     : this.knowledgeExplanationTransportGrace;
-            return deadline.plus(grace);
+            return requestDeadline.plus(grace);
         }
     }
 }

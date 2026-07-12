@@ -1024,6 +1024,8 @@ class FlowPathExtractor:
             label=str(item.get("label") or item.get("name") or node_id),
             qualified_name=str(item.get("qualifiedName")) if item.get("qualifiedName") else None,
             relative_path=str(item.get("relativePath")) if item.get("relativePath") else None,
+            line_start=int(item.get("lineStart")) if item.get("lineStart") is not None else None,
+            line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
             summary=str(item.get("summary")) if item.get("summary") else None,
             entrypoint=bool(item.get("entrypoint")),
         )
@@ -1168,6 +1170,13 @@ class KnowledgeQueryService:
                     },
                 )
             )
+        flow_units, flow_paths, hydrated_flow_bundle, hydration_truncated, hydration_diagnostics = self._hydrate_returned_flow_units(
+            flow_units,
+            self.policy.max_evidence_refs,
+        )
+        flow_bundle = self._merge_bundles(flow_bundle, hydrated_flow_bundle)
+        flow_truncated = flow_truncated or hydration_truncated
+        diagnostics.extend(hydration_diagnostics)
         response_bundle = self._merge_bundles(slice_bundle, flow_bundle)
         evidence_bundle = self.evidence_builder.build(response_bundle)
         matched_sources = self._matched_sources(matched_nodes, eligible_sources)
@@ -1209,6 +1218,56 @@ class KnowledgeQueryService:
                 diagnostics=diagnostics,
             ),
             flow_units=flow_units,
+        )
+
+    def _hydrate_returned_flow_units(
+        self,
+        flow_units: tuple[FlowUnit, ...],
+        max_evidence_refs: int,
+    ) -> tuple[tuple[FlowUnit, ...], List[KnowledgeQueryFlowPath], Dict[str, Any], bool, List[KnowledgeQueryDiagnostic]]:
+        graph_store = getattr(self.flow_path_extractor, "graph_store", None)
+        if graph_store is None or not hasattr(graph_store, "hydrate_flow_unit_evidence"):
+            return flow_units, self.flow_path_extractor.flow_builder.public_flow_paths(flow_units), self._flow_bundle_from_units(flow_units), False, []
+        result = graph_store.hydrate_flow_unit_evidence(flow_units, max_evidence_refs=max_evidence_refs)
+        hydrated_units = tuple(getattr(result, "flow_units", flow_units) or ())
+        hydrated_flow_paths = self.flow_path_extractor.flow_builder.public_flow_paths(hydrated_units)
+        truncated = bool(getattr(result, "truncated", False))
+        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        if truncated:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="FLOW_EVIDENCE_TRUNCATED",
+                    message="Returned flow evidence was truncated by the per-flow evidence budget after required edge evidence hydration.",
+                    severity="WARN",
+                    metadata={
+                        "maxEvidenceRefsPerFlow": int(max_evidence_refs),
+                        "requiredEdgeEvidenceCount": int(getattr(result, "required_edge_count", 0)),
+                        "hydratedEdgeEvidenceCount": int(getattr(result, "hydrated_edge_count", 0)),
+                        "evidenceCount": int(getattr(result, "evidence_count", 0)),
+                        "missingEdgeIds": list(getattr(result, "missing_edge_ids", ()) or ())[:20],
+                    },
+                )
+            )
+        return hydrated_units, hydrated_flow_paths, self._flow_bundle_from_units(hydrated_units, truncated=truncated), truncated, diagnostics
+
+    def _flow_bundle_from_units(self, flow_units: Sequence[FlowUnit], *, truncated: bool = False) -> Dict[str, Any]:
+        nodes: Dict[tuple[str, str, str], FlowGraphNode] = {}
+        edges: Dict[tuple[str, str, str], FlowGraphEdge] = {}
+        evidence: Dict[tuple[str, str], FlowGraphEvidence] = {}
+        for unit in flow_units:
+            for node in unit.nodes:
+                nodes.setdefault((node.source_id, node.graph_id, node.node_id), node)
+            for edge in (*unit.edges, *unit.boundary_edges):
+                edges.setdefault((edge.source_id, edge.graph_id, edge.edge_id), edge)
+            for item in unit.evidence:
+                evidence.setdefault((item.source_id, item.evidence_id), item)
+        return flow_graph_bundle_to_public_bundle(
+            FlowGraphBundle(
+                nodes=tuple(nodes.values()),
+                edges=tuple(edges.values()),
+                evidence=tuple(evidence.values()),
+                truncated=truncated,
+            )
         )
 
     def _matched_sources(

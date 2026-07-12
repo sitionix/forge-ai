@@ -83,6 +83,7 @@ def create_app(
             "status": "UP",
             "model": {
                 "defaultModel": config.model.default_model,
+                "contextTokens": config.model.context_tokens,
             },
             "ollama": {
                 "status": "UNKNOWN",

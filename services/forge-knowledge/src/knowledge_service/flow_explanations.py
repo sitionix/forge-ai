@@ -10,6 +10,10 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import httpx
 
+from knowledge_service.config import (
+    DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
+    DEFAULT_GENERATIVE_CONTEXT_TOKENS,
+)
 from knowledge_service.flow_builder import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowUnit
 from knowledge_service.knowledge_query_schema import (
     FlowExplanation,
@@ -19,7 +23,9 @@ from knowledge_service.knowledge_query_schema import (
     FlowToolBoundary,
     FlowToolContext,
     FlowToolEvidence,
+    FlowToolStatus,
     FlowToolStep,
+    FlowToolTransition,
     KnowledgeQueryDiagnostic,
     KnowledgeQueryFlowExplanationResponse,
     KnowledgeQueryRequest,
@@ -132,7 +138,9 @@ class LocalOllamaFlowExplanationClient:
         self.base_url = self._require_localhost(base_url.rstrip("/"))
         self.model = model
         self.timeout_seconds = timeout_seconds
-        self.context_tokens = max(1024, int(context_tokens or 4096))
+        self.context_tokens = int(context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS)
+        if self.context_tokens < 1024:
+            raise ValueError("Flow explanation context_tokens must be at least 1024")
         self.renderer = renderer or FlowExplanationPromptRenderer()
         self._client = http_client or httpx.Client(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 
@@ -214,6 +222,8 @@ class FlowExplanationContextPacker:
                 "kind": node.node_kind,
                 "source": source_display_name,
                 "relativePath": node.relative_path,
+                "lineStart": node.line_start,
+                "lineEnd": node.line_end,
                 "summary": node.summary,
                 "evidence": [self._evidence_item(ref, evidence_by_ref[ref]) for ref in step_refs],
             }
@@ -867,8 +877,8 @@ class FlowExplanationService:
         self,
         provider: Any,
         *,
-        max_prompt_chars: int = 32768,
-        request_deadline_seconds: float = 90.0,
+        max_prompt_chars: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS * 4,
+        request_deadline_seconds: float = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
         min_call_timeout_seconds: float = _DEFAULT_MIN_CALL_TIMEOUT_SECONDS,
         packer: FlowExplanationContextPacker | None = None,
         validator: FlowExplanationValidator | None = None,
@@ -876,15 +886,18 @@ class FlowExplanationService:
         cancel_event: Any | None = None,
     ) -> None:
         self.provider = provider
-        self.max_prompt_chars = max(4096, int(max_prompt_chars or 32768))
-        self.request_deadline_seconds = max(0.001, float(request_deadline_seconds or 90.0))
+        self.max_prompt_chars = max(4096, int(max_prompt_chars or DEFAULT_GENERATIVE_CONTEXT_TOKENS * 4))
+        self.request_deadline_seconds = max(
+            0.001,
+            float(request_deadline_seconds or DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS),
+        )
         self.min_call_timeout_seconds = max(0.001, float(min_call_timeout_seconds or _DEFAULT_MIN_CALL_TIMEOUT_SECONDS))
         self.packer = packer or FlowExplanationContextPacker()
         self.validator = validator or FlowExplanationValidator()
         self.renderer = renderer or FlowExplanationPromptRenderer()
         self.cancel_event = cancel_event
 
-    def explain(self, request: KnowledgeQueryRequest, execution: Any) -> FlowExplanationRun:
+    def explain(self, request: KnowledgeQueryRequest, execution: Any, *, deadline_at: float | None = None) -> FlowExplanationRun:
         query_response = execution.response
         flow_units: tuple[FlowUnit, ...] = tuple(execution.flow_units or ())
         source_names = {source.sourceId: source.displayName for source in query_response.matchedSources}
@@ -898,7 +911,8 @@ class FlowExplanationService:
             )
             return FlowExplanationRun(query_response=query_response, results=[], diagnostics=[diagnostic])
 
-        deadline_at = time.monotonic() + self.request_deadline_seconds
+        if deadline_at is None:
+            deadline_at = time.monotonic() + self.request_deadline_seconds
         for flow_index, flow_unit in enumerate(flow_units, start=1):
             source_display_name = source_names.get(flow_unit.key.source_id) or flow_unit.key.source_id or None
             packed = self.packer.pack(
@@ -1172,21 +1186,30 @@ class FlowExplanationService:
                 for input_boundary in input_boundaries
                 for item in [boundaries_by_ref.get(str(input_boundary.get("boundaryRef") or ""), {})]
             ],
-            status="OK" if result.ok else "FAILED",
+            status=FlowToolStatus.OK if result.ok else FlowToolStatus.FAILED,
         )
 
     def _tool_flow(self, result: PerFlowExplanationResult) -> FlowToolContext:
         steps_by_order = self._step_explanations(result.explanation)
+        transitions_by_ref = self._transition_explanations(result.explanation)
         input_steps = [step for step in result.context.llm_input.get("steps", []) if isinstance(step, dict)]
+        input_transitions = [item for item in result.context.llm_input.get("transitions", []) if isinstance(item, dict)]
         input_boundaries = [item for item in result.context.llm_input.get("boundaries", []) if isinstance(item, dict)]
         return FlowToolContext(
             flowIndex=result.flow_index,
+            status=FlowToolStatus.OK if result.ok else FlowToolStatus.FAILED,
             title=str(result.explanation.get("title") if result.explanation else ""),
             narrative=self._public_narrative(result.explanation),
             steps=[
                 self._tool_step(result, step, steps_by_order.get(int(step["order"]), {}))
                 for step in input_steps
                 if isinstance(step.get("order"), int)
+            ],
+            transitions=[
+                self._tool_transition(result, item, transitions_by_ref.get(str(item.get("transitionRef") or ""), {}))
+                for item in input_transitions
+                if isinstance(item.get("fromOrder"), int)
+                and isinstance(item.get("toOrder"), int)
             ],
             boundaries=[self._tool_boundary(result, item) for item in input_boundaries],
             diagnostics=[self._compact_diagnostic(diagnostic) for diagnostic in result.diagnostics],
@@ -1200,7 +1223,9 @@ class FlowExplanationService:
     ) -> FlowToolStep:
         evidence_refs = list(explanation_step.get("evidenceRefs") or []) or [item["ref"] for item in step.get("evidence", []) if isinstance(item, dict)]
         evidence = [self._tool_evidence(ref, result.context.evidence_by_ref.get(ref)) for ref in evidence_refs]
-        address = self._address(step, evidence)
+        node_evidence_refs = [item["ref"] for item in step.get("evidence", []) if isinstance(item, dict)]
+        node_evidence = [self._tool_evidence(ref, result.context.evidence_by_ref.get(ref)) for ref in node_evidence_refs]
+        address = self._address(step, node_evidence)
         return FlowToolStep(
             order=int(step["order"]),
             symbol=str(step.get("symbol") or step.get("nodeLabel") or ""),
@@ -1208,6 +1233,25 @@ class FlowExplanationService:
             address=address,
             explanation=str(explanation_step.get("explanation") or "") if explanation_step else None,
             evidence=[item for item in evidence if item is not None],
+        )
+
+    def _tool_transition(
+        self,
+        result: PerFlowExplanationResult,
+        item: Mapping[str, Any],
+        explanation_item: Mapping[str, Any],
+    ) -> FlowToolTransition:
+        evidence_refs = list(explanation_item.get("evidenceRefs") or []) or [
+            evidence["ref"] for evidence in item.get("evidence", []) if isinstance(evidence, dict)
+        ]
+        evidence = [self._tool_evidence(ref, result.context.evidence_by_ref.get(ref)) for ref in evidence_refs]
+        return FlowToolTransition(
+            fromOrder=int(item["fromOrder"]),
+            toOrder=int(item["toOrder"]),
+            fromSymbol=str(item.get("fromSymbol") or ""),
+            toSymbol=str(item.get("toSymbol") or ""),
+            explanation=str(explanation_item.get("explanation") or "") if explanation_item else None,
+            evidence=[entry for entry in evidence if entry is not None],
         )
 
     def _tool_boundary(self, result: PerFlowExplanationResult, item: Mapping[str, Any]) -> FlowToolBoundary:
@@ -1225,17 +1269,39 @@ class FlowExplanationService:
         )
 
     def _address(self, step: Mapping[str, Any], evidence: Sequence[FlowToolEvidence | None]) -> FlowToolAddress:
+        node_path = self._node_relative_path(step)
+        node_line_start = self._node_line(step.get("lineStart"))
+        node_line_end = self._node_line(step.get("lineEnd"))
+        if node_path and node_line_start is not None:
+            return FlowToolAddress(
+                service=str(step.get("source")) if step.get("source") else None,
+                relativePath=node_path,
+                lineStart=node_line_start,
+                lineEnd=node_line_end if node_line_end is not None else node_line_start,
+            )
         first_evidence = next((item for item in evidence if item is not None and item.relativePath), None)
         return FlowToolAddress(
             service=str(step.get("source")) if step.get("source") else None,
-            relativePath=first_evidence.relativePath if first_evidence else self._node_relative_path(step),
+            relativePath=first_evidence.relativePath if first_evidence else node_path,
             lineStart=first_evidence.lineStart if first_evidence else None,
-            lineEnd=first_evidence.lineEnd if first_evidence else None,
+            lineEnd=(
+                first_evidence.lineEnd if first_evidence and first_evidence.lineEnd is not None else first_evidence.lineStart
+            )
+            if first_evidence
+            else None,
         )
 
     def _node_relative_path(self, step: Mapping[str, Any]) -> str | None:
         value = step.get("relativePath")
         return str(value) if value else None
+
+    def _node_line(self, value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     def _tool_evidence(self, ref: str, evidence: FlowGraphEvidence | None) -> FlowToolEvidence | None:
         if evidence is None:
@@ -1252,6 +1318,15 @@ class FlowExplanationService:
         if not explanation:
             return {}
         return {int(item["order"]): dict(item) for item in explanation.get("steps", []) if isinstance(item, dict) and isinstance(item.get("order"), int)}
+
+    def _transition_explanations(self, explanation: Mapping[str, Any] | None) -> Dict[str, Dict[str, Any]]:
+        if not explanation:
+            return {}
+        return {
+            str(item.get("transitionRef")): dict(item)
+            for item in explanation.get("transitions", [])
+            if isinstance(item, dict) and isinstance(item.get("transitionRef"), str)
+        }
 
     def _boundary_explanations(self, explanation: Mapping[str, Any] | None) -> Dict[str, Dict[str, Any]]:
         if not explanation:

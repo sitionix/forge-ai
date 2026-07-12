@@ -1,7 +1,9 @@
 import json
+import sqlite3
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,6 +25,11 @@ from knowledge_service.flow_builder import (
     FlowGraphEvidence,
     FlowGraphNode,
     FlowGraphSourceScope,
+    FlowStopReason,
+    FlowUnit,
+    FlowUnitKey,
+    FlowUnitOrigin,
+    flow_graph_bundle_to_public_bundle,
 )
 from knowledge_service.flow_explanations import (
     FLOW_EXPLANATION_LIMIT_REACHED,
@@ -657,6 +664,61 @@ def default_evidence():
         {"id": "ev-1", "sourceId": "source-a", "edgeId": "calls-1", "relativePath": "src/Controller.java", "lineStart": 10, "lineEnd": 10},
         {"id": "ev-2", "sourceId": "source-a", "edgeId": "calls-2", "relativePath": "src/UseCase.java", "lineStart": 20, "lineEnd": 20},
     ]
+
+
+def add_edge_evidence(
+    db_path: Path,
+    *,
+    source_id: str,
+    edge_id: str,
+    evidence_id: str,
+    relative_path: str,
+    line_start: int,
+    line_end=None,
+    excerpt=None,
+) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        template = conn.execute(
+            """
+            SELECT job_id, inventory_file_id, analysis_file_id, file_id, content_hash, created_at, updated_at
+            FROM analysis_graph_evidence
+            WHERE source_id = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (source_id,),
+        ).fetchone()
+        assert template is not None
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_evidence(
+                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                line_start, line_end, excerpt, excerpt_hash, evidence_kind, created_at, updated_at, fact_origin, flow_domain
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EDGE', ?, ?, 'STATIC', 'CODE')
+            """,
+            (
+                evidence_id,
+                template["job_id"],
+                source_id,
+                template["inventory_file_id"],
+                template["analysis_file_id"],
+                template["file_id"],
+                relative_path,
+                template["content_hash"],
+                line_start,
+                line_end if line_end is not None else line_start,
+                excerpt or f"excerpt-{evidence_id}",
+                excerpt or f"excerpt-{evidence_id}",
+                template["created_at"],
+                template["updated_at"],
+            ),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO analysis_graph_edge_evidence(edge_id, evidence_id) VALUES (?, ?)",
+            (edge_id, evidence_id),
+        )
 
 
 def test_valid_query_plan_v2_request_passes():
@@ -1304,6 +1366,205 @@ def test_analysis_store_load_call_flow_graph_returns_typed_bundle(tmp_path):
     assert {"a-start", "b-work", "c-finish"} <= {node.node_id for node in bundle.nodes}
     assert {"edge-a-b", "edge-b-c"} <= {edge.edge_id for edge in bundle.edges}
     assert all(node.graph_id == graph_id for node in bundle.nodes)
+    node_by_id = {node.node_id: node for node in bundle.nodes}
+    assert node_by_id["a-start"].relative_path == "src/A.java"
+    assert node_by_id["a-start"].line_start == 1
+    assert node_by_id["a-start"].line_end == 1
+
+
+def test_call_flow_graph_edge_evidence_representatives_are_fair_by_edge(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    graph_id = seed_semantic_graph(
+        db_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a", "nodeKind": "CALLABLE", "name": "A.run", "path": "src/A.java"},
+            {"id": "b", "nodeKind": "CALLABLE", "name": "B.run", "path": "src/B.java"},
+            {"id": "c", "nodeKind": "CALLABLE", "name": "C.run", "path": "src/C.java"},
+            {"id": "d", "nodeKind": "CALLABLE", "name": "D.run", "path": "src/D.java"},
+        ],
+        edges=[
+            {"id": "edge-1", "fromNodeId": "a", "toNodeId": "b", "edgeType": "CALLS", "evidence_id": "e1"},
+            {"id": "edge-2", "fromNodeId": "b", "toNodeId": "c", "edgeType": "CALLS", "evidence_id": "e3"},
+            {"id": "edge-3", "fromNodeId": "c", "toNodeId": "d", "edgeType": "CALLS", "evidence_id": "e4"},
+        ],
+    )
+    add_edge_evidence(db_path, source_id="source-a", edge_id="edge-1", evidence_id="e2", relative_path="src/A.java", line_start=2)
+    add_edge_evidence(db_path, source_id="source-a", edge_id="edge-3", evidence_id="e5", relative_path="src/C.java", line_start=5)
+
+    bundle = AnalysisStore(db_path).load_call_flow_graph(
+        [FlowGraphSourceScope(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_ids=("a",))],
+        max_edges=10,
+        max_evidence=3,
+    )
+
+    evidence_by_edge = {item.edge_id: item.evidence_id for item in bundle.evidence}
+    assert len(bundle.evidence) == 3
+    assert evidence_by_edge == {"edge-1": "e1", "edge-2": "e3", "edge-3": "e4"}
+
+
+def test_call_flow_graph_evidence_budget_is_not_exceeded_and_truncates_honestly(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    graph_id = seed_semantic_graph(
+        db_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a", "nodeKind": "CALLABLE", "name": "A.run"},
+            {"id": "b", "nodeKind": "CALLABLE", "name": "B.run"},
+            {"id": "c", "nodeKind": "CALLABLE", "name": "C.run"},
+            {"id": "d", "nodeKind": "CALLABLE", "name": "D.run"},
+        ],
+        edges=[
+            {"id": "edge-1", "fromNodeId": "a", "toNodeId": "b", "edgeType": "CALLS", "evidence_id": "e1"},
+            {"id": "edge-2", "fromNodeId": "b", "toNodeId": "c", "edgeType": "CALLS", "evidence_id": "e2"},
+            {"id": "edge-3", "fromNodeId": "c", "toNodeId": "d", "edgeType": "CALLS", "evidence_id": "e3"},
+        ],
+    )
+
+    bundle = AnalysisStore(db_path).load_call_flow_graph(
+        [FlowGraphSourceScope(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_ids=("a",))],
+        max_edges=10,
+        max_evidence=2,
+    )
+
+    assert len(bundle.evidence) == 2
+    assert bundle.truncated is True
+
+
+def test_returned_flow_unit_hydration_loads_only_returned_edge_evidence(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    graph_id = seed_semantic_graph(
+        db_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a", "nodeKind": "CALLABLE", "name": "A.start"},
+            {"id": "b", "nodeKind": "CALLABLE", "name": "B.work"},
+            {"id": "c", "nodeKind": "CALLABLE", "name": "C.finish"},
+            {"id": "x", "nodeKind": "CALLABLE", "name": "X.start"},
+            {"id": "y", "nodeKind": "CALLABLE", "name": "Y.work"},
+        ],
+        edges=[
+            {"id": "edge-a-b", "fromNodeId": "a", "toNodeId": "b", "edgeType": "CALLS", "evidence_id": "ev-a-b"},
+            {"id": "edge-b-c", "fromNodeId": "b", "toNodeId": "c", "edgeType": "CALLS", "evidence_id": "ev-b-c"},
+            {"id": "edge-x-y", "fromNodeId": "x", "toNodeId": "y", "edgeType": "CALLS", "evidence_id": "ev-x-y"},
+        ],
+    )
+    store = AnalysisStore(db_path)
+    bundle = store.load_call_flow_graph(
+        [
+            FlowGraphSourceScope(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_ids=("a",)),
+            FlowGraphSourceScope(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_ids=("x",)),
+        ],
+        max_edges=10,
+        max_evidence=0,
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [
+            SimpleNamespace(sourceId="source-a", graphId=graph_id, graphRevision=graph_id, nodeId="a", nodeKind="CALLABLE", score=1.0, matchReasons=("EXACT_NAME",)),
+            SimpleNamespace(sourceId="source-a", graphId=graph_id, graphRevision=graph_id, nodeId="x", nodeKind="CALLABLE", score=0.9, matchReasons=("EXACT_NAME",)),
+        ],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    returned_unit = next(unit for unit in result.flow_units if "edge-a-b" in unit.edge_ids)
+
+    hydration = store.hydrate_flow_unit_evidence((returned_unit,), max_evidence_refs=10)
+    hydrated = hydration.flow_units[0]
+
+    assert hydration.truncated is False
+    assert set(hydrated.edge_ids) == {"edge-a-b", "edge-b-c"}
+    assert {item.edge_id for item in hydrated.evidence} == {"edge-a-b", "edge-b-c"}
+    assert "edge-x-y" not in {item.edge_id for item in hydrated.evidence}
+    assert all(edge.evidence_ids for edge in hydrated.edges)
+
+
+def test_returned_flow_unit_hydration_preserves_evidence_ownership(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    graph_id = seed_semantic_graph(
+        db_path,
+        source_id="source-a",
+        evidence_ids=["node-a-evidence"],
+        nodes=[
+            {"id": "a", "nodeKind": "CALLABLE", "name": "A.start"},
+            {"id": "b", "nodeKind": "CALLABLE", "name": "B.work"},
+            {"id": "c", "nodeKind": "CALLABLE", "name": "C.finish"},
+        ],
+        edges=[
+            {"id": "edge-a-b", "fromNodeId": "a", "toNodeId": "b", "edgeType": "CALLS", "evidence_id": "ev-a-b"},
+            {"id": "edge-b-c", "fromNodeId": "b", "toNodeId": "c", "edgeType": "CALLS", "evidence_id": "ev-b-c"},
+        ],
+        claims=[{"id": "claim-a", "node_id": "a", "summary": "A starts the flow.", "evidence_ids": ["node-a-evidence"]}],
+    )
+    store = AnalysisStore(db_path)
+    bundle = store.load_call_flow_graph(
+        [FlowGraphSourceScope(source_id="source-a", graph_id=graph_id, graph_revision=graph_id, node_ids=("a",))],
+        max_edges=10,
+        max_evidence=0,
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [SimpleNamespace(sourceId="source-a", graphId=graph_id, graphRevision=graph_id, nodeId="a", nodeKind="CALLABLE", score=1.0, matchReasons=("EXACT_NAME",))],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+
+    hydrated = store.hydrate_flow_unit_evidence(result.flow_units[:1], max_evidence_refs=10).flow_units[0]
+
+    evidence_ids_by_edge = {edge.edge_id: edge.evidence_ids for edge in hydrated.edges}
+    assert evidence_ids_by_edge["edge-a-b"] == ("ev-a-b",)
+    assert evidence_ids_by_edge["edge-b-c"] == ("ev-b-c",)
+    assert "node-a-evidence" not in evidence_ids_by_edge["edge-a-b"]
+    assert any(item.node_id == "a" and item.evidence_id == "node-a-evidence" for item in hydrated.evidence)
+
+
+def test_hydrated_flow_bundle_deduplication_keeps_source_identity_for_same_evidence_id():
+    node_a = flow_graph_node("a", "A.start")
+    node_b = flow_graph_node("b", "B.work", source_id="source-b", graph_id="graph-b", graph_revision="graph-b")
+    evidence_a = FlowGraphEvidence("source-a", "graph-a", "graph-a", "shared-evidence", "a", None, "src/A.java", 1, 1, "A")
+    evidence_b = FlowGraphEvidence("source-b", "graph-b", "graph-b", "shared-evidence", "b", None, "src/B.java", 2, 2, "B")
+    unit_a = FlowUnit(
+        key=FlowUnitKey("source-a", "graph-a", ("a",), (), (), "TERMINAL_NODE"),
+        origins=(FlowUnitOrigin("a", "source-a", "graph-a", 1.0, ("EXACT_NAME",)),),
+        node_ids=("a",),
+        edge_ids=(),
+        boundary_edge_ids=(),
+        nodes=(node_a,),
+        edges=(),
+        boundary_edges=(),
+        evidence=(evidence_a,),
+        complete=True,
+        stop_reason=FlowStopReason.TERMINAL_NODE,
+        root_stop_reason=FlowStopReason.TERMINAL_NODE,
+        root_node_id="a",
+        seed_node_ids=("a",),
+        score=1.0,
+    )
+    unit_b = FlowUnit(
+        key=FlowUnitKey("source-b", "graph-b", ("b",), (), (), "TERMINAL_NODE"),
+        origins=(FlowUnitOrigin("b", "source-b", "graph-b", 1.0, ("EXACT_NAME",)),),
+        node_ids=("b",),
+        edge_ids=(),
+        boundary_edge_ids=(),
+        nodes=(node_b,),
+        edges=(),
+        boundary_edges=(),
+        evidence=(evidence_b,),
+        complete=True,
+        stop_reason=FlowStopReason.TERMINAL_NODE,
+        root_stop_reason=FlowStopReason.TERMINAL_NODE,
+        root_node_id="b",
+        seed_node_ids=("b",),
+        score=1.0,
+    )
+
+    bundle = service(FakeGraphStore())._flow_bundle_from_units((unit_a, unit_b))
+
+    assert len(bundle["evidence"]) == 2
+    assert {(item["sourceId"], item["id"]) for item in bundle["evidence"]} == {
+        ("source-a", "shared-evidence"),
+        ("source-b", "shared-evidence"),
+    }
 
 
 def test_anchor_expansion_service_has_no_schema_alias_fallbacks():
@@ -1601,7 +1862,208 @@ def test_codex_tool_response_excludes_internal_ids_and_includes_addresses_and_ev
     assert step["address"]["relativePath"] == "src/A.java"
     assert step["address"]["lineStart"] == 10
     assert step["evidence"][0]["excerpt"] == "class A { }"
+    transition = payload["flows"][0]["transitions"][0]
+    assert transition["fromOrder"] == 1
+    assert transition["toOrder"] == 2
+    assert transition["fromSymbol"] == "A.start"
+    assert transition["toSymbol"] == "B.work"
+    assert transition["explanation"]
+    assert transition["evidence"][0]["relativePath"] == "src/A.java"
+    assert transition["evidence"][0]["lineStart"] == 10
     assert payload["flows"][0]["narrative"]
+
+
+def test_tool_step_address_uses_graph_node_lines_without_node_owned_evidence():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java", line_start=7, line_end=9),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java", line_start=20, line_end=22),
+        ),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    request = query_request("A.start")
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    payload = service_under_test.to_tool_response(request, service_under_test.explain(request, execution_from_flow_result(result))).dict()
+
+    first_step = payload["flows"][0]["steps"][0]
+    assert first_step["address"]["relativePath"] == "src/A.java"
+    assert first_step["address"]["lineStart"] == 7
+    assert first_step["address"]["lineEnd"] == 9
+    assert payload["flows"][0]["transitions"][0]["evidence"][0]["lineStart"] == 40
+
+
+def test_transition_evidence_does_not_replace_step_declaration_address():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java", line_start=7, line_end=9),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java", line_start=20, line_end=22),
+        ),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    request = query_request("A.start")
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    payload = service_under_test.to_tool_response(request, service_under_test.explain(request, execution_from_flow_result(result))).dict()
+
+    assert payload["flows"][0]["steps"][0]["address"] == {
+        "service": "Source A",
+        "relativePath": "src/A.java",
+        "lineStart": 7,
+        "lineEnd": 9,
+    }
+    assert payload["flows"][0]["transitions"][0]["evidence"][0]["lineStart"] == 40
+
+
+def test_tool_step_address_line_information_stays_null_without_node_or_declaration_range():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java"),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java"),
+        ),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    request = query_request("A.start")
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    payload = service_under_test.to_tool_response(request, service_under_test.explain(request, execution_from_flow_result(result))).dict()
+
+    first_step = payload["flows"][0]["steps"][0]
+    assert first_step["address"]["relativePath"] == "src/A.java"
+    assert first_step["address"]["lineStart"] is None
+    assert first_step["address"]["lineEnd"] is None
+    assert payload["flows"][0]["transitions"][0]["evidence"][0]["lineStart"] == 40
+
+
+def test_public_flow_bundle_round_trips_node_line_ranges_through_fallback_typed_node():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java", line_start=7, line_end=9),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java", line_start=20, line_end=22),
+        ),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+        ),
+    )
+    public_bundle = flow_graph_bundle_to_public_bundle(bundle)
+
+    typed_bundle = FlowPathExtractor()._typed_bundle_from_public_graph(public_bundle)
+
+    assert [(node.node_id, node.line_start, node.line_end) for node in typed_bundle.nodes] == [
+        ("a-start", 7, 9),
+        ("b-work", 20, 22),
+    ]
+
+
+def test_tool_transition_evidence_is_exact_callsite_and_internal_ids_are_not_serialized():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java", line_start=7, line_end=9),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java", line_start=20, line_end=22),
+            flow_graph_node("c-finish", "C.finish", relative_path="src/C.java", line_start=30, line_end=31),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish", evidence_ids=("ev-b-c",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-c", None, "edge-b-c", "src/B.java", 50, 50, "c.finish();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    request = query_request("A.start")
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    payload = service_under_test.to_tool_response(request, service_under_test.explain(request, execution_from_flow_result(result))).dict()
+    serialized = json.dumps(payload)
+
+    transitions = payload["flows"][0]["transitions"]
+    assert [(item["fromOrder"], item["toOrder"]) for item in transitions] == [(1, 2), (2, 3)]
+    assert transitions[0]["evidence"][0]["relativePath"] == "src/A.java"
+    assert transitions[0]["evidence"][0]["lineStart"] == 40
+    assert transitions[0]["evidence"][0]["excerpt"] == "b.work();"
+    assert transitions[1]["evidence"][0]["relativePath"] == "src/B.java"
+    assert transitions[1]["evidence"][0]["lineStart"] == 50
+    assert transitions[1]["evidence"][0]["excerpt"] == "c.finish();"
+    assert "edge-a-b" not in serialized
+    assert "edge-b-c" not in serialized
+    assert "nodeId" not in serialized
+    assert "edgeId" not in serialized
+    assert "graphId" not in serialized
+
+
+def test_transition_validator_rejects_unrelated_edge_evidence_ref():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start"),
+            flow_graph_node("b-work", "B.work"),
+            flow_graph_node("c-finish", "C.finish"),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish", evidence_ids=("ev-b-c",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-c", None, "edge-b-c", "src/B.java", 50, 50, "c.finish();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+    packed = service_under_test.packer.pack(
+        request=query_request("A.start"),
+        flow_unit=result.flow_units[0],
+        flow_index=1,
+        source_display_name="Source A",
+    )
+    response = valid_flow_explanation(packed.llm_input)
+    wrong_ref = packed.llm_input["transitions"][1]["evidence"][0]["ref"]
+    response["transitions"][0]["evidenceRefs"] = [wrong_ref]
+
+    parsed, errors, code = FlowExplanationValidator().validate(json.dumps(response), packed)
+
+    assert parsed is None
+    assert code == FLOW_EXPLANATION_VALIDATION_FAILED
+    assert f"evidence ref {wrong_ref} is not valid for transitionRef t1" in errors
 
 
 def test_step_evidence_from_another_step_is_rejected_and_cannot_change_tool_address():
@@ -2409,8 +2871,13 @@ def test_one_failed_flow_does_not_kill_other_flow_tool_context():
     assert [flow.ok for flow in run.results] == [True, False]
     assert response.status == KnowledgeQueryStatus.OK
     assert response.flows[0].narrative
+    assert response.flows[0].status == "OK"
+    assert response.flows[1].status == "FAILED"
     assert response.flows[1].narrative == []
     assert response.flows[1].steps
+    assert response.flows[1].transitions
+    assert all(transition.explanation is None for transition in response.flows[1].transitions)
+    assert all(transition.evidence for transition in response.flows[1].transitions)
     assert any(diagnostic.code == FLOW_EXPLANATION_VALIDATION_FAILED for diagnostic in response.flows[1].diagnostics)
 
 
@@ -2444,6 +2911,37 @@ def test_flow_explanation_context_excludes_unrelated_flows_and_raw_debug_fields(
     assert "vector" not in serialized.lower()
     assert "debug" not in serialized.lower()
     assert [step["symbol"] for step in packed_context["steps"]] == ["A.start", "B.work", "C.finish"]
+
+
+def test_tool_transition_evidence_uses_edge_evidence_ids_when_evidence_row_has_no_edge_id():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java", line_start=1, line_end=4),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java", line_start=10, line_end=12),
+        ),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, None, "src/A.java", 3, 3, "b.work();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    service = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    run = service.explain(query_request("A.start"), execution_from_flow_result(result))
+    response = service.to_tool_response(query_request("A.start"), run)
+
+    assert result.flow_paths[0].evidenceIds == ["ev-a-b"]
+    transition = response.flows[0].transitions[0]
+    assert transition.fromSymbol == "A.start"
+    assert transition.toSymbol == "B.work"
+    assert [(item.relativePath, item.lineStart, item.lineEnd, item.excerpt) for item in transition.evidence] == [
+        ("src/A.java", 3, 3, "b.work();")
+    ]
 
 
 def test_flow_builder_preserves_shared_prefix_side_effect_branches_in_evidence_order():

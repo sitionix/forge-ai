@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Set
@@ -27,6 +27,7 @@ from knowledge_service.flow_builder import (
     FlowGraphEvidence,
     FlowGraphNode,
     FlowGraphSourceScope,
+    FlowUnit,
     flow_graph_bundle_to_public_bundle,
 )
 from knowledge_service.graph_call_intelligence import classify_call_metadata
@@ -98,6 +99,16 @@ class GraphQuery:
             "includeIsolated": self.include_isolated,
             "search": self.search,
         }
+
+
+@dataclass(frozen=True)
+class FlowUnitEvidenceHydrationResult:
+    flow_units: tuple[FlowUnit, ...]
+    truncated: bool = False
+    evidence_count: int = 0
+    required_edge_count: int = 0
+    hydrated_edge_count: int = 0
+    missing_edge_ids: tuple[str, ...] = ()
 
 
 class AnalysisStore:
@@ -2494,7 +2505,10 @@ class AnalysisStore:
             remaining_evidence = safe_max_evidence
             for source_id, node_ids in sorted(node_ids_by_source.items()):
                 if remaining_evidence <= 0:
+                    if edge_ids_by_source.get(source_id):
+                        truncated = True
                     break
+                edge_count = len(edge_ids_by_source.get(source_id, set()))
                 scope_evidence = self._query_flow_path_evidence(
                     conn,
                     source_id,
@@ -2502,8 +2516,10 @@ class AnalysisStore:
                     edge_ids_by_source.get(source_id, set()),
                     remaining_evidence,
                 )
+                if edge_count > remaining_evidence:
+                    truncated = True
                 evidence.extend(scope_evidence)
-                remaining_evidence -= len(scope_evidence)
+                remaining_evidence = max(0, remaining_evidence - len(scope_evidence))
 
             nodes = self._dedupe_by_id(nodes, "id")
             edges = self._dedupe_by_id(edges, "id")
@@ -2512,6 +2528,216 @@ class AnalysisStore:
             self._attach_current_graph_identity(conn, edges)
             self._attach_current_graph_identity(conn, evidence)
         return self._flow_graph_bundle_from_public_graph(nodes, edges, evidence, truncated)
+
+    def hydrate_flow_unit_evidence(
+        self,
+        flow_units: Sequence[FlowUnit],
+        max_evidence_refs: int = 25,
+    ) -> FlowUnitEvidenceHydrationResult:
+        self.init()
+        max_refs = max(0, min(int(max_evidence_refs or 0), 500))
+        if not flow_units:
+            return FlowUnitEvidenceHydrationResult(flow_units=())
+
+        hydrated_units: List[FlowUnit] = []
+        truncated = False
+        evidence_count = 0
+        required_edge_count = 0
+        hydrated_edge_count = 0
+        missing_edge_ids: List[str] = []
+        with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
+            for unit in flow_units:
+                hydrated, unit_truncated, metadata = self._hydrate_single_flow_unit_evidence(conn, unit, max_refs)
+                hydrated_units.append(hydrated)
+                truncated = truncated or unit_truncated
+                evidence_count += len(hydrated.evidence)
+                required_edge_count += int(metadata["required_edge_count"])
+                hydrated_edge_count += int(metadata["hydrated_edge_count"])
+                missing_edge_ids.extend(str(item) for item in metadata["missing_edge_ids"])
+        return FlowUnitEvidenceHydrationResult(
+            flow_units=tuple(hydrated_units),
+            truncated=truncated,
+            evidence_count=evidence_count,
+            required_edge_count=required_edge_count,
+            hydrated_edge_count=hydrated_edge_count,
+            missing_edge_ids=tuple(sorted(set(missing_edge_ids))),
+        )
+
+    def _hydrate_single_flow_unit_evidence(
+        self,
+        conn: sqlite3.Connection,
+        unit: FlowUnit,
+        max_refs: int,
+    ) -> tuple[FlowUnit, bool, Dict[str, Any]]:
+        source_id = str(unit.key.source_id or "")
+        ordered_edge_ids = tuple(dict.fromkeys((*unit.edge_ids, *unit.boundary_edge_ids)))
+        selected: List[Dict[str, Any]] = []
+        truncated = False
+        edge_evidence_by_id: Dict[str, List[str]] = {}
+        persisted_edge_ids: Set[str] = set()
+        if source_id and ordered_edge_ids:
+            edge_evidence_rows = self._query_returned_flow_edge_evidence(conn, source_id, ordered_edge_ids)
+            persisted_edge_ids = {str(item.get("edgeId")) for item in edge_evidence_rows if item.get("edgeId")}
+            if len(edge_evidence_rows) > max_refs:
+                truncated = True
+            selected_edge_rows = edge_evidence_rows[:max_refs]
+            selected.extend(selected_edge_rows)
+            for item in selected_edge_rows:
+                edge_id = str(item.get("edgeId") or "")
+                evidence_id = str(item.get("id") or "")
+                if edge_id and evidence_id:
+                    edge_evidence_by_id.setdefault(edge_id, []).append(evidence_id)
+            if persisted_edge_ids - set(edge_evidence_by_id):
+                truncated = True
+
+        remaining = max_refs - len(selected)
+        if source_id and remaining > 0 and unit.node_ids:
+            node_rows = self._query_returned_flow_node_evidence(
+                conn,
+                source_id,
+                set(unit.node_ids),
+                remaining + 1,
+                seen_evidence_ids={str(item.get("id") or "") for item in selected},
+            )
+            if len(node_rows) > remaining:
+                truncated = True
+            selected.extend(node_rows[:remaining])
+
+        flow_evidence = tuple(
+            item
+            for item in (self._flow_graph_evidence_from_public_graph(raw) for raw in selected)
+            if item is not None
+        )
+        edge_evidence_ids = {edge_id: tuple(ids) for edge_id, ids in edge_evidence_by_id.items()}
+        hydrated = replace(
+            unit,
+            edges=tuple(self._flow_unit_edge_with_evidence(edge, edge_evidence_ids) for edge in unit.edges),
+            boundary_edges=tuple(self._flow_unit_edge_with_evidence(edge, edge_evidence_ids) for edge in unit.boundary_edges),
+            evidence=flow_evidence,
+        )
+        missing_edge_ids = tuple(f"{source_id}:{edge_id}" for edge_id in sorted(persisted_edge_ids - set(edge_evidence_by_id)))
+        return hydrated, truncated, {
+            "required_edge_count": len(persisted_edge_ids),
+            "hydrated_edge_count": len(edge_evidence_by_id),
+            "missing_edge_ids": missing_edge_ids,
+        }
+
+    def _flow_unit_edge_with_evidence(self, edge: FlowGraphEdge, evidence_ids_by_edge: Dict[str, tuple[str, ...]]) -> FlowGraphEdge:
+        return replace(edge, evidence_ids=evidence_ids_by_edge.get(edge.edge_id, ()))
+
+    def _query_returned_flow_edge_evidence(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        ordered_edge_ids: Sequence[str],
+    ) -> List[Dict[str, Any]]:
+        ids = [str(edge_id) for edge_id in ordered_edge_ids if str(edge_id)]
+        if not ids:
+            return []
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        placeholders = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"""
+            WITH ranked_edge_evidence AS (
+                SELECT ev.id,
+                       ev.source_id,
+                       ev.analysis_file_id,
+                       COALESCE(af.relative_path, ev.relative_path) AS relative_path,
+                       ev.line_start,
+                       ev.line_end,
+                       ev.excerpt,
+                       ev.evidence_kind,
+                       ev.excerpt_hash,
+                       ev.fact_origin,
+                       ev.flow_domain,
+                       edge.id AS edge_id,
+                       NULL AS node_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY edge.id
+                           ORDER BY COALESCE(af.relative_path, ev.relative_path), ev.line_start, ev.line_end, ev.id
+                       ) AS evidence_rank
+                FROM analysis_graph_edges edge
+                JOIN analysis_graph_edge_evidence link ON link.edge_id = edge.id
+                JOIN analysis_graph_evidence ev
+                  ON ev.source_id = edge.source_id
+                 AND ev.id = link.evidence_id
+                LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
+                WHERE edge.source_id = ?
+                  AND edge.edge_type = ?
+                  AND edge.status IN ({current_status_sql})
+                  AND edge.id IN ({placeholders})
+            )
+            SELECT id, source_id, analysis_file_id, relative_path, line_start, line_end, excerpt,
+                   evidence_kind, excerpt_hash, fact_origin, flow_domain, edge_id, node_id
+            FROM ranked_edge_evidence
+            WHERE evidence_rank = 1
+            ORDER BY CASE edge_id
+                {" ".join(f"WHEN ? THEN {index}" for index, _ in enumerate(ids))}
+                ELSE {len(ids)}
+            END
+            """,
+            [source_id, contract.calls_edge_type, *current_status_params, *ids, *ids],
+        ).fetchall()
+        projected = self._linked_evidence_projection(rows)
+        self._attach_current_graph_identity(conn, projected)
+        return projected
+
+    def _query_returned_flow_node_evidence(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        node_ids: Set[str],
+        limit: int,
+        *,
+        seen_evidence_ids: Set[str],
+    ) -> List[Dict[str, Any]]:
+        if limit <= 0 or not node_ids:
+            return []
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        ids = sorted(str(node_id) for node_id in node_ids if str(node_id))
+        placeholders = ",".join("?" for _ in ids)
+        seen_clause = ""
+        seen_params: List[str] = []
+        if seen_evidence_ids:
+            seen_values = sorted(evidence_id for evidence_id in seen_evidence_ids if evidence_id)
+            if seen_values:
+                seen_clause = f"AND ev.id NOT IN ({','.join('?' for _ in seen_values)})"
+                seen_params = seen_values
+        rows = conn.execute(
+            f"""
+            SELECT ev.id,
+                   ev.source_id,
+                   ev.analysis_file_id,
+                   COALESCE(af.relative_path, ev.relative_path) AS relative_path,
+                   ev.line_start,
+                   ev.line_end,
+                   ev.excerpt,
+                   ev.evidence_kind,
+                   ev.excerpt_hash,
+                   ev.fact_origin,
+                   ev.flow_domain,
+                   NULL AS edge_id,
+                   claim.node_id AS node_id
+            FROM analysis_graph_claims claim
+            JOIN analysis_graph_claim_evidence link ON link.claim_id = claim.id
+            JOIN analysis_graph_evidence ev
+              ON ev.source_id = claim.source_id
+             AND ev.id = link.evidence_id
+            LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
+            WHERE claim.source_id = ?
+              AND claim.status IN ({current_status_sql})
+              AND claim.node_id IN ({placeholders})
+              {seen_clause}
+            ORDER BY claim.node_id, relative_path, ev.line_start, ev.line_end, ev.id
+            LIMIT ?
+            """,
+            [source_id, *current_status_params, *ids, *seen_params, limit],
+        ).fetchall()
+        projected = self._linked_evidence_projection(rows)
+        self._attach_current_graph_identity(conn, projected)
+        return projected
 
     def load_call_adjacency_for_sources(
         self,
@@ -2596,6 +2822,8 @@ class AnalysisStore:
             label=str(item.get("label") or item.get("name") or node_id),
             qualified_name=str(item.get("qualifiedName")) if item.get("qualifiedName") else None,
             relative_path=str(item.get("relativePath")) if item.get("relativePath") else None,
+            line_start=int(item.get("lineStart")) if item.get("lineStart") is not None else None,
+            line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
             summary=str(item.get("summary")) if item.get("summary") else None,
             entrypoint=bool(item.get("entrypoint")),
         )
@@ -2936,18 +3164,38 @@ class AnalysisStore:
             placeholders = ",".join("?" for _ in ids)
             rows = conn.execute(
                 f"""
-                SELECT ev.id, ev.source_id, ev.analysis_file_id, af.relative_path, ev.line_start, ev.line_end, ev.excerpt,
-                       ev.evidence_kind, ev.excerpt_hash, ev.fact_origin, ev.flow_domain,
-                       edge.id AS edge_id, NULL AS node_id
-                FROM analysis_graph_edges edge
-                JOIN analysis_graph_edge_evidence link ON link.edge_id = edge.id
-                JOIN analysis_graph_evidence ev
-                  ON ev.source_id = edge.source_id
-                 AND ev.id = link.evidence_id
-                LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
-                WHERE edge.source_id = ?
-                  AND edge.id IN ({placeholders})
-                ORDER BY ev.id
+                WITH ranked_edge_evidence AS (
+                    SELECT ev.id,
+                           ev.source_id,
+                           ev.analysis_file_id,
+                           COALESCE(af.relative_path, ev.relative_path) AS relative_path,
+                           ev.line_start,
+                           ev.line_end,
+                           ev.excerpt,
+                           ev.evidence_kind,
+                           ev.excerpt_hash,
+                           ev.fact_origin,
+                           ev.flow_domain,
+                           edge.id AS edge_id,
+                           NULL AS node_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY edge.id
+                               ORDER BY COALESCE(af.relative_path, ev.relative_path), ev.line_start, ev.line_end, ev.id
+                           ) AS evidence_rank
+                    FROM analysis_graph_edges edge
+                    JOIN analysis_graph_edge_evidence link ON link.edge_id = edge.id
+                    JOIN analysis_graph_evidence ev
+                      ON ev.source_id = edge.source_id
+                     AND ev.id = link.evidence_id
+                    LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
+                    WHERE edge.source_id = ?
+                      AND edge.id IN ({placeholders})
+                )
+                SELECT id, source_id, analysis_file_id, relative_path, line_start, line_end, excerpt,
+                       evidence_kind, excerpt_hash, fact_origin, flow_domain, edge_id, node_id
+                FROM ranked_edge_evidence
+                WHERE evidence_rank = 1
+                ORDER BY relative_path, line_start, line_end, edge_id, id
                 LIMIT ?
                 """,
                 [source_id, *ids, limit],

@@ -43,6 +43,7 @@ def build_dependencies(config: AppConfig) -> JarvisDependencies:
         model_client=OllamaClient(
             base_url=config.model.ollama_base_url,
             model=config.model.default_model,
+            context_tokens=config.model.context_tokens,
             timeout_seconds=config.model.request_timeout_seconds,
         ),
         action_registry=registry,

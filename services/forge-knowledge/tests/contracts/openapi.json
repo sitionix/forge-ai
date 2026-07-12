@@ -261,6 +261,14 @@
             "title": "Narrative",
             "type": "array"
           },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FlowToolStatus"
+              }
+            ],
+            "default": "OK"
+          },
           "steps": {
             "items": {
               "$ref": "#/components/schemas/FlowToolStep"
@@ -272,6 +280,13 @@
             "default": "",
             "title": "Title",
             "type": "string"
+          },
+          "transitions": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolTransition"
+            },
+            "title": "Transitions",
+            "type": "array"
           }
         },
         "required": [
@@ -309,6 +324,15 @@
         "title": "FlowToolEvidence",
         "type": "object"
       },
+      "FlowToolStatus": {
+        "description": "An enumeration.",
+        "enum": [
+          "OK",
+          "FAILED"
+        ],
+        "title": "FlowToolStatus",
+        "type": "string"
+      },
       "FlowToolStep": {
         "properties": {
           "address": {
@@ -344,6 +368,45 @@
           "kind"
         ],
         "title": "FlowToolStep",
+        "type": "object"
+      },
+      "FlowToolTransition": {
+        "properties": {
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "fromOrder": {
+            "title": "Fromorder",
+            "type": "integer"
+          },
+          "fromSymbol": {
+            "title": "Fromsymbol",
+            "type": "string"
+          },
+          "toOrder": {
+            "title": "Toorder",
+            "type": "integer"
+          },
+          "toSymbol": {
+            "title": "Tosymbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fromOrder",
+          "toOrder",
+          "fromSymbol",
+          "toSymbol"
+        ],
+        "title": "FlowToolTransition",
         "type": "object"
       },
       "HTTPValidationError": {

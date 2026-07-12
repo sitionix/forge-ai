@@ -16,7 +16,7 @@ from jarvis_agent.config import load_forge_settings
 
 settings = load_forge_settings()
 jarvis = settings.services.jarvis
-print(jarvis.host, jarvis.port, jarvis.model_runtime.base_url)
+print(jarvis.host, jarvis.port, settings.generative.base_url)
 PY
   )
 else

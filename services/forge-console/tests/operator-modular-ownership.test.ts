@@ -219,6 +219,34 @@ describe('Operator Console modular request ownership', () => {
     expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toBe('');
   });
 
+  it('UI-IT-05 aborts an in-flight Jarvis query when the page is disposed', async () => {
+    const dom = jarvisHtml();
+    const pending = deferred<unknown>();
+    let querySignal: AbortSignal | undefined;
+    const http = {
+      get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { actions: [] })),
+      post: vi.fn((_path: string, _body: unknown, options: { signal?: AbortSignal }) => {
+        querySignal = options.signal;
+        return pending.promise;
+      })
+    };
+    const page = new JarvisPage({ document: dom.window.document, http });
+    page.mount();
+    await flushAsync();
+    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'hello';
+
+    const request = page.submitQuery(new dom.window.Event('submit'));
+    await flushAsync();
+    expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('hello'), expect.any(Object));
+    expect(querySignal?.aborted).toBe(false);
+
+    page.dispose();
+    expect(querySignal?.aborted).toBe(true);
+    pending.resolve({ status: 'OK', intent: 'UNKNOWN', matchedSources: [], matchedNodes: [], flowPaths: [], nodes: [], edges: [], coverage: {}, diagnostics: [] });
+    await request;
+    expect(dom.window.document.getElementById('sendJarvisQuery')?.textContent).toBe('Sending...');
+  });
+
   it('UI-IT-09 renders Jarvis query preview without source content', async () => {
     const dom = jarvisHtml();
     const http = {
