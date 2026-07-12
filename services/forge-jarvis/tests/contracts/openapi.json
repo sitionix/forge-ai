@@ -149,6 +149,7 @@
         "type": "object"
       },
       "JarvisQueryResponse": {
+        "additionalProperties": false,
         "properties": {
           "coverage": {
             "title": "Coverage",
@@ -161,32 +162,11 @@
             "title": "Diagnostics",
             "type": "array"
           },
-          "edges": {
+          "flows": {
             "items": {
               "type": "object"
             },
-            "title": "Edges",
-            "type": "array"
-          },
-          "evidence": {
-            "items": {
-              "type": "object"
-            },
-            "title": "Evidence",
-            "type": "array"
-          },
-          "external": {
-            "items": {
-              "type": "object"
-            },
-            "title": "External",
-            "type": "array"
-          },
-          "flowPaths": {
-            "items": {
-              "type": "object"
-            },
-            "title": "Flowpaths",
+            "title": "Flows",
             "type": "array"
           },
           "intent": {
@@ -207,33 +187,12 @@
             "title": "Matchedsources",
             "type": "array"
           },
-          "nodes": {
-            "items": {
-              "type": "object"
-            },
-            "title": "Nodes",
-            "type": "array"
-          },
           "queryId": {
             "title": "Queryid",
             "type": "string"
           },
           "status": {
             "$ref": "#/components/schemas/JarvisQueryStatus"
-          },
-          "unresolved": {
-            "items": {
-              "type": "object"
-            },
-            "title": "Unresolved",
-            "type": "array"
-          },
-          "verifiedPaths": {
-            "items": {
-              "type": "object"
-            },
-            "title": "Verifiedpaths",
-            "type": "array"
           }
         },
         "required": [

@@ -8,8 +8,9 @@ from types import SimpleNamespace
 import httpx
 
 import knowledge_service.main as knowledge_main
-from knowledge_service.flow_builder import FlowBuilder, FlowGraphBundle, FlowGraphEdge, FlowGraphNode
-from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest, KnowledgeQueryResponse, KnowledgeQueryStatus
+from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
+from knowledge_service.flow_graph_contract import FlowGraphBundle, FlowGraphEdge, FlowGraphNode
+from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode, KnowledgeQueryRequest, KnowledgeQueryResponse, KnowledgeQueryStatus
 from knowledge_service.knowledge_query_service import KnowledgeQueryPolicy
 from support import build_test_app, write_runtime_config
 from knowledge_service.flow_explanations import FLOW_EXPLANATION_LIMIT_REACHED, FlowExplanationProviderResult
@@ -48,7 +49,7 @@ class FakeFlowExplanationProvider:
                     "stepRef": step["stepRef"],
                     "order": step["order"],
                     "explanation": f"`{step['symbol']}` is part of this flow.",
-                    "transitionRefs": [step["callToNext"]["transitionRef"]] if step.get("callToNext") else [],
+                    "transitionRefs": [item["transitionRef"] for item in llm_input.get("transitions", []) if item["fromStepRef"] == step["stepRef"]],
                     "evidenceRefs": [item["ref"] for item in step.get("evidence", [])],
                 }
                 for step in llm_input["steps"]
@@ -145,7 +146,7 @@ def test_query_flow_explanations_endpoint_returns_per_flow_text(tmp_path):
 
     payload = asyncio.run(exercise())
 
-    assert payload["flowPaths"]
+    assert payload["flows"]
     assert payload["flowExplanations"][0]["flowIndex"] == 1
     assert payload["flowExplanations"][0]["narrative"]
     assert [step["order"] for step in payload["flowExplanations"][0]["steps"]] == [1, 2]
@@ -189,7 +190,7 @@ def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tm
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     app_config.flow_explanation_request_timeout_seconds = 0.2
     app.state.app_config.flow_explanation_request_timeout_seconds = 0.2
-    flow_result = FlowBuilder().build(
+    flow_result = EntrypointFlowEngine().build(
         FlowGraphBundle(
             nodes=(
                 FlowGraphNode("source-a", "graph-a", "graph-a", "a-start", "a-start", "CALLABLE", "A.start"),
@@ -198,30 +199,28 @@ def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tm
             edges=(FlowGraphEdge("source-a", "graph-a", "graph-a", "edge-a-b", "CALLS", "a-start", "b-work", "RESOLVED"),),
         ),
         [
-            SimpleNamespace(
-                sourceId="source-a",
-                graphId="graph-a",
-                nodeId="a-start",
-                nodeKind="CALLABLE",
-                score=1.0,
-                matchReasons=("EXACT_NAME",),
+            KnowledgeQueryMatchedNode(
+                sourceId="source-a", graphId="graph-a", graphRevision="graph-a", nodeId="a-start",
+                stableKey="a-start", label="A.start", nodeKind="CALLABLE", score=1.0,
+                matchReasons=["EXACT_NAME"],
             )
         ],
-        set(),
-        KnowledgeQueryPolicy(max_flow_paths=10),
+        KnowledgeQueryPolicy(max_entrypoints_per_query=10),
+        max_flows=10,
+        include_tests=False,
     )
     query_response = KnowledgeQueryResponse(
         queryId="query-test",
         status=KnowledgeQueryStatus.OK,
         intent="FLOW_EXPLANATION",
         matchedSources=[{"sourceId": "source-a", "displayName": "Source A", "score": 1.0}],
-        flowPaths=flow_result.flow_paths,
+        flows=flow_result.public_flows,
     )
 
     class SlowQueryService:
-        def query_with_flow_units(self, body):
+        def query_with_flows(self, body):
             time.sleep(0.05)
-            return SimpleNamespace(response=query_response, flow_units=flow_result.flow_units)
+            return SimpleNamespace(response=query_response, flows=flow_result.flows)
 
     monkeypatch.setattr(knowledge_main, "build_knowledge_query_service", lambda *_args, **_kwargs: SlowQueryService())
     provider = FakeFlowExplanationProvider()
@@ -339,7 +338,7 @@ def test_cancelled_flow_explanation_request_does_not_start_subsequent_flow_calls
                         "stepRef": step["stepRef"],
                         "order": step["order"],
                         "explanation": f"`{step['symbol']}` is grounded.",
-                        "transitionRefs": [step["callToNext"]["transitionRef"]] if step.get("callToNext") else [],
+                        "transitionRefs": [item["transitionRef"] for item in llm_input.get("transitions", []) if item["fromStepRef"] == step["stepRef"]],
                         "evidenceRefs": [item["ref"] for item in step.get("evidence", [])],
                     }
                     for step in llm_input["steps"]

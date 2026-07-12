@@ -201,7 +201,7 @@ describe('Operator Console modular request ownership', () => {
     expect(http.post).toHaveBeenCalledTimes(1);
     expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('hello'), expect.any(Object));
     await second;
-    slow.resolve({ status: 'OK', intent: 'UNKNOWN', matchedSources: [], matchedNodes: [], flowPaths: [], nodes: [], edges: [], coverage: {}, diagnostics: [] });
+    slow.resolve({ status: 'OK', intent: 'UNKNOWN', matchedSources: [], matchedNodes: [], flows: [], coverage: {}, diagnostics: [] });
     await first;
     expect(dom.window.document.getElementById('sendJarvisQuery')?.textContent).toBe('Send');
   });
@@ -242,7 +242,7 @@ describe('Operator Console modular request ownership', () => {
 
     page.dispose();
     expect(querySignal?.aborted).toBe(true);
-    pending.resolve({ status: 'OK', intent: 'UNKNOWN', matchedSources: [], matchedNodes: [], flowPaths: [], nodes: [], edges: [], coverage: {}, diagnostics: [] });
+    pending.resolve({ status: 'OK', intent: 'UNKNOWN', matchedSources: [], matchedNodes: [], flows: [], coverage: {}, diagnostics: [] });
     await request;
     expect(dom.window.document.getElementById('sendJarvisQuery')?.textContent).toBe('Sending...');
   });
@@ -257,27 +257,27 @@ describe('Operator Console modular request ownership', () => {
         matchedSources: [{ sourceId: 'svc', displayName: 'Service', score: 0.9 }],
         matchedNodes: [{
           sourceId: 'svc',
-          nodeId: 'n1',
-          stableKey: 'src/App.java|CALLABLE|run',
-          kind: 'CALLABLE',
+          nodeKind: 'CALLABLE',
           label: 'run',
           score: 0.9,
           matchReasons: ['NAME_MATCH'],
+          relativePath: 'src/App.java',
           content: 'SECRET_SOURCE_CONTENT',
           sourceContent: 'ALSO_SECRET'
         }],
-        flowPaths: [{
-          flowId: 'flow-1',
-          sourceId: 'svc',
-          nodes: [{ id: 'n1', sourceId: 'svc', label: 'run' }],
-          edges: [],
+        flows: [{
+          flowIndex: 1,
+          source: 'svc',
+          entrypoint: { nodeRef: 'n1', label: 'run', kind: 'CALLABLE' },
+          entrypointOrigin: 'EXPLICIT_GRAPH_FACT',
+          matchedAnchors: [],
+          nodes: [{ nodeRef: 'n1', label: 'run', kind: 'CALLABLE' }],
+          transitions: [], boundaries: [],
           evidence: [],
           complete: true,
-          stopReason: 'TERMINAL_NODE'
+          coverage: {}, diagnostics: []
         }],
-        nodes: [{ id: 'n1', sourceId: 'svc', label: 'run', content: 'SECRET_SOURCE_CONTENT' }],
-        edges: [],
-        coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowPathCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
+        coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
         diagnostics: [{ code: 'D1', message: 'diag' }]
       }))
     };
@@ -289,7 +289,7 @@ describe('Operator Console modular request ownership', () => {
     expect(text).toContain('svc');
     expect(text).toContain('run');
     expect(text).toContain('NAME_MATCH');
-    expect(text).toContain('flow-1');
+    expect(text).toContain('EXPLICIT_GRAPH_FACT');
     expect(text).not.toContain('SECRET_SOURCE_CONTENT');
     expect(text).not.toContain('ALSO_SECRET');
   });

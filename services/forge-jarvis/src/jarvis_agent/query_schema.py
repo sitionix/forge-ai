@@ -80,15 +80,9 @@ class JarvisQueryResponse(BaseModel):
     intent: str
     matchedSources: List[Dict[str, Any]] = Field(default_factory=list)
     matchedNodes: List[Dict[str, Any]] = Field(default_factory=list)
-    flowPaths: List[Dict[str, Any]] = Field(default_factory=list)
-    nodes: List[Dict[str, Any]] = Field(default_factory=list)
-    edges: List[Dict[str, Any]] = Field(default_factory=list)
-    verifiedPaths: List[Dict[str, Any]] = Field(default_factory=list)
-    evidence: List[Dict[str, Any]] = Field(default_factory=list)
-    unresolved: List[Dict[str, Any]] = Field(default_factory=list)
-    external: List[Dict[str, Any]] = Field(default_factory=list)
+    flows: List[Dict[str, Any]] = Field(default_factory=list)
     coverage: Dict[str, Any] = Field(default_factory=dict)
     diagnostics: List[Dict[str, Any]] = Field(default_factory=list)
 
     class Config:
-        extra = "allow"
+        extra = "forbid"

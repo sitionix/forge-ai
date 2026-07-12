@@ -14,7 +14,8 @@ from knowledge_service.config import (
     DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
 )
-from knowledge_service.flow_builder import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowUnit
+from knowledge_service.entrypoint_flow_engine import EntrypointFlow
+from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
 from knowledge_service.knowledge_query_schema import (
     FlowExplanation,
     FlowExplanationBoundary,
@@ -74,7 +75,7 @@ class FlowExplanationAttempt:
 @dataclass(frozen=True)
 class PerFlowExplanationResult:
     flow_index: int
-    flow_unit: FlowUnit
+    flow: EntrypointFlow
     context: PackedFlowContext
     explanation: Optional[Dict[str, Any]]
     diagnostics: List[KnowledgeQueryDiagnostic] = field(default_factory=list)
@@ -191,28 +192,26 @@ class FlowExplanationContextPacker:
         self,
         *,
         request: KnowledgeQueryRequest,
-        flow_unit: FlowUnit,
+        flow: EntrypointFlow,
         flow_index: int,
         source_display_name: str | None,
     ) -> PackedFlowContext:
         evidence_by_ref: Dict[str, FlowGraphEvidence] = {}
         evidence_ref_by_id: Dict[str, str] = {}
         evidence_id_by_ref: Dict[str, str] = {}
-        for index, evidence in enumerate(flow_unit.evidence, start=1):
+        for index, evidence in enumerate(flow.evidence, start=1):
             ref = f"e{index}"
             evidence_by_ref[ref] = evidence
             evidence_ref_by_id[evidence.evidence_id] = ref
             evidence_id_by_ref[ref] = evidence.evidence_id
 
-        nodes = list(flow_unit.nodes)
-        edges_by_from_to = self._edges_by_from_to(flow_unit.edges)
+        nodes = list(flow.nodes)
+        order_by_node_id = {node.node_id: order for order, node in enumerate(nodes, start=1)}
         steps: List[Dict[str, Any]] = []
         transitions: List[Dict[str, Any]] = []
         for order, node in enumerate(nodes, start=1):
-            next_node = nodes[order] if order < len(nodes) else None
-            call_edge = edges_by_from_to.get((node.node_id, next_node.node_id)) if next_node else None
             step_ref = f"s{order}"
-            step_refs = self._step_refs(node, flow_unit.evidence, evidence_ref_by_id)
+            step_refs = self._step_refs(node, flow.evidence, evidence_ref_by_id)
             step: Dict[str, Any] = {
                 "stepRef": step_ref,
                 "order": order,
@@ -227,42 +226,40 @@ class FlowExplanationContextPacker:
                 "summary": node.summary,
                 "evidence": [self._evidence_item(ref, evidence_by_ref[ref]) for ref in step_refs],
             }
-            if next_node and call_edge:
-                call_refs = self._edge_refs(call_edge, flow_unit.evidence, evidence_ref_by_id)
-                transition_ref = f"t{order}"
-                step["callToNext"] = {
-                    "transitionRef": transition_ref,
-                    "fromStepRef": step_ref,
-                    "toStepRef": f"s{order + 1}",
-                    "order": order + 1,
-                    "symbol": self._symbol(next_node),
-                    "evidenceRefs": call_refs,
-                    "evidence": [self._evidence_item(ref, evidence_by_ref[ref]) for ref in call_refs],
-                }
-                transitions.append(
-                    {
-                        "transitionRef": transition_ref,
-                        "fromStepRef": step_ref,
-                        "toStepRef": f"s{order + 1}",
-                        "fromOrder": order,
-                        "toOrder": order + 1,
-                        "fromSymbol": self._symbol(node),
-                        "toSymbol": self._symbol(next_node),
-                        "evidenceRefs": call_refs,
-                        "evidence": [self._evidence_item(ref, evidence_by_ref[ref]) for ref in call_refs],
-                    }
-                )
             steps.append(step)
 
+        nodes_by_id = {node.node_id: node for node in nodes}
+        for transition_index, edge in enumerate(flow.transitions, start=1):
+            from_node = nodes_by_id[edge.from_node_id]
+            to_node = nodes_by_id[edge.to_node_id or ""]
+            call_refs = self._edge_refs(edge, flow.evidence, evidence_ref_by_id)
+            transitions.append({
+                "transitionRef": f"t{transition_index}",
+                "fromStepRef": f"s{order_by_node_id[from_node.node_id]}",
+                "toStepRef": f"s{order_by_node_id[to_node.node_id]}",
+                "fromOrder": order_by_node_id[from_node.node_id],
+                "toOrder": order_by_node_id[to_node.node_id],
+                "fromSymbol": self._symbol(from_node),
+                "toSymbol": self._symbol(to_node),
+                "evidenceRefs": call_refs,
+                "evidence": [self._evidence_item(ref, evidence_by_ref[ref]) for ref in call_refs],
+            })
+
         boundaries = [
-            self._boundary_item(index, edge, flow_unit.evidence, evidence_ref_by_id, evidence_by_ref)
-            for index, edge in enumerate(flow_unit.boundary_edges, start=1)
+            self._boundary_item(index, edge, flow.evidence, evidence_ref_by_id, evidence_by_ref)
+            for index, edge in enumerate(flow.boundary_transitions, start=1)
         ]
         llm_input: Dict[str, Any] = {
             "queryText": request.queryText,
             "answerLanguage": request.answerLanguage,
             "flowIndex": flow_index,
             "source": source_display_name,
+            "entrypoint": self._symbol(flow.entrypoint),
+            "entrypointOrigin": flow.origin.value,
+            "matchedAnchors": [
+                {"symbol": item.label, "score": item.score, "distance": item.distance, "matchReasons": list(item.match_reasons)}
+                for item in flow.anchors
+            ],
             "steps": steps,
             "transitions": transitions,
             "boundaries": boundaries,
@@ -899,25 +896,25 @@ class FlowExplanationService:
 
     def explain(self, request: KnowledgeQueryRequest, execution: Any, *, deadline_at: float | None = None) -> FlowExplanationRun:
         query_response = execution.response
-        flow_units: tuple[FlowUnit, ...] = tuple(execution.flow_units or ())
+        flows: tuple[EntrypointFlow, ...] = tuple(execution.flows or ())
         source_names = {source.sourceId: source.displayName for source in query_response.matchedSources}
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         results: List[PerFlowExplanationResult] = []
-        if not flow_units:
+        if not flows:
             diagnostic = KnowledgeQueryDiagnostic(
                 code=FLOW_EXPLANATION_SKIPPED_NO_FLOW,
-                message="No FlowUnits were available for per-flow explanation.",
+                message="No entrypoint flows were available for per-flow explanation.",
                 severity="INFO",
             )
             return FlowExplanationRun(query_response=query_response, results=[], diagnostics=[diagnostic])
 
         if deadline_at is None:
             deadline_at = time.monotonic() + self.request_deadline_seconds
-        for flow_index, flow_unit in enumerate(flow_units, start=1):
-            source_display_name = source_names.get(flow_unit.key.source_id) or flow_unit.key.source_id or None
+        for flow_index, flow in enumerate(flows, start=1):
+            source_display_name = source_names.get(flow.key.source_id) or flow.key.source_id or None
             packed = self.packer.pack(
                 request=request,
-                flow_unit=flow_unit,
+                flow=flow,
                 flow_index=flow_index,
                 source_display_name=source_display_name,
             )
@@ -931,7 +928,7 @@ class FlowExplanationService:
                 results.append(
                     PerFlowExplanationResult(
                         flow_index=flow_index,
-                        flow_unit=flow_unit,
+                        flow=flow,
                         context=packed,
                         explanation=None,
                         diagnostics=[diagnostic],
@@ -951,7 +948,7 @@ class FlowExplanationService:
                 results.append(
                     PerFlowExplanationResult(
                         flow_index=flow_index,
-                        flow_unit=flow_unit,
+                        flow=flow,
                         context=packed,
                         explanation=None,
                         diagnostics=[diagnostic],
@@ -959,14 +956,13 @@ class FlowExplanationService:
                     )
                 )
                 continue
-            result = self._explain_one(flow_unit, packed, deadline_at)
+            result = self._explain_one(flow, packed, deadline_at)
             diagnostics.extend(result.diagnostics)
             results.append(result)
         return FlowExplanationRun(query_response=query_response, results=results, diagnostics=diagnostics)
 
     def to_ui_response(self, run: FlowExplanationRun) -> KnowledgeQueryFlowExplanationResponse:
         base = run.query_response.dict()
-        base["evidence"] = self._merge_ui_evidence_catalog(base.get("evidence", []), run.results)
         base["flowExplanations"] = [self._ui_explanation(result) for result in run.results]
         base["diagnostics"] = [*base.get("diagnostics", []), *[diagnostic.dict() for diagnostic in run.diagnostics]]
         return KnowledgeQueryFlowExplanationResponse(**base)
@@ -981,7 +977,7 @@ class FlowExplanationService:
             diagnostics=compact_diagnostics,
         )
 
-    def _explain_one(self, flow_unit: FlowUnit, context: PackedFlowContext, deadline_at: float) -> PerFlowExplanationResult:
+    def _explain_one(self, flow: EntrypointFlow, context: PackedFlowContext, deadline_at: float) -> PerFlowExplanationResult:
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         try:
             first = self._complete_with_deadline(context.llm_input, deadline_at)
@@ -992,7 +988,7 @@ class FlowExplanationService:
             )
             return PerFlowExplanationResult(
                 flow_index=context.flow_index,
-                flow_unit=flow_unit,
+                flow=flow,
                 context=context,
                 explanation=None,
                 diagnostics=[diagnostic],
@@ -1007,7 +1003,7 @@ class FlowExplanationService:
             )
             return PerFlowExplanationResult(
                 flow_index=context.flow_index,
-                flow_unit=flow_unit,
+                flow=flow,
                 context=context,
                 explanation=None,
                 diagnostics=[diagnostic],
@@ -1016,7 +1012,7 @@ class FlowExplanationService:
         if explanation is not None:
             return PerFlowExplanationResult(
                 flow_index=context.flow_index,
-                flow_unit=flow_unit,
+                flow=flow,
                 context=context,
                 explanation=explanation,
                 diagnostics=[],
@@ -1035,7 +1031,7 @@ class FlowExplanationService:
             )
             return PerFlowExplanationResult(
                 flow_index=context.flow_index,
-                flow_unit=flow_unit,
+                flow=flow,
                 context=context,
                 explanation=None,
                 diagnostics=diagnostics,
@@ -1056,7 +1052,7 @@ class FlowExplanationService:
             )
             return PerFlowExplanationResult(
                 flow_index=context.flow_index,
-                flow_unit=flow_unit,
+                flow=flow,
                 context=context,
                 explanation=None,
                 diagnostics=diagnostics,
@@ -1074,7 +1070,7 @@ class FlowExplanationService:
             )
             return PerFlowExplanationResult(
                 flow_index=context.flow_index,
-                flow_unit=flow_unit,
+                flow=flow,
                 context=context,
                 explanation=None,
                 diagnostics=diagnostics,
@@ -1094,7 +1090,7 @@ class FlowExplanationService:
             )
             return PerFlowExplanationResult(
                 flow_index=context.flow_index,
-                flow_unit=flow_unit,
+                flow=flow,
                 context=context,
                 explanation=explanation,
                 diagnostics=diagnostics,
@@ -1112,7 +1108,7 @@ class FlowExplanationService:
         )
         return PerFlowExplanationResult(
             flow_index=context.flow_index,
-            flow_unit=flow_unit,
+            flow=flow,
             context=context,
             explanation=None,
             diagnostics=diagnostics,

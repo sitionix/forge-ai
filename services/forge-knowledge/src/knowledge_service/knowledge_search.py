@@ -199,6 +199,7 @@ class SearchDocument:
     endpoint_path: str = ""
     graph_id: Optional[str] = None
     graph_revision: Optional[str] = None
+    flow_domain: str = ""
     summary: str = ""
     metadata_text: str = ""
     signature: str = ""
@@ -283,6 +284,7 @@ class SearchDocument:
             endpoint_path=endpoint_path,
             graph_id=str(row.get("graphId") or row.get("graph_id") or "") or None,
             graph_revision=str(row.get("graphRevision") or row.get("graph_revision") or "") or None,
+            flow_domain=str(row.get("flowDomain") or row.get("flow_domain") or ""),
             summary=summary,
             metadata_text=metadata_text,
             signature=signature,
@@ -312,6 +314,7 @@ class SearchDocument:
             "graphRevision": self.graph_revision,
             "relativePath": self.relative_path or None,
             "qualifiedName": self.qualified_name or None,
+            "flowDomain": self.flow_domain or None,
         }
 
 

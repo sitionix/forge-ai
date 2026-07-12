@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
@@ -24,23 +25,17 @@ from knowledge_service.knowledge_search import (
 from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryCoverage,
     KnowledgeQueryDiagnostic,
-    KnowledgeQueryFlowPath,
     KnowledgeQueryMatchedNode,
+    KnowledgeQueryMatchedNodePreview,
     KnowledgeQueryMatchedSource,
     KnowledgeQueryRequest,
     KnowledgeQueryResponse,
     KnowledgeQueryStatus,
 )
-from knowledge_service.flow_builder import (
-    FlowBuilder,
+from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine
+from knowledge_service.flow_graph_contract import (
     FlowGraphBundle,
-    FlowGraphEdge,
-    FlowGraphEvidence,
-    FlowGraphNode,
     FlowGraphSourceScope,
-    FlowUnit,
-    FlowNodeKey,
-    flow_graph_bundle_to_public_bundle,
 )
 
 @dataclass(frozen=True)
@@ -48,12 +43,11 @@ class KnowledgeQueryPolicy:
     max_search_documents: int = 5000
     max_candidates_per_provider: int = 100
     max_display_candidates: int = 20
-    graph_slice_depth: int = 2
     max_traversal_nodes: int = 80
-    max_flow_paths: int = 25
-    max_flow_upstream_depth: int = 8
-    max_flow_downstream_depth: int = 12
-    max_flow_branching_per_node: int = 8
+    max_entrypoints_per_query: int = 25
+    max_reverse_depth: int = 8
+    max_downstream_depth: int = 12
+    max_edges_per_node: int = 64
     max_edges_per_traversal: int = 2000
     max_expanded_anchors: int = 200
     max_anchor_expansion_per_candidate: int = 30
@@ -134,7 +128,7 @@ class QuerySource:
 @dataclass(frozen=True)
 class KnowledgeQueryExecutionResult:
     response: KnowledgeQueryResponse
-    flow_units: tuple[FlowUnit, ...] = ()
+    flows: tuple[EntrypointFlow, ...] = ()
 
 
 class SourceScopeResolver:
@@ -215,13 +209,16 @@ class UnifiedAnchorSearcher:
         query: str,
         eligible_sources: Sequence[QuerySource],
         policy: KnowledgeQueryPolicy,
+        include_tests: bool = False,
     ) -> CandidateRetrievalResult:
         search_query = self.normalizer.normalize(query)
         if not search_query.tokens or not eligible_sources:
             return self._empty_result()
         raw_documents, document_truncated = self._load_search_documents(search_query.tokens, eligible_sources, policy)
+        if not include_tests:
+            raw_documents = [item for item in raw_documents if str(item.get("flowDomain") or "").upper() != "TEST"]
         documents = [SearchDocument.from_graph_node(candidate) for candidate in raw_documents if candidate.get("sourceId") or candidate.get("source_id")]
-        result = self.search_engine.search(query, documents, self._search_config(policy, eligible_sources))
+        result = self.search_engine.search(query, documents, self._search_config(policy, eligible_sources, include_tests))
         raw_candidates = list(getattr(result, "raw_candidates", []) or [])
         pools = self._candidate_pools(raw_candidates)
         all_candidates = self._all_candidates(raw_candidates)
@@ -367,7 +364,7 @@ class UnifiedAnchorSearcher:
             raw_documents = raw_documents[: policy.max_search_documents]
         return raw_documents, truncated
 
-    def _search_config(self, policy: KnowledgeQueryPolicy, eligible_sources: Sequence[QuerySource]) -> SearchConfig:
+    def _search_config(self, policy: KnowledgeQueryPolicy, eligible_sources: Sequence[QuerySource], include_tests: bool) -> SearchConfig:
         return SearchConfig(
             max_candidates_per_provider=policy.max_candidates_per_provider,
             min_lexical_score=policy.min_lexical_score,
@@ -379,13 +376,14 @@ class UnifiedAnchorSearcher:
                 for source in eligible_sources
                 if source.source_id and (source.graph_revision or source.graph_id)
             },
-            document_hydrator=lambda source_node_pairs: self._hydrate_search_documents(source_node_pairs, eligible_sources),
+            document_hydrator=lambda source_node_pairs: self._hydrate_search_documents(source_node_pairs, eligible_sources, include_tests),
         )
 
     def _hydrate_search_documents(
         self,
         source_node_pairs: Sequence[Tuple[str, str]],
         eligible_sources: Sequence[QuerySource],
+        include_tests: bool,
     ) -> List[SearchDocument]:
         if not source_node_pairs or not hasattr(self.graph_store, "query_search_documents_by_node_ids"):
             return []
@@ -410,6 +408,8 @@ class UnifiedAnchorSearcher:
         documents: List[SearchDocument] = []
         for raw_document in raw_documents:
             document = SearchDocument.from_graph_node(raw_document)
+            if not include_tests and document.flow_domain.upper() == "TEST":
+                continue
             key = (document.source_id, document.node_id)
             if key not in requested_keys:
                 continue
@@ -850,96 +850,27 @@ class AnchorExpansionService:
     def _node_kind(self, value: str) -> str:
         return str(value or "").upper()
 
-class GraphSliceQueryService:
-    def __init__(self, graph_store: Any) -> None:
-        self.graph_store = graph_store
-
-    def build(
-        self,
-        matched_nodes: Sequence[KnowledgeQueryMatchedNode],
-        policy: KnowledgeQueryPolicy,
-    ) -> tuple[Dict[str, List[Dict[str, Any]]], List[KnowledgeQueryDiagnostic]]:
-        if not matched_nodes:
-            return self._empty_slice(), []
-        try:
-            slice_bundle = self.graph_store.query_graph_slice([matched_node.dict() for matched_node in matched_nodes], policy.graph_slice_depth)
-        except Exception:
-            return self._empty_slice(), [
-                KnowledgeQueryDiagnostic(
-                    code="GRAPH_SLICE_FAILED",
-                    message="Graph slice could not be built from the selected matched nodes.",
-                    severity="WARN",
-                )
-            ]
-        return {
-            "nodes": list(slice_bundle.get("nodes") or []),
-            "edges": list(slice_bundle.get("edges") or []),
-            "evidence": list(slice_bundle.get("evidence") or []),
-            "unresolved": list(slice_bundle.get("unresolved") or []),
-            "external": list(slice_bundle.get("external") or []),
-            "verifiedPaths": list(slice_bundle.get("verifiedPaths") or []),
-        }, []
-
-    def _empty_slice(self) -> Dict[str, List[Dict[str, Any]]]:
-        return {"nodes": [], "edges": [], "evidence": [], "unresolved": [], "external": [], "verifiedPaths": []}
-
-
-class FlowPathExtractor:
+class EntrypointFlowGraphLoader:
     def __init__(self, graph_store: Any | None = None) -> None:
         self.graph_store = graph_store
-        self.flow_builder = FlowBuilder()
 
-    def extract(
+    def load(
         self,
         matched_nodes: Sequence[KnowledgeQueryMatchedNode],
-        slice_bundle: Dict[str, List[Dict[str, Any]]],
-        evidence: Sequence[Dict[str, Any]],
         policy: KnowledgeQueryPolicy,
-        entrypoint_candidate_node_ids: set[FlowNodeKey] | None = None,
-    ) -> tuple[List[KnowledgeQueryFlowPath], List[KnowledgeQueryDiagnostic], bool, Dict[str, Any], tuple[FlowUnit, ...]]:
-        graph_bundle = self._load_flow_graph(matched_nodes, slice_bundle, evidence, policy)
-        result = self.flow_builder.build(graph_bundle, matched_nodes, entrypoint_candidate_node_ids or set(), policy)
-        return (
-            result.flow_paths,
-            result.diagnostics,
-            result.truncated,
-            flow_graph_bundle_to_public_bundle(graph_bundle),
-            result.flow_units,
-        )
-
-    def _load_flow_graph(
-        self,
-        matched_nodes: Sequence[KnowledgeQueryMatchedNode],
-        slice_bundle: Dict[str, List[Dict[str, Any]]],
-        evidence: Sequence[Dict[str, Any]],
-        policy: KnowledgeQueryPolicy,
+        include_tests: bool,
     ) -> FlowGraphBundle:
         if not matched_nodes:
             return FlowGraphBundle()
-        source_scopes = self._source_scopes(matched_nodes)
-        if self.graph_store is not None and hasattr(self.graph_store, "load_call_flow_graph"):
-            return self.graph_store.load_call_flow_graph(
-                source_scopes,
-                max_edges=policy.max_edges_per_traversal,
-                max_evidence=policy.max_evidence_refs,
-            )
-        if self.graph_store is not None and hasattr(self.graph_store, "load_call_adjacency_for_sources"):
-            legacy_bundle = self.graph_store.load_call_adjacency_for_sources(
-                self._legacy_source_scopes(source_scopes),
-                max_edges=policy.max_edges_per_traversal,
-                max_evidence=policy.max_evidence_refs,
-            )
-            return self._typed_bundle_from_public_graph(legacy_bundle)
-        return self._typed_bundle_from_public_graph(
-            {
-                "nodes": list(slice_bundle.get("nodes") or []),
-                "edges": [edge for edge in slice_bundle.get("edges") or [] if str(edge.get("edgeType") or "").upper() == "CALLS"],
-                "evidence": list(evidence),
-                "truncated": False,
-            }
+        if self.graph_store is None or not hasattr(self.graph_store, "load_call_flow_graph"):
+            raise RuntimeError("Entrypoint flow graph loading requires load_call_flow_graph")
+        return self.graph_store.load_call_flow_graph(
+            self._source_scopes(matched_nodes, include_tests),
+            max_edges=policy.max_edges_per_traversal,
+            max_evidence=0,
         )
 
-    def _source_scopes(self, matched_nodes: Sequence[KnowledgeQueryMatchedNode]) -> List[FlowGraphSourceScope]:
+    def _source_scopes(self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], include_tests: bool) -> List[FlowGraphSourceScope]:
         grouped: Dict[tuple[str, str, str | None], set[str]] = {}
         for matched_node in matched_nodes:
             source_id = matched_node.sourceId
@@ -954,168 +885,39 @@ class FlowPathExtractor:
                 graph_id=graph_id,
                 graph_revision=graph_revision,
                 node_ids=tuple(sorted(node_ids)),
+                include_tests=include_tests,
             )
             for (source_id, graph_id, graph_revision), node_ids in sorted(grouped.items())
         ]
-
-    def _legacy_source_scopes(self, source_scopes: Sequence[FlowGraphSourceScope]) -> List[Dict[str, Any]]:
-        return [
-            {
-                "sourceId": scope.source_id,
-                "graphId": scope.graph_id,
-                "graphRevision": scope.graph_revision,
-                "nodeIds": list(scope.node_ids),
-            }
-            for scope in source_scopes
-        ]
-
-    def _typed_bundle_from_public_graph(self, bundle: Dict[str, Any]) -> FlowGraphBundle:
-        nodes = tuple(
-            node
-            for node in (self._typed_node(item) for item in bundle.get("nodes") or [])
-            if node is not None
-        )
-        edges = tuple(
-            edge
-            for edge in (self._typed_edge(item) for item in bundle.get("edges") or [])
-            if edge is not None
-        )
-        evidence = tuple(
-            item
-            for item in (self._typed_evidence(item) for item in bundle.get("evidence") or [])
-            if item is not None
-        )
-        evidence_ids_by_edge: Dict[str, List[str]] = defaultdict(list)
-        for item in evidence:
-            if item.edge_id:
-                evidence_ids_by_edge[item.edge_id].append(item.evidence_id)
-        if evidence_ids_by_edge:
-            edges = tuple(
-                FlowGraphEdge(
-                    source_id=edge.source_id,
-                    graph_id=edge.graph_id,
-                    graph_revision=edge.graph_revision,
-                    edge_id=edge.edge_id,
-                    edge_type=edge.edge_type,
-                    from_node_id=edge.from_node_id,
-                    to_node_id=edge.to_node_id,
-                    resolution_status=edge.resolution_status,
-                    external=edge.external,
-                    unresolved_target=edge.unresolved_target,
-                    evidence_ids=tuple(evidence_ids_by_edge.get(edge.edge_id) or edge.evidence_ids),
-                )
-                for edge in edges
-            )
-        return FlowGraphBundle(nodes=nodes, edges=edges, evidence=evidence, truncated=bool(bundle.get("truncated")))
-
-    def _typed_node(self, item: Dict[str, Any]) -> FlowGraphNode | None:
-        node_id = str(item.get("id") or item.get("nodeId") or "")
-        source_id = str(item.get("sourceId") or "")
-        graph_id = str(item.get("graphId") or item.get("graphRevision") or "")
-        if not node_id or not source_id:
-            return None
-        return FlowGraphNode(
-            source_id=source_id,
-            graph_id=graph_id,
-            graph_revision=str(item.get("graphRevision")) if item.get("graphRevision") else None,
-            node_id=node_id,
-            stable_key=str(item.get("stableKey") or node_id),
-            node_kind=str(item.get("nodeKind") or ""),
-            label=str(item.get("label") or item.get("name") or node_id),
-            qualified_name=str(item.get("qualifiedName")) if item.get("qualifiedName") else None,
-            relative_path=str(item.get("relativePath")) if item.get("relativePath") else None,
-            line_start=int(item.get("lineStart")) if item.get("lineStart") is not None else None,
-            line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
-            summary=str(item.get("summary")) if item.get("summary") else None,
-            entrypoint=bool(item.get("entrypoint")),
-        )
-
-    def _typed_edge(self, item: Dict[str, Any]) -> FlowGraphEdge | None:
-        edge_id = str(item.get("id") or item.get("edgeId") or "")
-        source_id = str(item.get("sourceId") or "")
-        graph_id = str(item.get("graphId") or item.get("graphRevision") or "")
-        from_node_id = str(item.get("fromNodeId") or "")
-        if not edge_id or not source_id or not from_node_id:
-            return None
-        return FlowGraphEdge(
-            source_id=source_id,
-            graph_id=graph_id,
-            graph_revision=str(item.get("graphRevision")) if item.get("graphRevision") else None,
-            edge_id=edge_id,
-            edge_type=str(item.get("edgeType") or ""),
-            from_node_id=from_node_id,
-            to_node_id=str(item.get("toNodeId")) if item.get("toNodeId") else None,
-            resolution_status=str(item.get("resolutionStatus") or "RESOLVED"),
-            external=bool(item.get("external")) or str(item.get("resolutionStatus") or "").upper() == "EXTERNAL_TARGET",
-            unresolved_target=item.get("unresolvedTarget") if isinstance(item.get("unresolvedTarget"), dict) else None,
-        )
-
-    def _typed_evidence(self, item: Dict[str, Any]) -> FlowGraphEvidence | None:
-        evidence_id = str(item.get("id") or "")
-        source_id = str(item.get("sourceId") or "")
-        graph_id = str(item.get("graphId") or item.get("graphRevision") or "")
-        if not evidence_id or not source_id:
-            return None
-        return FlowGraphEvidence(
-            source_id=source_id,
-            graph_id=graph_id,
-            graph_revision=str(item.get("graphRevision")) if item.get("graphRevision") else None,
-            evidence_id=evidence_id,
-            node_id=str(item.get("nodeId")) if item.get("nodeId") else None,
-            edge_id=str(item.get("edgeId")) if item.get("edgeId") else None,
-            relative_path=str(item.get("relativePath")) if item.get("relativePath") else None,
-            line_start=int(item.get("lineStart")) if item.get("lineStart") is not None else None,
-            line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
-            text=str(item.get("excerpt")) if item.get("excerpt") else None,
-        )
-
-
-class EvidenceBundleBuilder:
-    def build(self, slice_bundle: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
-        return {
-            "evidence": self._dedupe(slice_bundle.get("evidence") or []),
-            "verifiedPaths": self._dedupe(slice_bundle.get("verifiedPaths") or []),
-        }
-
-    def _dedupe(self, items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        result: List[Dict[str, Any]] = []
-        seen: set[str] = set()
-        for item in items:
-            key = str(item.get("id") or item.get("pathId") or item)
-            if key in seen:
-                continue
-            seen.add(key)
-            result.append(dict(item))
-        return result
-
 
 class KnowledgeQueryService:
     def __init__(
         self,
         source_scope_resolver: SourceScopeResolver,
         anchor_searcher: UnifiedAnchorSearcher,
-        graph_slice_service: GraphSliceQueryService,
-        flow_path_extractor: FlowPathExtractor,
-        evidence_builder: EvidenceBundleBuilder,
+        flow_graph_loader: EntrypointFlowGraphLoader,
+        flow_engine: EntrypointFlowEngine | None = None,
         policy: KnowledgeQueryPolicy | None = None,
         anchor_expander: AnchorExpansionService | None = None,
     ) -> None:
         self.source_scope_resolver = source_scope_resolver
         self.anchor_searcher = anchor_searcher
-        self.graph_slice_service = graph_slice_service
-        self.flow_path_extractor = flow_path_extractor
-        self.evidence_builder = evidence_builder
+        self.flow_graph_loader = flow_graph_loader
+        self.flow_engine = flow_engine or EntrypointFlowEngine()
         self.policy = policy or KnowledgeQueryPolicy()
-        self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(graph_slice_service, "graph_store", None))
+        self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_graph_loader, "graph_store", None))
 
     def query(self, request: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-        return self.query_with_flow_units(request).response
+        return self.query_with_flows(request).response
 
-    def query_with_flow_units(self, request: KnowledgeQueryRequest) -> KnowledgeQueryExecutionResult:
+    def query_with_flows(self, request: KnowledgeQueryRequest) -> KnowledgeQueryExecutionResult:
+        query_started = time.monotonic()
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         eligible_sources, scope_diagnostics = self.source_scope_resolver.resolve()
         diagnostics.extend(scope_diagnostics)
-        candidate_result = self.anchor_searcher.search(request.queryText, eligible_sources, self.policy)
+        candidate_started = time.monotonic()
+        candidate_result = self.anchor_searcher.search(request.queryText, eligible_sources, self.policy, bool(request.includeTests))
+        candidate_ms = (time.monotonic() - candidate_started) * 1000
         diagnostics.extend(candidate_result.diagnostics)
         if not candidate_result.all_candidates:
             return KnowledgeQueryExecutionResult(
@@ -1139,46 +941,38 @@ class KnowledgeQueryService:
         display_matched_nodes = candidate_result.display_candidates
         anchor_result = self.anchor_expander.expand(matched_nodes, eligible_sources, self.policy)
         diagnostics.extend(anchor_result.diagnostics)
-        slice_anchor_nodes = [anchor.node for anchor in anchor_result.expanded_anchors] or matched_nodes
         flow_seed_nodes = anchor_result.flow_seed_nodes
-        entrypoint_candidate_node_ids = self._entrypoint_candidate_node_ids(anchor_result.expanded_anchors)
-        slice_bundle, slice_diagnostics = self.graph_slice_service.build(slice_anchor_nodes, self.policy)
-        diagnostics.extend(slice_diagnostics)
-        flow_paths, flow_diagnostics, flow_truncated, flow_bundle, flow_units = self.flow_path_extractor.extract(
+        graph_load_started = time.monotonic()
+        flow_bundle = self.flow_graph_loader.load(flow_seed_nodes, self.policy, bool(request.includeTests))
+        graph_load_ms = (time.monotonic() - graph_load_started) * 1000
+        request_flow_limit = max(1, min(int(request.maxFlows or 10), int(self.policy.max_entrypoints_per_query or 25)))
+        build_result = self.flow_engine.build(
+            flow_bundle,
             flow_seed_nodes,
-            slice_bundle,
-            slice_bundle.get("evidence") or [],
             self.policy,
-            entrypoint_candidate_node_ids,
+            max_flows=request_flow_limit,
+            include_tests=bool(request.includeTests),
         )
-        request_flow_limit = max(1, min(int(request.maxFlows or 10), int(self.policy.max_flow_paths or 25)))
-        available_flow_count = len(flow_units)
-        request_flow_truncated = available_flow_count > request_flow_limit
-        flow_paths = flow_paths[:request_flow_limit]
-        flow_units = flow_units[:request_flow_limit]
-        diagnostics.extend(flow_diagnostics)
-        if request_flow_truncated:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="FLOW_QUERY_MAX_FLOWS_REACHED",
-                    message="Flow response was truncated by the request maxFlows limit.",
-                    severity="INFO",
-                    metadata={
-                        "returnedFlowCount": len(flow_units),
-                        "availableFlowCount": available_flow_count,
-                        "maxFlows": request_flow_limit,
-                    },
-                )
-            )
-        flow_units, flow_paths, hydrated_flow_bundle, hydration_truncated, hydration_diagnostics = self._hydrate_returned_flow_units(
-            flow_units,
+        diagnostics.extend(build_result.diagnostics)
+        hydration_started = time.monotonic()
+        flows, public_flows, hydration_truncated, hydration_diagnostics = self._hydrate_returned_flows(
+            build_result.flows,
             self.policy.max_evidence_refs,
         )
-        flow_bundle = self._merge_bundles(flow_bundle, hydrated_flow_bundle)
-        flow_truncated = flow_truncated or hydration_truncated
+        hydration_ms = (time.monotonic() - hydration_started) * 1000
         diagnostics.extend(hydration_diagnostics)
-        response_bundle = self._merge_bundles(slice_bundle, flow_bundle)
-        evidence_bundle = self.evidence_builder.build(response_bundle)
+        diagnostics.append(KnowledgeQueryDiagnostic(
+            code="ENTRYPOINT_FLOW_TIMINGS",
+            message="Entrypoint flow query stage timings.",
+            severity="INFO",
+            metadata={
+                "candidateSearchMs": round(candidate_ms, 3),
+                "graphLoadMs": round(graph_load_ms, 3),
+                **(build_result.stage_timings_ms or {}),
+                "evidenceHydrationMs": round(hydration_ms, 3),
+                "totalMs": round((time.monotonic() - query_started) * 1000, 3),
+            },
+        ))
         matched_sources = self._matched_sources(matched_nodes, eligible_sources)
         status = KnowledgeQueryStatus.OK
         if len(matched_sources) > 1 and self._is_ambiguous(matched_nodes):
@@ -1196,41 +990,35 @@ class KnowledgeQueryService:
                 status=status,
                 intent=request.intent.value,
                 matchedSources=matched_sources,
-                matchedNodes=display_matched_nodes,
-                flowPaths=flow_paths,
-                nodes=response_bundle["nodes"],
-                edges=response_bundle["edges"],
-                verifiedPaths=evidence_bundle["verifiedPaths"],
-                evidence=evidence_bundle["evidence"],
-                unresolved=response_bundle["unresolved"],
-                external=response_bundle["external"],
+                matchedNodes=[self._matched_node_preview(item) for item in display_matched_nodes],
+                flows=public_flows,
                 coverage=KnowledgeQueryCoverage(
                     searchedSourceCount=len(eligible_sources),
                     matchedSourceCount=len(matched_sources),
                     matchedNodeCount=len(matched_nodes),
-                    flowPathCount=len(flow_paths),
-                    nodeCount=len(response_bundle["nodes"]),
-                    edgeCount=len(response_bundle["edges"]),
-                    evidenceCount=len(evidence_bundle["evidence"]),
-                    truncated=candidate_result.truncated or anchor_result.truncated or flow_truncated or request_flow_truncated,
-                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or flow_truncated or request_flow_truncated,
+                    flowCount=len(public_flows),
+                    nodeCount=sum(flow.coverage.node_count for flow in flows),
+                    edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in flows),
+                    evidenceCount=sum(len(flow.evidence) for flow in flows),
+                    truncated=candidate_result.truncated or anchor_result.truncated or build_result.truncated or hydration_truncated,
+                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or build_result.truncated or hydration_truncated,
                 ),
                 diagnostics=diagnostics,
             ),
-            flow_units=flow_units,
+            flows=flows,
         )
 
-    def _hydrate_returned_flow_units(
+    def _hydrate_returned_flows(
         self,
-        flow_units: tuple[FlowUnit, ...],
+        flows: tuple[EntrypointFlow, ...],
         max_evidence_refs: int,
-    ) -> tuple[tuple[FlowUnit, ...], List[KnowledgeQueryFlowPath], Dict[str, Any], bool, List[KnowledgeQueryDiagnostic]]:
-        graph_store = getattr(self.flow_path_extractor, "graph_store", None)
-        if graph_store is None or not hasattr(graph_store, "hydrate_flow_unit_evidence"):
-            return flow_units, self.flow_path_extractor.flow_builder.public_flow_paths(flow_units), self._flow_bundle_from_units(flow_units), False, []
-        result = graph_store.hydrate_flow_unit_evidence(flow_units, max_evidence_refs=max_evidence_refs)
-        hydrated_units = tuple(getattr(result, "flow_units", flow_units) or ())
-        hydrated_flow_paths = self.flow_path_extractor.flow_builder.public_flow_paths(hydrated_units)
+    ) -> tuple[tuple[EntrypointFlow, ...], list[Any], bool, List[KnowledgeQueryDiagnostic]]:
+        graph_store = getattr(self.flow_graph_loader, "graph_store", None)
+        if graph_store is None or not hasattr(graph_store, "hydrate_entrypoint_flow_evidence"):
+            return flows, self.flow_engine.public_flows(flows), False, []
+        result = graph_store.hydrate_entrypoint_flow_evidence(flows, max_evidence_refs=max_evidence_refs)
+        hydrated_flows = tuple(getattr(result, "flows", flows) or ())
+        public_flows = self.flow_engine.public_flows(hydrated_flows)
         truncated = bool(getattr(result, "truncated", False))
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         if truncated:
@@ -1248,27 +1036,7 @@ class KnowledgeQueryService:
                     },
                 )
             )
-        return hydrated_units, hydrated_flow_paths, self._flow_bundle_from_units(hydrated_units, truncated=truncated), truncated, diagnostics
-
-    def _flow_bundle_from_units(self, flow_units: Sequence[FlowUnit], *, truncated: bool = False) -> Dict[str, Any]:
-        nodes: Dict[tuple[str, str, str], FlowGraphNode] = {}
-        edges: Dict[tuple[str, str, str], FlowGraphEdge] = {}
-        evidence: Dict[tuple[str, str], FlowGraphEvidence] = {}
-        for unit in flow_units:
-            for node in unit.nodes:
-                nodes.setdefault((node.source_id, node.graph_id, node.node_id), node)
-            for edge in (*unit.edges, *unit.boundary_edges):
-                edges.setdefault((edge.source_id, edge.graph_id, edge.edge_id), edge)
-            for item in unit.evidence:
-                evidence.setdefault((item.source_id, item.evidence_id), item)
-        return flow_graph_bundle_to_public_bundle(
-            FlowGraphBundle(
-                nodes=tuple(nodes.values()),
-                edges=tuple(edges.values()),
-                evidence=tuple(evidence.values()),
-                truncated=truncated,
-            )
-        )
+        return hydrated_flows, public_flows, truncated, diagnostics
 
     def _matched_sources(
         self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], eligible_sources: Sequence[QuerySource]
@@ -1282,40 +1050,24 @@ class KnowledgeQueryService:
             for source_id, score in sorted(scores.items(), key=lambda item: (-item[1], item[0]))
         ]
 
+    def _matched_node_preview(self, item: KnowledgeQueryMatchedNode) -> KnowledgeQueryMatchedNodePreview:
+        return KnowledgeQueryMatchedNodePreview(
+            sourceId=item.sourceId,
+            nodeKind=item.nodeKind,
+            label=item.label,
+            score=item.score,
+            matchReasons=item.matchReasons,
+            relativePath=item.relativePath,
+            qualifiedName=item.qualifiedName,
+            flowDomain=item.flowDomain,
+        )
+
     def _is_ambiguous(self, matched_nodes: Sequence[KnowledgeQueryMatchedNode]) -> bool:
         if len(matched_nodes) < 2:
             return False
         top = matched_nodes[0].score
         top_sources = {matched_node.sourceId for matched_node in matched_nodes if top - matched_node.score <= 0.03}
         return len(top_sources) > 1
-
-    def _entrypoint_candidate_node_ids(self, expanded_anchors: Sequence[ExpandedAnchor]) -> set[FlowNodeKey]:
-        return {
-            (anchor.node.sourceId, anchor.node.graphId or "", anchor.node.nodeId)
-            for anchor in expanded_anchors
-            if AnchorRole.ENTRYPOINT_CANDIDATE in anchor.roles and anchor.node.sourceId and anchor.node.nodeId
-        }
-
-    def _merge_bundles(self, first: Dict[str, List[Dict[str, Any]]], second: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
-        return {
-            "nodes": self._dedupe_items([*(first.get("nodes") or []), *(second.get("nodes") or [])], "id"),
-            "edges": self._dedupe_items([*(first.get("edges") or []), *(second.get("edges") or [])], "id"),
-            "evidence": self._dedupe_items([*(first.get("evidence") or []), *(second.get("evidence") or [])], "id"),
-            "unresolved": self._dedupe_items([*(first.get("unresolved") or []), *(second.get("unresolved") or [])], "id"),
-            "external": self._dedupe_items([*(first.get("external") or []), *(second.get("external") or [])], "id"),
-            "verifiedPaths": self._dedupe_items([*(first.get("verifiedPaths") or []), *(second.get("verifiedPaths") or [])], "pathId"),
-        }
-
-    def _dedupe_items(self, items: Sequence[Dict[str, Any]], field: str) -> List[Dict[str, Any]]:
-        result: List[Dict[str, Any]] = []
-        seen: set[str] = set()
-        for item in items:
-            key = str(item.get("sourceId") or "") + ":" + str(item.get("graphId") or "") + ":" + str(item.get(field) or item)
-            if key in seen:
-                continue
-            seen.add(key)
-            result.append(dict(item))
-        return result
 
     def _query_id(self) -> str:
         return str(uuid.uuid4())
@@ -1329,9 +1081,8 @@ def build_knowledge_query_service(graph_store: Any, app_config: Any | None = Non
     return KnowledgeQueryService(
         source_scope_resolver=SourceScopeResolver(graph_store),
         anchor_searcher=UnifiedAnchorSearcher(graph_store, search_engine=search_engine),
-        graph_slice_service=GraphSliceQueryService(graph_store),
-        flow_path_extractor=FlowPathExtractor(graph_store),
-        evidence_builder=EvidenceBundleBuilder(),
+        flow_graph_loader=EntrypointFlowGraphLoader(graph_store),
+        flow_engine=EntrypointFlowEngine(),
         anchor_expander=AnchorExpansionService(graph_store),
     )
 

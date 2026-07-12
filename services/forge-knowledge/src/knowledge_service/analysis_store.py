@@ -21,14 +21,13 @@ from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionRequest,
 )
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.flow_builder import (
+from knowledge_service.entrypoint_flow_engine import EntrypointFlow
+from knowledge_service.flow_graph_contract import (
     FlowGraphBundle,
     FlowGraphEdge,
     FlowGraphEvidence,
     FlowGraphNode,
     FlowGraphSourceScope,
-    FlowUnit,
-    flow_graph_bundle_to_public_bundle,
 )
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
@@ -102,8 +101,8 @@ class GraphQuery:
 
 
 @dataclass(frozen=True)
-class FlowUnitEvidenceHydrationResult:
-    flow_units: tuple[FlowUnit, ...]
+class EntrypointFlowEvidenceHydrationResult:
+    flows: tuple[EntrypointFlow, ...]
     truncated: bool = False
     evidence_count: int = 0
     required_edge_count: int = 0
@@ -583,6 +582,8 @@ class AnalysisStore:
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source ON analysis_graph_edges(source_id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_type ON analysis_graph_edges(source_id, edge_type)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_nodes ON analysis_graph_edges(from_node_id, to_node_id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_calls_outgoing ON analysis_graph_edges(source_id, edge_type, status, from_node_id, id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_calls_incoming ON analysis_graph_edges(source_id, edge_type, status, to_node_id, id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_flow_created ON analysis_graph_edges(source_id, flow_domain, created_at)",
             ),
             "analysis_graph_claim_evidence": (
@@ -1854,6 +1855,7 @@ class AnalysisStore:
                     GROUP BY source_id, from_node_id
                 )
                 SELECT n.*,
+                       {self._inventory_flow_domain_sql("n")} AS effective_flow_domain,
                        sources.display_name AS source_display_name,
                        af.relative_path,
                        claim.summary,
@@ -1993,6 +1995,7 @@ class AnalysisStore:
                     GROUP BY source_id, from_node_id
                 )
                 SELECT n.*,
+                       {self._inventory_flow_domain_sql("n")} AS effective_flow_domain,
                        sources.display_name AS source_display_name,
                        af.relative_path,
                        claim.summary,
@@ -2132,6 +2135,7 @@ class AnalysisStore:
                     GROUP BY source_id, from_node_id
                 )
                 SELECT n.*,
+                       {self._inventory_flow_domain_sql("n")} AS effective_flow_domain,
                        sources.display_name AS source_display_name,
                        af.relative_path,
                        claim.summary,
@@ -2400,8 +2404,7 @@ class AnalysisStore:
         unresolved = self._dedupe_by_id(unresolved, "id")
         self._attach_current_graph_identity(conn, unresolved)
         external = [edge for edge in unresolved if edge.get("external")]
-        verified_paths = self._verified_paths_from_evidence(evidence)
-        return {"nodes": nodes, "edges": edges, "evidence": evidence, "unresolved": unresolved, "external": external, "verifiedPaths": verified_paths}
+        return {"nodes": nodes, "edges": edges, "evidence": evidence, "unresolved": unresolved, "external": external}
 
     def load_call_flow_graph(
         self,
@@ -2414,6 +2417,7 @@ class AnalysisStore:
         safe_max_evidence = max(0, min(int(max_evidence or 0), 500))
         grouped: Dict[str, Set[str]] = {}
         requested_graph_by_source: Dict[str, str] = {}
+        include_tests_by_source: Dict[str, bool] = {}
         for scope in source_scopes:
             if not isinstance(scope, FlowGraphSourceScope):
                 continue
@@ -2421,6 +2425,7 @@ class AnalysisStore:
             if not source_id:
                 continue
             requested_graph_by_source.setdefault(source_id, str(scope.graph_id or ""))
+            include_tests_by_source[source_id] = include_tests_by_source.get(source_id, False) or bool(scope.include_tests)
             anchor_ids = {str(node_id) for node_id in scope.node_ids if str(node_id)}
             grouped.setdefault(source_id, set()).update(anchor_ids)
         if not grouped:
@@ -2472,11 +2477,13 @@ class AnalysisStore:
                         WHERE e.source_id = ?
                           AND e.edge_type = ?
                           AND e.status IN ({current_status_sql})
+                          AND {self._inventory_membership_graph_edge_clause("e")}
+                          AND (? OR COALESCE({self._inventory_flow_domain_sql("e")}, '') != 'TEST')
                           AND (e.from_node_id IN ({frontier_placeholders}) OR e.to_node_id IN ({frontier_placeholders}))
                         ORDER BY e.id
                         LIMIT ?
                         """,
-                        [source_id, contract.calls_edge_type, *current_status_params, *frontier_list, *frontier_list, remaining_edges],
+                        [source_id, contract.calls_edge_type, *current_status_params, include_tests_by_source.get(source_id, False), *frontier_list, *frontier_list, remaining_edges],
                     ).fetchall()
                     if len(edge_rows) >= remaining_edges:
                         truncated = True
@@ -2502,24 +2509,20 @@ class AnalysisStore:
             for source_id, node_ids in sorted(node_ids_by_source.items()):
                 nodes.extend(self._query_slice_nodes(conn, source_id, node_ids))
 
-            remaining_evidence = safe_max_evidence
-            for source_id, node_ids in sorted(node_ids_by_source.items()):
-                if remaining_evidence <= 0:
-                    if edge_ids_by_source.get(source_id):
-                        truncated = True
-                    break
-                edge_count = len(edge_ids_by_source.get(source_id, set()))
-                scope_evidence = self._query_flow_path_evidence(
-                    conn,
-                    source_id,
-                    node_ids,
-                    edge_ids_by_source.get(source_id, set()),
-                    remaining_evidence,
-                )
-                if edge_count > remaining_evidence:
-                    truncated = True
-                evidence.extend(scope_evidence)
-                remaining_evidence = max(0, remaining_evidence - len(scope_evidence))
+            if safe_max_evidence:
+                remaining_evidence = safe_max_evidence
+                for source_id, node_ids in sorted(node_ids_by_source.items()):
+                    if remaining_evidence <= 0:
+                        break
+                    scope_evidence = self._query_flow_path_evidence(
+                        conn,
+                        source_id,
+                        node_ids,
+                        edge_ids_by_source.get(source_id, set()),
+                        remaining_evidence,
+                    )
+                    evidence.extend(scope_evidence)
+                    remaining_evidence = max(0, remaining_evidence - len(scope_evidence))
 
             nodes = self._dedupe_by_id(nodes, "id")
             edges = self._dedupe_by_id(edges, "id")
@@ -2529,33 +2532,47 @@ class AnalysisStore:
             self._attach_current_graph_identity(conn, evidence)
         return self._flow_graph_bundle_from_public_graph(nodes, edges, evidence, truncated)
 
-    def hydrate_flow_unit_evidence(
+    def hydrate_entrypoint_flow_evidence(
         self,
-        flow_units: Sequence[FlowUnit],
+        flows: Sequence[EntrypointFlow],
         max_evidence_refs: int = 25,
-    ) -> FlowUnitEvidenceHydrationResult:
+    ) -> EntrypointFlowEvidenceHydrationResult:
         self.init()
         max_refs = max(0, min(int(max_evidence_refs or 0), 500))
-        if not flow_units:
-            return FlowUnitEvidenceHydrationResult(flow_units=())
+        if not flows:
+            return EntrypointFlowEvidenceHydrationResult(flows=())
 
-        hydrated_units: List[FlowUnit] = []
+        hydrated_flows: List[EntrypointFlow] = []
         truncated = False
         evidence_count = 0
         required_edge_count = 0
         hydrated_edge_count = 0
         missing_edge_ids: List[str] = []
+        edge_rows_by_source: Dict[str, List[Dict[str, Any]]] = {}
+        node_rows_by_source: Dict[str, List[Dict[str, Any]]] = {}
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
-            for unit in flow_units:
-                hydrated, unit_truncated, metadata = self._hydrate_single_flow_unit_evidence(conn, unit, max_refs)
-                hydrated_units.append(hydrated)
+            for source_id in sorted({flow.key.source_id for flow in flows}):
+                source_flows = [flow for flow in flows if flow.key.source_id == source_id]
+                edge_ids = tuple(dict.fromkeys(
+                    edge.edge_id for flow in source_flows for edge in (*flow.transitions, *flow.boundary_transitions)
+                ))
+                node_ids = {node.node_id for flow in source_flows for node in flow.nodes}
+                edge_rows_by_source[source_id] = self._query_returned_flow_edge_evidence(conn, source_id, edge_ids)
+                node_rows_by_source[source_id] = self._query_returned_flow_node_evidence(
+                    conn, source_id, node_ids, max_refs * len(source_flows) + 1, seen_evidence_ids=set()
+                )
+            for flow in flows:
+                hydrated, unit_truncated, metadata = self._hydrate_single_entrypoint_flow_evidence(
+                    flow, max_refs, edge_rows_by_source.get(flow.key.source_id, []), node_rows_by_source.get(flow.key.source_id, [])
+                )
+                hydrated_flows.append(hydrated)
                 truncated = truncated or unit_truncated
                 evidence_count += len(hydrated.evidence)
                 required_edge_count += int(metadata["required_edge_count"])
                 hydrated_edge_count += int(metadata["hydrated_edge_count"])
                 missing_edge_ids.extend(str(item) for item in metadata["missing_edge_ids"])
-        return FlowUnitEvidenceHydrationResult(
-            flow_units=tuple(hydrated_units),
+        return EntrypointFlowEvidenceHydrationResult(
+            flows=tuple(hydrated_flows),
             truncated=truncated,
             evidence_count=evidence_count,
             required_edge_count=required_edge_count,
@@ -2563,24 +2580,29 @@ class AnalysisStore:
             missing_edge_ids=tuple(sorted(set(missing_edge_ids))),
         )
 
-    def _hydrate_single_flow_unit_evidence(
+    def _hydrate_single_entrypoint_flow_evidence(
         self,
-        conn: sqlite3.Connection,
-        unit: FlowUnit,
+        flow: EntrypointFlow,
         max_refs: int,
-    ) -> tuple[FlowUnit, bool, Dict[str, Any]]:
-        source_id = str(unit.key.source_id or "")
-        ordered_edge_ids = tuple(dict.fromkeys((*unit.edge_ids, *unit.boundary_edge_ids)))
+        all_edge_rows: Sequence[Dict[str, Any]],
+        all_node_rows: Sequence[Dict[str, Any]],
+    ) -> tuple[EntrypointFlow, bool, Dict[str, Any]]:
+        source_id = str(flow.key.source_id or "")
+        ordered_edge_ids = tuple(dict.fromkeys(edge.edge_id for edge in (*flow.transitions, *flow.boundary_transitions)))
         selected: List[Dict[str, Any]] = []
         truncated = False
         edge_evidence_by_id: Dict[str, List[str]] = {}
         persisted_edge_ids: Set[str] = set()
         if source_id and ordered_edge_ids:
-            edge_evidence_rows = self._query_returned_flow_edge_evidence(conn, source_id, ordered_edge_ids)
+            order = {edge_id: index for index, edge_id in enumerate(ordered_edge_ids)}
+            edge_evidence_rows = sorted(
+                (item for item in all_edge_rows if item.get("edgeId") in order),
+                key=lambda item: (order[str(item.get("edgeId"))], str(item.get("id") or "")),
+            )
             persisted_edge_ids = {str(item.get("edgeId")) for item in edge_evidence_rows if item.get("edgeId")}
             if len(edge_evidence_rows) > max_refs:
                 truncated = True
-            selected_edge_rows = edge_evidence_rows[:max_refs]
+            selected_edge_rows = edge_evidence_rows
             selected.extend(selected_edge_rows)
             for item in selected_edge_rows:
                 edge_id = str(item.get("edgeId") or "")
@@ -2590,15 +2612,11 @@ class AnalysisStore:
             if persisted_edge_ids - set(edge_evidence_by_id):
                 truncated = True
 
-        remaining = max_refs - len(selected)
-        if source_id and remaining > 0 and unit.node_ids:
-            node_rows = self._query_returned_flow_node_evidence(
-                conn,
-                source_id,
-                set(unit.node_ids),
-                remaining + 1,
-                seen_evidence_ids={str(item.get("id") or "") for item in selected},
-            )
+        remaining = max(0, max_refs - len(selected))
+        node_ids = {node.node_id for node in flow.nodes}
+        if source_id and remaining > 0 and node_ids:
+            seen = {str(item.get("id") or "") for item in selected}
+            node_rows = [item for item in all_node_rows if item.get("nodeId") in node_ids and str(item.get("id") or "") not in seen]
             if len(node_rows) > remaining:
                 truncated = True
             selected.extend(node_rows[:remaining])
@@ -2610,9 +2628,9 @@ class AnalysisStore:
         )
         edge_evidence_ids = {edge_id: tuple(ids) for edge_id, ids in edge_evidence_by_id.items()}
         hydrated = replace(
-            unit,
-            edges=tuple(self._flow_unit_edge_with_evidence(edge, edge_evidence_ids) for edge in unit.edges),
-            boundary_edges=tuple(self._flow_unit_edge_with_evidence(edge, edge_evidence_ids) for edge in unit.boundary_edges),
+            flow,
+            transitions=tuple(self._flow_edge_with_evidence(edge, edge_evidence_ids) for edge in flow.transitions),
+            boundary_transitions=tuple(self._flow_edge_with_evidence(edge, edge_evidence_ids) for edge in flow.boundary_transitions),
             evidence=flow_evidence,
         )
         missing_edge_ids = tuple(f"{source_id}:{edge_id}" for edge_id in sorted(persisted_edge_ids - set(edge_evidence_by_id)))
@@ -2622,7 +2640,7 @@ class AnalysisStore:
             "missing_edge_ids": missing_edge_ids,
         }
 
-    def _flow_unit_edge_with_evidence(self, edge: FlowGraphEdge, evidence_ids_by_edge: Dict[str, tuple[str, ...]]) -> FlowGraphEdge:
+    def _flow_edge_with_evidence(self, edge: FlowGraphEdge, evidence_ids_by_edge: Dict[str, tuple[str, ...]]) -> FlowGraphEdge:
         return replace(edge, evidence_ids=evidence_ids_by_edge.get(edge.edge_id, ()))
 
     def _query_returned_flow_edge_evidence(
@@ -2739,45 +2757,6 @@ class AnalysisStore:
         self._attach_current_graph_identity(conn, projected)
         return projected
 
-    def load_call_adjacency_for_sources(
-        self,
-        source_scopes: List[Dict[str, Any]],
-        max_edges: int = 2000,
-        max_evidence: int = 25,
-    ) -> Dict[str, Any]:
-        bundle = self.load_call_flow_graph(
-            self._legacy_flow_graph_source_scopes(source_scopes),
-            max_edges=max_edges,
-            max_evidence=max_evidence,
-        )
-        public_bundle = flow_graph_bundle_to_public_bundle(bundle)
-        return {
-            "nodes": list(public_bundle["nodes"]),
-            "edges": list(public_bundle["edges"]),
-            "evidence": list(public_bundle["evidence"]),
-            "unresolved": list(public_bundle["unresolved"]),
-            "external": list(public_bundle["external"]),
-            "verifiedPaths": list(public_bundle["verifiedPaths"]),
-            "truncated": bool(public_bundle["truncated"]),
-        }
-
-    def _legacy_flow_graph_source_scopes(self, source_scopes: Sequence[Dict[str, Any]]) -> List[FlowGraphSourceScope]:
-        scopes: List[FlowGraphSourceScope] = []
-        for scope in source_scopes:
-            source_id = str(scope.get("sourceId") or "")
-            if not source_id:
-                continue
-            node_ids = tuple(sorted(str(node_id) for node_id in scope.get("nodeIds") or [] if str(node_id)))
-            scopes.append(
-                FlowGraphSourceScope(
-                    source_id=source_id,
-                    graph_id=str(scope.get("graphId") or ""),
-                    graph_revision=str(scope.get("graphRevision")) if scope.get("graphRevision") else None,
-                    node_ids=node_ids,
-                )
-            )
-        return scopes
-
     def _flow_graph_bundle_from_public_graph(
         self,
         nodes: Sequence[Dict[str, Any]],
@@ -2826,6 +2805,7 @@ class AnalysisStore:
             line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
             summary=str(item.get("summary")) if item.get("summary") else None,
             entrypoint=bool(item.get("entrypoint")),
+            flow_domain=str(item.get("flowDomain")) if item.get("flowDomain") else None,
         )
 
     def _flow_graph_edge_from_public_graph(self, item: Dict[str, Any], evidence_ids_by_edge: Dict[str, List[str]]) -> FlowGraphEdge | None:
@@ -2847,6 +2827,7 @@ class AnalysisStore:
             external=bool(item.get("external")) or str(item.get("resolutionStatus") or "").upper() == graph_query_contract().external_target_status,
             unresolved_target=item.get("unresolvedTarget") if isinstance(item.get("unresolvedTarget"), dict) else None,
             evidence_ids=tuple(evidence_ids_by_edge.get(edge_id) or ()),
+            flow_domain=str(item.get("flowDomain")) if item.get("flowDomain") else None,
         )
 
     def _flow_graph_evidence_from_public_graph(self, item: Dict[str, Any]) -> FlowGraphEvidence | None:
@@ -2907,7 +2888,7 @@ class AnalysisStore:
         entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
         rows = conn.execute(
             f"""
-            SELECT n.*, af.relative_path,
+            SELECT n.*, {self._inventory_flow_domain_sql("n")} AS effective_flow_domain, af.relative_path,
                    COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
                    CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint
             FROM analysis_graph_nodes n
@@ -2991,7 +2972,7 @@ class AnalysisStore:
                 )
                 GROUP BY source_id, node_id
             )
-            SELECT n.*, af.relative_path,
+            SELECT n.*, {self._inventory_flow_domain_sql("n")} AS effective_flow_domain, af.relative_path,
                    COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
                    CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint,
                    claim.summary AS summary
@@ -3275,27 +3256,6 @@ class AnalysisStore:
             seen.add(key)
             result.append(item)
         return result
-
-    def _verified_paths_from_evidence(self, evidence: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        paths: List[Dict[str, Any]] = []
-        seen: Set[str] = set()
-        for item in evidence:
-            relative_path = item.get("relativePath")
-            if not relative_path:
-                continue
-            key = f"{item.get('sourceId')}:{relative_path}"
-            if key in seen:
-                continue
-            seen.add(key)
-            paths.append(
-                {
-                    "sourceId": item.get("sourceId"),
-                    "relativePath": relative_path,
-                    "lineStart": item.get("lineStart"),
-                    "lineEnd": item.get("lineEnd"),
-                }
-            )
-        return paths
 
     def graph_metadata(self, source_id: Optional[str]) -> Dict[str, Any]:
         self.init()
@@ -3845,6 +3805,21 @@ class AnalysisStore:
             WHERE f_current.source_id = {alias}.source_id
               AND f_current.relative_path = {alias}.relative_path
               AND f_current.content_hash = {alias}.content_hash
+        )
+        """
+
+    def _inventory_flow_domain_sql(self, alias: str) -> str:
+        return f"""
+        COALESCE(
+            (
+                SELECT f_scope.flow_domain
+                FROM files f_scope
+                WHERE f_scope.source_id = {alias}.source_id
+                  AND f_scope.relative_path = {alias}.relative_path
+                  AND f_scope.content_hash = {alias}.content_hash
+                LIMIT 1
+            ),
+            {alias}.flow_domain
         )
         """
 
@@ -4422,7 +4397,7 @@ class AnalysisStore:
             "qualifiedName": row.get("qualified_name"),
             "relativePath": row.get("relative_path"),
             "sourceId": row.get("source_id"),
-            "flowDomain": row.get("flow_domain"),
+            "flowDomain": row.get("effective_flow_domain") or row.get("flow_domain"),
             "factOrigin": row.get("fact_origin"),
             "lineStart": row.get("line_start"),
             "lineEnd": row.get("line_end"),

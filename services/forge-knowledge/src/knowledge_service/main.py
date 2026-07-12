@@ -650,7 +650,7 @@ def _knowledge_query_flow_explanations_response(
     if time.monotonic() >= deadline_at:
         return _expired_flow_explanation_response(body)
     try:
-        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
+        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body)
         explanation_service, close_provider = _flow_explanation_service(request, config, cancel_event)
         try:
             run = explanation_service.explain(body, query_result, deadline_at=deadline_at)
@@ -685,7 +685,7 @@ def _knowledge_query_tool_context_response(
     if time.monotonic() >= deadline_at:
         return _expired_tool_context_response(body)
     try:
-        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
+        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body)
         explanation_service, close_provider = _flow_explanation_service(request, config, cancel_event)
         try:
             run = explanation_service.explain(body, query_result, deadline_at=deadline_at)

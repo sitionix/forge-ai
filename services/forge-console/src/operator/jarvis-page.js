@@ -263,8 +263,8 @@ export class JarvisPage {
     }
     const coverage = response.coverage || {};
     const matchedNodes = response.matchedNodes || [];
-    const flowPaths = response.flowPaths || [];
-    const evidence = response.evidence || [];
+    const flows = response.flows || [];
+    const evidenceCount = flows.reduce((total, flow) => total + (flow.evidence || []).length, 0);
     const matchedSources = response.matchedSources || [];
     panel.innerHTML = `
       <article class="detail-card">
@@ -278,20 +278,18 @@ export class JarvisPage {
         <div class="pill-row">
           ${pill(`sources ${coverage.matchedSourceCount ?? matchedSources.length ?? 0}`, 'READY_TO_START')}
           ${pill(`matched nodes ${coverage.matchedNodeCount ?? matchedNodes.length ?? 0}`, 'READY_TO_START')}
-          ${pill(`flows ${coverage.flowPathCount ?? flowPaths.length ?? 0}`, 'READY_TO_START')}
+          ${pill(`flows ${coverage.flowCount ?? flows.length ?? 0}`, 'READY_TO_START')}
           ${pill(`nodes ${coverage.nodeCount ?? 0}`, 'READY_TO_START')}
           ${pill(`edges ${coverage.edgeCount ?? 0}`, 'READY_TO_START')}
-          ${pill(`evidence ${coverage.evidenceCount ?? evidence.length ?? 0}`, 'READY_TO_START')}
+          ${pill(`evidence ${coverage.evidenceCount ?? evidenceCount}`, 'READY_TO_START')}
         </div>
       </article>
       <h3>Matched Sources</h3>
       ${this.renderMatchedSources(matchedSources)}
       <h3>Matched Nodes</h3>
       ${this.renderMatchedNodes(matchedNodes)}
-      <h3>Flow Paths (${flowPaths.length})</h3>
-      ${this.renderFlowPaths(flowPaths, response.diagnostics || [], matchedNodes)}
-      <h3>Evidence</h3>
-      ${this.renderEvidence(evidence)}
+      <h3>Entrypoint Flows (${flows.length})</h3>
+      ${this.renderFlows(flows, response.diagnostics || [], matchedNodes)}
     `;
   }
 
@@ -326,12 +324,12 @@ export class JarvisPage {
           <article class="detail-card">
             <div class="detail-card-head">
               <div>
-                <strong>${escapeHtml(item.label || item.nodeId || '-')}</strong>
+                <strong>${escapeHtml(item.label || '-')}</strong>
                 <p>${escapeHtml(item.sourceId || '-')} / ${escapeHtml(item.nodeKind || '-')}</p>
               </div>
               ${pill(`score ${Number(item.score ?? 0).toFixed(2)}`, 'READY_TO_START')}
             </div>
-            <p class="detail-meta">${escapeHtml(item.stableKey || item.nodeId || '-')}</p>
+            <p class="detail-meta">${escapeHtml(item.qualifiedName || item.relativePath || '-')}</p>
             <p class="detail-meta">${escapeHtml((item.matchReasons || []).join(', ') || '-')}</p>
           </article>
         `).join('')}
@@ -339,33 +337,30 @@ export class JarvisPage {
     `;
   }
 
-  renderFlowPaths(items, diagnostics = [], matchedNodes = []) {
+  renderFlows(items, diagnostics = [], matchedNodes = []) {
     if (items.length === 0) {
       const diagnostic = matchedNodes.length > 0
-        ? diagnostics.find((item) => ['NO_CALLS_PATH', 'RESULT_LIMIT_REACHED'].includes(item.code))
+        ? diagnostics.find((item) => ['ENTRYPOINT_FLOW_ROOT_NOT_FOUND', 'ENTRYPOINT_FLOW_SLICE_TRUNCATED'].includes(item.code))
         : null;
-      return `<div class="empty-state">${escapeHtml(diagnostic?.message || 'No flow paths.')}</div>`;
+      return `<div class="empty-state">${escapeHtml(diagnostic?.message || 'No entrypoint flows.')}</div>`;
     }
     return `
       <div class="jarvis-context-list">
         ${items.map((item) => {
           const nodes = item.nodes || [];
-          const edges = item.edges || [];
-          const labelsById = new Map(nodes.map((node) => [node.id || node.nodeId, node.label || node.name || node.id || node.nodeId || '-']));
-          const orderedNodeIds = item.nodeIds?.length ? item.nodeIds : nodes.map((node) => node.id || node.nodeId || '-');
-          const labels = orderedNodeIds.map((nodeId) => labelsById.get(nodeId) || nodeId || '-').join(' -> ');
-          const edgeCount = item.edgeIds?.length ?? edges.length;
+          const labels = nodes.map((node) => node.label || node.nodeRef || '-').join(', ');
+          const edgeCount = (item.transitions || []).length + (item.boundaries || []).length;
           return `
             <article class="detail-card">
               <div class="detail-card-head">
                 <div>
-                  <strong>${escapeHtml(item.flowId || 'flow')}</strong>
-                  <p>${escapeHtml(item.sourceId || '-')}</p>
+                  <strong>${escapeHtml(item.entrypoint?.label || `flow ${item.flowIndex || ''}`)}</strong>
+                  <p>${escapeHtml(item.source || '-')} / ${escapeHtml(item.entrypointOrigin || '-')}</p>
                 </div>
                 ${pill(item.complete === false ? 'partial' : 'complete', item.complete === false ? 'FAILED' : 'READY_TO_START')}
               </div>
               <p class="detail-meta">${escapeHtml(labels || '-')}</p>
-              <p class="detail-meta">${escapeHtml(`${orderedNodeIds.length} nodes / ${edgeCount} edges / ${item.stopReason || 'TERMINAL_NODE'}`)}</p>
+              <p class="detail-meta">${escapeHtml(`${nodes.length} nodes / ${edgeCount} transitions / ${(item.matchedAnchors || []).length} anchors`)}</p>
             </article>
           `;
         }).join('')}
