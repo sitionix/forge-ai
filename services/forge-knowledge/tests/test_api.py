@@ -8,10 +8,16 @@ from types import SimpleNamespace
 import httpx
 
 import knowledge_service.main as knowledge_main
-from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
-from knowledge_service.flow_graph_contract import FlowGraphBundle, FlowGraphEdge, FlowGraphNode
-from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode, KnowledgeQueryRequest, KnowledgeQueryResponse, KnowledgeQueryStatus
-from knowledge_service.knowledge_query_service import KnowledgeQueryPolicy
+from knowledge_service.entrypoint_flow_engine import (
+    EntrypointFlow,
+    EntrypointFlowAnchor,
+    EntrypointFlowCoverage,
+    EntrypointFlowEngine,
+    EntrypointFlowKey,
+    EntrypointFlowOrigin,
+)
+from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphNode
+from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest, KnowledgeQueryResponse, KnowledgeQueryStatus
 from support import build_test_app, write_runtime_config
 from knowledge_service.flow_explanations import FLOW_EXPLANATION_LIMIT_REACHED, FlowExplanationProviderResult
 from semantic_test_support import seed_semantic_graph
@@ -26,30 +32,29 @@ class FakeFlowExplanationProvider:
         self.calls.append({"llmInput": dict(llm_input), "timeoutSeconds": timeout_seconds})
         if self.delay_seconds:
             time.sleep(self.delay_seconds)
-        step_refs = [step["stepRef"] for step in llm_input["steps"]]
+        node_refs = [step["nodeRef"] for step in llm_input["steps"]]
         transition_refs = [transition["transitionRef"] for transition in llm_input.get("transitions", [])]
         response = {
             "title": "A.start to B.work",
             "narrative": [
                 {
-                    "text": "A.start and B.work are explained from the packed flow facts.",
-                    "stepRefs": step_refs,
+                    "text": "A.start and B.work are explained from the packed graph facts, including the node references and the CALLS transition that connects the two symbols.",
+                    "nodeRefs": node_refs,
                     "transitionRefs": transition_refs,
                     "boundaryRefs": [],
                 },
                 {
-                    "text": "The ordered transition evidence shows how this flow moves between those steps.",
-                    "stepRefs": step_refs,
+                    "text": "The graph transition evidence identifies the caller node and downstream callee node without treating sibling calls as an ordered path.",
+                    "nodeRefs": node_refs,
                     "transitionRefs": transition_refs,
                     "boundaryRefs": [],
                 },
             ],
             "steps": [
                 {
-                    "stepRef": step["stepRef"],
-                    "order": step["order"],
+                    "nodeRef": step["nodeRef"],
                     "explanation": f"`{step['symbol']}` is part of this flow.",
-                    "transitionRefs": [item["transitionRef"] for item in llm_input.get("transitions", []) if item["fromStepRef"] == step["stepRef"]],
+                    "transitionRefs": [item["transitionRef"] for item in llm_input.get("transitions", []) if item["fromNodeRef"] == step["nodeRef"]],
                     "evidenceRefs": [item["ref"] for item in step.get("evidence", [])],
                 }
                 for step in llm_input["steps"]
@@ -57,7 +62,7 @@ class FakeFlowExplanationProvider:
             "transitions": [
                 {
                     "transitionRef": transition["transitionRef"],
-                    "explanation": f"`{transition['fromSymbol']}` leads to `{transition['toSymbol']}` in the ordered flow.",
+                    "explanation": f"`{transition['fromSymbol']}` has a CALLS transition to `{transition['toSymbol']}`.",
                     "evidenceRefs": [item["ref"] for item in transition.get("evidence", [])],
                 }
                 for transition in llm_input.get("transitions", [])
@@ -149,7 +154,7 @@ def test_query_flow_explanations_endpoint_returns_per_flow_text(tmp_path):
     assert payload["flows"]
     assert payload["flowExplanations"][0]["flowIndex"] == 1
     assert payload["flowExplanations"][0]["narrative"]
-    assert [step["order"] for step in payload["flowExplanations"][0]["steps"]] == [1, 2]
+    assert [step["nodeRef"] for step in payload["flowExplanations"][0]["steps"]] == ["n1", "n2"]
     assert len(provider.calls) == 1
 
 
@@ -190,25 +195,26 @@ def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tm
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     app_config.flow_explanation_request_timeout_seconds = 0.2
     app.state.app_config.flow_explanation_request_timeout_seconds = 0.2
-    flow_result = EntrypointFlowEngine().build(
-        FlowGraphBundle(
-            nodes=(
-                FlowGraphNode("source-a", "graph-a", "graph-a", "a-start", "a-start", "CALLABLE", "A.start"),
-                FlowGraphNode("source-a", "graph-a", "graph-a", "b-work", "b-work", "CALLABLE", "B.work"),
-            ),
-            edges=(FlowGraphEdge("source-a", "graph-a", "graph-a", "edge-a-b", "CALLS", "a-start", "b-work", "RESOLVED"),),
-        ),
-        [
-            KnowledgeQueryMatchedNode(
-                sourceId="source-a", graphId="graph-a", graphRevision="graph-a", nodeId="a-start",
-                stableKey="a-start", label="A.start", nodeKind="CALLABLE", score=1.0,
-                matchReasons=["EXACT_NAME"],
-            )
-        ],
-        KnowledgeQueryPolicy(max_entrypoints_per_query=10),
-        max_flows=10,
-        include_tests=False,
+    flow_nodes = (
+        FlowGraphNode("source-a", "graph-a", "graph-a", "a-start", "a-start", "CALLABLE", "A.start"),
+        FlowGraphNode("source-a", "graph-a", "graph-a", "b-work", "b-work", "CALLABLE", "B.work"),
     )
+    flow_edge = FlowGraphEdge("source-a", "graph-a", "graph-a", "edge-a-b", "CALLS", "a-start", "b-work", "RESOLVED")
+    flow = EntrypointFlow(
+        key=EntrypointFlowKey("source-a", "graph-a", "a-start"),
+        entrypoint=flow_nodes[0],
+        origin=EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT,
+        anchors=(EntrypointFlowAnchor("a-start", "A.start", 1.0, ("EXACT_NAME",), 0),),
+        nodes=flow_nodes,
+        transitions=(flow_edge,),
+        boundary_transitions=(),
+        evidence=(),
+        complete=True,
+        coverage=EntrypointFlowCoverage(2, 1, 0, 1, 1),
+        diagnostics=(),
+        relevance_score=1.0,
+    )
+    flow_result = SimpleNamespace(flows=(flow,), public_flows=EntrypointFlowEngine().public_flows([flow]))
     query_response = KnowledgeQueryResponse(
         queryId="query-test",
         status=KnowledgeQueryStatus.OK,
@@ -315,30 +321,29 @@ def test_cancelled_flow_explanation_request_does_not_start_subsequent_flow_calls
                 self.first_returned.set()
             else:
                 self.second_started.set()
-            step_refs = [step["stepRef"] for step in llm_input["steps"]]
+            node_refs = [step["nodeRef"] for step in llm_input["steps"]]
             transition_refs = [transition["transitionRef"] for transition in llm_input.get("transitions", [])]
             response = {
                 "title": "cancelled request flow",
                 "narrative": [
                     {
-                        "text": "This blocked explanation has enough detail to represent the first flow facts.",
-                        "stepRefs": step_refs,
+                        "text": "This blocked explanation has enough detail to represent the first flow facts, the participating node references, and the CALLS transitions in the graph.",
+                        "nodeRefs": node_refs,
                         "transitionRefs": transition_refs,
                         "boundaryRefs": [],
                     },
                     {
-                        "text": "The second grounded block exists only so validation can pass if not cancelled.",
-                        "stepRefs": step_refs,
+                        "text": "The second grounded block describes the same graph slice with enough factual words for validation while avoiding any invented execution order.",
+                        "nodeRefs": node_refs,
                         "transitionRefs": transition_refs,
                         "boundaryRefs": [],
                     },
                 ],
                 "steps": [
                     {
-                        "stepRef": step["stepRef"],
-                        "order": step["order"],
+                        "nodeRef": step["nodeRef"],
                         "explanation": f"`{step['symbol']}` is grounded.",
-                        "transitionRefs": [item["transitionRef"] for item in llm_input.get("transitions", []) if item["fromStepRef"] == step["stepRef"]],
+                        "transitionRefs": [item["transitionRef"] for item in llm_input.get("transitions", []) if item["fromNodeRef"] == step["nodeRef"]],
                         "evidenceRefs": [item["ref"] for item in step.get("evidence", [])],
                     }
                     for step in llm_input["steps"]

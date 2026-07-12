@@ -9,15 +9,6 @@ FlowEdgeKey = Tuple[str, str, str]
 
 
 @dataclass(frozen=True)
-class FlowGraphSourceScope:
-    source_id: str
-    graph_id: str
-    graph_revision: str | None = None
-    node_ids: tuple[str, ...] = ()
-    include_tests: bool = False
-
-
-@dataclass(frozen=True)
 class FlowGraphNode:
     source_id: str
     graph_id: str
@@ -49,6 +40,7 @@ class FlowGraphEdge:
     unresolved_target: dict[str, object] | None = None
     evidence_ids: tuple[str, ...] = ()
     flow_domain: str | None = None
+    boundary_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -63,14 +55,6 @@ class FlowGraphEvidence:
     line_start: int | None
     line_end: int | None
     text: str | None
-
-
-@dataclass(frozen=True)
-class FlowGraphBundle:
-    nodes: tuple[FlowGraphNode, ...] = ()
-    edges: tuple[FlowGraphEdge, ...] = ()
-    evidence: tuple[FlowGraphEvidence, ...] = ()
-    truncated: bool = False
 
 
 def dedupe_evidence(items: Sequence[FlowGraphEvidence]) -> tuple[FlowGraphEvidence, ...]:

@@ -94,6 +94,391 @@
         "title": "Intent",
         "type": "object"
       },
+      "JarvisEntrypointOrigin": {
+        "description": "An enumeration.",
+        "enum": [
+          "EXPLICIT_GRAPH_FACT",
+          "INFERRED_ROOT"
+        ],
+        "title": "JarvisEntrypointOrigin",
+        "type": "string"
+      },
+      "JarvisFlowBoundary": {
+        "properties": {
+          "boundaryRef": {
+            "title": "Boundaryref",
+            "type": "string"
+          },
+          "evidenceRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "fromNodeRef": {
+            "title": "Fromnoderef",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "resolutionStatus": {
+            "title": "Resolutionstatus",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "boundaryRef",
+          "fromNodeRef",
+          "kind",
+          "resolutionStatus"
+        ],
+        "title": "JarvisFlowBoundary",
+        "type": "object"
+      },
+      "JarvisFlowCoverage": {
+        "properties": {
+          "anchorCount": {
+            "default": 0,
+            "title": "Anchorcount",
+            "type": "integer"
+          },
+          "boundaryCount": {
+            "default": 0,
+            "title": "Boundarycount",
+            "type": "integer"
+          },
+          "cycleDetected": {
+            "default": false,
+            "title": "Cycledetected",
+            "type": "boolean"
+          },
+          "maxDepthReached": {
+            "default": 0,
+            "title": "Maxdepthreached",
+            "type": "integer"
+          },
+          "nodeCount": {
+            "default": 0,
+            "title": "Nodecount",
+            "type": "integer"
+          },
+          "transitionCount": {
+            "default": 0,
+            "title": "Transitioncount",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "JarvisFlowCoverage",
+        "type": "object"
+      },
+      "JarvisFlowEvidence": {
+        "properties": {
+          "evidenceRef": {
+            "title": "Evidenceref",
+            "type": "string"
+          },
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "lineEnd": {
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "ownerRef": {
+            "title": "Ownerref",
+            "type": "string"
+          },
+          "relativePath": {
+            "title": "Relativepath",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidenceRef",
+          "ownerRef"
+        ],
+        "title": "JarvisFlowEvidence",
+        "type": "object"
+      },
+      "JarvisFlowNode": {
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "lineEnd": {
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "nodeRef": {
+            "title": "Noderef",
+            "type": "string"
+          },
+          "qualifiedName": {
+            "title": "Qualifiedname",
+            "type": "string"
+          },
+          "relativePath": {
+            "title": "Relativepath",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeRef",
+          "label",
+          "kind"
+        ],
+        "title": "JarvisFlowNode",
+        "type": "object"
+      },
+      "JarvisFlowOrigin": {
+        "properties": {
+          "anchorRef": {
+            "title": "Anchorref",
+            "type": "string"
+          },
+          "distance": {
+            "title": "Distance",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "matchReasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matchreasons",
+            "type": "array"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "anchorRef",
+          "label",
+          "score",
+          "distance"
+        ],
+        "title": "JarvisFlowOrigin",
+        "type": "object"
+      },
+      "JarvisFlowTransition": {
+        "properties": {
+          "evidenceRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "fromNodeRef": {
+            "title": "Fromnoderef",
+            "type": "string"
+          },
+          "toNodeRef": {
+            "title": "Tonoderef",
+            "type": "string"
+          },
+          "transitionRef": {
+            "title": "Transitionref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transitionRef",
+          "fromNodeRef",
+          "toNodeRef"
+        ],
+        "title": "JarvisFlowTransition",
+        "type": "object"
+      },
+      "JarvisKnowledgeFlow": {
+        "properties": {
+          "boundaries": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowBoundary"
+            },
+            "title": "Boundaries",
+            "type": "array"
+          },
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/JarvisFlowCoverage"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "entrypoint": {
+            "$ref": "#/components/schemas/JarvisFlowNode"
+          },
+          "entrypointOrigin": {
+            "$ref": "#/components/schemas/JarvisEntrypointOrigin"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "flowIndex": {
+            "title": "Flowindex",
+            "type": "integer"
+          },
+          "matchedAnchors": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowOrigin"
+            },
+            "title": "Matchedanchors",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "transitions": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowTransition"
+            },
+            "title": "Transitions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "flowIndex",
+          "source",
+          "entrypoint",
+          "entrypointOrigin"
+        ],
+        "title": "JarvisKnowledgeFlow",
+        "type": "object"
+      },
+      "JarvisQueryCoverage": {
+        "properties": {
+          "continuationAvailable": {
+            "default": false,
+            "title": "Continuationavailable",
+            "type": "boolean"
+          },
+          "edgeCount": {
+            "default": 0,
+            "title": "Edgecount",
+            "type": "integer"
+          },
+          "evidenceCount": {
+            "default": 0,
+            "title": "Evidencecount",
+            "type": "integer"
+          },
+          "flowCount": {
+            "default": 0,
+            "title": "Flowcount",
+            "type": "integer"
+          },
+          "matchedNodeCount": {
+            "default": 0,
+            "title": "Matchednodecount",
+            "type": "integer"
+          },
+          "matchedSourceCount": {
+            "default": 0,
+            "title": "Matchedsourcecount",
+            "type": "integer"
+          },
+          "nodeCount": {
+            "default": 0,
+            "title": "Nodecount",
+            "type": "integer"
+          },
+          "searchedSourceCount": {
+            "default": 0,
+            "title": "Searchedsourcecount",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "JarvisQueryCoverage",
+        "type": "object"
+      },
+      "JarvisQueryDiagnostic": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "metadata": {
+            "title": "Metadata",
+            "type": "object"
+          },
+          "severity": {
+            "default": "INFO",
+            "title": "Severity",
+            "type": "string"
+          },
+          "sourceId": {
+            "title": "Sourceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "JarvisQueryDiagnostic",
+        "type": "object"
+      },
       "JarvisQueryIntent": {
         "description": "An enumeration.",
         "enum": [
@@ -152,19 +537,18 @@
         "additionalProperties": false,
         "properties": {
           "coverage": {
-            "title": "Coverage",
-            "type": "object"
+            "$ref": "#/components/schemas/JarvisQueryCoverage"
           },
           "diagnostics": {
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/JarvisQueryDiagnostic"
             },
             "title": "Diagnostics",
             "type": "array"
           },
           "flows": {
             "items": {
-              "type": "object"
+              "$ref": "#/components/schemas/JarvisKnowledgeFlow"
             },
             "title": "Flows",
             "type": "array"

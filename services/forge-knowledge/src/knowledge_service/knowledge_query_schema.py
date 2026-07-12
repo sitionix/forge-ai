@@ -23,6 +23,16 @@ class KnowledgeQueryIntent(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class KnowledgeQueryEntrypointOrigin(str, Enum):
+    EXPLICIT_GRAPH_FACT = "EXPLICIT_GRAPH_FACT"
+    INFERRED_ROOT = "INFERRED_ROOT"
+
+
+class FlowExplanationStatus(str, Enum):
+    OK = "OK"
+    FAILED = "FAILED"
+
+
 class KnowledgeQueryRequest(BaseModel):
     queryText: str = Field(..., min_length=1)
     intent: KnowledgeQueryIntent = KnowledgeQueryIntent.UNKNOWN
@@ -171,7 +181,7 @@ class KnowledgeQueryFlow(BaseModel):
     flowIndex: int
     source: str
     entrypoint: KnowledgeQueryFlowNode
-    entrypointOrigin: str
+    entrypointOrigin: KnowledgeQueryEntrypointOrigin
     matchedAnchors: List[KnowledgeQueryFlowOrigin] = Field(default_factory=list)
     nodes: List[KnowledgeQueryFlowNode] = Field(default_factory=list)
     transitions: List[KnowledgeQueryFlowTransition] = Field(default_factory=list)
@@ -206,13 +216,15 @@ class KnowledgeQueryResponse(BaseModel):
 
 
 class FlowExplanationStep(BaseModel):
-    order: int
+    nodeRef: str
     nodeLabel: str
     explanation: Optional[str] = None
+    transitionRefs: List[str] = Field(default_factory=list)
     evidenceRefs: List[str] = Field(default_factory=list)
 
 
 class FlowExplanationBoundary(BaseModel):
+    boundaryRef: str
     kind: str
     explanation: Optional[str] = None
     evidenceRefs: List[str] = Field(default_factory=list)
@@ -224,16 +236,11 @@ class FlowExplanation(BaseModel):
     narrative: List[str] = Field(default_factory=list)
     steps: List[FlowExplanationStep] = Field(default_factory=list)
     boundaries: List[FlowExplanationBoundary] = Field(default_factory=list)
-    status: str = "OK"
+    status: FlowExplanationStatus = FlowExplanationStatus.OK
 
 
 class KnowledgeQueryFlowExplanationResponse(KnowledgeQueryResponse):
     flowExplanations: List[FlowExplanation] = Field(default_factory=list)
-
-
-class FlowToolStatus(str, Enum):
-    OK = "OK"
-    FAILED = "FAILED"
 
 
 class FlowToolAddress(BaseModel):
@@ -252,7 +259,7 @@ class FlowToolEvidence(BaseModel):
 
 
 class FlowToolStep(BaseModel):
-    order: int
+    nodeRef: str
     symbol: str
     kind: str
     address: FlowToolAddress = Field(default_factory=FlowToolAddress)
@@ -261,8 +268,9 @@ class FlowToolStep(BaseModel):
 
 
 class FlowToolTransition(BaseModel):
-    fromOrder: int
-    toOrder: int
+    transitionRef: str
+    fromNodeRef: str
+    toNodeRef: str
     fromSymbol: str
     toSymbol: str
     explanation: Optional[str] = None
@@ -270,6 +278,8 @@ class FlowToolTransition(BaseModel):
 
 
 class FlowToolBoundary(BaseModel):
+    boundaryRef: str
+    fromNodeRef: str
     kind: str
     target: Optional[str] = None
     explanation: Optional[str] = None
@@ -278,7 +288,7 @@ class FlowToolBoundary(BaseModel):
 
 class FlowToolContext(BaseModel):
     flowIndex: int
-    status: FlowToolStatus = FlowToolStatus.OK
+    status: FlowExplanationStatus = FlowExplanationStatus.OK
     title: str = ""
     narrative: List[str] = Field(default_factory=list)
     steps: List[FlowToolStep] = Field(default_factory=list)

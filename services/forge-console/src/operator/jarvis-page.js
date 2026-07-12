@@ -340,7 +340,7 @@ export class JarvisPage {
   renderFlows(items, diagnostics = [], matchedNodes = []) {
     if (items.length === 0) {
       const diagnostic = matchedNodes.length > 0
-        ? diagnostics.find((item) => ['ENTRYPOINT_FLOW_ROOT_NOT_FOUND', 'ENTRYPOINT_FLOW_SLICE_TRUNCATED'].includes(item.code))
+        ? diagnostics.find((item) => item.code === 'ENTRYPOINT_FLOW_ROOT_NOT_FOUND')
         : null;
       return `<div class="empty-state">${escapeHtml(diagnostic?.message || 'No entrypoint flows.')}</div>`;
     }

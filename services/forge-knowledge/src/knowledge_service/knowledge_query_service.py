@@ -33,26 +33,15 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryStatus,
 )
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine
-from knowledge_service.flow_graph_contract import (
-    FlowGraphBundle,
-    FlowGraphSourceScope,
-)
+from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 
 @dataclass(frozen=True)
 class KnowledgeQueryPolicy:
     max_search_documents: int = 5000
     max_candidates_per_provider: int = 100
     max_display_candidates: int = 20
-    max_traversal_nodes: int = 80
-    max_entrypoints_per_query: int = 25
-    max_reverse_depth: int = 8
-    max_downstream_depth: int = 12
-    max_edges_per_node: int = 64
-    max_edges_per_traversal: int = 2000
     max_expanded_anchors: int = 200
     max_anchor_expansion_per_candidate: int = 30
-    max_execution_ms: int = 250
-    max_evidence_refs: int = 25
     min_lexical_score: float = 0.28
     min_fuzzy_score: float = 0.58
     fuzzy_max_edit_distance: int = 3
@@ -850,62 +839,22 @@ class AnchorExpansionService:
     def _node_kind(self, value: str) -> str:
         return str(value or "").upper()
 
-class EntrypointFlowGraphLoader:
-    def __init__(self, graph_store: Any | None = None) -> None:
-        self.graph_store = graph_store
-
-    def load(
-        self,
-        matched_nodes: Sequence[KnowledgeQueryMatchedNode],
-        policy: KnowledgeQueryPolicy,
-        include_tests: bool,
-    ) -> FlowGraphBundle:
-        if not matched_nodes:
-            return FlowGraphBundle()
-        if self.graph_store is None or not hasattr(self.graph_store, "load_call_flow_graph"):
-            raise RuntimeError("Entrypoint flow graph loading requires load_call_flow_graph")
-        return self.graph_store.load_call_flow_graph(
-            self._source_scopes(matched_nodes, include_tests),
-            max_edges=policy.max_edges_per_traversal,
-            max_evidence=0,
-        )
-
-    def _source_scopes(self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], include_tests: bool) -> List[FlowGraphSourceScope]:
-        grouped: Dict[tuple[str, str, str | None], set[str]] = {}
-        for matched_node in matched_nodes:
-            source_id = matched_node.sourceId
-            node_id = matched_node.nodeId
-            if not source_id or not node_id:
-                continue
-            key = (source_id, matched_node.graphId or "", matched_node.graphRevision)
-            grouped.setdefault(key, set()).add(node_id)
-        return [
-            FlowGraphSourceScope(
-                source_id=source_id,
-                graph_id=graph_id,
-                graph_revision=graph_revision,
-                node_ids=tuple(sorted(node_ids)),
-                include_tests=include_tests,
-            )
-            for (source_id, graph_id, graph_revision), node_ids in sorted(grouped.items())
-        ]
-
 class KnowledgeQueryService:
     def __init__(
         self,
         source_scope_resolver: SourceScopeResolver,
         anchor_searcher: UnifiedAnchorSearcher,
-        flow_graph_loader: EntrypointFlowGraphLoader,
+        flow_repository: EntrypointFlowGraphRepository,
         flow_engine: EntrypointFlowEngine | None = None,
         policy: KnowledgeQueryPolicy | None = None,
         anchor_expander: AnchorExpansionService | None = None,
     ) -> None:
         self.source_scope_resolver = source_scope_resolver
         self.anchor_searcher = anchor_searcher
-        self.flow_graph_loader = flow_graph_loader
-        self.flow_engine = flow_engine or EntrypointFlowEngine()
+        self.flow_repository = flow_repository
+        self.flow_engine = flow_engine or EntrypointFlowEngine(flow_repository)
         self.policy = policy or KnowledgeQueryPolicy()
-        self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_graph_loader, "graph_store", None))
+        self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_repository, "graph_store", None))
 
     def query(self, request: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
         return self.query_with_flows(request).response
@@ -942,35 +891,22 @@ class KnowledgeQueryService:
         anchor_result = self.anchor_expander.expand(matched_nodes, eligible_sources, self.policy)
         diagnostics.extend(anchor_result.diagnostics)
         flow_seed_nodes = anchor_result.flow_seed_nodes
-        graph_load_started = time.monotonic()
-        flow_bundle = self.flow_graph_loader.load(flow_seed_nodes, self.policy, bool(request.includeTests))
-        graph_load_ms = (time.monotonic() - graph_load_started) * 1000
-        request_flow_limit = max(1, min(int(request.maxFlows or 10), int(self.policy.max_entrypoints_per_query or 25)))
+        request_flow_limit = max(1, min(int(request.maxFlows or 10), 10))
         build_result = self.flow_engine.build(
-            flow_bundle,
             flow_seed_nodes,
-            self.policy,
             max_flows=request_flow_limit,
             include_tests=bool(request.includeTests),
         )
         diagnostics.extend(build_result.diagnostics)
-        hydration_started = time.monotonic()
-        flows, public_flows, hydration_truncated, hydration_diagnostics = self._hydrate_returned_flows(
-            build_result.flows,
-            self.policy.max_evidence_refs,
-        )
-        hydration_ms = (time.monotonic() - hydration_started) * 1000
-        diagnostics.extend(hydration_diagnostics)
         diagnostics.append(KnowledgeQueryDiagnostic(
             code="ENTRYPOINT_FLOW_TIMINGS",
             message="Entrypoint flow query stage timings.",
             severity="INFO",
             metadata={
                 "candidateSearchMs": round(candidate_ms, 3),
-                "graphLoadMs": round(graph_load_ms, 3),
                 **(build_result.stage_timings_ms or {}),
-                "evidenceHydrationMs": round(hydration_ms, 3),
                 "totalMs": round((time.monotonic() - query_started) * 1000, 3),
+                **(build_result.traversal_stats or {}),
             },
         ))
         matched_sources = self._matched_sources(matched_nodes, eligible_sources)
@@ -991,52 +927,22 @@ class KnowledgeQueryService:
                 intent=request.intent.value,
                 matchedSources=matched_sources,
                 matchedNodes=[self._matched_node_preview(item) for item in display_matched_nodes],
-                flows=public_flows,
+                flows=build_result.public_flows,
                 coverage=KnowledgeQueryCoverage(
                     searchedSourceCount=len(eligible_sources),
                     matchedSourceCount=len(matched_sources),
                     matchedNodeCount=len(matched_nodes),
-                    flowCount=len(public_flows),
-                    nodeCount=sum(flow.coverage.node_count for flow in flows),
-                    edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in flows),
-                    evidenceCount=sum(len(flow.evidence) for flow in flows),
-                    truncated=candidate_result.truncated or anchor_result.truncated or build_result.truncated or hydration_truncated,
-                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or build_result.truncated or hydration_truncated,
+                    flowCount=len(build_result.public_flows),
+                    nodeCount=sum(flow.coverage.node_count for flow in build_result.flows),
+                    edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in build_result.flows),
+                    evidenceCount=sum(len(flow.evidence) for flow in build_result.flows),
+                    truncated=candidate_result.truncated or anchor_result.truncated or build_result.truncated,
+                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or build_result.truncated,
                 ),
                 diagnostics=diagnostics,
             ),
-            flows=flows,
+            flows=build_result.flows,
         )
-
-    def _hydrate_returned_flows(
-        self,
-        flows: tuple[EntrypointFlow, ...],
-        max_evidence_refs: int,
-    ) -> tuple[tuple[EntrypointFlow, ...], list[Any], bool, List[KnowledgeQueryDiagnostic]]:
-        graph_store = getattr(self.flow_graph_loader, "graph_store", None)
-        if graph_store is None or not hasattr(graph_store, "hydrate_entrypoint_flow_evidence"):
-            return flows, self.flow_engine.public_flows(flows), False, []
-        result = graph_store.hydrate_entrypoint_flow_evidence(flows, max_evidence_refs=max_evidence_refs)
-        hydrated_flows = tuple(getattr(result, "flows", flows) or ())
-        public_flows = self.flow_engine.public_flows(hydrated_flows)
-        truncated = bool(getattr(result, "truncated", False))
-        diagnostics: List[KnowledgeQueryDiagnostic] = []
-        if truncated:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="FLOW_EVIDENCE_TRUNCATED",
-                    message="Returned flow evidence was truncated by the per-flow evidence budget after required edge evidence hydration.",
-                    severity="WARN",
-                    metadata={
-                        "maxEvidenceRefsPerFlow": int(max_evidence_refs),
-                        "requiredEdgeEvidenceCount": int(getattr(result, "required_edge_count", 0)),
-                        "hydratedEdgeEvidenceCount": int(getattr(result, "hydrated_edge_count", 0)),
-                        "evidenceCount": int(getattr(result, "evidence_count", 0)),
-                        "missingEdgeIds": list(getattr(result, "missing_edge_ids", ()) or ())[:20],
-                    },
-                )
-            )
-        return hydrated_flows, public_flows, truncated, diagnostics
 
     def _matched_sources(
         self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], eligible_sources: Sequence[QuerySource]
@@ -1081,8 +987,7 @@ def build_knowledge_query_service(graph_store: Any, app_config: Any | None = Non
     return KnowledgeQueryService(
         source_scope_resolver=SourceScopeResolver(graph_store),
         anchor_searcher=UnifiedAnchorSearcher(graph_store, search_engine=search_engine),
-        flow_graph_loader=EntrypointFlowGraphLoader(graph_store),
-        flow_engine=EntrypointFlowEngine(),
+        flow_repository=EntrypointFlowGraphRepository(graph_store),
         anchor_expander=AnchorExpansionService(graph_store),
     )
 

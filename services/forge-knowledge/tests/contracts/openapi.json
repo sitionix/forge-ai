@@ -108,9 +108,12 @@
             "type": "array"
           },
           "status": {
-            "default": "OK",
-            "title": "Status",
-            "type": "string"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FlowExplanationStatus"
+              }
+            ],
+            "default": "OK"
           },
           "steps": {
             "items": {
@@ -133,6 +136,10 @@
       },
       "FlowExplanationBoundary": {
         "properties": {
+          "boundaryRef": {
+            "title": "Boundaryref",
+            "type": "string"
+          },
           "evidenceRefs": {
             "items": {
               "type": "string"
@@ -150,10 +157,20 @@
           }
         },
         "required": [
+          "boundaryRef",
           "kind"
         ],
         "title": "FlowExplanationBoundary",
         "type": "object"
+      },
+      "FlowExplanationStatus": {
+        "description": "An enumeration.",
+        "enum": [
+          "OK",
+          "FAILED"
+        ],
+        "title": "FlowExplanationStatus",
+        "type": "string"
       },
       "FlowExplanationStep": {
         "properties": {
@@ -172,13 +189,20 @@
             "title": "Nodelabel",
             "type": "string"
           },
-          "order": {
-            "title": "Order",
-            "type": "integer"
+          "nodeRef": {
+            "title": "Noderef",
+            "type": "string"
+          },
+          "transitionRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Transitionrefs",
+            "type": "array"
           }
         },
         "required": [
-          "order",
+          "nodeRef",
           "nodeLabel"
         ],
         "title": "FlowExplanationStep",
@@ -208,6 +232,10 @@
       },
       "FlowToolBoundary": {
         "properties": {
+          "boundaryRef": {
+            "title": "Boundaryref",
+            "type": "string"
+          },
           "evidence": {
             "items": {
               "$ref": "#/components/schemas/FlowToolEvidence"
@@ -217,6 +245,10 @@
           },
           "explanation": {
             "title": "Explanation",
+            "type": "string"
+          },
+          "fromNodeRef": {
+            "title": "Fromnoderef",
             "type": "string"
           },
           "kind": {
@@ -229,6 +261,8 @@
           }
         },
         "required": [
+          "boundaryRef",
+          "fromNodeRef",
           "kind"
         ],
         "title": "FlowToolBoundary",
@@ -264,7 +298,7 @@
           "status": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/FlowToolStatus"
+                "$ref": "#/components/schemas/FlowExplanationStatus"
               }
             ],
             "default": "OK"
@@ -324,15 +358,6 @@
         "title": "FlowToolEvidence",
         "type": "object"
       },
-      "FlowToolStatus": {
-        "description": "An enumeration.",
-        "enum": [
-          "OK",
-          "FAILED"
-        ],
-        "title": "FlowToolStatus",
-        "type": "string"
-      },
       "FlowToolStep": {
         "properties": {
           "address": {
@@ -353,9 +378,9 @@
             "title": "Kind",
             "type": "string"
           },
-          "order": {
-            "title": "Order",
-            "type": "integer"
+          "nodeRef": {
+            "title": "Noderef",
+            "type": "string"
           },
           "symbol": {
             "title": "Symbol",
@@ -363,7 +388,7 @@
           }
         },
         "required": [
-          "order",
+          "nodeRef",
           "symbol",
           "kind"
         ],
@@ -383,26 +408,31 @@
             "title": "Explanation",
             "type": "string"
           },
-          "fromOrder": {
-            "title": "Fromorder",
-            "type": "integer"
+          "fromNodeRef": {
+            "title": "Fromnoderef",
+            "type": "string"
           },
           "fromSymbol": {
             "title": "Fromsymbol",
             "type": "string"
           },
-          "toOrder": {
-            "title": "Toorder",
-            "type": "integer"
+          "toNodeRef": {
+            "title": "Tonoderef",
+            "type": "string"
           },
           "toSymbol": {
             "title": "Tosymbol",
             "type": "string"
+          },
+          "transitionRef": {
+            "title": "Transitionref",
+            "type": "string"
           }
         },
         "required": [
-          "fromOrder",
-          "toOrder",
+          "transitionRef",
+          "fromNodeRef",
+          "toNodeRef",
           "fromSymbol",
           "toSymbol"
         ],
@@ -529,6 +559,15 @@
         "title": "KnowledgeQueryDiagnostic",
         "type": "object"
       },
+      "KnowledgeQueryEntrypointOrigin": {
+        "description": "An enumeration.",
+        "enum": [
+          "EXPLICIT_GRAPH_FACT",
+          "INFERRED_ROOT"
+        ],
+        "title": "KnowledgeQueryEntrypointOrigin",
+        "type": "string"
+      },
       "KnowledgeQueryFlow": {
         "properties": {
           "boundaries": {
@@ -557,8 +596,7 @@
             "$ref": "#/components/schemas/KnowledgeQueryFlowNode"
           },
           "entrypointOrigin": {
-            "title": "Entrypointorigin",
-            "type": "string"
+            "$ref": "#/components/schemas/KnowledgeQueryEntrypointOrigin"
           },
           "evidence": {
             "items": {
