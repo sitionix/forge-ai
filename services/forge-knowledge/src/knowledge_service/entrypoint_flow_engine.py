@@ -643,4 +643,4 @@ class EntrypointFlowEngine:
                 value = target.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
-        return edge.to_node_id if edge.boundary_reason == "CURRENT_TARGET_NODE_MISSING" else None
+        return None

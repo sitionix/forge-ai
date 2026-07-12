@@ -102,7 +102,7 @@
           },
           "narrative": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/FlowExplanationNarrative"
             },
             "title": "Narrative",
             "type": "array"
@@ -126,6 +126,13 @@
             "default": "",
             "title": "Title",
             "type": "string"
+          },
+          "transitionExplanations": {
+            "items": {
+              "$ref": "#/components/schemas/FlowExplanationTransition"
+            },
+            "title": "Transitionexplanations",
+            "type": "array"
           }
         },
         "required": [
@@ -161,6 +168,40 @@
           "kind"
         ],
         "title": "FlowExplanationBoundary",
+        "type": "object"
+      },
+      "FlowExplanationNarrative": {
+        "properties": {
+          "boundaryRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Boundaryrefs",
+            "type": "array"
+          },
+          "nodeRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Noderefs",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "transitionRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Transitionrefs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "FlowExplanationNarrative",
         "type": "object"
       },
       "FlowExplanationStatus": {
@@ -206,6 +247,30 @@
           "nodeLabel"
         ],
         "title": "FlowExplanationStep",
+        "type": "object"
+      },
+      "FlowExplanationTransition": {
+        "properties": {
+          "evidenceRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "transitionRef": {
+            "title": "Transitionref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transitionRef"
+        ],
+        "title": "FlowExplanationTransition",
         "type": "object"
       },
       "FlowToolAddress": {
@@ -290,7 +355,7 @@
           },
           "narrative": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/FlowExplanationNarrative"
             },
             "title": "Narrative",
             "type": "array"

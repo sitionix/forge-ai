@@ -307,6 +307,8 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseStatus(HttpStatus.OK.value())
                         .responseBody("responseProxyGraphEdgeDetailContract.json"))
                 .create();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeQueryFlowExplanations()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeQueryToolContext()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisCommand()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
 
@@ -344,6 +346,12 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphEdgeContract())
                 .withQueryParameters(InfrastructureProxyQuery.graphNodeDetailContract())
+                .header("X-Correlation-Id", "corr-parity")
+                .assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeQueryFlowExplanations())
+                .header("X-Correlation-Id", "corr-parity")
+                .assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeQueryToolContext())
                 .header("X-Correlation-Id", "corr-parity")
                 .assertDefault();
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import replace
-from typing import Any, Dict, Iterable, List, Sequence, Set
+from typing import Any, Dict, Iterable, List, Sequence
 
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
@@ -73,7 +73,6 @@ class EntrypointFlowGraphRepository:
 
         edge_evidence_by_source: dict[str, list[FlowGraphEvidence]] = defaultdict(list)
         node_evidence_by_source: dict[str, list[FlowGraphEvidence]] = defaultdict(list)
-        edge_evidence_ids_by_source: dict[str, set[str]] = defaultdict(set)
         with self.graph_store._connect() as conn:
             for source_id, edge_ids in sorted(edge_ids_by_source.items()):
                 rows = self._query_edge_evidence(conn, source_id, sorted(edge_ids))
@@ -81,9 +80,8 @@ class EntrypointFlowGraphRepository:
                 self.graph_store._attach_current_graph_identity(conn, rows)
                 evidence = [item for item in (self.graph_store._flow_graph_evidence_from_public_graph(row) for row in rows) if item is not None]
                 edge_evidence_by_source[source_id].extend(evidence)
-                edge_evidence_ids_by_source[source_id].update(item.evidence_id for item in evidence)
             for source_id, node_ids in sorted(node_ids_by_source.items()):
-                rows = self._query_node_evidence(conn, source_id, sorted(node_ids), edge_evidence_ids_by_source.get(source_id, set()))
+                rows = self._query_node_evidence(conn, source_id, sorted(node_ids))
                 self._metrics["evidenceRowsLoaded"] += len(rows)
                 self.graph_store._attach_current_graph_identity(conn, rows)
                 node_evidence_by_source[source_id].extend(
@@ -319,7 +317,6 @@ class EntrypointFlowGraphRepository:
         conn: Any,
         source_id: str,
         node_ids: Sequence[str],
-        seen_evidence_ids: Set[str],
     ) -> List[Dict[str, Any]]:
         result: List[Dict[str, Any]] = []
         if not node_ids:
@@ -327,8 +324,6 @@ class EntrypointFlowGraphRepository:
         contract = graph_query_contract()
         current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
         for chunk in _chunks(list(node_ids)):
-            seen_values = sorted(evidence_id for evidence_id in seen_evidence_ids if evidence_id)
-            seen_clause = f"AND ev.id NOT IN ({','.join('?' for _ in seen_values)})" if seen_values else ""
             self._metrics["sqlStatements"] += 1
             placeholders = ",".join("?" for _ in chunk)
             rows = conn.execute(
@@ -356,10 +351,9 @@ class EntrypointFlowGraphRepository:
                   AND claim.status IN ({current_status_sql})
                   AND claim.node_id IN ({placeholders})
                   AND claim.rejection_reason IS NULL
-                  {seen_clause}
                 ORDER BY claim.node_id, relative_path, ev.line_start, ev.line_end, ev.id
                 """,
-                [source_id, *current_status_params, *chunk, *seen_values],
+                [source_id, *current_status_params, *chunk],
             ).fetchall()
             result.extend(self.graph_store._linked_evidence_projection(rows))
         return result

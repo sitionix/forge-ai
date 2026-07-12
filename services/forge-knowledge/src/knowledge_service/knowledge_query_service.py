@@ -40,8 +40,6 @@ class KnowledgeQueryPolicy:
     max_search_documents: int = 5000
     max_candidates_per_provider: int = 100
     max_display_candidates: int = 20
-    max_expanded_anchors: int = 200
-    max_anchor_expansion_per_candidate: int = 30
     min_lexical_score: float = 0.28
     min_fuzzy_score: float = 0.58
     fuzzy_max_edit_distance: int = 3
@@ -529,8 +527,6 @@ class AnchorExpansionService:
         try:
             bundle = self.graph_store.query_anchor_expansion(
                 self._source_node_pairs(original_candidates, graph_id_by_source, revision_by_source),
-                max_per_anchor=max(1, int(policy.max_anchor_expansion_per_candidate or 1)),
-                max_total=max(1, int(policy.max_expanded_anchors or 1)),
             )
         except Exception:
             return self._result(
@@ -551,8 +547,6 @@ class AnchorExpansionService:
         declares_out, declares_in, uses_field_in = self._structural_edge_indexes(bundle)
         truncated = bool(bundle.truncated)
         diagnostics: List[KnowledgeQueryDiagnostic] = []
-        added_by_origin: Dict[AnchorNodeKey, int] = defaultdict(int)
-        expanded_added = 0
 
         def add_expanded(
             origin: KnowledgeQueryMatchedNode,
@@ -560,7 +554,6 @@ class AnchorExpansionService:
             roles: set[AnchorRole],
             reason: AnchorExpansionReason,
         ) -> None:
-            nonlocal expanded_added, truncated
             if not raw_node:
                 return
             node = self._matched_node_from_graph_node(raw_node, origin)
@@ -568,15 +561,6 @@ class AnchorExpansionService:
             origin_key = accumulator.node_key(origin)
             if node_key is None or origin_key is None:
                 return
-            exists = accumulator.has_key(node_key)
-            if not exists:
-                per_anchor_limit = max(1, int(policy.max_anchor_expansion_per_candidate or 1))
-                total_limit = max(1, int(policy.max_expanded_anchors or 1))
-                if added_by_origin[origin_key] >= per_anchor_limit or expanded_added >= total_limit:
-                    truncated = True
-                    return
-                added_by_origin[origin_key] += 1
-                expanded_added += 1
             accumulator.add_anchor(node, roles, {reason}, origin.nodeId, node.score)
 
         for candidate in original_candidates:
@@ -626,18 +610,6 @@ class AnchorExpansionService:
         for key in self._entrypoint_keys(bundle, graph_nodes):
             accumulator.add_role_reason(key, AnchorRole.ENTRYPOINT_CANDIDATE, AnchorExpansionReason.ENTRYPOINT_HINT)
 
-        if truncated:
-            diagnostics.append(
-                KnowledgeQueryDiagnostic(
-                    code="ANCHOR_EXPANSION_LIMIT_REACHED",
-                    message="Graph anchor expansion reached an internal safety limit.",
-                    severity="INFO",
-                    metadata={
-                        "maxExpandedAnchors": policy.max_expanded_anchors,
-                        "maxAnchorExpansionPerCandidate": policy.max_anchor_expansion_per_candidate,
-                    },
-                )
-            )
         return self._result(original_candidates, accumulator, diagnostics, truncated=truncated)
 
     def _add_original_candidate(self, accumulator: _AnchorAccumulator, candidate: KnowledgeQueryMatchedNode) -> None:

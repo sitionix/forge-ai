@@ -223,6 +223,19 @@ class FlowExplanationStep(BaseModel):
     evidenceRefs: List[str] = Field(default_factory=list)
 
 
+class FlowExplanationNarrative(BaseModel):
+    text: str
+    nodeRefs: List[str] = Field(default_factory=list)
+    transitionRefs: List[str] = Field(default_factory=list)
+    boundaryRefs: List[str] = Field(default_factory=list)
+
+
+class FlowExplanationTransition(BaseModel):
+    transitionRef: str
+    explanation: Optional[str] = None
+    evidenceRefs: List[str] = Field(default_factory=list)
+
+
 class FlowExplanationBoundary(BaseModel):
     boundaryRef: str
     kind: str
@@ -233,8 +246,9 @@ class FlowExplanationBoundary(BaseModel):
 class FlowExplanation(BaseModel):
     flowIndex: int
     title: str = ""
-    narrative: List[str] = Field(default_factory=list)
+    narrative: List[FlowExplanationNarrative] = Field(default_factory=list)
     steps: List[FlowExplanationStep] = Field(default_factory=list)
+    transitionExplanations: List[FlowExplanationTransition] = Field(default_factory=list)
     boundaries: List[FlowExplanationBoundary] = Field(default_factory=list)
     status: FlowExplanationStatus = FlowExplanationStatus.OK
 
@@ -290,7 +304,7 @@ class FlowToolContext(BaseModel):
     flowIndex: int
     status: FlowExplanationStatus = FlowExplanationStatus.OK
     title: str = ""
-    narrative: List[str] = Field(default_factory=list)
+    narrative: List[FlowExplanationNarrative] = Field(default_factory=list)
     steps: List[FlowToolStep] = Field(default_factory=list)
     transitions: List[FlowToolTransition] = Field(default_factory=list)
     boundaries: List[FlowToolBoundary] = Field(default_factory=list)

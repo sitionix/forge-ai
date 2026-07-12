@@ -76,6 +76,16 @@ public final class InfrastructureProxyEndpoint {
         return nexusGet("/api/v1/infrastructure/knowledge/analysis/diagnostics", "responseProxyAnalysisDiagnostics.json");
     }
 
+    public static Endpoint<Object, Object> nexusKnowledgeQueryFlowExplanations() {
+        return nexusPost("/api/v1/infrastructure/knowledge/query/flow-explanations", "requestProxyKnowledgeFlowQuery.json",
+                "responseProxyKnowledgeFlowExplanations.json");
+    }
+
+    public static Endpoint<Object, Object> nexusKnowledgeQueryToolContext() {
+        return nexusPost("/api/v1/infrastructure/knowledge/query/tool-context", "requestProxyKnowledgeFlowQuery.json",
+                "responseProxyKnowledgeToolContext.json");
+    }
+
     public static Endpoint<Object, Object> nexusKnowledgeGraphMetadata() {
         return nexusGet("/api/v1/infrastructure/knowledge/analysis/graph/metadata", "responseProxyGraphMetadata.json");
     }
@@ -316,6 +326,16 @@ public final class InfrastructureProxyEndpoint {
 
     public static Endpoint<Object, Object> upstreamKnowledgeAnalysisDiagnostics() {
         return upstreamGet("/api/v1/knowledge/analysis/diagnostics", "responseProxyAnalysisDiagnostics.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamKnowledgeQueryFlowExplanations() {
+        return upstreamPost("/api/v1/knowledge/query/flow-explanations", "requestProxyKnowledgeFlowQuery.json",
+                "responseProxyKnowledgeFlowExplanations.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamKnowledgeQueryToolContext() {
+        return upstreamPost("/api/v1/knowledge/query/tool-context", "requestProxyKnowledgeFlowQuery.json",
+                "responseProxyKnowledgeToolContext.json");
     }
 
     public static Endpoint<Object, Object> upstreamKnowledgeGraphMetadata() {

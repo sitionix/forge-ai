@@ -48,9 +48,10 @@ GRAPH_CONTRACT_VERSION = "GRAPH_CURRENT_V1"
 GRAPH_SORT_VERSION = "ID_ASC_V1"
 GRAPH_CURSOR_SIGNATURE_CONTEXT = "knowledge-graph-cursor-v1"
 GRAPH_NODE_DETAIL_RELATION_LIMIT = 25
+ANCHOR_EXPANSION_BIND_CHUNK_SIZE = 400
 
 
-def _chunks(values: List[int], size: int):
+def _chunks(values: Sequence[Any], size: int):
     for offset in range(0, len(values), max(1, size)):
         yield values[offset : offset + max(1, size)]
 
@@ -2184,15 +2185,11 @@ class AnalysisStore:
     def query_anchor_expansion(
         self,
         source_node_pairs: Sequence[AnchorExpansionRequest],
-        max_per_anchor: int = 30,
-        max_total: int = 200,
     ) -> AnchorExpansionBundle:
         self.init()
         requested = self._anchor_expansion_requested_pairs(source_node_pairs)
         if not requested:
             return AnchorExpansionBundle()
-        safe_max_total = max(1, min(int(max_total or 1), 1000))
-        safe_relation_limit = max(1, min(safe_max_total + max(1, int(max_per_anchor or 1)) * len(requested), 2000))
         grouped: Dict[str, Set[str]] = {}
         for source_id, node_id in requested:
             grouped.setdefault(source_id, set()).add(node_id)
@@ -2200,7 +2197,6 @@ class AnalysisStore:
         nodes: List[Dict[str, Any]] = []
         edges: List[Dict[str, Any]] = []
         entrypoint_hints: List[Dict[str, Any]] = []
-        truncated = False
         contract = graph_query_contract()
         declares_edge_type = contract.required_edge_type("DECLARES")
         uses_field_edge_type = contract.required_edge_type("USES_FIELD")
@@ -2219,95 +2215,85 @@ class AnalysisStore:
                         node_ids_by_source.setdefault(source_id, set()).add(parent_node_id)
 
                 ids = sorted(anchor_ids)
-                placeholders = ",".join("?" for _ in ids)
-                rows = conn.execute(
-                    f"""
-                    SELECT e.*,
-                           fn.display_name AS from_display_name,
-                           fn.qualified_name AS from_qualified_name,
-                           fn.name AS from_name,
-                           tn.display_name AS to_display_name,
-                           tn.qualified_name AS to_qualified_name,
-                           tn.name AS to_name
-                    FROM analysis_graph_edges e
-                    LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                    LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
-                    WHERE e.source_id = ?
-                      AND e.edge_type IN (?, ?)
-                      AND e.status IN ({current_status_sql})
-                      AND e.resolution_status = ?
-                      AND {self._inventory_membership_graph_edge_clause("e")}
-                      AND (e.from_node_id IN ({placeholders}) OR e.to_node_id IN ({placeholders}))
-                    ORDER BY e.edge_type, e.from_node_id, e.to_node_id, e.id
-                    LIMIT ?
-                    """,
-                    [
-                        source_id,
-                        declares_edge_type,
-                        uses_field_edge_type,
-                        *current_status_params,
-                        contract.resolved_status,
-                        *ids,
-                        *ids,
-                        safe_relation_limit + 1,
-                    ],
-                ).fetchall()
-                if len(rows) > safe_relation_limit:
-                    truncated = True
-                    rows = rows[:safe_relation_limit]
-                for row in rows:
-                    edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
-                    for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
-                        if node_id:
-                            node_ids_by_source.setdefault(source_id, set()).add(node_id)
-                            if node_id not in anchor_ids:
-                                first_hop_ids_by_source.setdefault(source_id, set()).add(node_id)
+                for id_chunk in _chunks(ids, ANCHOR_EXPANSION_BIND_CHUNK_SIZE):
+                    placeholders = ",".join("?" for _ in id_chunk)
+                    rows = conn.execute(
+                        f"""
+                        SELECT e.*,
+                               fn.display_name AS from_display_name,
+                               fn.qualified_name AS from_qualified_name,
+                               fn.name AS from_name,
+                               tn.display_name AS to_display_name,
+                               tn.qualified_name AS to_qualified_name,
+                               tn.name AS to_name
+                        FROM analysis_graph_edges e
+                        LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                        WHERE e.source_id = ?
+                          AND e.edge_type IN (?, ?)
+                          AND e.status IN ({current_status_sql})
+                          AND e.resolution_status = ?
+                          AND {self._inventory_membership_graph_edge_clause("e")}
+                          AND (e.from_node_id IN ({placeholders}) OR e.to_node_id IN ({placeholders}))
+                        ORDER BY e.edge_type, e.from_node_id, e.to_node_id, e.id
+                        """,
+                        [
+                            source_id,
+                            declares_edge_type,
+                            uses_field_edge_type,
+                            *current_status_params,
+                            contract.resolved_status,
+                            *id_chunk,
+                            *id_chunk,
+                        ],
+                    ).fetchall()
+                    for row in rows:
+                        edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
+                        for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
+                            if node_id:
+                                node_ids_by_source.setdefault(source_id, set()).add(node_id)
+                                if node_id not in anchor_ids:
+                                    first_hop_ids_by_source.setdefault(source_id, set()).add(node_id)
 
-            remaining_edges = max(0, safe_relation_limit - len(edges))
             for source_id, first_hop_ids in sorted(first_hop_ids_by_source.items()):
-                if remaining_edges <= 0 or not first_hop_ids:
-                    break
+                if not first_hop_ids:
+                    continue
                 ids = sorted(first_hop_ids)
-                placeholders = ",".join("?" for _ in ids)
-                rows = conn.execute(
-                    f"""
-                    SELECT e.*,
-                           fn.display_name AS from_display_name,
-                           fn.qualified_name AS from_qualified_name,
-                           fn.name AS from_name,
-                           tn.display_name AS to_display_name,
-                           tn.qualified_name AS to_qualified_name,
-                           tn.name AS to_name
-                    FROM analysis_graph_edges e
-                    LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                    LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
-                    WHERE e.source_id = ?
-                      AND e.edge_type = ?
-                      AND e.status IN ({current_status_sql})
-                      AND e.resolution_status = ?
-                      AND {self._inventory_membership_graph_edge_clause("e")}
-                      AND e.from_node_id IN ({placeholders})
-                    ORDER BY e.edge_type, e.from_node_id, e.to_node_id, e.id
-                    LIMIT ?
-                    """,
-                    [
-                        source_id,
-                        declares_edge_type,
-                        *current_status_params,
-                        contract.resolved_status,
-                        *ids,
-                        remaining_edges + 1,
-                    ],
-                ).fetchall()
-                if len(rows) > remaining_edges:
-                    truncated = True
-                    rows = rows[:remaining_edges]
-                remaining_edges -= len(rows)
-                for row in rows:
-                    edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
-                    for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
-                        if node_id:
-                            node_ids_by_source.setdefault(source_id, set()).add(node_id)
+                for id_chunk in _chunks(ids, ANCHOR_EXPANSION_BIND_CHUNK_SIZE):
+                    placeholders = ",".join("?" for _ in id_chunk)
+                    rows = conn.execute(
+                        f"""
+                        SELECT e.*,
+                               fn.display_name AS from_display_name,
+                               fn.qualified_name AS from_qualified_name,
+                               fn.name AS from_name,
+                               tn.display_name AS to_display_name,
+                               tn.qualified_name AS to_qualified_name,
+                               tn.name AS to_name
+                        FROM analysis_graph_edges e
+                        LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                        WHERE e.source_id = ?
+                          AND e.edge_type = ?
+                          AND e.status IN ({current_status_sql})
+                          AND e.resolution_status = ?
+                          AND {self._inventory_membership_graph_edge_clause("e")}
+                          AND e.from_node_id IN ({placeholders})
+                        ORDER BY e.edge_type, e.from_node_id, e.to_node_id, e.id
+                        """,
+                        [
+                            source_id,
+                            declares_edge_type,
+                            *current_status_params,
+                            contract.resolved_status,
+                            *id_chunk,
+                        ],
+                    ).fetchall()
+                    for row in rows:
+                        edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
+                        for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
+                            if node_id:
+                                node_ids_by_source.setdefault(source_id, set()).add(node_id)
 
             for source_id, node_ids in sorted(node_ids_by_source.items()):
                 nodes.extend(self._query_anchor_expansion_nodes(conn, source_id, node_ids))
@@ -2324,7 +2310,7 @@ class AnalysisStore:
             nodes=tuple(self._anchor_expansion_node(item) for item in nodes),
             edges=tuple(self._anchor_expansion_edge(item) for item in edges),
             entrypoint_hints=tuple(self._anchor_entrypoint_hint(item) for item in entrypoint_hints),
-            truncated=truncated,
+            truncated=False,
         )
 
     def _flow_graph_node_from_public_graph(self, item: Dict[str, Any]) -> FlowGraphNode | None:

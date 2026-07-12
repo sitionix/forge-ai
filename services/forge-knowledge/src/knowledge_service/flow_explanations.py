@@ -19,8 +19,10 @@ from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEviden
 from knowledge_service.knowledge_query_schema import (
     FlowExplanation,
     FlowExplanationBoundary,
+    FlowExplanationNarrative,
     FlowExplanationStep,
     FlowExplanationStatus,
+    FlowExplanationTransition,
     FlowToolAddress,
     FlowToolBoundary,
     FlowToolContext,
@@ -1129,8 +1131,10 @@ class FlowExplanationService:
 
     def _ui_explanation(self, result: PerFlowExplanationResult) -> FlowExplanation:
         steps_by_ref = self._step_explanations(result.explanation)
+        transitions_by_ref = self._transition_explanations(result.explanation)
         boundaries_by_ref = self._boundary_explanations(result.explanation)
         input_steps = result.context.llm_input.get("steps") or []
+        input_transitions = [item for item in result.context.llm_input.get("transitions", []) if isinstance(item, dict)]
         input_boundaries = [item for item in result.context.llm_input.get("boundaries", []) if isinstance(item, dict)]
         return FlowExplanation(
             flowIndex=result.flow_index,
@@ -1146,6 +1150,16 @@ class FlowExplanationService:
                 )
                 for step in input_steps
                 if isinstance(step, dict) and isinstance(step.get("nodeRef"), str)
+            ],
+            transitionExplanations=[
+                FlowExplanationTransition(
+                    transitionRef=str(input_transition.get("transitionRef") or ""),
+                    explanation=str(item.get("explanation") or "") if item else None,
+                    evidenceRefs=self._ui_evidence_refs(result, item.get("evidenceRefs") or []),
+                )
+                for input_transition in input_transitions
+                for item in [transitions_by_ref.get(str(input_transition.get("transitionRef") or ""), {})]
+                if isinstance(input_transition.get("transitionRef"), str)
             ],
             boundaries=[
                 FlowExplanationBoundary(
@@ -1315,10 +1329,24 @@ class FlowExplanationService:
             if isinstance(item, dict) and isinstance(item.get("boundaryRef"), str)
         }
 
-    def _public_narrative(self, explanation: Mapping[str, Any] | None) -> List[str]:
+    def _public_narrative(self, explanation: Mapping[str, Any] | None) -> List[FlowExplanationNarrative]:
         if not explanation:
             return []
-        return [str(item.get("text") or "") for item in explanation.get("narrative", []) if isinstance(item, dict)]
+        return [
+            FlowExplanationNarrative(
+                text=str(item.get("text") or ""),
+                nodeRefs=self._public_string_list(item.get("nodeRefs")),
+                transitionRefs=self._public_string_list(item.get("transitionRefs")),
+                boundaryRefs=self._public_string_list(item.get("boundaryRefs")),
+            )
+            for item in explanation.get("narrative", [])
+            if isinstance(item, dict)
+        ]
+
+    def _public_string_list(self, value: Any) -> List[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value if isinstance(item, str) and item]
 
     def _ui_evidence_refs(self, result: PerFlowExplanationResult, refs: Sequence[str]) -> List[str]:
         public_refs: List[str] = []
