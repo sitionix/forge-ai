@@ -44,7 +44,7 @@ def test_status_endpoint_returns_runtime_status(tmp_path) -> None:
         body = client.get("/api/v1/jarvis/status").json()
 
     assert body["status"] == "UP"
-    assert body["model"]["defaultModel"] == "qwen2.5-coder:7b"
+    assert body["model"]["defaultModel"] == "qwen2.5-coder:14b"
     assert body["ollama"]["status"] == "UNKNOWN"
     assert body["actions"]["count"] == 2
 

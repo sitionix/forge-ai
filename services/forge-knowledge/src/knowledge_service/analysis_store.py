@@ -2495,15 +2495,16 @@ class AnalysisStore:
             for source_id, node_ids in sorted(node_ids_by_source.items()):
                 if remaining_evidence <= 0:
                     break
+                edge_count = len(edge_ids_by_source.get(source_id, set()))
                 scope_evidence = self._query_flow_path_evidence(
                     conn,
                     source_id,
                     node_ids,
                     edge_ids_by_source.get(source_id, set()),
-                    remaining_evidence,
+                    max(remaining_evidence, edge_count),
                 )
                 evidence.extend(scope_evidence)
-                remaining_evidence -= len(scope_evidence)
+                remaining_evidence = max(0, remaining_evidence - len(scope_evidence))
 
             nodes = self._dedupe_by_id(nodes, "id")
             edges = self._dedupe_by_id(edges, "id")
@@ -2596,6 +2597,8 @@ class AnalysisStore:
             label=str(item.get("label") or item.get("name") or node_id),
             qualified_name=str(item.get("qualifiedName")) if item.get("qualifiedName") else None,
             relative_path=str(item.get("relativePath")) if item.get("relativePath") else None,
+            line_start=int(item.get("lineStart")) if item.get("lineStart") is not None else None,
+            line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
             summary=str(item.get("summary")) if item.get("summary") else None,
             entrypoint=bool(item.get("entrypoint")),
         )

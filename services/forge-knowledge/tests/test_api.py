@@ -3,9 +3,14 @@ import json
 import threading
 import time
 from contextlib import suppress
+from types import SimpleNamespace
 
 import httpx
 
+import knowledge_service.main as knowledge_main
+from knowledge_service.flow_builder import FlowBuilder, FlowGraphBundle, FlowGraphEdge, FlowGraphNode
+from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest, KnowledgeQueryResponse, KnowledgeQueryStatus
+from knowledge_service.knowledge_query_service import KnowledgeQueryPolicy
 from support import build_test_app, write_runtime_config
 from knowledge_service.flow_explanations import FlowExplanationProviderResult
 from semantic_test_support import seed_semantic_graph
@@ -178,6 +183,58 @@ def test_slow_flow_explanation_does_not_block_concurrent_health_request(tmp_path
     assert health.json() == {"status": "UP"}
     assert elapsed < 0.25
     assert response.json()["status"] == "OK"
+
+
+def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tmp_path, monkeypatch):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    app_config.analysis_request_timeout_seconds = 0.2
+    app.state.app_config.analysis_request_timeout_seconds = 0.2
+    flow_result = FlowBuilder().build(
+        FlowGraphBundle(
+            nodes=(
+                FlowGraphNode("source-a", "graph-a", "graph-a", "a-start", "a-start", "CALLABLE", "A.start"),
+                FlowGraphNode("source-a", "graph-a", "graph-a", "b-work", "b-work", "CALLABLE", "B.work"),
+            ),
+            edges=(FlowGraphEdge("source-a", "graph-a", "graph-a", "edge-a-b", "CALLS", "a-start", "b-work", "RESOLVED"),),
+        ),
+        [
+            SimpleNamespace(
+                sourceId="source-a",
+                graphId="graph-a",
+                nodeId="a-start",
+                nodeKind="CALLABLE",
+                score=1.0,
+                matchReasons=("EXACT_NAME",),
+            )
+        ],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    query_response = KnowledgeQueryResponse(
+        queryId="query-test",
+        status=KnowledgeQueryStatus.OK,
+        intent="FLOW_EXPLANATION",
+        matchedSources=[{"sourceId": "source-a", "displayName": "Source A", "score": 1.0}],
+        flowPaths=flow_result.flow_paths,
+    )
+
+    class SlowQueryService:
+        def query_with_flow_units(self, body):
+            time.sleep(0.05)
+            return SimpleNamespace(response=query_response, flow_units=flow_result.flow_units)
+
+    monkeypatch.setattr(knowledge_main, "build_knowledge_query_service", lambda *_args, **_kwargs: SlowQueryService())
+    provider = FakeFlowExplanationProvider()
+    app.state.flow_explanation_provider = provider
+
+    response = knowledge_main._knowledge_query_flow_explanations_response(
+        SimpleNamespace(app=app),
+        KnowledgeQueryRequest(queryText="A.start"),
+    )
+
+    assert response.status == KnowledgeQueryStatus.OK
+    assert provider.calls
+    assert 0 < provider.calls[0]["timeoutSeconds"] < 0.2
 
 
 def test_cancelled_flow_explanation_request_does_not_start_subsequent_flow_calls(tmp_path):

@@ -293,7 +293,7 @@ forge:
         model-runtime:
           provider: ollama
           base-url: http://localhost:11434
-          model: qwen2.5-coder:7b
+          model: qwen2.5-coder:14b
           request-timeout-seconds: 120
         knowledge:
           request-timeout-seconds: 120

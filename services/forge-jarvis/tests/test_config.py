@@ -16,7 +16,7 @@ def test_root_forge_config_is_supported(tmp_path) -> None:
     )
 
     assert config.config_dir == tmp_path / "config"
-    assert config.model.default_model == "qwen2.5-coder:7b"
+    assert config.model.default_model == "qwen2.5-coder:14b"
     assert config.allowed_actions_path == tmp_path / "config" / "jarvis" / "allowed-actions.yaml"
 
 

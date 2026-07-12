@@ -13,6 +13,9 @@ forge:
       default-base-url: ${FORGE_NEXUS_BASE_URL:http://127.0.0.1:9099/fgaisox}
       services-config-resource: ${FORGE_SERVICES_CONFIG_RESOURCE:classpath:services.yaml}
     infrastructure:
+      proxy:
+        knowledge-explanation-request-deadline: ${forge.ai.services.knowledge.analysis.request-timeout-seconds:180}s
+        knowledge-explanation-transport-grace: 5s
       jarvis:
         enabled: true
         base-url: ${FORGE_JARVIS_BASE_URL:http://127.0.0.1:7071}
@@ -41,7 +44,7 @@ forge:
           base-url: http://localhost:11434
           model: qwen2.5-coder:14b
           request-timeout-seconds: 180
-          context-tokens: 65536
+          context-tokens: 32768
           max-file-chars: 60000
           max-chunk-chars: 20000
           concurrency: 1
@@ -56,7 +59,7 @@ forge:
         model-runtime:
           provider: ollama
           base-url: http://localhost:11434
-          model: qwen2.5-coder:7b
+          model: qwen2.5-coder:14b
           request-timeout-seconds: 120
         knowledge:
           request-timeout-seconds: 120

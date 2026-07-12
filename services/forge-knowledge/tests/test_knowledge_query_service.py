@@ -1304,6 +1304,10 @@ def test_analysis_store_load_call_flow_graph_returns_typed_bundle(tmp_path):
     assert {"a-start", "b-work", "c-finish"} <= {node.node_id for node in bundle.nodes}
     assert {"edge-a-b", "edge-b-c"} <= {edge.edge_id for edge in bundle.edges}
     assert all(node.graph_id == graph_id for node in bundle.nodes)
+    node_by_id = {node.node_id: node for node in bundle.nodes}
+    assert node_by_id["a-start"].relative_path == "src/A.java"
+    assert node_by_id["a-start"].line_start == 1
+    assert node_by_id["a-start"].line_end == 1
 
 
 def test_anchor_expansion_service_has_no_schema_alias_fallbacks():
@@ -1601,7 +1605,187 @@ def test_codex_tool_response_excludes_internal_ids_and_includes_addresses_and_ev
     assert step["address"]["relativePath"] == "src/A.java"
     assert step["address"]["lineStart"] == 10
     assert step["evidence"][0]["excerpt"] == "class A { }"
+    transition = payload["flows"][0]["transitions"][0]
+    assert transition["fromOrder"] == 1
+    assert transition["toOrder"] == 2
+    assert transition["fromSymbol"] == "A.start"
+    assert transition["toSymbol"] == "B.work"
+    assert transition["explanation"]
+    assert transition["evidence"][0]["relativePath"] == "src/A.java"
+    assert transition["evidence"][0]["lineStart"] == 10
     assert payload["flows"][0]["narrative"]
+
+
+def test_tool_step_address_uses_graph_node_lines_without_node_owned_evidence():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java", line_start=7, line_end=9),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java", line_start=20, line_end=22),
+        ),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    request = query_request("A.start")
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    payload = service_under_test.to_tool_response(request, service_under_test.explain(request, execution_from_flow_result(result))).dict()
+
+    first_step = payload["flows"][0]["steps"][0]
+    assert first_step["address"]["relativePath"] == "src/A.java"
+    assert first_step["address"]["lineStart"] == 7
+    assert first_step["address"]["lineEnd"] == 9
+    assert payload["flows"][0]["transitions"][0]["evidence"][0]["lineStart"] == 40
+
+
+def test_transition_evidence_does_not_replace_step_declaration_address():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java", line_start=7, line_end=9),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java", line_start=20, line_end=22),
+        ),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    request = query_request("A.start")
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    payload = service_under_test.to_tool_response(request, service_under_test.explain(request, execution_from_flow_result(result))).dict()
+
+    assert payload["flows"][0]["steps"][0]["address"] == {
+        "service": "Source A",
+        "relativePath": "src/A.java",
+        "lineStart": 7,
+        "lineEnd": 9,
+    }
+    assert payload["flows"][0]["transitions"][0]["evidence"][0]["lineStart"] == 40
+
+
+def test_tool_step_address_line_information_stays_null_without_node_or_declaration_range():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java"),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java"),
+        ),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    request = query_request("A.start")
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    payload = service_under_test.to_tool_response(request, service_under_test.explain(request, execution_from_flow_result(result))).dict()
+
+    first_step = payload["flows"][0]["steps"][0]
+    assert first_step["address"]["relativePath"] == "src/A.java"
+    assert first_step["address"]["lineStart"] is None
+    assert first_step["address"]["lineEnd"] is None
+    assert payload["flows"][0]["transitions"][0]["evidence"][0]["lineStart"] == 40
+
+
+def test_tool_transition_evidence_is_exact_callsite_and_internal_ids_are_not_serialized():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java", line_start=7, line_end=9),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java", line_start=20, line_end=22),
+            flow_graph_node("c-finish", "C.finish", relative_path="src/C.java", line_start=30, line_end=31),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish", evidence_ids=("ev-b-c",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-c", None, "edge-b-c", "src/B.java", 50, 50, "c.finish();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    request = query_request("A.start")
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    payload = service_under_test.to_tool_response(request, service_under_test.explain(request, execution_from_flow_result(result))).dict()
+    serialized = json.dumps(payload)
+
+    transitions = payload["flows"][0]["transitions"]
+    assert [(item["fromOrder"], item["toOrder"]) for item in transitions] == [(1, 2), (2, 3)]
+    assert transitions[0]["evidence"][0]["relativePath"] == "src/A.java"
+    assert transitions[0]["evidence"][0]["lineStart"] == 40
+    assert transitions[0]["evidence"][0]["excerpt"] == "b.work();"
+    assert transitions[1]["evidence"][0]["relativePath"] == "src/B.java"
+    assert transitions[1]["evidence"][0]["lineStart"] == 50
+    assert transitions[1]["evidence"][0]["excerpt"] == "c.finish();"
+    assert "edge-a-b" not in serialized
+    assert "edge-b-c" not in serialized
+    assert "nodeId" not in serialized
+    assert "edgeId" not in serialized
+    assert "graphId" not in serialized
+
+
+def test_transition_validator_rejects_unrelated_edge_evidence_ref():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start"),
+            flow_graph_node("b-work", "B.work"),
+            flow_graph_node("c-finish", "C.finish"),
+        ),
+        edges=(
+            flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),
+            flow_graph_edge("edge-b-c", "b-work", "c-finish", evidence_ids=("ev-b-c",)),
+        ),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, "edge-a-b", "src/A.java", 40, 40, "b.work();"),
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-b-c", None, "edge-b-c", "src/B.java", 50, 50, "c.finish();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    service_under_test = FlowExplanationService(RecordingFlowExplanationProvider())
+    packed = service_under_test.packer.pack(
+        request=query_request("A.start"),
+        flow_unit=result.flow_units[0],
+        flow_index=1,
+        source_display_name="Source A",
+    )
+    response = valid_flow_explanation(packed.llm_input)
+    wrong_ref = packed.llm_input["transitions"][1]["evidence"][0]["ref"]
+    response["transitions"][0]["evidenceRefs"] = [wrong_ref]
+
+    parsed, errors, code = FlowExplanationValidator().validate(json.dumps(response), packed)
+
+    assert parsed is None
+    assert code == FLOW_EXPLANATION_VALIDATION_FAILED
+    assert f"evidence ref {wrong_ref} is not valid for transitionRef t1" in errors
 
 
 def test_step_evidence_from_another_step_is_rejected_and_cannot_change_tool_address():
@@ -2411,6 +2595,8 @@ def test_one_failed_flow_does_not_kill_other_flow_tool_context():
     assert response.flows[0].narrative
     assert response.flows[1].narrative == []
     assert response.flows[1].steps
+    assert response.flows[1].transitions
+    assert all(transition.explanation for transition in response.flows[1].transitions)
     assert any(diagnostic.code == FLOW_EXPLANATION_VALIDATION_FAILED for diagnostic in response.flows[1].diagnostics)
 
 
@@ -2444,6 +2630,37 @@ def test_flow_explanation_context_excludes_unrelated_flows_and_raw_debug_fields(
     assert "vector" not in serialized.lower()
     assert "debug" not in serialized.lower()
     assert [step["symbol"] for step in packed_context["steps"]] == ["A.start", "B.work", "C.finish"]
+
+
+def test_tool_transition_evidence_uses_edge_evidence_ids_when_evidence_row_has_no_edge_id():
+    bundle = FlowGraphBundle(
+        nodes=(
+            flow_graph_node("a-start", "A.start", relative_path="src/A.java", line_start=1, line_end=4),
+            flow_graph_node("b-work", "B.work", relative_path="src/B.java", line_start=10, line_end=12),
+        ),
+        edges=(flow_graph_edge("edge-a-b", "a-start", "b-work", evidence_ids=("ev-a-b",)),),
+        evidence=(
+            FlowGraphEvidence("source-a", "graph-a", "graph-a", "ev-a-b", None, None, "src/A.java", 3, 3, "b.work();"),
+        ),
+    )
+    result = FlowBuilder().build(
+        bundle,
+        [matched_node(id="a-start", name="A.start", label="A.start")],
+        set(),
+        KnowledgeQueryPolicy(max_flow_paths=10),
+    )
+    service = FlowExplanationService(RecordingFlowExplanationProvider())
+
+    run = service.explain(query_request("A.start"), execution_from_flow_result(result))
+    response = service.to_tool_response(query_request("A.start"), run)
+
+    assert result.flow_paths[0].evidenceIds == ["ev-a-b"]
+    transition = response.flows[0].transitions[0]
+    assert transition.fromSymbol == "A.start"
+    assert transition.toSymbol == "B.work"
+    assert [(item.relativePath, item.lineStart, item.lineEnd, item.excerpt) for item in transition.evidence] == [
+        ("src/A.java", 3, 3, "b.work();")
+    ]
 
 
 def test_flow_builder_preserves_shared_prefix_side_effect_branches_in_evidence_order():

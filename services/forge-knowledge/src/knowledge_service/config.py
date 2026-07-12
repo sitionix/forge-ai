@@ -10,6 +10,9 @@ import yaml
 from pydantic import AnyHttpUrl, BaseModel, Field, root_validator, validator
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
+DEFAULT_GENERATIVE_MODEL = "qwen2.5-coder:14b"
+DEFAULT_GENERATIVE_CONTEXT_TOKENS = 32768
+DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS = 180
 
 
 class LoggingSettings(BaseModel):
@@ -46,12 +49,12 @@ class AnalysisSettings(BaseModel):
     enabled: bool = True
     provider: str = "ollama"
     base_url: AnyHttpUrl
-    model: str = Field(min_length=1)
-    request_timeout_seconds: int = Field(default=90, ge=1)
+    model: str = Field(default=DEFAULT_GENERATIVE_MODEL, min_length=1)
+    request_timeout_seconds: int = Field(default=DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS, ge=1)
     ai_call_timeout_seconds: Optional[int] = Field(default=None, ge=1)
     per_file_timeout_seconds: int = Field(default=120, ge=1)
     stall_threshold_seconds: int = Field(default=300, ge=1)
-    context_tokens: int = Field(default=8192, ge=1)
+    context_tokens: int = Field(default=DEFAULT_GENERATIVE_CONTEXT_TOKENS, ge=1)
     max_file_chars: int = Field(default=60000, ge=1)
     max_chunk_chars: int = Field(default=20000, ge=1)
     concurrency: int = Field(default=1, ge=1)
@@ -139,12 +142,12 @@ class AppConfig(BaseModel):
     analysis_enabled: bool = True
     analysis_provider: str = "ollama"
     analysis_base_url: str = "http://localhost:11434"
-    analysis_model: str = "qwen2.5-coder:14b"
-    analysis_request_timeout_seconds: int = 90
-    analysis_ai_call_timeout_seconds: int = 90
+    analysis_model: str = DEFAULT_GENERATIVE_MODEL
+    analysis_request_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
+    analysis_ai_call_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
     analysis_per_file_timeout_seconds: int = 120
     analysis_stall_threshold_seconds: int = 300
-    analysis_context_tokens: int = 8192
+    analysis_context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS
     analysis_max_file_chars: int = 60000
     analysis_max_chunk_chars: int = 20000
     analysis_concurrency: int = 1
@@ -420,18 +423,26 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                     "enabled": _bool(analysis.get("enabled", True)),
                     "provider": str(analysis.get("provider") or "ollama"),
                     "base_url": str(analysis.get("base-url") or analysis.get("base_url") or "http://localhost:11434"),
-                    "model": str(analysis.get("model") or "qwen2.5-coder:14b"),
-                    "request_timeout_seconds": int(analysis.get("request-timeout-seconds") or analysis.get("request_timeout_seconds") or 90),
+                    "model": str(analysis.get("model") or DEFAULT_GENERATIVE_MODEL),
+                    "request_timeout_seconds": int(
+                        analysis.get("request-timeout-seconds")
+                        or analysis.get("request_timeout_seconds")
+                        or DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
+                    ),
                     "ai_call_timeout_seconds": int(
                         analysis.get("ai-call-timeout-seconds")
                         or analysis.get("ai_call_timeout_seconds")
                         or analysis.get("request-timeout-seconds")
                         or analysis.get("request_timeout_seconds")
-                        or 90
+                        or DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
                     ),
                     "per_file_timeout_seconds": int(analysis.get("per-file-timeout-seconds") or analysis.get("per_file_timeout_seconds") or 120),
                     "stall_threshold_seconds": int(analysis.get("stall-threshold-seconds") or analysis.get("stall_threshold_seconds") or 300),
-                    "context_tokens": int(analysis.get("context-tokens") or analysis.get("context_tokens") or 8192),
+                    "context_tokens": int(
+                        analysis.get("context-tokens")
+                        or analysis.get("context_tokens")
+                        or DEFAULT_GENERATIVE_CONTEXT_TOKENS
+                    ),
                     "max_file_chars": int(analysis.get("max-file-chars") or analysis.get("max_file_chars") or 60000),
                     "max_chunk_chars": int(analysis.get("max-chunk-chars") or analysis.get("max_chunk_chars") or 20000),
                     "concurrency": int(analysis.get("concurrency") or 1),

@@ -13,9 +13,9 @@ class InfrastructureProxyRouteRegistryTest {
         final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(properties);
 
         assertThat(registry.require("knowledge.query.flow-explanations").readTimeout())
-                .isEqualTo(Duration.ofSeconds(95));
+                .isEqualTo(Duration.ofSeconds(185));
         assertThat(registry.require("knowledge.query.tool-context").readTimeout())
-                .isEqualTo(Duration.ofSeconds(95));
+                .isEqualTo(Duration.ofSeconds(185));
         assertThat(registry.require("knowledge.status").readTimeout()).isNull();
     }
 

@@ -4,6 +4,7 @@ import asyncio
 import functools
 import sqlite3
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
@@ -16,7 +17,12 @@ from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedA
 from knowledge_service.analysis_service import AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.bootstrap import KnowledgeDependencies, build_dependencies, configure_logging
-from knowledge_service.config import AppConfig, ForgeSettings, load_forge_settings
+from knowledge_service.config import (
+    DEFAULT_GENERATIVE_CONTEXT_TOKENS,
+    AppConfig,
+    ForgeSettings,
+    load_forge_settings,
+)
 from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.errors import KnowledgeError
@@ -626,11 +632,13 @@ def _knowledge_query_flow_explanations_response(
     cancel_event: threading.Event | None = None,
 ) -> KnowledgeQueryFlowExplanationResponse:
     config, deps = _state(request)
+    request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
+    deadline_at = time.monotonic() + request_deadline_seconds
     try:
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
         explanation_service, close_provider = _flow_explanation_service(request, config, cancel_event)
         try:
-            run = explanation_service.explain(body, query_result)
+            run = explanation_service.explain(body, query_result, deadline_at=deadline_at)
             return explanation_service.to_ui_response(run)
         finally:
             if close_provider:
@@ -656,11 +664,13 @@ def _knowledge_query_tool_context_response(
     cancel_event: threading.Event | None = None,
 ) -> KnowledgeQueryToolContextResponse:
     config, deps = _state(request)
+    request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
+    deadline_at = time.monotonic() + request_deadline_seconds
     try:
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flow_units(body)
         explanation_service, close_provider = _flow_explanation_service(request, config, cancel_event)
         try:
-            run = explanation_service.explain(body, query_result)
+            run = explanation_service.explain(body, query_result, deadline_at=deadline_at)
             return explanation_service.to_tool_response(body, run)
         finally:
             if close_provider:
@@ -717,8 +727,11 @@ def _flow_explanation_service(
     cancel_event: threading.Event | None = None,
 ) -> tuple[FlowExplanationService, Optional[Any]]:
     injected_provider = getattr(request.app.state, "flow_explanation_provider", None)
-    max_prompt_chars = max(4096, int(config.analysis_context_tokens or 4096) * 4)
-    request_deadline_seconds = max(1.0, float(config.analysis_request_timeout_seconds or config.analysis_ai_call_timeout_seconds or 90))
+    max_prompt_chars = max(
+        DEFAULT_GENERATIVE_CONTEXT_TOKENS,
+        int(config.analysis_context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS) * 4,
+    )
+    request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
     if injected_provider is not None:
         return FlowExplanationService(
             injected_provider,
@@ -738,6 +751,10 @@ def _flow_explanation_service(
         request_deadline_seconds=request_deadline_seconds,
         cancel_event=cancel_event,
     ), provider.close
+
+
+def _flow_explanation_request_deadline_seconds(config: AppConfig) -> float:
+    return max(0.001, float(config.analysis_request_timeout_seconds))
 
 
 def _current_file_progress(dependencies: KnowledgeDependencies) -> Dict[str, Any]:

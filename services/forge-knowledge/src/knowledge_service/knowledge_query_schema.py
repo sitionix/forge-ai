@@ -196,6 +196,15 @@ class FlowToolStep(BaseModel):
     evidence: List[FlowToolEvidence] = Field(default_factory=list)
 
 
+class FlowToolTransition(BaseModel):
+    fromOrder: int
+    toOrder: int
+    fromSymbol: str
+    toSymbol: str
+    explanation: Optional[str] = None
+    evidence: List[FlowToolEvidence] = Field(default_factory=list)
+
+
 class FlowToolBoundary(BaseModel):
     kind: str
     target: Optional[str] = None
@@ -208,6 +217,7 @@ class FlowToolContext(BaseModel):
     title: str = ""
     narrative: List[str] = Field(default_factory=list)
     steps: List[FlowToolStep] = Field(default_factory=list)
+    transitions: List[FlowToolTransition] = Field(default_factory=list)
     boundaries: List[FlowToolBoundary] = Field(default_factory=list)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 

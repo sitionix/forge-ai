@@ -11,6 +11,7 @@ import httpx
 from knowledge_service.analysis_graph_contract import AnalysisGraphContract, GraphContractProvider
 from knowledge_service.analysis_policy import AnalysisPolicy
 from knowledge_service.analysis_runtime_events import emit_runtime_event, runtime_preview, text_hash, utc_now
+from knowledge_service.config import DEFAULT_GENERATIVE_CONTEXT_TOKENS
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.target_enrichment import TargetPromptRenderer, TargetResponseParserValidator, is_target_enrichment_payload
@@ -25,7 +26,7 @@ class OllamaAnalysisClient:
         base_url: str,
         model: str,
         timeout_seconds: int,
-        context_tokens: int = 4096,
+        context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS,
         http_client: httpx.AsyncClient | None = None,
         policy: AnalysisPolicy | None = None,
         policy_path: str | Path | None = None,

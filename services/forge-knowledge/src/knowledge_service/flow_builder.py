@@ -39,6 +39,8 @@ class FlowGraphNode:
     label: str
     qualified_name: str | None = None
     relative_path: str | None = None
+    line_start: int | None = None
+    line_end: int | None = None
     summary: str | None = None
     entrypoint: bool = False
 
@@ -517,7 +519,7 @@ class FlowBuilder:
         edge_ids = tuple(edge_key[2] for edge_key in path.edge_keys)
         boundary_edge_ids = tuple(edge_key[2] for edge_key in path.boundary_edge_keys)
         origins = self._merge_origins(built_path.origins)
-        evidence = tuple(self._copy_evidence(item) for item in self._path_evidence(adjacency.evidence, path, policy))
+        evidence = tuple(self._copy_evidence(item) for item in self._path_evidence(adjacency, path, policy))
         key = FlowUnitKey(
             source_id=source_id,
             graph_id=graph_id,
@@ -610,29 +612,35 @@ class FlowBuilder:
 
     def _path_evidence(
         self,
-        evidence: Sequence[FlowGraphEvidence],
+        adjacency: _FlowAdjacency,
         path: _TraversalPath,
         policy: "KnowledgeQueryPolicy",
     ) -> list[FlowGraphEvidence]:
         max_refs = max(0, int(getattr(policy, "max_evidence_refs", 25) or 25))
         node_ids = {node_key[2] for node_key in path.node_keys}
         edge_ids = {edge_key[2] for edge_key in (*path.edge_keys, *path.boundary_edge_keys)}
+        edge_evidence_ids = {
+            evidence_id
+            for edge_key in (*path.edge_keys, *path.boundary_edge_keys)
+            for edge in [adjacency.edges_by_key.get(edge_key)]
+            if edge is not None
+            for evidence_id in edge.evidence_ids
+        }
         selected: list[FlowGraphEvidence] = []
         seen: set[str] = set()
         source_ids = {node_key[0] for node_key in path.node_keys}
         graph_ids = {node_key[1] for node_key in path.node_keys}
-        for item in evidence:
+        for item in adjacency.evidence:
             if item.evidence_id in seen:
                 continue
             if item.source_id not in source_ids:
                 continue
             if item.graph_id and item.graph_id not in graph_ids:
                 continue
-            if item.node_id and item.node_id not in node_ids:
-                continue
-            if item.edge_id and item.edge_id not in edge_ids:
-                continue
-            if not item.node_id and not item.edge_id:
+            linked_by_node = bool(item.node_id and item.node_id in node_ids)
+            linked_by_edge = bool(item.edge_id and item.edge_id in edge_ids)
+            linked_by_edge_evidence_id = item.evidence_id in edge_evidence_ids
+            if not linked_by_node and not linked_by_edge and not linked_by_edge_evidence_id:
                 continue
             selected.append(item)
             seen.add(item.evidence_id)

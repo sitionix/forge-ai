@@ -275,7 +275,7 @@ def _jarvis_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]
                 "model_runtime": {
                     "provider": str(model.get("provider") or "ollama"),
                     "base_url": str(model.get("base-url") or model.get("base_url") or "http://localhost:11434"),
-                    "model": str(model.get("model") or "qwen2.5-coder:7b"),
+                    "model": str(model.get("model") or "qwen2.5-coder:14b"),
                     "request_timeout_seconds": int(model.get("request-timeout-seconds") or model.get("request_timeout_seconds") or 120),
                 },
                 "knowledge": {
