@@ -17,8 +17,6 @@ from jarvis_agent.query_schema import (
 class KnowledgeQueryGateway(Protocol):
     async def query(self, payload: Dict[str, Any]) -> Dict[str, Any]: ...
 
-    async def query_flow_explanations(self, payload: Dict[str, Any]) -> Dict[str, Any]: ...
-
 
 class JarvisQueryService:
     def __init__(self, knowledge_gateway: KnowledgeQueryGateway) -> None:
@@ -33,7 +31,7 @@ class JarvisQueryService:
             "maxFlows": request.maxFlows,
         }
         if request.intent == JarvisQueryIntent.FLOW_EXPLANATION:
-            bundle = await self.knowledge_gateway.query_flow_explanations(payload)
+            bundle = await self.knowledge_gateway.query(payload)
             try:
                 return JarvisHumanAnswerResponse.parse_obj(bundle)
             except ValidationError as exc:

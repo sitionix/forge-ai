@@ -36,6 +36,31 @@ class FakeFlowExplanationProvider:
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
 
 
+class PerEntrypointAnswerProvider:
+    def __init__(self, fail_entrypoints=None):
+        self.calls = []
+        self.fail_entrypoints = set(fail_entrypoints or [])
+
+    def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+        self.calls.append({"llmInput": dict(llm_input), "timeoutSeconds": timeout_seconds})
+        entrypoint = str(llm_input.get("entrypoint") or "")
+        if entrypoint in self.fail_entrypoints:
+            raise RuntimeError("expected")
+        response = {"text": f"Answer for {entrypoint}."}
+        return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
+
+
+def _entrypoint_claim(node_id: str, *, kind: str = "HTTP") -> dict:
+    return {
+        "id": f"claim-{node_id}",
+        "node_id": node_id,
+        "claimKind": "ENTRYPOINT_HINT",
+        "summary": "entrypoint",
+        "evidence_ids": ["ev-node-query"],
+        "entrypointKind": kind,
+    }
+
+
 def _async_client(app):
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver")
 
@@ -104,29 +129,165 @@ def test_query_flow_explanations_endpoint_returns_human_answer(tmp_path):
             {"id": "b-work", "nodeKind": "CALLABLE", "name": "B.work", "qualified": "B.work", "path": "src/B.java"},
         ],
         edges=[{"id": "edge-a-b", "fromNodeId": "a-start", "toNodeId": "b-work", "edgeType": "CALLS"}],
+        claims=[_entrypoint_claim("a-start")],
     )
+    provider = FakeFlowExplanationProvider()
+    app.state.flow_explanation_provider = provider
     provider = FakeFlowExplanationProvider()
     app.state.flow_explanation_provider = provider
 
     async def exercise():
         async with _async_client(app) as client:
             response = await _await_with_wakeup(
-                client.post("/api/v1/knowledge/query/flow-explanations", json={"queryText": "A.start", "answerLanguage": "uk"})
+                client.post("/api/v1/knowledge/query", json={"queryText": "A.start", "answerLanguage": "uk"})
             )
             return response.json()
 
     response_payload = asyncio.run(exercise())
 
     assert response_payload["answerLanguage"] == "uk"
-    assert response_payload["answer"]["text"] == "A.start delegates to B.work using the grounded call tree."
-    assert response_payload["sources"] == [{"source": "source-a", "entrypoint": "A.start"}]
+    assert response_payload["answers"] == [
+        {"source": "source-a", "entrypoint": "A.start", "text": "A.start delegates to B.work using the grounded call tree."}
+    ]
     assert response_payload["diagnostics"] == []
     assert "status" not in response_payload
     assert "flows" not in response_payload
     assert "flowExplanations" not in response_payload
     assert "nodeRef" not in json.dumps(response_payload)
     assert len(provider.calls) == 1
-    assert provider.calls[0]["llmInput"]["flows"][0]["entrypoint"]["symbol"] == "A.start"
+    assert provider.calls[0]["llmInput"]["entrypoint"] == "A.start"
+    assert provider.calls[0]["llmInput"]["tree"]["symbol"] == "A.start"
+
+
+def test_query_endpoint_returns_one_answer_per_distinct_flow(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    roots = ["A.start", "B.start", "C.start"]
+    seed_semantic_graph(
+        app_config.store_path,
+        source_id="source-a",
+        nodes=[
+            *[
+                {"id": root.lower()[0], "nodeKind": "CALLABLE", "name": root, "qualified": root, "path": f"src/{root[0]}.java"}
+                for root in roots
+            ],
+            {"id": "shared", "nodeKind": "CALLABLE", "name": "Shared.work", "qualified": "Shared.work", "path": "src/Shared.java"},
+        ],
+        edges=[
+            {"id": f"edge-{root[0].lower()}-shared", "fromNodeId": root.lower()[0], "toNodeId": "shared", "edgeType": "CALLS"}
+            for root in roots
+        ],
+        claims=[_entrypoint_claim(root.lower()[0]) for root in roots],
+    )
+    provider = PerEntrypointAnswerProvider()
+    app.state.flow_explanation_provider = provider
+
+    async def exercise():
+        async with _async_client(app) as client:
+            response = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "Shared.work"}))
+            return response.status_code, response.json()
+
+    status, payload = asyncio.run(exercise())
+
+    assert status == 200
+    assert len(provider.calls) == 3
+    assert [call["llmInput"]["entrypoint"] for call in provider.calls] == roots
+    assert [answer["entrypoint"] for answer in payload["answers"]] == roots
+    assert [answer["text"] for answer in payload["answers"]] == [f"Answer for {root}." for root in roots]
+    assert payload["diagnostics"] == []
+    assert "status" not in payload
+    assert "flows" not in payload
+    for call in provider.calls:
+        rendered_prompt_facts = json.dumps(call["llmInput"], ensure_ascii=False)
+        other_roots = set(roots) - {call["llmInput"]["entrypoint"]}
+        assert not any(root in rendered_prompt_facts for root in other_roots)
+
+
+def test_query_endpoint_partial_flow_failure_keeps_successful_answers(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_semantic_graph(
+        app_config.store_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a", "nodeKind": "CALLABLE", "name": "A.start", "qualified": "A.start", "path": "src/A.java"},
+            {"id": "b", "nodeKind": "CALLABLE", "name": "B.start", "qualified": "B.start", "path": "src/B.java"},
+            {"id": "shared", "nodeKind": "CALLABLE", "name": "Shared.work", "qualified": "Shared.work", "path": "src/Shared.java"},
+        ],
+        edges=[
+            {"id": "edge-a-shared", "fromNodeId": "a", "toNodeId": "shared", "edgeType": "CALLS"},
+            {"id": "edge-b-shared", "fromNodeId": "b", "toNodeId": "shared", "edgeType": "CALLS"},
+        ],
+        claims=[_entrypoint_claim("a"), _entrypoint_claim("b", kind="KAFKA")],
+    )
+    provider = PerEntrypointAnswerProvider(fail_entrypoints={"B.start"})
+    app.state.flow_explanation_provider = provider
+
+    async def exercise():
+        async with _async_client(app) as client:
+            response = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "Shared.work"}))
+            return response.status_code, response.json()
+
+    status, payload = asyncio.run(exercise())
+
+    assert status == 200
+    assert len(provider.calls) == 2
+    assert payload["answers"] == [{"source": "source-a", "entrypoint": "A.start", "text": "Answer for A.start."}]
+    assert payload["diagnostics"] == [
+        {
+            "code": "HUMAN_FLOW_ANSWER_GENERATION_FAILED",
+            "message": "The local model could not explain one selected flow.",
+            "severity": "WARN",
+            "sourceId": "source-a",
+            "metadata": {"entrypoint": "B.start"},
+        }
+    ]
+
+
+def test_query_endpoint_total_flow_failure_returns_502(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_semantic_graph(
+        app_config.store_path,
+        source_id="source-a",
+        nodes=[{"id": "a", "nodeKind": "CALLABLE", "name": "A.start", "qualified": "A.start", "path": "src/A.java"}],
+        claims=[_entrypoint_claim("a")],
+    )
+    app.state.flow_explanation_provider = PerEntrypointAnswerProvider(fail_entrypoints={"A.start"})
+
+    async def exercise():
+        async with _async_client(app) as client:
+            response = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
+            return response.status_code, response.json()
+
+    status, payload = asyncio.run(exercise())
+
+    assert status == 502
+    assert payload == {
+        "code": "HUMAN_ANSWER_GENERATION_FAILED",
+        "message": "The local model could not produce any grounded flow answers.",
+    }
+
+
+def test_query_endpoint_no_candidates_returns_404(tmp_path):
+    app, _, _, _ = build_test_app(write_runtime_config(tmp_path))
+    app.state.flow_explanation_provider = PerEntrypointAnswerProvider()
+
+    async def exercise():
+        async with _async_client(app) as client:
+            response = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "Missing"}))
+            return response.status_code, response.json()
+
+    status, payload = asyncio.run(exercise())
+
+    assert status == 404
+    assert payload == {
+        "code": "NO_GROUNDED_GRAPH_CANDIDATES",
+        "message": "No grounded graph candidates were found.",
+    }
+
+
+def test_removed_flow_explanations_route_is_not_in_openapi(tmp_path):
+    app, _, _, _ = build_test_app(write_runtime_config(tmp_path))
+
+    assert "/api/v1/knowledge/query/flow-explanations" not in app.openapi()["paths"]
 
 
 def test_slow_flow_explanation_does_not_block_concurrent_health_request(tmp_path):
@@ -139,13 +300,14 @@ def test_slow_flow_explanation_does_not_block_concurrent_health_request(tmp_path
             {"id": "b-work", "nodeKind": "CALLABLE", "name": "B.work", "qualified": "B.work", "path": "src/B.java"},
         ],
         edges=[{"id": "edge-a-b", "fromNodeId": "a-start", "toNodeId": "b-work", "edgeType": "CALLS"}],
+        claims=[_entrypoint_claim("a-start")],
     )
     app.state.flow_explanation_provider = FakeFlowExplanationProvider(delay_seconds=0.4)
 
     async def exercise():
         async with _async_client(app) as client:
             slow = asyncio.create_task(
-                _await_with_wakeup(client.post("/api/v1/knowledge/query/flow-explanations", json={"queryText": "A.start"}))
+                _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
             )
             await asyncio.sleep(0.05)
             started = time.monotonic()
@@ -159,7 +321,7 @@ def test_slow_flow_explanation_does_not_block_concurrent_health_request(tmp_path
     assert health.status_code == 200
     assert health.json() == {"status": "UP"}
     assert elapsed < 0.25
-    assert response.json()["answer"]["text"] == "A.start delegates to B.work using the grounded call tree."
+    assert response.json()["answers"][0]["text"] == "A.start delegates to B.work using the grounded call tree."
     assert "status" not in response.json()
 
 
@@ -207,14 +369,14 @@ def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tm
     deadline_at = time.monotonic() + 0.2
     time.sleep(0.03)
 
-    response = knowledge_main._knowledge_query_flow_explanations_response(
+    response = knowledge_main._knowledge_human_query_response(
         SimpleNamespace(app=app),
         KnowledgeQueryRequest(queryText="A.start"),
         deadline_at=deadline_at,
     )
 
-    assert response.answer.text == "A.start delegates to B.work using the grounded call tree."
-    assert response.sources[0].entrypoint == "A.start"
+    assert response.answers[0].text == "A.start delegates to B.work using the grounded call tree."
+    assert response.answers[0].entrypoint == "A.start"
     assert provider.calls
     assert 0 < provider.calls[0]["timeoutSeconds"] < 0.17
 
@@ -229,7 +391,7 @@ def test_expired_flow_explanation_deadline_before_worker_returns_controlled_resp
     provider = FakeFlowExplanationProvider()
     app.state.flow_explanation_provider = provider
 
-    response = knowledge_main._knowledge_query_flow_explanations_response(
+    response = knowledge_main._knowledge_human_query_response(
         SimpleNamespace(app=app),
         KnowledgeQueryRequest(queryText="A.start"),
         deadline_at=time.monotonic() - 0.001,
@@ -254,7 +416,10 @@ def test_tool_context_endpoint_returns_compact_nested_tree(tmp_path):
             {"id": "b-work", "nodeKind": "CALLABLE", "name": "B.work", "qualified": "B.work", "path": "src/B.java"},
         ],
         edges=[{"id": "edge-a-b", "fromNodeId": "a-start", "toNodeId": "b-work", "edgeType": "CALLS"}],
+        claims=[_entrypoint_claim("a-start")],
     )
+    provider = FakeFlowExplanationProvider()
+    app.state.flow_explanation_provider = provider
 
     async def exercise():
         async with _async_client(app) as client:
@@ -267,12 +432,14 @@ def test_tool_context_endpoint_returns_compact_nested_tree(tmp_path):
     assert payload["queryText"] == "A.start"
     assert payload["trees"][0]["source"] == "source-a"
     assert payload["trees"][0]["entrypoint"]["symbol"] == "A.start"
+    assert payload["trees"][0]["entrypoint"]["kind"] == "HTTP_ENDPOINT"
     assert payload["trees"][0]["entrypoint"]["children"][0]["symbol"] == "B.work"
     rendered = json.dumps(payload)
     assert "status" not in payload
     assert "flows" not in payload
     assert "nodeRef" not in rendered
     assert "transitionRef" not in rendered
+    assert provider.calls == []
 
 
 def test_cancelled_flow_explanation_request_does_not_start_subsequent_flow_calls(tmp_path):
@@ -322,7 +489,7 @@ def test_cancelled_flow_explanation_request_does_not_start_subsequent_flow_calls
 
     async def exercise():
         async with _async_client(app) as client:
-            request_task = asyncio.create_task(client.post("/api/v1/knowledge/query/flow-explanations", json={"queryText": "B.work"}))
+            request_task = asyncio.create_task(client.post("/api/v1/knowledge/query", json={"queryText": "B.work"}))
             await wait_for_event(provider.first_started)
             request_task.cancel()
             with suppress(asyncio.CancelledError):

@@ -46,7 +46,7 @@ class InfrastructureJarvisQueryTimeoutHierarchyIT extends AbstractForgeAiIT {
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery())
                 .header("X-Correlation-Id", "corr-jarvis-timeout-hierarchy")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answer.text", containsString("JarvisGateway")))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").doesNotExist())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows").doesNotExist())
                 .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("UPSTREAM_TIMEOUT"))))

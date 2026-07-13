@@ -48,7 +48,7 @@ class KnowledgeClient:
 
     async def query_flow_explanations(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return await self._post(
-            "/api/v1/knowledge/query/flow-explanations",
+            "/api/v1/knowledge/query",
             payload,
             timeout_seconds=self.flow_explanation_timeout_seconds,
         )

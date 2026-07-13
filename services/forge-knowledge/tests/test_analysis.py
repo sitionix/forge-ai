@@ -4843,21 +4843,20 @@ def test_knowledge_query_works_with_missing_pending_and_stale_semantic_index(tmp
     monkeypatch.setattr(main, "app_config", cfg)
     monkeypatch.setattr(main, "store", store)
 
-    missing = post_json("/api/v1/knowledge/query", knowledge_query_payload("ObjectHandler"))
-    assert missing["status"] == 200
-    assert missing["json"]["status"] != "QUERY_FAILED"
+    query_service = build_knowledge_query_service(AnalysisStore(store.db_path), cfg)
+
+    missing = query_service.query(knowledge_query_request("ObjectHandler")).dict()
+    assert missing["status"] != "QUERY_FAILED"
 
     wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
-    pending = post_json("/api/v1/knowledge/query", knowledge_query_payload("ObjectHandler"))
-    assert pending["status"] == 200
-    assert pending["json"]["status"] in {"OK", "AMBIGUOUS"}
+    pending = query_service.query(knowledge_query_request("ObjectHandler")).dict()
+    assert pending["status"] in {"OK", "AMBIGUOUS"}
 
     semantic_store = SemanticIndexStore(store.db_path)
     state = semantic_store.get_state("edge-gateway")
     semantic_store.mark_source_stale("edge-gateway", f"{state['graph_revision']}:manual-stale", state["total_node_count"])
-    stale = post_json("/api/v1/knowledge/query", knowledge_query_payload("ObjectHandler"))
-    assert stale["status"] == 200
-    assert stale["json"]["status"] in {"OK", "AMBIGUOUS"}
+    stale = query_service.query(knowledge_query_request("ObjectHandler")).dict()
+    assert stale["status"] in {"OK", "AMBIGUOUS"}
 
 
 def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, monkeypatch):

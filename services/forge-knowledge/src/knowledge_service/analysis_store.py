@@ -27,6 +27,7 @@ from knowledge_service.graph_query_contract import graph_query_contract, sql_in_
 from knowledge_service.observability import observed_connect
 from knowledge_service.overview_projection import ensure_overview_schema, rebuild_overview, refresh_overview_for_sources
 from knowledge_service.semantic_index import SemanticIndexStatus, SemanticIndexStore, ensure_semantic_index_schema
+from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION
 
 
 ANALYSIS_SCHEMA_MIGRATIONS = (
@@ -436,11 +437,13 @@ class AnalysisStore:
                 rejection_reason TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                entrypoint_kind TEXT,
                 fact_origin TEXT,
                 flow_domain TEXT,
                 FOREIGN KEY(node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE
             )
         """)
+        self._ensure_column(conn, "analysis_graph_claims", "entrypoint_kind", "TEXT")
 
     def _create_graph_edge_schema(self, conn: sqlite3.Connection) -> None:
         conn.execute("""
@@ -1476,9 +1479,9 @@ class AnalysisStore:
                     """
                     INSERT INTO analysis_graph_claims(
                         id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
-                        rejection_reason, created_at, updated_at, fact_origin, flow_domain
+                        rejection_reason, created_at, updated_at, entrypoint_kind, fact_origin, flow_domain
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         claim["id"],
@@ -1492,6 +1495,7 @@ class AnalysisStore:
                         claim.get("rejection_reason"),
                         created_at,
                         created_at,
+                        self._claim_entrypoint_kind(claim),
                         claim.get("fact_origin"),
                         claim.get("flow_domain"),
                     ),
@@ -2335,6 +2339,7 @@ class AnalysisStore:
             line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
             summary=str(item.get("summary")) if item.get("summary") else None,
             entrypoint=bool(item.get("entrypoint")),
+            entrypoint_kind=str(item.get("entrypointKind")) if item.get("entrypointKind") else None,
             flow_domain=str(item.get("flowDomain")) if item.get("flowDomain") else None,
         )
 
@@ -3677,6 +3682,7 @@ class AnalysisStore:
             "confidence": row.get("confidence"),
             "degree": int(row.get("graph_degree") or 0),
             "entrypoint": bool(row.get("entrypoint")),
+            "entrypointKind": row.get("entrypoint_kind"),
         }
 
     def _anchor_expansion_node_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -3917,7 +3923,7 @@ class AnalysisStore:
         return {
             "analysisStatus": analysis_status,
             "jobId": job_id,
-            "engineVersion": "GRAPH_V1",
+            "engineVersion": GRAPH_ENGINE_VERSION,
             "processedFileCount": processed,
             "processedFiles": processed,
             "fileCount": total_files,
@@ -3988,6 +3994,17 @@ class AnalysisStore:
                 if row.get("job_id"):
                     return str(row["job_id"])
         return str(state.get("job_id") or "direct")
+
+    def _claim_entrypoint_kind(self, claim: Dict[str, Any]) -> Optional[str]:
+        if str(claim.get("claim_kind") or "").upper() != "ENTRYPOINT_HINT":
+            return None
+        metadata = claim.get("metadata")
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get("entrypointKind")
+        if not isinstance(value, str) or not value.strip():
+            return None
+        return value.strip().upper()
 
     def _graph_identity_by_source(self, conn: sqlite3.Connection, source_ids: List[str]) -> Dict[str, Dict[str, Optional[str]]]:
         if not source_ids or not self._table_exists(conn, "analysis_graph_state"):

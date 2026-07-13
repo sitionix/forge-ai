@@ -1,12 +1,10 @@
 {
   "answerLanguage": "uk",
-  "answer": {
-    "text": "Сайт створюється через JarvisGateway, який делегує роботу внутрішнім компонентам."
-  },
-  "sources": [
+  "answers": [
     {
       "source": "source-a",
-      "entrypoint": "JarvisGateway"
+      "entrypoint": "JarvisGateway",
+      "text": "Сайт створюється через JarvisGateway, який делегує роботу внутрішнім компонентам."
     }
   ],
   "diagnostics": []

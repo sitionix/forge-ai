@@ -110,16 +110,21 @@ def test_flow_explanation_query_uses_dedicated_knowledge_contract(tmp_path):
 
     body = response.json()
     assert response.status_code == 200
-    assert knowledge.calls == []
-    assert knowledge.paths == ["/api/v1/knowledge/query/flow-explanations"]
-    assert knowledge.flow_explanation_calls == [
+    assert knowledge.calls == [
         normalized_query_payload("SiteController createSite", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=10)
     ]
+    assert knowledge.paths == ["/api/v1/knowledge/query"]
+    assert knowledge.flow_explanation_calls == []
     assert model.prompts == []
     assert body == {
         "answerLanguage": "uk",
-        "answer": {"text": "Сайт створюється через контролер і use case."},
-        "sources": [{"source": "stsssox", "entrypoint": "SiteController.createSite"}],
+        "answers": [
+            {
+                "source": "stsssox",
+                "entrypoint": "SiteController.createSite",
+                "text": "Сайт створюється через контролер і use case.",
+            }
+        ],
         "diagnostics": [],
     }
     assert "status" not in body
@@ -133,7 +138,7 @@ def test_flow_explanation_generation_failure_uses_public_error(tmp_path):
             502,
             {
                 "code": "HUMAN_ANSWER_GENERATION_FAILED",
-                "message": "The local model could not produce a grounded answer.",
+                "message": "The local model could not produce any grounded flow answers.",
             },
         )
     )
@@ -145,7 +150,7 @@ def test_flow_explanation_generation_failure_uses_public_error(tmp_path):
     assert response.status_code == 502
     assert response.json() == {
         "code": "HUMAN_ANSWER_GENERATION_FAILED",
-        "message": "The local model could not produce a grounded answer.",
+        "message": "The local model could not produce any grounded flow answers.",
     }
 
 

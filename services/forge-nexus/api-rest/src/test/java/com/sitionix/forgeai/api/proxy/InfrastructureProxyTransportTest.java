@@ -51,7 +51,7 @@ class InfrastructureProxyTransportTest {
         when(request.getQueryString()).thenReturn(null);
 
         transport.forward(
-                "knowledge.query.flow-explanations",
+                "knowledge.query",
                 Map.of(),
                 "{\"queryText\":\"A.start\"}".getBytes(UTF_8),
                 new HttpHeaders(),
@@ -113,7 +113,7 @@ class InfrastructureProxyTransportTest {
                     final HttpResponse<InputStream> response = mock(HttpResponse.class);
                     when(response.statusCode()).thenReturn(200);
                     when(response.body()).thenReturn(new ByteArrayInputStream("""
-                            {"answerLanguage":"uk","answer":{"text":"JarvisGateway handles the request."},"sources":[],"diagnostics":[]}
+                            {"answerLanguage":"uk","answers":[{"source":"source-a","entrypoint":"JarvisGateway","text":"JarvisGateway handles the request."}],"diagnostics":[]}
                             """.strip().getBytes(UTF_8)));
                     when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of("Content-Type", List.of("application/json")), (left, right) -> true));
                     return CompletableFuture.completedFuture(response);
@@ -146,7 +146,7 @@ class InfrastructureProxyTransportTest {
 
         final String body = new String(response.getBody(), UTF_8);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(body).contains("\"answer\"");
+        assertThat(body).contains("\"answers\"");
         assertThat(body).doesNotContain("\"status\"");
         assertThat(body).doesNotContain("\"flows\"");
         assertThat(body).doesNotContain("UPSTREAM_TIMEOUT");
@@ -166,7 +166,7 @@ class InfrastructureProxyTransportTest {
                     final HttpResponse<InputStream> response = mock(HttpResponse.class);
                     when(response.statusCode()).thenReturn(200);
                     when(response.body()).thenReturn(new ByteArrayInputStream(
-                            "{\"answerLanguage\":\"uk\",\"answer\":{\"text\":\"ok\"},\"sources\":[],\"diagnostics\":[]}".getBytes(UTF_8)
+                            "{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"A.start\",\"text\":\"ok\"}],\"diagnostics\":[]}".getBytes(UTF_8)
                     ));
                     when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of("Content-Type", List.of("application/json")), (left, right) -> true));
                     return CompletableFuture.completedFuture(response);
@@ -188,7 +188,7 @@ class InfrastructureProxyTransportTest {
         when(request.getQueryString()).thenReturn(null);
 
         final ResponseEntity<byte[]> response = transport.forward(
-                "knowledge.query.flow-explanations",
+                "knowledge.query",
                 Map.of(),
                 "{\"queryText\":\"A.start\"}".getBytes(UTF_8),
                 new org.springframework.http.HttpHeaders(),
@@ -197,7 +197,7 @@ class InfrastructureProxyTransportTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         final String body = new String(response.getBody(), UTF_8);
-        assertThat(body).contains("\"answer\"");
+        assertThat(body).contains("\"answers\"");
         assertThat(body).doesNotContain("\"status\"");
     }
 }

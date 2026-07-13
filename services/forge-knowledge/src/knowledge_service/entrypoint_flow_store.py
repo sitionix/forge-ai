@@ -172,6 +172,7 @@ class EntrypointFlowGraphRepository:
                    COALESCE(af.relative_path, n.relative_path) AS relative_path,
                    0 AS graph_degree,
                    CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint,
+                   entry.entrypoint_kind AS entrypoint_kind,
                    claim.summary AS summary
             FROM analysis_graph_nodes n
             LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id

@@ -265,10 +265,15 @@ class KnowledgeHumanAnswerSource(BaseModel):
     entrypoint: str
 
 
-class KnowledgeQueryFlowExplanationResponse(BaseModel):
+class KnowledgeFlowAnswer(BaseModel):
+    source: str
+    entrypoint: str
+    text: str
+
+
+class KnowledgeHumanQueryResponse(BaseModel):
     answerLanguage: str
-    answer: KnowledgeHumanAnswer
-    sources: List[KnowledgeHumanAnswerSource] = Field(default_factory=list)
+    answers: List[KnowledgeFlowAnswer] = Field(default_factory=list)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 

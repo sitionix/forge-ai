@@ -42,8 +42,8 @@ from knowledge_service.inventory_refresh import AsyncInventoryScheduler, Invento
 from knowledge_service.inventory_schema import InventoryBuildRequest
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.knowledge_query_schema import (
+    KnowledgeHumanQueryResponse,
     KnowledgeQueryDiagnostic,
-    KnowledgeQueryFlowExplanationResponse,
     KnowledgeQueryRequest,
     KnowledgeQueryResponse,
     KnowledgeQueryStatus,
@@ -242,21 +242,17 @@ def create_app(
                 raise
             raise KnowledgeError("CONTEXT_BUILD_FAILED", "Context build failed") from exc
 
-    @app.post("/api/v1/knowledge/query", response_model=KnowledgeQueryResponse)
-    async def knowledge_query(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-        return await _run_in_thread(_knowledge_query_response, request, body)
-
     @app.post(
-        "/api/v1/knowledge/query/flow-explanations",
-        response_model=KnowledgeQueryFlowExplanationResponse,
+        "/api/v1/knowledge/query",
+        response_model=KnowledgeHumanQueryResponse,
         response_model_exclude_none=True,
     )
-    async def knowledge_query_flow_explanations(request: Request, body: KnowledgeQueryRequest):
+    async def knowledge_query(request: Request, body: KnowledgeQueryRequest):
         config, _ = _state(request)
         deadline_at = time.monotonic() + _flow_explanation_request_deadline_seconds(config)
         cancel_event = threading.Event()
         return await _run_in_thread(
-            _knowledge_query_flow_explanations_response,
+            _knowledge_human_query_response,
             request,
             body,
             cancel_event,
@@ -649,7 +645,7 @@ def _knowledge_query_response(request: Request, body: KnowledgeQueryRequest) -> 
         )
 
 
-def _knowledge_query_flow_explanations_response(
+def _knowledge_human_query_response(
     request: Request,
     body: KnowledgeQueryRequest,
     cancel_event: threading.Event | None = None,
@@ -684,7 +680,7 @@ def _knowledge_query_flow_explanations_response(
         return _public_error_response(
             502,
             "HUMAN_ANSWER_GENERATION_FAILED",
-            "The local model could not produce a grounded answer.",
+            "The local model could not produce any grounded flow answers.",
         )
     except Exception:
         return _public_error_response(

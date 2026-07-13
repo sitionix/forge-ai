@@ -310,7 +310,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseStatus(HttpStatus.OK.value())
                         .responseBody("responseProxyGraphEdgeDetailContract.json"))
                 .create();
-        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeQueryFlowExplanations()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeQuery()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeQueryToolContext()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisCommand()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
@@ -351,7 +351,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .withQueryParameters(InfrastructureProxyQuery.graphNodeDetailContract())
                 .header("X-Correlation-Id", "corr-parity")
                 .assertDefault();
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeQueryFlowExplanations())
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeQuery())
                 .header("X-Correlation-Id", "corr-parity")
                 .assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeQueryToolContext())
@@ -890,11 +890,13 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery())
                 .header("X-Correlation-Id", "corr-jarvis-query-positive")
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.answerLanguage").value("uk"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answer.text", containsString("JarvisGateway")))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.sources[0].source").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.sources[0].entrypoint").value("JarvisGateway"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].source").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].entrypoint").value("JarvisGateway"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics").isEmpty())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").doesNotExist())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answer").doesNotExist())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.sources").doesNotExist())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows").doesNotExist())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowExplanations").doesNotExist())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes").doesNotExist())
@@ -904,7 +906,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryOptionalControls())
                 .header("X-Correlation-Id", "corr-jarvis-query-optional")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answer.text", containsString("JarvisGateway")))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").doesNotExist())
                 .assertDefault();
 
@@ -955,7 +957,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery())
                 .header("X-Correlation-Id", "corr-jarvis-redaction")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answer.text", containsString("JarvisGateway")))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes").doesNotExist())
                 .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("SYSTEM PROMPT"))))
                 .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("source content"))))

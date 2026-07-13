@@ -27,10 +27,9 @@ from knowledge_service.knowledge_query_schema import (
     FlowToolEvidence,
     FlowToolTree,
     FlowToolTreeItem,
-    KnowledgeHumanAnswer,
-    KnowledgeHumanAnswerSource,
+    KnowledgeFlowAnswer,
+    KnowledgeHumanQueryResponse,
     KnowledgeQueryDiagnostic,
-    KnowledgeQueryFlowExplanationResponse,
     KnowledgeQueryRequest,
     KnowledgeQueryResponse,
     KnowledgeQueryToolContextResponse,
@@ -145,7 +144,7 @@ class HumanAnswerPromptRenderer:
             "Return strict JSON only with exactly this shape: {\"text\":\"human-readable answer\"}.\n"
             "Use the requested answerLanguage. Directly answer the question. Preserve branches as alternatives or parallel calls when the facts branch.\n"
             "Do not mention graph terminology, retrieval mechanics, refs, nodes, transitions, boundaries, hierarchy, scores, or internal IDs.\n"
-            "Do not invent behavior unsupported by the supplied facts. If several entrypoints are legitimate alternatives, explain them as alternatives in one answer.\n"
+            "Do not invent behavior unsupported by the supplied facts. Explain only the single supplied entrypoint flow.\n"
             f"{validation_block}"
             "BEGIN_VERIFIED_FLOW_FACTS_JSON\n"
             f"{context_json}\n"
@@ -164,23 +163,18 @@ class CompactFlowProjector:
             diagnostics=self._diagnostics(execution),
         )
 
-    def human_llm_input(self, request: KnowledgeQueryRequest, execution: Any) -> Dict[str, Any]:
-        trees = [self._tree(flow) for flow in tuple(execution.flows or ())]
+    def human_llm_input(self, request: KnowledgeQueryRequest, flow: EntrypointFlow) -> Dict[str, Any]:
+        tree = self._tree(flow)
         return {
             "queryText": request.queryText,
             "answerLanguage": request.answerLanguage,
-            "sources": [source.dict() for source in self.human_sources(execution)],
-            "flows": [tree.dict(exclude_none=True) for tree in trees],
+            "source": tree.source,
+            "entrypoint": tree.entrypoint.symbol,
+            "tree": tree.entrypoint.dict(exclude_none=True),
         }
 
-    def human_sources(self, execution: Any) -> List[KnowledgeHumanAnswerSource]:
-        result: List[KnowledgeHumanAnswerSource] = []
-        for flow in tuple(execution.flows or ()):
-            source = str(flow.key.source_id or "")
-            entrypoint = self._symbol(flow.entrypoint)
-            if source and entrypoint and not any(item.source == source and item.entrypoint == entrypoint for item in result):
-                result.append(KnowledgeHumanAnswerSource(source=source, entrypoint=entrypoint))
-        return result
+    def flow_answer_identity(self, flow: EntrypointFlow) -> tuple[str, str]:
+        return str(flow.key.source_id or ""), self._symbol(flow.entrypoint)
 
     def _tree(self, flow: EntrypointFlow) -> FlowToolTree:
         node_by_id = {node.node_id: node for node in flow.nodes}
@@ -304,11 +298,21 @@ class CompactFlowProjector:
         return str(node.label or node.node_id)
 
     def _node_kind(self, node: FlowGraphNode) -> str:
-        if node.entrypoint and node.node_kind == "CALLABLE":
-            return "HTTP_ENDPOINT"
+        if node.entrypoint:
+            return self._entrypoint_kind(node.entrypoint_kind)
         if node.node_kind == "CALLABLE":
             return "METHOD"
         return node.node_kind
+
+    def _entrypoint_kind(self, value: str | None) -> str:
+        normalized = str(value or "").strip().upper()
+        return {
+            "HTTP": "HTTP_ENDPOINT",
+            "KAFKA": "KAFKA_LISTENER",
+            "SCHEDULED": "SCHEDULED_TASK",
+            "MESSAGE": "MESSAGE_HANDLER",
+            "BOOTSTRAP": "APPLICATION_ENTRYPOINT",
+        }.get(normalized, "ENTRYPOINT")
 
     def _unresolved_target_name(self, edge: FlowGraphEdge) -> str | None:
         target = edge.unresolved_target or {}
@@ -374,23 +378,52 @@ class HumanFlowAnswerService:
         execution: Any,
         *,
         deadline_at: float | None = None,
-    ) -> KnowledgeQueryFlowExplanationResponse:
+    ) -> KnowledgeHumanQueryResponse:
         flows = tuple(execution.flows or ())
         if not flows:
             raise HumanAnswerGenerationFailed("no grounded flows")
         if deadline_at is None:
             deadline_at = time.monotonic() + self.request_deadline_seconds
-        llm_input = self.projector.human_llm_input(request, execution)
-        prompt_len = len(self.renderer.render(llm_input))
-        if prompt_len > self.max_prompt_chars:
-            raise HumanAnswerGenerationFailed("human answer prompt exceeded budget")
-        first = self._complete_with_deadline(llm_input, deadline_at)
-        text = self._validate_text(first.raw_text)
-        return KnowledgeQueryFlowExplanationResponse(
-            answerLanguage=request.answerLanguage,
-            answer=KnowledgeHumanAnswer(text=text),
-            sources=self.projector.human_sources(execution),
-            diagnostics=[],
+        answers: List[KnowledgeFlowAnswer] = []
+        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        deadline_failures = 0
+        for flow in flows:
+            source, entrypoint = self.projector.flow_answer_identity(flow)
+            try:
+                if self._cancelled():
+                    raise FlowExplanationDeadlineExceeded()
+                llm_input = self.projector.human_llm_input(request, flow)
+                prompt_len = len(self.renderer.render(llm_input))
+                if prompt_len > self.max_prompt_chars:
+                    raise HumanAnswerGenerationFailed("human answer prompt exceeded budget")
+                first = self._complete_with_deadline(llm_input, deadline_at)
+                text = self._validate_text(first.raw_text)
+                answers.append(KnowledgeFlowAnswer(source=source, entrypoint=entrypoint, text=text))
+            except FlowExplanationDeadlineExceeded:
+                deadline_failures += 1
+                diagnostics.append(self._flow_failure_diagnostic(source, entrypoint))
+                if self._cancelled():
+                    break
+            except HumanAnswerGenerationFailed:
+                diagnostics.append(self._flow_failure_diagnostic(source, entrypoint))
+
+        if answers:
+            return KnowledgeHumanQueryResponse(
+                answerLanguage=request.answerLanguage,
+                answers=answers,
+                diagnostics=diagnostics,
+            )
+        if deadline_failures:
+            raise FlowExplanationDeadlineExceeded()
+        raise HumanAnswerGenerationFailed("no grounded flow answers")
+
+    def _flow_failure_diagnostic(self, source: str, entrypoint: str) -> KnowledgeQueryDiagnostic:
+        return KnowledgeQueryDiagnostic(
+            code="HUMAN_FLOW_ANSWER_GENERATION_FAILED",
+            message="The local model could not explain one selected flow.",
+            severity="WARN",
+            sourceId=source or None,
+            metadata={"entrypoint": entrypoint},
         )
 
     def _complete_with_deadline(self, llm_input: Mapping[str, Any], deadline_at: float) -> FlowExplanationProviderResult:
@@ -1231,11 +1264,11 @@ class FlowExplanationService:
             results.append(result)
         return FlowExplanationRun(query_response=query_response, results=results, diagnostics=diagnostics)
 
-    def to_ui_response(self, run: FlowExplanationRun) -> KnowledgeQueryFlowExplanationResponse:
+    def to_ui_response(self, run: FlowExplanationRun) -> Dict[str, Any]:
         base = run.query_response.dict()
         base["flowExplanations"] = [self._ui_explanation(result) for result in run.results]
         base["diagnostics"] = [*base.get("diagnostics", []), *[diagnostic.dict() for diagnostic in run.diagnostics]]
-        return KnowledgeQueryFlowExplanationResponse(**base)
+        return base
 
     def to_tool_response(self, request: KnowledgeQueryRequest, run: FlowExplanationRun) -> KnowledgeQueryToolContextResponse:
         execution = type(

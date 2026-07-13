@@ -220,20 +220,7 @@
         "title": "InventoryBuildRequest",
         "type": "object"
       },
-      "KnowledgeHumanAnswer": {
-        "properties": {
-          "text": {
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "required": [
-          "text"
-        ],
-        "title": "KnowledgeHumanAnswer",
-        "type": "object"
-      },
-      "KnowledgeHumanAnswerSource": {
+      "KnowledgeFlowAnswer": {
         "properties": {
           "entrypoint": {
             "title": "Entrypoint",
@@ -242,64 +229,45 @@
           "source": {
             "title": "Source",
             "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
           }
         },
         "required": [
           "source",
-          "entrypoint"
+          "entrypoint",
+          "text"
         ],
-        "title": "KnowledgeHumanAnswerSource",
+        "title": "KnowledgeFlowAnswer",
         "type": "object"
       },
-      "KnowledgeQueryCoverage": {
+      "KnowledgeHumanQueryResponse": {
         "properties": {
-          "continuationAvailable": {
-            "default": false,
-            "title": "Continuationavailable",
-            "type": "boolean"
+          "answerLanguage": {
+            "title": "Answerlanguage",
+            "type": "string"
           },
-          "edgeCount": {
-            "default": 0,
-            "title": "Edgecount",
-            "type": "integer"
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeFlowAnswer"
+            },
+            "title": "Answers",
+            "type": "array"
           },
-          "evidenceCount": {
-            "default": 0,
-            "title": "Evidencecount",
-            "type": "integer"
-          },
-          "flowCount": {
-            "default": 0,
-            "title": "Flowcount",
-            "type": "integer"
-          },
-          "matchedNodeCount": {
-            "default": 0,
-            "title": "Matchednodecount",
-            "type": "integer"
-          },
-          "matchedSourceCount": {
-            "default": 0,
-            "title": "Matchedsourcecount",
-            "type": "integer"
-          },
-          "nodeCount": {
-            "default": 0,
-            "title": "Nodecount",
-            "type": "integer"
-          },
-          "searchedSourceCount": {
-            "default": 0,
-            "title": "Searchedsourcecount",
-            "type": "integer"
-          },
-          "truncated": {
-            "default": false,
-            "title": "Truncated",
-            "type": "boolean"
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
           }
         },
-        "title": "KnowledgeQueryCoverage",
+        "required": [
+          "answerLanguage"
+        ],
+        "title": "KnowledgeHumanQueryResponse",
         "type": "object"
       },
       "KnowledgeQueryDiagnostic": {
@@ -333,340 +301,6 @@
         "title": "KnowledgeQueryDiagnostic",
         "type": "object"
       },
-      "KnowledgeQueryEntrypointOrigin": {
-        "description": "An enumeration.",
-        "enum": [
-          "EXPLICIT_GRAPH_FACT",
-          "INFERRED_ROOT"
-        ],
-        "title": "KnowledgeQueryEntrypointOrigin",
-        "type": "string"
-      },
-      "KnowledgeQueryFlow": {
-        "properties": {
-          "boundaries": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryFlowBoundary"
-            },
-            "title": "Boundaries",
-            "type": "array"
-          },
-          "complete": {
-            "default": true,
-            "title": "Complete",
-            "type": "boolean"
-          },
-          "coverage": {
-            "$ref": "#/components/schemas/KnowledgeQueryFlowCoverage"
-          },
-          "diagnostics": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
-            },
-            "title": "Diagnostics",
-            "type": "array"
-          },
-          "entrypoint": {
-            "$ref": "#/components/schemas/KnowledgeQueryFlowNode"
-          },
-          "entrypointOrigin": {
-            "$ref": "#/components/schemas/KnowledgeQueryEntrypointOrigin"
-          },
-          "evidence": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryFlowEvidence"
-            },
-            "title": "Evidence",
-            "type": "array"
-          },
-          "flowIndex": {
-            "title": "Flowindex",
-            "type": "integer"
-          },
-          "matchedAnchors": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryFlowOrigin"
-            },
-            "title": "Matchedanchors",
-            "type": "array"
-          },
-          "nodes": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryFlowNode"
-            },
-            "title": "Nodes",
-            "type": "array"
-          },
-          "source": {
-            "title": "Source",
-            "type": "string"
-          },
-          "transitions": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryFlowTransition"
-            },
-            "title": "Transitions",
-            "type": "array"
-          }
-        },
-        "required": [
-          "flowIndex",
-          "source",
-          "entrypoint",
-          "entrypointOrigin"
-        ],
-        "title": "KnowledgeQueryFlow",
-        "type": "object"
-      },
-      "KnowledgeQueryFlowBoundary": {
-        "properties": {
-          "boundaryRef": {
-            "title": "Boundaryref",
-            "type": "string"
-          },
-          "evidenceRefs": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Evidencerefs",
-            "type": "array"
-          },
-          "fromNodeRef": {
-            "title": "Fromnoderef",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "resolutionStatus": {
-            "title": "Resolutionstatus",
-            "type": "string"
-          },
-          "target": {
-            "title": "Target",
-            "type": "string"
-          }
-        },
-        "required": [
-          "boundaryRef",
-          "fromNodeRef",
-          "kind",
-          "resolutionStatus"
-        ],
-        "title": "KnowledgeQueryFlowBoundary",
-        "type": "object"
-      },
-      "KnowledgeQueryFlowCoverage": {
-        "properties": {
-          "anchorCount": {
-            "default": 0,
-            "title": "Anchorcount",
-            "type": "integer"
-          },
-          "boundaryCount": {
-            "default": 0,
-            "title": "Boundarycount",
-            "type": "integer"
-          },
-          "cycleDetected": {
-            "default": false,
-            "title": "Cycledetected",
-            "type": "boolean"
-          },
-          "maxDepthReached": {
-            "default": 0,
-            "title": "Maxdepthreached",
-            "type": "integer"
-          },
-          "nodeCount": {
-            "default": 0,
-            "title": "Nodecount",
-            "type": "integer"
-          },
-          "transitionCount": {
-            "default": 0,
-            "title": "Transitioncount",
-            "type": "integer"
-          },
-          "truncated": {
-            "default": false,
-            "title": "Truncated",
-            "type": "boolean"
-          }
-        },
-        "title": "KnowledgeQueryFlowCoverage",
-        "type": "object"
-      },
-      "KnowledgeQueryFlowEvidence": {
-        "properties": {
-          "evidenceRef": {
-            "title": "Evidenceref",
-            "type": "string"
-          },
-          "excerpt": {
-            "title": "Excerpt",
-            "type": "string"
-          },
-          "lineEnd": {
-            "title": "Lineend",
-            "type": "integer"
-          },
-          "lineStart": {
-            "title": "Linestart",
-            "type": "integer"
-          },
-          "ownerRef": {
-            "title": "Ownerref",
-            "type": "string"
-          },
-          "relativePath": {
-            "title": "Relativepath",
-            "type": "string"
-          }
-        },
-        "required": [
-          "evidenceRef",
-          "ownerRef"
-        ],
-        "title": "KnowledgeQueryFlowEvidence",
-        "type": "object"
-      },
-      "KnowledgeQueryFlowExplanationResponse": {
-        "properties": {
-          "answer": {
-            "$ref": "#/components/schemas/KnowledgeHumanAnswer"
-          },
-          "answerLanguage": {
-            "title": "Answerlanguage",
-            "type": "string"
-          },
-          "diagnostics": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
-            },
-            "title": "Diagnostics",
-            "type": "array"
-          },
-          "sources": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeHumanAnswerSource"
-            },
-            "title": "Sources",
-            "type": "array"
-          }
-        },
-        "required": [
-          "answerLanguage",
-          "answer"
-        ],
-        "title": "KnowledgeQueryFlowExplanationResponse",
-        "type": "object"
-      },
-      "KnowledgeQueryFlowNode": {
-        "properties": {
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "lineEnd": {
-            "title": "Lineend",
-            "type": "integer"
-          },
-          "lineStart": {
-            "title": "Linestart",
-            "type": "integer"
-          },
-          "nodeRef": {
-            "title": "Noderef",
-            "type": "string"
-          },
-          "qualifiedName": {
-            "title": "Qualifiedname",
-            "type": "string"
-          },
-          "relativePath": {
-            "title": "Relativepath",
-            "type": "string"
-          }
-        },
-        "required": [
-          "nodeRef",
-          "label",
-          "kind"
-        ],
-        "title": "KnowledgeQueryFlowNode",
-        "type": "object"
-      },
-      "KnowledgeQueryFlowOrigin": {
-        "properties": {
-          "anchorRef": {
-            "title": "Anchorref",
-            "type": "string"
-          },
-          "distance": {
-            "title": "Distance",
-            "type": "integer"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "matchReasons": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Matchreasons",
-            "type": "array"
-          },
-          "score": {
-            "title": "Score",
-            "type": "number"
-          }
-        },
-        "required": [
-          "anchorRef",
-          "label",
-          "score",
-          "distance"
-        ],
-        "title": "KnowledgeQueryFlowOrigin",
-        "type": "object"
-      },
-      "KnowledgeQueryFlowTransition": {
-        "properties": {
-          "evidenceRefs": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Evidencerefs",
-            "type": "array"
-          },
-          "fromNodeRef": {
-            "title": "Fromnoderef",
-            "type": "string"
-          },
-          "toNodeRef": {
-            "title": "Tonoderef",
-            "type": "string"
-          },
-          "transitionRef": {
-            "title": "Transitionref",
-            "type": "string"
-          }
-        },
-        "required": [
-          "transitionRef",
-          "fromNodeRef",
-          "toNodeRef"
-        ],
-        "title": "KnowledgeQueryFlowTransition",
-        "type": "object"
-      },
       "KnowledgeQueryIntent": {
         "description": "An enumeration.",
         "enum": [
@@ -679,76 +313,6 @@
         ],
         "title": "KnowledgeQueryIntent",
         "type": "string"
-      },
-      "KnowledgeQueryMatchedNodePreview": {
-        "properties": {
-          "flowDomain": {
-            "title": "Flowdomain",
-            "type": "string"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "matchReasons": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Matchreasons",
-            "type": "array"
-          },
-          "nodeKind": {
-            "title": "Nodekind",
-            "type": "string"
-          },
-          "qualifiedName": {
-            "title": "Qualifiedname",
-            "type": "string"
-          },
-          "relativePath": {
-            "title": "Relativepath",
-            "type": "string"
-          },
-          "score": {
-            "title": "Score",
-            "type": "number"
-          },
-          "sourceId": {
-            "title": "Sourceid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "sourceId",
-          "nodeKind",
-          "label",
-          "score"
-        ],
-        "title": "KnowledgeQueryMatchedNodePreview",
-        "type": "object"
-      },
-      "KnowledgeQueryMatchedSource": {
-        "properties": {
-          "displayName": {
-            "title": "Displayname",
-            "type": "string"
-          },
-          "score": {
-            "title": "Score",
-            "type": "number"
-          },
-          "sourceId": {
-            "title": "Sourceid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "sourceId",
-          "displayName",
-          "score"
-        ],
-        "title": "KnowledgeQueryMatchedSource",
-        "type": "object"
       },
       "KnowledgeQueryRequest": {
         "additionalProperties": false,
@@ -790,71 +354,6 @@
         ],
         "title": "KnowledgeQueryRequest",
         "type": "object"
-      },
-      "KnowledgeQueryResponse": {
-        "properties": {
-          "coverage": {
-            "$ref": "#/components/schemas/KnowledgeQueryCoverage"
-          },
-          "diagnostics": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
-            },
-            "title": "Diagnostics",
-            "type": "array"
-          },
-          "flows": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryFlow"
-            },
-            "title": "Flows",
-            "type": "array"
-          },
-          "intent": {
-            "title": "Intent",
-            "type": "string"
-          },
-          "matchedNodes": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryMatchedNodePreview"
-            },
-            "title": "Matchednodes",
-            "type": "array"
-          },
-          "matchedSources": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryMatchedSource"
-            },
-            "title": "Matchedsources",
-            "type": "array"
-          },
-          "queryId": {
-            "title": "Queryid",
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/KnowledgeQueryStatus"
-          }
-        },
-        "required": [
-          "queryId",
-          "status",
-          "intent"
-        ],
-        "title": "KnowledgeQueryResponse",
-        "type": "object"
-      },
-      "KnowledgeQueryStatus": {
-        "description": "An enumeration.",
-        "enum": [
-          "OK",
-          "NO_CANDIDATES",
-          "AMBIGUOUS",
-          "INVALID_REQUEST",
-          "QUERY_FAILED"
-        ],
-        "title": "KnowledgeQueryStatus",
-        "type": "string"
       },
       "KnowledgeQueryToolContextResponse": {
         "properties": {
@@ -2228,44 +1727,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/KnowledgeQueryResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        }
-      }
-    },
-    "/api/v1/knowledge/query/flow-explanations": {
-      "post": {
-        "parameters": [],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/KnowledgeQueryRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KnowledgeQueryFlowExplanationResponse"
+                  "$ref": "#/components/schemas/KnowledgeHumanQueryResponse"
                 }
               }
             },

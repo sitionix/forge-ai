@@ -207,14 +207,19 @@ def test_flow_explanation_query_calls_knowledge_flow_endpoint_once(tmp_path) -> 
         include_tests=False,
         max_flows=10,
     )
-    assert knowledge.flow_explanation_calls == [expected_payload]
-    assert knowledge.calls == []
-    assert knowledge.paths == ["/api/v1/knowledge/query/flow-explanations"]
+    assert knowledge.calls == [expected_payload]
+    assert knowledge.flow_explanation_calls == []
+    assert knowledge.paths == ["/api/v1/knowledge/query"]
     body = response.json()
     assert body == {
         "answerLanguage": "uk",
-        "answer": {"text": "Сайт створюється через SiteController.createSite."},
-        "sources": [{"source": "stsssox", "entrypoint": "SiteController.createSite"}],
+        "answers": [
+            {
+                "source": "stsssox",
+                "entrypoint": "SiteController.createSite",
+                "text": "Сайт створюється через SiteController.createSite.",
+            }
+        ],
         "diagnostics": [],
     }
     assert "status" not in body
@@ -228,7 +233,7 @@ def test_flow_explanation_generation_failure_preserves_upstream_error(tmp_path) 
             502,
             {
                 "code": "HUMAN_ANSWER_GENERATION_FAILED",
-                "message": "The local model could not produce a grounded answer.",
+                "message": "The local model could not produce any grounded flow answers.",
             },
         )
     )
@@ -240,13 +245,56 @@ def test_flow_explanation_generation_failure_preserves_upstream_error(tmp_path) 
     assert response.status_code == 502
     assert response.json() == {
         "code": "HUMAN_ANSWER_GENERATION_FAILED",
-        "message": "The local model could not produce a grounded answer.",
+        "message": "The local model could not produce any grounded flow answers.",
     }
-    assert knowledge.flow_explanation_calls == [
+    assert knowledge.calls == [
         normalized_query_payload("JarvisGateway", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=10)
     ]
-    assert knowledge.calls == []
-    assert knowledge.paths == ["/api/v1/knowledge/query/flow-explanations"]
+    assert knowledge.flow_explanation_calls == []
+    assert knowledge.paths == ["/api/v1/knowledge/query"]
+
+
+def test_flow_explanation_response_preserves_multiple_answers_and_diagnostics(tmp_path) -> None:
+    knowledge = FakeKnowledgeClient(
+        bundle=human_answer_bundle(
+            answers=[
+                {"source": "service-a", "entrypoint": "ControllerA.create", "text": "A creates the site."},
+                {"source": "service-b", "entrypoint": "ListenerB.handle", "text": "B handles the event."},
+            ],
+            diagnostics=[
+                {
+                    "code": "HUMAN_FLOW_ANSWER_GENERATION_FAILED",
+                    "message": "The local model could not explain one selected flow.",
+                    "severity": "WARN",
+                    "sourceId": "service-c",
+                    "metadata": {"entrypoint": "ListenerC.handle"},
+                }
+            ],
+        )
+    )
+    app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/jarvis/query", json=flow_query_payload("site flow"))
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "answerLanguage": "uk",
+        "answers": [
+            {"source": "service-a", "entrypoint": "ControllerA.create", "text": "A creates the site."},
+            {"source": "service-b", "entrypoint": "ListenerB.handle", "text": "B handles the event."},
+        ],
+        "diagnostics": [
+            {
+                "code": "HUMAN_FLOW_ANSWER_GENERATION_FAILED",
+                "message": "The local model could not explain one selected flow.",
+                "severity": "WARN",
+                "sourceId": "service-c",
+                "metadata": {"entrypoint": "ListenerC.handle"},
+            }
+        ],
+    }
+    assert knowledge.paths == ["/api/v1/knowledge/query"]
 
 
 def test_flow_explanation_malformed_knowledge_response_maps_to_controlled_error(tmp_path) -> None:
@@ -258,11 +306,11 @@ def test_flow_explanation_malformed_knowledge_response_maps_to_controlled_error(
 
     assert response.status_code == 502
     assert response.json()["code"] == "KNOWLEDGE_BAD_RESPONSE"
-    assert knowledge.flow_explanation_calls == [
+    assert knowledge.calls == [
         normalized_query_payload("JarvisGateway", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=10)
     ]
-    assert knowledge.calls == []
-    assert knowledge.paths == ["/api/v1/knowledge/query/flow-explanations"]
+    assert knowledge.flow_explanation_calls == []
+    assert knowledge.paths == ["/api/v1/knowledge/query"]
 
 
 def test_query_does_not_call_ollama_generation(tmp_path) -> None:
@@ -378,7 +426,7 @@ def test_flow_explanation_client_uses_timeout_beyond_normal_knowledge_boundary()
 
     result, calls = asyncio.run(exercise())
 
-    assert calls == ["/api/v1/knowledge/query/flow-explanations"]
-    assert result["answer"]["text"] == "JarvisGateway handles the request."
+    assert calls == ["/api/v1/knowledge/query"]
+    assert result["answers"][0]["text"] == "JarvisGateway handles the request."
     assert "status" not in result
     assert "flows" not in result

@@ -228,16 +228,10 @@ class JarvisKnowledgeQueryResponse(BaseModel):
         extra = "forbid"
 
 
-class JarvisHumanAnswer(BaseModel):
-    text: str
-
-    class Config:
-        extra = "forbid"
-
-
-class JarvisHumanAnswerSource(BaseModel):
+class JarvisFlowAnswer(BaseModel):
     source: str
     entrypoint: str
+    text: str
 
     class Config:
         extra = "forbid"
@@ -245,8 +239,7 @@ class JarvisHumanAnswerSource(BaseModel):
 
 class JarvisHumanAnswerResponse(BaseModel):
     answerLanguage: str
-    answer: JarvisHumanAnswer
-    sources: List[JarvisHumanAnswerSource] = Field(default_factory=list)
+    answers: List[JarvisFlowAnswer] = Field(default_factory=list)
     diagnostics: List[JarvisQueryDiagnostic] = Field(default_factory=list)
 
     class Config:

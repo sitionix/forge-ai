@@ -16,7 +16,7 @@ class InfrastructureProxyRouteRegistryTest {
                 new ForgeAiFlowExplanationProperties()
         );
 
-        assertThat(registry.require("knowledge.query.flow-explanations").readTimeout())
+        assertThat(registry.require("knowledge.query").readTimeout())
                 .isEqualTo(Duration.ofSeconds(185));
         assertThat(registry.require("knowledge.query.tool-context").readTimeout())
                 .isEqualTo(Duration.ofSeconds(185));
@@ -39,7 +39,7 @@ class InfrastructureProxyRouteRegistryTest {
                 flowExplanationProperties
         );
 
-        assertThat(registry.require("knowledge.query.flow-explanations").readTimeout())
+        assertThat(registry.require("knowledge.query").readTimeout())
                 .isEqualTo(Duration.ofSeconds(49));
         assertThat(registry.require("knowledge.query.tool-context").readTimeout())
                 .isEqualTo(Duration.ofSeconds(49));

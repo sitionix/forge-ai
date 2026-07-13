@@ -23,8 +23,6 @@ class ModelClient(Protocol):
 class KnowledgeQueryClient(Protocol):
     async def query(self, payload: Dict[str, Any]) -> Dict[str, Any]: ...
 
-    async def query_flow_explanations(self, payload: Dict[str, Any]) -> Dict[str, Any]: ...
-
 
 @dataclass(frozen=True)
 class JarvisDependencies:

@@ -103,6 +103,30 @@
         "title": "JarvisEntrypointOrigin",
         "type": "string"
       },
+      "JarvisFlowAnswer": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "title": "Entrypoint",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "entrypoint",
+          "text"
+        ],
+        "title": "JarvisFlowAnswer",
+        "type": "object"
+      },
       "JarvisFlowBoundary": {
         "properties": {
           "boundaryRef": {
@@ -521,29 +545,19 @@
         "title": "JarvisFlowTransition",
         "type": "object"
       },
-      "JarvisHumanAnswer": {
-        "additionalProperties": false,
-        "properties": {
-          "text": {
-            "title": "Text",
-            "type": "string"
-          }
-        },
-        "required": [
-          "text"
-        ],
-        "title": "JarvisHumanAnswer",
-        "type": "object"
-      },
       "JarvisHumanAnswerResponse": {
         "additionalProperties": false,
         "properties": {
-          "answer": {
-            "$ref": "#/components/schemas/JarvisHumanAnswer"
-          },
           "answerLanguage": {
             "title": "Answerlanguage",
             "type": "string"
+          },
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowAnswer"
+            },
+            "title": "Answers",
+            "type": "array"
           },
           "diagnostics": {
             "items": {
@@ -551,39 +565,12 @@
             },
             "title": "Diagnostics",
             "type": "array"
-          },
-          "sources": {
-            "items": {
-              "$ref": "#/components/schemas/JarvisHumanAnswerSource"
-            },
-            "title": "Sources",
-            "type": "array"
           }
         },
         "required": [
-          "answerLanguage",
-          "answer"
+          "answerLanguage"
         ],
         "title": "JarvisHumanAnswerResponse",
-        "type": "object"
-      },
-      "JarvisHumanAnswerSource": {
-        "additionalProperties": false,
-        "properties": {
-          "entrypoint": {
-            "title": "Entrypoint",
-            "type": "string"
-          },
-          "source": {
-            "title": "Source",
-            "type": "string"
-          }
-        },
-        "required": [
-          "source",
-          "entrypoint"
-        ],
-        "title": "JarvisHumanAnswerSource",
         "type": "object"
       },
       "JarvisKnowledgeFlow": {

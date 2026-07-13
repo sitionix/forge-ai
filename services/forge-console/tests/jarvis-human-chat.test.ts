@@ -41,8 +41,7 @@ function submitEvent() {
 function humanResponse(text = 'Сайт створюється через SiteController.createSite.') {
   return {
     answerLanguage: 'uk',
-    answer: { text },
-    sources: [{ source: 'stsssox', entrypoint: 'SiteController.createSite' }],
+    answers: [{ source: 'stsssox', entrypoint: 'SiteController.createSite', text }],
     diagnostics: []
   };
 }
@@ -104,11 +103,46 @@ describe('Jarvis human chat', () => {
     expect(text).toContain('Сайт створюється через SiteController.createSite.');
     expect(text).toContain('stsssox');
     expect(text).toContain('SiteController.createSite');
+    expect(dom.window.document.querySelectorAll('.jarvis-answer-card')).toHaveLength(1);
     expect(dom.window.document.querySelector('.jarvis-flow-card')).toBeNull();
     expect(text).not.toContain('CALLS');
     expect(text).not.toContain('Technical details');
     expect(text).not.toContain('nodeRef');
     expect(text).not.toContain('Raw JSON');
+  });
+
+  it('renders one plain answer card per response item and keeps diagnostics compact', async () => {
+    const dom = jarvisDom();
+    const response = {
+      answerLanguage: 'uk',
+      answers: [
+        { source: 'svc', entrypoint: 'ControllerA.create', text: 'Перша відповідь.' },
+        { source: 'svc', entrypoint: 'ListenerB.handle', text: 'Друга відповідь.' },
+        { source: 'svc', entrypoint: 'JobC.run', text: 'Третя відповідь.' }
+      ],
+      diagnostics: [
+        {
+          code: 'HUMAN_FLOW_ANSWER_GENERATION_FAILED',
+          message: 'One flow failed.',
+          sourceId: 'svc',
+          metadata: { entrypoint: 'Failed.handle' }
+        }
+      ]
+    };
+    const http = { post: vi.fn(() => Promise.resolve(response)) };
+    const page = new JarvisPage({ document: dom.window.document, http });
+    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'Поясни';
+
+    await page.submitQuery(submitEvent());
+
+    const cards = dom.window.document.querySelectorAll('.jarvis-answer-card');
+    const cardTexts = Array.from(cards).map((card) => card.textContent ?? '');
+    expect(cards).toHaveLength(3);
+    expect(cardTexts[0]).toContain('ControllerA.create');
+    expect(cardTexts[1]).toContain('ListenerB.handle');
+    expect(cardTexts[2]).toContain('JobC.run');
+    expect(dom.window.document.body.textContent).toContain('One flow failed.');
+    expect(dom.window.document.querySelector('.jarvis-answer-warning')).not.toBeNull();
   });
 
   it('keeps prior messages when a later request fails', async () => {

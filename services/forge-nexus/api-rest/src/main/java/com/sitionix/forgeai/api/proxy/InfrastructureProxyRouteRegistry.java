@@ -31,9 +31,9 @@ public class InfrastructureProxyRouteRegistry {
         this.knowledge(registered, "knowledge.inventory.files", HttpMethod.GET, "/api/v1/knowledge/inventory/files", false);
         this.knowledge(
                 registered,
-                "knowledge.query.flow-explanations",
+                "knowledge.query",
                 HttpMethod.POST,
-                "/api/v1/knowledge/query/flow-explanations",
+                "/api/v1/knowledge/query",
                 true,
                 explanationReadTimeout
         );

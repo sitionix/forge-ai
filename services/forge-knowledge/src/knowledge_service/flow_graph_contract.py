@@ -23,6 +23,7 @@ class FlowGraphNode:
     line_end: int | None = None
     summary: str | None = None
     entrypoint: bool = False
+    entrypoint_kind: str | None = None
     flow_domain: str | None = None
 
 

@@ -46,7 +46,7 @@ class ForgeAiFlowExplanationConfigurationContractTest {
         );
 
         assertThat(flowExplanationProperties.getRequestTimeoutSeconds()).isEqualTo(73);
-        assertThat(registry.require("knowledge.query.flow-explanations").readTimeout())
+        assertThat(registry.require("knowledge.query").readTimeout())
                 .isEqualTo(Duration.ofSeconds(78));
         assertThat(registry.require("knowledge.query.tool-context").readTimeout())
                 .isEqualTo(Duration.ofSeconds(78));
@@ -73,7 +73,7 @@ class ForgeAiFlowExplanationConfigurationContractTest {
                 flowExplanationProperties
         );
 
-        assertThat(registry.require("knowledge.query.flow-explanations").readTimeout())
+        assertThat(registry.require("knowledge.query").readTimeout())
                 .isEqualTo(Duration.ofMillis(150));
         assertThat(registry.require("jarvis.query").readTimeout())
                 .isEqualTo(Duration.ofMillis(200));

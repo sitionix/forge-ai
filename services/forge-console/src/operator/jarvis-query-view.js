@@ -60,8 +60,8 @@ export class JarvisQueryView {
     element.innerHTML = `
       <div class="jarvis-chat-role">Jarvis</div>
       <div class="jarvis-chat-bubble">
-        <p>${escapeHtml(text(response?.answer?.text, 'No answer was returned.'))}</p>
-        ${this.renderSources(response?.sources)}
+        ${this.renderAnswers(response?.answers)}
+        ${this.renderDiagnostics(response?.diagnostics)}
       </div>
     `;
   }
@@ -84,17 +84,31 @@ export class JarvisQueryView {
     `;
   }
 
-  renderSources(sources) {
-    const items = list(sources).filter((item) => item?.source || item?.entrypoint);
+  renderAnswers(answers) {
+    const items = list(answers).filter((item) => item?.text);
+    if (!items.length) {
+      return '<p>No answer was returned.</p>';
+    }
+    return items.map((item) => `
+      <article class="jarvis-answer-card">
+        <strong>${escapeHtml(text(item.entrypoint, 'Entrypoint'))}</strong>
+        <p>${escapeHtml(text(item.text))}</p>
+        <footer class="jarvis-answer-sources" aria-label="Answer source">
+          <span>${escapeHtml(text(item.source, 'source'))}${item.entrypoint ? ` · ${escapeHtml(text(item.entrypoint))}` : ''}</span>
+        </footer>
+      </article>
+    `).join('');
+  }
+
+  renderDiagnostics(diagnostics) {
+    const items = list(diagnostics).filter((item) => item?.message || item?.code);
     if (!items.length) {
       return '';
     }
     return `
-      <footer class="jarvis-answer-sources" aria-label="Answer sources">
-        ${items.map((item) => `
-          <span>${escapeHtml(text(item.source, 'source'))}${item.entrypoint ? ` · ${escapeHtml(text(item.entrypoint))}` : ''}</span>
-        `).join('')}
-      </footer>
+      <aside class="jarvis-answer-warning">
+        ${items.map((item) => `<p>${escapeHtml(text(item.message || item.code))}</p>`).join('')}
+      </aside>
     `;
   }
 

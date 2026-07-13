@@ -167,9 +167,9 @@ def seed_semantic_graph(
                 """
                 INSERT OR REPLACE INTO analysis_graph_claims(
                     id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
-                    rejection_reason, created_at, updated_at, fact_origin, flow_domain
+                    rejection_reason, created_at, updated_at, entrypoint_kind, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0.9, ?, ?, ?, ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, 0.9, ?, ?, ?, ?, ?, 'STATIC', 'CODE')
                 """,
                 (
                     claim["id"],
@@ -182,6 +182,7 @@ def seed_semantic_graph(
                     claim.get("rejection_reason"),
                     now,
                     now,
+                    claim.get("entrypointKind") or claim.get("entrypoint_kind"),
                 ),
             )
             for evidence_id in claim.get("evidence_ids", []):

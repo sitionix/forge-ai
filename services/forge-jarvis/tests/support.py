@@ -138,7 +138,7 @@ class FakeKnowledgeClient:
         return self.bundle
 
     async def query_flow_explanations(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        self.paths.append("/api/v1/knowledge/query/flow-explanations")
+        self.paths.append("/api/v1/knowledge/query")
         self.flow_explanation_calls.append(dict(payload))
         if self.error:
             raise self.error
@@ -238,13 +238,16 @@ def human_answer_bundle(
     *,
     text: str = "JarvisGateway handles the request.",
     answer_language: str = "uk",
+    answers: Optional[List[Dict[str, str]]] = None,
     sources: Optional[List[Dict[str, str]]] = None,
     diagnostics: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
+    if answers is None:
+        source_items = sources if sources is not None else [{"source": "forge-ai", "entrypoint": "JarvisGateway"}]
+        answers = [{**item, "text": text} for item in source_items]
     return {
         "answerLanguage": answer_language,
-        "answer": {"text": text},
-        "sources": sources if sources is not None else [{"source": "forge-ai", "entrypoint": "JarvisGateway"}],
+        "answers": answers,
         "diagnostics": diagnostics or [],
     }
 

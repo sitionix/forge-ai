@@ -47,8 +47,7 @@ function queryPayload(queryText: string) {
 function humanAnswer(text = 'JarvisGateway answers from compact human context.') {
   return {
     answerLanguage: 'uk',
-    answer: { text },
-    sources: [{ source: 'forge-ai', entrypoint: 'JarvisGateway' }],
+    answers: [{ source: 'forge-ai', entrypoint: 'JarvisGateway', text }],
     diagnostics: []
   };
 }
