@@ -9,6 +9,7 @@ from support import (
     FakeKnowledgeClient,
     FakeModelClient,
     build_test_app,
+    flow_query_payload,
     knowledge_bad_response,
     knowledge_query_bundle,
     knowledge_unavailable,
@@ -91,6 +92,77 @@ def test_status_actions_command_and_query_success_paths(tmp_path):
     assert query["flows"][0]["entrypoint"]["label"] == "JarvisGateway"
     assert query["flows"][0]["transitions"] == []
     assert query["diagnostics"] == []
+
+
+def test_flow_explanation_query_uses_dedicated_knowledge_contract(tmp_path):
+    explanation = {
+        "flowIndex": 1,
+        "title": "Create site",
+        "narrative": [{"text": "The controller delegates to the service.", "nodeRefs": ["n1"], "transitionRefs": ["t1"], "boundaryRefs": []}],
+        "steps": [{"nodeRef": "n1", "nodeLabel": "SiteController.createSite", "explanation": "Handles the request.", "transitionRefs": ["t1"], "evidenceRefs": ["e1"]}],
+        "transitionExplanations": [{"transitionRef": "t1", "explanation": "Calls the service.", "evidenceRefs": ["e2"]}],
+        "boundaries": [{"boundaryRef": "b1", "fromNodeRef": "n1", "kind": "UNRESOLVED", "resolutionStatus": "DYNAMIC_TARGET", "target": "mapper", "explanation": "The target is dynamic.", "evidenceRefs": ["e3"]}],
+        "status": "OK",
+    }
+    knowledge = FakeKnowledgeClient(
+        bundle=knowledge_query_bundle(
+            intent="FLOW_EXPLANATION",
+            edges=[{"transitionRef": "t1", "fromNodeRef": "n1", "toNodeRef": "n2", "evidenceRefs": ["e2"]}],
+            flow_explanations=[explanation],
+        )
+    )
+    app, *_rest, model, _knowledge = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/jarvis/query", json=flow_query_payload("SiteController createSite"))
+
+    body = response.json()
+    assert response.status_code == 200
+    assert knowledge.calls == []
+    assert knowledge.paths == ["/api/v1/knowledge/query/flow-explanations"]
+    assert knowledge.flow_explanation_calls == [
+        normalized_query_payload("SiteController createSite", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=3)
+    ]
+    assert model.prompts == []
+    assert body["flowExplanations"][0] == explanation
+    assert body["flows"][0]["transitions"][0]["transitionRef"] == "t1"
+
+
+def test_flow_explanation_failed_status_preserves_successful_http_response(tmp_path):
+    knowledge = FakeKnowledgeClient(
+        bundle=knowledge_query_bundle(
+            intent="FLOW_EXPLANATION",
+            flow_explanations=[
+                {
+                    "flowIndex": 1,
+                    "title": "",
+                    "narrative": [],
+                    "steps": [{"nodeRef": "n1", "nodeLabel": "JarvisGateway"}],
+                    "transitionExplanations": [],
+                    "boundaries": [],
+                    "status": "FAILED",
+                }
+            ],
+        )
+    )
+    app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/jarvis/query", json=flow_query_payload("JarvisGateway"))
+
+    assert response.status_code == 200
+    assert response.json()["flowExplanations"][0]["status"] == "FAILED"
+
+
+def test_flow_explanation_malformed_knowledge_object_uses_controlled_error(tmp_path):
+    knowledge = FakeKnowledgeClient(bundle={"queryId": "q", "status": "OK", "intent": "FLOW_EXPLANATION", "unexpected": True})
+    app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/jarvis/query", json=flow_query_payload("JarvisGateway"))
+
+    assert response.status_code == 502
+    assert response.json()["code"] == "KNOWLEDGE_BAD_RESPONSE"
 
 
 def test_status_when_model_provider_is_down(tmp_path):

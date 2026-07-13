@@ -217,6 +217,206 @@
         "title": "JarvisFlowEvidence",
         "type": "object"
       },
+      "JarvisFlowExplanation": {
+        "properties": {
+          "boundaries": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowExplanationBoundary"
+            },
+            "title": "Boundaries",
+            "type": "array"
+          },
+          "flowIndex": {
+            "title": "Flowindex",
+            "type": "integer"
+          },
+          "narrative": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowExplanationNarrative"
+            },
+            "title": "Narrative",
+            "type": "array"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JarvisFlowExplanationStatus"
+              }
+            ],
+            "default": "OK"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowExplanationStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "transitionExplanations": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowExplanationTransition"
+            },
+            "title": "Transitionexplanations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "flowIndex"
+        ],
+        "title": "JarvisFlowExplanation",
+        "type": "object"
+      },
+      "JarvisFlowExplanationBoundary": {
+        "properties": {
+          "boundaryRef": {
+            "title": "Boundaryref",
+            "type": "string"
+          },
+          "evidenceRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "fromNodeRef": {
+            "title": "Fromnoderef",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "resolutionStatus": {
+            "title": "Resolutionstatus",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "boundaryRef",
+          "fromNodeRef",
+          "kind",
+          "resolutionStatus"
+        ],
+        "title": "JarvisFlowExplanationBoundary",
+        "type": "object"
+      },
+      "JarvisFlowExplanationNarrative": {
+        "properties": {
+          "boundaryRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Boundaryrefs",
+            "type": "array"
+          },
+          "nodeRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Noderefs",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "transitionRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Transitionrefs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "JarvisFlowExplanationNarrative",
+        "type": "object"
+      },
+      "JarvisFlowExplanationStatus": {
+        "description": "An enumeration.",
+        "enum": [
+          "OK",
+          "FAILED"
+        ],
+        "title": "JarvisFlowExplanationStatus",
+        "type": "string"
+      },
+      "JarvisFlowExplanationStep": {
+        "properties": {
+          "evidenceRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "nodeLabel": {
+            "title": "Nodelabel",
+            "type": "string"
+          },
+          "nodeRef": {
+            "title": "Noderef",
+            "type": "string"
+          },
+          "transitionRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Transitionrefs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodeRef",
+          "nodeLabel"
+        ],
+        "title": "JarvisFlowExplanationStep",
+        "type": "object"
+      },
+      "JarvisFlowExplanationTransition": {
+        "properties": {
+          "evidenceRefs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "transitionRef": {
+            "title": "Transitionref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transitionRef"
+        ],
+        "title": "JarvisFlowExplanationTransition",
+        "type": "object"
+      },
       "JarvisFlowNode": {
         "properties": {
           "kind": {
@@ -544,6 +744,13 @@
               "$ref": "#/components/schemas/JarvisQueryDiagnostic"
             },
             "title": "Diagnostics",
+            "type": "array"
+          },
+          "flowExplanations": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowExplanation"
+            },
+            "title": "Flowexplanations",
             "type": "array"
           },
           "flows": {

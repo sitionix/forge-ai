@@ -132,6 +132,10 @@ class DelayedKnowledgeClient(FakeKnowledgeClient):
         await asyncio.sleep(0.002)
         return await super().query(payload)
 
+    async def query_flow_explanations(self, payload):
+        await asyncio.sleep(0.002)
+        return await super().query_flow_explanations(payload)
+
 
 class DelayedModelClient(FakeModelClient):
     async def generate_text(self, prompt: str) -> str:

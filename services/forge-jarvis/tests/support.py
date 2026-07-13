@@ -127,11 +127,21 @@ class FakeKnowledgeClient:
         self.bundle = bundle if bundle is not None else knowledge_query_bundle()
         self.error = error
         self.calls: List[Dict[str, Any]] = []
+        self.flow_explanation_calls: List[Dict[str, Any]] = []
+        self.paths: List[str] = []
 
     async def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self.paths.append("/api/v1/knowledge/query")
         if self.error:
             raise self.error
         self.calls.append(dict(payload))
+        return self.bundle
+
+    async def query_flow_explanations(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self.paths.append("/api/v1/knowledge/query/flow-explanations")
+        if self.error:
+            raise self.error
+        self.flow_explanation_calls.append(dict(payload))
         return self.bundle
 
 
@@ -152,17 +162,19 @@ class RecordingActionExecutor:
 def knowledge_query_bundle(
     *,
     status: str = "OK",
+    intent: str = "UNKNOWN",
     matched_nodes: Optional[List[Dict[str, Any]]] = None,
     flows: Optional[List[Dict[str, Any]]] = None,
     nodes: Optional[List[Dict[str, Any]]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     evidence: Optional[List[Dict[str, Any]]] = None,
+    flow_explanations: Optional[List[Dict[str, Any]]] = None,
     diagnostics: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     return {
         "queryId": "query-test",
         "status": status,
-        "intent": "UNKNOWN",
+        "intent": intent,
         "matchedSources": [
             {
                 "sourceId": "forge-ai",
@@ -217,12 +229,29 @@ def knowledge_query_bundle(
             "truncated": False,
             "continuationAvailable": False,
         },
+        "flowExplanations": flow_explanations or [],
         "diagnostics": diagnostics or [],
     }
 
 
 def query_payload(query_text: str) -> Dict[str, Any]:
     return {"queryText": query_text}
+
+
+def flow_query_payload(
+    query_text: str,
+    *,
+    answer_language: str = "uk",
+    include_tests: bool = False,
+    max_flows: int = 3,
+) -> Dict[str, Any]:
+    return {
+        "queryText": query_text,
+        "intent": "FLOW_EXPLANATION",
+        "answerLanguage": answer_language,
+        "includeTests": include_tests,
+        "maxFlows": max_flows,
+    }
 
 
 def normalized_query_payload(

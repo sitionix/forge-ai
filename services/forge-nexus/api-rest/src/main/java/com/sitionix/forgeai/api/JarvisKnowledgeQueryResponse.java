@@ -10,6 +10,7 @@ public record JarvisKnowledgeQueryResponse(
         List<JsonNode> matchedSources,
         List<JsonNode> matchedNodes,
         List<JsonNode> flows,
+        List<JsonNode> flowExplanations,
         JsonNode coverage,
         List<JsonNode> diagnostics
 ) {

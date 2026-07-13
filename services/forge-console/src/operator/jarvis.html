@@ -71,20 +71,20 @@
       <div class="panel-head compact">
         <div>
           <h2>Graph Knowledge Query</h2>
-          <p>Questions are sent through Forge AI to Jarvis. Jarvis asks Knowledge for graph-backed facts. LLM answer composition is not enabled yet.</p>
+          <p>Questions are sent through Forge AI to Jarvis for graph-backed flow explanations.</p>
         </div>
       </div>
       <form id="jarvisQueryForm" class="jarvis-query-form">
         <label class="field jarvis-query-message">
           <span>Question</span>
-          <textarea id="jarvisQueryText" placeholder="поясни як працює JarvisGateway"></textarea>
+          <textarea id="jarvisQueryText" placeholder="як створюється сайт"></textarea>
         </label>
         <div class="form-actions">
           <button id="sendJarvisQuery" type="submit" class="button">Send</button>
         </div>
       </form>
       <div class="notice-box jarvis-security-notice">Scope: Auto / all analyzed sources.</div>
-      <div id="jarvisQueryLoading" class="notice-box hidden">Loading graph facts...</div>
+      <div id="jarvisQueryLoading" class="notice-box hidden">Analyzing the current graph and preparing flow cards...</div>
       <div id="jarvisQueryError" class="error-box hidden"></div>
       <div id="jarvisQueryResult" class="jarvis-query-result hidden"></div>
       <div id="jarvisQueryDiagnostics" class="jarvis-query-diagnostics hidden"></div>

@@ -28,6 +28,11 @@ class JarvisEntrypointOrigin(str, Enum):
     INFERRED_ROOT = "INFERRED_ROOT"
 
 
+class JarvisFlowExplanationStatus(str, Enum):
+    OK = "OK"
+    FAILED = "FAILED"
+
+
 class JarvisQueryRequest(BaseModel):
     queryText: str = Field(..., min_length=1)
     intent: JarvisQueryIntent = JarvisQueryIntent.UNKNOWN
@@ -155,6 +160,47 @@ class JarvisKnowledgeFlow(BaseModel):
     diagnostics: List[JarvisQueryDiagnostic] = Field(default_factory=list)
 
 
+class JarvisFlowExplanationNarrative(BaseModel):
+    text: str
+    nodeRefs: List[str] = Field(default_factory=list)
+    transitionRefs: List[str] = Field(default_factory=list)
+    boundaryRefs: List[str] = Field(default_factory=list)
+
+
+class JarvisFlowExplanationStep(BaseModel):
+    nodeRef: str
+    nodeLabel: str
+    explanation: Optional[str] = None
+    transitionRefs: List[str] = Field(default_factory=list)
+    evidenceRefs: List[str] = Field(default_factory=list)
+
+
+class JarvisFlowExplanationTransition(BaseModel):
+    transitionRef: str
+    explanation: Optional[str] = None
+    evidenceRefs: List[str] = Field(default_factory=list)
+
+
+class JarvisFlowExplanationBoundary(BaseModel):
+    boundaryRef: str
+    fromNodeRef: str
+    kind: str
+    resolutionStatus: str
+    target: Optional[str] = None
+    explanation: Optional[str] = None
+    evidenceRefs: List[str] = Field(default_factory=list)
+
+
+class JarvisFlowExplanation(BaseModel):
+    flowIndex: int
+    title: str = ""
+    narrative: List[JarvisFlowExplanationNarrative] = Field(default_factory=list)
+    steps: List[JarvisFlowExplanationStep] = Field(default_factory=list)
+    transitionExplanations: List[JarvisFlowExplanationTransition] = Field(default_factory=list)
+    boundaries: List[JarvisFlowExplanationBoundary] = Field(default_factory=list)
+    status: JarvisFlowExplanationStatus = JarvisFlowExplanationStatus.OK
+
+
 class JarvisQueryCoverage(BaseModel):
     searchedSourceCount: int = 0
     matchedSourceCount: int = 0
@@ -174,6 +220,7 @@ class JarvisQueryResponse(BaseModel):
     matchedSources: List[Dict[str, Any]] = Field(default_factory=list)
     matchedNodes: List[Dict[str, Any]] = Field(default_factory=list)
     flows: List[JarvisKnowledgeFlow] = Field(default_factory=list)
+    flowExplanations: List[JarvisFlowExplanation] = Field(default_factory=list)
     coverage: JarvisQueryCoverage = Field(default_factory=JarvisQueryCoverage)
     diagnostics: List[JarvisQueryDiagnostic] = Field(default_factory=list)
 

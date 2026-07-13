@@ -8,6 +8,10 @@ export interface OperatorRuntimeConfig {
   statusPollIntervalMs: number;
   activeJobPollIntervalMs: number;
   graphPollIntervalMs: number;
+  jarvisQueryAnswerLanguage: string;
+  jarvisQueryIncludeTests: boolean;
+  jarvisQueryMaxFlows: number;
+  jarvisFlowRenderBatchSize: number;
 }
 
 declare global {
@@ -23,7 +27,11 @@ export const defaultRuntimeConfig: OperatorRuntimeConfig = {
   infrastructureApiBasePath: '/api/v1/infrastructure',
   statusPollIntervalMs: 15000,
   activeJobPollIntervalMs: 1500,
-  graphPollIntervalMs: 30000
+  graphPollIntervalMs: 30000,
+  jarvisQueryAnswerLanguage: 'uk',
+  jarvisQueryIncludeTests: false,
+  jarvisQueryMaxFlows: 3,
+  jarvisFlowRenderBatchSize: 100
 };
 
 export function contextPathFromLocation(pathname: string = window.location.pathname): string {
@@ -56,7 +64,11 @@ function normalizeRuntimeConfig(config: OperatorRuntimeConfig): OperatorRuntimeC
     infrastructureApiBasePath: normalizeBasePath(config.infrastructureApiBasePath),
     statusPollIntervalMs: positiveInteger(config.statusPollIntervalMs, defaultRuntimeConfig.statusPollIntervalMs),
     activeJobPollIntervalMs: positiveInteger(config.activeJobPollIntervalMs, defaultRuntimeConfig.activeJobPollIntervalMs),
-    graphPollIntervalMs: positiveInteger(config.graphPollIntervalMs, defaultRuntimeConfig.graphPollIntervalMs)
+    graphPollIntervalMs: positiveInteger(config.graphPollIntervalMs, defaultRuntimeConfig.graphPollIntervalMs),
+    jarvisQueryAnswerLanguage: stringValue(config.jarvisQueryAnswerLanguage, defaultRuntimeConfig.jarvisQueryAnswerLanguage),
+    jarvisQueryIncludeTests: Boolean(config.jarvisQueryIncludeTests),
+    jarvisQueryMaxFlows: boundedInteger(config.jarvisQueryMaxFlows, defaultRuntimeConfig.jarvisQueryMaxFlows, 1, 10),
+    jarvisFlowRenderBatchSize: positiveInteger(config.jarvisFlowRenderBatchSize, defaultRuntimeConfig.jarvisFlowRenderBatchSize)
   };
 }
 
@@ -68,4 +80,15 @@ function normalizeBasePath(value: string): string {
 
 function positiveInteger(value: number, fallback: number): number {
   return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function boundedInteger(value: number, fallback: number, min: number, max: number): number {
+  if (!Number.isInteger(value)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, value));
+}
+
+function stringValue(value: string, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }

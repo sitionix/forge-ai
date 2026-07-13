@@ -30,7 +30,7 @@ import static org.hamcrest.Matchers.not;
         "forge.ai.infrastructure.knowledge.read-timeout=2500ms",
         "forge.ai.infrastructure.jarvis.read-timeout=2500ms",
         "forge.ai.infrastructure.proxy.max-request-body-bytes=128",
-        "forge.ai.infrastructure.proxy.max-response-body-bytes=1600"
+        "forge.ai.infrastructure.proxy.max-response-body-bytes=6500"
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
@@ -894,14 +894,26 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].entrypoint.label").value("JarvisGateway"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].nodes[0].nodeRef").value("n1"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].transitions[0].transitionRef").value("t1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].transitions[1].transitionRef").value("t2"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].boundaries[0].kind").value("EXTERNAL"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].boundaries[1].kind").value("UNRESOLVED"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].boundaries[2].kind").value("CURRENT_TARGET_NODE_MISSING"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].source").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].evidence[0].ownerRef").value("t1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].evidence[0].ownerRef").value("n1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].evidence[1].ownerRef").value("t1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].evidence[4].ownerRef").value("b1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[1].flowIndex").value(2))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[1].entrypointOrigin").value("INFERRED_ROOT"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowExplanations[0].status").value("OK"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowExplanations[0].transitionExplanations[1].transitionRef").value("t2"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowExplanations[0].boundaries[0].evidenceRefs[0]").value("e-b1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowExplanations[1].status").value("FAILED"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics").isEmpty())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.matchedNodeCount").value(1))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.flowCount").value(1))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.nodeCount").value(2))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.edgeCount").value(1))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.evidenceCount").value(1))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.flowCount").value(2))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.nodeCount").value(5))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.edgeCount").value(6))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.evidenceCount").value(8))
                 .assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryOptionalControls())
@@ -915,6 +927,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("NO_CANDIDATES"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes").isEmpty())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows").isEmpty())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowExplanations").isEmpty())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.matchedNodeCount").value(0))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.flowCount").value(0))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics[0].code").value("NO_GRAPH_CANDIDATES"))

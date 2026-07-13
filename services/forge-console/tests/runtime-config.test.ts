@@ -18,5 +18,23 @@ describe('runtime config', () => {
     expect(config.activeJobPollIntervalMs).toBe(1500);
     expect(config.statusPollIntervalMs).toBe(25000);
     expect(config.apiMode).toBe('same-origin');
+    expect(config.jarvisQueryAnswerLanguage).toBe('uk');
+    expect(config.jarvisQueryIncludeTests).toBe(false);
+    expect(config.jarvisQueryMaxFlows).toBe(3);
+    expect(config.jarvisFlowRenderBatchSize).toBe(100);
+  });
+
+  it('normalizes Jarvis flow query defaults', () => {
+    const config = runtimeConfigFromWindow({
+      jarvisQueryAnswerLanguage: ' en ',
+      jarvisQueryIncludeTests: true,
+      jarvisQueryMaxFlows: 99,
+      jarvisFlowRenderBatchSize: 0
+    });
+
+    expect(config.jarvisQueryAnswerLanguage).toBe('en');
+    expect(config.jarvisQueryIncludeTests).toBe(true);
+    expect(config.jarvisQueryMaxFlows).toBe(10);
+    expect(config.jarvisFlowRenderBatchSize).toBe(100);
   });
 });

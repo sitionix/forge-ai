@@ -127,7 +127,13 @@ async function flushAsync() {
 }
 
 function queryPayload(queryText: string) {
-  return { queryText };
+  return {
+    queryText,
+    intent: 'FLOW_EXPLANATION',
+    answerLanguage: 'uk',
+    includeTests: false,
+    maxFlows: 3
+  };
 }
 
 describe('Operator Console modular request ownership', () => {
@@ -277,6 +283,15 @@ describe('Operator Console modular request ownership', () => {
           complete: true,
           coverage: {}, diagnostics: []
         }],
+        flowExplanations: [{
+          flowIndex: 1,
+          title: 'run flow',
+          narrative: [{ text: 'The run entrypoint was found.', nodeRefs: ['n1'], transitionRefs: [], boundaryRefs: [] }],
+          steps: [{ nodeRef: 'n1', nodeLabel: 'run', explanation: 'Runs the entrypoint.', transitionRefs: [], evidenceRefs: [] }],
+          transitionExplanations: [],
+          boundaries: [],
+          status: 'OK'
+        }],
         coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
         diagnostics: [{ code: 'D1', message: 'diag' }]
       }))
@@ -288,8 +303,8 @@ describe('Operator Console modular request ownership', () => {
     const text = dom.window.document.body.textContent || '';
     expect(text).toContain('svc');
     expect(text).toContain('run');
-    expect(text).toContain('NAME_MATCH');
     expect(text).toContain('EXPLICIT_GRAPH_FACT');
+    expect(text).toContain('Technical details');
     expect(text).not.toContain('SECRET_SOURCE_CONTENT');
     expect(text).not.toContain('ALSO_SECRET');
   });

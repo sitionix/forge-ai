@@ -81,6 +81,30 @@ class ForgeAiInfrastructureJarvisControllerTest {
     }
 
     @Test
+    void querySerializesFullFlowExplanationRequestAndDelegatesToGenericProxyRoute() {
+        this.stub("{\"queryId\":\"q1\",\"status\":\"OK\",\"intent\":\"FLOW_EXPLANATION\",\"flowExplanations\":[]}");
+        final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
+                "JarvisGateway",
+                JarvisKnowledgeQueryIntent.FLOW_EXPLANATION,
+                "uk",
+                false,
+                3
+        );
+
+        this.controller.query(body, this.headers, this.request);
+
+        final byte[] expectedBody = ("{\"queryText\":\"JarvisGateway\",\"intent\":\"FLOW_EXPLANATION\","
+                + "\"answerLanguage\":\"uk\",\"includeTests\":false,\"maxFlows\":3}").getBytes(StandardCharsets.UTF_8);
+        verify(this.transport).forward(
+                eq("jarvis.query"),
+                eq(Map.of()),
+                argThat(actual -> Arrays.equals(actual, expectedBody)),
+                same(this.headers),
+                same(this.request)
+        );
+    }
+
+    @Test
     void queryPreservesSuccessfulFactualBundleBytes() throws Exception {
         final String response = "{\"queryId\":\"q1\",\"status\":\"OK\",\"intent\":\"UNKNOWN\",\"matchedSources\":[]}";
         this.stub(response);
@@ -108,6 +132,21 @@ class ForgeAiInfrastructureJarvisControllerTest {
         final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
         assertThat(body.get("title")).isEqualTo("VALIDATION_FAILED");
         assertThat(body.get("details")).asString().contains("queryText");
+        verifyNoInteractions(this.transport);
+    }
+
+    @Test
+    void queryValidationErrorDoesNotProxyOutOfRangeMaxFlows() throws Exception {
+        final ResponseEntity<byte[]> result = this.controller.query(
+                new JarvisKnowledgeQueryRequest("JarvisGateway", JarvisKnowledgeQueryIntent.FLOW_EXPLANATION, "uk", false, 11),
+                this.headers,
+                this.request
+        ).join();
+
+        assertThat(result.getStatusCode().value()).isEqualTo(400);
+        final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
+        assertThat(body.get("title")).isEqualTo("VALIDATION_FAILED");
+        assertThat(body.get("details")).asString().contains("maxFlows");
         verifyNoInteractions(this.transport);
     }
 

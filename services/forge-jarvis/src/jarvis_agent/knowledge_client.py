@@ -28,12 +28,18 @@ class KnowledgeClient:
         self._validate_base_url()
 
     async def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return await self._post("/api/v1/knowledge/query", payload)
+
+    async def query_flow_explanations(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return await self._post("/api/v1/knowledge/query/flow-explanations", payload)
+
+    async def _post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
             headers = {}
             correlation_id = current_correlation_id()
             if correlation_id:
                 headers[CORRELATION_HEADER] = correlation_id
-            response = await self._client.post(f"{self.base_url}/api/v1/knowledge/query", json=payload, headers=headers)
+            response = await self._client.post(f"{self.base_url}{path}", json=payload, headers=headers)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise KnowledgeUnavailableError(f"Knowledge is not reachable at {self.base_url}") from exc

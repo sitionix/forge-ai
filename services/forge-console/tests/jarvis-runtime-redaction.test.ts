@@ -36,7 +36,13 @@ async function flushAsync() {
 }
 
 function queryPayload(queryText: string) {
-  return { queryText };
+  return {
+    queryText,
+    intent: 'FLOW_EXPLANATION',
+    answerLanguage: 'uk',
+    includeTests: false,
+    maxFlows: 3
+  };
 }
 
 describe('Jarvis runtime rendering', () => {
@@ -83,6 +89,22 @@ describe('Jarvis runtime rendering', () => {
             complete: true,
             coverage: {}, diagnostics: []
           }],
+          flowExplanations: [{
+            flowIndex: 1,
+            title: 'Controller create flow',
+            narrative: [{ text: 'The controller delegates to the use case and repository.', nodeRefs: ['n1', 'n2', 'n3'], transitionRefs: ['t1', 't2'], boundaryRefs: [] }],
+            steps: [
+              { nodeRef: 'n1', nodeLabel: 'Controller.create', explanation: 'Receives the request.', transitionRefs: ['t1'], evidenceRefs: [] },
+              { nodeRef: 'n2', nodeLabel: 'UseCase.execute', explanation: 'Runs the use case.', transitionRefs: ['t2'], evidenceRefs: [] },
+              { nodeRef: 'n3', nodeLabel: 'Repository.save', explanation: 'Persists data.', transitionRefs: [], evidenceRefs: [] }
+            ],
+            transitionExplanations: [
+              { transitionRef: 't1', explanation: 'Calls the use case.', evidenceRefs: [] },
+              { transitionRef: 't2', explanation: 'Calls the repository.', evidenceRefs: [] }
+            ],
+            boundaries: [],
+            status: 'OK'
+          }],
           coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
           diagnostics: [{ code: 'OK', message: 'No sensitive data' }]
         });
@@ -100,8 +122,9 @@ describe('Jarvis runtime rendering', () => {
     const text = dom.window.document.body.textContent || '';
     expect(text).toContain('JarvisGateway');
     expect(text).toContain('src/JarvisGateway.java');
-    expect(text).toContain('Entrypoint Flows (1)');
-    expect(text).toContain('Controller.create, UseCase.execute, Repository.save');
+    expect(text).toContain('Controller create flow');
+    expect(text).toContain('CALLS structure');
+    expect(text).toContain('Repository.save');
     expect(text).not.toContain('SECRET_SOURCE_CONTENT');
     expect(text).not.toContain('["bash"');
     expect(text).not.toContain('sleep 0.2');
@@ -119,6 +142,7 @@ describe('Jarvis runtime rendering', () => {
         matchedSources: [],
         matchedNodes: [],
         flows: [],
+        flowExplanations: [],
         coverage: { searchedSourceCount: 2, matchedSourceCount: 0, matchedNodeCount: 0, flowCount: 0, nodeCount: 0, edgeCount: 0, evidenceCount: 0 },
         diagnostics: [{ code: 'NO_GRAPH_CANDIDATES', message: 'No matches' }]
       }))
@@ -156,6 +180,7 @@ describe('Jarvis runtime rendering', () => {
           matchReasons: ['NAME_MATCH']
         }],
         flows: [],
+        flowExplanations: [],
         coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowCount: 0, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
         diagnostics: [{ code: 'ENTRYPOINT_FLOW_ROOT_NOT_FOUND', message: 'No bounded entrypoint root could be built.' }]
       }))
@@ -168,7 +193,7 @@ describe('Jarvis runtime rendering', () => {
     await page.submitQuery({ preventDefault: () => undefined });
 
     const text = dom.window.document.body.textContent || '';
-    expect(text).toContain('Entrypoint Flows (0)');
+    expect(text).toContain('No entrypoint flows');
     expect(text).toContain('No bounded entrypoint root could be built.');
     expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('lonely'), expect.any(Object));
     page.dispose();

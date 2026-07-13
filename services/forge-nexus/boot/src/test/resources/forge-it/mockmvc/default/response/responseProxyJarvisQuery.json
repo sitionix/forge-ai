@@ -1,1 +1,98 @@
-{"queryId":"query-fixture","status":"OK","intent":"UNKNOWN","matchedSources":[{"sourceId":"source-a","displayName":"Source A","score":0.95}],"matchedNodes":[{"sourceId":"source-a","nodeKind":"CALLABLE","label":"JarvisGateway","score":0.95,"matchReasons":["NAME_MATCH"]}],"flows":[{"flowIndex":1,"source":"source-a","entrypoint":{"nodeRef":"n1","label":"JarvisGateway","kind":"CALLABLE"},"entrypointOrigin":"EXPLICIT_GRAPH_FACT","matchedAnchors":[{"anchorRef":"n1","label":"JarvisGateway","score":0.95,"distance":0,"matchReasons":["NAME_MATCH"]}],"nodes":[{"nodeRef":"n1","label":"JarvisGateway","kind":"CALLABLE"},{"nodeRef":"n2","label":"KnowledgeQueryGateway","kind":"CALLABLE"}],"transitions":[{"transitionRef":"t1","fromNodeRef":"n1","toNodeRef":"n2","evidenceRefs":["e1"]}],"boundaries":[],"evidence":[{"evidenceRef":"e1","ownerRef":"t1","relativePath":"src/JarvisGateway.java","lineStart":10,"lineEnd":10,"excerpt":"call"}],"complete":true,"coverage":{"nodeCount":2,"transitionCount":1,"boundaryCount":0,"anchorCount":1,"maxDepthReached":1,"cycleDetected":false,"truncated":false},"diagnostics":[]}],"coverage":{"searchedSourceCount":2,"matchedSourceCount":1,"matchedNodeCount":1,"flowCount":1,"nodeCount":2,"edgeCount":1,"evidenceCount":1,"truncated":false,"continuationAvailable":false},"diagnostics":[]}
+{
+  "queryId": "query-fixture",
+  "status": "OK",
+  "intent": "FLOW_EXPLANATION",
+  "matchedSources": [
+    {"sourceId": "source-a", "displayName": "Source A", "score": 0.95},
+    {"sourceId": "source-b", "displayName": "Source B", "score": 0.82}
+  ],
+  "matchedNodes": [
+    {"sourceId": "source-a", "nodeKind": "CALLABLE", "label": "JarvisGateway", "score": 0.95, "matchReasons": ["NAME_MATCH"]}
+  ],
+  "flows": [
+    {
+      "flowIndex": 1,
+      "source": "source-a",
+      "entrypoint": {"nodeRef": "n1", "label": "JarvisGateway", "kind": "CALLABLE"},
+      "entrypointOrigin": "EXPLICIT_GRAPH_FACT",
+      "matchedAnchors": [{"anchorRef": "n1", "label": "JarvisGateway", "score": 0.95, "distance": 0, "matchReasons": ["NAME_MATCH"]}],
+      "nodes": [
+        {"nodeRef": "n1", "label": "JarvisGateway", "kind": "CALLABLE"},
+        {"nodeRef": "n2", "label": "WorkerA", "kind": "CALLABLE"},
+        {"nodeRef": "n3", "label": "WorkerB", "kind": "CALLABLE"},
+        {"nodeRef": "n4", "label": "WorkerC", "kind": "CALLABLE"}
+      ],
+      "transitions": [
+        {"transitionRef": "t1", "fromNodeRef": "n1", "toNodeRef": "n2", "evidenceRefs": ["e-t1"]},
+        {"transitionRef": "t2", "fromNodeRef": "n1", "toNodeRef": "n3", "evidenceRefs": ["e-t2"]},
+        {"transitionRef": "t3", "fromNodeRef": "n1", "toNodeRef": "n4", "evidenceRefs": ["e-t3"]}
+      ],
+      "boundaries": [
+        {"boundaryRef": "b1", "fromNodeRef": "n2", "kind": "EXTERNAL", "resolutionStatus": "EXTERNAL_TARGET", "target": "PaymentApi", "evidenceRefs": ["e-b1"]},
+        {"boundaryRef": "b2", "fromNodeRef": "n3", "kind": "UNRESOLVED", "resolutionStatus": "DYNAMIC_TARGET", "target": "dynamicMapper", "evidenceRefs": ["e-b2"]},
+        {"boundaryRef": "b3", "fromNodeRef": "n4", "kind": "CURRENT_TARGET_NODE_MISSING", "resolutionStatus": "CURRENT_TARGET_NODE_MISSING", "target": null, "evidenceRefs": ["e-b3"]}
+      ],
+      "evidence": [
+        {"evidenceRef": "e-n1", "ownerRef": "n1", "relativePath": "src/JarvisGateway.java", "lineStart": 9, "lineEnd": 12, "excerpt": "entrypoint"},
+        {"evidenceRef": "e-t1", "ownerRef": "t1", "relativePath": "src/JarvisGateway.java", "lineStart": 20, "lineEnd": 20, "excerpt": "call A"},
+        {"evidenceRef": "e-t2", "ownerRef": "t2", "relativePath": "src/JarvisGateway.java", "lineStart": 21, "lineEnd": 21, "excerpt": "call B"},
+        {"evidenceRef": "e-t3", "ownerRef": "t3", "relativePath": "src/JarvisGateway.java", "lineStart": 22, "lineEnd": 22, "excerpt": "call C"},
+        {"evidenceRef": "e-b1", "ownerRef": "b1", "relativePath": "src/WorkerA.java", "lineStart": 30, "lineEnd": 31, "excerpt": "external"},
+        {"evidenceRef": "e-b2", "ownerRef": "b2", "relativePath": "src/WorkerB.java", "lineStart": 40, "lineEnd": 41, "excerpt": "dynamic"},
+        {"evidenceRef": "e-b3", "ownerRef": "b3", "relativePath": "src/WorkerC.java", "lineStart": 50, "lineEnd": 51, "excerpt": "missing"}
+      ],
+      "complete": true,
+      "coverage": {"nodeCount": 4, "transitionCount": 3, "boundaryCount": 3, "anchorCount": 1, "maxDepthReached": 1, "cycleDetected": false, "truncated": false},
+      "diagnostics": []
+    },
+    {
+      "flowIndex": 2,
+      "source": "source-b",
+      "entrypoint": {"nodeRef": "m1", "label": "InferredRoot", "kind": "CALLABLE"},
+      "entrypointOrigin": "INFERRED_ROOT",
+      "matchedAnchors": [],
+      "nodes": [{"nodeRef": "m1", "label": "InferredRoot", "kind": "CALLABLE"}],
+      "transitions": [],
+      "boundaries": [],
+      "evidence": [{"evidenceRef": "e-m1", "ownerRef": "m1", "relativePath": "src/InferredRoot.java", "lineStart": 1, "lineEnd": 2, "excerpt": "root"}],
+      "complete": false,
+      "coverage": {"nodeCount": 1, "transitionCount": 0, "boundaryCount": 0, "anchorCount": 0, "maxDepthReached": 0, "cycleDetected": false, "truncated": false},
+      "diagnostics": [{"code": "FLOW_INCOMPLETE", "message": "Fixture incomplete flow."}]
+    }
+  ],
+  "flowExplanations": [
+    {
+      "flowIndex": 1,
+      "title": "Jarvis gateway flow",
+      "narrative": [{"text": "The entrypoint calls three workers as sibling branches.", "nodeRefs": ["n1"], "transitionRefs": ["t1", "t2", "t3"], "boundaryRefs": []}],
+      "steps": [
+        {"nodeRef": "n1", "nodeLabel": "JarvisGateway", "explanation": "Receives the query.", "transitionRefs": ["t1", "t2", "t3"], "evidenceRefs": ["e-n1"]},
+        {"nodeRef": "n2", "nodeLabel": "WorkerA", "explanation": "Handles branch A.", "transitionRefs": [], "evidenceRefs": []},
+        {"nodeRef": "n3", "nodeLabel": "WorkerB", "explanation": "Handles branch B.", "transitionRefs": [], "evidenceRefs": []},
+        {"nodeRef": "n4", "nodeLabel": "WorkerC", "explanation": "Handles branch C.", "transitionRefs": [], "evidenceRefs": []}
+      ],
+      "transitionExplanations": [
+        {"transitionRef": "t1", "explanation": "Calls WorkerA.", "evidenceRefs": ["e-t1"]},
+        {"transitionRef": "t2", "explanation": "Calls WorkerB.", "evidenceRefs": ["e-t2"]},
+        {"transitionRef": "t3", "explanation": "Calls WorkerC.", "evidenceRefs": ["e-t3"]}
+      ],
+      "boundaries": [
+        {"boundaryRef": "b1", "fromNodeRef": "n2", "kind": "EXTERNAL", "resolutionStatus": "EXTERNAL_TARGET", "target": "PaymentApi", "explanation": "Leaves the current graph.", "evidenceRefs": ["e-b1"]},
+        {"boundaryRef": "b2", "fromNodeRef": "n3", "kind": "UNRESOLVED", "resolutionStatus": "DYNAMIC_TARGET", "target": "dynamicMapper", "explanation": "The target is dynamic.", "evidenceRefs": ["e-b2"]},
+        {"boundaryRef": "b3", "fromNodeRef": "n4", "kind": "CURRENT_TARGET_NODE_MISSING", "resolutionStatus": "CURRENT_TARGET_NODE_MISSING", "target": null, "explanation": "The target is absent from the current graph.", "evidenceRefs": ["e-b3"]}
+      ],
+      "status": "OK"
+    },
+    {
+      "flowIndex": 2,
+      "title": "",
+      "narrative": [],
+      "steps": [{"nodeRef": "m1", "nodeLabel": "InferredRoot", "transitionRefs": [], "evidenceRefs": ["e-m1"]}],
+      "transitionExplanations": [],
+      "boundaries": [],
+      "status": "FAILED"
+    }
+  ],
+  "coverage": {"searchedSourceCount": 2, "matchedSourceCount": 2, "matchedNodeCount": 1, "flowCount": 2, "nodeCount": 5, "edgeCount": 6, "evidenceCount": 8, "truncated": false, "continuationAvailable": false},
+  "diagnostics": []
+}
