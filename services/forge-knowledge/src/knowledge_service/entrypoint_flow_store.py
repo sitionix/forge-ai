@@ -173,6 +173,11 @@ class EntrypointFlowGraphRepository:
                    0 AS graph_degree,
                    CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint,
                    entry.entrypoint_kind AS entrypoint_kind,
+                   entry.entrypoint_http_method AS entrypoint_http_method,
+                   entry.entrypoint_route AS entrypoint_route,
+                   entry.entrypoint_topic AS entrypoint_topic,
+                   entry.entrypoint_schedule AS entrypoint_schedule,
+                   entry.entrypoint_interface_method AS entrypoint_interface_method,
                    claim.summary AS summary
             FROM analysis_graph_nodes n
             LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id

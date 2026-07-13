@@ -92,7 +92,7 @@ export class JarvisQueryView {
     return items.map((item) => `
       <article class="jarvis-answer-card">
         <strong>${escapeHtml(text(item.entrypoint, 'Entrypoint'))}</strong>
-        <p>${escapeHtml(text(item.text))}</p>
+        <p class="jarvis-answer-text">${escapeHtml(text(item.text))}</p>
         <footer class="jarvis-answer-sources" aria-label="Answer source">
           <span>${escapeHtml(text(item.source, 'source'))}${item.entrypoint ? ` · ${escapeHtml(text(item.entrypoint))}` : ''}</span>
         </footer>

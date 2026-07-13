@@ -438,12 +438,22 @@ class AnalysisStore:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 entrypoint_kind TEXT,
+                entrypoint_http_method TEXT,
+                entrypoint_route TEXT,
+                entrypoint_topic TEXT,
+                entrypoint_schedule TEXT,
+                entrypoint_interface_method TEXT,
                 fact_origin TEXT,
                 flow_domain TEXT,
                 FOREIGN KEY(node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE
             )
         """)
         self._ensure_column(conn, "analysis_graph_claims", "entrypoint_kind", "TEXT")
+        self._ensure_column(conn, "analysis_graph_claims", "entrypoint_http_method", "TEXT")
+        self._ensure_column(conn, "analysis_graph_claims", "entrypoint_route", "TEXT")
+        self._ensure_column(conn, "analysis_graph_claims", "entrypoint_topic", "TEXT")
+        self._ensure_column(conn, "analysis_graph_claims", "entrypoint_schedule", "TEXT")
+        self._ensure_column(conn, "analysis_graph_claims", "entrypoint_interface_method", "TEXT")
 
     def _create_graph_edge_schema(self, conn: sqlite3.Connection) -> None:
         conn.execute("""
@@ -1479,9 +1489,11 @@ class AnalysisStore:
                     """
                     INSERT INTO analysis_graph_claims(
                         id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
-                        rejection_reason, created_at, updated_at, entrypoint_kind, fact_origin, flow_domain
+                        rejection_reason, created_at, updated_at, entrypoint_kind,
+                        entrypoint_http_method, entrypoint_route, entrypoint_topic, entrypoint_schedule,
+                        entrypoint_interface_method, fact_origin, flow_domain
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         claim["id"],
@@ -1496,6 +1508,11 @@ class AnalysisStore:
                         created_at,
                         created_at,
                         self._claim_entrypoint_kind(claim),
+                        self._claim_entrypoint_metadata_value(claim, "httpMethod", uppercase=True),
+                        self._claim_entrypoint_metadata_value(claim, "route"),
+                        self._claim_entrypoint_metadata_value(claim, "topic"),
+                        self._claim_entrypoint_metadata_value(claim, "schedule"),
+                        self._claim_entrypoint_metadata_value(claim, "interfaceMethod"),
                         claim.get("fact_origin"),
                         claim.get("flow_domain"),
                     ),
@@ -2340,6 +2357,11 @@ class AnalysisStore:
             summary=str(item.get("summary")) if item.get("summary") else None,
             entrypoint=bool(item.get("entrypoint")),
             entrypoint_kind=str(item.get("entrypointKind")) if item.get("entrypointKind") else None,
+            entrypoint_http_method=str(item.get("entrypointHttpMethod")) if item.get("entrypointHttpMethod") else None,
+            entrypoint_route=str(item.get("entrypointRoute")) if item.get("entrypointRoute") else None,
+            entrypoint_topic=str(item.get("entrypointTopic")) if item.get("entrypointTopic") else None,
+            entrypoint_schedule=str(item.get("entrypointSchedule")) if item.get("entrypointSchedule") else None,
+            entrypoint_interface_method=str(item.get("entrypointInterfaceMethod")) if item.get("entrypointInterfaceMethod") else None,
             flow_domain=str(item.get("flowDomain")) if item.get("flowDomain") else None,
         )
 
@@ -3683,6 +3705,11 @@ class AnalysisStore:
             "degree": int(row.get("graph_degree") or 0),
             "entrypoint": bool(row.get("entrypoint")),
             "entrypointKind": row.get("entrypoint_kind"),
+            "entrypointHttpMethod": row.get("entrypoint_http_method"),
+            "entrypointRoute": row.get("entrypoint_route"),
+            "entrypointTopic": row.get("entrypoint_topic"),
+            "entrypointSchedule": row.get("entrypoint_schedule"),
+            "entrypointInterfaceMethod": row.get("entrypoint_interface_method"),
         }
 
     def _anchor_expansion_node_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -4005,6 +4032,24 @@ class AnalysisStore:
         if not isinstance(value, str) or not value.strip():
             return None
         return value.strip().upper()
+
+    def _claim_entrypoint_metadata_value(
+        self,
+        claim: Dict[str, Any],
+        key: str,
+        *,
+        uppercase: bool = False,
+    ) -> Optional[str]:
+        if str(claim.get("claim_kind") or "").upper() != "ENTRYPOINT_HINT":
+            return None
+        metadata = claim.get("metadata")
+        if not isinstance(metadata, dict):
+            return None
+        value = metadata.get(key)
+        if not isinstance(value, str) or not value.strip():
+            return None
+        normalized = value.strip()
+        return normalized.upper() if uppercase else normalized
 
     def _graph_identity_by_source(self, conn: sqlite3.Connection, source_ids: List[str]) -> Dict[str, Dict[str, Optional[str]]]:
         if not source_ids or not self._table_exists(conn, "analysis_graph_state"):

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import yaml
 
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.graph_call_intelligence import classify_call_metadata
@@ -96,6 +100,7 @@ class StaticGraphMaterializer:
         "DeleteMapping": "DELETE",
         "PatchMapping": "PATCH",
     }
+    OPENAPI_OPERATION_METHODS = {"get", "post", "put", "delete", "patch", "head", "options", "trace"}
     ENTRYPOINT_ANNOTATIONS = {
         "GetMapping",
         "PostMapping",
@@ -662,6 +667,9 @@ class StaticGraphMaterializer:
             resolved_name = self._resolve_type_reference(result, interface_name)
             interface = type_lookup.get(resolved_name) or type_lookup.get(self._simple_type(resolved_name))
             if interface is None:
+                inherited = self._external_api_first_entrypoint(resolved_name, callable_item)
+                if inherited.get("interfaceMethod"):
+                    return inherited
                 continue
             for candidate in result.callables:
                 if candidate.owner_type_local_id != interface.local_id:
@@ -686,6 +694,61 @@ class StaticGraphMaterializer:
                     "interfaceMethod": candidate.qualified_name,
                 }
         return {"httpMethod": None, "route": None, "interfaceMethod": None}
+
+    def _external_api_first_entrypoint(self, interface_name: str, callable_item: Any) -> Dict[str, Optional[str]]:
+        interface_name = str(interface_name or "").strip()
+        parts = interface_name.split(".")
+        try:
+            api_first_index = parts.index("api_first")
+        except ValueError:
+            return {"httpMethod": None, "route": None, "interfaceMethod": None}
+        if api_first_index < 2 or len(parts) <= api_first_index + 2 or parts[api_first_index + 1] != "api":
+            return {"httpMethod": None, "route": None, "interfaceMethod": None}
+
+        contract_package = parts[api_first_index - 2].replace("_", "-")
+        api_name = parts[api_first_index - 1]
+        operation = self._openapi_operation(contract_package, api_name, str(callable_item.name or ""))
+        if not operation:
+            return {"httpMethod": None, "route": None, "interfaceMethod": f"{interface_name}.{callable_item.name}"}
+        return {
+            "httpMethod": operation.get("httpMethod"),
+            "route": operation.get("route"),
+            "interfaceMethod": f"{interface_name}.{callable_item.name}",
+        }
+
+    def _openapi_operation(self, contract_package: str, api_name: str, operation_id: str) -> Dict[str, Optional[str]]:
+        workspace_root = os.environ.get("FORGE_WORKSPACE_ROOT")
+        if not workspace_root:
+            return {}
+        openapi_path = Path(workspace_root) / contract_package / "apis" / api_name / "rest" / "openapi.yml"
+        openapi = self._read_yaml_mapping(openapi_path)
+        paths = openapi.get("paths") if isinstance(openapi.get("paths"), dict) else {}
+        for route, raw_path_item in paths.items():
+            path_item = self._resolve_openapi_path_item(openapi_path, raw_path_item)
+            for method, operation in path_item.items():
+                if str(method).lower() not in self.OPENAPI_OPERATION_METHODS or not isinstance(operation, dict):
+                    continue
+                if operation.get("operationId") == operation_id:
+                    return {"httpMethod": str(method).upper(), "route": str(route)}
+        return {}
+
+    def _resolve_openapi_path_item(self, openapi_path: Path, raw_path_item: Any) -> Dict[str, Any]:
+        if not isinstance(raw_path_item, dict):
+            return {}
+        ref = raw_path_item.get("$ref")
+        if not ref:
+            return raw_path_item
+        ref_file = str(ref).split("#", 1)[0]
+        if not ref_file:
+            return {}
+        return self._read_yaml_mapping((openapi_path.parent / ref_file).resolve())
+
+    def _read_yaml_mapping(self, path: Path) -> Dict[str, Any]:
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            return {}
+        return data if isinstance(data, dict) else {}
 
     def _main_entrypoint_claim(
         self, result: StructuralParseResult, target_local_id: str, callable_item, owner_annotations: List[StructuralAnnotation]

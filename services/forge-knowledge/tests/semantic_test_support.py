@@ -167,9 +167,11 @@ def seed_semantic_graph(
                 """
                 INSERT OR REPLACE INTO analysis_graph_claims(
                     id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
-                    rejection_reason, created_at, updated_at, entrypoint_kind, fact_origin, flow_domain
+                    rejection_reason, created_at, updated_at, entrypoint_kind,
+                    entrypoint_http_method, entrypoint_route, entrypoint_topic, entrypoint_schedule,
+                    entrypoint_interface_method, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0.9, ?, ?, ?, ?, ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, 0.9, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STATIC', 'CODE')
                 """,
                 (
                     claim["id"],
@@ -183,6 +185,11 @@ def seed_semantic_graph(
                     now,
                     now,
                     claim.get("entrypointKind") or claim.get("entrypoint_kind"),
+                    claim.get("httpMethod") or claim.get("http_method"),
+                    claim.get("route"),
+                    claim.get("topic"),
+                    claim.get("schedule"),
+                    claim.get("interfaceMethod") or claim.get("interface_method"),
                 ),
             )
             for evidence_id in claim.get("evidence_ids", []):

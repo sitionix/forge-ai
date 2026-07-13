@@ -284,9 +284,19 @@ class FlowToolEvidence(BaseModel):
     excerpt: Optional[str] = None
 
 
+class FlowToolTrigger(BaseModel):
+    kind: str
+    method: Optional[str] = None
+    route: Optional[str] = None
+    topic: Optional[str] = None
+    schedule: Optional[str] = None
+    interfaceMethod: Optional[str] = None
+
+
 class FlowToolTreeItem(BaseModel):
     symbol: str
     kind: str
+    trigger: Optional[FlowToolTrigger] = None
     path: Optional[str] = None
     lineStart: Optional[int] = None
     lineEnd: Optional[int] = None

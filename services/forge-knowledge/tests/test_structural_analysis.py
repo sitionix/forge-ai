@@ -224,6 +224,64 @@ class ResponseDto {}
     assert entrypoint.metadata["interfaceMethod"] == "example.GeneratedApi.create"
 
 
+def test_static_graph_materializer_derives_controller_override_entrypoint_from_external_api_contract(tmp_path, monkeypatch):
+    contract_dir = tmp_path / "workspace" / "app-afesox" / "apis" / "stsssox" / "rest"
+    (contract_dir / "paths" / "v1").mkdir(parents=True)
+    (contract_dir / "openapi.yml").write_text(
+        """openapi: "3.0.0"
+paths:
+  /api/v1/sites:
+    $ref: './paths/v1/sites.yml'
+""",
+        encoding="utf-8",
+    )
+    (contract_dir / "paths" / "v1" / "sites.yml").write_text(
+        """post:
+  operationId: createSite
+  responses:
+    '201':
+      description: Site created
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FORGE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    text = """package example;
+
+import com.app_afesox.stsssox.api_first.api.SiteApi;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+
+@RestController
+class SiteController implements SiteApi {
+  @Override
+  public ResponseEntity<CreateSiteResponseDTO> createSite(CreateSiteRequestDTO request) {
+    return null;
+  }
+}
+
+class CreateSiteRequestDTO {}
+class CreateSiteResponseDTO {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    controller_create = next(
+        node
+        for node in graph.nodes
+        if node.nodeKind == "CALLABLE" and node.qualifiedName == "example.SiteController.createSite"
+    )
+    entrypoint = next(
+        claim
+        for claim in graph.claims
+        if claim.claimKind == "ENTRYPOINT_HINT" and claim.nodeLocalId == controller_create.localId
+    )
+
+    assert entrypoint.metadata["entrypointKind"] == "HTTP"
+    assert entrypoint.metadata["origin"] == "DERIVED"
+    assert entrypoint.metadata["route"] == "/api/v1/sites"
+    assert entrypoint.metadata["httpMethod"] == "POST"
+    assert entrypoint.metadata["interfaceMethod"] == "com.app_afesox.stsssox.api_first.api.SiteApi.createSite"
+    assert entrypoint.summary == "Handles POST requests for /api/v1/sites."
+
+
 def test_java_parser_extracts_static_callsites_with_conservative_resolution():
     result = parse_sample()
     calls = {(call.method_name, call.receiver_text): call for call in result.callsites}

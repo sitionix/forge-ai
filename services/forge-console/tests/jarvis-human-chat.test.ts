@@ -145,6 +145,24 @@ describe('Jarvis human chat', () => {
     expect(dom.window.document.querySelector('.jarvis-answer-warning')).not.toBeNull();
   });
 
+  it('preserves multiline numbered answers and keeps escaped text plain', async () => {
+    const dom = jarvisDom();
+    const response = humanResponse('1. POST /api/v1/sites входить у SiteController.createSite.\\n2. <b>HTML</b> лишається текстом.');
+    const http = { post: vi.fn(() => Promise.resolve(response)) };
+    const page = new JarvisPage({ document: dom.window.document, http });
+    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'Як створити сайт?';
+
+    await page.submitQuery(submitEvent());
+
+    const answer = dom.window.document.querySelector('.jarvis-answer-text');
+    expect(answer?.textContent).toContain('1. POST /api/v1/sites');
+    expect(answer?.textContent).toContain('\\n2. <b>HTML</b> лишається текстом.');
+    expect(answer?.innerHTML).toContain('&lt;b&gt;HTML&lt;/b&gt;');
+    expect(dom.window.document.querySelector('.jarvis-answer-text b')).toBeNull();
+    expect(dom.window.document.querySelectorAll('.jarvis-answer-card')).toHaveLength(1);
+    expect(dom.window.document.querySelector('.jarvis-flow-card')).toBeNull();
+  });
+
   it('keeps prior messages when a later request fails', async () => {
     const dom = jarvisDom();
     const http = {

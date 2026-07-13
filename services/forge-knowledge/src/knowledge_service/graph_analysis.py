@@ -26,6 +26,7 @@ CLAIM_METADATA_ALLOWLIST = {
     "entrypointKind",
     "exceptionType",
     "httpMethod",
+    "interfaceMethod",
     "route",
     "schedule",
     "topic",

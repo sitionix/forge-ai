@@ -173,6 +173,9 @@
           "symbol": {
             "title": "Symbol",
             "type": "string"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/FlowToolTrigger"
           }
         },
         "required": [
@@ -180,6 +183,39 @@
           "kind"
         ],
         "title": "FlowToolTreeItem",
+        "type": "object"
+      },
+      "FlowToolTrigger": {
+        "properties": {
+          "interfaceMethod": {
+            "title": "Interfacemethod",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "schedule": {
+            "title": "Schedule",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FlowToolTrigger",
         "type": "object"
       },
       "HTTPValidationError": {

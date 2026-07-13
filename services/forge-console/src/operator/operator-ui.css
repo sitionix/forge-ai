@@ -1375,6 +1375,10 @@ body.sidebar-collapsed .sidebar-link {
   font-size: 13px;
 }
 
+.jarvis-answer-text {
+  white-space: pre-wrap;
+}
+
 .jarvis-answer-sources {
   display: flex;
   flex-wrap: wrap;

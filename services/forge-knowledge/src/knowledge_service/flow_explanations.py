@@ -25,6 +25,7 @@ from knowledge_service.knowledge_query_schema import (
     FlowExplanationStatus,
     FlowExplanationTransition,
     FlowToolEvidence,
+    FlowToolTrigger,
     FlowToolTree,
     FlowToolTreeItem,
     KnowledgeFlowAnswer,
@@ -140,11 +141,22 @@ class HumanAnswerPromptRenderer:
             validation_block += "\n"
         context_json = json.dumps(dict(llm_input), ensure_ascii=False, indent=2, sort_keys=True)
         return (
-            "Answer the user's code-flow question in normal human language using only the supplied verified flow facts.\n"
+            "Answer the user's code-flow question as a detailed technical step-by-step explanation for exactly one supplied flow.\n"
             "Return strict JSON only with exactly this shape: {\"text\":\"human-readable answer\"}.\n"
-            "Use the requested answerLanguage. Directly answer the question. Preserve branches as alternatives or parallel calls when the facts branch.\n"
+            "Use only the requested answerLanguage for prose; do not mix in another natural language except exact code symbols and quoted literals.\n"
+            "Directly answer the question using only the supplied verified flow facts.\n"
+            "The text must start with the trigger when present: HTTP method and route, then the entrypoint symbol and its responsibility.\n"
+            "Then describe execution as plain numbered steps in the supplied CALLS-tree order. For every meaningful step, include the exact class or method symbol, "
+            "what data enters that step, what the step does, what it calls next, and any grounded validation, persistence, or side effect.\n"
+            "When validation facts include thresholds, null or empty checks, exception classes, or error messages, include those exact grounded details.\n"
+            "Describe branches as branches or parallel actions when facts branch; do not fabricate a sequence between sibling branches.\n"
+            "Finish with the observable result: returned response or status, persisted data, and emitted event or external side effect when those facts are supplied.\n"
+            "Keep the answer plain text. Numbered lines are preferred; Markdown tables, headings, badges, and graph/debug formatting are not.\n"
+            "Do not collapse the flow into a generic summary or repeat tautologies such as creating a site creates a site.\n"
+            "Do not omit available method names, class names, trigger details, validation rules, persistence details, side effects, or final results.\n"
+            "Do not invent validation, side effects, transports, routes, statuses, or ordering unsupported by the supplied facts.\n"
+            "Do not call an outbox write a direct Kafka publish unless the supplied facts include Kafka dispatch.\n"
             "Do not mention graph terminology, retrieval mechanics, refs, nodes, transitions, boundaries, hierarchy, scores, or internal IDs.\n"
-            "Do not invent behavior unsupported by the supplied facts. Explain only the single supplied entrypoint flow.\n"
             f"{validation_block}"
             "BEGIN_VERIFIED_FLOW_FACTS_JSON\n"
             f"{context_json}\n"
@@ -178,12 +190,6 @@ class CompactFlowProjector:
 
     def _tree(self, flow: EntrypointFlow) -> FlowToolTree:
         node_by_id = {node.node_id: node for node in flow.nodes}
-        outgoing: Dict[str, List[FlowGraphEdge]] = {}
-        for edge in sorted(flow.transitions, key=self._edge_sort_key):
-            outgoing.setdefault(edge.from_node_id, []).append(edge)
-        boundaries: Dict[str, List[FlowGraphEdge]] = {}
-        for edge in sorted(flow.boundary_transitions, key=self._edge_sort_key):
-            boundaries.setdefault(edge.from_node_id, []).append(edge)
         evidence_by_node: Dict[str, List[FlowGraphEvidence]] = {}
         evidence_by_edge: Dict[str, List[FlowGraphEvidence]] = {}
         for item in flow.evidence:
@@ -191,6 +197,12 @@ class CompactFlowProjector:
                 evidence_by_edge.setdefault(item.edge_id, []).append(item)
             elif item.node_id:
                 evidence_by_node.setdefault(item.node_id, []).append(item)
+        outgoing: Dict[str, List[FlowGraphEdge]] = {}
+        for edge in sorted(flow.transitions, key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
+            outgoing.setdefault(edge.from_node_id, []).append(edge)
+        boundaries: Dict[str, List[FlowGraphEdge]] = {}
+        for edge in sorted(flow.boundary_transitions, key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
+            boundaries.setdefault(edge.from_node_id, []).append(edge)
 
         root = self._node_item(flow.entrypoint, evidence_by_node.get(flow.entrypoint.node_id, []))
         rendered = {flow.entrypoint.node_id}
@@ -198,7 +210,7 @@ class CompactFlowProjector:
             {
                 "node": flow.entrypoint,
                 "item": root,
-                "entries": [*outgoing.get(flow.entrypoint.node_id, []), *boundaries.get(flow.entrypoint.node_id, [])],
+                "entries": self._sorted_child_edges(flow.entrypoint.node_id, outgoing, boundaries, evidence_by_edge),
                 "index": 0,
                 "ancestry": {flow.entrypoint.node_id},
             }
@@ -231,12 +243,24 @@ class CompactFlowProjector:
                 {
                     "node": target,
                     "item": child,
-                    "entries": [*outgoing.get(target.node_id, []), *boundaries.get(target.node_id, [])],
+                    "entries": self._sorted_child_edges(target.node_id, outgoing, boundaries, evidence_by_edge),
                     "index": 0,
                     "ancestry": {*frame["ancestry"], target.node_id},
                 }
             )
         return FlowToolTree(source=str(flow.key.source_id or ""), entrypoint=root)
+
+    def _sorted_child_edges(
+        self,
+        node_id: str,
+        outgoing: Mapping[str, Sequence[FlowGraphEdge]],
+        boundaries: Mapping[str, Sequence[FlowGraphEdge]],
+        evidence_by_edge: Mapping[str, Sequence[FlowGraphEvidence]],
+    ) -> List[FlowGraphEdge]:
+        return sorted(
+            [*outgoing.get(node_id, ()), *boundaries.get(node_id, ())],
+            key=lambda item: self._edge_sort_key(item, evidence_by_edge),
+        )
 
     def _node_item(
         self,
@@ -249,6 +273,7 @@ class CompactFlowProjector:
         return FlowToolTreeItem(
             symbol=self._symbol(node),
             kind=self._node_kind(node),
+            trigger=self._trigger(node),
             path=node.relative_path,
             lineStart=node.line_start,
             lineEnd=node.line_end,
@@ -262,12 +287,12 @@ class CompactFlowProjector:
     def _boundary_item(self, edge: FlowGraphEdge, evidence: Sequence[FlowGraphEvidence]) -> FlowToolTreeItem:
         projection = self.boundary_classifier.project(edge)
         kind = "EXTERNAL_CALL" if projection.kind.value == "EXTERNAL" else "UNRESOLVED_CALL"
-        symbol = projection.target or self._unresolved_target_name(edge) or (
+        symbol = self._boundary_symbol(edge, projection.target) or (
             "External call" if kind == "EXTERNAL_CALL" else "Unresolved call"
         )
         description = "Calls an external client boundary." if kind == "EXTERNAL_CALL" else None
         if edge.boundary_reason == "CURRENT_TARGET_NODE_MISSING":
-            symbol = projection.target or "Target missing from current graph"
+            symbol = self._boundary_symbol(edge, projection.target) or "Target missing from current graph"
             description = "Target is missing from the current graph."
         return FlowToolTreeItem(
             symbol=symbol,
@@ -279,6 +304,33 @@ class CompactFlowProjector:
             evidence=[self._evidence(item) for item in evidence],
             children=[],
         )
+
+    def _boundary_symbol(self, edge: FlowGraphEdge, projected_target: str | None) -> str | None:
+        target = edge.unresolved_target or {}
+        if not isinstance(target, dict):
+            return self._compact_symbol(projected_target)
+        for key in ("qualifiedName", "target", "displayName", "label", "symbol"):
+            value = self._clean(target.get(key) if isinstance(target.get(key), str) else None)
+            if value:
+                return self._compact_symbol(value)
+        name = self._clean(target.get("name") if isinstance(target.get("name"), str) else None)
+        for key in ("interfaceType", "receiverTypeHint", "targetTypeText"):
+            owner = self._clean(target.get(key) if isinstance(target.get(key), str) else None)
+            if owner and name and owner != name and self._looks_like_symbol(owner):
+                return f"{self._compact_symbol(owner)}.{name}"
+        return self._compact_symbol(projected_target or name)
+
+    def _compact_symbol(self, value: str | None) -> str | None:
+        normalized = self._clean(value)
+        if not normalized:
+            return None
+        parts = [part for part in normalized.split(".") if part]
+        if len(parts) >= 2:
+            return ".".join(parts[-2:])
+        return normalized
+
+    def _looks_like_symbol(self, value: str) -> bool:
+        return re.match(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$", value) is not None
 
     def _evidence(self, item: FlowGraphEvidence) -> FlowToolEvidence:
         return FlowToolEvidence(
@@ -314,6 +366,28 @@ class CompactFlowProjector:
             "BOOTSTRAP": "APPLICATION_ENTRYPOINT",
         }.get(normalized, "ENTRYPOINT")
 
+    def _trigger(self, node: FlowGraphNode) -> FlowToolTrigger | None:
+        if not node.entrypoint:
+            return None
+        normalized = str(node.entrypoint_kind or "").strip().upper()
+        trigger_kind = {
+            "HTTP": "HTTP",
+            "KAFKA": "KAFKA",
+            "SCHEDULED": "SCHEDULED",
+            "MESSAGE": "MESSAGE",
+            "BOOTSTRAP": "BOOTSTRAP",
+        }.get(normalized)
+        if trigger_kind is None:
+            return None
+        return FlowToolTrigger(
+            kind=trigger_kind,
+            method=self._clean(node.entrypoint_http_method),
+            route=self._clean(node.entrypoint_route),
+            topic=self._clean(node.entrypoint_topic),
+            schedule=self._clean(node.entrypoint_schedule),
+            interfaceMethod=self._clean(node.entrypoint_interface_method),
+        )
+
     def _unresolved_target_name(self, edge: FlowGraphEdge) -> str | None:
         target = edge.unresolved_target or {}
         for key in ("name", "qualifiedName", "targetTypeText", "receiverTypeHint"):
@@ -322,8 +396,22 @@ class CompactFlowProjector:
                 return value.strip()
         return None
 
-    def _edge_sort_key(self, edge: FlowGraphEdge) -> tuple[str, str, str, str]:
-        return (edge.from_node_id, edge.to_node_id or "", edge.edge_id, edge.resolution_status)
+    def _edge_sort_key(
+        self,
+        edge: FlowGraphEdge,
+        evidence_by_edge: Mapping[str, Sequence[FlowGraphEvidence]] | None = None,
+    ) -> tuple[str, int, int, str, str, str]:
+        line_starts = [
+            item.line_start
+            for item in (evidence_by_edge or {}).get(edge.edge_id, ())
+            if item.line_start is not None
+        ]
+        first_line = min(line_starts) if line_starts else 1_000_000_000
+        return (edge.from_node_id, first_line, 0 if line_starts else 1, edge.to_node_id or "", edge.edge_id, edge.resolution_status)
+
+    def _clean(self, value: str | None) -> str | None:
+        normalized = str(value or "").strip()
+        return normalized or None
 
     def _diagnostics(self, execution: Any) -> List[KnowledgeQueryDiagnostic]:
         response = getattr(execution, "response", None)

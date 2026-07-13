@@ -24,6 +24,11 @@ class FlowGraphNode:
     summary: str | None = None
     entrypoint: bool = False
     entrypoint_kind: str | None = None
+    entrypoint_http_method: str | None = None
+    entrypoint_route: str | None = None
+    entrypoint_topic: str | None = None
+    entrypoint_schedule: str | None = None
+    entrypoint_interface_method: str | None = None
     flow_domain: str | None = None
 
 

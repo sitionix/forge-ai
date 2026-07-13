@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import threading
@@ -50,8 +52,15 @@ class PerEntrypointAnswerProvider:
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
 
 
-def _entrypoint_claim(node_id: str, *, kind: str = "HTTP") -> dict:
-    return {
+def _entrypoint_claim(
+    node_id: str,
+    *,
+    kind: str = "HTTP",
+    http_method: str | None = None,
+    route: str | None = None,
+    interface_method: str | None = None,
+) -> dict:
+    claim = {
         "id": f"claim-{node_id}",
         "node_id": node_id,
         "claimKind": "ENTRYPOINT_HINT",
@@ -59,6 +68,13 @@ def _entrypoint_claim(node_id: str, *, kind: str = "HTTP") -> dict:
         "evidence_ids": ["ev-node-query"],
         "entrypointKind": kind,
     }
+    if http_method:
+        claim["httpMethod"] = http_method
+    if route:
+        claim["route"] = route
+    if interface_method:
+        claim["interfaceMethod"] = interface_method
+    return claim
 
 
 def _async_client(app):
@@ -129,7 +145,14 @@ def test_query_flow_explanations_endpoint_returns_human_answer(tmp_path):
             {"id": "b-work", "nodeKind": "CALLABLE", "name": "B.work", "qualified": "B.work", "path": "src/B.java"},
         ],
         edges=[{"id": "edge-a-b", "fromNodeId": "a-start", "toNodeId": "b-work", "edgeType": "CALLS"}],
-        claims=[_entrypoint_claim("a-start")],
+        claims=[
+            _entrypoint_claim(
+                "a-start",
+                http_method="POST",
+                route="/api/v1/sites",
+                interface_method="com.app.SiteApi.createSite",
+            )
+        ],
     )
     provider = FakeFlowExplanationProvider()
     app.state.flow_explanation_provider = provider
@@ -157,6 +180,12 @@ def test_query_flow_explanations_endpoint_returns_human_answer(tmp_path):
     assert len(provider.calls) == 1
     assert provider.calls[0]["llmInput"]["entrypoint"] == "A.start"
     assert provider.calls[0]["llmInput"]["tree"]["symbol"] == "A.start"
+    assert provider.calls[0]["llmInput"]["tree"]["trigger"] == {
+        "kind": "HTTP",
+        "method": "POST",
+        "route": "/api/v1/sites",
+        "interfaceMethod": "com.app.SiteApi.createSite",
+    }
 
 
 def test_query_endpoint_returns_one_answer_per_distinct_flow(tmp_path):
@@ -300,7 +329,7 @@ def test_slow_flow_explanation_does_not_block_concurrent_health_request(tmp_path
             {"id": "b-work", "nodeKind": "CALLABLE", "name": "B.work", "qualified": "B.work", "path": "src/B.java"},
         ],
         edges=[{"id": "edge-a-b", "fromNodeId": "a-start", "toNodeId": "b-work", "edgeType": "CALLS"}],
-        claims=[_entrypoint_claim("a-start")],
+        claims=[_entrypoint_claim("a-start", http_method="POST", route="/api/v1/sites")],
     )
     app.state.flow_explanation_provider = FakeFlowExplanationProvider(delay_seconds=0.4)
 
@@ -416,7 +445,7 @@ def test_tool_context_endpoint_returns_compact_nested_tree(tmp_path):
             {"id": "b-work", "nodeKind": "CALLABLE", "name": "B.work", "qualified": "B.work", "path": "src/B.java"},
         ],
         edges=[{"id": "edge-a-b", "fromNodeId": "a-start", "toNodeId": "b-work", "edgeType": "CALLS"}],
-        claims=[_entrypoint_claim("a-start")],
+        claims=[_entrypoint_claim("a-start", http_method="POST", route="/api/v1/sites")],
     )
     provider = FakeFlowExplanationProvider()
     app.state.flow_explanation_provider = provider
@@ -433,6 +462,7 @@ def test_tool_context_endpoint_returns_compact_nested_tree(tmp_path):
     assert payload["trees"][0]["source"] == "source-a"
     assert payload["trees"][0]["entrypoint"]["symbol"] == "A.start"
     assert payload["trees"][0]["entrypoint"]["kind"] == "HTTP_ENDPOINT"
+    assert payload["trees"][0]["entrypoint"]["trigger"] == {"kind": "HTTP", "method": "POST", "route": "/api/v1/sites"}
     assert payload["trees"][0]["entrypoint"]["children"][0]["symbol"] == "B.work"
     rendered = json.dumps(payload)
     assert "status" not in payload
@@ -440,6 +470,35 @@ def test_tool_context_endpoint_returns_compact_nested_tree(tmp_path):
     assert "nodeRef" not in rendered
     assert "transitionRef" not in rendered
     assert provider.calls == []
+
+
+def test_missing_http_trigger_details_are_not_invented(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_semantic_graph(
+        app_config.store_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a-start", "nodeKind": "CALLABLE", "name": "A.start", "qualified": "A.start", "path": "src/A.java"},
+            {"id": "b-work", "nodeKind": "CALLABLE", "name": "B.work", "qualified": "B.work", "path": "src/B.java"},
+        ],
+        edges=[{"id": "edge-a-b", "fromNodeId": "a-start", "toNodeId": "b-work", "edgeType": "CALLS"}],
+        claims=[_entrypoint_claim("a-start")],
+    )
+    provider = FakeFlowExplanationProvider()
+    app.state.flow_explanation_provider = provider
+
+    async def exercise():
+        async with _async_client(app) as client:
+            response = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
+            return response.status_code
+
+    status = asyncio.run(exercise())
+
+    assert status == 200
+    tree = provider.calls[0]["llmInput"]["tree"]
+    assert tree["trigger"] == {"kind": "HTTP"}
+    assert "method" not in tree["trigger"]
+    assert "route" not in tree["trigger"]
 
 
 def test_cancelled_flow_explanation_request_does_not_start_subsequent_flow_calls(tmp_path):
