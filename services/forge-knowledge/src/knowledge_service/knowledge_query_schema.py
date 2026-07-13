@@ -238,7 +238,10 @@ class FlowExplanationTransition(BaseModel):
 
 class FlowExplanationBoundary(BaseModel):
     boundaryRef: str
+    fromNodeRef: str
     kind: str
+    resolutionStatus: str
+    target: Optional[str] = None
     explanation: Optional[str] = None
     evidenceRefs: List[str] = Field(default_factory=list)
 
@@ -295,6 +298,7 @@ class FlowToolBoundary(BaseModel):
     boundaryRef: str
     fromNodeRef: str
     kind: str
+    resolutionStatus: str
     target: Optional[str] = None
     explanation: Optional[str] = None
     evidence: List[FlowToolEvidence] = Field(default_factory=list)

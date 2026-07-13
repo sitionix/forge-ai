@@ -158,14 +158,28 @@
             "title": "Explanation",
             "type": "string"
           },
+          "fromNodeRef": {
+            "title": "Fromnoderef",
+            "type": "string"
+          },
           "kind": {
             "title": "Kind",
+            "type": "string"
+          },
+          "resolutionStatus": {
+            "title": "Resolutionstatus",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
             "type": "string"
           }
         },
         "required": [
           "boundaryRef",
-          "kind"
+          "fromNodeRef",
+          "kind",
+          "resolutionStatus"
         ],
         "title": "FlowExplanationBoundary",
         "type": "object"
@@ -320,6 +334,10 @@
             "title": "Kind",
             "type": "string"
           },
+          "resolutionStatus": {
+            "title": "Resolutionstatus",
+            "type": "string"
+          },
           "target": {
             "title": "Target",
             "type": "string"
@@ -328,7 +346,8 @@
         "required": [
           "boundaryRef",
           "fromNodeRef",
-          "kind"
+          "kind",
+          "resolutionStatus"
         ],
         "title": "FlowToolBoundary",
         "type": "object"

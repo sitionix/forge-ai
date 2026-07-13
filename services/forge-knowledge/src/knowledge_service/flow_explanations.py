@@ -15,6 +15,7 @@ from knowledge_service.config import (
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
 )
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow
+from knowledge_service.flow_boundary_classifier import FlowBoundaryClassifier, FLOW_BOUNDARY_CLASSIFIER
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
 from knowledge_service.knowledge_query_schema import (
     FlowExplanation,
@@ -113,7 +114,7 @@ class FlowExplanationPromptRenderer:
             "\"narrative\":[{\"text\":\"string\",\"nodeRefs\":[\"n1\"],\"transitionRefs\":[\"t1\"],\"boundaryRefs\":[\"b1\"]}],"
             "\"steps\":[{\"nodeRef\":\"n1\",\"explanation\":\"string\",\"transitionRefs\":[\"t1\"],\"evidenceRefs\":[\"e1\"]}],"
             "\"transitions\":[{\"transitionRef\":\"t1\",\"explanation\":\"string\",\"evidenceRefs\":[\"e1\"]}],"
-            "\"boundaries\":[{\"boundaryRef\":\"b1\",\"kind\":\"EXTERNAL_BOUNDARY\",\"explanation\":\"string\",\"evidenceRefs\":[\"e3\"]}]}.\n"
+            "\"boundaries\":[{\"boundaryRef\":\"b1\",\"kind\":\"EXTERNAL\",\"explanation\":\"string\",\"evidenceRefs\":[\"e3\"]}]}.\n"
             "The steps array must cover every input nodeRef. The transitions array must cover every input transitionRef. "
             "Boundary explanations are required for every input boundaryRef when input boundaries exist.\n"
             "Use nodeRefs, transitionRefs, and boundaryRefs to ground each sentence in the exact graph facts it explains.\n"
@@ -190,6 +191,9 @@ class LocalOllamaFlowExplanationClient:
 
 
 class FlowExplanationContextPacker:
+    def __init__(self, boundary_classifier: FlowBoundaryClassifier | None = None) -> None:
+        self.boundary_classifier = boundary_classifier or FLOW_BOUNDARY_CLASSIFIER
+
     def pack(
         self,
         *,
@@ -310,11 +314,13 @@ class FlowExplanationContextPacker:
         node_ref_by_id: Mapping[str, str],
     ) -> Dict[str, Any]:
         refs = self._edge_refs(edge, evidence, evidence_ref_by_id)
+        projection = self.boundary_classifier.project(edge)
         return {
             "boundaryRef": f"b{index}",
             "fromNodeRef": node_ref_by_id.get(edge.from_node_id),
-            "kind": self._boundary_kind(edge),
-            "target": self._boundary_target(edge),
+            "kind": projection.kind.value,
+            "target": projection.target,
+            "resolutionStatus": projection.resolution_status,
             "evidence": [self._evidence_item(ref, evidence_by_ref[ref]) for ref in refs],
             "evidenceRefs": refs,
         }
@@ -334,19 +340,6 @@ class FlowExplanationContextPacker:
 
     def _symbol(self, node: FlowGraphNode) -> str:
         return str(node.qualified_name or node.label or node.node_id)
-
-    def _boundary_kind(self, edge: FlowGraphEdge) -> str:
-        if edge.external or str(edge.resolution_status or "").upper() == "EXTERNAL_TARGET":
-            return "EXTERNAL_BOUNDARY"
-        return "UNRESOLVED_BOUNDARY"
-
-    def _boundary_target(self, edge: FlowGraphEdge) -> str | None:
-        target = edge.unresolved_target or {}
-        for key in ("name", "qualifiedName", "target", "kindHint", "displayName", "label", "symbol"):
-            value = target.get(key) if isinstance(target, dict) else None
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return None
 
 
 class FlowExplanationValidator:
@@ -1164,7 +1157,10 @@ class FlowExplanationService:
             boundaries=[
                 FlowExplanationBoundary(
                     boundaryRef=str(input_boundary.get("boundaryRef") or ""),
+                    fromNodeRef=str(input_boundary.get("fromNodeRef") or ""),
                     kind=str(input_boundary.get("kind") or ""),
+                    resolutionStatus=str(input_boundary.get("resolutionStatus") or ""),
+                    target=self._optional_string(input_boundary.get("target")),
                     explanation=str(item.get("explanation") or "") if item else None,
                     evidenceRefs=self._ui_evidence_refs(result, item.get("evidenceRefs") or []),
                 )
@@ -1251,10 +1247,16 @@ class FlowExplanationService:
             boundaryRef=str(item.get("boundaryRef") or ""),
             fromNodeRef=str(item.get("fromNodeRef") or ""),
             kind=str(item.get("kind") or ""),
-            target=str(item.get("target")) if item.get("target") else None,
+            resolutionStatus=str(item.get("resolutionStatus") or ""),
+            target=self._optional_string(item.get("target")),
             explanation=str(explanation_item.get("explanation") or "") if explanation_item else None,
             evidence=[entry for entry in evidence if entry is not None],
         )
+
+    def _optional_string(self, value: Any) -> str | None:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
 
     def _address(self, step: Mapping[str, Any], evidence: Sequence[FlowToolEvidence | None]) -> FlowToolAddress:
         node_path = self._node_relative_path(step)

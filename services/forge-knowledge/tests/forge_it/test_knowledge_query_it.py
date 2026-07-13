@@ -37,6 +37,15 @@ def request(query: str, *, max_flows: int = 10, include_tests: bool = False):
     }
 
 
+def query_all_surfaces(app, query: str):
+    payload = request(query)
+    return (
+        post(app, "/api/v1/knowledge/query", payload).json(),
+        post(app, "/api/v1/knowledge/query/flow-explanations", payload).json(),
+        post(app, "/api/v1/knowledge/query/tool-context", payload).json(),
+    )
+
+
 def explicit(node_id: str, evidence_id: str):
     return {
         "id": f"claim-{node_id}", "node_id": node_id, "claimKind": "ENTRYPOINT_HINT",
@@ -50,6 +59,7 @@ def assert_flow_refs_close(payload: dict) -> None:
         transition_refs = {item["transitionRef"] for item in flow.get("transitions", [])}
         boundary_refs = {item["boundaryRef"] for item in flow.get("boundaries", [])}
         evidence_refs = {item["evidenceRef"] for item in flow.get("evidence", [])}
+        evidence_owner_by_ref = {item["evidenceRef"]: item["ownerRef"] for item in flow.get("evidence", [])}
         assert flow["entrypoint"]["nodeRef"] in node_refs
         for item in flow.get("matchedAnchors", []):
             assert item["anchorRef"] in node_refs
@@ -57,9 +67,14 @@ def assert_flow_refs_close(payload: dict) -> None:
             assert item["fromNodeRef"] in node_refs
             assert item["toNodeRef"] in node_refs
             assert set(item.get("evidenceRefs", [])) <= evidence_refs
+            for ref in item.get("evidenceRefs", []):
+                assert evidence_owner_by_ref[ref] == item["transitionRef"]
         for item in flow.get("boundaries", []):
             assert item["fromNodeRef"] in node_refs
+            assert "toNodeRef" not in item
             assert set(item.get("evidenceRefs", [])) <= evidence_refs
+            for ref in item.get("evidenceRefs", []):
+                assert evidence_owner_by_ref[ref] == item["boundaryRef"]
         for item in flow.get("evidence", []):
             assert item["ownerRef"] in node_refs | transition_refs | boundary_refs
 
@@ -89,6 +104,7 @@ def assert_explanation_refs_close(payload: dict) -> None:
             assert set(item.get("evidenceRefs", [])) <= evidence_refs
         for item in explanation.get("boundaries", []):
             assert item["boundaryRef"] in boundary_refs
+            assert item["fromNodeRef"] in node_refs
             assert set(item.get("evidenceRefs", [])) <= evidence_refs
 
 
@@ -119,6 +135,34 @@ def assert_tool_refs_close(tool_payload: dict, base_payload: dict) -> None:
             assert {evidence["ref"] for evidence in item.get("evidence", [])} <= evidence_refs
 
 
+def assert_boundary_facts_match(base_payload: dict, explanation_payload: dict | None = None, tool_payload: dict | None = None) -> None:
+    base_by_index = _flows_by_index(base_payload)
+    if explanation_payload is not None:
+        for explanation in explanation_payload.get("flowExplanations", []):
+            flow = base_by_index[int(explanation["flowIndex"])]
+            base_boundaries = {item["boundaryRef"]: item for item in flow.get("boundaries", [])}
+            explanation_boundaries = {item["boundaryRef"]: item for item in explanation.get("boundaries", [])}
+            assert set(explanation_boundaries) == set(base_boundaries)
+            for boundary_ref, base_boundary in base_boundaries.items():
+                explanation_boundary = explanation_boundaries[boundary_ref]
+                assert explanation_boundary["fromNodeRef"] == base_boundary["fromNodeRef"]
+                assert explanation_boundary["kind"] == base_boundary["kind"]
+                assert explanation_boundary.get("target") == base_boundary.get("target")
+                assert explanation_boundary["resolutionStatus"] == base_boundary["resolutionStatus"]
+    if tool_payload is not None:
+        for tool_flow in tool_payload.get("flows", []):
+            flow = base_by_index[int(tool_flow["flowIndex"])]
+            base_boundaries = {item["boundaryRef"]: item for item in flow.get("boundaries", [])}
+            tool_boundaries = {item["boundaryRef"]: item for item in tool_flow.get("boundaries", [])}
+            assert set(tool_boundaries) == set(base_boundaries)
+            for boundary_ref, base_boundary in base_boundaries.items():
+                tool_boundary = tool_boundaries[boundary_ref]
+                assert tool_boundary["fromNodeRef"] == base_boundary["fromNodeRef"]
+                assert tool_boundary["kind"] == base_boundary["kind"]
+                assert tool_boundary.get("target") == base_boundary.get("target")
+                assert tool_boundary["resolutionStatus"] == base_boundary["resolutionStatus"]
+
+
 def assert_no_internal_ids(payload: dict, secrets: tuple[str, ...]) -> None:
     rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     for secret in secrets:
@@ -130,6 +174,100 @@ def assert_no_slice_truncation(payload: dict) -> None:
     for flow in payload.get("flows", []):
         assert flow["complete"] is True
         assert flow["coverage"]["truncated"] is False
+
+
+def append_stale_resolved_call_boundary(
+    store_path,
+    *,
+    source_id: str,
+    from_node_id: str,
+    to_node_id: str,
+    edge_id: str,
+    evidence_id: str,
+) -> None:
+    with sqlite3.connect(store_path) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = OFF")
+        node = conn.execute(
+            """
+            SELECT job_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash
+            FROM analysis_graph_nodes
+            WHERE source_id = ? AND id = ?
+            """,
+            (source_id, from_node_id),
+        ).fetchone()
+        assert node is not None
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            INSERT INTO analysis_graph_edges(
+                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                from_node_id, to_node_id, edge_type, resolution_status, confidence,
+                unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CALLS', 'RESOLVED', 0.91,
+                    NULL, '{}', 'TRUSTED', ?, ?, 'STATIC', 'CODE')
+            """,
+            (
+                edge_id,
+                node["job_id"],
+                source_id,
+                node["inventory_file_id"],
+                node["analysis_file_id"],
+                node["file_id"],
+                node["relative_path"],
+                node["content_hash"],
+                from_node_id,
+                to_node_id,
+                now,
+                now,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO analysis_graph_edge_evidence(edge_id, evidence_id) VALUES (?, ?)",
+            (edge_id, evidence_id),
+        )
+        graph_id = SemanticIndexStore.compute_graph_revision_conn(conn, source_id)
+        counts = conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = ?) AS node_count,
+              (SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = ?) AS edge_count,
+              (SELECT COUNT(*) FROM analysis_graph_claims WHERE source_id = ?) AS claim_count,
+              (SELECT COUNT(*) FROM analysis_graph_evidence WHERE source_id = ?) AS evidence_count
+            """,
+            (source_id, source_id, source_id, source_id),
+        ).fetchone()
+        conn.execute(
+            """
+            UPDATE analysis_graph_state
+            SET graph_id = ?, content_identity = ?, node_count = ?, edge_count = ?, claim_count = ?, evidence_count = ?, updated_at = ?
+            WHERE source_id = ?
+            """,
+            (
+                graph_id,
+                graph_id,
+                int(counts["node_count"]),
+                int(counts["edge_count"]),
+                int(counts["claim_count"]),
+                int(counts["evidence_count"]),
+                now,
+                source_id,
+            ),
+        )
+
+
+def replace_evidence_excerpts(store_path, source_id: str, excerpts_by_id: dict[str, str]) -> None:
+    with sqlite3.connect(store_path) as conn:
+        for evidence_id, excerpt in excerpts_by_id.items():
+            conn.execute(
+                """
+                UPDATE analysis_graph_evidence
+                SET excerpt = ?, excerpt_hash = ?
+                WHERE source_id = ? AND id = ?
+                """,
+                (excerpt, excerpt, source_id, evidence_id),
+            )
 
 
 class FailingProvider:
@@ -501,70 +639,17 @@ def test_real_stack_missing_current_target_does_not_leak_internal_target_id(tmp_
         evidence_ids=["secret-evidence-db-id"],
     )
     with sqlite3.connect(config.store_path) as conn:
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = OFF")
         conn.execute(
             "UPDATE analysis_graph_evidence SET excerpt='public evidence excerpt', excerpt_hash='public-evidence-excerpt' WHERE source_id='neutral-missing'"
         )
-        node = conn.execute(
-            """
-            SELECT job_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash
-            FROM analysis_graph_nodes
-            WHERE source_id = 'neutral-missing' AND id = 'secret-entrypoint-db-id'
-            """
-        ).fetchone()
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute(
-            """
-            INSERT INTO analysis_graph_edges(
-                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                from_node_id, to_node_id, edge_type, resolution_status, confidence,
-                unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
-            )
-            VALUES (?, ?, 'neutral-missing', ?, ?, ?, ?, ?, 'secret-entrypoint-db-id', 'secret-missing-target-db-id',
-                    'CALLS', 'RESOLVED', 0.91, NULL, '{}', 'TRUSTED', ?, ?, 'STATIC', 'CODE')
-            """,
-            (
-                "secret-edge-db-id",
-                node["job_id"],
-                node["inventory_file_id"],
-                node["analysis_file_id"],
-                node["file_id"],
-                node["relative_path"],
-                node["content_hash"],
-                now,
-                now,
-            ),
-        )
-        conn.execute(
-            "INSERT INTO analysis_graph_edge_evidence(edge_id, evidence_id) VALUES ('secret-edge-db-id', 'secret-evidence-db-id')"
-        )
-        graph_id = SemanticIndexStore.compute_graph_revision_conn(conn, "neutral-missing")
-        counts = conn.execute(
-            """
-            SELECT
-              (SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = 'neutral-missing') AS node_count,
-              (SELECT COUNT(*) FROM analysis_graph_edges WHERE source_id = 'neutral-missing') AS edge_count,
-              (SELECT COUNT(*) FROM analysis_graph_claims WHERE source_id = 'neutral-missing') AS claim_count,
-              (SELECT COUNT(*) FROM analysis_graph_evidence WHERE source_id = 'neutral-missing') AS evidence_count
-            """
-        ).fetchone()
-        conn.execute(
-            """
-            UPDATE analysis_graph_state
-            SET graph_id = ?, content_identity = ?, node_count = ?, edge_count = ?, claim_count = ?, evidence_count = ?, updated_at = ?
-            WHERE source_id = 'neutral-missing'
-            """,
-            (
-                graph_id,
-                graph_id,
-                int(counts["node_count"]),
-                int(counts["edge_count"]),
-                int(counts["claim_count"]),
-                int(counts["evidence_count"]),
-                now,
-            ),
-        )
+    append_stale_resolved_call_boundary(
+        config.store_path,
+        source_id="neutral-missing",
+        from_node_id="secret-entrypoint-db-id",
+        to_node_id="secret-missing-target-db-id",
+        edge_id="secret-edge-db-id",
+        evidence_id="secret-evidence-db-id",
+    )
     app.state.flow_explanation_provider = FailingProvider()
 
     base = post(app, "/api/v1/knowledge/query", request("Public Entry")).json()
@@ -582,6 +667,248 @@ def test_real_stack_missing_current_target_does_not_leak_internal_target_id(tmp_
     assert explained["status"] == "OK"
     assert explained["flowExplanations"][0]["status"] == "FAILED"
     assert tool["flows"][0]["status"] == "FAILED"
+    assert_flow_refs_close(base)
+    assert_flow_refs_close(explained)
+    assert_explanation_refs_close(explained)
+    assert_tool_refs_close(tool, base)
+    assert_boundary_facts_match(base, explained, tool)
+    assert_no_internal_ids(base, secrets)
+    assert_no_internal_ids(explained, secrets)
+    assert_no_internal_ids(tool, secrets)
+
+
+def test_real_stack_external_boundary_kind_target_and_evidence_are_canonical_across_surfaces(tmp_path):
+    app, _, config, _ = build_test_app(write_runtime_config(tmp_path))
+    descriptor = "PublicExternalGateway.call"
+    secrets = (
+        "secret-external-entry-db-id",
+        "secret-external-edge-db-id",
+        "secret-external-evidence-db-id",
+        "secret-external-claim-db-id",
+    )
+    seed_semantic_graph(
+        config.store_path,
+        source_id="neutral-external-boundary",
+        nodes=[
+            {
+                "id": "secret-external-entry-db-id",
+                "nodeKind": "CALLABLE",
+                "name": "Public External Entry",
+                "qualified": "PublicExternalEntry",
+                "path": "src/PublicExternalEntry.txt",
+            }
+        ],
+        edges=[
+            {
+                "id": "secret-external-edge-db-id",
+                "fromNodeId": "secret-external-entry-db-id",
+                "edgeType": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "unresolved": {"qualifiedName": descriptor},
+                "evidence_id": "secret-external-evidence-db-id",
+            }
+        ],
+        claims=[
+            {
+                "id": "secret-external-claim-db-id",
+                "node_id": "secret-external-entry-db-id",
+                "claimKind": "ENTRYPOINT_HINT",
+                "summary": "typed root",
+                "evidence_ids": ["ev-node-query"],
+            }
+        ],
+    )
+    replace_evidence_excerpts(
+        config.store_path,
+        "neutral-external-boundary",
+        {
+            "secret-external-evidence-db-id": "public external boundary evidence",
+            "ev-node-query": "public root evidence",
+        },
+    )
+    app.state.flow_explanation_provider = GroundedProvider()
+
+    base, explained, tool = query_all_surfaces(app, "Public External Entry")
+
+    boundary = base["flows"][0]["boundaries"][0]
+    assert boundary["kind"] == "EXTERNAL"
+    assert boundary["target"] == descriptor
+    assert boundary["resolutionStatus"] == "EXTERNAL_TARGET"
+    assert_boundary_facts_match(base, explained, tool)
+    assert_flow_refs_close(base)
+    assert_explanation_refs_close(explained)
+    assert_tool_refs_close(tool, base)
+    assert_no_internal_ids(base, secrets)
+    assert_no_internal_ids(explained, secrets)
+    assert_no_internal_ids(tool, secrets)
+
+
+def test_real_stack_dynamic_unresolved_boundary_kind_target_are_canonical_across_surfaces(tmp_path):
+    app, _, config, _ = build_test_app(write_runtime_config(tmp_path))
+    descriptor = "RuntimeSelectedHandler.handle"
+    secrets = (
+        "secret-unresolved-entry-db-id",
+        "secret-unresolved-edge-db-id",
+        "secret-unresolved-evidence-db-id",
+        "secret-unresolved-claim-db-id",
+    )
+    seed_semantic_graph(
+        config.store_path,
+        source_id="neutral-unresolved-boundary",
+        nodes=[
+            {
+                "id": "secret-unresolved-entry-db-id",
+                "nodeKind": "CALLABLE",
+                "name": "Public Dynamic Entry",
+                "qualified": "PublicDynamicEntry",
+                "path": "src/PublicDynamicEntry.txt",
+            }
+        ],
+        edges=[
+            {
+                "id": "secret-unresolved-edge-db-id",
+                "fromNodeId": "secret-unresolved-entry-db-id",
+                "edgeType": "CALLS",
+                "resolutionStatus": "DYNAMIC_TARGET",
+                "unresolved": {"name": descriptor},
+                "evidence_id": "secret-unresolved-evidence-db-id",
+            }
+        ],
+        claims=[
+            {
+                "id": "secret-unresolved-claim-db-id",
+                "node_id": "secret-unresolved-entry-db-id",
+                "claimKind": "ENTRYPOINT_HINT",
+                "summary": "typed root",
+                "evidence_ids": ["ev-node-query"],
+            }
+        ],
+    )
+    replace_evidence_excerpts(
+        config.store_path,
+        "neutral-unresolved-boundary",
+        {
+            "secret-unresolved-evidence-db-id": "public unresolved boundary evidence",
+            "ev-node-query": "public root evidence",
+        },
+    )
+    app.state.flow_explanation_provider = GroundedProvider()
+
+    base, explained, tool = query_all_surfaces(app, "Public Dynamic Entry")
+
+    boundary = base["flows"][0]["boundaries"][0]
+    assert boundary["kind"] == "UNRESOLVED"
+    assert boundary["target"] == descriptor
+    assert boundary["resolutionStatus"] == "DYNAMIC_TARGET"
+    assert_boundary_facts_match(base, explained, tool)
+    assert_flow_refs_close(base)
+    assert_explanation_refs_close(explained)
+    assert_tool_refs_close(tool, base)
+    assert_no_internal_ids(base, secrets)
+    assert_no_internal_ids(explained, secrets)
+    assert_no_internal_ids(tool, secrets)
+
+
+def test_real_stack_mixed_boundary_flow_preserves_distinct_canonical_boundaries(tmp_path):
+    app, _, config, _ = build_test_app(write_runtime_config(tmp_path))
+    external_descriptor = "PublicExternalBoundary.call"
+    unresolved_descriptor = "PublicUnresolvedBoundary.call"
+    secrets = (
+        "secret-mixed-entry-db-id",
+        "secret-mixed-worker-db-id",
+        "secret-mixed-internal-edge-db-id",
+        "secret-mixed-external-edge-db-id",
+        "secret-mixed-unresolved-edge-db-id",
+        "secret-mixed-missing-edge-db-id",
+        "secret-mixed-missing-target-db-id",
+        "secret-mixed-ev-internal",
+        "secret-mixed-ev-external",
+        "secret-mixed-ev-unresolved",
+        "secret-mixed-ev-missing",
+    )
+    seed_semantic_graph(
+        config.store_path,
+        source_id="neutral-mixed-boundaries",
+        nodes=[
+            {
+                "id": "secret-mixed-entry-db-id",
+                "nodeKind": "CALLABLE",
+                "name": "Public Mixed Entry",
+                "qualified": "PublicMixedEntry",
+                "path": "src/PublicMixedEntry.txt",
+            },
+            {
+                "id": "secret-mixed-worker-db-id",
+                "nodeKind": "CALLABLE",
+                "name": "Public Worker",
+                "qualified": "PublicWorker",
+                "path": "src/PublicWorker.txt",
+            },
+        ],
+        edges=[
+            {
+                "id": "secret-mixed-internal-edge-db-id",
+                "fromNodeId": "secret-mixed-entry-db-id",
+                "toNodeId": "secret-mixed-worker-db-id",
+                "edgeType": "CALLS",
+                "evidence_id": "secret-mixed-ev-internal",
+            },
+            {
+                "id": "secret-mixed-external-edge-db-id",
+                "fromNodeId": "secret-mixed-entry-db-id",
+                "edgeType": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "unresolved": {"displayName": external_descriptor},
+                "evidence_id": "secret-mixed-ev-external",
+            },
+            {
+                "id": "secret-mixed-unresolved-edge-db-id",
+                "fromNodeId": "secret-mixed-entry-db-id",
+                "edgeType": "CALLS",
+                "resolutionStatus": "UNRESOLVED",
+                "unresolved": {"target": unresolved_descriptor},
+                "evidence_id": "secret-mixed-ev-unresolved",
+            },
+        ],
+        claims=[explicit("secret-mixed-entry-db-id", "ev-node-query")],
+        evidence_ids=["ev-node-query", "secret-mixed-ev-missing"],
+    )
+    replace_evidence_excerpts(
+        config.store_path,
+        "neutral-mixed-boundaries",
+        {
+            "secret-mixed-ev-internal": "public internal transition evidence",
+            "secret-mixed-ev-external": "public external boundary evidence",
+            "secret-mixed-ev-unresolved": "public unresolved boundary evidence",
+            "secret-mixed-ev-missing": "public missing boundary evidence",
+            "ev-node-query": "public root evidence",
+        },
+    )
+    append_stale_resolved_call_boundary(
+        config.store_path,
+        source_id="neutral-mixed-boundaries",
+        from_node_id="secret-mixed-entry-db-id",
+        to_node_id="secret-mixed-missing-target-db-id",
+        edge_id="secret-mixed-missing-edge-db-id",
+        evidence_id="secret-mixed-ev-missing",
+    )
+    app.state.flow_explanation_provider = GroundedProvider()
+
+    base, explained, tool = query_all_surfaces(app, "Public Mixed Entry")
+
+    assert len(base["flows"]) == 1
+    flow = base["flows"][0]
+    assert flow["coverage"]["transitionCount"] == 1
+    assert flow["coverage"]["boundaryCount"] == 3
+    assert len(flow["transitions"]) == 1
+    assert len(flow["boundaries"]) == 3
+    assert {(item["kind"], item.get("target")) for item in flow["boundaries"]} == {
+        ("CURRENT_TARGET_NODE_MISSING", None),
+        ("EXTERNAL", external_descriptor),
+        ("UNRESOLVED", unresolved_descriptor),
+    }
+    assert not any(item.get("toNodeRef") for item in flow["boundaries"])
+    assert_boundary_facts_match(base, explained, tool)
     assert_flow_refs_close(base)
     assert_flow_refs_close(explained)
     assert_explanation_refs_close(explained)

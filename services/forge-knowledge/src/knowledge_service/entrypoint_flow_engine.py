@@ -14,6 +14,7 @@ from knowledge_service.flow_graph_contract import (
     FlowNodeKey,
     dedupe_evidence,
 )
+from knowledge_service.flow_boundary_classifier import FlowBoundaryClassifier, FLOW_BOUNDARY_CLASSIFIER
 from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryDiagnostic,
     KnowledgeQueryEntrypointOrigin,
@@ -130,8 +131,13 @@ class _FlowCollectionState:
 
 
 class EntrypointFlowEngine:
-    def __init__(self, repository: EntrypointFlowGraphRepository | None = None) -> None:
+    def __init__(
+        self,
+        repository: EntrypointFlowGraphRepository | None = None,
+        boundary_classifier: FlowBoundaryClassifier | None = None,
+    ) -> None:
         self.repository = repository
+        self.boundary_classifier = boundary_classifier or FLOW_BOUNDARY_CLASSIFIER
 
     def build(
         self,
@@ -501,14 +507,7 @@ class EntrypointFlowEngine:
                 if edge.from_node_id in node_ref_by_id and (edge.to_node_id or "") in node_ref_by_id
             ],
             boundaries=[
-                KnowledgeQueryFlowBoundary(
-                    boundaryRef=boundary_ref_by_id[edge.edge_id],
-                    fromNodeRef=node_ref_by_id[edge.from_node_id],
-                    kind=self._boundary_kind(edge),
-                    resolutionStatus=edge.resolution_status,
-                    target=self._boundary_target(edge),
-                    evidenceRefs=[evidence_ref_by_id[item] for item in edge.evidence_ids if item in evidence_ref_by_id],
-                )
+                self._public_boundary(edge, boundary_ref_by_id[edge.edge_id], node_ref_by_id, evidence_ref_by_id)
                 for edge in flow.boundary_transitions
                 if edge.from_node_id in node_ref_by_id
             ],
@@ -556,6 +555,23 @@ class EntrypointFlowEngine:
             relativePath=node.relative_path,
             lineStart=node.line_start,
             lineEnd=node.line_end,
+        )
+
+    def _public_boundary(
+        self,
+        edge: FlowGraphEdge,
+        boundary_ref: str,
+        node_ref_by_id: dict[str, str],
+        evidence_ref_by_id: dict[str, str],
+    ) -> KnowledgeQueryFlowBoundary:
+        projection = self.boundary_classifier.project(edge)
+        return KnowledgeQueryFlowBoundary(
+            boundaryRef=boundary_ref,
+            fromNodeRef=node_ref_by_id[edge.from_node_id],
+            kind=projection.kind.value,
+            resolutionStatus=projection.resolution_status,
+            target=projection.target,
+            evidenceRefs=[evidence_ref_by_id[item] for item in edge.evidence_ids if item in evidence_ref_by_id],
         )
 
     def _candidate_sort_key(self, item):
@@ -627,20 +643,4 @@ class EntrypointFlowEngine:
                 expected_revision = key[1]
                 if not expected_revision or expected_revision in {node.graph_id, node.graph_revision or ""}:
                     return node
-        return None
-
-    def _boundary_kind(self, edge: FlowGraphEdge) -> str:
-        if edge.boundary_reason:
-            return edge.boundary_reason
-        if edge.external or str(edge.resolution_status or "").upper() == "EXTERNAL_TARGET":
-            return "EXTERNAL"
-        return "UNRESOLVED"
-
-    def _boundary_target(self, edge: FlowGraphEdge) -> str | None:
-        target = edge.unresolved_target or {}
-        if isinstance(target, dict):
-            for key in ("name", "qualifiedName", "target", "kindHint", "displayName", "label", "symbol"):
-                value = target.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
         return None
