@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -21,25 +21,44 @@ class KnowledgeConfigurationError(ValueError):
 
 
 class KnowledgeClient:
-    def __init__(self, base_url: str, timeout_seconds: int) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout_seconds: float,
+        flow_explanation_timeout_seconds: Optional[float] = None,
+        http_client: Optional[httpx.AsyncClient] = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
+        self.flow_explanation_timeout_seconds = flow_explanation_timeout_seconds or timeout_seconds
+        self._client = http_client or httpx.AsyncClient(timeout=self._timeout(timeout_seconds))
         self._validate_base_url()
 
     async def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return await self._post("/api/v1/knowledge/query", payload)
 
     async def query_flow_explanations(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return await self._post("/api/v1/knowledge/query/flow-explanations", payload)
+        return await self._post(
+            "/api/v1/knowledge/query/flow-explanations",
+            payload,
+            timeout_seconds=self.flow_explanation_timeout_seconds,
+        )
 
-    async def _post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def _post(self, path: str, payload: Dict[str, Any], timeout_seconds: Optional[float] = None) -> Dict[str, Any]:
         try:
             headers = {}
             correlation_id = current_correlation_id()
             if correlation_id:
                 headers[CORRELATION_HEADER] = correlation_id
-            response = await self._client.post(f"{self.base_url}{path}", json=payload, headers=headers)
+            if timeout_seconds is None:
+                response = await self._client.post(f"{self.base_url}{path}", json=payload, headers=headers)
+            else:
+                response = await self._client.post(
+                    f"{self.base_url}{path}",
+                    json=payload,
+                    headers=headers,
+                    timeout=self._timeout(timeout_seconds),
+                )
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise KnowledgeUnavailableError(f"Knowledge is not reachable at {self.base_url}") from exc
@@ -60,3 +79,7 @@ class KnowledgeClient:
             raise KnowledgeConfigurationError("Knowledge base URL must use http")
         if (parsed.hostname or "").lower() not in {"127.0.0.1", "localhost"}:
             raise KnowledgeConfigurationError("Knowledge base URL must point to localhost")
+
+    @staticmethod
+    def _timeout(timeout_seconds: float) -> httpx.Timeout:
+        return httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds))

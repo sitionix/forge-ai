@@ -312,6 +312,9 @@ forge:
       base-url: http://localhost:11434
       model: qwen2.5-coder:14b
       context-tokens: 32768
+    query:
+      flow-explanation:
+        request-timeout-seconds: 180
     services:
       jarvis:
         host: 127.0.0.1
@@ -321,6 +324,7 @@ forge:
           request-timeout-seconds: 120
         knowledge:
           request-timeout-seconds: 120
+          flow-explanation-transport-grace-seconds: 5
         actions-file: "{jarvis_dir / "allowed-actions.yaml"}"
         system-prompt-path: "{jarvis_dir / "system-prompt.md"}"
 """.lstrip(),

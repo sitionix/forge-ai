@@ -1,3 +1,6 @@
+import asyncio
+
+import httpx
 from support import AsgiTestClient as TestClient
 import pytest
 
@@ -351,3 +354,51 @@ def test_query_does_not_execute_actions(tmp_path) -> None:
 def test_non_localhost_knowledge_base_url_rejected() -> None:
     with pytest.raises(ValueError):
         KnowledgeClient("http://example.com:7081", 120)
+
+
+def test_flow_explanation_client_uses_timeout_beyond_normal_knowledge_boundary() -> None:
+    async def exercise():
+        calls = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.url.path)
+            read_timeout = request.extensions.get("timeout", {}).get("read", 0)
+            if read_timeout <= 0.12:
+                raise httpx.ReadTimeout("old timeout boundary", request=request)
+            await asyncio.sleep(0.001)
+            return httpx.Response(
+                200,
+                json=knowledge_query_bundle(
+                    intent="FLOW_EXPLANATION",
+                    flow_explanations=[
+                        {
+                            "flowIndex": 1,
+                            "title": "",
+                            "narrative": [],
+                            "steps": [{"nodeRef": "n1", "nodeLabel": "JarvisGateway"}],
+                            "transitionExplanations": [],
+                            "boundaries": [],
+                            "status": "FAILED",
+                        }
+                    ],
+                ),
+            )
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(0.1))
+        client = KnowledgeClient(
+            "http://127.0.0.1:7081",
+            timeout_seconds=0.1,
+            flow_explanation_timeout_seconds=0.15,
+            http_client=http_client,
+        )
+        try:
+            result = await client.query_flow_explanations(flow_query_payload("JarvisGateway"))
+        finally:
+            await client.aclose()
+        return result, calls
+
+    result, calls = asyncio.run(exercise())
+
+    assert calls == ["/api/v1/knowledge/query/flow-explanations"]
+    assert result["flows"]
+    assert result["flowExplanations"][0]["status"] == "FAILED"

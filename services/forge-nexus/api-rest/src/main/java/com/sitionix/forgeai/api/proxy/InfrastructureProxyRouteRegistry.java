@@ -17,8 +17,12 @@ public class InfrastructureProxyRouteRegistry {
     public InfrastructureProxyRouteRegistry(final InfrastructureProxyProperties properties,
                                             final ForgeAiFlowExplanationProperties flowExplanationProperties) {
         final Map<String, InfrastructureProxyRoute> registered = new LinkedHashMap<>();
+        final Duration flowExplanationDeadline = flowExplanationProperties.requestTimeout();
+        properties.getProxy().validateFlowExplanationTimeoutHierarchy(flowExplanationDeadline);
         final var explanationReadTimeout = properties.getProxy()
-                .knowledgeExplanationReadTimeout(flowExplanationProperties.requestTimeout());
+                .knowledgeExplanationReadTimeout(flowExplanationDeadline);
+        final var jarvisQueryReadTimeout = properties.getProxy()
+                .jarvisQueryReadTimeout(flowExplanationDeadline);
         this.knowledge(registered, "knowledge.status", HttpMethod.GET, "/api/v1/knowledge/status", false);
         this.knowledge(registered, "knowledge.sources", HttpMethod.GET, "/api/v1/knowledge/sources", false);
         this.knowledge(registered, "knowledge.overview", HttpMethod.GET, "/api/v1/knowledge/overview", false);
@@ -65,7 +69,7 @@ public class InfrastructureProxyRouteRegistry {
         this.jarvis(registered, "jarvis.status", HttpMethod.GET, "/api/v1/jarvis/status", false);
         this.jarvis(registered, "jarvis.actions", HttpMethod.GET, "/api/v1/jarvis/actions", false);
         this.jarvis(registered, "jarvis.command", HttpMethod.POST, "/api/v1/jarvis/command", true);
-        this.jarvis(registered, "jarvis.query", HttpMethod.POST, "/api/v1/jarvis/query", true);
+        this.jarvis(registered, "jarvis.query", HttpMethod.POST, "/api/v1/jarvis/query", true, jarvisQueryReadTimeout);
         this.routes = Map.copyOf(registered);
     }
 
@@ -128,7 +132,24 @@ public class InfrastructureProxyRouteRegistry {
                         final HttpMethod method,
                         final String upstreamPath,
                         final boolean requestBodyAllowed) {
-        registered.put(key, new InfrastructureProxyRoute(key, InfrastructureProxyService.JARVIS, method, ignored -> upstreamPath, requestBodyAllowed, true, null));
+        this.jarvis(registered, key, method, upstreamPath, requestBodyAllowed, null);
+    }
+
+    private void jarvis(final Map<String, InfrastructureProxyRoute> registered,
+                        final String key,
+                        final HttpMethod method,
+                        final String upstreamPath,
+                        final boolean requestBodyAllowed,
+                        final Duration readTimeout) {
+        registered.put(key, new InfrastructureProxyRoute(
+                key,
+                InfrastructureProxyService.JARVIS,
+                method,
+                ignored -> upstreamPath,
+                requestBodyAllowed,
+                true,
+                readTimeout
+        ));
     }
 
     private static String segment(final String value) {

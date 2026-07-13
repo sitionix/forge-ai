@@ -10,10 +10,11 @@ import org.springframework.stereotype.Component;
 public class ForgeAiFlowExplanationProperties {
 
     private int requestTimeoutSeconds = 180;
+    private Duration requestTimeout;
 
     @PostConstruct
     public void validate() {
-        if (this.requestTimeoutSeconds <= 0) {
+        if (this.requestTimeoutSeconds <= 0 || this.requestTimeout().compareTo(Duration.ZERO) <= 0) {
             throw new IllegalStateException("Flow explanation request timeout must be positive");
         }
     }
@@ -26,10 +27,19 @@ public class ForgeAiFlowExplanationProperties {
         this.requestTimeoutSeconds = requestTimeoutSeconds;
     }
 
+    public Duration getRequestTimeout() {
+        return this.requestTimeout;
+    }
+
+    public void setRequestTimeout(final Duration requestTimeout) {
+        this.requestTimeout = requestTimeout;
+    }
+
     public Duration requestTimeout() {
-        if (this.requestTimeoutSeconds <= 0) {
+        final Duration timeout = this.requestTimeout == null ? Duration.ofSeconds(this.requestTimeoutSeconds) : this.requestTimeout;
+        if (timeout.compareTo(Duration.ZERO) <= 0) {
             throw new IllegalStateException("Flow explanation request timeout must be positive");
         }
-        return Duration.ofSeconds(this.requestTimeoutSeconds);
+        return timeout;
     }
 }

@@ -20,8 +20,13 @@ class ForgeAiFlowExplanationConfigurationContractTest {
     @Test
     void rootForgeAiYamlBindsFlowExplanationTimeout() {
         final ForgeAiFlowExplanationProperties properties = bindRootFlowExplanationProperties(Map.of());
+        final InfrastructureProxyProperties infrastructureProperties = bindRootInfrastructureProperties(Map.of());
 
         assertThat(properties.getRequestTimeoutSeconds()).isEqualTo(180);
+        assertThat(infrastructureProperties.getProxy().knowledgeExplanationReadTimeout(properties.requestTimeout()))
+                .isEqualTo(Duration.ofSeconds(185));
+        assertThat(infrastructureProperties.getProxy().jarvisQueryReadTimeout(properties.requestTimeout()))
+                .isEqualTo(Duration.ofSeconds(190));
     }
 
     @Test
@@ -30,7 +35,10 @@ class ForgeAiFlowExplanationConfigurationContractTest {
                 "FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS",
                 "73"
         ));
-        final InfrastructureProxyProperties infrastructureProperties = new InfrastructureProxyProperties();
+        final InfrastructureProxyProperties infrastructureProperties = bindRootInfrastructureProperties(Map.of(
+                "FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS",
+                "73"
+        ));
 
         final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(
                 infrastructureProperties,
@@ -42,6 +50,33 @@ class ForgeAiFlowExplanationConfigurationContractTest {
                 .isEqualTo(Duration.ofSeconds(78));
         assertThat(registry.require("knowledge.query.tool-context").readTimeout())
                 .isEqualTo(Duration.ofSeconds(78));
+        assertThat(registry.require("jarvis.query").readTimeout())
+                .isEqualTo(Duration.ofSeconds(83));
+    }
+
+    @Test
+    void durationDeadlineCanBindForDeterministicTimeoutHierarchyTests() {
+        final StandardEnvironment environment = new StandardEnvironment();
+        environment.getPropertySources().addFirst(new MapPropertySource("test-overrides", Map.of(
+                "forge.ai.query.flow-explanation.request-timeout",
+                "100ms"
+        )));
+        final ForgeAiFlowExplanationProperties flowExplanationProperties = Binder.get(environment)
+                .bind("forge.ai.query.flow-explanation", ForgeAiFlowExplanationProperties.class)
+                .orElseThrow(() -> new IllegalStateException("Failed to bind test flow explanation settings"));
+        final InfrastructureProxyProperties infrastructureProperties = new InfrastructureProxyProperties();
+        infrastructureProperties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofMillis(50));
+        infrastructureProperties.getProxy().setJarvisQueryTransportGrace(Duration.ofMillis(50));
+
+        final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(
+                infrastructureProperties,
+                flowExplanationProperties
+        );
+
+        assertThat(registry.require("knowledge.query.flow-explanations").readTimeout())
+                .isEqualTo(Duration.ofMillis(150));
+        assertThat(registry.require("jarvis.query").readTimeout())
+                .isEqualTo(Duration.ofMillis(200));
     }
 
     private static ForgeAiFlowExplanationProperties bindRootFlowExplanationProperties(
@@ -55,6 +90,19 @@ class ForgeAiFlowExplanationConfigurationContractTest {
         return Binder.get(environment)
                 .bind("forge.ai.query.flow-explanation", ForgeAiFlowExplanationProperties.class)
                 .orElseThrow(() -> new IllegalStateException("Failed to bind root flow explanation settings"));
+    }
+
+    private static InfrastructureProxyProperties bindRootInfrastructureProperties(
+            final Map<String, Object> overrides
+    ) {
+        final StandardEnvironment environment = new StandardEnvironment();
+        environment.getPropertySources().addFirst(new MapPropertySource("test-overrides", overrides));
+        for (final PropertySource<?> propertySource : rootForgeAiYaml()) {
+            environment.getPropertySources().addLast(propertySource);
+        }
+        return Binder.get(environment)
+                .bind("forge.ai.infrastructure", InfrastructureProxyProperties.class)
+                .orElseThrow(() -> new IllegalStateException("Failed to bind root infrastructure settings"));
     }
 
     private static List<PropertySource<?>> rootForgeAiYaml() {

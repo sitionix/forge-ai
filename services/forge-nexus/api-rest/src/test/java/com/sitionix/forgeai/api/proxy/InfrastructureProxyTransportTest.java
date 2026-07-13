@@ -64,6 +64,94 @@ class InfrastructureProxyTransportTest {
     }
 
     @Test
+    void jarvisQueryRouteRequestTimeoutExceedsJarvisKnowledgeFlowTimeout() {
+        final HttpClient httpClient = mock(HttpClient.class);
+        final CompletableFuture<HttpResponse<InputStream>> upstream = new CompletableFuture<>();
+        when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenReturn(upstream);
+
+        final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
+        properties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofSeconds(7));
+        properties.getProxy().setJarvisQueryTransportGrace(Duration.ofSeconds(11));
+        final ForgeAiFlowExplanationProperties flowExplanationProperties = new ForgeAiFlowExplanationProperties();
+        flowExplanationProperties.setRequestTimeoutSeconds(42);
+        final ObjectMapper objectMapper = new ObjectMapper();
+        final InfrastructureProxyTransport transport = new InfrastructureProxyTransport(
+                httpClient,
+                new InfrastructureProxyRouteRegistry(properties, flowExplanationProperties),
+                properties,
+                new InfrastructureProxyResponseMapper(objectMapper),
+                objectMapper
+        );
+        final HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getQueryString()).thenReturn(null);
+
+        transport.forward(
+                "jarvis.query",
+                Map.of(),
+                "{\"queryText\":\"JarvisGateway\"}".getBytes(UTF_8),
+                new HttpHeaders(),
+                request
+        );
+
+        final ArgumentCaptor<HttpRequest> upstreamRequest = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient).sendAsync(upstreamRequest.capture(), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any());
+        assertThat(upstreamRequest.getValue().timeout()).contains(Duration.ofSeconds(60));
+    }
+
+    @Test
+    void jarvisQueryRouteDoesNotTimeoutBeforeFailClosedFactualResponse() throws Exception {
+        final HttpClient httpClient = mock(HttpClient.class);
+        final Duration controlledResponseDelay = Duration.ofMillis(150);
+        when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenAnswer(invocation -> {
+                    final HttpRequest request = invocation.getArgument(0);
+                    final Duration requestTimeout = request.timeout().orElse(Duration.ZERO);
+                    if (requestTimeout.compareTo(controlledResponseDelay) <= 0) {
+                        return CompletableFuture.failedFuture(new java.net.http.HttpTimeoutException("timed out"));
+                    }
+                    final HttpResponse<InputStream> response = mock(HttpResponse.class);
+                    when(response.statusCode()).thenReturn(200);
+                    when(response.body()).thenReturn(new ByteArrayInputStream("""
+                            {"status":"OK","flows":[{"flowIndex":1}],"flowExplanations":[{"flowIndex":1,"status":"FAILED"}]}
+                            """.strip().getBytes(UTF_8)));
+                    when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of("Content-Type", List.of("application/json")), (left, right) -> true));
+                    return CompletableFuture.completedFuture(response);
+                });
+
+        final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
+        properties.getJarvis().setReadTimeout(Duration.ofMillis(120));
+        properties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofMillis(50));
+        properties.getProxy().setJarvisQueryTransportGrace(Duration.ofMillis(50));
+        final ForgeAiFlowExplanationProperties flowExplanationProperties = new ForgeAiFlowExplanationProperties();
+        flowExplanationProperties.setRequestTimeout(Duration.ofMillis(100));
+        final ObjectMapper objectMapper = new ObjectMapper();
+        final InfrastructureProxyTransport transport = new InfrastructureProxyTransport(
+                httpClient,
+                new InfrastructureProxyRouteRegistry(properties, flowExplanationProperties),
+                properties,
+                new InfrastructureProxyResponseMapper(objectMapper),
+                objectMapper
+        );
+        final HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getQueryString()).thenReturn(null);
+
+        final ResponseEntity<byte[]> response = transport.forward(
+                "jarvis.query",
+                Map.of(),
+                "{\"queryText\":\"JarvisGateway\"}".getBytes(UTF_8),
+                new org.springframework.http.HttpHeaders(),
+                request
+        ).get(1, TimeUnit.SECONDS);
+
+        final String body = new String(response.getBody(), UTF_8);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(body).contains("\"flows\"");
+        assertThat(body).contains("\"status\":\"FAILED\"");
+        assertThat(body).doesNotContain("UPSTREAM_TIMEOUT");
+    }
+
+    @Test
     void explanationRouteDoesNotTimeoutBeforeKnowledgeControlledDeadlineResponse() throws Exception {
         final HttpClient httpClient = mock(HttpClient.class);
         final Duration controlledResponseDelay = Duration.ofMillis(25);
