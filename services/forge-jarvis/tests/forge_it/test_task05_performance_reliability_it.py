@@ -41,7 +41,7 @@ def test_perf_jar_01_status_and_actions_are_bounded_and_do_not_call_ollama(tmp_p
 def test_perf_jar_02_query_records_knowledge_timing_and_does_not_generate_answer(tmp_path):
     knowledge = DelayedKnowledgeClient(
         bundle=knowledge_query_bundle(
-            nodes=[{"id": "n1", "sourceId": "forge-ai", "label": "JarvisGateway"}],
+                nodes=[{"nodeRef": "n1", "label": "JarvisGateway", "kind": "CALLABLE"}],
             evidence=[{"id": "ev1", "sourceId": "forge-ai", "relativePath": "src/JarvisGateway.java", "lineStart": 1, "lineEnd": 3}],
         )
     )
@@ -57,7 +57,7 @@ def test_perf_jar_02_query_records_knowledge_timing_and_does_not_generate_answer
         assert timing["knowledge"] > 0
         assert timing["ollama"] == 0
         assert body["matchedNodes"]
-        assert body["flowPaths"]
+        assert body["flows"]
         assert "answer" not in body
         text = sample.response.body.decode("utf-8")
         assert "Answer should not be generated" not in text

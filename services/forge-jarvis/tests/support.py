@@ -153,7 +153,7 @@ def knowledge_query_bundle(
     *,
     status: str = "OK",
     matched_nodes: Optional[List[Dict[str, Any]]] = None,
-    flow_paths: Optional[List[Dict[str, Any]]] = None,
+    flows: Optional[List[Dict[str, Any]]] = None,
     nodes: Optional[List[Dict[str, Any]]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     evidence: Optional[List[Dict[str, Any]]] = None,
@@ -179,45 +179,38 @@ def knowledge_query_bundle(
         else [
             {
                 "sourceId": "forge-ai",
-                "nodeId": "node-jarvis-gateway",
-                "stableKey": "src/JarvisGateway.java|CALLABLE|JarvisGateway",
-                "kind": "CALLABLE",
+                "nodeKind": "CALLABLE",
                 "label": "JarvisGateway",
                 "score": 0.95,
                 "matchReasons": ["NAME_MATCH"],
+                "relativePath": "src/JarvisGateway.java",
             }
         ],
-        "nodes": nodes if nodes is not None else [{"id": "node-jarvis-gateway", "sourceId": "forge-ai", "label": "JarvisGateway"}],
-        "edges": edges if edges is not None else [],
-        "flowPaths": flow_paths
-        if flow_paths is not None
+        "flows": flows
+        if flows is not None
         else []
         if status == "NO_CANDIDATES"
         else [
             {
-                "flowId": "flow-1",
-                "sourceId": "forge-ai",
-                "matchedNodeIds": ["node-jarvis-gateway"],
-                "nodeIds": ["node-jarvis-gateway"],
-                "edgeIds": [],
-                "boundaryEdgeIds": [],
-                "evidenceIds": [],
-                "nodes": [{"id": "node-jarvis-gateway", "sourceId": "forge-ai", "label": "JarvisGateway"}],
-                "edges": [],
+                "flowIndex": 1,
+                "source": "forge-ai",
+                "entrypoint": {"nodeRef": "n1", "label": "JarvisGateway", "kind": "CALLABLE"},
+                "entrypointOrigin": "EXPLICIT_GRAPH_FACT",
+                "matchedAnchors": [{"anchorRef": "n1", "label": "JarvisGateway", "score": 0.95, "distance": 0, "matchReasons": ["NAME_MATCH"]}],
+                "nodes": nodes if nodes is not None else [{"nodeRef": "n1", "label": "JarvisGateway", "kind": "CALLABLE"}],
+                "transitions": edges if edges is not None else [],
+                "boundaries": [],
                 "evidence": [],
                 "complete": True,
-                "stopReason": "TERMINAL_NODE",
+                "coverage": {"nodeCount": 1, "transitionCount": 0, "boundaryCount": 0, "anchorCount": 1, "maxDepthReached": 0, "cycleDetected": False, "truncated": False},
+                "diagnostics": [],
             }
         ],
-        "verifiedPaths": [],
-        "evidence": evidence if evidence is not None else [],
-        "unresolved": [],
-        "external": [],
         "coverage": {
             "searchedSourceCount": 1,
             "matchedSourceCount": 0 if status == "NO_CANDIDATES" else 1,
             "matchedNodeCount": 0 if status == "NO_CANDIDATES" else 1,
-            "flowPathCount": 0 if status == "NO_CANDIDATES" else 1,
+            "flowCount": 0 if status == "NO_CANDIDATES" else 1,
             "nodeCount": 0 if status == "NO_CANDIDATES" else 1,
             "edgeCount": 0,
             "evidenceCount": len(evidence or []),

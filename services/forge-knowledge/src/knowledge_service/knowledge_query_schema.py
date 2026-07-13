@@ -23,6 +23,16 @@ class KnowledgeQueryIntent(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class KnowledgeQueryEntrypointOrigin(str, Enum):
+    EXPLICIT_GRAPH_FACT = "EXPLICIT_GRAPH_FACT"
+    INFERRED_ROOT = "INFERRED_ROOT"
+
+
+class FlowExplanationStatus(str, Enum):
+    OK = "OK"
+    FAILED = "FAILED"
+
+
 class KnowledgeQueryRequest(BaseModel):
     queryText: str = Field(..., min_length=1)
     intent: KnowledgeQueryIntent = KnowledgeQueryIntent.UNKNOWN
@@ -100,28 +110,93 @@ class KnowledgeQueryMatchedNode(BaseModel):
     graphRevision: Optional[str] = None
     relativePath: Optional[str] = None
     qualifiedName: Optional[str] = None
+    flowDomain: Optional[str] = None
 
 
-class KnowledgeQueryFlowPath(BaseModel):
-    flowId: str
-    sourceId: Optional[str] = None
-    matchedNodeIds: List[str] = Field(default_factory=list)
-    nodeIds: List[str] = Field(default_factory=list)
-    edgeIds: List[str] = Field(default_factory=list)
-    boundaryEdgeIds: List[str] = Field(default_factory=list)
-    evidenceIds: List[str] = Field(default_factory=list)
-    nodes: List[Dict[str, Any]] = Field(default_factory=list)
-    edges: List[Dict[str, Any]] = Field(default_factory=list)
-    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+class KnowledgeQueryMatchedNodePreview(BaseModel):
+    sourceId: str
+    nodeKind: str
+    label: str
+    score: float
+    matchReasons: List[str] = Field(default_factory=list)
+    relativePath: Optional[str] = None
+    qualifiedName: Optional[str] = None
+    flowDomain: Optional[str] = None
+
+
+class KnowledgeQueryFlowNode(BaseModel):
+    nodeRef: str
+    label: str
+    kind: str
+    qualifiedName: Optional[str] = None
+    relativePath: Optional[str] = None
+    lineStart: Optional[int] = None
+    lineEnd: Optional[int] = None
+
+
+class KnowledgeQueryFlowOrigin(BaseModel):
+    anchorRef: str
+    label: str
+    score: float
+    distance: int
+    matchReasons: List[str] = Field(default_factory=list)
+
+
+class KnowledgeQueryFlowTransition(BaseModel):
+    transitionRef: str
+    fromNodeRef: str
+    toNodeRef: str
+    evidenceRefs: List[str] = Field(default_factory=list)
+
+
+class KnowledgeQueryFlowBoundary(BaseModel):
+    boundaryRef: str
+    fromNodeRef: str
+    kind: str
+    resolutionStatus: str
+    target: Optional[str] = None
+    evidenceRefs: List[str] = Field(default_factory=list)
+
+
+class KnowledgeQueryFlowEvidence(BaseModel):
+    evidenceRef: str
+    ownerRef: str
+    relativePath: Optional[str] = None
+    lineStart: Optional[int] = None
+    lineEnd: Optional[int] = None
+    excerpt: Optional[str] = None
+
+
+class KnowledgeQueryFlowCoverage(BaseModel):
+    nodeCount: int = 0
+    transitionCount: int = 0
+    boundaryCount: int = 0
+    anchorCount: int = 0
+    maxDepthReached: int = 0
+    cycleDetected: bool = False
+    truncated: bool = False
+
+
+class KnowledgeQueryFlow(BaseModel):
+    flowIndex: int
+    source: str
+    entrypoint: KnowledgeQueryFlowNode
+    entrypointOrigin: KnowledgeQueryEntrypointOrigin
+    matchedAnchors: List[KnowledgeQueryFlowOrigin] = Field(default_factory=list)
+    nodes: List[KnowledgeQueryFlowNode] = Field(default_factory=list)
+    transitions: List[KnowledgeQueryFlowTransition] = Field(default_factory=list)
+    boundaries: List[KnowledgeQueryFlowBoundary] = Field(default_factory=list)
+    evidence: List[KnowledgeQueryFlowEvidence] = Field(default_factory=list)
     complete: bool = True
-    stopReason: str = "TERMINAL_NODE"
+    coverage: KnowledgeQueryFlowCoverage = Field(default_factory=KnowledgeQueryFlowCoverage)
+    diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 
 class KnowledgeQueryCoverage(BaseModel):
     searchedSourceCount: int = 0
     matchedSourceCount: int = 0
     matchedNodeCount: int = 0
-    flowPathCount: int = 0
+    flowCount: int = 0
     nodeCount: int = 0
     edgeCount: int = 0
     evidenceCount: int = 0
@@ -134,27 +209,39 @@ class KnowledgeQueryResponse(BaseModel):
     status: KnowledgeQueryStatus
     intent: str
     matchedSources: List[KnowledgeQueryMatchedSource] = Field(default_factory=list)
-    matchedNodes: List[KnowledgeQueryMatchedNode] = Field(default_factory=list)
-    flowPaths: List[KnowledgeQueryFlowPath] = Field(default_factory=list)
-    nodes: List[Dict[str, Any]] = Field(default_factory=list)
-    edges: List[Dict[str, Any]] = Field(default_factory=list)
-    verifiedPaths: List[Dict[str, Any]] = Field(default_factory=list)
-    evidence: List[Dict[str, Any]] = Field(default_factory=list)
-    unresolved: List[Dict[str, Any]] = Field(default_factory=list)
-    external: List[Dict[str, Any]] = Field(default_factory=list)
+    matchedNodes: List[KnowledgeQueryMatchedNodePreview] = Field(default_factory=list)
+    flows: List[KnowledgeQueryFlow] = Field(default_factory=list)
     coverage: KnowledgeQueryCoverage = Field(default_factory=KnowledgeQueryCoverage)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 
 class FlowExplanationStep(BaseModel):
-    order: int
+    nodeRef: str
     nodeLabel: str
+    explanation: Optional[str] = None
+    transitionRefs: List[str] = Field(default_factory=list)
+    evidenceRefs: List[str] = Field(default_factory=list)
+
+
+class FlowExplanationNarrative(BaseModel):
+    text: str
+    nodeRefs: List[str] = Field(default_factory=list)
+    transitionRefs: List[str] = Field(default_factory=list)
+    boundaryRefs: List[str] = Field(default_factory=list)
+
+
+class FlowExplanationTransition(BaseModel):
+    transitionRef: str
     explanation: Optional[str] = None
     evidenceRefs: List[str] = Field(default_factory=list)
 
 
 class FlowExplanationBoundary(BaseModel):
+    boundaryRef: str
+    fromNodeRef: str
     kind: str
+    resolutionStatus: str
+    target: Optional[str] = None
     explanation: Optional[str] = None
     evidenceRefs: List[str] = Field(default_factory=list)
 
@@ -162,19 +249,15 @@ class FlowExplanationBoundary(BaseModel):
 class FlowExplanation(BaseModel):
     flowIndex: int
     title: str = ""
-    narrative: List[str] = Field(default_factory=list)
+    narrative: List[FlowExplanationNarrative] = Field(default_factory=list)
     steps: List[FlowExplanationStep] = Field(default_factory=list)
+    transitionExplanations: List[FlowExplanationTransition] = Field(default_factory=list)
     boundaries: List[FlowExplanationBoundary] = Field(default_factory=list)
-    status: str = "OK"
+    status: FlowExplanationStatus = FlowExplanationStatus.OK
 
 
 class KnowledgeQueryFlowExplanationResponse(KnowledgeQueryResponse):
     flowExplanations: List[FlowExplanation] = Field(default_factory=list)
-
-
-class FlowToolStatus(str, Enum):
-    OK = "OK"
-    FAILED = "FAILED"
 
 
 class FlowToolAddress(BaseModel):
@@ -193,7 +276,7 @@ class FlowToolEvidence(BaseModel):
 
 
 class FlowToolStep(BaseModel):
-    order: int
+    nodeRef: str
     symbol: str
     kind: str
     address: FlowToolAddress = Field(default_factory=FlowToolAddress)
@@ -202,8 +285,9 @@ class FlowToolStep(BaseModel):
 
 
 class FlowToolTransition(BaseModel):
-    fromOrder: int
-    toOrder: int
+    transitionRef: str
+    fromNodeRef: str
+    toNodeRef: str
     fromSymbol: str
     toSymbol: str
     explanation: Optional[str] = None
@@ -211,7 +295,10 @@ class FlowToolTransition(BaseModel):
 
 
 class FlowToolBoundary(BaseModel):
+    boundaryRef: str
+    fromNodeRef: str
     kind: str
+    resolutionStatus: str
     target: Optional[str] = None
     explanation: Optional[str] = None
     evidence: List[FlowToolEvidence] = Field(default_factory=list)
@@ -219,9 +306,9 @@ class FlowToolBoundary(BaseModel):
 
 class FlowToolContext(BaseModel):
     flowIndex: int
-    status: FlowToolStatus = FlowToolStatus.OK
+    status: FlowExplanationStatus = FlowExplanationStatus.OK
     title: str = ""
-    narrative: List[str] = Field(default_factory=list)
+    narrative: List[FlowExplanationNarrative] = Field(default_factory=list)
     steps: List[FlowToolStep] = Field(default_factory=list)
     transitions: List[FlowToolTransition] = Field(default_factory=list)
     boundaries: List[FlowToolBoundary] = Field(default_factory=list)

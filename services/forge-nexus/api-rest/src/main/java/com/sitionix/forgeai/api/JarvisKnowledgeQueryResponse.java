@@ -9,13 +9,7 @@ public record JarvisKnowledgeQueryResponse(
         String intent,
         List<JsonNode> matchedSources,
         List<JsonNode> matchedNodes,
-        List<JsonNode> flowPaths,
-        List<JsonNode> nodes,
-        List<JsonNode> edges,
-        List<JsonNode> verifiedPaths,
-        List<JsonNode> evidence,
-        List<JsonNode> unresolved,
-        List<JsonNode> external,
+        List<JsonNode> flows,
         JsonNode coverage,
         List<JsonNode> diagnostics
 ) {

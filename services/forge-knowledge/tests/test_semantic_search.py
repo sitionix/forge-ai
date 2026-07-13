@@ -3,7 +3,13 @@ import sqlite3
 from datetime import datetime, timezone
 
 from knowledge_service.semantic_index import ensure_semantic_index_schema
-from knowledge_service.semantic_search import SemanticSearchConfig, SemanticVectorStore, cosine_similarity
+from knowledge_service.semantic_search import (
+    SemanticCandidateProvider,
+    SemanticSearchConfig,
+    SemanticVectorMatch,
+    SemanticVectorStore,
+    cosine_similarity,
+)
 
 
 def test_cosine_similarity_is_deterministic():
@@ -50,6 +56,35 @@ def test_vector_search_reports_scan_guardrail(tmp_path):
 
     assert len(result.matches) == 2
     assert any(diagnostic["code"] == "SEMANTIC_VECTOR_LIMIT_REACHED" for diagnostic in result.diagnostics)
+
+
+def test_unhydrated_semantic_diagnostic_does_not_expose_internal_ids(tmp_path):
+    provider = SemanticCandidateProvider(tmp_path / "knowledge.sqlite", _FakeEmbeddingProvider())
+
+    diagnostic = provider._hit_not_hydrated_diagnostic(
+        [
+            SemanticVectorMatch(
+                source_id="source-a",
+                node_id="secret-node-db-id",
+                document_id="secret-vector-db-id",
+                similarity=0.75,
+            )
+        ],
+        [],
+        [],
+    )
+
+    payload = json.dumps(diagnostic)
+    assert "secret-node-db-id" not in payload
+    assert "secret-vector-db-id" not in payload
+    assert diagnostic["metadata"]["sample"] == [{"sourceId": "source-a", "similarity": 0.75}]
+
+
+class _FakeEmbeddingProvider:
+    model = "fake"
+
+    def embed_texts(self, texts):
+        return [[1.0, 0.0] for _ in texts]
 
 
 def _seed_vectors(db_path, rows):

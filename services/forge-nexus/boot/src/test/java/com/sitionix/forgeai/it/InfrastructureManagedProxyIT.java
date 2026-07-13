@@ -307,6 +307,8 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseStatus(HttpStatus.OK.value())
                         .responseBody("responseProxyGraphEdgeDetailContract.json"))
                 .create();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeQueryFlowExplanations()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeQueryToolContext()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisCommand()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
 
@@ -344,6 +346,12 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeGraphEdgeContract())
                 .withQueryParameters(InfrastructureProxyQuery.graphNodeDetailContract())
+                .header("X-Correlation-Id", "corr-parity")
+                .assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeQueryFlowExplanations())
+                .header("X-Correlation-Id", "corr-parity")
+                .assertDefault();
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeQueryToolContext())
                 .header("X-Correlation-Id", "corr-parity")
                 .assertDefault();
 
@@ -881,19 +889,16 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedSources[0].sourceId").value("source-a"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].sourceId").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].nodeId").value("node-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].flowId").value("flow-1"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].nodeIds[0]").value("node-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].edgeIds[0]").value("edge-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].nodes[0].sourceId").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths[0].edges[0].sourceId").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.nodes[0].sourceId").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.nodes[1].sourceId").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.edges[0].sourceId").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.evidence[0].sourceId").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics[0].code").value("GRAPH_SLICE_OK"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].label").value("JarvisGateway"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].flowIndex").value(1))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].entrypoint.label").value("JarvisGateway"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].nodes[0].nodeRef").value("n1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].transitions[0].transitionRef").value("t1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].source").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].evidence[0].ownerRef").value("t1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics").isEmpty())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.matchedNodeCount").value(1))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.flowPathCount").value(1))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.flowCount").value(1))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.nodeCount").value(2))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.edgeCount").value(1))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.evidenceCount").value(1))
@@ -902,16 +907,16 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryOptionalControls())
                 .header("X-Correlation-Id", "corr-jarvis-query-optional")
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].nodeId").value("node-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].label").value("JarvisGateway"))
                 .assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryNoCandidates())
                 .header("X-Correlation-Id", "corr-jarvis-query-no-candidates")
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("NO_CANDIDATES"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes").isEmpty())
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowPaths").isEmpty())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows").isEmpty())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.matchedNodeCount").value(0))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.flowPathCount").value(0))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.flowCount").value(0))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics[0].code").value("NO_GRAPH_CANDIDATES"))
                 .assertDefault();
 

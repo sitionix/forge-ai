@@ -87,9 +87,9 @@ def test_status_actions_command_and_query_success_paths(tmp_path):
     assert model.prompts == []
     assert model.health_calls == 0
     assert query["matchedNodes"][0]["sourceId"] == "forge-ai"
-    assert query["flowPaths"][0]["flowId"] == "flow-1"
-    assert query["flowPaths"][0]["nodeIds"] == ["node-jarvis-gateway"]
-    assert query["flowPaths"][0]["edgeIds"] == []
+    assert query["flows"][0]["flowIndex"] == 1
+    assert query["flows"][0]["entrypoint"]["label"] == "JarvisGateway"
+    assert query["flows"][0]["transitions"] == []
     assert query["diagnostics"] == []
 
 
@@ -141,14 +141,14 @@ def test_query_failure_matrix_and_diagnostics(tmp_path):
 
     empty = FakeKnowledgeClient(
         bundle=knowledge_query_bundle(
-            status="NO_CANDIDATES", matched_nodes=[], flow_paths=[], nodes=[], diagnostics=[{"code": "NO_GRAPH_CANDIDATES", "message": "No matches"}]
+            status="NO_CANDIDATES", matched_nodes=[], flows=[], nodes=[], diagnostics=[{"code": "NO_GRAPH_CANDIDATES", "message": "No matches"}]
         )
     )
     with TestClient(build_test_app(write_runtime_config(tmp_path), knowledge=empty)[0]) as client:
         response = client.post("/api/v1/jarvis/query", json=query_payload("missing"))
         body = response.json()
         assert body["matchedNodes"] == []
-        assert body["flowPaths"] == []
+        assert body["flows"] == []
         assert {item["code"] for item in body["diagnostics"]} == {"NO_GRAPH_CANDIDATES"}
 
     with TestClient(build_test_app(write_runtime_config(tmp_path), knowledge=FakeKnowledgeClient(error=knowledge_unavailable()))[0]) as client:
@@ -175,7 +175,7 @@ def test_query_surfaces_knowledge_analysis_diagnostics_when_graph_is_not_ready(t
         bundle=knowledge_query_bundle(
             status="NO_CANDIDATES",
             matched_nodes=[],
-            flow_paths=[],
+            flows=[],
             nodes=[],
             diagnostics=[
                 {
@@ -194,7 +194,7 @@ def test_query_surfaces_knowledge_analysis_diagnostics_when_graph_is_not_ready(t
     body = response.json()
     assert response.status_code == 200
     assert body["matchedNodes"] == []
-    assert body["flowPaths"] == []
+    assert body["flows"] == []
     assert "answer" not in body
     assert {item["code"] for item in body["diagnostics"]} == {"ANALYSIS_NOT_READY"}
     assert knowledge.calls == [normalized_query_payload("explain analyzed files")]

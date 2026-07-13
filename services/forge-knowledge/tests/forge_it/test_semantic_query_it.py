@@ -25,7 +25,7 @@ def query_request(query_text):
     )
 
 
-def test_semantic_query_improves_human_retrieval_and_flow_paths(tmp_path):
+def test_semantic_query_improves_human_retrieval_and_entrypoint_flows(tmp_path):
     app, _, app_config, deps = build_test_app(write_runtime_config(tmp_path))
     assert app is not None
     seed_semantic_flow_fixture(app_config.store_path, refresh_overview=True)
@@ -39,22 +39,24 @@ def test_semantic_query_improves_human_retrieval_and_flow_paths(tmp_path):
 
     response = service.query(query_request("де Jarvis передає query в Knowledge"))
 
-    matched_ids = [node.nodeId for node in response.matchedNodes]
-    assert {"jarvis-query-service-query", "jarvis-knowledge-client-query", "knowledge-query-service-query"} & set(matched_ids)
+    matched_labels = [node.label for node in response.matchedNodes]
+    relevant_labels = {
+        "JarvisQueryService.query",
+        "KnowledgeClient.query",
+        "KnowledgeQueryService.query",
+    }
+    assert relevant_labels & set(matched_labels)
     assert any("SEMANTIC_VECTOR_SIMILARITY" in node.matchReasons for node in response.matchedNodes)
-    if "wiremock-query-params" in matched_ids:
-        assert matched_ids.index("wiremock-query-params") > min(
-            matched_ids.index(node_id)
-            for node_id in matched_ids
-            if node_id in {"jarvis-query-service-query", "jarvis-knowledge-client-query", "knowledge-query-service-query"}
+    if "WireMockQueryParams" in matched_labels:
+        assert matched_labels.index("WireMockQueryParams") > min(
+            matched_labels.index(label)
+            for label in matched_labels
+            if label in relevant_labels
         )
-    assert response.flowPaths
-    for flow in response.flowPaths:
-        edges_by_id = {edge["id"]: edge for edge in flow.edges}
-        for index, edge_id in enumerate(flow.edgeIds):
-            edge = edges_by_id[edge_id]
-            assert edge["fromNodeId"] == flow.nodeIds[index]
-            assert edge["toNodeId"] == flow.nodeIds[index + 1]
+    assert response.flows
+    for flow in response.flows:
+        node_refs = {node.nodeRef for node in flow.nodes}
+        assert all(edge.fromNodeRef in node_refs and edge.toNodeRef in node_refs for edge in flow.transitions)
 
 
 def test_exact_query_beats_semantic_candidate(tmp_path):
@@ -66,7 +68,7 @@ def test_exact_query_beats_semantic_candidate(tmp_path):
 
     response = service.query(query_request("WireMockQueryParams"))
 
-    assert response.matchedNodes[0].nodeId == "wiremock-query-params"
+    assert response.matchedNodes[0].label == "WireMockQueryParams"
     assert "NAME_MATCH" in response.matchedNodes[0].matchReasons
 
 

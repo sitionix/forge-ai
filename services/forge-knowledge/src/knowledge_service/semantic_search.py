@@ -317,8 +317,6 @@ class SemanticCandidateProvider(CandidateProvider):
         sample = [
             {
                 "sourceId": match.source_id,
-                "nodeId": match.node_id,
-                "semanticDocumentId": match.document_id,
                 "similarity": round(match.similarity, 6),
             }
             for match in unhydrated_matches[:5]

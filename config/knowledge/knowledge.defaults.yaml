@@ -104,6 +104,11 @@ knowledge:
         flow_domain: TEST
         path_patterns:
           - "src/test/**"
+          - "**/src/test/**"
+          - "src/integrationTest/**"
+          - "**/src/integrationTest/**"
+          - "src/it/**"
+          - "**/src/it/**"
           - "tests/**"
           - "**/tests/**"
           - "**/__tests__/**"

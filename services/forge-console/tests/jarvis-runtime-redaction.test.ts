@@ -57,39 +57,33 @@ describe('Jarvis runtime rendering', () => {
           matchedSources: [{ sourceId: 'forge-ai', displayName: 'Forge AI', score: 0.95 }],
           matchedNodes: [{
             sourceId: 'forge-ai',
-            nodeId: 'n1',
-            stableKey: 'src/JarvisGateway.java|CALLABLE|JarvisGateway',
-            kind: 'CALLABLE',
+            nodeKind: 'CALLABLE',
             label: 'JarvisGateway',
             score: 1,
             matchReasons: ['NAME_MATCH'],
+            relativePath: 'src/JarvisGateway.java',
             content: 'SECRET_SOURCE_CONTENT'
           }],
-          flowPaths: [{
-            flowId: 'flow-1',
-            sourceId: 'forge-ai',
-            matchedNodeIds: ['n2'],
-            nodeIds: ['n1', 'n2', 'n3'],
-            edgeIds: ['e1', 'e2'],
-            boundaryEdgeIds: [],
-            evidenceIds: [],
+          flows: [{
+            flowIndex: 1,
+            source: 'forge-ai',
+            entrypoint: { nodeRef: 'n1', label: 'Controller.create', kind: 'CALLABLE' },
+            entrypointOrigin: 'EXPLICIT_GRAPH_FACT',
+            matchedAnchors: [],
             nodes: [
-              { id: 'n1', sourceId: 'forge-ai', label: 'Controller.create' },
-              { id: 'n2', sourceId: 'forge-ai', label: 'UseCase.execute' },
-              { id: 'n3', sourceId: 'forge-ai', label: 'Repository.save' }
+              { nodeRef: 'n1', label: 'Controller.create', kind: 'CALLABLE' },
+              { nodeRef: 'n2', label: 'UseCase.execute', kind: 'CALLABLE' },
+              { nodeRef: 'n3', label: 'Repository.save', kind: 'CALLABLE' }
             ],
-            edges: [
-              { id: 'e1', sourceId: 'forge-ai', fromNodeId: 'n1', toNodeId: 'n2', edgeType: 'CALLS' },
-              { id: 'e2', sourceId: 'forge-ai', fromNodeId: 'n2', toNodeId: 'n3', edgeType: 'CALLS' }
+            transitions: [
+              { transitionRef: 't1', fromNodeRef: 'n1', toNodeRef: 'n2' },
+              { transitionRef: 't2', fromNodeRef: 'n2', toNodeRef: 'n3' }
             ],
-            evidence: [],
+            boundaries: [], evidence: [],
             complete: true,
-            stopReason: 'TERMINAL_NODE'
+            coverage: {}, diagnostics: []
           }],
-          nodes: [{ id: 'n1', sourceId: 'forge-ai', label: 'JarvisGateway', content: 'SECRET_SOURCE_CONTENT' }],
-          edges: [],
-          evidence: [],
-          coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowPathCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
+          coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
           diagnostics: [{ code: 'OK', message: 'No sensitive data' }]
         });
       })
@@ -106,8 +100,8 @@ describe('Jarvis runtime rendering', () => {
     const text = dom.window.document.body.textContent || '';
     expect(text).toContain('JarvisGateway');
     expect(text).toContain('src/JarvisGateway.java');
-    expect(text).toContain('Flow Paths (1)');
-    expect(text).toContain('Controller.create -> UseCase.execute -> Repository.save');
+    expect(text).toContain('Entrypoint Flows (1)');
+    expect(text).toContain('Controller.create, UseCase.execute, Repository.save');
     expect(text).not.toContain('SECRET_SOURCE_CONTENT');
     expect(text).not.toContain('["bash"');
     expect(text).not.toContain('sleep 0.2');
@@ -124,10 +118,8 @@ describe('Jarvis runtime rendering', () => {
         intent: 'UNKNOWN',
         matchedSources: [],
         matchedNodes: [],
-        flowPaths: [],
-        nodes: [],
-        edges: [],
-        coverage: { searchedSourceCount: 2, matchedSourceCount: 0, matchedNodeCount: 0, flowPathCount: 0, nodeCount: 0, edgeCount: 0, evidenceCount: 0 },
+        flows: [],
+        coverage: { searchedSourceCount: 2, matchedSourceCount: 0, matchedNodeCount: 0, flowCount: 0, nodeCount: 0, edgeCount: 0, evidenceCount: 0 },
         diagnostics: [{ code: 'NO_GRAPH_CANDIDATES', message: 'No matches' }]
       }))
     };
@@ -158,19 +150,14 @@ describe('Jarvis runtime rendering', () => {
         matchedSources: [{ sourceId: 'svc', displayName: 'Service', score: 1 }],
         matchedNodes: [{
           sourceId: 'svc',
-          nodeId: 'n1',
-          stableKey: 'svc|n1',
-          kind: 'CALLABLE',
+          nodeKind: 'CALLABLE',
           label: 'Lonely.execute',
           score: 1,
           matchReasons: ['NAME_MATCH']
         }],
-        flowPaths: [],
-        nodes: [{ id: 'n1', sourceId: 'svc', label: 'Lonely.execute' }],
-        edges: [],
-        evidence: [],
-        coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowPathCount: 0, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
-        diagnostics: [{ code: 'NO_CALLS_PATH', message: 'No verified CALLS path could be built.' }]
+        flows: [],
+        coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowCount: 0, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
+        diagnostics: [{ code: 'ENTRYPOINT_FLOW_ROOT_NOT_FOUND', message: 'No bounded entrypoint root could be built.' }]
       }))
     };
     const page = new JarvisPage({ document: dom.window.document, http });
@@ -181,8 +168,8 @@ describe('Jarvis runtime rendering', () => {
     await page.submitQuery({ preventDefault: () => undefined });
 
     const text = dom.window.document.body.textContent || '';
-    expect(text).toContain('Flow Paths (0)');
-    expect(text).toContain('No verified CALLS path could be built.');
+    expect(text).toContain('Entrypoint Flows (0)');
+    expect(text).toContain('No bounded entrypoint root could be built.');
     expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('lonely'), expect.any(Object));
     page.dispose();
   });

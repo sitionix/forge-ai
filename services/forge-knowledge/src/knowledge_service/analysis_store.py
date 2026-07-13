@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Set
@@ -21,15 +21,7 @@ from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionRequest,
 )
 from knowledge_service.errors import KnowledgeError
-from knowledge_service.flow_builder import (
-    FlowGraphBundle,
-    FlowGraphEdge,
-    FlowGraphEvidence,
-    FlowGraphNode,
-    FlowGraphSourceScope,
-    FlowUnit,
-    flow_graph_bundle_to_public_bundle,
-)
+from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.observability import observed_connect
@@ -56,9 +48,10 @@ GRAPH_CONTRACT_VERSION = "GRAPH_CURRENT_V1"
 GRAPH_SORT_VERSION = "ID_ASC_V1"
 GRAPH_CURSOR_SIGNATURE_CONTEXT = "knowledge-graph-cursor-v1"
 GRAPH_NODE_DETAIL_RELATION_LIMIT = 25
+ANCHOR_EXPANSION_BIND_CHUNK_SIZE = 400
 
 
-def _chunks(values: List[int], size: int):
+def _chunks(values: Sequence[Any], size: int):
     for offset in range(0, len(values), max(1, size)):
         yield values[offset : offset + max(1, size)]
 
@@ -99,16 +92,6 @@ class GraphQuery:
             "includeIsolated": self.include_isolated,
             "search": self.search,
         }
-
-
-@dataclass(frozen=True)
-class FlowUnitEvidenceHydrationResult:
-    flow_units: tuple[FlowUnit, ...]
-    truncated: bool = False
-    evidence_count: int = 0
-    required_edge_count: int = 0
-    hydrated_edge_count: int = 0
-    missing_edge_ids: tuple[str, ...] = ()
 
 
 class AnalysisStore:
@@ -583,6 +566,8 @@ class AnalysisStore:
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source ON analysis_graph_edges(source_id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_type ON analysis_graph_edges(source_id, edge_type)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_nodes ON analysis_graph_edges(from_node_id, to_node_id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_calls_outgoing ON analysis_graph_edges(source_id, edge_type, status, from_node_id, id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_calls_incoming ON analysis_graph_edges(source_id, edge_type, status, to_node_id, id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_flow_created ON analysis_graph_edges(source_id, flow_domain, created_at)",
             ),
             "analysis_graph_claim_evidence": (
@@ -1854,6 +1839,7 @@ class AnalysisStore:
                     GROUP BY source_id, from_node_id
                 )
                 SELECT n.*,
+                       {self._inventory_flow_domain_sql("n")} AS effective_flow_domain,
                        sources.display_name AS source_display_name,
                        af.relative_path,
                        claim.summary,
@@ -1993,6 +1979,7 @@ class AnalysisStore:
                     GROUP BY source_id, from_node_id
                 )
                 SELECT n.*,
+                       {self._inventory_flow_domain_sql("n")} AS effective_flow_domain,
                        sources.display_name AS source_display_name,
                        af.relative_path,
                        claim.summary,
@@ -2132,6 +2119,7 @@ class AnalysisStore:
                     GROUP BY source_id, from_node_id
                 )
                 SELECT n.*,
+                       {self._inventory_flow_domain_sql("n")} AS effective_flow_domain,
                        sources.display_name AS source_display_name,
                        af.relative_path,
                        claim.summary,
@@ -2197,15 +2185,11 @@ class AnalysisStore:
     def query_anchor_expansion(
         self,
         source_node_pairs: Sequence[AnchorExpansionRequest],
-        max_per_anchor: int = 30,
-        max_total: int = 200,
     ) -> AnchorExpansionBundle:
         self.init()
         requested = self._anchor_expansion_requested_pairs(source_node_pairs)
         if not requested:
             return AnchorExpansionBundle()
-        safe_max_total = max(1, min(int(max_total or 1), 1000))
-        safe_relation_limit = max(1, min(safe_max_total + max(1, int(max_per_anchor or 1)) * len(requested), 2000))
         grouped: Dict[str, Set[str]] = {}
         for source_id, node_id in requested:
             grouped.setdefault(source_id, set()).add(node_id)
@@ -2213,7 +2197,6 @@ class AnalysisStore:
         nodes: List[Dict[str, Any]] = []
         edges: List[Dict[str, Any]] = []
         entrypoint_hints: List[Dict[str, Any]] = []
-        truncated = False
         contract = graph_query_contract()
         declares_edge_type = contract.required_edge_type("DECLARES")
         uses_field_edge_type = contract.required_edge_type("USES_FIELD")
@@ -2232,95 +2215,85 @@ class AnalysisStore:
                         node_ids_by_source.setdefault(source_id, set()).add(parent_node_id)
 
                 ids = sorted(anchor_ids)
-                placeholders = ",".join("?" for _ in ids)
-                rows = conn.execute(
-                    f"""
-                    SELECT e.*,
-                           fn.display_name AS from_display_name,
-                           fn.qualified_name AS from_qualified_name,
-                           fn.name AS from_name,
-                           tn.display_name AS to_display_name,
-                           tn.qualified_name AS to_qualified_name,
-                           tn.name AS to_name
-                    FROM analysis_graph_edges e
-                    LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                    LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
-                    WHERE e.source_id = ?
-                      AND e.edge_type IN (?, ?)
-                      AND e.status IN ({current_status_sql})
-                      AND e.resolution_status = ?
-                      AND {self._inventory_membership_graph_edge_clause("e")}
-                      AND (e.from_node_id IN ({placeholders}) OR e.to_node_id IN ({placeholders}))
-                    ORDER BY e.edge_type, e.from_node_id, e.to_node_id, e.id
-                    LIMIT ?
-                    """,
-                    [
-                        source_id,
-                        declares_edge_type,
-                        uses_field_edge_type,
-                        *current_status_params,
-                        contract.resolved_status,
-                        *ids,
-                        *ids,
-                        safe_relation_limit + 1,
-                    ],
-                ).fetchall()
-                if len(rows) > safe_relation_limit:
-                    truncated = True
-                    rows = rows[:safe_relation_limit]
-                for row in rows:
-                    edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
-                    for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
-                        if node_id:
-                            node_ids_by_source.setdefault(source_id, set()).add(node_id)
-                            if node_id not in anchor_ids:
-                                first_hop_ids_by_source.setdefault(source_id, set()).add(node_id)
+                for id_chunk in _chunks(ids, ANCHOR_EXPANSION_BIND_CHUNK_SIZE):
+                    placeholders = ",".join("?" for _ in id_chunk)
+                    rows = conn.execute(
+                        f"""
+                        SELECT e.*,
+                               fn.display_name AS from_display_name,
+                               fn.qualified_name AS from_qualified_name,
+                               fn.name AS from_name,
+                               tn.display_name AS to_display_name,
+                               tn.qualified_name AS to_qualified_name,
+                               tn.name AS to_name
+                        FROM analysis_graph_edges e
+                        LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                        WHERE e.source_id = ?
+                          AND e.edge_type IN (?, ?)
+                          AND e.status IN ({current_status_sql})
+                          AND e.resolution_status = ?
+                          AND {self._inventory_membership_graph_edge_clause("e")}
+                          AND (e.from_node_id IN ({placeholders}) OR e.to_node_id IN ({placeholders}))
+                        ORDER BY e.edge_type, e.from_node_id, e.to_node_id, e.id
+                        """,
+                        [
+                            source_id,
+                            declares_edge_type,
+                            uses_field_edge_type,
+                            *current_status_params,
+                            contract.resolved_status,
+                            *id_chunk,
+                            *id_chunk,
+                        ],
+                    ).fetchall()
+                    for row in rows:
+                        edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
+                        for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
+                            if node_id:
+                                node_ids_by_source.setdefault(source_id, set()).add(node_id)
+                                if node_id not in anchor_ids:
+                                    first_hop_ids_by_source.setdefault(source_id, set()).add(node_id)
 
-            remaining_edges = max(0, safe_relation_limit - len(edges))
             for source_id, first_hop_ids in sorted(first_hop_ids_by_source.items()):
-                if remaining_edges <= 0 or not first_hop_ids:
-                    break
+                if not first_hop_ids:
+                    continue
                 ids = sorted(first_hop_ids)
-                placeholders = ",".join("?" for _ in ids)
-                rows = conn.execute(
-                    f"""
-                    SELECT e.*,
-                           fn.display_name AS from_display_name,
-                           fn.qualified_name AS from_qualified_name,
-                           fn.name AS from_name,
-                           tn.display_name AS to_display_name,
-                           tn.qualified_name AS to_qualified_name,
-                           tn.name AS to_name
-                    FROM analysis_graph_edges e
-                    LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                    LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
-                    WHERE e.source_id = ?
-                      AND e.edge_type = ?
-                      AND e.status IN ({current_status_sql})
-                      AND e.resolution_status = ?
-                      AND {self._inventory_membership_graph_edge_clause("e")}
-                      AND e.from_node_id IN ({placeholders})
-                    ORDER BY e.edge_type, e.from_node_id, e.to_node_id, e.id
-                    LIMIT ?
-                    """,
-                    [
-                        source_id,
-                        declares_edge_type,
-                        *current_status_params,
-                        contract.resolved_status,
-                        *ids,
-                        remaining_edges + 1,
-                    ],
-                ).fetchall()
-                if len(rows) > remaining_edges:
-                    truncated = True
-                    rows = rows[:remaining_edges]
-                remaining_edges -= len(rows)
-                for row in rows:
-                    edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
-                    for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
-                        if node_id:
-                            node_ids_by_source.setdefault(source_id, set()).add(node_id)
+                for id_chunk in _chunks(ids, ANCHOR_EXPANSION_BIND_CHUNK_SIZE):
+                    placeholders = ",".join("?" for _ in id_chunk)
+                    rows = conn.execute(
+                        f"""
+                        SELECT e.*,
+                               fn.display_name AS from_display_name,
+                               fn.qualified_name AS from_qualified_name,
+                               fn.name AS from_name,
+                               tn.display_name AS to_display_name,
+                               tn.qualified_name AS to_qualified_name,
+                               tn.name AS to_name
+                        FROM analysis_graph_edges e
+                        LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
+                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                        WHERE e.source_id = ?
+                          AND e.edge_type = ?
+                          AND e.status IN ({current_status_sql})
+                          AND e.resolution_status = ?
+                          AND {self._inventory_membership_graph_edge_clause("e")}
+                          AND e.from_node_id IN ({placeholders})
+                        ORDER BY e.edge_type, e.from_node_id, e.to_node_id, e.id
+                        """,
+                        [
+                            source_id,
+                            declares_edge_type,
+                            *current_status_params,
+                            contract.resolved_status,
+                            *id_chunk,
+                        ],
+                    ).fetchall()
+                    for row in rows:
+                        edges.append(self._anchor_expansion_edge_projection(self._row_dict(row)))
+                        for node_id in (str(row["from_node_id"] or ""), str(row["to_node_id"] or "")):
+                            if node_id:
+                                node_ids_by_source.setdefault(source_id, set()).add(node_id)
 
             for source_id, node_ids in sorted(node_ids_by_source.items()):
                 nodes.extend(self._query_anchor_expansion_nodes(conn, source_id, node_ids))
@@ -2337,474 +2310,8 @@ class AnalysisStore:
             nodes=tuple(self._anchor_expansion_node(item) for item in nodes),
             edges=tuple(self._anchor_expansion_edge(item) for item in edges),
             entrypoint_hints=tuple(self._anchor_entrypoint_hint(item) for item in entrypoint_hints),
-            truncated=truncated,
+            truncated=False,
         )
-
-    def query_graph_slice(self, anchors: List[Dict[str, Any]], depth: int) -> Dict[str, List[Dict[str, Any]]]:
-        self.init()
-        safe_depth = max(1, min(int(depth or 1), 4))
-        grouped: Dict[str, Set[str]] = {}
-        for anchor in anchors:
-            source_id = str(anchor.get("sourceId") or "")
-            node_id = str(anchor.get("nodeId") or anchor.get("id") or "")
-            if source_id and node_id:
-                grouped.setdefault(source_id, set()).add(node_id)
-        nodes: List[Dict[str, Any]] = []
-        edges: List[Dict[str, Any]] = []
-        evidence: List[Dict[str, Any]] = []
-        unresolved: List[Dict[str, Any]] = []
-        unresolved_statuses = set(graph_query_contract().unresolved_resolution_statuses())
-        with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
-            for source_id, anchor_ids in grouped.items():
-                selected_node_ids = set(anchor_ids)
-                frontier = set(anchor_ids)
-                unresolved_edge_ids: Set[str] = set()
-                for _ in range(safe_depth):
-                    if not frontier:
-                        break
-                    frontier_list = sorted(frontier)
-                    frontier_placeholders = ",".join("?" for _ in frontier_list)
-                    edge_rows = conn.execute(
-                        f"""
-                        SELECT id, from_node_id, to_node_id, resolution_status
-                        FROM analysis_graph_edges
-                        WHERE source_id = ?
-                          AND (from_node_id IN ({frontier_placeholders}) OR to_node_id IN ({frontier_placeholders}))
-                        ORDER BY id
-                        LIMIT 500
-                        """,
-                        [source_id, *frontier_list, *frontier_list],
-                    ).fetchall()
-                    next_frontier: Set[str] = set()
-                    for edge in edge_rows:
-                        from_node_id = str(edge["from_node_id"])
-                        to_node_id = str(edge["to_node_id"] or "")
-                        if not to_node_id or edge["resolution_status"] in unresolved_statuses:
-                            unresolved_edge_ids.add(str(edge["id"]))
-                        for node_id in (from_node_id, to_node_id):
-                            if node_id and node_id not in selected_node_ids:
-                                selected_node_ids.add(node_id)
-                                next_frontier.add(node_id)
-                    frontier = next_frontier
-                nodes.extend(self._query_slice_nodes(conn, source_id, selected_node_ids))
-                slice_edges = self._query_slice_edges(conn, source_id, selected_node_ids)
-                edges.extend(slice_edges)
-                unresolved.extend(self._query_unresolved_slice_edges(conn, source_id, selected_node_ids, unresolved_edge_ids))
-                evidence.extend(self._query_slice_evidence(conn, source_id, selected_node_ids, {edge["id"] for edge in slice_edges}))
-        nodes = self._dedupe_by_id(nodes, "id")
-        edges = self._dedupe_by_id(edges, "id")
-        evidence = self._dedupe_by_id(evidence, "id")
-        self._attach_current_graph_identity(conn, nodes)
-        self._attach_current_graph_identity(conn, edges)
-        self._attach_current_graph_identity(conn, evidence)
-        unresolved = self._dedupe_by_id(unresolved, "id")
-        self._attach_current_graph_identity(conn, unresolved)
-        external = [edge for edge in unresolved if edge.get("external")]
-        verified_paths = self._verified_paths_from_evidence(evidence)
-        return {"nodes": nodes, "edges": edges, "evidence": evidence, "unresolved": unresolved, "external": external, "verifiedPaths": verified_paths}
-
-    def load_call_flow_graph(
-        self,
-        source_scopes: Sequence[FlowGraphSourceScope],
-        max_edges: int = 2000,
-        max_evidence: int = 25,
-    ) -> FlowGraphBundle:
-        self.init()
-        safe_max_edges = max(1, min(int(max_edges or 1), 10000))
-        safe_max_evidence = max(0, min(int(max_evidence or 0), 500))
-        grouped: Dict[str, Set[str]] = {}
-        requested_graph_by_source: Dict[str, str] = {}
-        for scope in source_scopes:
-            if not isinstance(scope, FlowGraphSourceScope):
-                continue
-            source_id = str(scope.source_id or "")
-            if not source_id:
-                continue
-            requested_graph_by_source.setdefault(source_id, str(scope.graph_id or ""))
-            anchor_ids = {str(node_id) for node_id in scope.node_ids if str(node_id)}
-            grouped.setdefault(source_id, set()).update(anchor_ids)
-        if not grouped:
-            return FlowGraphBundle()
-
-        nodes: List[Dict[str, Any]] = []
-        edges: List[Dict[str, Any]] = []
-        evidence: List[Dict[str, Any]] = []
-        truncated = False
-        contract = graph_query_contract()
-        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
-        with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
-            identity_by_source = self._graph_identity_by_source(conn, sorted(grouped))
-            active_grouped: Dict[str, Set[str]] = {}
-            for source_id, anchor_ids in grouped.items():
-                identity = identity_by_source.get(source_id) or {}
-                requested_graph_id = requested_graph_by_source.get(source_id) or ""
-                current_graph_id = str(identity.get("graphId") or "")
-                if requested_graph_id and current_graph_id and requested_graph_id != current_graph_id:
-                    continue
-                active_grouped[source_id] = set(anchor_ids)
-            if not active_grouped:
-                return FlowGraphBundle()
-            remaining_edges = safe_max_edges + 1
-            edge_ids_by_source: Dict[str, Set[str]] = {}
-            node_ids_by_source: Dict[str, Set[str]] = {source_id: set(anchor_ids) for source_id, anchor_ids in active_grouped.items()}
-            for source_id, anchor_ids in sorted(active_grouped.items()):
-                if remaining_edges <= 0:
-                    truncated = True
-                    break
-                node_ids = node_ids_by_source.setdefault(source_id, set())
-                frontier = {node_id for node_id in anchor_ids if node_id}
-                scope_edge_ids = edge_ids_by_source.setdefault(source_id, set())
-                while frontier and remaining_edges > 0:
-                    frontier_list = sorted(frontier)
-                    frontier_placeholders = ",".join("?" for _ in frontier_list)
-                    edge_rows = conn.execute(
-                        f"""
-                        SELECT e.*,
-                               fn.display_name AS from_display_name,
-                               fn.qualified_name AS from_qualified_name,
-                               fn.name AS from_name,
-                               tn.display_name AS to_display_name,
-                               tn.qualified_name AS to_qualified_name,
-                               tn.name AS to_name
-                        FROM analysis_graph_edges e
-                        LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
-                        WHERE e.source_id = ?
-                          AND e.edge_type = ?
-                          AND e.status IN ({current_status_sql})
-                          AND (e.from_node_id IN ({frontier_placeholders}) OR e.to_node_id IN ({frontier_placeholders}))
-                        ORDER BY e.id
-                        LIMIT ?
-                        """,
-                        [source_id, contract.calls_edge_type, *current_status_params, *frontier_list, *frontier_list, remaining_edges],
-                    ).fetchall()
-                    if len(edge_rows) >= remaining_edges:
-                        truncated = True
-                        edge_rows = edge_rows[: max(0, remaining_edges - 1)]
-                    remaining_edges -= len(edge_rows)
-                    next_frontier: Set[str] = set()
-                    for row in edge_rows:
-                        edge_id = str(row["id"])
-                        if edge_id in scope_edge_ids:
-                            continue
-                        item = self._graph_edge_projection(self._row_dict(row))
-                        item["sourceId"] = row["source_id"]
-                        edges.append(item)
-                        scope_edge_ids.add(edge_id)
-                        for node_id in (str(row["from_node_id"]), str(row["to_node_id"] or "")):
-                            if node_id and node_id not in node_ids:
-                                node_ids.add(node_id)
-                                next_frontier.add(node_id)
-                    if truncated or not next_frontier:
-                        break
-                    frontier = next_frontier
-
-            for source_id, node_ids in sorted(node_ids_by_source.items()):
-                nodes.extend(self._query_slice_nodes(conn, source_id, node_ids))
-
-            remaining_evidence = safe_max_evidence
-            for source_id, node_ids in sorted(node_ids_by_source.items()):
-                if remaining_evidence <= 0:
-                    if edge_ids_by_source.get(source_id):
-                        truncated = True
-                    break
-                edge_count = len(edge_ids_by_source.get(source_id, set()))
-                scope_evidence = self._query_flow_path_evidence(
-                    conn,
-                    source_id,
-                    node_ids,
-                    edge_ids_by_source.get(source_id, set()),
-                    remaining_evidence,
-                )
-                if edge_count > remaining_evidence:
-                    truncated = True
-                evidence.extend(scope_evidence)
-                remaining_evidence = max(0, remaining_evidence - len(scope_evidence))
-
-            nodes = self._dedupe_by_id(nodes, "id")
-            edges = self._dedupe_by_id(edges, "id")
-            evidence = self._dedupe_by_id(evidence, "id")
-            self._attach_current_graph_identity(conn, nodes)
-            self._attach_current_graph_identity(conn, edges)
-            self._attach_current_graph_identity(conn, evidence)
-        return self._flow_graph_bundle_from_public_graph(nodes, edges, evidence, truncated)
-
-    def hydrate_flow_unit_evidence(
-        self,
-        flow_units: Sequence[FlowUnit],
-        max_evidence_refs: int = 25,
-    ) -> FlowUnitEvidenceHydrationResult:
-        self.init()
-        max_refs = max(0, min(int(max_evidence_refs or 0), 500))
-        if not flow_units:
-            return FlowUnitEvidenceHydrationResult(flow_units=())
-
-        hydrated_units: List[FlowUnit] = []
-        truncated = False
-        evidence_count = 0
-        required_edge_count = 0
-        hydrated_edge_count = 0
-        missing_edge_ids: List[str] = []
-        with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
-            for unit in flow_units:
-                hydrated, unit_truncated, metadata = self._hydrate_single_flow_unit_evidence(conn, unit, max_refs)
-                hydrated_units.append(hydrated)
-                truncated = truncated or unit_truncated
-                evidence_count += len(hydrated.evidence)
-                required_edge_count += int(metadata["required_edge_count"])
-                hydrated_edge_count += int(metadata["hydrated_edge_count"])
-                missing_edge_ids.extend(str(item) for item in metadata["missing_edge_ids"])
-        return FlowUnitEvidenceHydrationResult(
-            flow_units=tuple(hydrated_units),
-            truncated=truncated,
-            evidence_count=evidence_count,
-            required_edge_count=required_edge_count,
-            hydrated_edge_count=hydrated_edge_count,
-            missing_edge_ids=tuple(sorted(set(missing_edge_ids))),
-        )
-
-    def _hydrate_single_flow_unit_evidence(
-        self,
-        conn: sqlite3.Connection,
-        unit: FlowUnit,
-        max_refs: int,
-    ) -> tuple[FlowUnit, bool, Dict[str, Any]]:
-        source_id = str(unit.key.source_id or "")
-        ordered_edge_ids = tuple(dict.fromkeys((*unit.edge_ids, *unit.boundary_edge_ids)))
-        selected: List[Dict[str, Any]] = []
-        truncated = False
-        edge_evidence_by_id: Dict[str, List[str]] = {}
-        persisted_edge_ids: Set[str] = set()
-        if source_id and ordered_edge_ids:
-            edge_evidence_rows = self._query_returned_flow_edge_evidence(conn, source_id, ordered_edge_ids)
-            persisted_edge_ids = {str(item.get("edgeId")) for item in edge_evidence_rows if item.get("edgeId")}
-            if len(edge_evidence_rows) > max_refs:
-                truncated = True
-            selected_edge_rows = edge_evidence_rows[:max_refs]
-            selected.extend(selected_edge_rows)
-            for item in selected_edge_rows:
-                edge_id = str(item.get("edgeId") or "")
-                evidence_id = str(item.get("id") or "")
-                if edge_id and evidence_id:
-                    edge_evidence_by_id.setdefault(edge_id, []).append(evidence_id)
-            if persisted_edge_ids - set(edge_evidence_by_id):
-                truncated = True
-
-        remaining = max_refs - len(selected)
-        if source_id and remaining > 0 and unit.node_ids:
-            node_rows = self._query_returned_flow_node_evidence(
-                conn,
-                source_id,
-                set(unit.node_ids),
-                remaining + 1,
-                seen_evidence_ids={str(item.get("id") or "") for item in selected},
-            )
-            if len(node_rows) > remaining:
-                truncated = True
-            selected.extend(node_rows[:remaining])
-
-        flow_evidence = tuple(
-            item
-            for item in (self._flow_graph_evidence_from_public_graph(raw) for raw in selected)
-            if item is not None
-        )
-        edge_evidence_ids = {edge_id: tuple(ids) for edge_id, ids in edge_evidence_by_id.items()}
-        hydrated = replace(
-            unit,
-            edges=tuple(self._flow_unit_edge_with_evidence(edge, edge_evidence_ids) for edge in unit.edges),
-            boundary_edges=tuple(self._flow_unit_edge_with_evidence(edge, edge_evidence_ids) for edge in unit.boundary_edges),
-            evidence=flow_evidence,
-        )
-        missing_edge_ids = tuple(f"{source_id}:{edge_id}" for edge_id in sorted(persisted_edge_ids - set(edge_evidence_by_id)))
-        return hydrated, truncated, {
-            "required_edge_count": len(persisted_edge_ids),
-            "hydrated_edge_count": len(edge_evidence_by_id),
-            "missing_edge_ids": missing_edge_ids,
-        }
-
-    def _flow_unit_edge_with_evidence(self, edge: FlowGraphEdge, evidence_ids_by_edge: Dict[str, tuple[str, ...]]) -> FlowGraphEdge:
-        return replace(edge, evidence_ids=evidence_ids_by_edge.get(edge.edge_id, ()))
-
-    def _query_returned_flow_edge_evidence(
-        self,
-        conn: sqlite3.Connection,
-        source_id: str,
-        ordered_edge_ids: Sequence[str],
-    ) -> List[Dict[str, Any]]:
-        ids = [str(edge_id) for edge_id in ordered_edge_ids if str(edge_id)]
-        if not ids:
-            return []
-        contract = graph_query_contract()
-        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
-        placeholders = ",".join("?" for _ in ids)
-        rows = conn.execute(
-            f"""
-            WITH ranked_edge_evidence AS (
-                SELECT ev.id,
-                       ev.source_id,
-                       ev.analysis_file_id,
-                       COALESCE(af.relative_path, ev.relative_path) AS relative_path,
-                       ev.line_start,
-                       ev.line_end,
-                       ev.excerpt,
-                       ev.evidence_kind,
-                       ev.excerpt_hash,
-                       ev.fact_origin,
-                       ev.flow_domain,
-                       edge.id AS edge_id,
-                       NULL AS node_id,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY edge.id
-                           ORDER BY COALESCE(af.relative_path, ev.relative_path), ev.line_start, ev.line_end, ev.id
-                       ) AS evidence_rank
-                FROM analysis_graph_edges edge
-                JOIN analysis_graph_edge_evidence link ON link.edge_id = edge.id
-                JOIN analysis_graph_evidence ev
-                  ON ev.source_id = edge.source_id
-                 AND ev.id = link.evidence_id
-                LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
-                WHERE edge.source_id = ?
-                  AND edge.edge_type = ?
-                  AND edge.status IN ({current_status_sql})
-                  AND edge.id IN ({placeholders})
-            )
-            SELECT id, source_id, analysis_file_id, relative_path, line_start, line_end, excerpt,
-                   evidence_kind, excerpt_hash, fact_origin, flow_domain, edge_id, node_id
-            FROM ranked_edge_evidence
-            WHERE evidence_rank = 1
-            ORDER BY CASE edge_id
-                {" ".join(f"WHEN ? THEN {index}" for index, _ in enumerate(ids))}
-                ELSE {len(ids)}
-            END
-            """,
-            [source_id, contract.calls_edge_type, *current_status_params, *ids, *ids],
-        ).fetchall()
-        projected = self._linked_evidence_projection(rows)
-        self._attach_current_graph_identity(conn, projected)
-        return projected
-
-    def _query_returned_flow_node_evidence(
-        self,
-        conn: sqlite3.Connection,
-        source_id: str,
-        node_ids: Set[str],
-        limit: int,
-        *,
-        seen_evidence_ids: Set[str],
-    ) -> List[Dict[str, Any]]:
-        if limit <= 0 or not node_ids:
-            return []
-        contract = graph_query_contract()
-        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
-        ids = sorted(str(node_id) for node_id in node_ids if str(node_id))
-        placeholders = ",".join("?" for _ in ids)
-        seen_clause = ""
-        seen_params: List[str] = []
-        if seen_evidence_ids:
-            seen_values = sorted(evidence_id for evidence_id in seen_evidence_ids if evidence_id)
-            if seen_values:
-                seen_clause = f"AND ev.id NOT IN ({','.join('?' for _ in seen_values)})"
-                seen_params = seen_values
-        rows = conn.execute(
-            f"""
-            SELECT ev.id,
-                   ev.source_id,
-                   ev.analysis_file_id,
-                   COALESCE(af.relative_path, ev.relative_path) AS relative_path,
-                   ev.line_start,
-                   ev.line_end,
-                   ev.excerpt,
-                   ev.evidence_kind,
-                   ev.excerpt_hash,
-                   ev.fact_origin,
-                   ev.flow_domain,
-                   NULL AS edge_id,
-                   claim.node_id AS node_id
-            FROM analysis_graph_claims claim
-            JOIN analysis_graph_claim_evidence link ON link.claim_id = claim.id
-            JOIN analysis_graph_evidence ev
-              ON ev.source_id = claim.source_id
-             AND ev.id = link.evidence_id
-            LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
-            WHERE claim.source_id = ?
-              AND claim.status IN ({current_status_sql})
-              AND claim.node_id IN ({placeholders})
-              {seen_clause}
-            ORDER BY claim.node_id, relative_path, ev.line_start, ev.line_end, ev.id
-            LIMIT ?
-            """,
-            [source_id, *current_status_params, *ids, *seen_params, limit],
-        ).fetchall()
-        projected = self._linked_evidence_projection(rows)
-        self._attach_current_graph_identity(conn, projected)
-        return projected
-
-    def load_call_adjacency_for_sources(
-        self,
-        source_scopes: List[Dict[str, Any]],
-        max_edges: int = 2000,
-        max_evidence: int = 25,
-    ) -> Dict[str, Any]:
-        bundle = self.load_call_flow_graph(
-            self._legacy_flow_graph_source_scopes(source_scopes),
-            max_edges=max_edges,
-            max_evidence=max_evidence,
-        )
-        public_bundle = flow_graph_bundle_to_public_bundle(bundle)
-        return {
-            "nodes": list(public_bundle["nodes"]),
-            "edges": list(public_bundle["edges"]),
-            "evidence": list(public_bundle["evidence"]),
-            "unresolved": list(public_bundle["unresolved"]),
-            "external": list(public_bundle["external"]),
-            "verifiedPaths": list(public_bundle["verifiedPaths"]),
-            "truncated": bool(public_bundle["truncated"]),
-        }
-
-    def _legacy_flow_graph_source_scopes(self, source_scopes: Sequence[Dict[str, Any]]) -> List[FlowGraphSourceScope]:
-        scopes: List[FlowGraphSourceScope] = []
-        for scope in source_scopes:
-            source_id = str(scope.get("sourceId") or "")
-            if not source_id:
-                continue
-            node_ids = tuple(sorted(str(node_id) for node_id in scope.get("nodeIds") or [] if str(node_id)))
-            scopes.append(
-                FlowGraphSourceScope(
-                    source_id=source_id,
-                    graph_id=str(scope.get("graphId") or ""),
-                    graph_revision=str(scope.get("graphRevision")) if scope.get("graphRevision") else None,
-                    node_ids=node_ids,
-                )
-            )
-        return scopes
-
-    def _flow_graph_bundle_from_public_graph(
-        self,
-        nodes: Sequence[Dict[str, Any]],
-        edges: Sequence[Dict[str, Any]],
-        evidence: Sequence[Dict[str, Any]],
-        truncated: bool,
-    ) -> FlowGraphBundle:
-        flow_evidence = tuple(
-            item
-            for item in (self._flow_graph_evidence_from_public_graph(raw) for raw in evidence)
-            if item is not None
-        )
-        evidence_ids_by_edge: Dict[str, List[str]] = defaultdict(list)
-        for item in flow_evidence:
-            if item.edge_id:
-                evidence_ids_by_edge[item.edge_id].append(item.evidence_id)
-        flow_edges = tuple(
-            edge
-            for edge in (self._flow_graph_edge_from_public_graph(raw, evidence_ids_by_edge) for raw in edges)
-            if edge is not None
-        )
-        flow_nodes = tuple(
-            node
-            for node in (self._flow_graph_node_from_public_graph(raw) for raw in nodes)
-            if node is not None
-        )
-        return FlowGraphBundle(nodes=flow_nodes, edges=flow_edges, evidence=flow_evidence, truncated=truncated)
 
     def _flow_graph_node_from_public_graph(self, item: Dict[str, Any]) -> FlowGraphNode | None:
         node_id = str(item.get("id") or "")
@@ -2826,6 +2333,7 @@ class AnalysisStore:
             line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
             summary=str(item.get("summary")) if item.get("summary") else None,
             entrypoint=bool(item.get("entrypoint")),
+            flow_domain=str(item.get("flowDomain")) if item.get("flowDomain") else None,
         )
 
     def _flow_graph_edge_from_public_graph(self, item: Dict[str, Any], evidence_ids_by_edge: Dict[str, List[str]]) -> FlowGraphEdge | None:
@@ -2847,6 +2355,7 @@ class AnalysisStore:
             external=bool(item.get("external")) or str(item.get("resolutionStatus") or "").upper() == graph_query_contract().external_target_status,
             unresolved_target=item.get("unresolvedTarget") if isinstance(item.get("unresolvedTarget"), dict) else None,
             evidence_ids=tuple(evidence_ids_by_edge.get(edge_id) or ()),
+            flow_domain=str(item.get("flowDomain")) if item.get("flowDomain") else None,
         )
 
     def _flow_graph_evidence_from_public_graph(self, item: Dict[str, Any]) -> FlowGraphEvidence | None:
@@ -2907,7 +2416,7 @@ class AnalysisStore:
         entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
         rows = conn.execute(
             f"""
-            SELECT n.*, af.relative_path,
+            SELECT n.*, {self._inventory_flow_domain_sql("n")} AS effective_flow_domain, af.relative_path,
                    COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
                    CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint
             FROM analysis_graph_nodes n
@@ -2967,265 +2476,6 @@ class AnalysisStore:
             for row in rows
         ]
 
-    def _query_slice_nodes(self, conn: sqlite3.Connection, source_id: str, node_ids: Set[str]) -> List[Dict[str, Any]]:
-        if not node_ids:
-            return []
-        ids = sorted(node_ids)
-        placeholders = ",".join("?" for _ in ids)
-        contract = graph_query_contract()
-        entry_status_sql, entry_status_params = sql_in_clause(contract.statuses_for_current_graph())
-        claim_status_sql, claim_status_params = sql_in_clause(contract.statuses_for_responsibility_summary())
-        rows = conn.execute(
-            f"""
-            WITH claim AS (
-                SELECT source_id, node_id, group_concat(summary, ' ') AS summary
-                FROM (
-                    SELECT source_id, node_id, summary
-                    FROM analysis_graph_claims
-                    WHERE source_id = ?
-                      AND node_id IN ({placeholders})
-                      AND claim_kind = ?
-                      AND status IN ({claim_status_sql})
-                      AND rejection_reason IS NULL
-                    ORDER BY source_id, node_id, status, confidence DESC, id
-                )
-                GROUP BY source_id, node_id
-            )
-            SELECT n.*, af.relative_path,
-                   COALESCE(out_degree.count, 0) + COALESCE(in_degree.count, 0) AS graph_degree,
-                   CASE WHEN entry.id IS NULL THEN 0 ELSE 1 END AS entrypoint,
-                   claim.summary AS summary
-            FROM analysis_graph_nodes n
-            LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
-            LEFT JOIN (
-                SELECT source_id, from_node_id AS node_id, COUNT(*) AS count
-                FROM analysis_graph_edges
-                GROUP BY source_id, from_node_id
-            ) out_degree ON out_degree.source_id = n.source_id AND out_degree.node_id = n.id
-            LEFT JOIN (
-                SELECT source_id, to_node_id AS node_id, COUNT(*) AS count
-                FROM analysis_graph_edges
-                WHERE to_node_id IS NOT NULL
-                GROUP BY source_id, to_node_id
-            ) in_degree ON in_degree.source_id = n.source_id AND in_degree.node_id = n.id
-            LEFT JOIN analysis_graph_claims entry
-              ON entry.source_id = n.source_id
-             AND entry.node_id = n.id
-             AND entry.claim_kind = ?
-             AND entry.status IN ({entry_status_sql})
-            LEFT JOIN claim
-              ON claim.source_id = n.source_id
-             AND claim.node_id = n.id
-            WHERE n.source_id = ?
-              AND n.id IN ({placeholders})
-            ORDER BY n.id
-            """,
-            [source_id, *ids, contract.responsibility_claim_kind, *claim_status_params, contract.entrypoint_claim_kind, *entry_status_params, source_id, *ids],
-        ).fetchall()
-        return [self._graph_node_projection(self._row_dict(row)) for row in rows]
-
-    def _query_slice_edges(self, conn: sqlite3.Connection, source_id: str, node_ids: Set[str]) -> List[Dict[str, Any]]:
-        if not node_ids:
-            return []
-        ids = sorted(node_ids)
-        placeholders = ",".join("?" for _ in ids)
-        rows = conn.execute(
-            f"""
-            SELECT e.*,
-                   fn.display_name AS from_display_name,
-                   fn.qualified_name AS from_qualified_name,
-                   fn.name AS from_name,
-                   tn.display_name AS to_display_name,
-                   tn.qualified_name AS to_qualified_name,
-                   tn.name AS to_name
-            FROM analysis_graph_edges e
-            LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-            LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
-            WHERE e.source_id = ?
-              AND e.from_node_id IN ({placeholders})
-              AND e.to_node_id IN ({placeholders})
-            ORDER BY e.id
-            LIMIT 1000
-            """,
-            [source_id, *ids, *ids],
-        ).fetchall()
-        return [self._graph_edge_projection(self._row_dict(row)) for row in rows]
-
-    def _query_unresolved_slice_edges(
-        self,
-        conn: sqlite3.Connection,
-        source_id: str,
-        node_ids: Set[str],
-        unresolved_edge_ids: Set[str],
-    ) -> List[Dict[str, Any]]:
-        if not node_ids and not unresolved_edge_ids:
-            return []
-        clauses: List[str] = ["e.source_id = ?"]
-        params: List[Any] = [source_id]
-        disjunctions: List[str] = []
-        if node_ids:
-            ids = sorted(node_ids)
-            placeholders = ",".join("?" for _ in ids)
-            unresolved_sql, unresolved_params = sql_in_clause(graph_query_contract().unresolved_resolution_statuses())
-            disjunctions.append(f"(e.from_node_id IN ({placeholders}) AND (e.to_node_id IS NULL OR e.resolution_status IN ({unresolved_sql})))")
-            params.extend(ids)
-            params.extend(unresolved_params)
-        if unresolved_edge_ids:
-            edge_ids = sorted(unresolved_edge_ids)
-            placeholders = ",".join("?" for _ in edge_ids)
-            disjunctions.append(f"e.id IN ({placeholders})")
-            params.extend(edge_ids)
-        clauses.append(f"({' OR '.join(disjunctions)})")
-        rows = conn.execute(
-            f"""
-            SELECT e.*,
-                   fn.display_name AS from_display_name,
-                   fn.qualified_name AS from_qualified_name,
-                   fn.name AS from_name,
-                   tn.display_name AS to_display_name,
-                   tn.qualified_name AS to_qualified_name,
-                   tn.name AS to_name
-            FROM analysis_graph_edges e
-            LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-            LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
-            WHERE {" AND ".join(clauses)}
-            ORDER BY e.id
-            LIMIT 200
-            """,
-            params,
-        ).fetchall()
-        return [self._graph_edge_projection(self._row_dict(row)) for row in rows]
-
-    def _query_slice_evidence(
-        self,
-        conn: sqlite3.Connection,
-        source_id: str,
-        node_ids: Set[str],
-        edge_ids: Set[str],
-    ) -> List[Dict[str, Any]]:
-        result: List[Dict[str, Any]] = []
-        if edge_ids:
-            ids = sorted(edge_ids)
-            placeholders = ",".join("?" for _ in ids)
-            rows = conn.execute(
-                f"""
-                SELECT ev.id, ev.source_id, ev.analysis_file_id, af.relative_path, ev.line_start, ev.line_end, ev.excerpt,
-                       ev.evidence_kind, ev.excerpt_hash, ev.fact_origin, ev.flow_domain
-                FROM analysis_graph_edges edge
-                JOIN analysis_graph_edge_evidence link ON link.edge_id = edge.id
-                JOIN analysis_graph_evidence ev
-                  ON ev.source_id = edge.source_id
-                 AND ev.id = link.evidence_id
-                LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
-                WHERE edge.source_id = ?
-                  AND edge.id IN ({placeholders})
-                ORDER BY ev.id
-                LIMIT 200
-                """,
-                [source_id, *ids],
-            ).fetchall()
-            result.extend(self._evidence_projection(rows))
-        if node_ids:
-            ids = sorted(node_ids)
-            placeholders = ",".join("?" for _ in ids)
-            rows = conn.execute(
-                f"""
-                SELECT ev.id, ev.source_id, ev.analysis_file_id, af.relative_path, ev.line_start, ev.line_end, ev.excerpt,
-                       ev.evidence_kind, ev.excerpt_hash, ev.fact_origin, ev.flow_domain
-                FROM analysis_graph_claims claim
-                JOIN analysis_graph_claim_evidence link ON link.claim_id = claim.id
-                JOIN analysis_graph_evidence ev
-                  ON ev.source_id = claim.source_id
-                 AND ev.id = link.evidence_id
-                LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
-                WHERE claim.source_id = ?
-                  AND claim.node_id IN ({placeholders})
-                ORDER BY ev.id
-                LIMIT 200
-                """,
-                [source_id, *ids],
-            ).fetchall()
-            result.extend(self._evidence_projection(rows))
-        return result
-
-    def _query_flow_path_evidence(
-        self,
-        conn: sqlite3.Connection,
-        source_id: str,
-        node_ids: Set[str],
-        edge_ids: Set[str],
-        limit: int,
-    ) -> List[Dict[str, Any]]:
-        if limit <= 0:
-            return []
-        result: List[Dict[str, Any]] = []
-        if edge_ids:
-            ids = sorted(edge_ids)
-            placeholders = ",".join("?" for _ in ids)
-            rows = conn.execute(
-                f"""
-                WITH ranked_edge_evidence AS (
-                    SELECT ev.id,
-                           ev.source_id,
-                           ev.analysis_file_id,
-                           COALESCE(af.relative_path, ev.relative_path) AS relative_path,
-                           ev.line_start,
-                           ev.line_end,
-                           ev.excerpt,
-                           ev.evidence_kind,
-                           ev.excerpt_hash,
-                           ev.fact_origin,
-                           ev.flow_domain,
-                           edge.id AS edge_id,
-                           NULL AS node_id,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY edge.id
-                               ORDER BY COALESCE(af.relative_path, ev.relative_path), ev.line_start, ev.line_end, ev.id
-                           ) AS evidence_rank
-                    FROM analysis_graph_edges edge
-                    JOIN analysis_graph_edge_evidence link ON link.edge_id = edge.id
-                    JOIN analysis_graph_evidence ev
-                      ON ev.source_id = edge.source_id
-                     AND ev.id = link.evidence_id
-                    LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
-                    WHERE edge.source_id = ?
-                      AND edge.id IN ({placeholders})
-                )
-                SELECT id, source_id, analysis_file_id, relative_path, line_start, line_end, excerpt,
-                       evidence_kind, excerpt_hash, fact_origin, flow_domain, edge_id, node_id
-                FROM ranked_edge_evidence
-                WHERE evidence_rank = 1
-                ORDER BY relative_path, line_start, line_end, edge_id, id
-                LIMIT ?
-                """,
-                [source_id, *ids, limit],
-            ).fetchall()
-            result.extend(self._linked_evidence_projection(rows))
-        remaining = limit - len(result)
-        if remaining > 0 and node_ids:
-            ids = sorted(node_ids)
-            placeholders = ",".join("?" for _ in ids)
-            rows = conn.execute(
-                f"""
-                SELECT ev.id, ev.source_id, ev.analysis_file_id, af.relative_path, ev.line_start, ev.line_end, ev.excerpt,
-                       ev.evidence_kind, ev.excerpt_hash, ev.fact_origin, ev.flow_domain,
-                       NULL AS edge_id, claim.node_id AS node_id
-                FROM analysis_graph_claims claim
-                JOIN analysis_graph_claim_evidence link ON link.claim_id = claim.id
-                JOIN analysis_graph_evidence ev
-                  ON ev.source_id = claim.source_id
-                 AND ev.id = link.evidence_id
-                LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
-                WHERE claim.source_id = ?
-                  AND claim.node_id IN ({placeholders})
-                ORDER BY ev.id
-                LIMIT ?
-                """,
-                [source_id, *ids, remaining],
-            ).fetchall()
-            result.extend(self._linked_evidence_projection(rows))
-        return result
-
     def _linked_evidence_projection(self, rows: List[sqlite3.Row]) -> List[Dict[str, Any]]:
         result = []
         for row in rows:
@@ -3275,27 +2525,6 @@ class AnalysisStore:
             seen.add(key)
             result.append(item)
         return result
-
-    def _verified_paths_from_evidence(self, evidence: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        paths: List[Dict[str, Any]] = []
-        seen: Set[str] = set()
-        for item in evidence:
-            relative_path = item.get("relativePath")
-            if not relative_path:
-                continue
-            key = f"{item.get('sourceId')}:{relative_path}"
-            if key in seen:
-                continue
-            seen.add(key)
-            paths.append(
-                {
-                    "sourceId": item.get("sourceId"),
-                    "relativePath": relative_path,
-                    "lineStart": item.get("lineStart"),
-                    "lineEnd": item.get("lineEnd"),
-                }
-            )
-        return paths
 
     def graph_metadata(self, source_id: Optional[str]) -> Dict[str, Any]:
         self.init()
@@ -3845,6 +3074,21 @@ class AnalysisStore:
             WHERE f_current.source_id = {alias}.source_id
               AND f_current.relative_path = {alias}.relative_path
               AND f_current.content_hash = {alias}.content_hash
+        )
+        """
+
+    def _inventory_flow_domain_sql(self, alias: str) -> str:
+        return f"""
+        COALESCE(
+            (
+                SELECT f_scope.flow_domain
+                FROM files f_scope
+                WHERE f_scope.source_id = {alias}.source_id
+                  AND f_scope.relative_path = {alias}.relative_path
+                  AND f_scope.content_hash = {alias}.content_hash
+                LIMIT 1
+            ),
+            {alias}.flow_domain
         )
         """
 
@@ -4422,7 +3666,7 @@ class AnalysisStore:
             "qualifiedName": row.get("qualified_name"),
             "relativePath": row.get("relative_path"),
             "sourceId": row.get("source_id"),
-            "flowDomain": row.get("flow_domain"),
+            "flowDomain": row.get("effective_flow_domain") or row.get("flow_domain"),
             "factOrigin": row.get("fact_origin"),
             "lineStart": row.get("line_start"),
             "lineEnd": row.get("line_end"),
