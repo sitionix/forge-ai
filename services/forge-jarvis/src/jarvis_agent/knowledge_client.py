@@ -44,9 +44,6 @@ class KnowledgeClient:
         self._validate_base_url()
 
     async def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return await self._post("/api/v1/knowledge/query", payload)
-
-    async def query_flow_explanations(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return await self._post(
             "/api/v1/knowledge/query",
             payload,

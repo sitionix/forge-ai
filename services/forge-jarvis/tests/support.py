@@ -124,22 +124,14 @@ class FakeModelClient:
 
 class FakeKnowledgeClient:
     def __init__(self, *, bundle: Optional[Dict[str, Any]] = None, error: Optional[Exception] = None) -> None:
-        self.bundle = bundle if bundle is not None else knowledge_query_bundle()
+        self.bundle = bundle if bundle is not None else human_answer_bundle()
         self.error = error
         self.calls: List[Dict[str, Any]] = []
-        self.flow_explanation_calls: List[Dict[str, Any]] = []
         self.paths: List[str] = []
 
     async def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         self.paths.append("/api/v1/knowledge/query")
         self.calls.append(dict(payload))
-        if self.error:
-            raise self.error
-        return self.bundle
-
-    async def query_flow_explanations(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        self.paths.append("/api/v1/knowledge/query")
-        self.flow_explanation_calls.append(dict(payload))
         if self.error:
             raise self.error
         return self.bundle
@@ -157,81 +149,6 @@ class RecordingActionExecutor:
         if self.fail:
             raise ActionExecutionError("controlled failure")
         return ExecutionResult(executed=True, message=f"Action executed: {intent.action}.{intent.target}", output="ok")
-
-
-def knowledge_query_bundle(
-    *,
-    status: str = "OK",
-    intent: str = "UNKNOWN",
-    matched_nodes: Optional[List[Dict[str, Any]]] = None,
-    flows: Optional[List[Dict[str, Any]]] = None,
-    nodes: Optional[List[Dict[str, Any]]] = None,
-    edges: Optional[List[Dict[str, Any]]] = None,
-    evidence: Optional[List[Dict[str, Any]]] = None,
-    flow_explanations: Optional[List[Dict[str, Any]]] = None,
-    diagnostics: Optional[List[Dict[str, str]]] = None,
-) -> Dict[str, Any]:
-    return {
-        "queryId": "query-test",
-        "status": status,
-        "intent": intent,
-        "matchedSources": [
-            {
-                "sourceId": "forge-ai",
-                "displayName": "Forge AI",
-                "score": 0.95,
-            }
-        ]
-        if status != "NO_CANDIDATES"
-        else [],
-        "matchedNodes": matched_nodes
-        if matched_nodes is not None
-        else []
-        if status == "NO_CANDIDATES"
-        else [
-            {
-                "sourceId": "forge-ai",
-                "nodeKind": "CALLABLE",
-                "label": "JarvisGateway",
-                "score": 0.95,
-                "matchReasons": ["NAME_MATCH"],
-                "relativePath": "src/JarvisGateway.java",
-            }
-        ],
-        "flows": flows
-        if flows is not None
-        else []
-        if status == "NO_CANDIDATES"
-        else [
-            {
-                "flowIndex": 1,
-                "source": "forge-ai",
-                "entrypoint": {"nodeRef": "n1", "label": "JarvisGateway", "kind": "CALLABLE"},
-                "entrypointOrigin": "EXPLICIT_GRAPH_FACT",
-                "matchedAnchors": [{"anchorRef": "n1", "label": "JarvisGateway", "score": 0.95, "distance": 0, "matchReasons": ["NAME_MATCH"]}],
-                "nodes": nodes if nodes is not None else [{"nodeRef": "n1", "label": "JarvisGateway", "kind": "CALLABLE"}],
-                "transitions": edges if edges is not None else [],
-                "boundaries": [],
-                "evidence": [],
-                "complete": True,
-                "coverage": {"nodeCount": 1, "transitionCount": 0, "boundaryCount": 0, "anchorCount": 1, "maxDepthReached": 0, "cycleDetected": False, "truncated": False},
-                "diagnostics": [],
-            }
-        ],
-        "coverage": {
-            "searchedSourceCount": 1,
-            "matchedSourceCount": 0 if status == "NO_CANDIDATES" else 1,
-            "matchedNodeCount": 0 if status == "NO_CANDIDATES" else 1,
-            "flowCount": 0 if status == "NO_CANDIDATES" else 1,
-            "nodeCount": 0 if status == "NO_CANDIDATES" else 1,
-            "edgeCount": 0,
-            "evidenceCount": len(evidence or []),
-            "truncated": False,
-            "continuationAvailable": False,
-        },
-        "flowExplanations": flow_explanations or [],
-        "diagnostics": diagnostics or [],
-    }
 
 
 def human_answer_bundle(

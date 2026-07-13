@@ -15,6 +15,7 @@ import com.sitionix.forgeai.api.proxy.InfrastructureProxyTransport;
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
@@ -59,7 +60,7 @@ class ForgeAiInfrastructureJarvisControllerTest {
 
     @Test
     void querySerializesMinimalRequestAndDelegatesToGenericProxyRoute() {
-        this.stub("{\"queryId\":\"q1\",\"status\":\"OK\",\"intent\":\"UNKNOWN\",\"matchedSources\":[]}");
+        this.stub("{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
         final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
                 "JarvisGateway",
                 null,
@@ -105,8 +106,8 @@ class ForgeAiInfrastructureJarvisControllerTest {
     }
 
     @Test
-    void queryPreservesSuccessfulFactualBundleBytes() throws Exception {
-        final String response = "{\"queryId\":\"q1\",\"status\":\"OK\",\"intent\":\"UNKNOWN\",\"matchedSources\":[]}";
+    void queryPreservesSuccessfulHumanAnswerBytes() throws Exception {
+        final String response = "{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}";
         this.stub(response);
 
         final ResponseEntity<byte[]> result = this.controller.query(
@@ -116,8 +117,12 @@ class ForgeAiInfrastructureJarvisControllerTest {
         ).join();
         final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
 
-        assertThat(body.get("queryId")).isEqualTo("q1");
-        assertThat(body.get("status")).isEqualTo("OK");
+        assertThat(body.get("answerLanguage")).isEqualTo("uk");
+        assertThat(body.containsKey("queryId")).isFalse();
+        assertThat(body.containsKey("status")).isFalse();
+        assertThat(body.containsKey("matchedNodes")).isFalse();
+        assertThat(body.containsKey("flows")).isFalse();
+        assertThat((List<?>) body.get("answers")).hasSize(1);
     }
 
     @Test

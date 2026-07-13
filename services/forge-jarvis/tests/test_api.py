@@ -13,13 +13,41 @@ from support import (
     flow_query_payload,
     human_answer_bundle,
     knowledge_bad_response,
-    knowledge_query_bundle,
     knowledge_unavailable,
     normalized_query_payload,
     ollama_unavailable,
     query_payload,
     write_runtime_config,
 )
+
+
+GRAPH_BUNDLE_FIELDS = {
+    "status",
+    "queryId",
+    "intent",
+    "matchedSources",
+    "matchedNodes",
+    "flows",
+    "flowExplanations",
+    "coverage",
+    "nodes",
+    "transitions",
+    "boundaries",
+}
+
+
+def assert_compact_human_response(body, *, answer_language="uk", entrypoint="JarvisGateway") -> None:
+    assert set(body) == {"answerLanguage", "answers", "diagnostics"}
+    assert body["answerLanguage"] == answer_language
+    assert body["answers"] == [
+        {
+            "source": "forge-ai",
+            "entrypoint": entrypoint,
+            "text": "JarvisGateway handles the request.",
+        }
+    ]
+    assert body["diagnostics"] == []
+    assert not (GRAPH_BUNDLE_FIELDS & set(body))
 
 
 def test_health_endpoint(tmp_path) -> None:
@@ -175,56 +203,47 @@ def test_query_rejects_invalid_optional_controls(tmp_path, payload) -> None:
     assert response.status_code == 422
 
 
-def test_query_calls_knowledge_gateway(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("payload", "expected_payload"),
+    [
+        (query_payload(" explain JarvisGateway "), normalized_query_payload("explain JarvisGateway")),
+        (
+            {"queryText": " explain JarvisGateway ", "intent": "UNKNOWN", "answerLanguage": "uk", "includeTests": False},
+            normalized_query_payload("explain JarvisGateway", intent="UNKNOWN", answer_language="uk", include_tests=False, max_flows=10),
+        ),
+        (
+            {"queryText": " explain JarvisGateway ", "intent": "COMPONENT_USAGE", "answerLanguage": "uk", "includeTests": False},
+            normalized_query_payload("explain JarvisGateway", intent="COMPONENT_USAGE", answer_language="uk", include_tests=False, max_flows=10),
+        ),
+        (
+            {"queryText": " explain JarvisGateway ", "intent": "COMPONENT_RESPONSIBILITY", "answerLanguage": "uk", "includeTests": False},
+            normalized_query_payload("explain JarvisGateway", intent="COMPONENT_RESPONSIBILITY", answer_language="uk", include_tests=False, max_flows=10),
+        ),
+        (
+            {"queryText": " explain JarvisGateway ", "intent": "CODE_LOCATION", "answerLanguage": "uk", "includeTests": False},
+            normalized_query_payload("explain JarvisGateway", intent="CODE_LOCATION", answer_language="uk", include_tests=False, max_flows=10),
+        ),
+        (
+            {"queryText": " explain JarvisGateway ", "intent": "ARCHITECTURE_OVERVIEW", "answerLanguage": "uk", "includeTests": False},
+            normalized_query_payload("explain JarvisGateway", intent="ARCHITECTURE_OVERVIEW", answer_language="uk", include_tests=False, max_flows=10),
+        ),
+        (
+            flow_query_payload(" explain JarvisGateway "),
+            normalized_query_payload("explain JarvisGateway", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=10),
+        ),
+    ],
+)
+def test_query_intents_call_knowledge_human_endpoint_once(tmp_path, payload, expected_payload) -> None:
     knowledge = FakeKnowledgeClient()
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json=query_payload(" explain JarvisGateway "))
+        response = client.post("/api/v1/jarvis/query", json=payload)
 
     assert response.status_code == 200
-    assert knowledge.calls == [normalized_query_payload("explain JarvisGateway")]
-    assert response.json()["matchedNodes"][0]["sourceId"] == "forge-ai"
-
-
-def test_flow_explanation_query_calls_knowledge_flow_endpoint_once(tmp_path) -> None:
-    knowledge = FakeKnowledgeClient(
-        bundle=human_answer_bundle(
-            text="Сайт створюється через SiteController.createSite.",
-            sources=[{"source": "stsssox", "entrypoint": "SiteController.createSite"}],
-        )
-    )
-    app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
-
-    with TestClient(app) as client:
-        response = client.post("/api/v1/jarvis/query", json=flow_query_payload(" SiteController createSite "))
-
-    assert response.status_code == 200
-    expected_payload = normalized_query_payload(
-        "SiteController createSite",
-        intent="FLOW_EXPLANATION",
-        answer_language="uk",
-        include_tests=False,
-        max_flows=10,
-    )
     assert knowledge.calls == [expected_payload]
-    assert knowledge.flow_explanation_calls == []
     assert knowledge.paths == ["/api/v1/knowledge/query"]
-    body = response.json()
-    assert body == {
-        "answerLanguage": "uk",
-        "answers": [
-            {
-                "source": "stsssox",
-                "entrypoint": "SiteController.createSite",
-                "text": "Сайт створюється через SiteController.createSite.",
-            }
-        ],
-        "diagnostics": [],
-    }
-    assert "status" not in body
-    assert "flows" not in body
-    assert "flowExplanations" not in body
+    assert_compact_human_response(response.json())
 
 
 def test_flow_explanation_generation_failure_preserves_upstream_error(tmp_path) -> None:
@@ -250,7 +269,6 @@ def test_flow_explanation_generation_failure_preserves_upstream_error(tmp_path) 
     assert knowledge.calls == [
         normalized_query_payload("JarvisGateway", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=10)
     ]
-    assert knowledge.flow_explanation_calls == []
     assert knowledge.paths == ["/api/v1/knowledge/query"]
 
 
@@ -298,7 +316,7 @@ def test_flow_explanation_response_preserves_multiple_answers_and_diagnostics(tm
 
 
 def test_flow_explanation_malformed_knowledge_response_maps_to_controlled_error(tmp_path) -> None:
-    knowledge = FakeKnowledgeClient(bundle={"answerLanguage": "uk", "answer": {"text": "ok"}, "status": "OK", "sources": [], "diagnostics": []})
+    knowledge = FakeKnowledgeClient(bundle={"answerLanguage": "uk", "answers": [{"source": "forge-ai"}], "diagnostics": []})
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
@@ -309,7 +327,6 @@ def test_flow_explanation_malformed_knowledge_response_maps_to_controlled_error(
     assert knowledge.calls == [
         normalized_query_payload("JarvisGateway", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=10)
     ]
-    assert knowledge.flow_explanation_calls == []
     assert knowledge.paths == ["/api/v1/knowledge/query"]
 
 
@@ -325,38 +342,37 @@ def test_query_does_not_call_ollama_generation(tmp_path) -> None:
     assert model.health_calls == 0
 
 
-def test_query_response_preserves_factual_bundle(tmp_path) -> None:
+def test_query_response_preserves_human_contract(tmp_path) -> None:
     app, *_ = build_test_app(write_runtime_config(tmp_path))
 
     with TestClient(app) as client:
         response = client.post("/api/v1/jarvis/query", json=query_payload("explain JarvisGateway"))
 
-    body = response.json()
-    assert body["status"] == "OK"
-    assert body["matchedSources"][0]["sourceId"] == "forge-ai"
-    assert body["matchedNodes"][0]["label"] == "JarvisGateway"
-    assert body["flows"][0]["flowIndex"] == 1
-    assert body["flows"][0]["entrypoint"]["label"] == "JarvisGateway"
-    assert body["flows"][0]["transitions"] == []
-    assert "answer" not in body
+    assert response.status_code == 200
+    assert_compact_human_response(response.json())
 
 
-def test_query_no_candidates_preserves_controlled_response(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("status_code", "body"),
+    [
+        (404, {"code": "NO_GROUNDED_GRAPH_CANDIDATES", "message": "No grounded graph candidates were found."}),
+        (502, {"code": "HUMAN_ANSWER_GENERATION_FAILED", "message": "The local model could not produce any grounded flow answers."}),
+        (504, {"code": "HUMAN_ANSWER_GENERATION_TIMEOUT", "message": "The local model timed out while generating grounded flow answers."}),
+    ],
+)
+def test_query_preserves_controlled_knowledge_error(tmp_path, status_code, body) -> None:
     knowledge = FakeKnowledgeClient(
-        bundle=knowledge_query_bundle(
-            status="NO_CANDIDATES", matched_nodes=[], flows=[], nodes=[], diagnostics=[{"code": "NO_GRAPH_CANDIDATES", "message": "No graph candidates"}]
-        )
+        error=KnowledgeUpstreamResponseError(status_code, body)
     )
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:
         response = client.post("/api/v1/jarvis/query", json=query_payload("unknown"))
 
-    body = response.json()
-    assert body["status"] == "NO_CANDIDATES"
-    assert body["matchedNodes"] == []
-    assert body["flows"] == []
-    assert any(diagnostic["code"] == "NO_GRAPH_CANDIDATES" for diagnostic in body["diagnostics"])
+    assert response.status_code == status_code
+    assert response.json() == body
+    assert knowledge.calls == [normalized_query_payload("unknown")]
+    assert knowledge.paths == ["/api/v1/knowledge/query"]
 
 
 def test_query_maps_knowledge_unavailable_to_controlled_error(tmp_path) -> None:
@@ -387,7 +403,8 @@ def test_query_does_not_execute_actions(tmp_path) -> None:
     with TestClient(app) as client:
         response = client.post("/api/v1/jarvis/query", json=query_payload("explain JarvisGateway"))
 
-    assert response.json()["status"] == "OK"
+    assert response.status_code == 200
+    assert_compact_human_response(response.json())
     assert executor.invocations == []
 
 
@@ -396,7 +413,7 @@ def test_non_localhost_knowledge_base_url_rejected() -> None:
         KnowledgeClient("http://example.com:7081", 120)
 
 
-def test_flow_explanation_client_uses_timeout_beyond_normal_knowledge_boundary() -> None:
+def test_query_client_uses_human_timeout_beyond_normal_knowledge_boundary() -> None:
     async def exercise():
         calls = []
 
@@ -419,7 +436,7 @@ def test_flow_explanation_client_uses_timeout_beyond_normal_knowledge_boundary()
             http_client=http_client,
         )
         try:
-            result = await client.query_flow_explanations(flow_query_payload("JarvisGateway"))
+            result = await client.query(flow_query_payload("JarvisGateway"))
         finally:
             await client.aclose()
         return result, calls

@@ -64,7 +64,7 @@ class InfrastructureProxyTransportTest {
     }
 
     @Test
-    void jarvisQueryRouteRequestTimeoutExceedsJarvisKnowledgeFlowTimeout() {
+    void jarvisQueryRouteRequestTimeoutExceedsKnowledgeHumanQueryTimeout() {
         final HttpClient httpClient = mock(HttpClient.class);
         final CompletableFuture<HttpResponse<InputStream>> upstream = new CompletableFuture<>();
         when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))

@@ -23,7 +23,7 @@ from jarvis_agent.observability import (
     track_dependency,
 )
 from jarvis_agent.ollama_client import OllamaBadResponseError, OllamaUnavailableError
-from jarvis_agent.query_schema import JarvisQueryRequest, JarvisQueryResponse
+from jarvis_agent.query_schema import JarvisHumanAnswerResponse, JarvisQueryRequest
 from jarvis_agent.query_service import JarvisQueryService
 from jarvis_agent.security import SecurityError
 
@@ -140,7 +140,7 @@ def create_app(
 
         return CommandResponse(input=text, intent=intent, execution=execution)
 
-    @app.post("/api/v1/jarvis/query", response_model=JarvisQueryResponse)
+    @app.post("/api/v1/jarvis/query", response_model=JarvisHumanAnswerResponse)
     async def query(request: Request, body: JarvisQueryRequest):
         _, deps = _state(request)
         logging.getLogger("jarvis_agent").info("knowledge query received")

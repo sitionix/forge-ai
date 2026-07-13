@@ -1,17 +1,9 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, StrictBool, validator
-
-
-class JarvisQueryStatus(str, Enum):
-    OK = "OK"
-    NO_CANDIDATES = "NO_CANDIDATES"
-    AMBIGUOUS = "AMBIGUOUS"
-    INVALID_REQUEST = "INVALID_REQUEST"
-    QUERY_FAILED = "QUERY_FAILED"
 
 
 class JarvisQueryIntent(str, Enum):
@@ -21,16 +13,6 @@ class JarvisQueryIntent(str, Enum):
     CODE_LOCATION = "CODE_LOCATION"
     ARCHITECTURE_OVERVIEW = "ARCHITECTURE_OVERVIEW"
     UNKNOWN = "UNKNOWN"
-
-
-class JarvisEntrypointOrigin(str, Enum):
-    EXPLICIT_GRAPH_FACT = "EXPLICIT_GRAPH_FACT"
-    INFERRED_ROOT = "INFERRED_ROOT"
-
-
-class JarvisFlowExplanationStatus(str, Enum):
-    OK = "OK"
-    FAILED = "FAILED"
 
 
 class JarvisQueryRequest(BaseModel):
@@ -92,142 +74,6 @@ class JarvisQueryDiagnostic(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-class JarvisFlowNode(BaseModel):
-    nodeRef: str
-    label: str
-    kind: str
-    qualifiedName: Optional[str] = None
-    relativePath: Optional[str] = None
-    lineStart: Optional[int] = None
-    lineEnd: Optional[int] = None
-
-
-class JarvisFlowOrigin(BaseModel):
-    anchorRef: str
-    label: str
-    score: float
-    distance: int
-    matchReasons: List[str] = Field(default_factory=list)
-
-
-class JarvisFlowTransition(BaseModel):
-    transitionRef: str
-    fromNodeRef: str
-    toNodeRef: str
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class JarvisFlowBoundary(BaseModel):
-    boundaryRef: str
-    fromNodeRef: str
-    kind: str
-    resolutionStatus: str
-    target: Optional[str] = None
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class JarvisFlowEvidence(BaseModel):
-    evidenceRef: str
-    ownerRef: str
-    relativePath: Optional[str] = None
-    lineStart: Optional[int] = None
-    lineEnd: Optional[int] = None
-    excerpt: Optional[str] = None
-
-
-class JarvisFlowCoverage(BaseModel):
-    nodeCount: int = 0
-    transitionCount: int = 0
-    boundaryCount: int = 0
-    anchorCount: int = 0
-    maxDepthReached: int = 0
-    cycleDetected: bool = False
-    truncated: bool = False
-
-
-class JarvisKnowledgeFlow(BaseModel):
-    flowIndex: int
-    source: str
-    entrypoint: JarvisFlowNode
-    entrypointOrigin: JarvisEntrypointOrigin
-    matchedAnchors: List[JarvisFlowOrigin] = Field(default_factory=list)
-    nodes: List[JarvisFlowNode] = Field(default_factory=list)
-    transitions: List[JarvisFlowTransition] = Field(default_factory=list)
-    boundaries: List[JarvisFlowBoundary] = Field(default_factory=list)
-    evidence: List[JarvisFlowEvidence] = Field(default_factory=list)
-    complete: bool = True
-    coverage: JarvisFlowCoverage = Field(default_factory=JarvisFlowCoverage)
-    diagnostics: List[JarvisQueryDiagnostic] = Field(default_factory=list)
-
-
-class JarvisFlowExplanationNarrative(BaseModel):
-    text: str
-    nodeRefs: List[str] = Field(default_factory=list)
-    transitionRefs: List[str] = Field(default_factory=list)
-    boundaryRefs: List[str] = Field(default_factory=list)
-
-
-class JarvisFlowExplanationStep(BaseModel):
-    nodeRef: str
-    nodeLabel: str
-    explanation: Optional[str] = None
-    transitionRefs: List[str] = Field(default_factory=list)
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class JarvisFlowExplanationTransition(BaseModel):
-    transitionRef: str
-    explanation: Optional[str] = None
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class JarvisFlowExplanationBoundary(BaseModel):
-    boundaryRef: str
-    fromNodeRef: str
-    kind: str
-    resolutionStatus: str
-    target: Optional[str] = None
-    explanation: Optional[str] = None
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class JarvisFlowExplanation(BaseModel):
-    flowIndex: int
-    title: str = ""
-    narrative: List[JarvisFlowExplanationNarrative] = Field(default_factory=list)
-    steps: List[JarvisFlowExplanationStep] = Field(default_factory=list)
-    transitionExplanations: List[JarvisFlowExplanationTransition] = Field(default_factory=list)
-    boundaries: List[JarvisFlowExplanationBoundary] = Field(default_factory=list)
-    status: JarvisFlowExplanationStatus = JarvisFlowExplanationStatus.OK
-
-
-class JarvisQueryCoverage(BaseModel):
-    searchedSourceCount: int = 0
-    matchedSourceCount: int = 0
-    matchedNodeCount: int = 0
-    flowCount: int = 0
-    nodeCount: int = 0
-    edgeCount: int = 0
-    evidenceCount: int = 0
-    truncated: bool = False
-    continuationAvailable: bool = False
-
-
-class JarvisKnowledgeQueryResponse(BaseModel):
-    queryId: str
-    status: JarvisQueryStatus
-    intent: str
-    matchedSources: List[Dict[str, Any]] = Field(default_factory=list)
-    matchedNodes: List[Dict[str, Any]] = Field(default_factory=list)
-    flows: List[JarvisKnowledgeFlow] = Field(default_factory=list)
-    flowExplanations: List[JarvisFlowExplanation] = Field(default_factory=list)
-    coverage: JarvisQueryCoverage = Field(default_factory=JarvisQueryCoverage)
-    diagnostics: List[JarvisQueryDiagnostic] = Field(default_factory=list)
-
-    class Config:
-        extra = "forbid"
-
-
 class JarvisFlowAnswer(BaseModel):
     source: str
     entrypoint: str
@@ -244,6 +90,3 @@ class JarvisHumanAnswerResponse(BaseModel):
 
     class Config:
         extra = "forbid"
-
-
-JarvisQueryResponse = Union[JarvisHumanAnswerResponse, JarvisKnowledgeQueryResponse]

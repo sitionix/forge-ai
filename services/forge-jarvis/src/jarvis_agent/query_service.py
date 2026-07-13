@@ -7,10 +7,7 @@ from pydantic import ValidationError
 from jarvis_agent.knowledge_client import KnowledgeBadResponseError
 from jarvis_agent.query_schema import (
     JarvisHumanAnswerResponse,
-    JarvisKnowledgeQueryResponse,
-    JarvisQueryIntent,
     JarvisQueryRequest,
-    JarvisQueryResponse,
 )
 
 
@@ -22,7 +19,7 @@ class JarvisQueryService:
     def __init__(self, knowledge_gateway: KnowledgeQueryGateway) -> None:
         self.knowledge_gateway = knowledge_gateway
 
-    async def query(self, request: JarvisQueryRequest) -> JarvisQueryResponse:
+    async def query(self, request: JarvisQueryRequest) -> JarvisHumanAnswerResponse:
         payload = {
             "queryText": request.queryText,
             "intent": request.intent.value,
@@ -30,15 +27,8 @@ class JarvisQueryService:
             "includeTests": request.includeTests,
             "maxFlows": request.maxFlows,
         }
-        if request.intent == JarvisQueryIntent.FLOW_EXPLANATION:
-            bundle = await self.knowledge_gateway.query(payload)
-            try:
-                return JarvisHumanAnswerResponse.parse_obj(bundle)
-            except ValidationError as exc:
-                raise KnowledgeBadResponseError("Knowledge returned a malformed query response") from exc
-        else:
-            bundle = await self.knowledge_gateway.query(payload)
+        bundle = await self.knowledge_gateway.query(payload)
         try:
-            return JarvisKnowledgeQueryResponse.parse_obj(bundle)
+            return JarvisHumanAnswerResponse.parse_obj(bundle)
         except ValidationError as exc:
             raise KnowledgeBadResponseError("Knowledge returned a malformed query response") from exc
