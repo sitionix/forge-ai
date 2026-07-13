@@ -10,9 +10,11 @@ from knowledge_service.flow_graph_contract import (
     FlowEdgeKey,
     FlowGraphEdge,
     FlowGraphEvidence,
+    FlowGraphEvidenceKey,
     FlowGraphNode,
     FlowNodeKey,
     dedupe_evidence,
+    evidence_key,
 )
 from knowledge_service.flow_boundary_classifier import FlowBoundaryClassifier, FLOW_BOUNDARY_CLASSIFIER
 from knowledge_service.knowledge_query_schema import (
@@ -460,7 +462,7 @@ class EntrypointFlowEngine:
         node_ref_by_id = {node.node_id: f"n{position}" for position, node in enumerate(flow.nodes, start=1)}
         transition_ref_by_id = {edge.edge_id: f"t{position}" for position, edge in enumerate(flow.transitions, start=1)}
         boundary_ref_by_id = {edge.edge_id: f"b{position}" for position, edge in enumerate(flow.boundary_transitions, start=1)}
-        evidence_ref_by_id = {item.evidence_id: f"e{position}" for position, item in enumerate(flow.evidence, start=1)}
+        evidence_ref_by_key = {evidence_key(item): f"e{position}" for position, item in enumerate(flow.evidence, start=1)}
         public_nodes = [self._public_node(node, node_ref_by_id[node.node_id]) for node in flow.nodes]
         public_evidence: list[KnowledgeQueryFlowEvidence] = []
         for item in flow.evidence:
@@ -472,7 +474,7 @@ class EntrypointFlowEngine:
             if not owner_ref:
                 continue
             public_evidence.append(KnowledgeQueryFlowEvidence(
-                evidenceRef=evidence_ref_by_id[item.evidence_id],
+                evidenceRef=evidence_ref_by_key[evidence_key(item)],
                 ownerRef=owner_ref,
                 relativePath=item.relative_path,
                 lineStart=item.line_start,
@@ -501,13 +503,13 @@ class EntrypointFlowEngine:
                     transitionRef=transition_ref_by_id[edge.edge_id],
                     fromNodeRef=node_ref_by_id[edge.from_node_id],
                     toNodeRef=node_ref_by_id[edge.to_node_id or ""],
-                    evidenceRefs=[evidence_ref_by_id[item] for item in edge.evidence_ids if item in evidence_ref_by_id],
+                    evidenceRefs=self._public_edge_evidence_refs(edge, flow.evidence, evidence_ref_by_key),
                 )
                 for edge in flow.transitions
                 if edge.from_node_id in node_ref_by_id and (edge.to_node_id or "") in node_ref_by_id
             ],
             boundaries=[
-                self._public_boundary(edge, boundary_ref_by_id[edge.edge_id], node_ref_by_id, evidence_ref_by_id)
+                self._public_boundary(edge, boundary_ref_by_id[edge.edge_id], node_ref_by_id, flow.evidence, evidence_ref_by_key)
                 for edge in flow.boundary_transitions
                 if edge.from_node_id in node_ref_by_id
             ],
@@ -562,7 +564,8 @@ class EntrypointFlowEngine:
         edge: FlowGraphEdge,
         boundary_ref: str,
         node_ref_by_id: dict[str, str],
-        evidence_ref_by_id: dict[str, str],
+        evidence: Sequence[FlowGraphEvidence],
+        evidence_ref_by_key: dict[FlowGraphEvidenceKey, str],
     ) -> KnowledgeQueryFlowBoundary:
         projection = self.boundary_classifier.project(edge)
         return KnowledgeQueryFlowBoundary(
@@ -571,8 +574,26 @@ class EntrypointFlowEngine:
             kind=projection.kind.value,
             resolutionStatus=projection.resolution_status,
             target=projection.target,
-            evidenceRefs=[evidence_ref_by_id[item] for item in edge.evidence_ids if item in evidence_ref_by_id],
+            evidenceRefs=self._public_edge_evidence_refs(edge, evidence, evidence_ref_by_key),
         )
+
+    def _public_edge_evidence_refs(
+        self,
+        edge: FlowGraphEdge,
+        evidence: Sequence[FlowGraphEvidence],
+        evidence_ref_by_key: dict[FlowGraphEvidenceKey, str],
+    ) -> list[str]:
+        refs: list[str] = []
+        linked_evidence_ids = set(edge.evidence_ids)
+        for item in evidence:
+            if item.edge_id != edge.edge_id:
+                continue
+            if linked_evidence_ids and item.evidence_id not in linked_evidence_ids:
+                continue
+            ref = evidence_ref_by_key.get(evidence_key(item))
+            if ref and ref not in refs:
+                refs.append(ref)
+        return refs
 
     def _candidate_sort_key(self, item):
         (key, origin), anchors = item

@@ -16,7 +16,7 @@ from knowledge_service.config import (
 )
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow
 from knowledge_service.flow_boundary_classifier import FlowBoundaryClassifier, FLOW_BOUNDARY_CLASSIFIER
-from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
+from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphEvidenceKey, FlowGraphNode, evidence_key
 from knowledge_service.knowledge_query_schema import (
     FlowExplanation,
     FlowExplanationBoundary,
@@ -203,11 +203,11 @@ class FlowExplanationContextPacker:
         source_display_name: str | None,
     ) -> PackedFlowContext:
         evidence_by_ref: Dict[str, FlowGraphEvidence] = {}
-        evidence_ref_by_id: Dict[str, str] = {}
+        evidence_ref_by_key: Dict[FlowGraphEvidenceKey, str] = {}
         for index, evidence in enumerate(flow.evidence, start=1):
             ref = f"e{index}"
             evidence_by_ref[ref] = evidence
-            evidence_ref_by_id[evidence.evidence_id] = ref
+            evidence_ref_by_key[evidence_key(evidence)] = ref
 
         nodes = list(flow.nodes)
         node_ref_by_id = {node.node_id: f"n{index}" for index, node in enumerate(nodes, start=1)}
@@ -215,7 +215,7 @@ class FlowExplanationContextPacker:
         transitions: List[Dict[str, Any]] = []
         for node in nodes:
             node_ref = node_ref_by_id[node.node_id]
-            step_refs = self._step_refs(node, flow.evidence, evidence_ref_by_id)
+            step_refs = self._step_refs(node, flow.evidence, evidence_ref_by_key)
             step: Dict[str, Any] = {
                 "nodeRef": node_ref,
                 "symbol": self._symbol(node),
@@ -235,7 +235,7 @@ class FlowExplanationContextPacker:
         for transition_index, edge in enumerate(flow.transitions, start=1):
             from_node = nodes_by_id[edge.from_node_id]
             to_node = nodes_by_id[edge.to_node_id or ""]
-            call_refs = self._edge_refs(edge, flow.evidence, evidence_ref_by_id)
+            call_refs = self._edge_refs(edge, flow.evidence, evidence_ref_by_key)
             transitions.append({
                 "transitionRef": f"t{transition_index}",
                 "fromNodeRef": node_ref_by_id[from_node.node_id],
@@ -247,7 +247,7 @@ class FlowExplanationContextPacker:
             })
 
         boundaries = [
-            self._boundary_item(index, edge, flow.evidence, evidence_ref_by_id, evidence_by_ref, node_ref_by_id)
+            self._boundary_item(index, edge, flow.evidence, evidence_ref_by_key, evidence_by_ref, node_ref_by_id)
             for index, edge in enumerate(flow.boundary_transitions, start=1)
         ]
         llm_input: Dict[str, Any] = {
@@ -282,26 +282,27 @@ class FlowExplanationContextPacker:
         self,
         node: FlowGraphNode,
         evidence: Sequence[FlowGraphEvidence],
-        evidence_ref_by_id: Mapping[str, str],
+        evidence_ref_by_key: Mapping[FlowGraphEvidenceKey, str],
     ) -> List[str]:
         refs: List[str] = []
         for item in evidence:
             if item.node_id == node.node_id:
-                self._append_ref(refs, evidence_ref_by_id.get(item.evidence_id))
+                self._append_ref(refs, evidence_ref_by_key.get(evidence_key(item)))
         return refs
 
     def _edge_refs(
         self,
         edge: FlowGraphEdge,
         evidence: Sequence[FlowGraphEvidence],
-        evidence_ref_by_id: Mapping[str, str],
+        evidence_ref_by_key: Mapping[FlowGraphEvidenceKey, str],
     ) -> List[str]:
         refs: List[str] = []
-        for evidence_id in edge.evidence_ids:
-            self._append_ref(refs, evidence_ref_by_id.get(evidence_id))
+        linked_evidence_ids = set(edge.evidence_ids)
         for item in evidence:
             if item.edge_id == edge.edge_id:
-                self._append_ref(refs, evidence_ref_by_id.get(item.evidence_id))
+                if linked_evidence_ids and item.evidence_id not in linked_evidence_ids:
+                    continue
+                self._append_ref(refs, evidence_ref_by_key.get(evidence_key(item)))
         return refs
 
     def _boundary_item(
@@ -309,11 +310,11 @@ class FlowExplanationContextPacker:
         index: int,
         edge: FlowGraphEdge,
         evidence: Sequence[FlowGraphEvidence],
-        evidence_ref_by_id: Mapping[str, str],
+        evidence_ref_by_key: Mapping[FlowGraphEvidenceKey, str],
         evidence_by_ref: Mapping[str, FlowGraphEvidence],
         node_ref_by_id: Mapping[str, str],
     ) -> Dict[str, Any]:
-        refs = self._edge_refs(edge, evidence, evidence_ref_by_id)
+        refs = self._edge_refs(edge, evidence, evidence_ref_by_key)
         projection = self.boundary_classifier.project(edge)
         return {
             "boundaryRef": f"b{index}",

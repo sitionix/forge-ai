@@ -125,14 +125,27 @@ def assert_tool_refs_close(tool_payload: dict, base_payload: dict) -> None:
             assert set(item.get("boundaryRefs", [])) <= boundary_refs
         for item in tool_flow.get("steps", []):
             assert item["nodeRef"] in node_refs
-            assert {evidence["ref"] for evidence in item.get("evidence", [])} <= evidence_refs
+            step_evidence_refs = {evidence["ref"] for evidence in item.get("evidence", [])}
+            assert step_evidence_refs <= evidence_refs
+            for ref in step_evidence_refs:
+                assert flow_evidence_owner(flow, ref) == item["nodeRef"]
         for item in tool_flow.get("transitions", []):
             assert item["fromNodeRef"] in node_refs
             assert item["toNodeRef"] in node_refs
-            assert {evidence["ref"] for evidence in item.get("evidence", [])} <= evidence_refs
+            transition_evidence_refs = {evidence["ref"] for evidence in item.get("evidence", [])}
+            assert transition_evidence_refs <= evidence_refs
+            for ref in transition_evidence_refs:
+                assert flow_evidence_owner(flow, ref) == item["transitionRef"]
         for item in tool_flow.get("boundaries", []):
             assert item["fromNodeRef"] in node_refs
-            assert {evidence["ref"] for evidence in item.get("evidence", [])} <= evidence_refs
+            boundary_evidence_refs = {evidence["ref"] for evidence in item.get("evidence", [])}
+            assert boundary_evidence_refs <= evidence_refs
+            for ref in boundary_evidence_refs:
+                assert flow_evidence_owner(flow, ref) == item["boundaryRef"]
+
+
+def flow_evidence_owner(flow: dict, evidence_ref: str) -> str:
+    return next(item["ownerRef"] for item in flow.get("evidence", []) if item["evidenceRef"] == evidence_ref)
 
 
 def assert_boundary_facts_match(base_payload: dict, explanation_payload: dict | None = None, tool_payload: dict | None = None) -> None:
@@ -909,6 +922,141 @@ def test_real_stack_mixed_boundary_flow_preserves_distinct_canonical_boundaries(
     }
     assert not any(item.get("toNodeRef") for item in flow["boundaries"])
     assert_boundary_facts_match(base, explained, tool)
+    assert_flow_refs_close(base)
+    assert_flow_refs_close(explained)
+    assert_explanation_refs_close(explained)
+    assert_tool_refs_close(tool, base)
+    assert_no_internal_ids(base, secrets)
+    assert_no_internal_ids(explained, secrets)
+    assert_no_internal_ids(tool, secrets)
+
+
+def test_real_stack_shared_evidence_row_has_owner_specific_public_refs(tmp_path):
+    app, _, config, _ = build_test_app(write_runtime_config(tmp_path))
+    secrets = (
+        "secret-entrypoint-db-id",
+        "secret-edge-a-db-id",
+        "secret-edge-b-db-id",
+        "secret-shared-evidence-db-id",
+    )
+    seed_semantic_graph(
+        config.store_path,
+        source_id="neutral-shared-evidence",
+        nodes=[
+            {
+                "id": "secret-entrypoint-db-id",
+                "nodeKind": "CALLABLE",
+                "name": "Public Entry",
+                "qualified": "PublicEntry",
+                "path": "src/Example.java",
+            },
+            {
+                "id": "secret-worker-a-db-id",
+                "nodeKind": "CALLABLE",
+                "name": "Public Worker A",
+                "qualified": "PublicWorkerA",
+                "path": "src/Example.java",
+            },
+            {
+                "id": "secret-worker-b-db-id",
+                "nodeKind": "CALLABLE",
+                "name": "Public Worker B",
+                "qualified": "PublicWorkerB",
+                "path": "src/Example.java",
+            },
+        ],
+        edges=[
+            {
+                "id": "secret-edge-a-db-id",
+                "fromNodeId": "secret-entrypoint-db-id",
+                "toNodeId": "secret-worker-a-db-id",
+                "edgeType": "CALLS",
+                "evidence_id": "secret-shared-evidence-db-id",
+            },
+            {
+                "id": "secret-edge-b-db-id",
+                "fromNodeId": "secret-entrypoint-db-id",
+                "toNodeId": "secret-worker-b-db-id",
+                "edgeType": "CALLS",
+                "evidence_id": "secret-shared-evidence-db-id",
+            },
+        ],
+        claims=[
+            {
+                "id": "secret-entrypoint-claim-db-id",
+                "node_id": "secret-entrypoint-db-id",
+                "claimKind": "ENTRYPOINT_HINT",
+                "summary": "public entrypoint root",
+                "evidence_ids": [],
+            }
+        ],
+        evidence_ids=["secret-shared-evidence-db-id"],
+    )
+    replace_evidence_excerpts(
+        config.store_path,
+        "neutral-shared-evidence",
+        {"secret-shared-evidence-db-id": "shared call evidence"},
+    )
+    with sqlite3.connect(config.store_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM analysis_graph_evidence WHERE source_id = 'neutral-shared-evidence'"
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM analysis_graph_edge_evidence WHERE evidence_id = 'secret-shared-evidence-db-id'"
+        ).fetchone()[0] == 2
+    app.state.flow_explanation_provider = GroundedProvider()
+
+    base, explained, tool = query_all_surfaces(app, "Public Entry")
+
+    assert len(base["flows"]) == 1
+    flow = base["flows"][0]
+    assert flow["coverage"]["transitionCount"] == 2
+    assert len(flow["transitions"]) == 2
+    transition_a, transition_b = flow["transitions"]
+    assert transition_a["transitionRef"] != transition_b["transitionRef"]
+    assert transition_a["evidenceRefs"]
+    assert transition_b["evidenceRefs"]
+    transition_a_evidence_ref = transition_a["evidenceRefs"][0]
+    transition_b_evidence_ref = transition_b["evidenceRefs"][0]
+    assert transition_a_evidence_ref != transition_b_evidence_ref
+
+    evidence_by_ref = {item["evidenceRef"]: item for item in flow["evidence"]}
+    assert set(evidence_by_ref) == {transition_a_evidence_ref, transition_b_evidence_ref}
+    evidence_a = evidence_by_ref[transition_a_evidence_ref]
+    evidence_b = evidence_by_ref[transition_b_evidence_ref]
+    assert evidence_a["ownerRef"] == transition_a["transitionRef"]
+    assert evidence_b["ownerRef"] == transition_b["transitionRef"]
+    assert evidence_a["relativePath"] == evidence_b["relativePath"] == "src/Example.java"
+    assert evidence_a["lineStart"] == evidence_b["lineStart"]
+    assert evidence_a["lineEnd"] == evidence_b["lineEnd"]
+    assert evidence_a["excerpt"] == evidence_b["excerpt"] == "shared call evidence"
+
+    explanation = explained["flowExplanations"][0]
+    assert explanation["status"] == "OK"
+    explanation_by_transition = {item["transitionRef"]: item for item in explanation["transitionExplanations"]}
+    assert set(explanation_by_transition) == {transition_a["transitionRef"], transition_b["transitionRef"]}
+    assert explanation_by_transition[transition_a["transitionRef"]]["evidenceRefs"] == [transition_a_evidence_ref]
+    assert explanation_by_transition[transition_b["transitionRef"]]["evidenceRefs"] == [transition_b_evidence_ref]
+    assert transition_b_evidence_ref not in explanation_by_transition[transition_a["transitionRef"]]["evidenceRefs"]
+    assert transition_a_evidence_ref not in explanation_by_transition[transition_b["transitionRef"]]["evidenceRefs"]
+    for transition in flow["transitions"]:
+        for evidence_ref in explanation_by_transition[transition["transitionRef"]]["evidenceRefs"]:
+            assert flow_evidence_owner(flow, evidence_ref) == transition["transitionRef"]
+
+    tool_flow = tool["flows"][0]
+    assert tool_flow["status"] == "OK"
+    tool_by_transition = {item["transitionRef"]: item for item in tool_flow["transitions"]}
+    assert set(tool_by_transition) == {transition_a["transitionRef"], transition_b["transitionRef"]}
+    tool_transition_a_refs = [item["ref"] for item in tool_by_transition[transition_a["transitionRef"]]["evidence"]]
+    tool_transition_b_refs = [item["ref"] for item in tool_by_transition[transition_b["transitionRef"]]["evidence"]]
+    assert tool_transition_a_refs == [transition_a_evidence_ref]
+    assert tool_transition_b_refs == [transition_b_evidence_ref]
+    assert tool_transition_a_refs[0] != tool_transition_b_refs[0]
+    assert tool_by_transition[transition_a["transitionRef"]]["evidence"][0]["excerpt"] == "shared call evidence"
+    assert tool_by_transition[transition_b["transitionRef"]]["evidence"][0]["excerpt"] == "shared call evidence"
+    assert flow_evidence_owner(flow, tool_transition_a_refs[0]) == transition_a["transitionRef"]
+    assert flow_evidence_owner(flow, tool_transition_b_refs[0]) == transition_b["transitionRef"]
+
     assert_flow_refs_close(base)
     assert_flow_refs_close(explained)
     assert_explanation_refs_close(explained)

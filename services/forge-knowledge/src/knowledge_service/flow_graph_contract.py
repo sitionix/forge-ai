@@ -57,8 +57,29 @@ class FlowGraphEvidence:
     text: str | None
 
 
+@dataclass(frozen=True)
+class FlowGraphEvidenceKey:
+    source_id: str
+    evidence_id: str
+    node_id: str | None = None
+    edge_id: str | None = None
+
+
+def evidence_key(item: FlowGraphEvidence) -> FlowGraphEvidenceKey:
+    return FlowGraphEvidenceKey(
+        source_id=item.source_id,
+        evidence_id=item.evidence_id,
+        node_id=item.node_id,
+        edge_id=item.edge_id,
+    )
+
+
 def dedupe_evidence(items: Sequence[FlowGraphEvidence]) -> tuple[FlowGraphEvidence, ...]:
-    by_key: dict[tuple[str, str], FlowGraphEvidence] = {}
+    by_key: dict[FlowGraphEvidenceKey, FlowGraphEvidence] = {}
     for item in items:
-        by_key.setdefault((item.source_id, item.evidence_id), item)
-    return tuple(by_key[key] for key in sorted(by_key))
+        by_key.setdefault(evidence_key(item), item)
+    return tuple(by_key[key] for key in sorted(by_key, key=_evidence_key_sort))
+
+
+def _evidence_key_sort(key: FlowGraphEvidenceKey) -> tuple[str, str, str, str]:
+    return (key.source_id, key.evidence_id, key.node_id or "", key.edge_id or "")
