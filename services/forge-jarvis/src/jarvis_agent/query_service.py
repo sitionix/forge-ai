@@ -5,7 +5,13 @@ from typing import Any, Dict, Protocol
 from pydantic import ValidationError
 
 from jarvis_agent.knowledge_client import KnowledgeBadResponseError
-from jarvis_agent.query_schema import JarvisQueryIntent, JarvisQueryRequest, JarvisQueryResponse
+from jarvis_agent.query_schema import (
+    JarvisHumanAnswerResponse,
+    JarvisKnowledgeQueryResponse,
+    JarvisQueryIntent,
+    JarvisQueryRequest,
+    JarvisQueryResponse,
+)
 
 
 class KnowledgeQueryGateway(Protocol):
@@ -28,9 +34,13 @@ class JarvisQueryService:
         }
         if request.intent == JarvisQueryIntent.FLOW_EXPLANATION:
             bundle = await self.knowledge_gateway.query_flow_explanations(payload)
+            try:
+                return JarvisHumanAnswerResponse.parse_obj(bundle)
+            except ValidationError as exc:
+                raise KnowledgeBadResponseError("Knowledge returned a malformed query response") from exc
         else:
             bundle = await self.knowledge_gateway.query(payload)
         try:
-            return JarvisQueryResponse.parse_obj(bundle)
+            return JarvisKnowledgeQueryResponse.parse_obj(bundle)
         except ValidationError as exc:
             raise KnowledgeBadResponseError("Knowledge returned a malformed query response") from exc

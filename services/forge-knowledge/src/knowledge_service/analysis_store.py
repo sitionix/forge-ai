@@ -1353,8 +1353,8 @@ class AnalysisStore:
         created_at: str,
     ) -> None:
         def replace_identity() -> None:
-            self._upsert_file(conn, file_id, state)
             self._delete_file_graph(conn, file_id)
+            self._upsert_file(conn, file_id, state)
 
         self._run_graph_store_step("analysis_files", "delete_file_analysis", replace_identity)
         self._insert_graph_nodes(conn, file_id, state, graph, created_at)
@@ -1621,7 +1621,9 @@ class AnalysisStore:
 
     def _finalize_graph_replacement(self, conn: sqlite3.Connection, source_id: str, created_at: str) -> None:
         def finalize() -> None:
+            self._resolve_source_type_relation_edges(conn, source_id)
             self._resolve_source_call_edges(conn, source_id)
+            self._expand_source_interface_dispatch_edges(conn, source_id)
             graph_id = self._refresh_graph_state(conn, source_id, created_at)
             if graph_id:
                 SemanticIndexStore.mark_current_graph_pending_conn(conn, source_id)
@@ -4241,6 +4243,7 @@ class AnalysisStore:
             if row["source_id"]
         }
         if graph_node_ids:
+            self._detach_incoming_edges_for_replaced_nodes(conn, file_id, graph_node_ids)
             self._delete_semantic_documents_for_nodes(conn, graph_node_ids)
         conn.execute("DELETE FROM analysis_graph_nodes WHERE analysis_file_id = ? OR inventory_file_id = ? OR file_id = ?", (file_id, file_id, file_id))
         conn.execute(
@@ -4256,6 +4259,56 @@ class AnalysisStore:
             (file_id, file_id, file_id),
         )
         return source_ids
+
+    def _detach_incoming_edges_for_replaced_nodes(self, conn: sqlite3.Connection, file_id: int, node_ids: List[str]) -> None:
+        contract = graph_query_contract()
+        for batch in _chunks(node_ids, 400):
+            placeholders = ",".join("?" for _ in batch)
+            rows = conn.execute(
+                f"""
+                SELECT e.id,
+                       e.metadata_json,
+                       target.name AS target_name,
+                       target.qualified_name AS target_qualified_name
+                FROM analysis_graph_edges e
+                JOIN analysis_graph_nodes target
+                  ON target.source_id = e.source_id
+                 AND target.id = e.to_node_id
+                WHERE e.to_node_id IN ({placeholders})
+                  AND COALESCE(e.analysis_file_id, e.inventory_file_id, e.file_id) != ?
+                """,
+                [*batch, file_id],
+            ).fetchall()
+            for row in rows:
+                metadata = self._json_dict(row["metadata_json"])
+                type_hint = metadata.get("targetTypeHint") or metadata.get("receiverTypeHint") or metadata.get("targetTypeText")
+                unresolved_target = {
+                    "name": metadata.get("methodName") or row["target_name"],
+                    "receiverText": metadata.get("receiverText"),
+                    "receiverTypeHint": type_hint,
+                    "targetTypeText": type_hint,
+                    "qualifiedName": row["target_qualified_name"],
+                    "kindHint": "CALLABLE",
+                }
+                metadata["resolutionReason"] = "NOT_RESOLVED"
+                metadata["unresolvedReason"] = "TARGET_NOT_ANALYZED"
+                metadata = self._edge_metadata_for_storage(metadata)
+                conn.execute(
+                    """
+                    UPDATE analysis_graph_edges
+                    SET to_node_id = NULL,
+                        resolution_status = ?,
+                        unresolved_target_json = ?,
+                        metadata_json = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        contract.unresolved_status,
+                        json.dumps({key: value for key, value in unresolved_target.items() if value is not None}),
+                        json.dumps(metadata),
+                        row["id"],
+                    ),
+                )
 
     def _delete_semantic_documents_for_nodes(self, conn: sqlite3.Connection, node_ids: List[str]) -> None:
         if not node_ids or not self._table_exists(conn, "semantic_documents"):
@@ -4412,6 +4465,82 @@ class AnalysisStore:
             if graph.graph_revision and graph.total_node_count > 0:
                 SemanticIndexStore.mark_source_stale_conn(conn, source_id, graph.graph_revision, graph.total_node_count)
 
+    def _resolve_source_type_relation_edges(self, conn: sqlite3.Connection, source_id: str) -> None:
+        contract = graph_query_contract()
+        implements_edge_type = contract.required_edge_type("IMPLEMENTS")
+        extends_edge_type = contract.required_edge_type("EXTENDS")
+        pending_status_sql, pending_status_params = sql_in_clause(contract.resolver_pending_statuses())
+        rows = conn.execute(
+            f"""
+            SELECT id, metadata_json, unresolved_target_json
+            FROM analysis_graph_edges
+            WHERE source_id = ?
+              AND edge_type IN (?, ?)
+              AND to_node_id IS NULL
+              AND resolution_status IN ({pending_status_sql})
+            """,
+            (source_id, implements_edge_type, extends_edge_type, *pending_status_params),
+        ).fetchall()
+        if not rows:
+            return
+        types_by_simple, types_by_qualified = self._type_candidates_by_name(conn, source_id)
+        for edge in rows:
+            metadata = self._json_dict(edge["metadata_json"])
+            unresolved_target = self._json_dict(edge["unresolved_target_json"])
+            target_type = (
+                unresolved_target.get("qualifiedName")
+                or unresolved_target.get("targetTypeText")
+                or unresolved_target.get("name")
+            )
+            if not target_type:
+                continue
+            type_candidates = (
+                types_by_qualified.get(str(target_type), [])
+                or types_by_simple.get(str(target_type).rsplit(".", 1)[-1], [])
+            )
+            if len(type_candidates) == 1:
+                metadata = dict(metadata)
+                metadata.pop("unresolvedReason", None)
+                metadata["resolutionReason"] = "TYPE_RELATION_TARGET_MATCH"
+                metadata = self._edge_metadata_for_storage(metadata)
+                conn.execute(
+                    """
+                    UPDATE analysis_graph_edges
+                    SET to_node_id = ?,
+                        resolution_status = ?,
+                        unresolved_target_json = NULL,
+                        metadata_json = ?
+                    WHERE id = ?
+                    """,
+                    (type_candidates[0]["id"], contract.resolved_status, json.dumps(metadata), edge["id"]),
+                )
+            elif len(type_candidates) > 1:
+                self._mark_edge_multiple(conn, edge["id"], metadata, len(type_candidates))
+
+    def _type_candidates_by_name(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+    ) -> tuple[Dict[str, List[sqlite3.Row]], Dict[str, List[sqlite3.Row]]]:
+        contract = graph_query_contract()
+        type_rows = conn.execute(
+            """
+            SELECT id, name, qualified_name
+            FROM analysis_graph_nodes
+            WHERE source_id = ?
+              AND node_kind = ?
+              AND status = ?
+            """,
+            (source_id, contract.type_node_kind, contract.trusted_status),
+        ).fetchall()
+        types_by_simple: Dict[str, List[sqlite3.Row]] = {}
+        types_by_qualified: Dict[str, List[sqlite3.Row]] = {}
+        for row in type_rows:
+            types_by_simple.setdefault(row["name"], []).append(row)
+            if row["qualified_name"]:
+                types_by_qualified.setdefault(row["qualified_name"], []).append(row)
+        return types_by_simple, types_by_qualified
+
     def _resolve_source_call_edges(self, conn: sqlite3.Connection, source_id: str) -> None:
         contract = graph_query_contract()
         pending_status_sql, pending_status_params = sql_in_clause(contract.resolver_pending_statuses())
@@ -4428,22 +4557,7 @@ class AnalysisStore:
         ).fetchall()
         if not rows:
             return
-        type_rows = conn.execute(
-            """
-            SELECT id, name, qualified_name
-            FROM analysis_graph_nodes
-            WHERE source_id = ?
-              AND node_kind = ?
-              AND status = ?
-        """,
-            (source_id, contract.type_node_kind, contract.trusted_status),
-        ).fetchall()
-        types_by_simple: Dict[str, List[sqlite3.Row]] = {}
-        types_by_qualified: Dict[str, List[sqlite3.Row]] = {}
-        for row in type_rows:
-            types_by_simple.setdefault(row["name"], []).append(row)
-            if row["qualified_name"]:
-                types_by_qualified.setdefault(row["qualified_name"], []).append(row)
+        types_by_simple, types_by_qualified = self._type_candidates_by_name(conn, source_id)
         for edge in rows:
             metadata = self._json_dict(edge["metadata_json"])
             unresolved_target = self._json_dict(edge["unresolved_target_json"])
@@ -4475,6 +4589,383 @@ class AnalysisStore:
                 )
             elif len(callable_candidates) > 1:
                 self._mark_call_edge_multiple(conn, edge["id"], metadata, len(callable_candidates))
+
+    def _expand_source_interface_dispatch_edges(self, conn: sqlite3.Connection, source_id: str) -> None:
+        contract = graph_query_contract()
+        rows = conn.execute(
+            """
+            SELECT e.*
+            FROM analysis_graph_edges e
+            WHERE e.source_id = ?
+              AND e.edge_type = ?
+              AND e.resolution_status IN (?, ?)
+              AND e.status = ?
+            ORDER BY e.id
+            """,
+            (source_id, contract.calls_edge_type, contract.resolved_status, contract.unresolved_status, contract.trusted_status),
+        ).fetchall()
+        for edge in rows:
+            interface_target = (
+                self._interface_call_target(conn, source_id, edge)
+                if edge["to_node_id"]
+                else self._unresolved_interface_call_target(conn, source_id, edge)
+            )
+            if interface_target is None:
+                continue
+            candidates = self._implementation_method_candidates_for_interface_target(conn, source_id, edge, interface_target)
+            if not candidates:
+                self._mark_interface_call_unresolved(conn, edge, interface_target)
+                continue
+            candidate_ids = [row["id"] for row in candidates]
+            if edge["to_node_id"] in candidate_ids and len(candidate_ids) == 1:
+                continue
+            metadata = self._json_dict(edge["metadata_json"])
+            metadata["resolutionReason"] = "INTERFACE_IMPLEMENTATION_DISPATCH"
+            metadata = self._edge_metadata_for_storage(metadata)
+            first_target_id = candidate_ids[0]
+            if edge["to_node_id"] != first_target_id:
+                conn.execute(
+                    """
+                    UPDATE analysis_graph_edges
+                    SET to_node_id = ?,
+                        resolution_status = ?,
+                        unresolved_target_json = NULL,
+                        metadata_json = ?
+                    WHERE id = ?
+                    """,
+                    (first_target_id, contract.resolved_status, json.dumps(metadata), edge["id"]),
+                )
+            for target_id in candidate_ids[1:]:
+                self._insert_interface_dispatch_clone(conn, edge, target_id, metadata)
+
+    def _interface_call_target(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        edge: sqlite3.Row,
+    ) -> Optional[sqlite3.Row]:
+        contract = graph_query_contract()
+        row = conn.execute(
+            """
+            SELECT target.id AS target_id,
+                   target.name AS target_name,
+                   target.qualified_name AS target_qualified_name,
+                   parent.id AS interface_type_id,
+                   parent.name AS interface_name,
+                   parent.qualified_name AS interface_qualified_name,
+                   (
+                     SELECT ev.excerpt
+                     FROM analysis_graph_edges declaration
+                     JOIN analysis_graph_edge_evidence dee ON dee.edge_id = declaration.id
+                     JOIN analysis_graph_evidence ev ON ev.id = dee.evidence_id
+                     WHERE declaration.source_id = target.source_id
+                       AND declaration.to_node_id = parent.id
+                       AND declaration.edge_type = 'DECLARES'
+                     ORDER BY ev.line_start, ev.id
+                     LIMIT 1
+                   ) AS interface_declaration_excerpt
+            FROM analysis_graph_nodes target
+            JOIN analysis_graph_nodes parent
+              ON parent.source_id = target.source_id
+             AND parent.id = target.parent_node_id
+            WHERE target.source_id = ?
+              AND target.id = ?
+              AND target.node_kind = ?
+              AND target.status = ?
+              AND parent.node_kind = ?
+              AND parent.status = ?
+            """,
+            (
+                source_id,
+                edge["to_node_id"],
+                contract.callable_node_kind,
+                contract.trusted_status,
+                contract.type_node_kind,
+                contract.trusted_status,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        declaration = str(row["interface_declaration_excerpt"] or "").strip().lower()
+        return row if declaration.startswith("interface ") else None
+
+    def _unresolved_interface_call_target(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        edge: sqlite3.Row,
+    ) -> Optional[sqlite3.Row]:
+        contract = graph_query_contract()
+        unresolved_target = self._json_dict(edge["unresolved_target_json"])
+        metadata = self._json_dict(edge["metadata_json"])
+        method_name = unresolved_target.get("name") or metadata.get("methodName")
+        interface_type_name = (
+            unresolved_target.get("interfaceType")
+            or unresolved_target.get("targetTypeText")
+            or metadata.get("targetTypeHint")
+            or metadata.get("receiverTypeHint")
+            or metadata.get("targetTypeText")
+        )
+        if not method_name or not interface_type_name:
+            return None
+        types_by_simple, types_by_qualified = self._type_candidates_by_name(conn, source_id)
+        interface_types = (
+            types_by_qualified.get(str(interface_type_name), [])
+            or types_by_simple.get(str(interface_type_name).rsplit(".", 1)[-1], [])
+        )
+        if len(interface_types) != 1:
+            return None
+        target = self._callable_candidates_for_type(conn, interface_types[0]["id"], str(method_name), edge["argument_count"])
+        if len(target) != 1:
+            return None
+        return conn.execute(
+            """
+            SELECT target.id AS target_id,
+                   target.name AS target_name,
+                   target.qualified_name AS target_qualified_name,
+                   parent.id AS interface_type_id,
+                   parent.name AS interface_name,
+                   parent.qualified_name AS interface_qualified_name
+            FROM analysis_graph_nodes target
+            JOIN analysis_graph_nodes parent
+              ON parent.source_id = target.source_id
+             AND parent.id = target.parent_node_id
+            WHERE target.source_id = ?
+              AND target.id = ?
+              AND target.node_kind = ?
+              AND target.status = ?
+              AND parent.node_kind = ?
+              AND parent.status = ?
+            """,
+            (
+                source_id,
+                target[0]["id"],
+                contract.callable_node_kind,
+                contract.trusted_status,
+                contract.type_node_kind,
+                contract.trusted_status,
+            ),
+        ).fetchone()
+
+    def _mark_interface_call_unresolved(
+        self,
+        conn: sqlite3.Connection,
+        edge: sqlite3.Row,
+        target: sqlite3.Row,
+    ) -> None:
+        contract = graph_query_contract()
+        metadata = self._json_dict(edge["metadata_json"])
+        metadata["resolutionReason"] = "INTERFACE_IMPLEMENTATION_NOT_FOUND"
+        metadata["unresolvedReason"] = "NO_ANALYZED_IMPLEMENTATION"
+        interface_type = target["interface_qualified_name"] or target["interface_name"]
+        if interface_type:
+            metadata["targetTypeHint"] = interface_type
+            metadata.setdefault("targetTypeText", interface_type)
+        metadata = self._edge_metadata_for_storage(metadata)
+        original_unresolved_target = self._json_dict(edge["unresolved_target_json"])
+        unresolved_target = dict(original_unresolved_target)
+        if not unresolved_target:
+            unresolved_target = {
+                "name": target["target_name"],
+                "qualifiedName": target["target_qualified_name"],
+            }
+        if interface_type:
+            unresolved_target.setdefault("interfaceType", interface_type)
+        conn.execute(
+            """
+            UPDATE analysis_graph_edges
+            SET to_node_id = NULL,
+                resolution_status = ?,
+                unresolved_target_json = ?,
+                metadata_json = ?
+            WHERE id = ?
+            """,
+            (
+                contract.unresolved_status,
+                json.dumps({key: value for key, value in unresolved_target.items() if value is not None}),
+                json.dumps(metadata),
+                edge["id"],
+            ),
+        )
+
+    def _implementation_method_candidates_for_call_edge(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        edge: sqlite3.Row,
+    ) -> List[sqlite3.Row]:
+        contract = graph_query_contract()
+        target = conn.execute(
+            """
+            SELECT id, name, parameter_count, parent_node_id
+            FROM analysis_graph_nodes
+            WHERE source_id = ?
+              AND id = ?
+              AND node_kind = ?
+              AND status = ?
+            """,
+            (source_id, edge["to_node_id"], contract.callable_node_kind, contract.trusted_status),
+        ).fetchone()
+        if target is None or not target["parent_node_id"]:
+            return []
+        interface_target = {
+            "target_name": target["name"],
+            "interface_type_id": target["parent_node_id"],
+        }
+        return self._implementation_method_candidates_for_interface_target(conn, source_id, edge, interface_target)
+
+    def _implementation_method_candidates_for_interface_target(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        edge: sqlite3.Row,
+        target: Any,
+    ) -> List[sqlite3.Row]:
+        interface_type_id = target["interface_type_id"]
+        metadata = self._json_dict(edge["metadata_json"])
+        type_hint = metadata.get("targetTypeHint") or metadata.get("receiverTypeHint") or metadata.get("targetTypeText")
+        if type_hint:
+            types_by_simple, types_by_qualified = self._type_candidates_by_name(conn, source_id)
+            hinted_types = (
+                types_by_qualified.get(str(type_hint), [])
+                or types_by_simple.get(str(type_hint).rsplit(".", 1)[-1], [])
+            )
+            if len(hinted_types) == 1 and self._implementing_type_rows(conn, source_id, hinted_types[0]["id"]):
+                interface_type_id = hinted_types[0]["id"]
+        implementation_types = self._implementing_type_rows(conn, source_id, interface_type_id)
+        candidates: List[sqlite3.Row] = []
+        for implementation_type in implementation_types:
+            candidates.extend(
+                self._callable_candidates_for_type(
+                    conn,
+                    implementation_type["id"],
+                    str(target["target_name"]),
+                    edge["argument_count"],
+                )
+            )
+        deduped: Dict[str, sqlite3.Row] = {row["id"]: row for row in candidates}
+        return sorted(
+            deduped.values(),
+            key=lambda row: (
+                str(row["qualified_name"] or ""),
+                str(row["id"] or ""),
+            ),
+        )
+
+    def _implementing_type_rows(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        interface_type_id: str,
+    ) -> List[sqlite3.Row]:
+        contract = graph_query_contract()
+        implements_edge_type = contract.required_edge_type("IMPLEMENTS")
+        extends_edge_type = contract.required_edge_type("EXTENDS")
+        return conn.execute(
+            """
+            WITH RECURSIVE related(type_id, has_implements, depth) AS (
+                SELECT e.from_node_id,
+                       CASE WHEN e.edge_type = ? THEN 1 ELSE 0 END,
+                       1
+                FROM analysis_graph_edges e
+                WHERE e.source_id = ?
+                  AND e.edge_type IN (?, ?)
+                  AND e.to_node_id = ?
+                  AND e.resolution_status = ?
+                  AND e.status = ?
+                UNION
+                SELECT e.from_node_id,
+                       CASE WHEN e.edge_type = ? THEN 1 ELSE related.has_implements END,
+                       related.depth + 1
+                FROM analysis_graph_edges e
+                JOIN related ON related.type_id = e.to_node_id
+                WHERE e.source_id = ?
+                  AND e.edge_type IN (?, ?)
+                  AND e.resolution_status = ?
+                  AND e.status = ?
+                  AND related.depth < 8
+            )
+            SELECT DISTINCT n.id, n.qualified_name, n.name
+            FROM related
+            JOIN analysis_graph_nodes n
+              ON n.source_id = ?
+             AND n.id = related.type_id
+            WHERE related.has_implements = 1
+              AND n.node_kind = ?
+              AND n.status = ?
+            ORDER BY n.qualified_name, n.id
+            """,
+            (
+                implements_edge_type,
+                source_id,
+                implements_edge_type,
+                extends_edge_type,
+                interface_type_id,
+                contract.resolved_status,
+                contract.trusted_status,
+                implements_edge_type,
+                source_id,
+                implements_edge_type,
+                extends_edge_type,
+                contract.resolved_status,
+                contract.trusted_status,
+                source_id,
+                contract.type_node_kind,
+                contract.trusted_status,
+            ),
+        ).fetchall()
+
+    def _insert_interface_dispatch_clone(
+        self,
+        conn: sqlite3.Connection,
+        edge: sqlite3.Row,
+        target_id: str,
+        metadata: Dict[str, Any],
+    ) -> None:
+        clone_id = "analysis-graph-edge:" + hashlib.sha256(
+            f"{edge['id']}|interface-dispatch|{target_id}".encode("utf-8")
+        ).hexdigest()[:24]
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_edges(
+                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
+                from_node_id, to_node_id, edge_type, resolution_status, confidence,
+                argument_count, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                clone_id,
+                edge["job_id"],
+                edge["source_id"],
+                edge["inventory_file_id"],
+                edge["analysis_file_id"],
+                edge["file_id"],
+                edge["relative_path"],
+                edge["content_hash"],
+                edge["from_node_id"],
+                target_id,
+                edge["edge_type"],
+                graph_query_contract().resolved_status,
+                edge["confidence"],
+                edge["argument_count"],
+                json.dumps(metadata),
+                edge["status"],
+                edge["created_at"],
+                edge["updated_at"],
+                edge["fact_origin"],
+                edge["flow_domain"],
+            ),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_edge_evidence(edge_id, evidence_id)
+            SELECT ?, evidence_id
+            FROM analysis_graph_edge_evidence
+            WHERE edge_id = ?
+            """,
+            (clone_id, edge["id"]),
+        )
 
     def _resolved_call_metadata(self, metadata: Dict[str, Any], unresolved_target: Dict[str, Any]) -> Dict[str, Any]:
         result = dict(metadata or {})
@@ -4510,7 +5001,7 @@ class AnalysisStore:
         contract = graph_query_contract()
         rows = conn.execute(
             """
-            SELECT id, parameter_count
+            SELECT id, qualified_name, name, parameter_count
             FROM analysis_graph_nodes
             WHERE parent_node_id = ?
               AND node_kind = ?
@@ -4523,6 +5014,23 @@ class AnalysisStore:
             return rows
         matching = [row for row in rows if row["parameter_count"] is not None and int(row["parameter_count"]) == int(argument_count)]
         return matching
+
+    def _mark_edge_multiple(self, conn: sqlite3.Connection, edge_id: str, metadata: Dict[str, Any], candidate_count: int) -> None:
+        contract = graph_query_contract()
+        next_metadata = dict(metadata)
+        next_metadata["resolutionReason"] = "MULTIPLE_TYPE_CANDIDATES"
+        next_metadata["unresolvedReason"] = "MULTIPLE_TYPES_MATCH"
+        next_metadata["candidateCount"] = candidate_count
+        next_metadata = self._edge_metadata_for_storage(next_metadata)
+        conn.execute(
+            """
+            UPDATE analysis_graph_edges
+            SET resolution_status = ?,
+                metadata_json = ?
+            WHERE id = ?
+        """,
+            (contract.multiple_candidates_status, json.dumps(next_metadata), edge_id),
+        )
 
     def _mark_call_edge_multiple(self, conn: sqlite3.Connection, edge_id: str, metadata: Dict[str, Any], candidate_count: int) -> None:
         contract = graph_query_contract()
@@ -4547,6 +5055,7 @@ class AnalysisStore:
                 "callKind",
                 "callTargetCategory",
                 "methodName",
+                "relationKind",
                 "receiverText",
                 "receiverTypeHint",
                 "resolutionReason",

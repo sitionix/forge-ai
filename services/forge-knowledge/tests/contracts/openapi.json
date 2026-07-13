@@ -87,332 +87,6 @@
         "title": "ContextRequest",
         "type": "object"
       },
-      "FlowExplanation": {
-        "properties": {
-          "boundaries": {
-            "items": {
-              "$ref": "#/components/schemas/FlowExplanationBoundary"
-            },
-            "title": "Boundaries",
-            "type": "array"
-          },
-          "flowIndex": {
-            "title": "Flowindex",
-            "type": "integer"
-          },
-          "narrative": {
-            "items": {
-              "$ref": "#/components/schemas/FlowExplanationNarrative"
-            },
-            "title": "Narrative",
-            "type": "array"
-          },
-          "status": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/FlowExplanationStatus"
-              }
-            ],
-            "default": "OK"
-          },
-          "steps": {
-            "items": {
-              "$ref": "#/components/schemas/FlowExplanationStep"
-            },
-            "title": "Steps",
-            "type": "array"
-          },
-          "title": {
-            "default": "",
-            "title": "Title",
-            "type": "string"
-          },
-          "transitionExplanations": {
-            "items": {
-              "$ref": "#/components/schemas/FlowExplanationTransition"
-            },
-            "title": "Transitionexplanations",
-            "type": "array"
-          }
-        },
-        "required": [
-          "flowIndex"
-        ],
-        "title": "FlowExplanation",
-        "type": "object"
-      },
-      "FlowExplanationBoundary": {
-        "properties": {
-          "boundaryRef": {
-            "title": "Boundaryref",
-            "type": "string"
-          },
-          "evidenceRefs": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Evidencerefs",
-            "type": "array"
-          },
-          "explanation": {
-            "title": "Explanation",
-            "type": "string"
-          },
-          "fromNodeRef": {
-            "title": "Fromnoderef",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "resolutionStatus": {
-            "title": "Resolutionstatus",
-            "type": "string"
-          },
-          "target": {
-            "title": "Target",
-            "type": "string"
-          }
-        },
-        "required": [
-          "boundaryRef",
-          "fromNodeRef",
-          "kind",
-          "resolutionStatus"
-        ],
-        "title": "FlowExplanationBoundary",
-        "type": "object"
-      },
-      "FlowExplanationNarrative": {
-        "properties": {
-          "boundaryRefs": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Boundaryrefs",
-            "type": "array"
-          },
-          "nodeRefs": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Noderefs",
-            "type": "array"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
-          },
-          "transitionRefs": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Transitionrefs",
-            "type": "array"
-          }
-        },
-        "required": [
-          "text"
-        ],
-        "title": "FlowExplanationNarrative",
-        "type": "object"
-      },
-      "FlowExplanationStatus": {
-        "description": "An enumeration.",
-        "enum": [
-          "OK",
-          "FAILED"
-        ],
-        "title": "FlowExplanationStatus",
-        "type": "string"
-      },
-      "FlowExplanationStep": {
-        "properties": {
-          "evidenceRefs": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Evidencerefs",
-            "type": "array"
-          },
-          "explanation": {
-            "title": "Explanation",
-            "type": "string"
-          },
-          "nodeLabel": {
-            "title": "Nodelabel",
-            "type": "string"
-          },
-          "nodeRef": {
-            "title": "Noderef",
-            "type": "string"
-          },
-          "transitionRefs": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Transitionrefs",
-            "type": "array"
-          }
-        },
-        "required": [
-          "nodeRef",
-          "nodeLabel"
-        ],
-        "title": "FlowExplanationStep",
-        "type": "object"
-      },
-      "FlowExplanationTransition": {
-        "properties": {
-          "evidenceRefs": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Evidencerefs",
-            "type": "array"
-          },
-          "explanation": {
-            "title": "Explanation",
-            "type": "string"
-          },
-          "transitionRef": {
-            "title": "Transitionref",
-            "type": "string"
-          }
-        },
-        "required": [
-          "transitionRef"
-        ],
-        "title": "FlowExplanationTransition",
-        "type": "object"
-      },
-      "FlowToolAddress": {
-        "properties": {
-          "lineEnd": {
-            "title": "Lineend",
-            "type": "integer"
-          },
-          "lineStart": {
-            "title": "Linestart",
-            "type": "integer"
-          },
-          "relativePath": {
-            "title": "Relativepath",
-            "type": "string"
-          },
-          "service": {
-            "title": "Service",
-            "type": "string"
-          }
-        },
-        "title": "FlowToolAddress",
-        "type": "object"
-      },
-      "FlowToolBoundary": {
-        "properties": {
-          "boundaryRef": {
-            "title": "Boundaryref",
-            "type": "string"
-          },
-          "evidence": {
-            "items": {
-              "$ref": "#/components/schemas/FlowToolEvidence"
-            },
-            "title": "Evidence",
-            "type": "array"
-          },
-          "explanation": {
-            "title": "Explanation",
-            "type": "string"
-          },
-          "fromNodeRef": {
-            "title": "Fromnoderef",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "resolutionStatus": {
-            "title": "Resolutionstatus",
-            "type": "string"
-          },
-          "target": {
-            "title": "Target",
-            "type": "string"
-          }
-        },
-        "required": [
-          "boundaryRef",
-          "fromNodeRef",
-          "kind",
-          "resolutionStatus"
-        ],
-        "title": "FlowToolBoundary",
-        "type": "object"
-      },
-      "FlowToolContext": {
-        "properties": {
-          "boundaries": {
-            "items": {
-              "$ref": "#/components/schemas/FlowToolBoundary"
-            },
-            "title": "Boundaries",
-            "type": "array"
-          },
-          "diagnostics": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
-            },
-            "title": "Diagnostics",
-            "type": "array"
-          },
-          "flowIndex": {
-            "title": "Flowindex",
-            "type": "integer"
-          },
-          "narrative": {
-            "items": {
-              "$ref": "#/components/schemas/FlowExplanationNarrative"
-            },
-            "title": "Narrative",
-            "type": "array"
-          },
-          "status": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/FlowExplanationStatus"
-              }
-            ],
-            "default": "OK"
-          },
-          "steps": {
-            "items": {
-              "$ref": "#/components/schemas/FlowToolStep"
-            },
-            "title": "Steps",
-            "type": "array"
-          },
-          "title": {
-            "default": "",
-            "title": "Title",
-            "type": "string"
-          },
-          "transitions": {
-            "items": {
-              "$ref": "#/components/schemas/FlowToolTransition"
-            },
-            "title": "Transitions",
-            "type": "array"
-          }
-        },
-        "required": [
-          "flowIndex"
-        ],
-        "title": "FlowToolContext",
-        "type": "object"
-      },
       "FlowToolEvidence": {
         "properties": {
           "excerpt": {
@@ -427,25 +101,47 @@
             "title": "Linestart",
             "type": "integer"
           },
-          "ref": {
-            "title": "Ref",
+          "path": {
+            "title": "Path",
             "type": "string"
+          }
+        },
+        "title": "FlowToolEvidence",
+        "type": "object"
+      },
+      "FlowToolTree": {
+        "properties": {
+          "entrypoint": {
+            "$ref": "#/components/schemas/FlowToolTreeItem"
           },
-          "relativePath": {
-            "title": "Relativepath",
+          "source": {
+            "title": "Source",
             "type": "string"
           }
         },
         "required": [
-          "ref"
+          "source",
+          "entrypoint"
         ],
-        "title": "FlowToolEvidence",
+        "title": "FlowToolTree",
         "type": "object"
       },
-      "FlowToolStep": {
+      "FlowToolTreeItem": {
         "properties": {
-          "address": {
-            "$ref": "#/components/schemas/FlowToolAddress"
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolTreeItem"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "cycle": {
+            "title": "Cycle",
+            "type": "boolean"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
           },
           "evidence": {
             "items": {
@@ -454,17 +150,25 @@
             "title": "Evidence",
             "type": "array"
           },
-          "explanation": {
-            "title": "Explanation",
-            "type": "string"
-          },
           "kind": {
             "title": "Kind",
             "type": "string"
           },
-          "nodeRef": {
-            "title": "Noderef",
+          "lineEnd": {
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
             "type": "string"
+          },
+          "shared": {
+            "title": "Shared",
+            "type": "boolean"
           },
           "symbol": {
             "title": "Symbol",
@@ -472,55 +176,10 @@
           }
         },
         "required": [
-          "nodeRef",
           "symbol",
           "kind"
         ],
-        "title": "FlowToolStep",
-        "type": "object"
-      },
-      "FlowToolTransition": {
-        "properties": {
-          "evidence": {
-            "items": {
-              "$ref": "#/components/schemas/FlowToolEvidence"
-            },
-            "title": "Evidence",
-            "type": "array"
-          },
-          "explanation": {
-            "title": "Explanation",
-            "type": "string"
-          },
-          "fromNodeRef": {
-            "title": "Fromnoderef",
-            "type": "string"
-          },
-          "fromSymbol": {
-            "title": "Fromsymbol",
-            "type": "string"
-          },
-          "toNodeRef": {
-            "title": "Tonoderef",
-            "type": "string"
-          },
-          "toSymbol": {
-            "title": "Tosymbol",
-            "type": "string"
-          },
-          "transitionRef": {
-            "title": "Transitionref",
-            "type": "string"
-          }
-        },
-        "required": [
-          "transitionRef",
-          "fromNodeRef",
-          "toNodeRef",
-          "fromSymbol",
-          "toSymbol"
-        ],
-        "title": "FlowToolTransition",
+        "title": "FlowToolTreeItem",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -559,6 +218,37 @@
           }
         },
         "title": "InventoryBuildRequest",
+        "type": "object"
+      },
+      "KnowledgeHumanAnswer": {
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "KnowledgeHumanAnswer",
+        "type": "object"
+      },
+      "KnowledgeHumanAnswerSource": {
+        "properties": {
+          "entrypoint": {
+            "title": "Entrypoint",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "entrypoint"
+        ],
+        "title": "KnowledgeHumanAnswerSource",
         "type": "object"
       },
       "KnowledgeQueryCoverage": {
@@ -844,8 +534,12 @@
       },
       "KnowledgeQueryFlowExplanationResponse": {
         "properties": {
-          "coverage": {
-            "$ref": "#/components/schemas/KnowledgeQueryCoverage"
+          "answer": {
+            "$ref": "#/components/schemas/KnowledgeHumanAnswer"
+          },
+          "answerLanguage": {
+            "title": "Answerlanguage",
+            "type": "string"
           },
           "diagnostics": {
             "items": {
@@ -854,50 +548,17 @@
             "title": "Diagnostics",
             "type": "array"
           },
-          "flowExplanations": {
+          "sources": {
             "items": {
-              "$ref": "#/components/schemas/FlowExplanation"
+              "$ref": "#/components/schemas/KnowledgeHumanAnswerSource"
             },
-            "title": "Flowexplanations",
+            "title": "Sources",
             "type": "array"
-          },
-          "flows": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryFlow"
-            },
-            "title": "Flows",
-            "type": "array"
-          },
-          "intent": {
-            "title": "Intent",
-            "type": "string"
-          },
-          "matchedNodes": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryMatchedNodePreview"
-            },
-            "title": "Matchednodes",
-            "type": "array"
-          },
-          "matchedSources": {
-            "items": {
-              "$ref": "#/components/schemas/KnowledgeQueryMatchedSource"
-            },
-            "title": "Matchedsources",
-            "type": "array"
-          },
-          "queryId": {
-            "title": "Queryid",
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/KnowledgeQueryStatus"
           }
         },
         "required": [
-          "queryId",
-          "status",
-          "intent"
+          "answerLanguage",
+          "answer"
         ],
         "title": "KnowledgeQueryFlowExplanationResponse",
         "type": "object"
@@ -1197,10 +858,6 @@
       },
       "KnowledgeQueryToolContextResponse": {
         "properties": {
-          "answerLanguage": {
-            "title": "Answerlanguage",
-            "type": "string"
-          },
           "diagnostics": {
             "items": {
               "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
@@ -1208,25 +865,20 @@
             "title": "Diagnostics",
             "type": "array"
           },
-          "flows": {
-            "items": {
-              "$ref": "#/components/schemas/FlowToolContext"
-            },
-            "title": "Flows",
-            "type": "array"
-          },
           "queryText": {
             "title": "Querytext",
             "type": "string"
           },
-          "status": {
-            "$ref": "#/components/schemas/KnowledgeQueryStatus"
+          "trees": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolTree"
+            },
+            "title": "Trees",
+            "type": "array"
           }
         },
         "required": [
-          "queryText",
-          "answerLanguage",
-          "status"
+          "queryText"
         ],
         "title": "KnowledgeQueryToolContextResponse",
         "type": "object"

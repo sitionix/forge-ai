@@ -183,7 +183,8 @@ public final class InfrastructureProxyEndpoint {
     }
 
     public static Endpoint<Object, Object> nexusJarvisQueryNoCandidates() {
-        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", "responseProxyJarvisQueryNoCandidates.json");
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", HttpStatus.NOT_FOUND,
+                "responseProxyJarvisQueryNoCandidates.json");
     }
 
     public static Endpoint<Object, Object> nexusJarvisQueryBlank() {
@@ -435,7 +436,8 @@ public final class InfrastructureProxyEndpoint {
     }
 
     public static Endpoint<Object, Object> upstreamJarvisQueryNoCandidates() {
-        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", "responseProxyJarvisQueryNoCandidates.json");
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", HttpStatus.NOT_FOUND,
+                "responseProxyJarvisQueryNoCandidates.json");
     }
 
     public static Endpoint<Object, Object> upstreamTooLargeKnowledgeStatus() {

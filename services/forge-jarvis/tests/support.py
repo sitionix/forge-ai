@@ -132,16 +132,16 @@ class FakeKnowledgeClient:
 
     async def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         self.paths.append("/api/v1/knowledge/query")
+        self.calls.append(dict(payload))
         if self.error:
             raise self.error
-        self.calls.append(dict(payload))
         return self.bundle
 
     async def query_flow_explanations(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         self.paths.append("/api/v1/knowledge/query/flow-explanations")
+        self.flow_explanation_calls.append(dict(payload))
         if self.error:
             raise self.error
-        self.flow_explanation_calls.append(dict(payload))
         return self.bundle
 
 
@@ -234,6 +234,21 @@ def knowledge_query_bundle(
     }
 
 
+def human_answer_bundle(
+    *,
+    text: str = "JarvisGateway handles the request.",
+    answer_language: str = "uk",
+    sources: Optional[List[Dict[str, str]]] = None,
+    diagnostics: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
+    return {
+        "answerLanguage": answer_language,
+        "answer": {"text": text},
+        "sources": sources if sources is not None else [{"source": "forge-ai", "entrypoint": "JarvisGateway"}],
+        "diagnostics": diagnostics or [],
+    }
+
+
 def query_payload(query_text: str) -> Dict[str, Any]:
     return {"queryText": query_text}
 
@@ -243,15 +258,17 @@ def flow_query_payload(
     *,
     answer_language: str = "uk",
     include_tests: bool = False,
-    max_flows: int = 3,
+    max_flows: Optional[int] = None,
 ) -> Dict[str, Any]:
-    return {
+    payload = {
         "queryText": query_text,
         "intent": "FLOW_EXPLANATION",
         "answerLanguage": answer_language,
         "includeTests": include_tests,
-        "maxFlows": max_flows,
     }
+    if max_flows is not None:
+        payload["maxFlows"] = max_flows
+    return payload
 
 
 def normalized_query_payload(

@@ -1,12 +1,10 @@
 import { escapeHtml, pill, renderRequestError, setError, timeOnly } from './dom-render-helpers.js';
-import { JarvisQueryView, safeQueryResponse as redactQueryResponse } from './jarvis-query-view.js';
+import { JarvisQueryView } from './jarvis-query-view.js';
 import { RequestCoordinator } from './request-coordinator.js';
 
 const DEFAULT_QUERY_CONFIG = {
   jarvisQueryAnswerLanguage: 'uk',
-  jarvisQueryIncludeTests: false,
-  jarvisQueryMaxFlows: 3,
-  jarvisFlowRenderBatchSize: 100
+  jarvisQueryIncludeTests: false
 };
 
 export class JarvisPage {
@@ -15,10 +13,7 @@ export class JarvisPage {
     this.http = options.http;
     this.runtimeConfig = { ...DEFAULT_QUERY_CONFIG, ...(options.runtimeConfig || {}) };
     this.requestCoordinator = options.requestCoordinator || new RequestCoordinator();
-    this.queryView = options.queryView || new JarvisQueryView({
-      document: this.document,
-      batchSize: this.runtimeConfig.jarvisFlowRenderBatchSize
-    });
+    this.queryView = options.queryView || new JarvisQueryView({ document: this.document });
     this.disposed = false;
     this.refreshListener = () => {
       this.loadStatus();
@@ -157,13 +152,11 @@ export class JarvisPage {
   }
 
   queryPayload(queryText) {
-    const maxFlows = Math.min(10, Math.max(1, Number(this.runtimeConfig.jarvisQueryMaxFlows) || DEFAULT_QUERY_CONFIG.jarvisQueryMaxFlows));
     return {
       queryText,
       intent: 'FLOW_EXPLANATION',
       answerLanguage: String(this.runtimeConfig.jarvisQueryAnswerLanguage || DEFAULT_QUERY_CONFIG.jarvisQueryAnswerLanguage),
-      includeTests: Boolean(this.runtimeConfig.jarvisQueryIncludeTests),
-      maxFlows
+      includeTests: Boolean(this.runtimeConfig.jarvisQueryIncludeTests)
     };
   }
 
@@ -260,7 +253,7 @@ export class JarvisPage {
     button.disabled = busy;
     button.textContent = busy ? 'Sending...' : 'Send';
     if (loading) {
-      loading.textContent = 'Analyzing the current graph and preparing flow cards...';
+      loading.textContent = 'Analyzing the current graph and preparing an answer...';
     }
     loading?.classList.toggle('hidden', !busy);
   }
@@ -268,9 +261,5 @@ export class JarvisPage {
   renderQueryResponse(response) {
     const pendingMessageId = this.queryView.appendPendingAssistant();
     this.queryView.replaceWithResponse(pendingMessageId, response);
-  }
-
-  safeQueryResponse(value) {
-    return redactQueryResponse(value);
   }
 }

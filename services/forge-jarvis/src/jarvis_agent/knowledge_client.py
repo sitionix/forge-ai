@@ -16,6 +16,15 @@ class KnowledgeBadResponseError(ValueError):
     """Raised when Knowledge returns malformed JSON."""
 
 
+class KnowledgeUpstreamResponseError(ConnectionError):
+    """Raised when Knowledge returns a controlled non-2xx response."""
+
+    def __init__(self, status_code: int, body: Dict[str, Any]) -> None:
+        super().__init__(f"Knowledge returned HTTP {status_code}")
+        self.status_code = status_code
+        self.body = body
+
+
 class KnowledgeConfigurationError(ValueError):
     """Raised when Knowledge configuration is unsafe."""
 
@@ -59,7 +68,14 @@ class KnowledgeClient:
                     headers=headers,
                     timeout=self._timeout(timeout_seconds),
                 )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                try:
+                    data = response.json()
+                except ValueError as exc:
+                    raise KnowledgeBadResponseError("Knowledge returned invalid JSON") from exc
+                if not isinstance(data, dict):
+                    raise KnowledgeBadResponseError("Knowledge returned a non-object error response")
+                raise KnowledgeUpstreamResponseError(response.status_code, data)
         except httpx.HTTPError as exc:
             raise KnowledgeUnavailableError(f"Knowledge is not reachable at {self.base_url}") from exc
         try:

@@ -10,8 +10,6 @@ export interface OperatorRuntimeConfig {
   graphPollIntervalMs: number;
   jarvisQueryAnswerLanguage: string;
   jarvisQueryIncludeTests: boolean;
-  jarvisQueryMaxFlows: number;
-  jarvisFlowRenderBatchSize: number;
 }
 
 declare global {
@@ -29,9 +27,7 @@ export const defaultRuntimeConfig: OperatorRuntimeConfig = {
   activeJobPollIntervalMs: 1500,
   graphPollIntervalMs: 30000,
   jarvisQueryAnswerLanguage: 'uk',
-  jarvisQueryIncludeTests: false,
-  jarvisQueryMaxFlows: 3,
-  jarvisFlowRenderBatchSize: 100
+  jarvisQueryIncludeTests: false
 };
 
 export function contextPathFromLocation(pathname: string = window.location.pathname): string {
@@ -66,9 +62,7 @@ function normalizeRuntimeConfig(config: OperatorRuntimeConfig): OperatorRuntimeC
     activeJobPollIntervalMs: positiveInteger(config.activeJobPollIntervalMs, defaultRuntimeConfig.activeJobPollIntervalMs),
     graphPollIntervalMs: positiveInteger(config.graphPollIntervalMs, defaultRuntimeConfig.graphPollIntervalMs),
     jarvisQueryAnswerLanguage: stringValue(config.jarvisQueryAnswerLanguage, defaultRuntimeConfig.jarvisQueryAnswerLanguage),
-    jarvisQueryIncludeTests: Boolean(config.jarvisQueryIncludeTests),
-    jarvisQueryMaxFlows: boundedInteger(config.jarvisQueryMaxFlows, defaultRuntimeConfig.jarvisQueryMaxFlows, 1, 10),
-    jarvisFlowRenderBatchSize: positiveInteger(config.jarvisFlowRenderBatchSize, defaultRuntimeConfig.jarvisFlowRenderBatchSize)
+    jarvisQueryIncludeTests: Boolean(config.jarvisQueryIncludeTests)
   };
 }
 
@@ -80,13 +74,6 @@ function normalizeBasePath(value: string): string {
 
 function positiveInteger(value: number, fallback: number): number {
   return Number.isInteger(value) && value > 0 ? value : fallback;
-}
-
-function boundedInteger(value: number, fallback: number, min: number, max: number): number {
-  if (!Number.isInteger(value)) {
-    return fallback;
-  }
-  return Math.min(max, Math.max(min, value));
 }
 
 function stringValue(value: string, fallback: string): string {

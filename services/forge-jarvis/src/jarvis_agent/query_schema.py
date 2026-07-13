@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, StrictBool, validator
 
@@ -213,7 +213,7 @@ class JarvisQueryCoverage(BaseModel):
     continuationAvailable: bool = False
 
 
-class JarvisQueryResponse(BaseModel):
+class JarvisKnowledgeQueryResponse(BaseModel):
     queryId: str
     status: JarvisQueryStatus
     intent: str
@@ -226,3 +226,31 @@ class JarvisQueryResponse(BaseModel):
 
     class Config:
         extra = "forbid"
+
+
+class JarvisHumanAnswer(BaseModel):
+    text: str
+
+    class Config:
+        extra = "forbid"
+
+
+class JarvisHumanAnswerSource(BaseModel):
+    source: str
+    entrypoint: str
+
+    class Config:
+        extra = "forbid"
+
+
+class JarvisHumanAnswerResponse(BaseModel):
+    answerLanguage: str
+    answer: JarvisHumanAnswer
+    sources: List[JarvisHumanAnswerSource] = Field(default_factory=list)
+    diagnostics: List[JarvisQueryDiagnostic] = Field(default_factory=list)
+
+    class Config:
+        extra = "forbid"
+
+
+JarvisQueryResponse = Union[JarvisHumanAnswerResponse, JarvisKnowledgeQueryResponse]

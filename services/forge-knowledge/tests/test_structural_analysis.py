@@ -126,6 +126,104 @@ def test_java_parser_extracts_package_imports_types_callables_fields_and_annotat
     assert get.body_line_end == 20
 
 
+def test_java_parser_extracts_type_relations_controller_annotations_override_and_signatures():
+    text = """package example;
+
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+
+@RestController
+class GeneratedController implements GeneratedApi {
+  @Override
+  public ResponseEntity<ResponseDto> create(RequestDto request) {
+    return null;
+  }
+}
+
+interface GeneratedApi extends BaseApi {
+  @PostMapping("/items")
+  ResponseEntity<ResponseDto> create(RequestDto request);
+}
+
+interface BaseApi {}
+
+class SpecializedController extends GeneratedController {}
+
+class RequestDto {}
+class ResponseDto {}
+"""
+    result = JavaParserAdapter().parse(text, metadata(text))
+    types = {item.name: item for item in result.types}
+
+    assert types["GeneratedController"].implemented_interfaces == ["GeneratedApi"]
+    assert types["GeneratedApi"].extended_interfaces == ["BaseApi"]
+    assert types["SpecializedController"].extended_classes == ["GeneratedController"]
+    assert any(annotation.name == "RestController" for annotation in types["GeneratedController"].annotations)
+    create = next(item for item in result.callables if item.qualified_name == "example.GeneratedController.create")
+    assert create.visibility == "PUBLIC"
+    assert create.signature == "create(RequestDto)"
+    assert create.parameters == ["RequestDto"]
+    assert any(annotation.name == "Override" for annotation in create.annotations)
+
+
+def test_static_graph_materializer_persists_type_relations_and_controller_override_entrypoint():
+    text = """package example;
+
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+
+@RestController
+class GeneratedController implements GeneratedApi {
+  @Override
+  public ResponseEntity<ResponseDto> create(RequestDto request) {
+    return null;
+  }
+}
+
+interface GeneratedApi extends BaseApi {
+  @PostMapping("/items")
+  ResponseEntity<ResponseDto> create(RequestDto request);
+}
+
+interface BaseApi {}
+
+class SpecializedController extends GeneratedController {}
+
+class RequestDto {}
+class ResponseDto {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    types = {node.name: node for node in graph.nodes if node.nodeKind == "TYPE"}
+
+    implements_edge = next(edge for edge in graph.edges if edge.edgeType == "IMPLEMENTS")
+    extends_edges = [edge for edge in graph.edges if edge.edgeType == "EXTENDS"]
+    assert implements_edge.fromNodeLocalId == types["GeneratedController"].localId
+    assert implements_edge.toNodeLocalId == types["GeneratedApi"].localId
+    assert implements_edge.unresolvedTarget is None
+    assert implements_edge.metadata["relationKind"] == "IMPLEMENTED_INTERFACE"
+    assert [item.lineStart for item in implements_edge.evidence] == [7]
+    assert {edge.metadata["relationKind"] for edge in extends_edges} == {"EXTENDED_INTERFACE", "EXTENDED_CLASS"}
+    assert {edge.toNodeLocalId for edge in extends_edges} == {types["BaseApi"].localId, types["GeneratedController"].localId}
+
+    controller_create = next(
+        node
+        for node in graph.nodes
+        if node.nodeKind == "CALLABLE" and node.qualifiedName == "example.GeneratedController.create"
+    )
+    entrypoint = next(
+        claim
+        for claim in graph.claims
+        if claim.claimKind == "ENTRYPOINT_HINT" and claim.nodeLocalId == controller_create.localId
+    )
+    assert entrypoint.metadata["entrypointKind"] == "HTTP"
+    assert entrypoint.metadata["origin"] == "DERIVED"
+    assert entrypoint.metadata["route"] == "/items"
+    assert entrypoint.metadata["httpMethod"] == "POST"
+    assert entrypoint.metadata["interfaceMethod"] == "example.GeneratedApi.create"
+
+
 def test_java_parser_extracts_static_callsites_with_conservative_resolution():
     result = parse_sample()
     calls = {(call.method_name, call.receiver_text): call for call in result.callsites}

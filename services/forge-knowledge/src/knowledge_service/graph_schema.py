@@ -7,7 +7,7 @@ from pydantic import BaseModel, Extra, Field, validator
 
 
 GRAPH_SCHEMA_VERSION = "knowledge.graph.analysis.v1"
-GRAPH_ANALYSIS_ENGINE_VERSION = "GRAPH_V1"
+GRAPH_ANALYSIS_ENGINE_VERSION = "GRAPH_V2"
 
 
 class GraphDiagnosticStage(str, Enum):

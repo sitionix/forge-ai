@@ -12,10 +12,11 @@ from knowledge_service.structural_model import (
     StructuralFileMetadata,
     StructuralParseDiagnostic,
     StructuralParseResult,
+    StructuralType,
 )
 
 
-GRAPH_ENGINE_VERSION = "GRAPH_V1"
+GRAPH_ENGINE_VERSION = "GRAPH_V2"
 
 
 class ParserAdapterRegistry:
@@ -118,11 +119,13 @@ class StaticGraphMaterializer:
         diagnostics: List[Dict[str, Any]] = []
         file_local_id = result.file_stable_key
         callables_by_id = {item.local_id: item for item in result.callables}
+        types_by_id = {item.local_id: item for item in result.types}
         fields_by_id = {item.local_id: item for item in result.fields}
         fields_by_owner: Dict[str, List[Any]] = {}
         for item in result.fields:
             fields_by_owner.setdefault(item.owner_type_local_id, []).append(item)
         field_usages: Dict[tuple[str, str], Dict[str, Any]] = {}
+        type_lookup = self._type_lookup(result)
         nodes.append(
             GraphNode(
                 localId=file_local_id,
@@ -227,6 +230,7 @@ class StaticGraphMaterializer:
                     metadata=self._metadata(result, "DECLARATION", item.stable_key),
                 )
             )
+            edges.extend(self._type_relation_edges(result, item, type_lookup))
         for item in result.callables:
             nodes.append(
                 GraphNode(
@@ -272,6 +276,9 @@ class StaticGraphMaterializer:
             )
             owner_annotations = self._type_annotations(result, item.owner_type_local_id)
             claims.extend(self._entrypoint_claims(result, item.local_id, item.annotations, owner_annotations))
+            override_claim = self._controller_override_entrypoint_claim(result, item.local_id, item, types_by_id.get(item.owner_type_local_id or ""))
+            if override_claim:
+                claims.append(override_claim)
             main_claim = self._main_entrypoint_claim(result, item.local_id, item, owner_annotations)
             if main_claim:
                 claims.append(main_claim)
@@ -469,6 +476,92 @@ class StaticGraphMaterializer:
             return False
         return re.search(r"(?<![\w$])this\." + re.escape(field_name) + r"\b", value) is not None
 
+    def _type_relation_edges(
+        self,
+        result: StructuralParseResult,
+        item: StructuralType,
+        type_lookup: Dict[str, StructuralType],
+    ) -> List[GraphEdge]:
+        edges: List[GraphEdge] = []
+        for target_name in item.implemented_interfaces:
+            edges.append(self._type_relation_edge(result, item, target_name, "IMPLEMENTS", "IMPLEMENTED_INTERFACE", type_lookup))
+        for target_name in item.extended_classes:
+            edges.append(self._type_relation_edge(result, item, target_name, "EXTENDS", "EXTENDED_CLASS", type_lookup))
+        for target_name in item.extended_interfaces:
+            edges.append(self._type_relation_edge(result, item, target_name, "EXTENDS", "EXTENDED_INTERFACE", type_lookup))
+        return edges
+
+    def _type_relation_edge(
+        self,
+        result: StructuralParseResult,
+        source_type: StructuralType,
+        target_name: str,
+        edge_type: str,
+        relation_kind: str,
+        type_lookup: Dict[str, StructuralType],
+    ) -> GraphEdge:
+        resolved_name = self._resolve_type_reference(result, target_name)
+        target_type = type_lookup.get(resolved_name) or type_lookup.get(self._simple_type(resolved_name))
+        unresolved = None
+        resolution_status = "RESOLVED" if target_type is not None else "UNRESOLVED"
+        if target_type is None:
+            unresolved = {
+                "name": self._simple_type(resolved_name),
+                "qualifiedName": resolved_name if "." in resolved_name else None,
+                "targetTypeText": resolved_name,
+                "kindHint": "TYPE",
+            }
+        stable_key = self._stable_key(result, edge_type, source_type.local_id, relation_kind, resolved_name)
+        return GraphEdge(
+            localId=stable_key,
+            fromNodeLocalId=source_type.local_id,
+            toNodeLocalId=target_type.local_id if target_type is not None else None,
+            edgeType=edge_type,
+            resolutionStatus=resolution_status,
+            confidence=1.0,
+            evidence=[self._evidence(source_type.line_start, source_type.line_end)],
+            unresolvedTarget=unresolved,
+            metadata=self._metadata(
+                result,
+                relation_kind,
+                stable_key,
+                {
+                    "relationKind": relation_kind,
+                    "targetTypeText": resolved_name,
+                    "resolutionReason": "SAME_FILE_TYPE" if target_type is not None else "NOT_RESOLVED",
+                    "unresolvedReason": None if target_type is not None else "TARGET_NOT_ANALYZED",
+                },
+            ),
+        )
+
+    def _type_lookup(self, result: StructuralParseResult) -> Dict[str, StructuralType]:
+        lookup: Dict[str, StructuralType] = {}
+        for item in result.types:
+            lookup[item.name] = item
+            lookup[item.qualified_name] = item
+        return lookup
+
+    def _resolve_type_reference(self, result: StructuralParseResult, type_name: str) -> str:
+        value = str(type_name or "").strip()
+        if not value:
+            return value
+        simple = self._simple_type(value)
+        for item in result.imports:
+            if item.is_wildcard:
+                continue
+            if item.imported_name.rsplit(".", 1)[-1] == simple:
+                return item.imported_name
+        if "." in value:
+            return value
+        if result.package_name:
+            return f"{result.package_name}.{value}"
+        return value
+
+    def _simple_type(self, value: str) -> str:
+        value = str(value or "").strip()
+        value = value.split("<", 1)[0]
+        return value.rsplit(".", 1)[-1]
+
     def _entrypoint_claims(
         self, result: StructuralParseResult, target_local_id: str, annotations: List[StructuralAnnotation], owner_annotations: List[StructuralAnnotation]
     ) -> List[GraphClaim]:
@@ -486,6 +579,7 @@ class StaticGraphMaterializer:
                 self._stable_key(result, "ENTRYPOINT", target_local_id, simple, str(annotation.line_start)),
                 {
                     "entrypointKind": self._entrypoint_kind(simple),
+                    "origin": "STATIC",
                     "annotation": simple,
                     "annotationName": simple,
                     "httpMethod": http_method,
@@ -508,6 +602,90 @@ class StaticGraphMaterializer:
                 )
             )
         return claims
+
+    def _controller_override_entrypoint_claim(
+        self,
+        result: StructuralParseResult,
+        target_local_id: str,
+        callable_item: Any,
+        owner_type: Optional[StructuralType],
+    ) -> Optional[GraphClaim]:
+        if owner_type is None:
+            return None
+        owner_annotation_names = {annotation.name.rsplit(".", 1)[-1] for annotation in owner_type.annotations}
+        if not owner_annotation_names.intersection({"RestController", "Controller"}):
+            return None
+        if callable_item.visibility != "PUBLIC":
+            return None
+        callable_annotation_names = {annotation.name.rsplit(".", 1)[-1] for annotation in callable_item.annotations}
+        if "Override" not in callable_annotation_names:
+            return None
+        if not owner_type.implemented_interfaces:
+            return None
+        if callable_annotation_names.intersection(self.ENTRYPOINT_ANNOTATIONS):
+            return None
+        inherited = self._interface_method_entrypoint(result, owner_type, callable_item)
+        metadata = self._metadata(
+            result,
+            "ENTRYPOINT_HINT",
+            self._stable_key(result, "ENTRYPOINT", target_local_id, "CONTROLLER_OVERRIDE", str(callable_item.line_start)),
+            {
+                "entrypointKind": "HTTP",
+                "origin": "DERIVED",
+                "annotation": "Override",
+                "annotationName": "Override",
+                "httpMethod": inherited.get("httpMethod"),
+                "route": inherited.get("route"),
+                "interfaceMethod": inherited.get("interfaceMethod"),
+                "sourceAnnotationLine": callable_item.line_start,
+            },
+        )
+        evidence = [
+            self._evidence(annotation.line_start, annotation.line_end, f"@{annotation.name.rsplit('.', 1)[-1]}")
+            for annotation in owner_type.annotations
+            if annotation.name.rsplit(".", 1)[-1] in {"RestController", "Controller"}
+        ]
+        evidence.append(self._evidence(callable_item.line_start, callable_item.line_end, callable_item.signature))
+        return GraphClaim(
+            localId=metadata["stableKey"],
+            nodeLocalId=target_local_id,
+            claimKind="ENTRYPOINT_HINT",
+            summary=self._entrypoint_summary("RequestMapping", inherited.get("httpMethod"), inherited.get("route")),
+            evidence=evidence,
+            confidence=1.0,
+            metadata=metadata,
+        )
+
+    def _interface_method_entrypoint(self, result: StructuralParseResult, owner_type: StructuralType, callable_item: Any) -> Dict[str, Optional[str]]:
+        type_lookup = self._type_lookup(result)
+        for interface_name in owner_type.implemented_interfaces:
+            resolved_name = self._resolve_type_reference(result, interface_name)
+            interface = type_lookup.get(resolved_name) or type_lookup.get(self._simple_type(resolved_name))
+            if interface is None:
+                continue
+            for candidate in result.callables:
+                if candidate.owner_type_local_id != interface.local_id:
+                    continue
+                if candidate.name != callable_item.name or len(candidate.parameters) != len(callable_item.parameters):
+                    continue
+                route_annotation = next(
+                    (
+                        annotation
+                        for annotation in candidate.annotations
+                        if annotation.name.rsplit(".", 1)[-1] in {"RequestMapping", *self.HTTP_METHODS.keys()}
+                    ),
+                    None,
+                )
+                if route_annotation is None:
+                    return {"httpMethod": None, "route": None, "interfaceMethod": candidate.qualified_name}
+                simple = route_annotation.name.rsplit(".", 1)[-1]
+                owner_route = self._route_from_annotations(interface.annotations)
+                return {
+                    "httpMethod": self.HTTP_METHODS.get(simple),
+                    "route": self._join_routes(owner_route, self._annotation_route(route_annotation)),
+                    "interfaceMethod": candidate.qualified_name,
+                }
+        return {"httpMethod": None, "route": None, "interfaceMethod": None}
 
     def _main_entrypoint_claim(
         self, result: StructuralParseResult, target_local_id: str, callable_item, owner_annotations: List[StructuralAnnotation]

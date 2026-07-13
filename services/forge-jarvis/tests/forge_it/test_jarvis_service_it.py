@@ -4,12 +4,14 @@ import pytest
 from support import AsgiTestClient as TestClient
 from pydantic import ValidationError
 
+from jarvis_agent.knowledge_client import KnowledgeUpstreamResponseError
 from jarvis_agent.config import load_forge_settings
 from support import (
     FakeKnowledgeClient,
     FakeModelClient,
     build_test_app,
     flow_query_payload,
+    human_answer_bundle,
     knowledge_bad_response,
     knowledge_query_bundle,
     knowledge_unavailable,
@@ -95,20 +97,10 @@ def test_status_actions_command_and_query_success_paths(tmp_path):
 
 
 def test_flow_explanation_query_uses_dedicated_knowledge_contract(tmp_path):
-    explanation = {
-        "flowIndex": 1,
-        "title": "Create site",
-        "narrative": [{"text": "The controller delegates to the service.", "nodeRefs": ["n1"], "transitionRefs": ["t1"], "boundaryRefs": []}],
-        "steps": [{"nodeRef": "n1", "nodeLabel": "SiteController.createSite", "explanation": "Handles the request.", "transitionRefs": ["t1"], "evidenceRefs": ["e1"]}],
-        "transitionExplanations": [{"transitionRef": "t1", "explanation": "Calls the service.", "evidenceRefs": ["e2"]}],
-        "boundaries": [{"boundaryRef": "b1", "fromNodeRef": "n1", "kind": "UNRESOLVED", "resolutionStatus": "DYNAMIC_TARGET", "target": "mapper", "explanation": "The target is dynamic.", "evidenceRefs": ["e3"]}],
-        "status": "OK",
-    }
     knowledge = FakeKnowledgeClient(
-        bundle=knowledge_query_bundle(
-            intent="FLOW_EXPLANATION",
-            edges=[{"transitionRef": "t1", "fromNodeRef": "n1", "toNodeRef": "n2", "evidenceRefs": ["e2"]}],
-            flow_explanations=[explanation],
+        bundle=human_answer_bundle(
+            text="Сайт створюється через контролер і use case.",
+            sources=[{"source": "stsssox", "entrypoint": "SiteController.createSite"}],
         )
     )
     app, *_rest, model, _knowledge = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
@@ -121,28 +113,28 @@ def test_flow_explanation_query_uses_dedicated_knowledge_contract(tmp_path):
     assert knowledge.calls == []
     assert knowledge.paths == ["/api/v1/knowledge/query/flow-explanations"]
     assert knowledge.flow_explanation_calls == [
-        normalized_query_payload("SiteController createSite", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=3)
+        normalized_query_payload("SiteController createSite", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=10)
     ]
     assert model.prompts == []
-    assert body["flowExplanations"][0] == explanation
-    assert body["flows"][0]["transitions"][0]["transitionRef"] == "t1"
+    assert body == {
+        "answerLanguage": "uk",
+        "answer": {"text": "Сайт створюється через контролер і use case."},
+        "sources": [{"source": "stsssox", "entrypoint": "SiteController.createSite"}],
+        "diagnostics": [],
+    }
+    assert "status" not in body
+    assert "flows" not in body
+    assert "flowExplanations" not in body
 
 
-def test_flow_explanation_failed_status_preserves_successful_http_response(tmp_path):
+def test_flow_explanation_generation_failure_uses_public_error(tmp_path):
     knowledge = FakeKnowledgeClient(
-        bundle=knowledge_query_bundle(
-            intent="FLOW_EXPLANATION",
-            flow_explanations=[
-                {
-                    "flowIndex": 1,
-                    "title": "",
-                    "narrative": [],
-                    "steps": [{"nodeRef": "n1", "nodeLabel": "JarvisGateway"}],
-                    "transitionExplanations": [],
-                    "boundaries": [],
-                    "status": "FAILED",
-                }
-            ],
+        error=KnowledgeUpstreamResponseError(
+            502,
+            {
+                "code": "HUMAN_ANSWER_GENERATION_FAILED",
+                "message": "The local model could not produce a grounded answer.",
+            },
         )
     )
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
@@ -150,12 +142,15 @@ def test_flow_explanation_failed_status_preserves_successful_http_response(tmp_p
     with TestClient(app) as client:
         response = client.post("/api/v1/jarvis/query", json=flow_query_payload("JarvisGateway"))
 
-    assert response.status_code == 200
-    assert response.json()["flowExplanations"][0]["status"] == "FAILED"
+    assert response.status_code == 502
+    assert response.json() == {
+        "code": "HUMAN_ANSWER_GENERATION_FAILED",
+        "message": "The local model could not produce a grounded answer.",
+    }
 
 
 def test_flow_explanation_malformed_knowledge_object_uses_controlled_error(tmp_path):
-    knowledge = FakeKnowledgeClient(bundle={"queryId": "q", "status": "OK", "intent": "FLOW_EXPLANATION", "unexpected": True})
+    knowledge = FakeKnowledgeClient(bundle={"answerLanguage": "uk", "answer": {"text": "ok"}, "status": "OK", "sources": [], "diagnostics": []})
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
     with TestClient(app) as client:

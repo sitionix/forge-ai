@@ -256,68 +256,51 @@ class FlowExplanation(BaseModel):
     status: FlowExplanationStatus = FlowExplanationStatus.OK
 
 
-class KnowledgeQueryFlowExplanationResponse(KnowledgeQueryResponse):
-    flowExplanations: List[FlowExplanation] = Field(default_factory=list)
+class KnowledgeHumanAnswer(BaseModel):
+    text: str
 
 
-class FlowToolAddress(BaseModel):
-    service: Optional[str] = None
-    relativePath: Optional[str] = None
-    lineStart: Optional[int] = None
-    lineEnd: Optional[int] = None
+class KnowledgeHumanAnswerSource(BaseModel):
+    source: str
+    entrypoint: str
+
+
+class KnowledgeQueryFlowExplanationResponse(BaseModel):
+    answerLanguage: str
+    answer: KnowledgeHumanAnswer
+    sources: List[KnowledgeHumanAnswerSource] = Field(default_factory=list)
+    diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 
 class FlowToolEvidence(BaseModel):
-    ref: str
-    relativePath: Optional[str] = None
+    path: Optional[str] = None
     lineStart: Optional[int] = None
     lineEnd: Optional[int] = None
     excerpt: Optional[str] = None
 
 
-class FlowToolStep(BaseModel):
-    nodeRef: str
+class FlowToolTreeItem(BaseModel):
     symbol: str
     kind: str
-    address: FlowToolAddress = Field(default_factory=FlowToolAddress)
-    explanation: Optional[str] = None
+    path: Optional[str] = None
+    lineStart: Optional[int] = None
+    lineEnd: Optional[int] = None
+    description: Optional[str] = None
     evidence: List[FlowToolEvidence] = Field(default_factory=list)
+    children: List["FlowToolTreeItem"] = Field(default_factory=list)
+    cycle: Optional[bool] = None
+    shared: Optional[bool] = None
 
 
-class FlowToolTransition(BaseModel):
-    transitionRef: str
-    fromNodeRef: str
-    toNodeRef: str
-    fromSymbol: str
-    toSymbol: str
-    explanation: Optional[str] = None
-    evidence: List[FlowToolEvidence] = Field(default_factory=list)
-
-
-class FlowToolBoundary(BaseModel):
-    boundaryRef: str
-    fromNodeRef: str
-    kind: str
-    resolutionStatus: str
-    target: Optional[str] = None
-    explanation: Optional[str] = None
-    evidence: List[FlowToolEvidence] = Field(default_factory=list)
-
-
-class FlowToolContext(BaseModel):
-    flowIndex: int
-    status: FlowExplanationStatus = FlowExplanationStatus.OK
-    title: str = ""
-    narrative: List[FlowExplanationNarrative] = Field(default_factory=list)
-    steps: List[FlowToolStep] = Field(default_factory=list)
-    transitions: List[FlowToolTransition] = Field(default_factory=list)
-    boundaries: List[FlowToolBoundary] = Field(default_factory=list)
-    diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
+class FlowToolTree(BaseModel):
+    source: str
+    entrypoint: FlowToolTreeItem
 
 
 class KnowledgeQueryToolContextResponse(BaseModel):
     queryText: str
-    answerLanguage: str
-    status: KnowledgeQueryStatus
-    flows: List[FlowToolContext] = Field(default_factory=list)
+    trees: List[FlowToolTree] = Field(default_factory=list)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
+
+
+FlowToolTreeItem.update_forward_refs()

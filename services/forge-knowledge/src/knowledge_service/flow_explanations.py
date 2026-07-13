@@ -24,12 +24,11 @@ from knowledge_service.knowledge_query_schema import (
     FlowExplanationStep,
     FlowExplanationStatus,
     FlowExplanationTransition,
-    FlowToolAddress,
-    FlowToolBoundary,
-    FlowToolContext,
     FlowToolEvidence,
-    FlowToolStep,
-    FlowToolTransition,
+    FlowToolTree,
+    FlowToolTreeItem,
+    KnowledgeHumanAnswer,
+    KnowledgeHumanAnswerSource,
     KnowledgeQueryDiagnostic,
     KnowledgeQueryFlowExplanationResponse,
     KnowledgeQueryRequest,
@@ -127,6 +126,308 @@ class FlowExplanationPromptRenderer:
             f"{context_json}\n"
             "END_FLOW_CONTEXT_JSON\n"
         )
+
+
+class HumanAnswerGenerationFailed(Exception):
+    pass
+
+
+class HumanAnswerPromptRenderer:
+    def render(self, llm_input: Mapping[str, Any], validation_errors: Sequence[str] | None = None) -> str:
+        validation_block = ""
+        if validation_errors:
+            validation_block = "\nPrevious response failed validation. Correct these issues using only the supplied facts:\n"
+            validation_block += "\n".join(f"- {error}" for error in validation_errors)
+            validation_block += "\n"
+        context_json = json.dumps(dict(llm_input), ensure_ascii=False, indent=2, sort_keys=True)
+        return (
+            "Answer the user's code-flow question in normal human language using only the supplied verified flow facts.\n"
+            "Return strict JSON only with exactly this shape: {\"text\":\"human-readable answer\"}.\n"
+            "Use the requested answerLanguage. Directly answer the question. Preserve branches as alternatives or parallel calls when the facts branch.\n"
+            "Do not mention graph terminology, retrieval mechanics, refs, nodes, transitions, boundaries, hierarchy, scores, or internal IDs.\n"
+            "Do not invent behavior unsupported by the supplied facts. If several entrypoints are legitimate alternatives, explain them as alternatives in one answer.\n"
+            f"{validation_block}"
+            "BEGIN_VERIFIED_FLOW_FACTS_JSON\n"
+            f"{context_json}\n"
+            "END_VERIFIED_FLOW_FACTS_JSON\n"
+        )
+
+
+class CompactFlowProjector:
+    def __init__(self, boundary_classifier: FlowBoundaryClassifier | None = None) -> None:
+        self.boundary_classifier = boundary_classifier or FLOW_BOUNDARY_CLASSIFIER
+
+    def to_tool_response(self, request: KnowledgeQueryRequest, execution: Any) -> KnowledgeQueryToolContextResponse:
+        return KnowledgeQueryToolContextResponse(
+            queryText=request.queryText,
+            trees=[self._tree(flow) for flow in tuple(execution.flows or ())],
+            diagnostics=self._diagnostics(execution),
+        )
+
+    def human_llm_input(self, request: KnowledgeQueryRequest, execution: Any) -> Dict[str, Any]:
+        trees = [self._tree(flow) for flow in tuple(execution.flows or ())]
+        return {
+            "queryText": request.queryText,
+            "answerLanguage": request.answerLanguage,
+            "sources": [source.dict() for source in self.human_sources(execution)],
+            "flows": [tree.dict(exclude_none=True) for tree in trees],
+        }
+
+    def human_sources(self, execution: Any) -> List[KnowledgeHumanAnswerSource]:
+        result: List[KnowledgeHumanAnswerSource] = []
+        for flow in tuple(execution.flows or ()):
+            source = str(flow.key.source_id or "")
+            entrypoint = self._symbol(flow.entrypoint)
+            if source and entrypoint and not any(item.source == source and item.entrypoint == entrypoint for item in result):
+                result.append(KnowledgeHumanAnswerSource(source=source, entrypoint=entrypoint))
+        return result
+
+    def _tree(self, flow: EntrypointFlow) -> FlowToolTree:
+        node_by_id = {node.node_id: node for node in flow.nodes}
+        outgoing: Dict[str, List[FlowGraphEdge]] = {}
+        for edge in sorted(flow.transitions, key=self._edge_sort_key):
+            outgoing.setdefault(edge.from_node_id, []).append(edge)
+        boundaries: Dict[str, List[FlowGraphEdge]] = {}
+        for edge in sorted(flow.boundary_transitions, key=self._edge_sort_key):
+            boundaries.setdefault(edge.from_node_id, []).append(edge)
+        evidence_by_node: Dict[str, List[FlowGraphEvidence]] = {}
+        evidence_by_edge: Dict[str, List[FlowGraphEvidence]] = {}
+        for item in flow.evidence:
+            if item.edge_id:
+                evidence_by_edge.setdefault(item.edge_id, []).append(item)
+            elif item.node_id:
+                evidence_by_node.setdefault(item.node_id, []).append(item)
+
+        root = self._node_item(flow.entrypoint, evidence_by_node.get(flow.entrypoint.node_id, []))
+        rendered = {flow.entrypoint.node_id}
+        stack: List[Dict[str, Any]] = [
+            {
+                "node": flow.entrypoint,
+                "item": root,
+                "entries": [*outgoing.get(flow.entrypoint.node_id, []), *boundaries.get(flow.entrypoint.node_id, [])],
+                "index": 0,
+                "ancestry": {flow.entrypoint.node_id},
+            }
+        ]
+        while stack:
+            frame = stack[-1]
+            if frame["index"] >= len(frame["entries"]):
+                stack.pop()
+                continue
+            entry = frame["entries"][frame["index"]]
+            frame["index"] += 1
+            if entry in boundaries.get(frame["node"].node_id, []):
+                frame["item"].children.append(self._boundary_item(entry, evidence_by_edge.get(entry.edge_id, [])))
+                continue
+            target = node_by_id.get(entry.to_node_id or "")
+            if target is None:
+                frame["item"].children.append(self._boundary_item(replace_edge_boundary(entry), evidence_by_edge.get(entry.edge_id, [])))
+                continue
+            child_evidence = [*evidence_by_node.get(target.node_id, []), *evidence_by_edge.get(entry.edge_id, [])]
+            if target.node_id in frame["ancestry"]:
+                frame["item"].children.append(self._node_item(target, child_evidence, cycle=True))
+                continue
+            if target.node_id in rendered:
+                frame["item"].children.append(self._node_item(target, child_evidence, shared=True))
+                continue
+            child = self._node_item(target, child_evidence)
+            frame["item"].children.append(child)
+            rendered.add(target.node_id)
+            stack.append(
+                {
+                    "node": target,
+                    "item": child,
+                    "entries": [*outgoing.get(target.node_id, []), *boundaries.get(target.node_id, [])],
+                    "index": 0,
+                    "ancestry": {*frame["ancestry"], target.node_id},
+                }
+            )
+        return FlowToolTree(source=str(flow.key.source_id or ""), entrypoint=root)
+
+    def _node_item(
+        self,
+        node: FlowGraphNode,
+        evidence: Sequence[FlowGraphEvidence],
+        *,
+        cycle: bool = False,
+        shared: bool = False,
+    ) -> FlowToolTreeItem:
+        return FlowToolTreeItem(
+            symbol=self._symbol(node),
+            kind=self._node_kind(node),
+            path=node.relative_path,
+            lineStart=node.line_start,
+            lineEnd=node.line_end,
+            description=node.summary,
+            evidence=[self._evidence(item) for item in evidence],
+            children=[],
+            cycle=True if cycle else None,
+            shared=True if shared else None,
+        )
+
+    def _boundary_item(self, edge: FlowGraphEdge, evidence: Sequence[FlowGraphEvidence]) -> FlowToolTreeItem:
+        projection = self.boundary_classifier.project(edge)
+        kind = "EXTERNAL_CALL" if projection.kind.value == "EXTERNAL" else "UNRESOLVED_CALL"
+        symbol = projection.target or self._unresolved_target_name(edge) or (
+            "External call" if kind == "EXTERNAL_CALL" else "Unresolved call"
+        )
+        description = "Calls an external client boundary." if kind == "EXTERNAL_CALL" else None
+        if edge.boundary_reason == "CURRENT_TARGET_NODE_MISSING":
+            symbol = projection.target or "Target missing from current graph"
+            description = "Target is missing from the current graph."
+        return FlowToolTreeItem(
+            symbol=symbol,
+            kind=kind,
+            path=None,
+            lineStart=None,
+            lineEnd=None,
+            description=description,
+            evidence=[self._evidence(item) for item in evidence],
+            children=[],
+        )
+
+    def _evidence(self, item: FlowGraphEvidence) -> FlowToolEvidence:
+        return FlowToolEvidence(
+            path=item.relative_path,
+            lineStart=item.line_start,
+            lineEnd=item.line_end,
+            excerpt=item.text,
+        )
+
+    def _symbol(self, node: FlowGraphNode) -> str:
+        qualified = str(node.qualified_name or "").strip()
+        if qualified:
+            parts = [part for part in qualified.split(".") if part]
+            if node.node_kind == "CALLABLE" and len(parts) >= 2:
+                return ".".join(parts[-2:])
+            return parts[-1] if parts else qualified
+        return str(node.label or node.node_id)
+
+    def _node_kind(self, node: FlowGraphNode) -> str:
+        if node.entrypoint and node.node_kind == "CALLABLE":
+            return "HTTP_ENDPOINT"
+        if node.node_kind == "CALLABLE":
+            return "METHOD"
+        return node.node_kind
+
+    def _unresolved_target_name(self, edge: FlowGraphEdge) -> str | None:
+        target = edge.unresolved_target or {}
+        for key in ("name", "qualifiedName", "targetTypeText", "receiverTypeHint"):
+            value = target.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    def _edge_sort_key(self, edge: FlowGraphEdge) -> tuple[str, str, str, str]:
+        return (edge.from_node_id, edge.to_node_id or "", edge.edge_id, edge.resolution_status)
+
+    def _diagnostics(self, execution: Any) -> List[KnowledgeQueryDiagnostic]:
+        response = getattr(execution, "response", None)
+        diagnostics = list(getattr(response, "diagnostics", []) or [])
+        for flow in tuple(getattr(execution, "flows", ()) or ()):
+            diagnostics.extend(flow.diagnostics)
+        return [
+            self._compact_diagnostic(item)
+            for item in diagnostics
+            if not str(item.code).startswith("SEMANTIC_") and item.code != "ENTRYPOINT_FLOW_TIMINGS"
+        ]
+
+    def _compact_diagnostic(self, diagnostic: KnowledgeQueryDiagnostic) -> KnowledgeQueryDiagnostic:
+        return KnowledgeQueryDiagnostic(
+            code=diagnostic.code,
+            message=diagnostic.message,
+            severity=diagnostic.severity,
+            sourceId=diagnostic.sourceId,
+            metadata={},
+        )
+
+
+def replace_edge_boundary(edge: FlowGraphEdge) -> FlowGraphEdge:
+    from dataclasses import replace
+
+    return replace(edge, boundary_reason="CURRENT_TARGET_NODE_MISSING")
+
+
+class HumanFlowAnswerService:
+    def __init__(
+        self,
+        provider: Any,
+        *,
+        max_prompt_chars: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS * 4,
+        request_deadline_seconds: float = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
+        min_call_timeout_seconds: float = _DEFAULT_MIN_CALL_TIMEOUT_SECONDS,
+        projector: CompactFlowProjector | None = None,
+        renderer: HumanAnswerPromptRenderer | None = None,
+        cancel_event: Any | None = None,
+    ) -> None:
+        self.provider = provider
+        self.max_prompt_chars = max(4096, int(max_prompt_chars or DEFAULT_GENERATIVE_CONTEXT_TOKENS * 4))
+        self.request_deadline_seconds = max(0.001, float(request_deadline_seconds or DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS))
+        self.min_call_timeout_seconds = max(0.001, float(min_call_timeout_seconds or _DEFAULT_MIN_CALL_TIMEOUT_SECONDS))
+        self.projector = projector or CompactFlowProjector()
+        self.renderer = renderer or HumanAnswerPromptRenderer()
+        self.cancel_event = cancel_event
+
+    def answer(
+        self,
+        request: KnowledgeQueryRequest,
+        execution: Any,
+        *,
+        deadline_at: float | None = None,
+    ) -> KnowledgeQueryFlowExplanationResponse:
+        flows = tuple(execution.flows or ())
+        if not flows:
+            raise HumanAnswerGenerationFailed("no grounded flows")
+        if deadline_at is None:
+            deadline_at = time.monotonic() + self.request_deadline_seconds
+        llm_input = self.projector.human_llm_input(request, execution)
+        prompt_len = len(self.renderer.render(llm_input))
+        if prompt_len > self.max_prompt_chars:
+            raise HumanAnswerGenerationFailed("human answer prompt exceeded budget")
+        first = self._complete_with_deadline(llm_input, deadline_at)
+        text = self._validate_text(first.raw_text)
+        return KnowledgeQueryFlowExplanationResponse(
+            answerLanguage=request.answerLanguage,
+            answer=KnowledgeHumanAnswer(text=text),
+            sources=self.projector.human_sources(execution),
+            diagnostics=[],
+        )
+
+    def _complete_with_deadline(self, llm_input: Mapping[str, Any], deadline_at: float) -> FlowExplanationProviderResult:
+        if self._cancelled() or self._remaining_seconds(deadline_at) <= self.min_call_timeout_seconds:
+            raise FlowExplanationDeadlineExceeded()
+        remaining = self._remaining_seconds(deadline_at)
+        try:
+            result = self.provider.complete(llm_input, timeout_seconds=remaining)
+        except (TimeoutError, httpx.TimeoutException) as exc:
+            raise FlowExplanationDeadlineExceeded() from exc
+        except Exception as exc:
+            raise HumanAnswerGenerationFailed(str(type(exc).__name__)) from exc
+        if self._cancelled() or time.monotonic() > deadline_at + _DEADLINE_COMPLETION_GRACE_SECONDS:
+            raise FlowExplanationDeadlineExceeded()
+        return result
+
+    def _validate_text(self, raw_text: str) -> str:
+        try:
+            payload = json.loads(raw_text)
+        except Exception as exc:
+            raise HumanAnswerGenerationFailed("human answer was not valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise HumanAnswerGenerationFailed("human answer was not a JSON object")
+        text = payload.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise HumanAnswerGenerationFailed("human answer text missing")
+        normalized = text.strip()
+        forbidden = ("nodeRef", "transitionRef", "boundaryRef", "evidenceRef", "flowIndex", "analysis-graph-")
+        if any(token in normalized for token in forbidden):
+            raise HumanAnswerGenerationFailed("human answer exposed internal graph details")
+        return normalized
+
+    def _remaining_seconds(self, deadline_at: float) -> float:
+        return max(0.0, deadline_at - time.monotonic())
+
+    def _cancelled(self) -> bool:
+        return bool(self.cancel_event is not None and getattr(self.cancel_event, "is_set", lambda: False)())
 
 
 class LocalOllamaFlowExplanationClient:
@@ -937,14 +1238,15 @@ class FlowExplanationService:
         return KnowledgeQueryFlowExplanationResponse(**base)
 
     def to_tool_response(self, request: KnowledgeQueryRequest, run: FlowExplanationRun) -> KnowledgeQueryToolContextResponse:
-        compact_diagnostics = [self._compact_diagnostic(diagnostic) for diagnostic in run.diagnostics]
-        return KnowledgeQueryToolContextResponse(
-            queryText=request.queryText,
-            answerLanguage=request.answerLanguage,
-            status=run.query_response.status,
-            flows=[self._tool_flow(result) for result in run.results],
-            diagnostics=compact_diagnostics,
-        )
+        execution = type(
+            "FlowProjectionExecution",
+            (),
+            {
+                "response": run.query_response,
+                "flows": tuple(result.flow for result in run.results),
+            },
+        )()
+        return CompactFlowProjector().to_tool_response(request, execution)
 
     def _explain_one(self, flow: EntrypointFlow, context: PackedFlowContext, deadline_at: float) -> PerFlowExplanationResult:
         diagnostics: List[KnowledgeQueryDiagnostic] = []

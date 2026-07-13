@@ -13,6 +13,7 @@ EDGE_METADATA_ALLOWLIST = {
     "callKind",
     "callTargetCategory",
     "methodName",
+    "relationKind",
     "receiverText",
     "receiverTypeHint",
     "resolutionReason",

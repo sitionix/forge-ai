@@ -14,7 +14,7 @@ from jarvis_agent.bootstrap import JarvisDependencies, build_dependencies, confi
 from jarvis_agent.config import AppConfig, ForgeSettings, load_forge_settings
 from jarvis_agent.intent_parser import IntentParseError, parse_intent
 from jarvis_agent.intent_schema import CommandRequest, CommandResponse
-from jarvis_agent.knowledge_client import KnowledgeBadResponseError, KnowledgeUnavailableError
+from jarvis_agent.knowledge_client import KnowledgeBadResponseError, KnowledgeUnavailableError, KnowledgeUpstreamResponseError
 from jarvis_agent.observability import (
     CORRELATION_HEADER,
     ObservabilityMiddleware,
@@ -152,6 +152,9 @@ def create_app(
         except KnowledgeBadResponseError:
             logging.getLogger("jarvis_agent").warning("knowledge returned malformed response")
             return error_response(502, "KNOWLEDGE_BAD_RESPONSE", "Knowledge returned a malformed query response", request)
+        except KnowledgeUpstreamResponseError as exc:
+            logging.getLogger("jarvis_agent").warning("knowledge returned controlled upstream response: %s", exc.status_code)
+            return JSONResponse(status_code=exc.status_code, content=exc.body)
 
     return app
 

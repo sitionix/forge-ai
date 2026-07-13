@@ -100,7 +100,7 @@ class InfrastructureProxyTransportTest {
     }
 
     @Test
-    void jarvisQueryRouteDoesNotTimeoutBeforeFailClosedFactualResponse() throws Exception {
+    void jarvisQueryRouteDoesNotTimeoutBeforeHumanFlowResponse() throws Exception {
         final HttpClient httpClient = mock(HttpClient.class);
         final Duration controlledResponseDelay = Duration.ofMillis(150);
         when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
@@ -113,7 +113,7 @@ class InfrastructureProxyTransportTest {
                     final HttpResponse<InputStream> response = mock(HttpResponse.class);
                     when(response.statusCode()).thenReturn(200);
                     when(response.body()).thenReturn(new ByteArrayInputStream("""
-                            {"status":"OK","flows":[{"flowIndex":1}],"flowExplanations":[{"flowIndex":1,"status":"FAILED"}]}
+                            {"answerLanguage":"uk","answer":{"text":"JarvisGateway handles the request."},"sources":[],"diagnostics":[]}
                             """.strip().getBytes(UTF_8)));
                     when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of("Content-Type", List.of("application/json")), (left, right) -> true));
                     return CompletableFuture.completedFuture(response);
@@ -146,8 +146,9 @@ class InfrastructureProxyTransportTest {
 
         final String body = new String(response.getBody(), UTF_8);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(body).contains("\"flows\"");
-        assertThat(body).contains("\"status\":\"FAILED\"");
+        assertThat(body).contains("\"answer\"");
+        assertThat(body).doesNotContain("\"status\"");
+        assertThat(body).doesNotContain("\"flows\"");
         assertThat(body).doesNotContain("UPSTREAM_TIMEOUT");
     }
 
@@ -164,7 +165,9 @@ class InfrastructureProxyTransportTest {
                     }
                     final HttpResponse<InputStream> response = mock(HttpResponse.class);
                     when(response.statusCode()).thenReturn(200);
-                    when(response.body()).thenReturn(new ByteArrayInputStream("{\"status\":\"OK\"}".getBytes(UTF_8)));
+                    when(response.body()).thenReturn(new ByteArrayInputStream(
+                            "{\"answerLanguage\":\"uk\",\"answer\":{\"text\":\"ok\"},\"sources\":[],\"diagnostics\":[]}".getBytes(UTF_8)
+                    ));
                     when(response.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of("Content-Type", List.of("application/json")), (left, right) -> true));
                     return CompletableFuture.completedFuture(response);
                 });
@@ -193,6 +196,8 @@ class InfrastructureProxyTransportTest {
         ).get(1, TimeUnit.SECONDS);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(new String(response.getBody(), UTF_8)).isEqualTo("{\"status\":\"OK\"}");
+        final String body = new String(response.getBody(), UTF_8);
+        assertThat(body).contains("\"answer\"");
+        assertThat(body).doesNotContain("\"status\"");
     }
 }

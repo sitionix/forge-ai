@@ -33,7 +33,7 @@ class InfrastructureJarvisQueryTimeoutHierarchyIT extends AbstractForgeAiIT {
     private InfrastructureProxyAsyncMockMvc proxyMockMvc;
 
     @Test
-    void itJarvisQueryWaitsPastNormalServiceTimeoutForFailClosedFlowResponse() {
+    void itJarvisQueryWaitsPastNormalServiceTimeoutForHumanFlowResponse() {
         this.testManager.wiremock()
                 .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery())
                 .applyDefault(context -> context
@@ -46,9 +46,9 @@ class InfrastructureJarvisQueryTimeoutHierarchyIT extends AbstractForgeAiIT {
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery())
                 .header("X-Correlation-Id", "corr-jarvis-timeout-hierarchy")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].flowIndex").value(1))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowExplanations[1].status").value("FAILED"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answer.text", containsString("JarvisGateway")))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").doesNotExist())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows").doesNotExist())
                 .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("UPSTREAM_TIMEOUT"))))
                 .assertDefault();
     }

@@ -273,6 +273,14 @@ def test_inferred_root_is_marked_and_diagnosed():
     assert any(item.code == "ENTRYPOINT_FLOW_INFERRED_ROOT" for item in result.flows[0].diagnostics)
 
 
+def test_inferred_roots_are_omitted_when_explicit_entrypoints_are_reachable():
+    nodes = [node("Alpha", entrypoint=True), node("Beta"), node("Detached")]
+    edges = [edge("ab", "Alpha", "Beta")]
+    result = build(nodes, edges, [anchor("Beta"), anchor("Detached")])
+    assert [flow.entrypoint.node_id for flow in result.flows] == ["Alpha"]
+    assert result.flows[0].origin is EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT
+
+
 def test_cycle_edge_is_retained_once_and_traversal_terminates():
     nodes = [node("Alpha", entrypoint=True), node("Beta"), node("Gamma")]
     edges = [edge("ab", "Alpha", "Beta"), edge("bg", "Beta", "Gamma"), edge("gb", "Gamma", "Beta")]

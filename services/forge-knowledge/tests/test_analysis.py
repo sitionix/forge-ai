@@ -1450,6 +1450,12 @@ interface SiteInfraMapper {
   Site asSite(SiteEntity entity);
 }
 
+class SiteInfraMapperImpl implements SiteInfraMapper {
+  public Site asSite(SiteEntity entity) {
+    return new Site();
+  }
+}
+
 class Site {}
 class SiteEntity {}
 """
@@ -1471,7 +1477,7 @@ class SiteEntity {}
         edge = conn.execute(
             """
             SELECT e.resolution_status, e.to_node_id, e.argument_count, e.metadata_json,
-                   e.unresolved_target_json, target.name AS target_name, ev.line_start, ev.excerpt
+                   e.unresolved_target_json, target.name AS target_name, target.qualified_name AS target_qualified_name, ev.line_start, ev.excerpt
             FROM analysis_graph_edges e
             JOIN analysis_graph_nodes target ON target.id = e.to_node_id
             JOIN analysis_graph_edge_evidence ee ON ee.edge_id = e.id
@@ -1485,6 +1491,7 @@ class SiteEntity {}
         assert edge is not None
         assert edge["resolution_status"] == "RESOLVED"
         assert edge["target_name"] == "asSite"
+        assert edge["target_qualified_name"] == "example.SiteInfraMapperImpl.asSite"
         assert edge["argument_count"] is None
         assert edge["unresolved_target_json"] is None
         assert edge["line_start"] == 11
@@ -1493,8 +1500,297 @@ class SiteEntity {}
         assert metadata["receiverText"] == "this.siteInfraMapper"
         assert metadata["receiverTypeHint"] == "SiteInfraMapper"
         assert metadata["targetTypeText"] == "SiteInfraMapper"
-        assert metadata["resolutionReason"] == "FIELD_TYPE_HINT"
+        assert metadata["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH"
         assert "unresolvedReason" not in metadata
+
+
+def test_resolver_dispatches_interface_calls_to_unique_implementation(tmp_path):
+    content = """package example;
+
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+class Controller implements GeneratedApi {
+  private final UseCase useCase;
+
+  @Override
+  public Response handle(Request request) {
+    return useCase.execute(new Command());
+  }
+}
+
+interface GeneratedApi {
+  Response handle(Request request);
+}
+
+interface UseCase {
+  Response execute(Command command);
+}
+
+class UseCaseImpl implements UseCase {
+  private final Repository repository;
+
+  public Response execute(Command command) {
+    return repository.save(command);
+  }
+}
+
+interface Repository {
+  Response save(Command command);
+}
+
+class RepositoryImpl implements Repository {
+  public Response save(Command command) {
+    return new Response();
+  }
+}
+
+class Request {}
+class Command {}
+class Response {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(content, "src/main/java/example/Controller.java"),
+        _materialize_static_java_for_test(content, 1, "src/main/java/example/Controller.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT caller.qualified_name AS caller, target.qualified_name AS target, e.resolution_status, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND json_extract(e.metadata_json, '$.methodName') IN ('execute', 'save')
+            ORDER BY caller.qualified_name, target.qualified_name
+            """
+        ).fetchall()
+
+    targets = {(row["caller"], row["target"]): row for row in rows}
+    assert ("example.Controller.handle", "example.UseCaseImpl.execute") in targets
+    assert ("example.UseCaseImpl.execute", "example.RepositoryImpl.save") in targets
+    assert all(row["resolution_status"] == "RESOLVED" for row in targets.values())
+    assert all(json.loads(row["metadata_json"])["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH" for row in targets.values())
+
+
+def test_resolver_revisits_unresolved_interface_calls_when_implementation_arrives_later(tmp_path):
+    api_content = """package example;
+
+class Controller {
+  private final UseCase useCase;
+
+  Response handle(Command command) {
+    return useCase.execute(command);
+  }
+}
+
+interface UseCase {
+  Response execute(Command command);
+}
+
+class Command {}
+class Response {}
+"""
+    implementation_content = """package example;
+
+class UseCaseImpl implements UseCase {
+  public Response execute(Command command) {
+    return new Response();
+  }
+}
+
+class Command {}
+class Response {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(api_content, "src/main/java/example/Controller.java"),
+        _materialize_static_java_for_test(api_content, 1, "src/main/java/example/Controller.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        unresolved = conn.execute(
+            """
+            SELECT e.resolution_status, e.to_node_id, e.unresolved_target_json, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'example.Controller.handle'
+              AND json_extract(e.metadata_json, '$.methodName') = 'execute'
+            """
+        ).fetchone()
+    assert unresolved is not None
+    assert unresolved["resolution_status"] == "UNRESOLVED"
+    assert unresolved["to_node_id"] is None
+    assert json.loads(unresolved["unresolved_target_json"])["interfaceType"] == "example.UseCase"
+
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(implementation_content, "src/main/java/example/UseCaseImpl.java"),
+        _materialize_static_java_for_test(implementation_content, 2, "src/main/java/example/UseCaseImpl.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        resolved = conn.execute(
+            """
+            SELECT target.qualified_name AS target, e.resolution_status, e.unresolved_target_json, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'example.Controller.handle'
+              AND json_extract(e.metadata_json, '$.methodName') = 'execute'
+            """
+        ).fetchone()
+
+    assert resolved is not None
+    assert resolved["target"] == "example.UseCaseImpl.execute"
+    assert resolved["resolution_status"] == "RESOLVED"
+    assert resolved["unresolved_target_json"] is None
+    assert json.loads(resolved["metadata_json"])["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH"
+
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(implementation_content, "src/main/java/example/UseCaseImpl.java"),
+        _materialize_static_java_for_test(implementation_content, 2, "src/main/java/example/UseCaseImpl.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        refreshed = conn.execute(
+            """
+            SELECT target.qualified_name AS target, e.resolution_status, e.unresolved_target_json, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'example.Controller.handle'
+              AND json_extract(e.metadata_json, '$.methodName') = 'execute'
+            """
+        ).fetchone()
+
+    assert refreshed is not None
+    assert refreshed["target"] == "example.UseCaseImpl.execute"
+    assert refreshed["resolution_status"] == "RESOLVED"
+    assert refreshed["unresolved_target_json"] is None
+    assert json.loads(refreshed["metadata_json"])["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH"
+
+
+def test_resolver_retains_all_interface_implementation_branches(tmp_path):
+    content = """package example;
+
+class Controller {
+  private final UseCase useCase;
+
+  Response handle(Command command) {
+    return useCase.execute(command);
+  }
+}
+
+interface UseCase {
+  Response execute(Command command);
+}
+
+class FirstUseCase implements UseCase {
+  public Response execute(Command command) { return new Response(); }
+}
+
+class SecondUseCase implements UseCase {
+  public Response execute(Command command) { return new Response(); }
+}
+
+class Command {}
+class Response {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(content, "src/main/java/example/Controller.java"),
+        _materialize_static_java_for_test(content, 1, "src/main/java/example/Controller.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT target.qualified_name AS target, e.resolution_status, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'example.Controller.handle'
+              AND json_extract(e.metadata_json, '$.methodName') = 'execute'
+            ORDER BY target.qualified_name
+            """
+        ).fetchall()
+
+    assert [row["target"] for row in rows] == ["example.FirstUseCase.execute", "example.SecondUseCase.execute"]
+    assert all(row["resolution_status"] == "RESOLVED" for row in rows)
+    assert all(json.loads(row["metadata_json"])["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH" for row in rows)
+
+
+def test_resolver_keeps_missing_interface_implementation_as_terminal_unresolved_call(tmp_path):
+    content = """package example;
+
+class Service {
+  private final GeneratedMapper mapper;
+
+  Dto map(Entity entity) {
+    return mapper.asDto(entity);
+  }
+}
+
+interface GeneratedMapper {
+  Dto asDto(Entity entity);
+}
+
+class Entity {}
+class Dto {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(content, "src/main/java/example/Service.java"),
+        _materialize_static_java_for_test(content, 1, "src/main/java/example/Service.java"),
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        edge = conn.execute(
+            """
+            SELECT e.resolution_status, e.to_node_id, e.unresolved_target_json, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'example.Service.map'
+              AND json_extract(e.metadata_json, '$.methodName') = 'asDto'
+            """
+        ).fetchone()
+
+    assert edge is not None
+    assert edge["resolution_status"] == "UNRESOLVED"
+    assert edge["to_node_id"] is None
+    assert json.loads(edge["unresolved_target_json"])["qualifiedName"] == "example.GeneratedMapper.asDto"
+    metadata = json.loads(edge["metadata_json"])
+    assert metadata["resolutionReason"] == "INTERFACE_IMPLEMENTATION_NOT_FOUND"
+    assert metadata["unresolvedReason"] == "NO_ANALYZED_IMPLEMENTATION"
 
 
 def test_resolver_does_not_fake_success_for_same_arity_overloads(tmp_path):

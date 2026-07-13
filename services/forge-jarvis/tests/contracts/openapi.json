@@ -521,6 +521,71 @@
         "title": "JarvisFlowTransition",
         "type": "object"
       },
+      "JarvisHumanAnswer": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "JarvisHumanAnswer",
+        "type": "object"
+      },
+      "JarvisHumanAnswerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/JarvisHumanAnswer"
+          },
+          "answerLanguage": {
+            "title": "Answerlanguage",
+            "type": "string"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisHumanAnswerSource"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "answerLanguage",
+          "answer"
+        ],
+        "title": "JarvisHumanAnswerResponse",
+        "type": "object"
+      },
+      "JarvisHumanAnswerSource": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "title": "Entrypoint",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "entrypoint"
+        ],
+        "title": "JarvisHumanAnswerSource",
+        "type": "object"
+      },
       "JarvisKnowledgeFlow": {
         "properties": {
           "boundaries": {
@@ -595,6 +660,67 @@
           "entrypointOrigin"
         ],
         "title": "JarvisKnowledgeFlow",
+        "type": "object"
+      },
+      "JarvisKnowledgeQueryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/JarvisQueryCoverage"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "flowExplanations": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisFlowExplanation"
+            },
+            "title": "Flowexplanations",
+            "type": "array"
+          },
+          "flows": {
+            "items": {
+              "$ref": "#/components/schemas/JarvisKnowledgeFlow"
+            },
+            "title": "Flows",
+            "type": "array"
+          },
+          "intent": {
+            "title": "Intent",
+            "type": "string"
+          },
+          "matchedNodes": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Matchednodes",
+            "type": "array"
+          },
+          "matchedSources": {
+            "items": {
+              "type": "object"
+            },
+            "title": "Matchedsources",
+            "type": "array"
+          },
+          "queryId": {
+            "title": "Queryid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JarvisQueryStatus"
+          }
+        },
+        "required": [
+          "queryId",
+          "status",
+          "intent"
+        ],
+        "title": "JarvisKnowledgeQueryResponse",
         "type": "object"
       },
       "JarvisQueryCoverage": {
@@ -733,67 +859,6 @@
         "title": "JarvisQueryRequest",
         "type": "object"
       },
-      "JarvisQueryResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "coverage": {
-            "$ref": "#/components/schemas/JarvisQueryCoverage"
-          },
-          "diagnostics": {
-            "items": {
-              "$ref": "#/components/schemas/JarvisQueryDiagnostic"
-            },
-            "title": "Diagnostics",
-            "type": "array"
-          },
-          "flowExplanations": {
-            "items": {
-              "$ref": "#/components/schemas/JarvisFlowExplanation"
-            },
-            "title": "Flowexplanations",
-            "type": "array"
-          },
-          "flows": {
-            "items": {
-              "$ref": "#/components/schemas/JarvisKnowledgeFlow"
-            },
-            "title": "Flows",
-            "type": "array"
-          },
-          "intent": {
-            "title": "Intent",
-            "type": "string"
-          },
-          "matchedNodes": {
-            "items": {
-              "type": "object"
-            },
-            "title": "Matchednodes",
-            "type": "array"
-          },
-          "matchedSources": {
-            "items": {
-              "type": "object"
-            },
-            "title": "Matchedsources",
-            "type": "array"
-          },
-          "queryId": {
-            "title": "Queryid",
-            "type": "string"
-          },
-          "status": {
-            "$ref": "#/components/schemas/JarvisQueryStatus"
-          }
-        },
-        "required": [
-          "queryId",
-          "status",
-          "intent"
-        ],
-        "title": "JarvisQueryResponse",
-        "type": "object"
-      },
       "JarvisQueryStatus": {
         "description": "An enumeration.",
         "enum": [
@@ -917,7 +982,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JarvisQueryResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/JarvisHumanAnswerResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/JarvisKnowledgeQueryResponse"
+                    }
+                  ],
+                  "title": "Response Query Api V1 Jarvis Query Post"
                 }
               }
             },

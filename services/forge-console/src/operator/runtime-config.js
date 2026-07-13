@@ -8,8 +8,6 @@ window.FORGE_OPERATOR_RUNTIME_CONFIG = Object.freeze({
   graphPollIntervalMs: 30000,
   jarvisQueryAnswerLanguage: 'uk',
   jarvisQueryIncludeTests: false,
-  jarvisQueryMaxFlows: 3,
-  jarvisFlowRenderBatchSize: 100,
   graphCacheEnabled: true,
   graphCacheMaxRevisions: 3,
   graphCacheMaxAgeSeconds: 86400,

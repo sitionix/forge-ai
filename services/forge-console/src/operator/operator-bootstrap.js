@@ -18,8 +18,6 @@ export function bootstrapOperatorConsole(options = {}) {
     graphPollIntervalMs: 30000,
     jarvisQueryAnswerLanguage: 'uk',
     jarvisQueryIncludeTests: false,
-    jarvisQueryMaxFlows: 3,
-    jarvisFlowRenderBatchSize: 100,
     ...(windowRef.FORGE_OPERATOR_RUNTIME_CONFIG || {}),
     ...(options.runtimeConfig || {})
   };

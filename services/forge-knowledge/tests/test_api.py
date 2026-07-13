@@ -19,7 +19,7 @@ from knowledge_service.entrypoint_flow_engine import (
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphNode
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest, KnowledgeQueryResponse, KnowledgeQueryStatus
 from support import build_test_app, write_runtime_config
-from knowledge_service.flow_explanations import FLOW_EXPLANATION_LIMIT_REACHED, FlowExplanationProviderResult
+from knowledge_service.flow_explanations import FlowExplanationProviderResult
 from semantic_test_support import seed_semantic_graph
 
 
@@ -32,43 +32,7 @@ class FakeFlowExplanationProvider:
         self.calls.append({"llmInput": dict(llm_input), "timeoutSeconds": timeout_seconds})
         if self.delay_seconds:
             time.sleep(self.delay_seconds)
-        node_refs = [step["nodeRef"] for step in llm_input["steps"]]
-        transition_refs = [transition["transitionRef"] for transition in llm_input.get("transitions", [])]
-        response = {
-            "title": "A.start to B.work",
-            "narrative": [
-                {
-                    "text": "A.start and B.work are explained from the packed graph facts, including the node references and the CALLS transition that connects the two symbols.",
-                    "nodeRefs": node_refs,
-                    "transitionRefs": transition_refs,
-                    "boundaryRefs": [],
-                },
-                {
-                    "text": "The graph transition evidence identifies the caller node and downstream callee node without treating sibling calls as an ordered path.",
-                    "nodeRefs": node_refs,
-                    "transitionRefs": transition_refs,
-                    "boundaryRefs": [],
-                },
-            ],
-            "steps": [
-                {
-                    "nodeRef": step["nodeRef"],
-                    "explanation": f"`{step['symbol']}` is part of this flow.",
-                    "transitionRefs": [item["transitionRef"] for item in llm_input.get("transitions", []) if item["fromNodeRef"] == step["nodeRef"]],
-                    "evidenceRefs": [item["ref"] for item in step.get("evidence", [])],
-                }
-                for step in llm_input["steps"]
-            ],
-            "transitions": [
-                {
-                    "transitionRef": transition["transitionRef"],
-                    "explanation": f"`{transition['fromSymbol']}` has a CALLS transition to `{transition['toSymbol']}`.",
-                    "evidenceRefs": [item["ref"] for item in transition.get("evidence", [])],
-                }
-                for transition in llm_input.get("transitions", [])
-            ],
-            "boundaries": [],
-        }
+        response = {"text": "A.start delegates to B.work using the grounded call tree."}
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
 
 
@@ -130,7 +94,7 @@ def test_missing_config_sources_response(tmp_path):
     assert payload["message"] == "No local knowledge-sources.yaml configured"
 
 
-def test_query_flow_explanations_endpoint_returns_per_flow_text(tmp_path):
+def test_query_flow_explanations_endpoint_returns_human_answer(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_semantic_graph(
         app_config.store_path,
@@ -146,16 +110,23 @@ def test_query_flow_explanations_endpoint_returns_per_flow_text(tmp_path):
 
     async def exercise():
         async with _async_client(app) as client:
-            response = await _await_with_wakeup(client.post("/api/v1/knowledge/query/flow-explanations", json={"queryText": "A.start"}))
+            response = await _await_with_wakeup(
+                client.post("/api/v1/knowledge/query/flow-explanations", json={"queryText": "A.start", "answerLanguage": "uk"})
+            )
             return response.json()
 
-    payload = asyncio.run(exercise())
+    response_payload = asyncio.run(exercise())
 
-    assert payload["flows"]
-    assert payload["flowExplanations"][0]["flowIndex"] == 1
-    assert payload["flowExplanations"][0]["narrative"]
-    assert [step["nodeRef"] for step in payload["flowExplanations"][0]["steps"]] == ["n1", "n2"]
+    assert response_payload["answerLanguage"] == "uk"
+    assert response_payload["answer"]["text"] == "A.start delegates to B.work using the grounded call tree."
+    assert response_payload["sources"] == [{"source": "source-a", "entrypoint": "A.start"}]
+    assert response_payload["diagnostics"] == []
+    assert "status" not in response_payload
+    assert "flows" not in response_payload
+    assert "flowExplanations" not in response_payload
+    assert "nodeRef" not in json.dumps(response_payload)
     assert len(provider.calls) == 1
+    assert provider.calls[0]["llmInput"]["flows"][0]["entrypoint"]["symbol"] == "A.start"
 
 
 def test_slow_flow_explanation_does_not_block_concurrent_health_request(tmp_path):
@@ -188,7 +159,8 @@ def test_slow_flow_explanation_does_not_block_concurrent_health_request(tmp_path
     assert health.status_code == 200
     assert health.json() == {"status": "UP"}
     assert elapsed < 0.25
-    assert response.json()["status"] == "OK"
+    assert response.json()["answer"]["text"] == "A.start delegates to B.work using the grounded call tree."
+    assert "status" not in response.json()
 
 
 def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tmp_path, monkeypatch):
@@ -241,7 +213,8 @@ def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tm
         deadline_at=deadline_at,
     )
 
-    assert response.status == KnowledgeQueryStatus.OK
+    assert response.answer.text == "A.start delegates to B.work using the grounded call tree."
+    assert response.sources[0].entrypoint == "A.start"
     assert provider.calls
     assert 0 < provider.calls[0]["timeoutSeconds"] < 0.17
 
@@ -262,31 +235,44 @@ def test_expired_flow_explanation_deadline_before_worker_returns_controlled_resp
         deadline_at=time.monotonic() - 0.001,
     )
 
-    assert response.status == KnowledgeQueryStatus.OK
-    assert response.diagnostics
-    assert response.diagnostics[0].code == FLOW_EXPLANATION_LIMIT_REACHED
-    assert response.diagnostics[0].metadata["stage"] == "BEFORE_QUERY"
+    assert response.status_code == 504
+    body = json.loads(response.body.decode("utf-8"))
+    assert body == {
+        "code": "FLOW_EXPLANATION_TIMEOUT",
+        "message": "Knowledge flow explanation timed out.",
+    }
     assert provider.calls == []
 
 
-def test_expired_tool_context_deadline_before_worker_returns_controlled_response(tmp_path, monkeypatch):
-    app, _, _, _ = build_test_app(write_runtime_config(tmp_path))
-
-    def fail_if_called(*_args, **_kwargs):
-        raise AssertionError("query service should not be built after deadline expiry")
-
-    monkeypatch.setattr(knowledge_main, "build_knowledge_query_service", fail_if_called)
-
-    response = knowledge_main._knowledge_query_tool_context_response(
-        SimpleNamespace(app=app),
-        KnowledgeQueryRequest(queryText="A.start"),
-        deadline_at=time.monotonic() - 0.001,
+def test_tool_context_endpoint_returns_compact_nested_tree(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_semantic_graph(
+        app_config.store_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a-start", "nodeKind": "CALLABLE", "name": "A.start", "qualified": "A.start", "path": "src/A.java"},
+            {"id": "b-work", "nodeKind": "CALLABLE", "name": "B.work", "qualified": "B.work", "path": "src/B.java"},
+        ],
+        edges=[{"id": "edge-a-b", "fromNodeId": "a-start", "toNodeId": "b-work", "edgeType": "CALLS"}],
     )
 
-    assert response.status == KnowledgeQueryStatus.OK
-    assert response.diagnostics
-    assert response.diagnostics[0].code == FLOW_EXPLANATION_LIMIT_REACHED
-    assert response.diagnostics[0].metadata["stage"] == "BEFORE_QUERY"
+    async def exercise():
+        async with _async_client(app) as client:
+            response = await _await_with_wakeup(client.post("/api/v1/knowledge/query/tool-context", json={"queryText": "A.start"}))
+            return response.status_code, response.json()
+
+    status, payload = asyncio.run(exercise())
+
+    assert status == 200
+    assert payload["queryText"] == "A.start"
+    assert payload["trees"][0]["source"] == "source-a"
+    assert payload["trees"][0]["entrypoint"]["symbol"] == "A.start"
+    assert payload["trees"][0]["entrypoint"]["children"][0]["symbol"] == "B.work"
+    rendered = json.dumps(payload)
+    assert "status" not in payload
+    assert "flows" not in payload
+    assert "nodeRef" not in rendered
+    assert "transitionRef" not in rendered
 
 
 def test_cancelled_flow_explanation_request_does_not_start_subsequent_flow_calls(tmp_path):
@@ -321,43 +307,7 @@ def test_cancelled_flow_explanation_request_does_not_start_subsequent_flow_calls
                 self.first_returned.set()
             else:
                 self.second_started.set()
-            node_refs = [step["nodeRef"] for step in llm_input["steps"]]
-            transition_refs = [transition["transitionRef"] for transition in llm_input.get("transitions", [])]
-            response = {
-                "title": "cancelled request flow",
-                "narrative": [
-                    {
-                        "text": "This blocked explanation has enough detail to represent the first flow facts, the participating node references, and the CALLS transitions in the graph.",
-                        "nodeRefs": node_refs,
-                        "transitionRefs": transition_refs,
-                        "boundaryRefs": [],
-                    },
-                    {
-                        "text": "The second grounded block describes the same graph slice with enough factual words for validation while avoiding any invented execution order.",
-                        "nodeRefs": node_refs,
-                        "transitionRefs": transition_refs,
-                        "boundaryRefs": [],
-                    },
-                ],
-                "steps": [
-                    {
-                        "nodeRef": step["nodeRef"],
-                        "explanation": f"`{step['symbol']}` is grounded.",
-                        "transitionRefs": [item["transitionRef"] for item in llm_input.get("transitions", []) if item["fromNodeRef"] == step["nodeRef"]],
-                        "evidenceRefs": [item["ref"] for item in step.get("evidence", [])],
-                    }
-                    for step in llm_input["steps"]
-                ],
-                "transitions": [
-                    {
-                        "transitionRef": transition["transitionRef"],
-                        "explanation": f"`{transition['fromSymbol']}` reaches `{transition['toSymbol']}`.",
-                        "evidenceRefs": [item["ref"] for item in transition.get("evidence", [])],
-                    }
-                    for transition in llm_input.get("transitions", [])
-                ],
-                "boundaries": [],
-            }
+            response = {"text": "The cancelled request had already started producing a human answer."}
             return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
 
     provider = BlockingProvider()

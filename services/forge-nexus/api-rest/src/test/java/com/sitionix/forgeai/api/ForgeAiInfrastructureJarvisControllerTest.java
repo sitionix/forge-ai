@@ -82,19 +82,19 @@ class ForgeAiInfrastructureJarvisControllerTest {
 
     @Test
     void querySerializesFullFlowExplanationRequestAndDelegatesToGenericProxyRoute() {
-        this.stub("{\"queryId\":\"q1\",\"status\":\"OK\",\"intent\":\"FLOW_EXPLANATION\",\"flowExplanations\":[]}");
+        this.stub("{\"answerLanguage\":\"uk\",\"answer\":{\"text\":\"ok\"},\"sources\":[],\"diagnostics\":[]}");
         final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
                 "JarvisGateway",
                 JarvisKnowledgeQueryIntent.FLOW_EXPLANATION,
                 "uk",
                 false,
-                3
+                null
         );
 
         this.controller.query(body, this.headers, this.request);
 
         final byte[] expectedBody = ("{\"queryText\":\"JarvisGateway\",\"intent\":\"FLOW_EXPLANATION\","
-                + "\"answerLanguage\":\"uk\",\"includeTests\":false,\"maxFlows\":3}").getBytes(StandardCharsets.UTF_8);
+                + "\"answerLanguage\":\"uk\",\"includeTests\":false}").getBytes(StandardCharsets.UTF_8);
         verify(this.transport).forward(
                 eq("jarvis.query"),
                 eq(Map.of()),

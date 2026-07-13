@@ -20,21 +20,15 @@ describe('runtime config', () => {
     expect(config.apiMode).toBe('same-origin');
     expect(config.jarvisQueryAnswerLanguage).toBe('uk');
     expect(config.jarvisQueryIncludeTests).toBe(false);
-    expect(config.jarvisQueryMaxFlows).toBe(3);
-    expect(config.jarvisFlowRenderBatchSize).toBe(100);
   });
 
-  it('normalizes Jarvis flow query defaults', () => {
+  it('normalizes Jarvis human query defaults', () => {
     const config = runtimeConfigFromWindow({
       jarvisQueryAnswerLanguage: ' en ',
-      jarvisQueryIncludeTests: true,
-      jarvisQueryMaxFlows: 99,
-      jarvisFlowRenderBatchSize: 0
+      jarvisQueryIncludeTests: true
     });
 
     expect(config.jarvisQueryAnswerLanguage).toBe('en');
     expect(config.jarvisQueryIncludeTests).toBe(true);
-    expect(config.jarvisQueryMaxFlows).toBe(10);
-    expect(config.jarvisFlowRenderBatchSize).toBe(100);
   });
 });
