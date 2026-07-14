@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -10,6 +11,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import httpx
 
+from knowledge_service.answer_language import AnswerLanguageResolver, HumanAnswerTextValidator
 from knowledge_service.config import (
     DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
@@ -35,6 +37,7 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryResponse,
     KnowledgeQueryToolContextResponse,
 )
+from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 
 FLOW_EXPLANATION_LLM_FAILED = "FLOW_EXPLANATION_LLM_FAILED"
@@ -132,30 +135,47 @@ class HumanAnswerGenerationFailed(Exception):
     pass
 
 
+class HumanAnswerContractViolation(HumanAnswerGenerationFailed):
+    def __init__(self, errors: Sequence[str]) -> None:
+        self.errors = [str(error) for error in errors if str(error).strip()]
+        super().__init__("; ".join(self.errors) or "human answer violated output contract")
+
+
 class HumanAnswerPromptRenderer:
     def render(self, llm_input: Mapping[str, Any], validation_errors: Sequence[str] | None = None) -> str:
         validation_block = ""
         if validation_errors:
-            validation_block = "\nPrevious response failed validation. Correct these issues using only the supplied facts:\n"
+            validation_block = "\nPrevious response failed validation. Correct these exact contract violations using only the supplied facts:\n"
             validation_block += "\n".join(f"- {error}" for error in validation_errors)
-            validation_block += "\n"
+            validation_block += (
+                "\nReturn a replacement JSON object only. The text value must begin immediately with 1., "
+                "every non-empty line must be a numbered step, and the text must contain no Markdown markers or backticks.\n"
+            )
         context_json = json.dumps(dict(llm_input), ensure_ascii=False, indent=2, sort_keys=True)
         return (
-            "Answer the user's code-flow question as a detailed technical step-by-step explanation for exactly one supplied flow.\n"
+            "Answer the user's code-flow question as a concise technical walkthrough for exactly one supplied flow.\n"
             "Return strict JSON only with exactly this shape: {\"text\":\"human-readable answer\"}.\n"
-            "Use only the requested answerLanguage for prose; do not mix in another natural language except exact code symbols and quoted literals.\n"
+            "Use only the requested responseLanguage for prose. Exact code symbols, HTTP routes, and quoted literals may stay as-is.\n"
             "Directly answer the question using only the supplied verified flow facts.\n"
-            "The text must start with the trigger when present: HTTP method and route, then the entrypoint symbol and its responsibility.\n"
-            "Then describe execution as plain numbered steps in the supplied CALLS-tree order. For every meaningful step, include the exact class or method symbol, "
-            "what data enters that step, what the step does, what it calls next, and any grounded validation, persistence, or side effect.\n"
-            "When validation facts include thresholds, null or empty checks, exception classes, or error messages, include those exact grounded details.\n"
-            "Describe branches as branches or parallel actions when facts branch; do not fabricate a sequence between sibling branches.\n"
-            "Finish with the observable result: returned response or status, persisted data, and emitted event or external side effect when those facts are supplied.\n"
-            "Keep the answer plain text. Numbered lines are preferred; Markdown tables, headings, badges, and graph/debug formatting are not.\n"
-            "Do not collapse the flow into a generic summary or repeat tautologies such as creating a site creates a site.\n"
+            "The tree kind fields are internal classifier labels for grounding only. Never copy labels such as UNRESOLVED_CALL, EXTERNAL_CALL, METHOD, HTTP_ENDPOINT, KAFKA_LISTENER, or ENTRYPOINT into the answer.\n"
+            "If an input description uses the word boundary, rewrite it as an external call, unresolved target, missing target, or supplied target without saying boundary.\n"
+            "Start with the trigger and entrypoint when available, including the HTTP method and route only when they are supplied.\n"
+            "Use numbered steps. The first non-empty line must start with 1. and the answer must contain at least steps 1 and 2.\n"
+            "Each step should usually be one or two natural sentences.\n"
+            "Mention exact class or method symbols where they help identify the code.\n"
+            "Explain what data arrives, what the code does, what it calls next, and grounded validation, persistence, or side effects when supplied.\n"
+            "When validation facts include thresholds, null or empty checks, exception classes, or error messages, include the exact grounded detail.\n"
+            "Explain branches as branches; do not fabricate a sequence between sibling branches.\n"
+            "End with the observable result: returned response or status, persisted data, emitted event, or external side effect when supplied.\n"
+            "If the supplied facts do not include a return value, status, persistence, event, or side effect, state that the verified facts do not provide that detail.\n"
+            "Keep the answer escaped plain text inside the JSON string. Numbered lines are preferred.\n"
+            "The JSON text string must begin with 1. and every non-empty line in that string must begin with a numbered step such as 1., 2., or 3.\n"
+            "Do not use Markdown: no headings, tables, bold markers, badges, bullets as presentation, or inline-code backticks.\n"
+            "Do not use repeated audit labels or section labels such as Data enters, Action, Next step, Returns, or Observable result.\n"
+            "Do not collapse the flow into a generic summary or mechanically repeat every graph field.\n"
             "Do not omit available method names, class names, trigger details, validation rules, persistence details, side effects, or final results.\n"
             "Do not invent validation, side effects, transports, routes, statuses, or ordering unsupported by the supplied facts.\n"
-            "Do not call an outbox write a direct Kafka publish unless the supplied facts include Kafka dispatch.\n"
+            "Do not infer default framework behavior or use speculative language such as likely, probably, maybe, assuming, or presumably.\n"
             "Do not mention graph terminology, retrieval mechanics, refs, nodes, transitions, boundaries, hierarchy, scores, or internal IDs.\n"
             f"{validation_block}"
             "BEGIN_VERIFIED_FLOW_FACTS_JSON\n"
@@ -175,18 +195,69 @@ class CompactFlowProjector:
             diagnostics=self._diagnostics(execution),
         )
 
-    def human_llm_input(self, request: KnowledgeQueryRequest, flow: EntrypointFlow) -> Dict[str, Any]:
+    def human_llm_input(self, request: KnowledgeQueryRequest, flow: EntrypointFlow, plan: QueryRetrievalPlan | None = None) -> Dict[str, Any]:
+        if plan is None:
+            resolved_language = AnswerLanguageResolver().resolve(request.queryText, request.answerLanguage)
+            intent = request.intent.value if hasattr(request.intent, "value") else str(request.intent or "UNKNOWN")
+            if intent == "AUTO":
+                intent = "FLOW_EXPLANATION"
+            plan = QueryRetrievalPlan(
+                original_query=request.queryText,
+                normalized_query=request.queryText,
+                search_queries=(),
+                code_identifiers=(),
+                concepts=(),
+                effective_intent=intent,
+                detected_language=resolved_language,
+                response_language=resolved_language,
+            )
         tree = self._tree(flow)
         return {
-            "queryText": request.queryText,
-            "answerLanguage": request.answerLanguage,
+            "originalQuestion": request.queryText,
+            "detectedLanguage": plan.detected_language,
+            "responseLanguage": plan.response_language,
+            "intent": plan.effective_intent,
             "source": tree.source,
             "entrypoint": tree.entrypoint.symbol,
-            "tree": tree.entrypoint.dict(exclude_none=True),
+            "tree": self._human_tree_item(tree.entrypoint),
         }
 
     def flow_answer_identity(self, flow: EntrypointFlow) -> tuple[str, str]:
         return str(flow.key.source_id or ""), self._symbol(flow.entrypoint)
+
+    def _human_tree_item(self, item: FlowToolTreeItem, *, depth: int = 0) -> Dict[str, Any]:
+        data = item.dict(exclude_none=True)
+        children = [
+            self._human_tree_item(child, depth=depth + 1)
+            for child in item.children
+            if not self._omit_human_tree_child(child, depth=depth + 1)
+        ]
+        data["children"] = children
+        if data.get("evidence"):
+            data["evidence"] = [
+                {
+                    **evidence,
+                    "excerpt": self._truncate_evidence_excerpt(evidence.get("excerpt")),
+                }
+                for evidence in data["evidence"][:3]
+                if isinstance(evidence, dict)
+            ]
+        return data
+
+    def _omit_human_tree_child(self, item: FlowToolTreeItem, *, depth: int) -> bool:
+        if item.children:
+            return False
+        if depth < 2:
+            return False
+        return item.kind in {"UNRESOLVED_CALL", "EXTERNAL_CALL"}
+
+    def _truncate_evidence_excerpt(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value)
+        if len(text) <= 260:
+            return text
+        return f"{text[:257]}..."
 
     def _tree(self, flow: EntrypointFlow) -> FlowToolTree:
         node_by_id = {node.node_id: node for node in flow.nodes}
@@ -450,6 +521,10 @@ class HumanFlowAnswerService:
         min_call_timeout_seconds: float = _DEFAULT_MIN_CALL_TIMEOUT_SECONDS,
         projector: CompactFlowProjector | None = None,
         renderer: HumanAnswerPromptRenderer | None = None,
+        language_resolver: AnswerLanguageResolver | None = None,
+        text_validator: HumanAnswerTextValidator | None = None,
+        provider_name: str | None = None,
+        provider_model: str | None = None,
         cancel_event: Any | None = None,
     ) -> None:
         self.provider = provider
@@ -458,13 +533,19 @@ class HumanFlowAnswerService:
         self.min_call_timeout_seconds = max(0.001, float(min_call_timeout_seconds or _DEFAULT_MIN_CALL_TIMEOUT_SECONDS))
         self.projector = projector or CompactFlowProjector()
         self.renderer = renderer or HumanAnswerPromptRenderer()
+        self.language_resolver = language_resolver or AnswerLanguageResolver()
+        self.text_validator = text_validator or HumanAnswerTextValidator()
+        self.provider_name = provider_name
+        self.provider_model = provider_model
         self.cancel_event = cancel_event
+        self.audit_records: List[Dict[str, Any]] = []
 
     def answer(
         self,
         request: KnowledgeQueryRequest,
         execution: Any,
         *,
+        plan: QueryRetrievalPlan | None = None,
         deadline_at: float | None = None,
     ) -> KnowledgeHumanQueryResponse:
         flows = tuple(execution.flows or ())
@@ -475,17 +556,21 @@ class HumanFlowAnswerService:
         answers: List[KnowledgeFlowAnswer] = []
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         deadline_failures = 0
+        effective_plan = plan or self._fallback_plan(request)
+        resolved_language = effective_plan.response_language
         for flow in flows:
             source, entrypoint = self.projector.flow_answer_identity(flow)
             try:
                 if self._cancelled():
                     raise FlowExplanationDeadlineExceeded()
-                llm_input = self.projector.human_llm_input(request, flow)
-                prompt_len = len(self.renderer.render(llm_input))
-                if prompt_len > self.max_prompt_chars:
-                    raise HumanAnswerGenerationFailed("human answer prompt exceeded budget")
-                first = self._complete_with_deadline(llm_input, deadline_at)
-                text = self._validate_text(first.raw_text)
+                llm_input = self.projector.human_llm_input(request, flow, effective_plan)
+                text = self._answer_one_flow(
+                    llm_input,
+                    deadline_at,
+                    entrypoint=entrypoint,
+                    requested_language=request.answerLanguage,
+                    resolved_language=resolved_language,
+                )
                 answers.append(KnowledgeFlowAnswer(source=source, entrypoint=entrypoint, text=text))
             except FlowExplanationDeadlineExceeded:
                 deadline_failures += 1
@@ -497,13 +582,59 @@ class HumanFlowAnswerService:
 
         if answers:
             return KnowledgeHumanQueryResponse(
-                answerLanguage=request.answerLanguage,
+                answerLanguage=resolved_language,
                 answers=answers,
                 diagnostics=diagnostics,
             )
         if deadline_failures:
             raise FlowExplanationDeadlineExceeded()
         raise HumanAnswerGenerationFailed("no grounded flow answers")
+
+    def _fallback_plan(self, request: KnowledgeQueryRequest) -> QueryRetrievalPlan:
+        resolved_language = self.language_resolver.resolve(request.queryText, request.answerLanguage)
+        intent = request.intent.value if hasattr(request.intent, "value") else str(request.intent or "UNKNOWN")
+        if intent == "AUTO":
+            intent = "FLOW_EXPLANATION"
+        return QueryRetrievalPlan(
+            original_query=request.queryText,
+            normalized_query=request.queryText,
+            search_queries=(),
+            code_identifiers=(),
+            concepts=(),
+            effective_intent=intent,
+            detected_language=resolved_language,
+            response_language=resolved_language,
+        )
+
+    def _answer_one_flow(
+        self,
+        llm_input: Mapping[str, Any],
+        deadline_at: float,
+        *,
+        entrypoint: str,
+        requested_language: str | None,
+        resolved_language: str,
+    ) -> str:
+        validation_errors: Sequence[str] | None = None
+        for attempt_count in (1, 2):
+            result = self._complete_with_deadline(
+                llm_input,
+                deadline_at,
+                validation_errors=validation_errors,
+                entrypoint=entrypoint,
+                attempt_count=attempt_count,
+                requested_language=requested_language,
+                resolved_language=resolved_language,
+            )
+            try:
+                return self._validate_text(result.raw_text, resolved_language)
+            except HumanAnswerContractViolation as exc:
+                self._record_validation_errors(entrypoint=entrypoint, attempt_count=attempt_count, errors=exc.errors)
+                if attempt_count == 1:
+                    validation_errors = exc.errors
+                    continue
+                raise HumanAnswerGenerationFailed("human answer repair failed validation") from exc
+        raise HumanAnswerGenerationFailed("human answer repair failed validation")
 
     def _flow_failure_diagnostic(self, source: str, entrypoint: str) -> KnowledgeQueryDiagnostic:
         return KnowledgeQueryDiagnostic(
@@ -514,35 +645,101 @@ class HumanFlowAnswerService:
             metadata={"entrypoint": entrypoint},
         )
 
-    def _complete_with_deadline(self, llm_input: Mapping[str, Any], deadline_at: float) -> FlowExplanationProviderResult:
+    def _complete_with_deadline(
+        self,
+        llm_input: Mapping[str, Any],
+        deadline_at: float,
+        *,
+        validation_errors: Sequence[str] | None = None,
+        entrypoint: str,
+        attempt_count: int,
+        requested_language: str | None,
+        resolved_language: str,
+    ) -> FlowExplanationProviderResult:
         if self._cancelled() or self._remaining_seconds(deadline_at) <= self.min_call_timeout_seconds:
             raise FlowExplanationDeadlineExceeded()
+        prompt = self.renderer.render(llm_input, validation_errors)
+        if len(prompt) > self.max_prompt_chars:
+            raise HumanAnswerGenerationFailed("human answer prompt exceeded budget")
         remaining = self._remaining_seconds(deadline_at)
         try:
-            result = self.provider.complete(llm_input, timeout_seconds=remaining)
+            result = self.provider.complete(llm_input, validation_errors=validation_errors, timeout_seconds=remaining)
         except (TimeoutError, httpx.TimeoutException) as exc:
             raise FlowExplanationDeadlineExceeded() from exc
         except Exception as exc:
             raise HumanAnswerGenerationFailed(str(type(exc).__name__)) from exc
         if self._cancelled() or time.monotonic() > deadline_at + _DEADLINE_COMPLETION_GRACE_SECONDS:
             raise FlowExplanationDeadlineExceeded()
+        self._record_audit(
+            prompt,
+            result.raw_text,
+            entrypoint=entrypoint,
+            attempt_count=attempt_count,
+            requested_language=requested_language,
+            resolved_language=resolved_language,
+        )
         return result
 
-    def _validate_text(self, raw_text: str) -> str:
+    def _validate_text(self, raw_text: str, language: str) -> str:
         try:
             payload = json.loads(raw_text)
         except Exception as exc:
-            raise HumanAnswerGenerationFailed("human answer was not valid JSON") from exc
+            raise HumanAnswerContractViolation(["Response must be strict JSON with a non-empty text string."]) from exc
         if not isinstance(payload, dict):
-            raise HumanAnswerGenerationFailed("human answer was not a JSON object")
+            raise HumanAnswerContractViolation(["Response must be a JSON object."])
         text = payload.get("text")
         if not isinstance(text, str) or not text.strip():
-            raise HumanAnswerGenerationFailed("human answer text missing")
+            raise HumanAnswerContractViolation(["Response JSON must contain a non-empty text string."])
         normalized = text.strip()
         forbidden = ("nodeRef", "transitionRef", "boundaryRef", "evidenceRef", "flowIndex", "analysis-graph-")
         if any(token in normalized for token in forbidden):
-            raise HumanAnswerGenerationFailed("human answer exposed internal graph details")
+            raise HumanAnswerContractViolation(["Response must not expose internal graph refs, node ids, transition refs, evidence refs, or analysis ids."])
+        text_validation = self.text_validator.validate(normalized, language)
+        if not text_validation.valid:
+            raise HumanAnswerContractViolation(text_validation.errors)
         return normalized
+
+    def _record_audit(
+        self,
+        prompt: str,
+        raw_response: str,
+        *,
+        entrypoint: str,
+        attempt_count: int,
+        requested_language: str | None,
+        resolved_language: str,
+    ) -> None:
+        self.audit_records.append(
+            {
+                "provider": self._provider_name(),
+                "model": self._provider_model(),
+                "promptLength": len(prompt),
+                "promptHash": self._sha256(prompt),
+                "rawResponseLength": len(raw_response),
+                "rawResponseHash": self._sha256(raw_response),
+                "flowEntrypoint": entrypoint,
+                "attemptCount": attempt_count,
+                "requestedLanguage": str(requested_language or "AUTO"),
+                "resolvedLanguage": resolved_language,
+            }
+        )
+
+    def _record_validation_errors(self, *, entrypoint: str, attempt_count: int, errors: Sequence[str]) -> None:
+        for record in reversed(self.audit_records):
+            if record.get("flowEntrypoint") == entrypoint and record.get("attemptCount") == attempt_count:
+                record["validationErrors"] = [str(error) for error in errors]
+                return
+
+    def _provider_name(self) -> str:
+        value = self.provider_name or getattr(self.provider, "name", None)
+        return str(value or self.provider.__class__.__name__)
+
+    def _provider_model(self) -> str:
+        value = self.provider_model or getattr(self.provider, "model", None)
+        return str(value or "")
+
+    def _sha256(self, value: str) -> str:
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
     def _remaining_seconds(self, deadline_at: float) -> float:
         return max(0.0, deadline_at - time.monotonic())

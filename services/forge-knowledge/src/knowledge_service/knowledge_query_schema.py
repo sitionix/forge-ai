@@ -15,6 +15,7 @@ class KnowledgeQueryStatus(str, Enum):
 
 
 class KnowledgeQueryIntent(str, Enum):
+    AUTO = "AUTO"
     FLOW_EXPLANATION = "FLOW_EXPLANATION"
     COMPONENT_USAGE = "COMPONENT_USAGE"
     COMPONENT_RESPONSIBILITY = "COMPONENT_RESPONSIBILITY"
@@ -35,8 +36,8 @@ class FlowExplanationStatus(str, Enum):
 
 class KnowledgeQueryRequest(BaseModel):
     queryText: str = Field(..., min_length=1)
-    intent: KnowledgeQueryIntent = KnowledgeQueryIntent.UNKNOWN
-    answerLanguage: str = Field("en", min_length=1)
+    intent: KnowledgeQueryIntent = KnowledgeQueryIntent.AUTO
+    answerLanguage: Optional[str] = None
     includeTests: StrictBool = False
     maxFlows: int = Field(10, ge=1, le=10)
 
@@ -55,18 +56,18 @@ class KnowledgeQueryRequest(BaseModel):
     @validator("intent", pre=True, always=True)
     def default_missing_intent(cls, value: KnowledgeQueryIntent) -> KnowledgeQueryIntent:
         if value is None:
-            return KnowledgeQueryIntent.UNKNOWN
+            return KnowledgeQueryIntent.AUTO
         return value
 
     @validator("answerLanguage", pre=True, always=True)
-    def normalize_answer_language(cls, value: str) -> str:
+    def normalize_answer_language(cls, value: str | None) -> Optional[str]:
         if value is None:
-            return "en"
+            return None
         if not isinstance(value, str):
             raise ValueError("answerLanguage must be a string")
         normalized = value.strip().lower()
         if not normalized:
-            return "en"
+            return None
         return normalized
 
     @validator("includeTests", pre=True, always=True)

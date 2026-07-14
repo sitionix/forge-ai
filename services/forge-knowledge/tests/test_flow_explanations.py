@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from dataclasses import replace
 
 from knowledge_service.entrypoint_flow_engine import (
@@ -10,7 +11,15 @@ from knowledge_service.entrypoint_flow_engine import (
     EntrypointFlowKey,
     EntrypointFlowOrigin,
 )
-from knowledge_service.flow_explanations import CompactFlowProjector, FlowExplanationContextPacker, FlowExplanationValidator, HumanAnswerPromptRenderer
+from knowledge_service.flow_explanations import (
+    CompactFlowProjector,
+    FlowExplanationContextPacker,
+    FlowExplanationProviderResult,
+    FlowExplanationValidator,
+    HumanAnswerGenerationFailed,
+    HumanAnswerPromptRenderer,
+    HumanFlowAnswerService,
+)
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 
@@ -149,6 +158,83 @@ def technical_create_site_flow(*, with_trigger: bool = True) -> EntrypointFlow:
         diagnostics=(),
         relevance_score=1.0,
     )
+
+
+def unrelated_listener_flow() -> EntrypointFlow:
+    root = FlowGraphNode(
+        source_id=SOURCE,
+        graph_id=REVISION,
+        graph_revision=REVISION,
+        node_id="listener",
+        stable_key="listener",
+        node_kind="CALLABLE",
+        label="PaymentListener.handle",
+        qualified_name="com.example.payments.PaymentListener.handle",
+        relative_path="events/PaymentListener.java",
+        line_start=12,
+        line_end=20,
+        summary="Receives a payment event, validates it, stores a ledger row, and acknowledges processing.",
+        entrypoint=True,
+        entrypoint_kind="KAFKA",
+        entrypoint_topic="payments.created",
+    )
+    nodes = [
+        root,
+        node("PaymentValidator.requireValid"),
+        node("LedgerRepository.save"),
+        node("PaymentAcknowledgement.publish"),
+    ]
+    transitions = [
+        edge("listener-validate", "listener", "PaymentValidator.requireValid"),
+        edge("listener-save", "listener", "LedgerRepository.save"),
+        edge("listener-publish", "listener", "PaymentAcknowledgement.publish"),
+    ]
+    return EntrypointFlow(
+        key=EntrypointFlowKey(SOURCE, REVISION, root.node_id),
+        entrypoint=root,
+        origin=EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT,
+        anchors=(EntrypointFlowAnchor(root.node_id, root.label, 1.0, ("TEST",), 0),),
+        nodes=tuple(nodes),
+        transitions=tuple(transitions),
+        boundary_transitions=(),
+        evidence=(
+            evidence("n-listener", None, "listener", 12, "@KafkaListener(topics = \"payments.created\")"),
+            evidence("e-listener-validate", "listener-validate", None, 14, "paymentValidator.requireValid(event)"),
+            evidence("e-listener-save", "listener-save", None, 16, "ledgerRepository.save(row)"),
+            evidence("e-listener-publish", "listener-publish", None, 18, "acknowledgement.publish(event.id())"),
+        ),
+        complete=True,
+        coverage=EntrypointFlowCoverage(len(nodes), len(transitions), 0, 1, 2),
+        diagnostics=(),
+        relevance_score=1.0,
+    )
+
+
+class SequenceHumanAnswerProvider:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+        self.calls.append(
+            {
+                "llmInput": dict(llm_input),
+                "validationErrors": list(validation_errors or []),
+                "timeoutSeconds": timeout_seconds,
+            }
+        )
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        if isinstance(response, str):
+            raw = json.dumps({"text": response}, ensure_ascii=False)
+        else:
+            raw = json.dumps(response, ensure_ascii=False)
+        return FlowExplanationProviderResult(raw_text=raw, prompt_char_length=100)
+
+
+def human_execution(graph_flow: EntrypointFlow):
+    return SimpleNamespace(flows=(graph_flow,))
 
 
 def valid_response_for(context):
@@ -336,20 +422,20 @@ def test_human_prompt_contract_requires_grounded_step_by_step_output():
     )
 
     for required in (
-        "detailed technical step-by-step",
+        "technical walkthrough",
         "HTTP method and route",
-        "entrypoint symbol",
-        "CALLS-tree order",
+        "trigger and entrypoint",
+        "Use numbered steps",
         "exact class or method symbol",
         "validation, persistence, or side effect",
-        "Use only the requested answerLanguage",
-        "plain numbered steps",
+        "Use only the requested responseLanguage",
         "exception classes, or error messages",
         "observable result",
-        "Keep the answer plain text",
+        "escaped plain text",
+        "Do not use Markdown",
+        "Do not use repeated audit labels",
         "Do not collapse the flow into a generic summary",
         "Do not invent validation",
-        "Do not call an outbox write a direct Kafka publish",
         "Do not mention graph terminology",
     ):
         assert required in prompt
@@ -363,3 +449,279 @@ def test_missing_trigger_metadata_is_not_invented():
     rendered = json.dumps(llm_input, ensure_ascii=False)
     assert "POST" not in rendered
     assert "/api/v1/sites" not in rendered
+
+
+def test_auto_language_resolves_ukrainian_and_accepts_ukrainian_prose():
+    provider = SequenceHumanAnswerProvider([
+        "1. POST /api/v1/sites входить у SiteController.createSite і передає запит далі.\n2. Наприкінці повертається підтверджена відповідь."
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert response.answerLanguage == "uk"
+    assert provider.calls[0]["llmInput"]["responseLanguage"] == "uk"
+    assert "передає запит" in response.answers[0].text
+
+
+def test_auto_language_resolves_english_and_accepts_english_prose():
+    provider = SequenceHumanAnswerProvider([
+        "1. POST /api/v1/sites enters SiteController.createSite and maps the request.\n2. The final result is returned to the caller."
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="how is a site created", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert response.answerLanguage == "en"
+    assert provider.calls[0]["llmInput"]["responseLanguage"] == "en"
+    assert "enters SiteController.createSite" in response.answers[0].text
+
+
+def test_explicit_language_override_keeps_english_for_ukrainian_question():
+    provider = SequenceHumanAnswerProvider([
+        "1. POST /api/v1/sites enters SiteController.createSite and maps the request.\n2. The final result is returned to the caller."
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION", answerLanguage="en"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert response.answerLanguage == "en"
+    assert provider.calls[0]["llmInput"]["responseLanguage"] == "en"
+
+
+def test_mixed_technical_query_resolves_to_surrounding_ukrainian_language():
+    provider = SequenceHumanAnswerProvider([
+        "1. SiteController.createSite приймає запит і передає його в наступний крок.\n2. Результат повертається клієнту."
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як працює SiteController.createSite", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert response.answerLanguage == "uk"
+    assert provider.calls[0]["llmInput"]["responseLanguage"] == "uk"
+
+
+def test_language_violation_gets_one_repair_attempt_for_same_flow():
+    provider = SequenceHumanAnswerProvider([
+        "1. POST /api/v1/sites enters SiteController.createSite and maps the request.\n2. The controller returns the created response.",
+        "1. POST /api/v1/sites входить у SiteController.createSite і передає запит далі.\n2. Результат повертається клієнту.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert response.answerLanguage == "uk"
+    assert len(provider.calls) == 2
+    assert provider.calls[1]["validationErrors"]
+    assert "Ukrainian" in provider.calls[1]["validationErrors"][0]
+    assert "передає запит" in response.answers[0].text
+
+
+def test_markdown_and_language_violation_gets_bounded_plain_text_repair():
+    provider = SequenceHumanAnswerProvider([
+        {"text": "**Flow**\n1. `SiteController.createSite` receives the request."},
+        "1. SiteController.createSite приймає запит і передає його в наступний крок.\n2. Відповідь повертається клієнту.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert len(provider.calls) == 2
+    assert any("Markdown" in error for error in provider.calls[1]["validationErrors"])
+    assert "**" not in response.answers[0].text
+    assert "`" not in response.answers[0].text
+
+
+def test_paragraph_walkthrough_gets_repaired_to_numbered_steps():
+    provider = SequenceHumanAnswerProvider([
+        "SiteController.createSite приймає HTTP POST запит на /api/v1/sites і передає його в CreateSiteImpl.execute. Наприкінці контролер повертає створену відповідь.",
+        "1. SiteController.createSite приймає HTTP POST запит на /api/v1/sites і передає його в CreateSiteImpl.execute.\n2. Наприкінці контролер повертає створену відповідь.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert len(provider.calls) == 2
+    assert any("numbered walkthrough" in error for error in provider.calls[1]["validationErrors"])
+    assert response.answers[0].text.startswith("1.")
+
+
+def test_observable_result_label_gets_repaired_to_plain_numbered_prose():
+    provider = SequenceHumanAnswerProvider([
+        "1. SiteController.createSite приймає HTTP POST запит на /api/v1/sites.\n2. Observable result: контролер повертає створену відповідь.",
+        "1. SiteController.createSite приймає HTTP POST запит на /api/v1/sites.\n2. Наприкінці контролер повертає створену відповідь.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert len(provider.calls) == 2
+    assert any("Observable result" in error for error in provider.calls[1]["validationErrors"])
+    assert "Observable result:" not in response.answers[0].text
+
+
+def test_lettered_substeps_get_repaired_to_numbered_walkthrough_only():
+    provider = SequenceHumanAnswerProvider([
+        "1. SiteController.createSite приймає запит.\n   а) CreateSiteImpl.execute валідує назву.\n2. Контролер повертає відповідь.",
+        "1. SiteController.createSite приймає запит і передає його до CreateSiteImpl.execute.\n2. CreateSiteImpl.execute валідує назву, після чого контролер повертає відповідь.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert len(provider.calls) == 2
+    assert any("lettered" in error for error in provider.calls[1]["validationErrors"])
+    assert "а)" not in response.answers[0].text
+
+
+def test_graph_edge_terms_get_repaired_out_of_human_answer():
+    provider = SequenceHumanAnswerProvider([
+        "1. SiteController.getSiteOverview викликає UNRESOLVED_CALL GetSiteOverview.execute.\n2. Контролер повертає DTO.",
+        "1. SiteController.getSiteOverview викликає GetSiteOverview.execute.\n2. Контролер повертає DTO.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як працює SiteController.getSiteOverview", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert len(provider.calls) == 2
+    assert any("graph terminology" in error for error in provider.calls[1]["validationErrors"])
+    assert "UNRESOLVED_CALL" not in response.answers[0].text
+
+
+def test_unresolved_call_wording_gets_repaired_out_of_human_answer():
+    provider = SequenceHumanAnswerProvider([
+        "1. SiteController.getSiteOverview reaches an unresolved call to GetSiteOverview.execute.\n2. The controller returns the DTO.",
+        "1. SiteController.getSiteOverview calls GetSiteOverview.execute.\n2. The controller returns the DTO.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="how does SiteController.getSiteOverview work", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert len(provider.calls) == 2
+    assert any("graph terminology" in error for error in provider.calls[1]["validationErrors"])
+    assert "unresolved call" not in response.answers[0].text
+
+
+def test_unnumbered_paragraph_after_steps_gets_repaired():
+    provider = SequenceHumanAnswerProvider([
+        "1. AgentProjectController.createAgentProject приймає запит.\n2. Контролер повертає DTO.\nVerified facts do not provide persistence details.",
+        "1. AgentProjectController.createAgentProject приймає запит.\n2. Контролер повертає DTO, а перевірені факти не надають деталей збереження.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити агентський проект", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert len(provider.calls) == 2
+    assert any("numbered walkthrough step" in error for error in provider.calls[1]["validationErrors"])
+    assert "Verified facts" not in response.answers[0].text
+
+
+def test_graph_boundary_wording_gets_repaired_out_of_human_answer():
+    provider = SequenceHumanAnswerProvider([
+        "1. AgentController.createAgent доходить до external client boundary.\n2. Контролер повертає DTO.",
+        "1. AgentController.createAgent готує відповідь через ResponseEntity.status(HttpStatus.CREATED).\n2. Контролер повертає DTO.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити агента", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+    )
+
+    assert len(provider.calls) == 2
+    assert any("graph terminology" in error for error in provider.calls[1]["validationErrors"])
+    assert "boundary" not in response.answers[0].text
+
+
+def test_speculative_framework_behavior_gets_repaired():
+    provider = SequenceHumanAnswerProvider([
+        "1. PaymentListener.handle receives the payment event.\n2. The observable result is likely a default Spring Boot response.",
+        "1. PaymentListener.handle receives the payment event and passes it to PaymentService.record.\n2. PaymentService.record saves through LedgerRepository.save and PaymentAcknowledgement.publish emits the acknowledgement.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="how does payment handling work", intent="FLOW_EXPLANATION"),
+        human_execution(unrelated_listener_flow()),
+    )
+
+    assert len(provider.calls) == 2
+    assert any("speculate" in error for error in provider.calls[1]["validationErrors"])
+    assert "likely" not in response.answers[0].text
+    assert "default Spring Boot" not in response.answers[0].text
+
+
+def test_repair_failure_fails_flow_without_projecting_compact_tree():
+    provider = SequenceHumanAnswerProvider([
+        "1. POST /api/v1/sites enters SiteController.createSite and returns a response.",
+        "1. POST /api/v1/sites still answers in English.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    try:
+        service.answer(
+            KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
+            human_execution(technical_create_site_flow()),
+        )
+    except HumanAnswerGenerationFailed:
+        pass
+    else:
+        raise AssertionError("Expected human answer generation to fail")
+
+    assert len(provider.calls) == 2
+
+
+def test_generic_prompt_and_projector_work_for_unrelated_flow_without_create_site_language():
+    graph_flow = unrelated_listener_flow()
+    provider = SequenceHumanAnswerProvider([
+        "1. Topic payments.created enters PaymentListener.handle and the event is validated.\n2. LedgerRepository.save persists the ledger row, then PaymentAcknowledgement.publish emits the acknowledgement."
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="how is the payment event handled", intent="FLOW_EXPLANATION"),
+        human_execution(graph_flow),
+    )
+    prompt = HumanAnswerPromptRenderer().render(provider.calls[0]["llmInput"])
+
+    assert response.answers[0].entrypoint == "PaymentListener.handle"
+    assert "PaymentListener.handle" in response.answers[0].text
+    forbidden = ("SiteController", "CreateSiteImpl", "SiteRepository", "SiteCreatedPayload", "/api/v1/sites", "stsssox")
+    assert not any(token in prompt for token in forbidden)
+    assert not any(token in response.answers[0].text for token in forbidden)

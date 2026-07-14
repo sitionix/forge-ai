@@ -38,8 +38,7 @@ async function flushAsync() {
 function queryPayload(queryText: string) {
   return {
     queryText,
-    intent: 'FLOW_EXPLANATION',
-    answerLanguage: 'uk',
+    intent: 'AUTO',
     includeTests: false
   };
 }

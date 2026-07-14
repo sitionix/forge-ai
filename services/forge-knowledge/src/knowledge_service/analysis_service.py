@@ -16,6 +16,7 @@ from knowledge_service.analysis_runtime_events import AnalysisRuntimeContext, an
 from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_store import AnalysisStore
+from knowledge_service.api_contract_locator import ApiContractLocator
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.analyzer_runtime import AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.config import AppConfig
@@ -63,7 +64,7 @@ class AnalysisSupervisor:
         self.snippets = SnippetExtractor()
         self.graph_engine = GraphAnalysisEngine()
         self.structural_engine = StructuralAnalysisEngine()
-        self.static_materializer = StaticGraphMaterializer()
+        self.static_materializer = StaticGraphMaterializer(ApiContractLocator(config.workspace_root))
         self.anchor_validator = AnchorAwareGraphValidator()
         self.graph_contract_provider = GraphContractProvider()
         self.target_progress_tracker = CurrentFileTargetProgressTracker()

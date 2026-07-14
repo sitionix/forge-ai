@@ -3,7 +3,6 @@ import { JarvisQueryView } from './jarvis-query-view.js';
 import { RequestCoordinator } from './request-coordinator.js';
 
 const DEFAULT_QUERY_CONFIG = {
-  jarvisQueryAnswerLanguage: 'uk',
   jarvisQueryIncludeTests: false
 };
 
@@ -154,8 +153,7 @@ export class JarvisPage {
   queryPayload(queryText) {
     return {
       queryText,
-      intent: 'FLOW_EXPLANATION',
-      answerLanguage: String(this.runtimeConfig.jarvisQueryAnswerLanguage || DEFAULT_QUERY_CONFIG.jarvisQueryAnswerLanguage),
+      intent: 'AUTO',
       includeTests: Boolean(this.runtimeConfig.jarvisQueryIncludeTests)
     };
   }

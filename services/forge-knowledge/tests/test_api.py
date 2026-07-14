@@ -22,6 +22,7 @@ from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphNode
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest, KnowledgeQueryResponse, KnowledgeQueryStatus
 from support import build_test_app, write_runtime_config
 from knowledge_service.flow_explanations import FlowExplanationProviderResult
+from knowledge_service.query_interpretation import QueryInterpretationProviderResult
 from semantic_test_support import seed_semantic_graph
 
 
@@ -34,7 +35,10 @@ class FakeFlowExplanationProvider:
         self.calls.append({"llmInput": dict(llm_input), "timeoutSeconds": timeout_seconds})
         if self.delay_seconds:
             time.sleep(self.delay_seconds)
-        response = {"text": "A.start delegates to B.work using the grounded call tree."}
+        if llm_input.get("responseLanguage") == "uk":
+            response = {"text": "1. A.start передає виконання до B.work за підтвердженим деревом викликів.\n2. B.work повертає підтверджений результат."}
+        else:
+            response = {"text": "1. A.start delegates to B.work using the grounded call tree.\n2. B.work returns the grounded result."}
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
 
 
@@ -48,8 +52,34 @@ class PerEntrypointAnswerProvider:
         entrypoint = str(llm_input.get("entrypoint") or "")
         if entrypoint in self.fail_entrypoints:
             raise RuntimeError("expected")
-        response = {"text": f"Answer for {entrypoint}."}
+        response = {"text": f"1. {entrypoint} starts the selected flow.\n2. The grounded flow answer for {entrypoint} is returned."}
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
+
+
+class SentinelAnswerProvider:
+    def __init__(self, sentinel: str):
+        self.sentinel = sentinel
+        self.calls = []
+
+    def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+        self.calls.append(
+            {
+                "llmInput": dict(llm_input),
+                "validationErrors": list(validation_errors or []),
+                "timeoutSeconds": timeout_seconds,
+            }
+        )
+        response = {"text": f"1. {self.sentinel}\n2. The selected flow returns the configured provider result."}
+        return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
+
+
+class BrokenQueryInterpretationProvider:
+    def __init__(self):
+        self.calls = []
+
+    def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+        self.calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
+        return QueryInterpretationProviderResult(raw_text="not json", prompt_char_length=100)
 
 
 def _entrypoint_claim(
@@ -170,7 +200,11 @@ def test_query_flow_explanations_endpoint_returns_human_answer(tmp_path):
 
     assert response_payload["answerLanguage"] == "uk"
     assert response_payload["answers"] == [
-        {"source": "source-a", "entrypoint": "A.start", "text": "A.start delegates to B.work using the grounded call tree."}
+        {
+            "source": "source-a",
+            "entrypoint": "A.start",
+            "text": "1. A.start передає виконання до B.work за підтвердженим деревом викликів.\n2. B.work повертає підтверджений результат.",
+        }
     ]
     assert response_payload["diagnostics"] == []
     assert "status" not in response_payload
@@ -186,6 +220,74 @@ def test_query_flow_explanations_endpoint_returns_human_answer(tmp_path):
         "route": "/api/v1/sites",
         "interfaceMethod": "com.app.SiteApi.createSite",
     }
+
+
+def test_query_endpoint_uses_configured_llm_provider_and_tool_context_does_not(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    query_provider = app.state.query_interpretation_provider
+    seed_semantic_graph(
+        app_config.store_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a-start", "nodeKind": "CALLABLE", "name": "A.start", "qualified": "A.start", "path": "src/A.java"},
+            {"id": "b-work", "nodeKind": "CALLABLE", "name": "B.work", "qualified": "B.work", "path": "src/B.java"},
+        ],
+        edges=[{"id": "edge-a-b", "fromNodeId": "a-start", "toNodeId": "b-work", "edgeType": "CALLS"}],
+        claims=[_entrypoint_claim("a-start", http_method="POST", route="/api/v1/alpha")],
+    )
+    sentinel = "Unique sentinel sentence from the fake configured LLM provider."
+    provider = SentinelAnswerProvider(sentinel)
+    app.state.flow_explanation_provider = provider
+
+    async def exercise():
+        async with _async_client(app) as client:
+            human = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "how does A.start work"}))
+            tool = await _await_with_wakeup(client.post("/api/v1/knowledge/query/tool-context", json={"queryText": "A.start"}))
+            return human.status_code, human.json(), tool.status_code, tool.json()
+
+    human_status, human_payload, tool_status, tool_payload = asyncio.run(exercise())
+
+    assert human_status == 200
+    assert sentinel in human_payload["answers"][0]["text"]
+    assert sentinel not in json.dumps(tool_payload)
+    assert tool_status == 200
+    assert len(provider.calls) == 1
+    assert len(query_provider.calls) == 2
+    assert query_provider.calls[0]["llmInput"]["queryText"] == "how does A.start work"
+    assert query_provider.calls[1]["llmInput"]["queryText"] == "A.start"
+    assert provider.calls[0]["llmInput"]["entrypoint"] == "A.start"
+    assert provider.calls[0]["llmInput"]["responseLanguage"] == "en"
+    audit = app.state.human_answer_audit_artifacts
+    assert len(audit) == 1
+    assert audit[0]["provider"] == app_config.analysis_provider
+    assert audit[0]["model"] == app_config.analysis_model
+    assert audit[0]["flowEntrypoint"] == "A.start"
+    assert audit[0]["attemptCount"] == 1
+    assert audit[0]["requestedLanguage"] == "AUTO"
+    assert audit[0]["resolvedLanguage"] == "en"
+    assert audit[0]["promptLength"] > 0
+    assert len(audit[0]["promptHash"]) == 64
+    assert audit[0]["rawResponseLength"] > 0
+    assert len(audit[0]["rawResponseHash"]) == 64
+
+
+def test_query_interpretation_failure_returns_502_without_final_answer_call(tmp_path):
+    app, _, _app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    broken_interpreter = BrokenQueryInterpretationProvider()
+    final_provider = SentinelAnswerProvider("should not be used")
+    app.state.query_interpretation_provider = broken_interpreter
+    app.state.flow_explanation_provider = final_provider
+
+    async def exercise():
+        async with _async_client(app) as client:
+            return await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "how does A.start work"}))
+
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 502
+    assert response.json()["code"] == "QUERY_INTERPRETATION_FAILED"
+    assert len(broken_interpreter.calls) == 2
+    assert final_provider.calls == []
 
 
 def test_query_endpoint_returns_one_answer_per_distinct_flow(tmp_path):
@@ -221,7 +323,10 @@ def test_query_endpoint_returns_one_answer_per_distinct_flow(tmp_path):
     assert len(provider.calls) == 3
     assert [call["llmInput"]["entrypoint"] for call in provider.calls] == roots
     assert [answer["entrypoint"] for answer in payload["answers"]] == roots
-    assert [answer["text"] for answer in payload["answers"]] == [f"Answer for {root}." for root in roots]
+    assert [answer["text"] for answer in payload["answers"]] == [
+        f"1. {root} starts the selected flow.\n2. The grounded flow answer for {root} is returned."
+        for root in roots
+    ]
     assert payload["diagnostics"] == []
     assert "status" not in payload
     assert "flows" not in payload
@@ -259,7 +364,13 @@ def test_query_endpoint_partial_flow_failure_keeps_successful_answers(tmp_path):
 
     assert status == 200
     assert len(provider.calls) == 2
-    assert payload["answers"] == [{"source": "source-a", "entrypoint": "A.start", "text": "Answer for A.start."}]
+    assert payload["answers"] == [
+        {
+            "source": "source-a",
+            "entrypoint": "A.start",
+            "text": "1. A.start starts the selected flow.\n2. The grounded flow answer for A.start is returned.",
+        }
+    ]
     assert payload["diagnostics"] == [
         {
             "code": "HUMAN_FLOW_ANSWER_GENERATION_FAILED",
@@ -350,7 +461,7 @@ def test_slow_flow_explanation_does_not_block_concurrent_health_request(tmp_path
     assert health.status_code == 200
     assert health.json() == {"status": "UP"}
     assert elapsed < 0.25
-    assert response.json()["answers"][0]["text"] == "A.start delegates to B.work using the grounded call tree."
+    assert response.json()["answers"][0]["text"] == "1. A.start delegates to B.work using the grounded call tree.\n2. B.work returns the grounded result."
     assert "status" not in response.json()
 
 
@@ -387,7 +498,7 @@ def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tm
     )
 
     class SlowQueryService:
-        def query_with_flows(self, body):
+        def query_with_flows(self, body, plan=None):
             time.sleep(0.05)
             return SimpleNamespace(response=query_response, flows=flow_result.flows)
 
@@ -404,7 +515,7 @@ def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tm
         deadline_at=deadline_at,
     )
 
-    assert response.answers[0].text == "A.start delegates to B.work using the grounded call tree."
+    assert response.answers[0].text == "1. A.start delegates to B.work using the grounded call tree.\n2. B.work returns the grounded result."
     assert response.answers[0].entrypoint == "A.start"
     assert provider.calls
     assert 0 < provider.calls[0]["timeoutSeconds"] < 0.17
@@ -533,7 +644,7 @@ def test_cancelled_flow_explanation_request_does_not_start_subsequent_flow_calls
                 self.first_returned.set()
             else:
                 self.second_started.set()
-            response = {"text": "The cancelled request had already started producing a human answer."}
+            response = {"text": "1. The cancelled request had already started producing a human answer.\n2. The provider returns without starting a second flow."}
             return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
 
     provider = BlockingProvider()

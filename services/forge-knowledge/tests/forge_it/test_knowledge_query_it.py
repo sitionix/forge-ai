@@ -29,14 +29,16 @@ def post(app, path: str, payload: dict):
     return asyncio.run(exercise())
 
 
-def request(query: str, *, max_flows: int = 10, include_tests: bool = False):
-    return {
+def request(query: str, *, max_flows: int = 10, include_tests: bool = False, answer_language: str | None = None):
+    payload = {
         "queryText": query,
         "intent": "FLOW_EXPLANATION",
-        "answerLanguage": "uk",
         "includeTests": include_tests,
         "maxFlows": max_flows,
     }
+    if answer_language is not None:
+        payload["answerLanguage"] = answer_language
+    return payload
 
 
 def graph_query(app, payload: dict) -> dict:
@@ -328,7 +330,8 @@ class FailingProvider:
 class GroundedProvider:
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
         sources = str(llm_input.get("entrypoint") or "")
-        response = {"text": f"Grounded answer for {sources or 'the selected flow'}."}
+        target = sources or "the selected flow"
+        response = {"text": f"1. {target} starts the grounded flow.\n2. The grounded answer for {target} is returned."}
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=128)
 
 

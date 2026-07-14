@@ -106,6 +106,30 @@ class ForgeAiInfrastructureJarvisControllerTest {
     }
 
     @Test
+    void querySerializesAutoIntentAndDelegatesToGenericProxyRoute() {
+        this.stub("{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
+        final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
+                "як створити сайт",
+                JarvisKnowledgeQueryIntent.AUTO,
+                null,
+                false,
+                null
+        );
+
+        this.controller.query(body, this.headers, this.request);
+
+        final byte[] expectedBody = ("{\"queryText\":\"як створити сайт\",\"intent\":\"AUTO\","
+                + "\"includeTests\":false}").getBytes(StandardCharsets.UTF_8);
+        verify(this.transport).forward(
+                eq("jarvis.query"),
+                eq(Map.of()),
+                argThat(actual -> Arrays.equals(actual, expectedBody)),
+                same(this.headers),
+                same(this.request)
+        );
+    }
+
+    @Test
     void queryPreservesSuccessfulHumanAnswerBytes() throws Exception {
         final String response = "{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}";
         this.stub(response);

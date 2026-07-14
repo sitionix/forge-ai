@@ -187,7 +187,7 @@ def test_query_rejects_old_request_shape(tmp_path) -> None:
 @pytest.mark.parametrize(
     "payload",
     [
-        {"queryText": "explain", "intent": "AU" + "TO"},
+        {"queryText": "explain", "intent": "AUTOMATIC"},
         {"queryText": "explain", "includeTests": "false"},
         {"queryText": "explain", "maxFlows": "10"},
         {"queryText": "explain", "maxFlows": 0},
@@ -229,7 +229,7 @@ def test_query_rejects_invalid_optional_controls(tmp_path, payload) -> None:
         ),
         (
             flow_query_payload(" explain JarvisGateway "),
-            normalized_query_payload("explain JarvisGateway", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=10),
+            normalized_query_payload("explain JarvisGateway", intent="FLOW_EXPLANATION", include_tests=False, max_flows=10),
         ),
     ],
 )
@@ -267,7 +267,7 @@ def test_flow_explanation_generation_failure_preserves_upstream_error(tmp_path) 
         "message": "The local model could not produce any grounded flow answers.",
     }
     assert knowledge.calls == [
-        normalized_query_payload("JarvisGateway", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=10)
+        normalized_query_payload("JarvisGateway", intent="FLOW_EXPLANATION", include_tests=False, max_flows=10)
     ]
     assert knowledge.paths == ["/api/v1/knowledge/query"]
 
@@ -325,7 +325,7 @@ def test_flow_explanation_malformed_knowledge_response_maps_to_controlled_error(
     assert response.status_code == 502
     assert response.json()["code"] == "KNOWLEDGE_BAD_RESPONSE"
     assert knowledge.calls == [
-        normalized_query_payload("JarvisGateway", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=10)
+        normalized_query_payload("JarvisGateway", intent="FLOW_EXPLANATION", include_tests=False, max_flows=10)
     ]
     assert knowledge.paths == ["/api/v1/knowledge/query"]
 

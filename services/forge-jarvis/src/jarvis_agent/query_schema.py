@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, StrictBool, validator
 
 
 class JarvisQueryIntent(str, Enum):
+    AUTO = "AUTO"
     FLOW_EXPLANATION = "FLOW_EXPLANATION"
     COMPONENT_USAGE = "COMPONENT_USAGE"
     COMPONENT_RESPONSIBILITY = "COMPONENT_RESPONSIBILITY"
@@ -17,8 +18,8 @@ class JarvisQueryIntent(str, Enum):
 
 class JarvisQueryRequest(BaseModel):
     queryText: str = Field(..., min_length=1)
-    intent: JarvisQueryIntent = JarvisQueryIntent.UNKNOWN
-    answerLanguage: str = Field("en", min_length=1)
+    intent: JarvisQueryIntent = JarvisQueryIntent.AUTO
+    answerLanguage: Optional[str] = None
     includeTests: StrictBool = False
     maxFlows: int = Field(10, ge=1, le=10)
 
@@ -37,18 +38,18 @@ class JarvisQueryRequest(BaseModel):
     @validator("intent", pre=True, always=True)
     def default_missing_intent(cls, value: JarvisQueryIntent) -> JarvisQueryIntent:
         if value is None:
-            return JarvisQueryIntent.UNKNOWN
+            return JarvisQueryIntent.AUTO
         return value
 
     @validator("answerLanguage", pre=True, always=True)
-    def normalize_answer_language(cls, value: str) -> str:
+    def normalize_answer_language(cls, value: str | None) -> Optional[str]:
         if value is None:
-            return "en"
+            return None
         if not isinstance(value, str):
             raise ValueError("answerLanguage must be a string")
         normalized = value.strip().lower()
         if not normalized:
-            return "en"
+            return None
         return normalized
 
     @validator("includeTests", pre=True, always=True)

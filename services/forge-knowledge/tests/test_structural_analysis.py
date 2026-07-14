@@ -3,6 +3,7 @@ import hashlib
 import pytest
 
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
+from knowledge_service.api_contract_locator import ApiContractLocator
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.java_parser_adapter import JavaParserAdapter
 from knowledge_service.structural_analysis import StaticGraphMaterializer, StructuralAnalysisEngine
@@ -224,27 +225,48 @@ class ResponseDto {}
     assert entrypoint.metadata["interfaceMethod"] == "example.GeneratedApi.create"
 
 
-def test_static_graph_materializer_derives_controller_override_entrypoint_from_external_api_contract(tmp_path, monkeypatch):
-    contract_dir = tmp_path / "workspace" / "app-afesox" / "apis" / "stsssox" / "rest"
+def _write_openapi_contract(workspace, package_name: str, api_name: str, route: str, method: str, operation_id: str) -> None:
+    contract_dir = workspace / package_name / "apis" / api_name / "rest"
     (contract_dir / "paths" / "v1").mkdir(parents=True)
     (contract_dir / "openapi.yml").write_text(
-        """openapi: "3.0.0"
+        f"""openapi: "3.0.0"
 paths:
-  /api/v1/sites:
-    $ref: './paths/v1/sites.yml'
+  {route}:
+    $ref: './paths/v1/{api_name}.yml'
 """,
         encoding="utf-8",
     )
-    (contract_dir / "paths" / "v1" / "sites.yml").write_text(
-        """post:
-  operationId: createSite
+    (contract_dir / "paths" / "v1" / f"{api_name}.yml").write_text(
+        f"""{method.lower()}:
+  operationId: {operation_id}
   responses:
-    '201':
-      description: Site created
+    '200':
+      description: OK
 """,
         encoding="utf-8",
     )
-    monkeypatch.setenv("FORGE_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+
+
+def test_api_contract_locator_resolves_api_first_operations_for_multiple_modules(tmp_path):
+    workspace = tmp_path / "workspace"
+    _write_openapi_contract(workspace, "app-afesox", "stsssox", "/api/v1/sites", "POST", "createSite")
+    _write_openapi_contract(workspace, "app-afesox", "atmssox", "/api/v1/accounts", "GET", "getAccount")
+    locator = ApiContractLocator(workspace)
+
+    site_operation = locator.locate_operation("com.app_afesox.stsssox.api_first.api.SiteApi", "createSite")
+    account_operation = locator.locate_operation("com.app_afesox.atmssox.api_first.api.AccountApi", "getAccount")
+
+    assert site_operation is not None
+    assert site_operation.http_method == "POST"
+    assert site_operation.route == "/api/v1/sites"
+    assert account_operation is not None
+    assert account_operation.http_method == "GET"
+    assert account_operation.route == "/api/v1/accounts"
+
+
+def test_static_graph_materializer_derives_controller_override_entrypoint_from_external_api_contract(tmp_path):
+    workspace = tmp_path / "workspace"
+    _write_openapi_contract(workspace, "app-afesox", "stsssox", "/api/v1/sites", "POST", "createSite")
     text = """package example;
 
 import com.app_afesox.stsssox.api_first.api.SiteApi;
@@ -262,7 +284,7 @@ class SiteController implements SiteApi {
 class CreateSiteRequestDTO {}
 class CreateSiteResponseDTO {}
 """
-    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    graph = StaticGraphMaterializer(ApiContractLocator(workspace)).to_graph(JavaParserAdapter().parse(text, metadata(text)))
     controller_create = next(
         node
         for node in graph.nodes

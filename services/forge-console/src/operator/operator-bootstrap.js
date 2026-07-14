@@ -16,7 +16,6 @@ export function bootstrapOperatorConsole(options = {}) {
     statusPollIntervalMs: 15000,
     activeJobPollIntervalMs: 2000,
     graphPollIntervalMs: 30000,
-    jarvisQueryAnswerLanguage: 'uk',
     jarvisQueryIncludeTests: false,
     ...(windowRef.FORGE_OPERATOR_RUNTIME_CONFIG || {}),
     ...(options.runtimeConfig || {})

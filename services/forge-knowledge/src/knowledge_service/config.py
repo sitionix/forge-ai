@@ -121,7 +121,15 @@ class FlowExplanationQuerySettings(BaseModel):
 
 
 class QuerySettings(BaseModel):
+    default_response_language: str = Field(default="en", min_length=2)
     flow_explanation: FlowExplanationQuerySettings = Field(default_factory=FlowExplanationQuerySettings)
+
+    @validator("default_response_language")
+    def normalize_default_response_language(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower().split("-", 1)[0]
+        if not re.match(r"^[a-z]{2,3}$", normalized) or normalized == "und":
+            raise ValueError("query.default_response_language must be a language code")
+        return normalized
 
 
 class ServicesSettings(BaseModel):
@@ -165,6 +173,7 @@ class AppConfig(BaseModel):
     analysis_request_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
     analysis_ai_call_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
     flow_explanation_request_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
+    query_default_response_language: str = "en"
     analysis_per_file_timeout_seconds: int = 120
     analysis_stall_threshold_seconds: int = 300
     analysis_context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS
@@ -248,6 +257,7 @@ class AppConfig(BaseModel):
             analysis_request_timeout_seconds=analysis.request_timeout_seconds,
             analysis_ai_call_timeout_seconds=analysis.ai_call_timeout_seconds or analysis.request_timeout_seconds,
             flow_explanation_request_timeout_seconds=settings.query.flow_explanation.request_timeout_seconds,
+            query_default_response_language=settings.query.default_response_language,
             analysis_per_file_timeout_seconds=analysis.per_file_timeout_seconds,
             analysis_stall_threshold_seconds=analysis.stall_threshold_seconds,
             analysis_context_tokens=generative.context_tokens,
@@ -430,6 +440,11 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
             ),
         },
         "query": {
+            "default_response_language": str(
+                query.get("default-response-language")
+                or query.get("default_response_language")
+                or "en"
+            ),
             "flow_explanation": {
                 "request_timeout_seconds": _int_config(
                     flow_explanation.get("request-timeout-seconds")
@@ -540,6 +555,8 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
             generative[field] = converter(env[name])
     if env.get("FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS"):
         raw["query"]["flow_explanation"]["request_timeout_seconds"] = int(env["FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS"])
+    if env.get("FORGE_QUERY_DEFAULT_RESPONSE_LANGUAGE"):
+        raw["query"]["default_response_language"] = env["FORGE_QUERY_DEFAULT_RESPONSE_LANGUAGE"]
 
     knowledge = raw["services"]["knowledge"]
     if env.get("KNOWLEDGE_HOST"):

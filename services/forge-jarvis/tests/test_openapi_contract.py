@@ -44,11 +44,12 @@ def test_jarvis_query_request_schema_is_query_plan_v2() -> None:
     assert set(properties) == {"queryText", "intent", "answerLanguage", "includeTests", "maxFlows"}
     assert set(schema["required"]) == {"queryText"}
     assert "query" not in properties
-    assert properties["intent"]["default"] == "UNKNOWN"
-    assert properties["answerLanguage"]["default"] == "en"
+    assert properties["intent"]["default"] == "AUTO"
+    assert "default" not in properties["answerLanguage"]
     assert properties["includeTests"]["default"] is False
     assert properties["maxFlows"]["default"] == 10
     assert spec["components"]["schemas"]["JarvisQueryIntent"]["enum"] == [
+        "AUTO",
         "FLOW_EXPLANATION",
         "COMPONENT_USAGE",
         "COMPONENT_RESPONSIBILITY",

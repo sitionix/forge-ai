@@ -23,10 +23,11 @@ class JarvisQueryService:
         payload = {
             "queryText": request.queryText,
             "intent": request.intent.value,
-            "answerLanguage": request.answerLanguage,
             "includeTests": request.includeTests,
             "maxFlows": request.maxFlows,
         }
+        if request.answerLanguage:
+            payload["answerLanguage"] = request.answerLanguage
         bundle = await self.knowledge_gateway.query(payload)
         try:
             return JarvisHumanAnswerResponse.parse_obj(bundle)

@@ -115,7 +115,7 @@ def test_flow_explanation_query_uses_dedicated_knowledge_contract(tmp_path):
     body = response.json()
     assert response.status_code == 200
     assert knowledge.calls == [
-        normalized_query_payload("SiteController createSite", intent="FLOW_EXPLANATION", answer_language="uk", include_tests=False, max_flows=10)
+        normalized_query_payload("SiteController createSite", intent="FLOW_EXPLANATION", include_tests=False, max_flows=10)
     ]
     assert knowledge.paths == ["/api/v1/knowledge/query"]
     assert model.prompts == []

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
+import os
 import sqlite3
 import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import anyio
@@ -57,6 +60,13 @@ from knowledge_service.observability import (
     sanitize_correlation_id,
 )
 from knowledge_service.overview_projection import read_overview
+from knowledge_service.query_interpretation import (
+    QUERY_INTERPRETATION_FAILED,
+    LocalOllamaQueryInterpretationClient,
+    QueryInterpretationFailed,
+    QueryInterpretationPromptRenderer,
+    QueryInterpretationService,
+)
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_schema import SemanticIndexBuildRequest, SemanticIndexBuildResponse
 from knowledge_service.semantic_worker import SemanticBuildCoordinator, SemanticIndexBackgroundWorker
@@ -657,8 +667,15 @@ def _knowledge_human_query_response(
     if time.monotonic() >= deadline_at:
         return _expired_flow_explanation_response(body)
     try:
-        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body)
+        interpretation_service, close_interpreter = _query_interpretation_service(request, config)
+        try:
+            retrieval_plan = interpretation_service.interpret(body, deadline_at=deadline_at)
+        finally:
+            if close_interpreter:
+                close_interpreter()
+        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
         if not tuple(query_result.flows or ()):
+            _record_query_interpretation_audits(request, body, interpretation_service.audit_records)
             return _public_error_response(
                 404,
                 "NO_GROUNDED_GRAPH_CANDIDATES",
@@ -666,10 +683,18 @@ def _knowledge_human_query_response(
             )
         answer_service, close_provider = _human_answer_service(request, config, cancel_event)
         try:
-            return answer_service.answer(body, query_result, deadline_at=deadline_at)
+            response = answer_service.answer(body, query_result, plan=retrieval_plan, deadline_at=deadline_at)
+            return response
         finally:
+            _record_human_answer_audits(request, body, answer_service.audit_records, interpretation_service.audit_records)
             if close_provider:
                 close_provider()
+    except QueryInterpretationFailed:
+        return _public_error_response(
+            502,
+            QUERY_INTERPRETATION_FAILED,
+            "The local model could not interpret the query.",
+        )
     except FlowExplanationDeadlineExceeded:
         return _public_error_response(
             504,
@@ -696,7 +721,16 @@ def _knowledge_query_tool_context_response(
 ):
     config, deps = _state(request)
     try:
-        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body)
+        deadline_at = time.monotonic() + _flow_explanation_request_deadline_seconds(config)
+        interpretation_service, close_interpreter = _query_interpretation_service(request, config)
+        try:
+            retrieval_plan = interpretation_service.interpret(body, deadline_at=deadline_at)
+        finally:
+            _record_query_interpretation_audits(request, body, interpretation_service.audit_records)
+            _write_human_answer_audit_artifact(body, [], interpretation_service.audit_records)
+            if close_interpreter:
+                close_interpreter()
+        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
         if not tuple(query_result.flows or ()):
             return _public_error_response(
                 404,
@@ -704,6 +738,12 @@ def _knowledge_query_tool_context_response(
                 "No grounded graph candidates were found.",
             )
         return CompactFlowProjector().to_tool_response(body, query_result)
+    except QueryInterpretationFailed:
+        return _public_error_response(
+            502,
+            QUERY_INTERPRETATION_FAILED,
+            "The local model could not interpret the query.",
+        )
     except Exception:
         return _public_error_response(
             503,
@@ -739,6 +779,60 @@ def _expired_tool_context_response(body: KnowledgeQueryRequest) -> JSONResponse:
 
 def _public_error_response(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"code": code, "message": message})
+
+
+def _record_human_answer_audits(
+    request: Request,
+    body: KnowledgeQueryRequest,
+    records: list[Dict[str, Any]],
+    interpretation_records: list[Dict[str, Any]] | None = None,
+) -> None:
+    interpretation_records = list(interpretation_records or [])
+    if not records and not interpretation_records:
+        return
+    _record_query_interpretation_audits(request, body, interpretation_records)
+    existing = getattr(request.app.state, "human_answer_audit_artifacts", None)
+    if existing is None:
+        existing = []
+        request.app.state.human_answer_audit_artifacts = existing
+    existing.extend(dict(record) for record in records)
+    _write_human_answer_audit_artifact(body, records, interpretation_records)
+
+
+def _record_query_interpretation_audits(request: Request, body: KnowledgeQueryRequest, records: list[Dict[str, Any]]) -> None:
+    if not records:
+        return
+    existing = getattr(request.app.state, "query_interpretation_audit_artifacts", None)
+    if existing is None:
+        existing = []
+        request.app.state.query_interpretation_audit_artifacts = existing
+    existing.extend(dict(record) for record in records)
+
+
+def _write_human_answer_audit_artifact(
+    body: KnowledgeQueryRequest,
+    records: list[Dict[str, Any]],
+    interpretation_records: list[Dict[str, Any]] | None = None,
+) -> None:
+    directory = str(os.environ.get("FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR") or "").strip()
+    if not directory:
+        return
+    try:
+        root = Path(directory)
+        root.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "requestPayload": body.dict(exclude_none=True),
+            "providerCallCount": len(records),
+            "queryInterpretationProviderCallCount": len(interpretation_records or []),
+            "interpretationRecords": [dict(record) for record in (interpretation_records or [])],
+            "records": [dict(record) for record in records],
+        }
+        filename = f"human-answer-{int(time.time() * 1000)}-{uuid.uuid4().hex}.json"
+        with (root / filename).open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+    except Exception:
+        return
 
 
 async def _run_in_thread(func, *args, request_cancel_event: threading.Event | None = None, **kwargs):
@@ -820,6 +914,8 @@ def _human_answer_service(
             injected_provider,
             max_prompt_chars=max_prompt_chars,
             request_deadline_seconds=request_deadline_seconds,
+            provider_name=config.analysis_provider,
+            provider_model=config.analysis_model,
             cancel_event=cancel_event,
         ), None
     provider = LocalOllamaFlowExplanationClient(
@@ -833,7 +929,40 @@ def _human_answer_service(
         provider,
         max_prompt_chars=max_prompt_chars,
         request_deadline_seconds=request_deadline_seconds,
+        provider_name=config.analysis_provider,
+        provider_model=config.analysis_model,
         cancel_event=cancel_event,
+    ), provider.close
+
+
+def _query_interpretation_service(
+    request: Request,
+    config: AppConfig,
+) -> tuple[QueryInterpretationService, Optional[Any]]:
+    injected_provider = getattr(request.app.state, "query_interpretation_provider", None)
+    request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
+    default_response_language = getattr(config, "query_default_response_language", "en")
+    if injected_provider is not None:
+        return QueryInterpretationService(
+            injected_provider,
+            default_response_language=default_response_language,
+            request_deadline_seconds=request_deadline_seconds,
+            provider_name=config.analysis_provider,
+            provider_model=config.analysis_model,
+        ), None
+    provider = LocalOllamaQueryInterpretationClient(
+        config.analysis_base_url,
+        config.analysis_model,
+        config.analysis_ai_call_timeout_seconds,
+        config.analysis_context_tokens,
+        renderer=QueryInterpretationPromptRenderer(),
+    )
+    return QueryInterpretationService(
+        provider,
+        default_response_language=default_response_language,
+        request_deadline_seconds=request_deadline_seconds,
+        provider_name=config.analysis_provider,
+        provider_model=config.analysis_model,
     ), provider.close
 
 

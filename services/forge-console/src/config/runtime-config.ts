@@ -8,7 +8,6 @@ export interface OperatorRuntimeConfig {
   statusPollIntervalMs: number;
   activeJobPollIntervalMs: number;
   graphPollIntervalMs: number;
-  jarvisQueryAnswerLanguage: string;
   jarvisQueryIncludeTests: boolean;
 }
 
@@ -26,7 +25,6 @@ export const defaultRuntimeConfig: OperatorRuntimeConfig = {
   statusPollIntervalMs: 15000,
   activeJobPollIntervalMs: 1500,
   graphPollIntervalMs: 30000,
-  jarvisQueryAnswerLanguage: 'uk',
   jarvisQueryIncludeTests: false
 };
 
@@ -61,7 +59,6 @@ function normalizeRuntimeConfig(config: OperatorRuntimeConfig): OperatorRuntimeC
     statusPollIntervalMs: positiveInteger(config.statusPollIntervalMs, defaultRuntimeConfig.statusPollIntervalMs),
     activeJobPollIntervalMs: positiveInteger(config.activeJobPollIntervalMs, defaultRuntimeConfig.activeJobPollIntervalMs),
     graphPollIntervalMs: positiveInteger(config.graphPollIntervalMs, defaultRuntimeConfig.graphPollIntervalMs),
-    jarvisQueryAnswerLanguage: stringValue(config.jarvisQueryAnswerLanguage, defaultRuntimeConfig.jarvisQueryAnswerLanguage),
     jarvisQueryIncludeTests: Boolean(config.jarvisQueryIncludeTests)
   };
 }
@@ -74,8 +71,4 @@ function normalizeBasePath(value: string): string {
 
 function positiveInteger(value: number, fallback: number): number {
   return Number.isInteger(value) && value > 0 ? value : fallback;
-}
-
-function stringValue(value: string, fallback: string): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }

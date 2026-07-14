@@ -176,16 +176,17 @@ def query_payload(query_text: str) -> Dict[str, Any]:
 def flow_query_payload(
     query_text: str,
     *,
-    answer_language: str = "uk",
+    answer_language: Optional[str] = None,
     include_tests: bool = False,
     max_flows: Optional[int] = None,
 ) -> Dict[str, Any]:
     payload = {
         "queryText": query_text,
         "intent": "FLOW_EXPLANATION",
-        "answerLanguage": answer_language,
         "includeTests": include_tests,
     }
+    if answer_language is not None:
+        payload["answerLanguage"] = answer_language
     if max_flows is not None:
         payload["maxFlows"] = max_flows
     return payload
@@ -194,18 +195,20 @@ def flow_query_payload(
 def normalized_query_payload(
     query_text: str,
     *,
-    intent: str = "UNKNOWN",
-    answer_language: str = "en",
+    intent: str = "AUTO",
+    answer_language: Optional[str] = None,
     include_tests: bool = False,
     max_flows: int = 10,
 ) -> Dict[str, Any]:
-    return {
+    payload = {
         "queryText": query_text.strip(),
         "intent": intent,
-        "answerLanguage": answer_language,
         "includeTests": include_tests,
         "maxFlows": max_flows,
     }
+    if answer_language is not None:
+        payload["answerLanguage"] = answer_language
+    return payload
 
 
 def write_runtime_config(tmp_path: Path) -> Path:

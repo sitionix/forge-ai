@@ -6,7 +6,6 @@ window.FORGE_OPERATOR_RUNTIME_CONFIG = Object.freeze({
   statusPollIntervalMs: 15000,
   activeJobPollIntervalMs: 1500,
   graphPollIntervalMs: 30000,
-  jarvisQueryAnswerLanguage: 'uk',
   jarvisQueryIncludeTests: false,
   graphCacheEnabled: true,
   graphCacheMaxRevisions: 3,

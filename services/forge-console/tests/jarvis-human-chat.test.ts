@@ -49,8 +49,7 @@ function humanResponse(text = 'Сайт створюється через SiteCo
 function expectedPayload(queryText: string) {
   return {
     queryText,
-    intent: 'FLOW_EXPLANATION',
-    answerLanguage: 'uk',
+    intent: 'AUTO',
     includeTests: false
   };
 }

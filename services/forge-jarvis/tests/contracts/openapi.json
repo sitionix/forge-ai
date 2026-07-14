@@ -180,6 +180,7 @@
       "JarvisQueryIntent": {
         "description": "An enumeration.",
         "enum": [
+          "AUTO",
           "FLOW_EXPLANATION",
           "COMPONENT_USAGE",
           "COMPONENT_RESPONSIBILITY",
@@ -194,8 +195,6 @@
         "additionalProperties": false,
         "properties": {
           "answerLanguage": {
-            "default": "en",
-            "minLength": 1,
             "title": "Answerlanguage",
             "type": "string"
           },
@@ -210,7 +209,7 @@
                 "$ref": "#/components/schemas/JarvisQueryIntent"
               }
             ],
-            "default": "UNKNOWN"
+            "default": "AUTO"
           },
           "maxFlows": {
             "default": 10,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -32,6 +32,7 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryResponse,
     KnowledgeQueryStatus,
 )
+from knowledge_service.query_interpretation import QueryRetrievalPlan
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 
@@ -54,6 +55,91 @@ class CandidatePoolKind(str, Enum):
     LEXICAL = "LEXICAL"
     FUZZY = "FUZZY"
     SEMANTIC = "SEMANTIC"
+
+
+_PLAN_GENERIC_TOKENS = {
+    "a",
+    "an",
+    "and",
+    "answer",
+    "architecture",
+    "class",
+    "code",
+    "component",
+    "describe",
+    "does",
+    "execute",
+    "execution",
+    "explain",
+    "flow",
+    "for",
+    "how",
+    "implementation",
+    "is",
+    "method",
+    "overview",
+    "process",
+    "query",
+    "response",
+    "service",
+    "step",
+    "steps",
+    "the",
+    "use",
+    "used",
+    "using",
+    "walkthrough",
+    "what",
+    "where",
+    "work",
+    "works",
+    "як",
+    "де",
+    "що",
+    "чому",
+    "який",
+    "яка",
+    "яке",
+    "працює",
+    "працювати",
+    "процес",
+    "виконання",
+    "поясни",
+    "пояснити",
+}
+_PLAN_ACTION_TOKENS = {
+    "create",
+    "created",
+    "creates",
+    "creating",
+    "creation",
+    "створити",
+    "створення",
+}
+_PLAN_TOKEN_ALIASES = {
+    "created": ("create", "created", "creation"),
+    "creates": ("create", "created", "creation"),
+    "creating": ("create", "created", "creation"),
+    "creation": ("create", "created", "creation"),
+    "сайт": ("site",),
+    "сайту": ("site",),
+    "сайти": ("site", "sites"),
+    "сайтів": ("site", "sites"),
+    "створити": ("create", "created", "creation"),
+    "створення": ("create", "created", "creation"),
+}
+_PRECISE_IDENTIFIER_REASONS = {
+    "QUALIFIED_NAME_EXACT",
+    "QUALIFIED_NAME_SUFFIX",
+    "QUALIFIED_NAME_LEAF",
+    "QUALIFIED_SEGMENT_SUFFIX",
+    "QUALIFIED_NAME_MATCH",
+    "NAME_MATCH",
+    "STABLE_KEY_MATCH",
+    "PATH_MATCH",
+}
+_PLAN_FILTER_MIN_SCORE = 0.42
+_PLAN_FILTER_TOP_DELTA = 0.18
 
 
 @dataclass(frozen=True)
@@ -252,6 +338,212 @@ class UnifiedAnchorSearcher:
             diagnostics=diagnostics,
             truncated=truncated,
         )
+
+    def search_plan(
+        self,
+        plan: QueryRetrievalPlan,
+        eligible_sources: Sequence[QuerySource],
+        policy: KnowledgeQueryPolicy,
+        include_tests: bool = False,
+    ) -> CandidateRetrievalResult:
+        query_inputs = plan.query_inputs()
+        combined_tokens = self.normalizer.normalize(" ".join(value for _, value in query_inputs)).tokens
+        if not combined_tokens or not eligible_sources:
+            return self._empty_result()
+        raw_documents, document_truncated = self._load_search_documents(combined_tokens, eligible_sources, policy)
+        if not include_tests:
+            raw_documents = [item for item in raw_documents if str(item.get("flowDomain") or "").upper() != "TEST"]
+        documents = [SearchDocument.from_graph_node(candidate) for candidate in raw_documents if candidate.get("sourceId") or candidate.get("source_id")]
+        config = self._search_config(policy, eligible_sources, include_tests)
+        raw_candidates: List[SearchCandidate] = []
+        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        candidate_limit_reached = False
+        for query_reason, query_value in query_inputs:
+            result = self.search_engine.search(query_value, documents, config)
+            candidate_limit_reached = candidate_limit_reached or bool(getattr(result, "candidate_limit_reached", False))
+            for item in result.diagnostics:
+                metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+                diagnostics.append(self._search_diagnostic({**item, "metadata": {**metadata, "queryReason": query_reason}}))
+            raw_candidates.extend(self._annotated_candidates(getattr(result, "raw_candidates", []) or [], query_reason))
+
+        pools = self._candidate_pools(raw_candidates)
+        merged_candidates = self.candidate_merger.merge(raw_candidates) if raw_candidates else []
+        merged_candidates = self._filter_plan_candidates(merged_candidates, plan)
+        all_candidates = [self._matched_node(candidate) for candidate in merged_candidates]
+        display_limit = max(1, int(policy.max_display_candidates or 1))
+        display_candidates = all_candidates[:display_limit]
+        truncated = document_truncated or candidate_limit_reached
+        if policy.enable_search_diagnostics and truncated:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="SEARCH_CANDIDATE_LIMIT_REACHED",
+                    message="Search reached an internal candidate safety limit before ranking completed.",
+                    severity="INFO",
+                    metadata={
+                        "maxSearchDocuments": policy.max_search_documents,
+                        "maxCandidatesPerProvider": policy.max_candidates_per_provider,
+                    },
+                )
+            )
+        if policy.enable_search_diagnostics and documents and not all_candidates:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="SEARCH_MATCHES_BELOW_THRESHOLD",
+                    message="Search inspected current graph facts, but deterministic matches did not clear ranking thresholds.",
+                    severity="INFO",
+                )
+            )
+        if policy.enable_search_diagnostics and len(display_candidates) < len(all_candidates):
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="MATCHED_NODE_PREVIEW_LIMITED",
+                    message="Matched node preview is limited for response size; graph processing used the full candidate set.",
+                    severity="INFO",
+                    metadata={"displayed": len(display_candidates), "internalCandidates": len(all_candidates)},
+                )
+            )
+        return CandidateRetrievalResult(
+            pools=pools,
+            all_candidates=all_candidates,
+            display_candidates=display_candidates,
+            diagnostics=diagnostics,
+            truncated=truncated,
+        )
+
+    def _filter_plan_candidates(
+        self,
+        candidates: Sequence[MergedCandidate],
+        plan: QueryRetrievalPlan,
+    ) -> List[MergedCandidate]:
+        ranked = list(candidates)
+        if not ranked:
+            return []
+        if plan.code_identifiers:
+            exact_identifier = [
+                candidate
+                for candidate in ranked
+                if self._is_precise_identifier_candidate(candidate)
+            ]
+            if exact_identifier:
+                callable_exact = [candidate for candidate in exact_identifier if self._node_kind(candidate.document.node_kind) == "CALLABLE"]
+                if callable_exact:
+                    exact_identifier = callable_exact
+                top_exact = max(candidate.score for candidate in exact_identifier)
+                threshold = max(0.75, top_exact - 0.12)
+                return [candidate for candidate in exact_identifier if candidate.score >= threshold] or exact_identifier
+
+        subject_tokens = self._plan_subject_tokens(plan)
+        if not subject_tokens:
+            return ranked
+        top_score = max(candidate.score for candidate in ranked)
+        threshold = max(_PLAN_FILTER_MIN_SCORE, top_score - _PLAN_FILTER_TOP_DELTA)
+        filtered = [
+            candidate
+            for candidate in ranked
+            if candidate.score >= threshold and self._candidate_matches_subject(candidate, subject_tokens)
+        ]
+        if plan.effective_intent == "FLOW_EXPLANATION":
+            callable_filtered = [candidate for candidate in filtered if self._node_kind(candidate.document.node_kind) == "CALLABLE"]
+            if callable_filtered:
+                filtered = callable_filtered
+        return filtered or ranked
+
+    def _is_precise_identifier_candidate(self, candidate: MergedCandidate) -> bool:
+        reasons = set(candidate.reasons)
+        if "QUERY_EXACT_IDENTIFIER" not in reasons:
+            return False
+        return any(
+            (reason.startswith("EXACT") and reason != "EXACT_KIND")
+            or reason in _PRECISE_IDENTIFIER_REASONS
+            for reason in reasons
+        )
+
+    def _plan_subject_tokens(self, plan: QueryRetrievalPlan) -> tuple[str, ...]:
+        values = [
+            plan.original_query,
+            plan.normalized_query,
+            *plan.search_queries,
+            *plan.concepts,
+        ]
+        result: List[str] = []
+        seen: set[str] = set()
+        for value in values:
+            query = self.normalizer.normalize(value)
+            tokens = list(query.important_tokens)
+            if any(char.isspace() for char in str(value or "")):
+                tokens = [token for token in tokens if token != query.compact]
+            for token in tokens:
+                normalized = str(token or "").strip().lower()
+                if len(normalized) < 3 or normalized in _PLAN_GENERIC_TOKENS or normalized.isdigit():
+                    continue
+                aliases = _PLAN_TOKEN_ALIASES.get(normalized)
+                if aliases:
+                    for alias in aliases:
+                        if alias not in seen:
+                            seen.add(alias)
+                            result.append(alias)
+                    continue
+                if normalized not in seen:
+                    seen.add(normalized)
+                    result.append(normalized)
+        return tuple(result[:12])
+
+    def _candidate_matches_subject(self, candidate: MergedCandidate, subject_tokens: Sequence[str]) -> bool:
+        document_tokens = set(candidate.document.token_set)
+        if not document_tokens:
+            return False
+        matched_tokens = [token for token in subject_tokens if self._token_matches_document(token, document_tokens)]
+        non_action_tokens = [token for token in subject_tokens if token not in _PLAN_ACTION_TOKENS]
+        matched_non_action = [token for token in non_action_tokens if token in matched_tokens]
+        if non_action_tokens and len(matched_non_action) < min(2, len(non_action_tokens)):
+            return False
+        action_tokens = [token for token in subject_tokens if token in _PLAN_ACTION_TOKENS]
+        if action_tokens and not any(self._token_matches_document(token, document_tokens) for token in action_tokens):
+            return False
+        return bool(matched_tokens)
+
+    def _token_matches_document(self, token: str, document_tokens: set[str]) -> bool:
+        if token in document_tokens:
+            return True
+        return any(
+            len(document_token) >= 3 and (document_token.startswith(token) or token.startswith(document_token))
+            for document_token in document_tokens
+        )
+
+    def _node_kind(self, value: str) -> str:
+        return str(value or "").upper()
+
+    def _annotated_candidates(self, candidates: Sequence[SearchCandidate], query_reason: str) -> List[SearchCandidate]:
+        result: List[SearchCandidate] = []
+        marker_reason = {
+            "ORIGINAL_QUERY": "QUERY_ORIGINAL",
+            "NORMALIZED_QUERY": "QUERY_NORMALIZED",
+            "SEARCH_QUERY": "QUERY_EXPANSION",
+            "CODE_IDENTIFIER": "QUERY_EXACT_IDENTIFIER",
+        }.get(query_reason, "QUERY_EXPANSION")
+        score_bonus = {
+            "ORIGINAL_QUERY": 0.015,
+            "NORMALIZED_QUERY": 0.0,
+            "SEARCH_QUERY": 0.0,
+            "CODE_IDENTIFIER": 0.045,
+        }.get(query_reason, 0.0)
+        priority_bonus = -2 if query_reason == "CODE_IDENTIFIER" else 0
+        for candidate in candidates:
+            adjusted_score = min(1.0, float(candidate.score) + score_bonus)
+            adjusted_priority = max(1, int(candidate.priority) + priority_bonus)
+            adjusted = replace(candidate, score=adjusted_score, priority=adjusted_priority)
+            result.append(adjusted)
+            result.append(
+                SearchCandidate(
+                    document=candidate.document,
+                    provider="QueryPlanCandidateProvider",
+                    reason=marker_reason,
+                    score=adjusted_score,
+                    confidence=candidate.confidence,
+                    priority=adjusted_priority,
+                )
+            )
+        return result
 
     def _empty_result(self) -> CandidateRetrievalResult:
         return CandidateRetrievalResult(
@@ -828,16 +1120,21 @@ class KnowledgeQueryService:
         self.policy = policy or KnowledgeQueryPolicy()
         self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_repository, "graph_store", None))
 
-    def query(self, request: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-        return self.query_with_flows(request).response
+    def query(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryResponse:
+        return self.query_with_flows(request, plan=plan).response
 
-    def query_with_flows(self, request: KnowledgeQueryRequest) -> KnowledgeQueryExecutionResult:
+    def query_with_flows(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryExecutionResult:
         query_started = time.monotonic()
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         eligible_sources, scope_diagnostics = self.source_scope_resolver.resolve()
         diagnostics.extend(scope_diagnostics)
         candidate_started = time.monotonic()
-        candidate_result = self.anchor_searcher.search(request.queryText, eligible_sources, self.policy, bool(request.includeTests))
+        if plan is not None:
+            candidate_result = self.anchor_searcher.search_plan(plan, eligible_sources, self.policy, bool(request.includeTests))
+            effective_intent = plan.effective_intent
+        else:
+            candidate_result = self.anchor_searcher.search(request.queryText, eligible_sources, self.policy, bool(request.includeTests))
+            effective_intent = request.intent.value
         candidate_ms = (time.monotonic() - candidate_started) * 1000
         diagnostics.extend(candidate_result.diagnostics)
         if not candidate_result.all_candidates:
@@ -845,7 +1142,7 @@ class KnowledgeQueryService:
                 response=KnowledgeQueryResponse(
                     queryId=self._query_id(),
                     status=KnowledgeQueryStatus.NO_CANDIDATES,
-                    intent=request.intent.value,
+                    intent=effective_intent,
                     coverage=KnowledgeQueryCoverage(searchedSourceCount=len(eligible_sources), matchedSourceCount=0),
                     diagnostics=[
                         *diagnostics,
@@ -869,6 +1166,15 @@ class KnowledgeQueryService:
             max_flows=request_flow_limit,
             include_tests=bool(request.includeTests),
         )
+        flows = build_result.flows
+        public_flows = build_result.public_flows
+        if plan is not None:
+            filtered_flows = self._filter_flows_by_code_identifiers(flows, plan.code_identifiers)
+            if not filtered_flows and plan.effective_intent == "FLOW_EXPLANATION":
+                filtered_flows = self._filter_flows_by_subject(flows, plan)
+            if filtered_flows:
+                flows = filtered_flows
+                public_flows = self.flow_engine.public_flows(flows)
         diagnostics.extend(build_result.diagnostics)
         diagnostics.append(KnowledgeQueryDiagnostic(
             code="ENTRYPOINT_FLOW_TIMINGS",
@@ -896,25 +1202,101 @@ class KnowledgeQueryService:
             response=KnowledgeQueryResponse(
                 queryId=self._query_id(),
                 status=status,
-                intent=request.intent.value,
+                intent=effective_intent,
                 matchedSources=matched_sources,
                 matchedNodes=[self._matched_node_preview(item) for item in display_matched_nodes],
-                flows=build_result.public_flows,
+                flows=public_flows,
                 coverage=KnowledgeQueryCoverage(
                     searchedSourceCount=len(eligible_sources),
                     matchedSourceCount=len(matched_sources),
                     matchedNodeCount=len(matched_nodes),
-                    flowCount=len(build_result.public_flows),
-                    nodeCount=sum(flow.coverage.node_count for flow in build_result.flows),
-                    edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in build_result.flows),
-                    evidenceCount=sum(len(flow.evidence) for flow in build_result.flows),
+                    flowCount=len(public_flows),
+                    nodeCount=sum(flow.coverage.node_count for flow in flows),
+                    edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in flows),
+                    evidenceCount=sum(len(flow.evidence) for flow in flows),
                     truncated=candidate_result.truncated or anchor_result.truncated or build_result.truncated,
                     continuationAvailable=candidate_result.truncated or anchor_result.truncated or build_result.truncated,
                 ),
                 diagnostics=diagnostics,
             ),
-            flows=build_result.flows,
+            flows=flows,
         )
+
+    def _filter_flows_by_code_identifiers(
+        self,
+        flows: Sequence[EntrypointFlow],
+        identifiers: Sequence[str],
+    ) -> tuple[EntrypointFlow, ...]:
+        exact_identifiers = [identifier for identifier in identifiers if "." in str(identifier or "")]
+        if not exact_identifiers:
+            return ()
+        result: List[EntrypointFlow] = []
+        for flow in flows:
+            if any(self._flow_matches_identifier(flow, identifier) for identifier in exact_identifiers):
+                result.append(flow)
+        return tuple(result)
+
+    def _flow_matches_identifier(self, flow: EntrypointFlow, identifier: str) -> bool:
+        normalized = str(identifier or "").strip()
+        if not normalized:
+            return False
+        candidates = {
+            str(flow.entrypoint.label or ""),
+            str(flow.entrypoint.qualified_name or ""),
+            str(flow.entrypoint.stable_key or ""),
+        }
+        for candidate in candidates:
+            if candidate == normalized:
+                return True
+            if candidate.endswith(f".{normalized}"):
+                return True
+        return False
+
+    def _filter_flows_by_subject(self, flows: Sequence[EntrypointFlow], plan: QueryRetrievalPlan) -> tuple[EntrypointFlow, ...]:
+        subject_tokens = self.anchor_searcher._plan_subject_tokens(
+            replace(plan, normalized_query="", search_queries=(), concepts=())
+        )
+        action_tokens = [token for token in subject_tokens if token in _PLAN_ACTION_TOKENS]
+        non_action_tokens = [token for token in subject_tokens if token not in _PLAN_ACTION_TOKENS]
+        if not action_tokens or not non_action_tokens:
+            return ()
+        result = [
+            flow
+            for flow in flows
+            if self._flow_matches_subject(flow, action_tokens, non_action_tokens)
+        ]
+        return tuple(result)
+
+    def _flow_matches_subject(
+        self,
+        flow: EntrypointFlow,
+        action_tokens: Sequence[str],
+        non_action_tokens: Sequence[str],
+    ) -> bool:
+        tokens = set(self.anchor_searcher.normalizer.unique_tokens(
+            " ".join(
+                str(value or "")
+                for value in (
+                    flow.entrypoint.label,
+                    flow.entrypoint.qualified_name,
+                    flow.entrypoint.stable_key,
+                    flow.entrypoint.summary,
+                    flow.entrypoint.entrypoint_route,
+                    flow.entrypoint.entrypoint_topic,
+                )
+            )
+        ))
+        if not any(self.anchor_searcher._token_matches_document(token, tokens) for token in action_tokens):
+            return False
+        required_non_action = min(2, len(non_action_tokens))
+        matched_non_action = [
+            token
+            for token in non_action_tokens
+            if self.anchor_searcher._token_matches_document(token, tokens)
+        ]
+        if len(non_action_tokens) <= 1:
+            return len(matched_non_action) >= required_non_action
+        return len(matched_non_action) == len(non_action_tokens)
 
     def _matched_sources(
         self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], eligible_sources: Sequence[QuerySource]
