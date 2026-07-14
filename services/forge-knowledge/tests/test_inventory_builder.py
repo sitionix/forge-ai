@@ -111,6 +111,58 @@ indexing:
     assert [file["relativePath"] for file in files] == ["src/App.java"]
 
 
+def test_inventory_exclude_exceptions_allow_only_configured_generated_roots(tmp_path):
+    workspace = tmp_path / "workspace"
+    service = workspace / "repo"
+    api_root = service / "services/forge-nexus/api-rest/target/generated-sources/annotations/com/example"
+    client_root = service / "services/forge-nexus/infrastructure/mongodb/target/generated-sources/annotations/com/example"
+    sibling_root = service / "services/forge-nexus/api-rest/target/generated-sources/other/com/example"
+    classes_root = service / "services/forge-nexus/api-rest/target/classes/com/example"
+    api_root.mkdir(parents=True)
+    client_root.mkdir(parents=True)
+    sibling_root.mkdir(parents=True)
+    classes_root.mkdir(parents=True)
+    (api_root / "GeneratedApi.java").write_text("interface GeneratedApi {}\n", encoding="utf-8")
+    (client_root / "GeneratedClient.java").write_text("class GeneratedClient {}\n", encoding="utf-8")
+    (sibling_root / "Other.java").write_text("class Other {}\n", encoding="utf-8")
+    (classes_root / "Compiled.java").write_text("class Compiled {}\n", encoding="utf-8")
+    (api_root / "GeneratedApi.class").write_bytes(b"\xca\xfe\xba\xbe")
+    (api_root / "generated.jar").write_bytes(b"PK\x03\x04")
+    (api_root / "ignored.txt").write_text("ignored\n", encoding="utf-8")
+    (service / "src").mkdir()
+    (service / "src" / "App.java").write_text("class App {}\n", encoding="utf-8")
+    catalog = tmp_path / "services.yaml"
+    catalog.write_text("services:\n  repo:\n    label: Repo\n    path: repo\n    group: backend\n", encoding="utf-8")
+    config_file = tmp_path / "knowledge-sources.yaml"
+    config_file.write_text(
+        f"""catalog:
+  path: "{catalog}"
+  workspace_root: "{workspace}"
+indexing:
+  include: ["**/*.java", "**/*.class", "**/*.jar"]
+  exclude: ["**/target/**"]
+  exclude_exceptions:
+    - "services/forge-nexus/api-rest/target/generated-sources/annotations/**/*"
+    - "services/forge-nexus/infrastructure/mongodb/target/generated-sources/annotations/**/*.java"
+""",
+        encoding="utf-8",
+    )
+    store = InventoryStore(tmp_path / "knowledge.sqlite")
+
+    result = InventoryBuilder(load_source_config(config_file), store).build([], [])
+
+    files = store.files("repo", None, None, 100, 0)["files"]
+    assert [file["relativePath"] for file in files] == [
+        "services/forge-nexus/api-rest/target/generated-sources/annotations/com/example/GeneratedApi.java",
+        "services/forge-nexus/infrastructure/mongodb/target/generated-sources/annotations/com/example/GeneratedClient.java",
+        "src/App.java",
+    ]
+    assert result["skippedBreakdown"]["byReason"] == {
+        "EXCLUDED_BY_PATTERN": 2,
+        "NOT_INCLUDED": 3,
+    }
+
+
 def test_inventory_build_counts_symlink_outside_root_when_supported(tmp_path):
     workspace = tmp_path / "workspace"
     service = workspace / "svc"

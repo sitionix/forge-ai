@@ -181,12 +181,7 @@
         "description": "An enumeration.",
         "enum": [
           "AUTO",
-          "FLOW_EXPLANATION",
-          "COMPONENT_USAGE",
-          "COMPONENT_RESPONSIBILITY",
-          "CODE_LOCATION",
-          "ARCHITECTURE_OVERVIEW",
-          "UNKNOWN"
+          "FLOW_EXPLANATION"
         ],
         "title": "JarvisQueryIntent",
         "type": "string"

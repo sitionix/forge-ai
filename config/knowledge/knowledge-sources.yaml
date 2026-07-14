@@ -22,3 +22,6 @@ indexing:
     - "**/*.xml"
     - "**/pom.xml"
     - "**/README*"
+  exclude_exceptions:
+    - "services/forge-nexus/api-rest/target/generated-sources/annotations/**/*.java"
+    - "services/forge-nexus/infrastructure/mongodb/target/generated-sources/annotations/**/*.java"

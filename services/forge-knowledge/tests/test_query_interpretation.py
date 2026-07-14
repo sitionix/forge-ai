@@ -37,7 +37,6 @@ def interpretation_payload(**overrides):
     payload = {
         "detectedLanguage": "uk",
         "responseLanguage": "uk",
-        "intent": "FLOW_EXPLANATION",
         "normalizedQuery": "процес виконання SiteController.createSite",
         "searchQueries": ["як працює SiteController.createSite", "site creation execution flow"],
         "codeIdentifiers": ["SiteController.createSite"],
@@ -57,10 +56,10 @@ def test_query_interpreter_resolves_mixed_technical_text_to_ukrainian():
     assert plan.response_language == "uk"
     assert plan.effective_intent == "FLOW_EXPLANATION"
     assert plan.code_identifiers == ("SiteController.createSite",)
-    assert provider.calls[0]["llmInput"]["explicitIntent"] == "AUTO"
+    assert "explicitIntent" not in provider.calls[0]["llmInput"]
 
 
-def test_query_interpreter_backend_language_resolution_overrides_provider_code_symbol_bias():
+def test_query_interpreter_preserves_planner_detected_language_without_backend_override():
     provider = SequenceQueryInterpretationProvider([
         interpretation_payload(detectedLanguage="en", responseLanguage="en")
     ])
@@ -68,8 +67,8 @@ def test_query_interpreter_backend_language_resolution_overrides_provider_code_s
 
     plan = service.interpret(KnowledgeQueryRequest(queryText="як працює SiteController.createSite", intent="AUTO"))
 
-    assert plan.detected_language == "uk"
-    assert plan.response_language == "uk"
+    assert plan.detected_language == "en"
+    assert plan.response_language == "en"
     assert len(provider.calls) == 1
 
 
@@ -126,7 +125,6 @@ def test_query_interpreter_prompt_is_generic():
     prompt = QueryInterpretationPromptRenderer().render(
         {
             "queryText": "how does ClassName.methodName work",
-            "explicitIntent": "AUTO",
             "explicitAnswerLanguage": None,
             "defaultResponseLanguage": "en",
         }

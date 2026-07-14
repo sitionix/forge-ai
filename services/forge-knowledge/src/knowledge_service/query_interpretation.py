@@ -5,13 +5,12 @@ import json
 import re
 import time
 import urllib.parse
+from collections import deque
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Deque, Dict, List, Mapping, Optional, Sequence
 
 import httpx
 
-from knowledge_service.answer_language import AnswerLanguageResolver
-from knowledge_service.answer_language import strip_technical_tokens
 from knowledge_service.config import (
     DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
@@ -26,18 +25,9 @@ _CODE_LIKE_RE = re.compile(r"\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\b|\b(?:[A
 _DEFAULT_MIN_CALL_TIMEOUT_SECONDS = 0.01
 _DEADLINE_COMPLETION_GRACE_SECONDS = 0.005
 
-_FINAL_INTENTS = {
-    KnowledgeQueryIntent.FLOW_EXPLANATION.value,
-    KnowledgeQueryIntent.COMPONENT_USAGE.value,
-    KnowledgeQueryIntent.COMPONENT_RESPONSIBILITY.value,
-    KnowledgeQueryIntent.CODE_LOCATION.value,
-    KnowledgeQueryIntent.ARCHITECTURE_OVERVIEW.value,
-    KnowledgeQueryIntent.UNKNOWN.value,
-}
 _ALLOWED_KEYS = {
     "detectedLanguage",
     "responseLanguage",
-    "intent",
     "normalizedQuery",
     "searchQueries",
     "codeIdentifiers",
@@ -55,7 +45,6 @@ class QueryInterpretationProviderResult:
 class QueryInterpretation:
     detected_language: str
     response_language: str
-    intent: str
     normalized_query: str
     search_queries: tuple[str, ...]
     code_identifiers: tuple[str, ...]
@@ -115,16 +104,15 @@ class QueryInterpretationPromptRenderer:
             "Interpret one developer knowledge query for retrieval planning.\n"
             "Return strict JSON only. Do not include prose outside JSON.\n"
             "The JSON shape is exactly: "
-            "{\"detectedLanguage\":\"string\",\"responseLanguage\":\"string\",\"intent\":\"string\","
+            "{\"detectedLanguage\":\"string\",\"responseLanguage\":\"uk|en\","
             "\"normalizedQuery\":\"string\",\"searchQueries\":[\"string\"],"
             "\"codeIdentifiers\":[\"string\"],\"concepts\":[\"string\"]}.\n"
             "Detect the dominant natural-language prose separately from code identifiers.\n"
-            "Use ISO 639 language codes. Ukrainian is uk, English is en, and unresolved language is und.\n"
+            "Use ISO 639 language codes for detectedLanguage. Ukrainian is uk, English is en, Russian is ru, and unresolved language is und.\n"
             "Use detectedLanguage \"und\" only when the query contains no meaningful natural-language prose.\n"
-            "If explicitAnswerLanguage is a language code, responseLanguage must be that code. "
-            "If it is null or auto, responseLanguage must match the detected prose language, or the configured default when detectedLanguage is und.\n"
-            "If explicitIntent is AUTO, classify the intent. Otherwise preserve the explicit intent exactly.\n"
-            "Final intent must be one of FLOW_EXPLANATION, COMPONENT_USAGE, COMPONENT_RESPONSIBILITY, CODE_LOCATION, ARCHITECTURE_OVERVIEW, UNKNOWN. It must not be AUTO.\n"
+            "responseLanguage must be exactly uk or en. Russian output is forbidden, so Russian detectedLanguage must use responseLanguage uk.\n"
+            "If explicitAnswerLanguage is uk or en, responseLanguage must be that code. "
+            "If it is null or auto, Ukrainian input uses uk, English input uses en, Russian input uses uk, other languages choose the closest supported language, and und uses defaultResponseLanguage.\n"
             "normalizedQuery must be one non-empty retrieval phrase.\n"
             "searchQueries may contain at most 4 additive retrieval phrases.\n"
             "codeIdentifiers may contain at most 10 exact code symbols, and every value must be an exact substring of queryText.\n"
@@ -148,28 +136,25 @@ class QueryInterpretationService:
         request_deadline_seconds: float = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
         min_call_timeout_seconds: float = _DEFAULT_MIN_CALL_TIMEOUT_SECONDS,
         renderer: QueryInterpretationPromptRenderer | None = None,
-        language_resolver: AnswerLanguageResolver | None = None,
         provider_name: str | None = None,
         provider_model: str | None = None,
+        audit_max_records: int = 200,
     ) -> None:
         self.provider = provider
         self.default_response_language = self._normalize_response_language(default_response_language) or "en"
         self.request_deadline_seconds = max(0.001, float(request_deadline_seconds or DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS))
         self.min_call_timeout_seconds = max(0.001, float(min_call_timeout_seconds or _DEFAULT_MIN_CALL_TIMEOUT_SECONDS))
         self.renderer = renderer or QueryInterpretationPromptRenderer()
-        self.language_resolver = language_resolver or AnswerLanguageResolver()
         self.provider_name = provider_name
         self.provider_model = provider_model
-        self.audit_records: List[Dict[str, Any]] = []
+        self.audit_records: Deque[Dict[str, Any]] = deque(maxlen=max(0, int(audit_max_records)))
 
     def interpret(self, request: KnowledgeQueryRequest, *, deadline_at: float | None = None) -> QueryRetrievalPlan:
         if deadline_at is None:
             deadline_at = time.monotonic() + self.request_deadline_seconds
-        explicit_intent = request.intent.value if isinstance(request.intent, KnowledgeQueryIntent) else str(request.intent or "")
         explicit_language = self._explicit_language(request.answerLanguage)
         llm_input = {
             "queryText": request.queryText,
-            "explicitIntent": explicit_intent or KnowledgeQueryIntent.AUTO.value,
             "explicitAnswerLanguage": explicit_language,
             "defaultResponseLanguage": self.default_response_language,
         }
@@ -185,7 +170,6 @@ class QueryInterpretationService:
                 interpretation = self._validate(
                     result.raw_text,
                     request,
-                    explicit_intent=explicit_intent,
                     explicit_language=explicit_language,
                 )
                 self._record_resolved_languages(interpretation)
@@ -195,7 +179,7 @@ class QueryInterpretationService:
                     search_queries=interpretation.search_queries,
                     code_identifiers=interpretation.code_identifiers,
                     concepts=interpretation.concepts,
-                    effective_intent=interpretation.intent,
+                    effective_intent=KnowledgeQueryIntent.FLOW_EXPLANATION.value,
                     detected_language=interpretation.detected_language,
                     response_language=interpretation.response_language,
                 )
@@ -238,7 +222,6 @@ class QueryInterpretationService:
         raw_text: str,
         request: KnowledgeQueryRequest,
         *,
-        explicit_intent: str,
         explicit_language: str | None,
     ) -> QueryInterpretation:
         errors: List[str] = []
@@ -257,35 +240,20 @@ class QueryInterpretationService:
 
         detected = self._normalize_detected_language(payload.get("detectedLanguage"))
         response_language = self._normalize_response_language(payload.get("responseLanguage"))
-        intent = str(payload.get("intent") or "").strip().upper()
         normalized_query = str(payload.get("normalizedQuery") or "").strip() if isinstance(payload.get("normalizedQuery"), str) else ""
 
         if not detected:
             errors.append("detectedLanguage must be a language code or und.")
         if not response_language:
-            errors.append("responseLanguage must be a language code.")
-        if intent not in _FINAL_INTENTS:
-            errors.append("intent must be a supported final intent and must not be AUTO.")
+            errors.append("responseLanguage must be exactly uk or en.")
         if not normalized_query:
             errors.append("normalizedQuery must be one non-empty string.")
 
-        resolved_detected_language = self._resolved_detected_language(request.queryText, detected)
-
-        expected_intent = str(explicit_intent or "").strip().upper() or KnowledgeQueryIntent.AUTO.value
-        if expected_intent != KnowledgeQueryIntent.AUTO.value:
-            if expected_intent not in _FINAL_INTENTS:
-                errors.append("explicitIntent must be AUTO or a supported final intent.")
-            elif intent and intent != expected_intent:
-                errors.append(f"intent must preserve explicitIntent {expected_intent}.")
-            intent = expected_intent if expected_intent in _FINAL_INTENTS else intent
-
         expected_response_language = explicit_language
         if expected_response_language is None:
-            expected_response_language = (
-                resolved_detected_language
-                if resolved_detected_language and resolved_detected_language != "und"
-                else self.default_response_language
-            )
+            expected_response_language = self._automatic_response_language(detected)
+        if response_language and expected_response_language and response_language != expected_response_language:
+            errors.append(f"responseLanguage must be {expected_response_language} for the detected language and explicit answer language policy.")
 
         search_queries = self._string_list(payload.get("searchQueries"), "searchQueries", 4, errors)
         code_identifiers = self._string_list(payload.get("codeIdentifiers"), "codeIdentifiers", 10, errors)
@@ -303,9 +271,8 @@ class QueryInterpretationService:
             raise QueryInterpretationContractViolation(errors)
 
         return QueryInterpretation(
-            detected_language=resolved_detected_language or "und",
+            detected_language=detected or "und",
             response_language=expected_response_language or response_language or self.default_response_language,
-            intent=intent,
             normalized_query=normalized_query,
             search_queries=tuple(search_queries),
             code_identifiers=tuple(code_identifiers),
@@ -368,15 +335,6 @@ class QueryInterpretationService:
                 break
         return result
 
-    def _resolved_detected_language(self, query_text: str, provider_detected: str) -> str:
-        natural_text = strip_technical_tokens(query_text).strip()
-        if not natural_text:
-            return "und"
-        resolved = self.language_resolver.resolve(query_text, None)
-        if resolved in {"uk", "en"}:
-            return resolved
-        return provider_detected or resolved or "und"
-
     def _explicit_language(self, value: str | None) -> str | None:
         normalized = self._normalize_response_language(value)
         if not normalized:
@@ -405,8 +363,20 @@ class QueryInterpretationService:
         if normalized == "auto":
             return "auto"
         normalized = normalized.split("-", 1)[0]
-        if _LANGUAGE_CODE_RE.match(normalized) and normalized != "und":
+        if normalized in {"uk", "en"}:
             return normalized
+        return ""
+
+    def _automatic_response_language(self, detected_language: str) -> str:
+        detected = str(detected_language or "").strip().lower().split("-", 1)[0]
+        if detected == "uk":
+            return "uk"
+        if detected == "en":
+            return "en"
+        if detected == "ru":
+            return "uk"
+        if detected == "und":
+            return self.default_response_language
         return ""
 
     def _record_audit(self, prompt: str, raw_response: str, *, attempt_count: int, llm_input: Mapping[str, Any]) -> None:

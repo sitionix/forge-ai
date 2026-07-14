@@ -157,7 +157,7 @@ class ForgeAiInfrastructureJarvisControllerTest {
                 this.request
         ).join();
 
-        assertThat(result.getStatusCode().value()).isEqualTo(400);
+        assertThat(result.getStatusCode().value()).isEqualTo(422);
         final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
         assertThat(body.get("title")).isEqualTo("VALIDATION_FAILED");
         assertThat(body.get("details")).asString().contains("queryText");
@@ -172,7 +172,7 @@ class ForgeAiInfrastructureJarvisControllerTest {
                 this.request
         ).join();
 
-        assertThat(result.getStatusCode().value()).isEqualTo(400);
+        assertThat(result.getStatusCode().value()).isEqualTo(422);
         final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
         assertThat(body.get("title")).isEqualTo("VALIDATION_FAILED");
         assertThat(body.get("details")).asString().contains("maxFlows");

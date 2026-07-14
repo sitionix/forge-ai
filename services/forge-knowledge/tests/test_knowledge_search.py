@@ -15,7 +15,7 @@ from knowledge_service.entrypoint_flow_engine import (
     EntrypointFlowOrigin,
 )
 from knowledge_service.flow_graph_contract import FlowGraphNode
-from knowledge_service.knowledge_query_service import KnowledgeQueryService, UnifiedAnchorSearcher
+from knowledge_service.knowledge_query_service import KnowledgeQueryPolicy, KnowledgeQueryService, UnifiedAnchorSearcher
 from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 
@@ -153,28 +153,30 @@ def test_ranker_merges_duplicate_candidates_and_preserves_reasons():
     assert {"ExactCandidateProvider", "LexicalCandidateProvider"} <= set(merged[0].providers)
 
 
-def test_retrieval_plan_filter_removes_low_signal_subject_misses():
+def test_retrieval_plan_filter_keeps_grounded_candidates_within_policy_score_window():
     searcher = UnifiedAnchorSearcher(graph_store=object())
-    site = doc("site", "SiteController.createSite", summary="creates a site")
-    noise = doc("agent", "AgentProjectController.createAgentProject", summary="created project workflow")
+    top = doc("top", "ReadController.read", summary="reads a record")
+    nearby = doc("nearby", "ReadService.fetch", summary="fetches the same record")
+    distant = doc("distant", "UnrelatedWorker.run", summary="background maintenance")
     plan = QueryRetrievalPlan(
-        original_query="how is a site created",
-        normalized_query="how is a site created",
-        search_queries=("site creation flow",),
+        original_query="how is a record read",
+        normalized_query="how is a record read",
+        search_queries=("record read flow",),
         code_identifiers=(),
-        concepts=("site creation",),
+        concepts=("record read",),
         effective_intent="FLOW_EXPLANATION",
         detected_language="en",
         response_language="en",
     )
     candidates = [
-        MergedCandidate(site, 0.62, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"]),
-        MergedCandidate(noise, 0.58, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_EXPANSION"], ["LexicalCandidateProvider"]),
+        MergedCandidate(top, 0.70, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"]),
+        MergedCandidate(nearby, 0.56, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_EXPANSION"], ["LexicalCandidateProvider"]),
+        MergedCandidate(distant, 0.40, "LOW", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_EXPANSION"], ["LexicalCandidateProvider"]),
     ]
 
-    filtered = searcher._filter_plan_candidates(candidates, plan)
+    filtered = searcher._filter_plan_candidates(candidates, plan, KnowledgeQueryPolicy(plan_candidate_min_score=0.42, plan_candidate_top_delta=0.18))
 
-    assert [candidate.document.node_id for candidate in filtered] == ["site"]
+    assert [candidate.document.node_id for candidate in filtered] == ["top", "nearby"]
 
 
 def test_retrieval_plan_filter_prefers_exact_code_identifier_matches():
@@ -198,76 +200,72 @@ def test_retrieval_plan_filter_prefers_exact_code_identifier_matches():
         MergedCandidate(broad, 0.91, "HIGH", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_EXPANSION"], ["LexicalCandidateProvider"]),
     ]
 
-    filtered = searcher._filter_plan_candidates(candidates, plan)
+    filtered = searcher._filter_plan_candidates(candidates, plan, KnowledgeQueryPolicy())
 
     assert [candidate.document.node_id for candidate in filtered] == ["site"]
 
 
-def test_flow_retrieval_plan_filter_prefers_callable_subject_matches_over_type_context():
+def test_flow_retrieval_plan_filter_uses_scores_without_subject_vocabulary():
     searcher = UnifiedAnchorSearcher(graph_store=object())
-    callable_match = doc("site", "SiteController.createSite", qualified_name="example.SiteController.createSite", summary="creates a site")
-    type_context = doc("site-controller", "SiteController", node_kind="TYPE", qualified_name="example.SiteController", summary="site controller")
+    callable_match = doc("callable", "PaymentListener.handle", qualified_name="example.PaymentListener.handle", summary="handles payment")
+    type_context = doc("type", "PaymentListener", node_kind="TYPE", qualified_name="example.PaymentListener", summary="payment listener")
     plan = QueryRetrievalPlan(
-        original_query="how is a site created",
-        normalized_query="how is a site created",
-        search_queries=("site creation flow",),
+        original_query="how is payment handled",
+        normalized_query="how is payment handled",
+        search_queries=("payment handling flow",),
         code_identifiers=(),
-        concepts=("site creation",),
+        concepts=("payment handling",),
         effective_intent="FLOW_EXPLANATION",
         detected_language="en",
         response_language="en",
     )
     candidates = [
+        MergedCandidate(type_context, 0.64, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"]),
         MergedCandidate(callable_match, 0.62, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"]),
-        MergedCandidate(type_context, 0.61, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"]),
     ]
 
-    filtered = searcher._filter_plan_candidates(candidates, plan)
+    filtered = searcher._filter_plan_candidates(candidates, plan, KnowledgeQueryPolicy())
 
-    assert [candidate.document.node_id for candidate in filtered] == ["site"]
+    assert [candidate.document.node_id for candidate in filtered] == ["type", "callable"]
 
 
-def test_flow_subject_filter_requires_all_specific_subject_terms():
+def test_exact_downstream_identifier_selects_containing_flow():
     service = KnowledgeQueryService(
         source_scope_resolver=object(),
         anchor_searcher=UnifiedAnchorSearcher(graph_store=object()),
         flow_repository=object(),
         anchor_expander=object(),
     )
-    plan = QueryRetrievalPlan(
-        original_query="how is an agent project created",
-        normalized_query="agent project creation flow",
-        search_queries=("agent project creation", "agent project conversation list"),
-        code_identifiers=(),
-        concepts=("agent project", "conversation"),
-        effective_intent="FLOW_EXPLANATION",
-        detected_language="en",
-        response_language="en",
+    root = flow("PaymentController.readPayment", qualified_name="example.PaymentController.readPayment")
+    downstream = FlowGraphNode(
+        source_id="source-a",
+        graph_id="graph-a",
+        graph_revision="rev-a",
+        node_id="repository-node",
+        stable_key="source-a|repository-node",
+        node_kind="CALLABLE",
+        label="PaymentRepository.findById",
+        qualified_name="example.PaymentRepository.findById",
     )
-    flows = (
-        flow(
-            "AgentProjectController.createAgentProject",
-            qualified_name="example.AgentProjectController.createAgentProject",
-            route="/api/v1/agent-projects",
-            summary="Creates an agent project",
-        ),
-        flow(
-            "AgentController.createAgent",
-            qualified_name="example.AgentController.createAgent",
-            route="/api/v1/agents",
-            summary="Creates an agent",
-        ),
-        flow(
-            "AgentRuleController.createAgentRule",
-            qualified_name="example.AgentRuleController.createAgentRule",
-            route="/api/v1/agents/{agentId}/rules",
-            summary="Creates an agent rule",
-        ),
+    containing = root.__class__(
+        key=root.key,
+        entrypoint=root.entrypoint,
+        origin=root.origin,
+        anchors=root.anchors,
+        nodes=(root.entrypoint, downstream),
+        transitions=root.transitions,
+        boundary_transitions=root.boundary_transitions,
+        evidence=root.evidence,
+        complete=root.complete,
+        coverage=root.coverage,
+        diagnostics=root.diagnostics,
+        relevance_score=root.relevance_score,
     )
+    unrelated = flow("InvoiceController.readInvoice", qualified_name="example.InvoiceController.readInvoice")
 
-    filtered = service._filter_flows_by_subject(flows, plan)
+    filtered = service._filter_flows_by_code_identifiers((containing, unrelated), ("PaymentRepository.findById",))
 
-    assert [item.entrypoint.label for item in filtered] == ["AgentProjectController.createAgentProject"]
+    assert [item.entrypoint.label for item in filtered] == ["PaymentController.readPayment"]
 
 
 def test_fuzzy_matcher_finds_transposed_and_missing_character_identifiers():

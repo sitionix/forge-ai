@@ -62,7 +62,7 @@ from knowledge_service.target_enrichment import (
 def knowledge_query_request(query_text: str) -> KnowledgeQueryRequest:
     return KnowledgeQueryRequest(
         queryText=query_text,
-        intent="UNKNOWN",
+        intent="AUTO",
         answerLanguage="en",
         includeTests=False,
         maxFlows=10,
@@ -72,7 +72,7 @@ def knowledge_query_request(query_text: str) -> KnowledgeQueryRequest:
 def knowledge_query_payload(query_text: str):
     return {
         "queryText": query_text,
-        "intent": "UNKNOWN",
+        "intent": "AUTO",
         "answerLanguage": "en",
         "includeTests": False,
         "maxFlows": 10,
@@ -1151,6 +1151,7 @@ def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_re
         }
     )
     store.replace_file_graph_analysis(1, state, first)
+    store.finalize_source_graph("edge-gateway")
     assert store.graph_manifest("edge-gateway", "CODE")["totalNodeCount"] == len(first["nodes"])
     store.update_job("job-1", {"status": "COMPLETED", "completedAt": "done"})
     first_manifest = store.graph_manifest("edge-gateway", "CODE")
@@ -1298,6 +1299,111 @@ def test_graph_store_retries_transient_sqlite_lock(monkeypatch, tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0] == len(graph["nodes"])
 
 
+def test_source_graph_finalization_runs_once_and_resolves_many_calls_without_sql_n_plus_one(monkeypatch, tmp_path):
+    service_store, _, _ = build_inventory_with_file_count(tmp_path / "service-finalize", 3)
+    runner = SupervisorHarness(service_store, app_config(tmp_path / "service-finalize"))
+    service_finalize_calls = []
+
+    def record_service_finalize(source_id):
+        service_finalize_calls.append(source_id)
+
+    monkeypatch.setattr(runner.analysis_store, "finalize_source_graph", record_service_finalize)
+
+    final = wait_job(service_store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    assert final["status"] == "COMPLETED"
+    assert final["processedFileCount"] == 3
+    assert service_finalize_calls == ["edge-gateway"]
+
+    call_count = 120
+    caller_body = "\n".join(f"    worker.handle();" for _ in range(call_count))
+    caller = f"""package example;
+
+class Dispatcher {{
+  private final Worker worker;
+
+  void dispatch() {{
+{caller_body}
+  }}
+}}
+"""
+    worker = """package example;
+
+class Worker {
+  void handle() {}
+}
+"""
+    store = AnalysisStore(tmp_path / "resolver-finalize.sqlite")
+    store.init()
+    original_finalize = store._finalize_graph_replacement
+    original_connect = store._connect
+    finalize_calls = []
+    trace_active = {"value": False}
+    traced_statements = []
+
+    def traced_finalize(conn, source_id, created_at):
+        finalize_calls.append(source_id)
+        trace_active["value"] = True
+        try:
+            return original_finalize(conn, source_id, created_at)
+        finally:
+            trace_active["value"] = False
+
+    def traced_connect(*args, **kwargs):
+        conn = original_connect(*args, **kwargs)
+        conn.set_trace_callback(lambda statement: traced_statements.append(statement) if trace_active["value"] else None)
+        return conn
+
+    monkeypatch.setattr(store, "_finalize_graph_replacement", traced_finalize)
+    monkeypatch.setattr(store, "_connect", traced_connect)
+
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(caller, "src/main/java/example/Dispatcher.java"),
+        _materialize_static_java_for_test(caller, 1, "src/main/java/example/Dispatcher.java"),
+    )
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(worker, "src/main/java/example/Worker.java"),
+        _materialize_static_java_for_test(worker, 2, "src/main/java/example/Worker.java"),
+    )
+
+    assert finalize_calls == []
+
+    store.finalize_source_graph("edge-gateway")
+    first_edges = _resolved_call_edges_for_test(store.db_path)
+    select_count = sum(1 for statement in traced_statements if statement.lstrip().upper().startswith("SELECT"))
+
+    assert finalize_calls == ["edge-gateway"]
+    assert len(first_edges) == call_count
+    assert all(edge["resolution_status"] == "RESOLVED" and edge["to_node_id"] for edge in first_edges)
+    assert select_count < call_count
+
+    traced_statements.clear()
+    store.finalize_source_graph("edge-gateway")
+    second_edges = _resolved_call_edges_for_test(store.db_path)
+
+    assert finalize_calls == ["edge-gateway", "edge-gateway"]
+    assert second_edges == first_edges
+
+
+def _resolved_call_edges_for_test(db_path):
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        return [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT id, from_node_id, to_node_id, resolution_status, metadata_json
+                FROM analysis_graph_edges
+                WHERE source_id = 'edge-gateway'
+                  AND edge_type = 'CALLS'
+                ORDER BY id
+                """
+            ).fetchall()
+        ]
+
+
 def test_duplicate_evidence_id_is_reported_as_graph_store_error_without_partial_rows(tmp_path):
     store = AnalysisStore(tmp_path / "knowledge.sqlite")
     store.init()
@@ -1397,6 +1503,7 @@ class TicketDto {}
         graph_state_for_test(mapper, "src/main/java/example/TicketMapper.java"),
         _materialize_static_java_for_test(mapper, 2, "src/main/java/example/TicketMapper.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -1471,6 +1578,7 @@ class SiteEntity {}
         graph_state_for_test(mapper, "src/main/java/example/SiteInfraMapper.java"),
         _materialize_static_java_for_test(mapper, 2, "src/main/java/example/SiteInfraMapper.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -1556,6 +1664,7 @@ class Response {}
         graph_state_for_test(content, "src/main/java/example/Controller.java"),
         _materialize_static_java_for_test(content, 1, "src/main/java/example/Controller.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -1615,6 +1724,7 @@ class Response {}
         graph_state_for_test(api_content, "src/main/java/example/Controller.java"),
         _materialize_static_java_for_test(api_content, 1, "src/main/java/example/Controller.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -1639,6 +1749,7 @@ class Response {}
         graph_state_for_test(implementation_content, "src/main/java/example/UseCaseImpl.java"),
         _materialize_static_java_for_test(implementation_content, 2, "src/main/java/example/UseCaseImpl.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -1666,6 +1777,7 @@ class Response {}
         graph_state_for_test(implementation_content, "src/main/java/example/UseCaseImpl.java"),
         _materialize_static_java_for_test(implementation_content, 2, "src/main/java/example/UseCaseImpl.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -1722,6 +1834,7 @@ class Response {}
         graph_state_for_test(content, "src/main/java/example/Controller.java"),
         _materialize_static_java_for_test(content, 1, "src/main/java/example/Controller.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -1769,6 +1882,7 @@ class Dto {}
         graph_state_for_test(content, "src/main/java/example/Service.java"),
         _materialize_static_java_for_test(content, 1, "src/main/java/example/Service.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -1829,6 +1943,7 @@ class TicketDto {}
         graph_state_for_test(mapper, "src/main/java/example/TicketMapper.java"),
         _materialize_static_java_for_test(mapper, 2, "src/main/java/example/TicketMapper.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row

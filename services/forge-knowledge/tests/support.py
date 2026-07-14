@@ -170,18 +170,15 @@ class DeterministicQueryInterpretationProvider:
             }
         )
         query_text = str(llm_input.get("queryText") or "").strip()
-        explicit_intent = str(llm_input.get("explicitIntent") or "AUTO").strip().upper()
         explicit_language = llm_input.get("explicitAnswerLanguage")
         detected = "uk" if any("\u0400" <= char <= "\u04ff" for char in _strip_code_symbols(query_text)) else "en"
         if not _strip_code_symbols(query_text).strip():
             detected = "und"
-        response_language = str(explicit_language or "").strip().lower() or (detected if detected != "und" else "en")
-        intent = explicit_intent if explicit_intent and explicit_intent != "AUTO" else "FLOW_EXPLANATION"
+        response_language = str(explicit_language or "").strip().lower() or ("uk" if detected in {"uk", "ru"} else "en")
         identifiers = _query_identifiers(query_text)
         payload = {
             "detectedLanguage": detected,
             "responseLanguage": response_language,
-            "intent": intent,
             "normalizedQuery": query_text,
             "searchQueries": [query_text],
             "codeIdentifiers": identifiers,

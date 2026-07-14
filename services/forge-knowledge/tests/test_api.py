@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from contextlib import suppress
@@ -105,6 +106,19 @@ def _entrypoint_claim(
     if interface_method:
         claim["interfaceMethod"] = interface_method
     return claim
+
+
+def _seed_a_start_flow(app_config) -> None:
+    seed_semantic_graph(
+        app_config.store_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a-start", "nodeKind": "CALLABLE", "name": "A.start", "qualified": "A.start", "path": "src/A.java"},
+            {"id": "b-work", "nodeKind": "CALLABLE", "name": "B.work", "qualified": "B.work", "path": "src/B.java"},
+        ],
+        edges=[{"id": "edge-a-b", "fromNodeId": "a-start", "toNodeId": "b-work", "edgeType": "CALLS"}],
+        claims=[_entrypoint_claim("a-start", http_method="POST", route="/api/v1/alpha")],
+    )
 
 
 def _async_client(app):
@@ -269,6 +283,63 @@ def test_query_endpoint_uses_configured_llm_provider_and_tool_context_does_not(t
     assert len(audit[0]["promptHash"]) == 64
     assert audit[0]["rawResponseLength"] > 0
     assert len(audit[0]["rawResponseHash"]) == 64
+
+
+def test_query_audit_memory_records_are_bounded(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    app.state.app_config.query_audit_memory_max_records = 1
+    _seed_a_start_flow(app.state.app_config)
+    app.state.flow_explanation_provider = SentinelAnswerProvider("bounded memory audit")
+
+    async def exercise():
+        async with _async_client(app) as client:
+            first = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
+            second = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
+            return first.status_code, second.status_code
+
+    assert asyncio.run(exercise()) == (200, 200)
+    assert len(app.state.human_answer_audit_artifacts) == 1
+    assert len(app.state.query_interpretation_audit_artifacts) == 1
+
+
+def test_query_audit_disk_retention_removes_old_files(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    app.state.app_config.query_audit_directory = tmp_path / "audit"
+    app.state.app_config.query_audit_max_retained_files = 1
+    _seed_a_start_flow(app.state.app_config)
+    app.state.flow_explanation_provider = SentinelAnswerProvider("bounded disk audit")
+
+    async def exercise():
+        async with _async_client(app) as client:
+            first = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
+            second = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
+            return first.status_code, second.status_code
+
+    assert asyncio.run(exercise()) == (200, 200)
+    files = sorted(app.state.app_config.query_audit_directory.glob("human-answer-*.json"))
+    assert len(files) == 1
+    assert not list(app.state.app_config.query_audit_directory.glob("*.tmp"))
+
+
+def test_query_audit_write_failure_warns_without_failing_query(tmp_path, caplog, capsys):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    audit_file = tmp_path / "audit-file"
+    audit_file.write_text("not a directory\n", encoding="utf-8")
+    app.state.app_config.query_audit_directory = audit_file
+    app.state.app_config.query_audit_max_retained_files = 1
+    _seed_a_start_flow(app.state.app_config)
+    app.state.flow_explanation_provider = SentinelAnswerProvider("audit warning")
+
+    async def exercise():
+        async with _async_client(app) as client:
+            return await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
+
+    with caplog.at_level(logging.WARNING, logger="knowledge_service.main"):
+        response = asyncio.run(exercise())
+
+    assert response.status_code == 200
+    captured = capsys.readouterr()
+    assert any(record.message == "human_answer_audit_write_failed" for record in caplog.records) or "human_answer_audit_write_failed" in captured.err
 
 
 def test_query_interpretation_failure_returns_502_without_final_answer_call(tmp_path):

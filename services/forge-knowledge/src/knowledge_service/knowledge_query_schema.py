@@ -17,21 +17,11 @@ class KnowledgeQueryStatus(str, Enum):
 class KnowledgeQueryIntent(str, Enum):
     AUTO = "AUTO"
     FLOW_EXPLANATION = "FLOW_EXPLANATION"
-    COMPONENT_USAGE = "COMPONENT_USAGE"
-    COMPONENT_RESPONSIBILITY = "COMPONENT_RESPONSIBILITY"
-    CODE_LOCATION = "CODE_LOCATION"
-    ARCHITECTURE_OVERVIEW = "ARCHITECTURE_OVERVIEW"
-    UNKNOWN = "UNKNOWN"
 
 
 class KnowledgeQueryEntrypointOrigin(str, Enum):
     EXPLICIT_GRAPH_FACT = "EXPLICIT_GRAPH_FACT"
     INFERRED_ROOT = "INFERRED_ROOT"
-
-
-class FlowExplanationStatus(str, Enum):
-    OK = "OK"
-    FAILED = "FAILED"
 
 
 class KnowledgeQueryRequest(BaseModel):
@@ -68,6 +58,11 @@ class KnowledgeQueryRequest(BaseModel):
         normalized = value.strip().lower()
         if not normalized:
             return None
+        if normalized == "auto":
+            return "auto"
+        normalized = normalized.split("-", 1)[0]
+        if normalized not in {"uk", "en"}:
+            raise ValueError("answerLanguage must be omitted, null, auto, uk, or en")
         return normalized
 
     @validator("includeTests", pre=True, always=True)
@@ -214,47 +209,6 @@ class KnowledgeQueryResponse(BaseModel):
     flows: List[KnowledgeQueryFlow] = Field(default_factory=list)
     coverage: KnowledgeQueryCoverage = Field(default_factory=KnowledgeQueryCoverage)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
-
-
-class FlowExplanationStep(BaseModel):
-    nodeRef: str
-    nodeLabel: str
-    explanation: Optional[str] = None
-    transitionRefs: List[str] = Field(default_factory=list)
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class FlowExplanationNarrative(BaseModel):
-    text: str
-    nodeRefs: List[str] = Field(default_factory=list)
-    transitionRefs: List[str] = Field(default_factory=list)
-    boundaryRefs: List[str] = Field(default_factory=list)
-
-
-class FlowExplanationTransition(BaseModel):
-    transitionRef: str
-    explanation: Optional[str] = None
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class FlowExplanationBoundary(BaseModel):
-    boundaryRef: str
-    fromNodeRef: str
-    kind: str
-    resolutionStatus: str
-    target: Optional[str] = None
-    explanation: Optional[str] = None
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class FlowExplanation(BaseModel):
-    flowIndex: int
-    title: str = ""
-    narrative: List[FlowExplanationNarrative] = Field(default_factory=list)
-    steps: List[FlowExplanationStep] = Field(default_factory=list)
-    transitionExplanations: List[FlowExplanationTransition] = Field(default_factory=list)
-    boundaries: List[FlowExplanationBoundary] = Field(default_factory=list)
-    status: FlowExplanationStatus = FlowExplanationStatus.OK
 
 
 class KnowledgeHumanAnswer(BaseModel):

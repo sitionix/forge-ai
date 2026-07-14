@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import logging
 import os
 import sqlite3
 import threading
 import time
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -34,7 +36,6 @@ from knowledge_service.flow_explanations import (
     FLOW_EXPLANATION_LIMIT_REACHED,
     CompactFlowProjector,
     FlowExplanationDeadlineExceeded,
-    FlowExplanationService,
     HumanAnswerGenerationFailed,
     HumanAnswerPromptRenderer,
     HumanFlowAnswerService,
@@ -78,6 +79,7 @@ from knowledge_service.storage_operations import StorageOperations
 app_config: Optional[AppConfig] = None
 store: Optional[InventoryStore] = None
 analysis_supervisor: Optional[AnalysisSupervisor] = None
+LOGGER = logging.getLogger(__name__)
 
 
 def create_app(
@@ -727,7 +729,7 @@ def _knowledge_query_tool_context_response(
             retrieval_plan = interpretation_service.interpret(body, deadline_at=deadline_at)
         finally:
             _record_query_interpretation_audits(request, body, interpretation_service.audit_records)
-            _write_human_answer_audit_artifact(body, [], interpretation_service.audit_records)
+            _write_human_answer_audit_artifact(config, body, [], interpretation_service.audit_records)
             if close_interpreter:
                 close_interpreter()
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
@@ -784,38 +786,42 @@ def _public_error_response(status_code: int, code: str, message: str) -> JSONRes
 def _record_human_answer_audits(
     request: Request,
     body: KnowledgeQueryRequest,
-    records: list[Dict[str, Any]],
-    interpretation_records: list[Dict[str, Any]] | None = None,
+    records,
+    interpretation_records=None,
 ) -> None:
     interpretation_records = list(interpretation_records or [])
     if not records and not interpretation_records:
         return
+    config, _ = _state(request)
     _record_query_interpretation_audits(request, body, interpretation_records)
     existing = getattr(request.app.state, "human_answer_audit_artifacts", None)
     if existing is None:
-        existing = []
+        existing = deque(maxlen=max(0, int(config.query_audit_memory_max_records)))
         request.app.state.human_answer_audit_artifacts = existing
     existing.extend(dict(record) for record in records)
-    _write_human_answer_audit_artifact(body, records, interpretation_records)
+    _write_human_answer_audit_artifact(config, body, records, interpretation_records)
 
 
-def _record_query_interpretation_audits(request: Request, body: KnowledgeQueryRequest, records: list[Dict[str, Any]]) -> None:
+def _record_query_interpretation_audits(request: Request, body: KnowledgeQueryRequest, records) -> None:
     if not records:
         return
+    config, _ = _state(request)
     existing = getattr(request.app.state, "query_interpretation_audit_artifacts", None)
     if existing is None:
-        existing = []
+        existing = deque(maxlen=max(0, int(config.query_audit_memory_max_records)))
         request.app.state.query_interpretation_audit_artifacts = existing
     existing.extend(dict(record) for record in records)
 
 
 def _write_human_answer_audit_artifact(
+    config: AppConfig,
     body: KnowledgeQueryRequest,
-    records: list[Dict[str, Any]],
-    interpretation_records: list[Dict[str, Any]] | None = None,
+    records,
+    interpretation_records=None,
 ) -> None:
-    directory = str(os.environ.get("FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR") or "").strip()
-    if not directory:
+    configured_directory = config.query_audit_directory
+    directory = str(configured_directory or os.environ.get("FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR") or "").strip()
+    if not directory or int(config.query_audit_max_retained_files) <= 0:
         return
     try:
         root = Path(directory)
@@ -828,11 +834,43 @@ def _write_human_answer_audit_artifact(
             "records": [dict(record) for record in records],
         }
         filename = f"human-answer-{int(time.time() * 1000)}-{uuid.uuid4().hex}.json"
-        with (root / filename).open("w", encoding="utf-8") as handle:
+        target = root / filename
+        tmp = root / f".{filename}.tmp"
+        with tmp.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
-    except Exception:
-        return
+        os.replace(tmp, target)
+        _cleanup_human_answer_audit_files(
+            root,
+            max_retained_files=config.query_audit_max_retained_files,
+            max_file_age_seconds=config.query_audit_max_file_age_seconds,
+        )
+    except Exception as exc:
+        LOGGER.warning("human_answer_audit_write_failed", extra={"error": type(exc).__name__, "directory": directory})
+
+
+def _cleanup_human_answer_audit_files(
+    root: Path,
+    *,
+    max_retained_files: int,
+    max_file_age_seconds: Optional[int],
+) -> None:
+    now = time.time()
+    files = sorted(
+        (path for path in root.glob("human-answer-*.json") if path.is_file()),
+        key=lambda path: (path.stat().st_mtime, path.name),
+        reverse=True,
+    )
+    for path in files:
+        if max_file_age_seconds is not None and now - path.stat().st_mtime > max_file_age_seconds:
+            path.unlink(missing_ok=True)
+    files = sorted(
+        (path for path in root.glob("human-answer-*.json") if path.is_file()),
+        key=lambda path: (path.stat().st_mtime, path.name),
+        reverse=True,
+    )
+    for path in files[max(0, int(max_retained_files)):]:
+        path.unlink(missing_ok=True)
 
 
 async def _run_in_thread(func, *args, request_cancel_event: threading.Event | None = None, **kwargs):
@@ -866,38 +904,6 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
     raise RuntimeError("Knowledge app dependencies are not initialized")
 
 
-def _flow_explanation_service(
-    request: Request,
-    config: AppConfig,
-    cancel_event: threading.Event | None = None,
-) -> tuple[FlowExplanationService, Optional[Any]]:
-    injected_provider = getattr(request.app.state, "flow_explanation_provider", None)
-    max_prompt_chars = max(
-        DEFAULT_GENERATIVE_CONTEXT_TOKENS,
-        int(config.analysis_context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS) * 4,
-    )
-    request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
-    if injected_provider is not None:
-        return FlowExplanationService(
-            injected_provider,
-            max_prompt_chars=max_prompt_chars,
-            request_deadline_seconds=request_deadline_seconds,
-            cancel_event=cancel_event,
-        ), None
-    provider = LocalOllamaFlowExplanationClient(
-        config.analysis_base_url,
-        config.analysis_model,
-        config.analysis_ai_call_timeout_seconds,
-        config.analysis_context_tokens,
-    )
-    return FlowExplanationService(
-        provider,
-        max_prompt_chars=max_prompt_chars,
-        request_deadline_seconds=request_deadline_seconds,
-        cancel_event=cancel_event,
-    ), provider.close
-
-
 def _human_answer_service(
     request: Request,
     config: AppConfig,
@@ -917,6 +923,7 @@ def _human_answer_service(
             provider_name=config.analysis_provider,
             provider_model=config.analysis_model,
             cancel_event=cancel_event,
+            audit_max_records=config.query_audit_memory_max_records,
         ), None
     provider = LocalOllamaFlowExplanationClient(
         config.analysis_base_url,
@@ -932,6 +939,7 @@ def _human_answer_service(
         provider_name=config.analysis_provider,
         provider_model=config.analysis_model,
         cancel_event=cancel_event,
+        audit_max_records=config.query_audit_memory_max_records,
     ), provider.close
 
 
@@ -949,6 +957,7 @@ def _query_interpretation_service(
             request_deadline_seconds=request_deadline_seconds,
             provider_name=config.analysis_provider,
             provider_model=config.analysis_model,
+            audit_max_records=config.query_audit_memory_max_records,
         ), None
     provider = LocalOllamaQueryInterpretationClient(
         config.analysis_base_url,
@@ -963,6 +972,7 @@ def _query_interpretation_service(
         request_deadline_seconds=request_deadline_seconds,
         provider_name=config.analysis_provider,
         provider_model=config.analysis_model,
+        audit_max_records=config.query_audit_memory_max_records,
     ), provider.close
 
 

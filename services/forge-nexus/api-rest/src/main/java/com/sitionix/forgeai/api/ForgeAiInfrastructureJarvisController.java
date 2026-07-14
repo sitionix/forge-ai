@@ -95,14 +95,25 @@ public class ForgeAiInfrastructureJarvisController {
         if (body.maxFlows() != null && (body.maxFlows() < 1 || body.maxFlows() > 10)) {
             return this.validationError("maxFlows must be between 1 and 10");
         }
+        if (!this.validAnswerLanguage(body.answerLanguage())) {
+            return this.validationError("answerLanguage must be omitted, null, auto, uk, or en");
+        }
         return null;
+    }
+
+    private boolean validAnswerLanguage(final String answerLanguage) {
+        if (answerLanguage == null || answerLanguage.isBlank()) {
+            return true;
+        }
+        final String normalized = answerLanguage.trim().toLowerCase();
+        return "auto".equals(normalized) || "uk".equals(normalized) || "en".equals(normalized);
     }
 
     private ResponseEntity<byte[]> validationError(final String details) {
         final byte[] body;
         try {
             body = this.objectMapper.writeValueAsBytes(Map.of(
-                    "code", HttpStatus.BAD_REQUEST.value(),
+                    "code", HttpStatus.UNPROCESSABLE_ENTITY.value(),
                     "title", "VALIDATION_FAILED",
                     "details", details
             ));
@@ -111,6 +122,6 @@ public class ForgeAiInfrastructureJarvisController {
         }
         final HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        return new ResponseEntity<>(body, headers, HttpStatus.BAD_REQUEST);
+        return new ResponseEntity<>(body, headers, HttpStatus.UNPROCESSABLE_ENTITY);
     }
 }

@@ -16,7 +16,6 @@ from knowledge_service.analysis_runtime_events import AnalysisRuntimeContext, an
 from knowledge_service.analysis_progress import CurrentFileTargetProgressTracker
 from knowledge_service.analysis_schema import AnalysisBuildRequest, RetryFailedAnalysisRequest
 from knowledge_service.analysis_store import AnalysisStore
-from knowledge_service.api_contract_locator import ApiContractLocator
 from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.analyzer_runtime import AnalyzerRuntime, ExtractorRegistry
 from knowledge_service.config import AppConfig
@@ -64,7 +63,7 @@ class AnalysisSupervisor:
         self.snippets = SnippetExtractor()
         self.graph_engine = GraphAnalysisEngine()
         self.structural_engine = StructuralAnalysisEngine()
-        self.static_materializer = StaticGraphMaterializer(ApiContractLocator(config.workspace_root))
+        self.static_materializer = StaticGraphMaterializer()
         self.anchor_validator = AnchorAwareGraphValidator()
         self.graph_contract_provider = GraphContractProvider()
         self.target_progress_tracker = CurrentFileTargetProgressTracker()
@@ -323,6 +322,7 @@ class AnalysisSupervisor:
         self._log("job_started", jobId=job_id, sourceId=None, processed=0, failed=0)
         processed = failed = 0
         diagnostics: List[Dict[str, Any]] = []
+        graph_dirty_source_ids: set[str] = set()
         try:
             for row in rows:
                 if self._stop_requested(job_id):
@@ -461,6 +461,7 @@ class AnalysisSupervisor:
                         ),
                         graph,
                     )
+                    graph_dirty_source_ids.add(str(row["source_id"]))
                     job_file_status = "ANALYZED_WITH_DIAGNOSTICS" if file_diagnostics else "ANALYZED"
                     self.analysis_store.update_job_file(
                         job_id,
@@ -522,6 +523,8 @@ class AnalysisSupervisor:
             if self._stop_requested(job_id):
                 self._mark_job_stopped(job_id, diagnostics)
                 return
+            for source_id in sorted(graph_dirty_source_ids):
+                self.analysis_store.finalize_source_graph(source_id)
             completed_at = datetime.now(timezone.utc)
             self.analysis_store.update_job(
                 job_id,

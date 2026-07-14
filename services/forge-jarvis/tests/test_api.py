@@ -188,6 +188,7 @@ def test_query_rejects_old_request_shape(tmp_path) -> None:
     "payload",
     [
         {"queryText": "explain", "intent": "AUTOMATIC"},
+        {"queryText": "explain", "intent": "COMPONENT_USAGE"},
         {"queryText": "explain", "includeTests": "false"},
         {"queryText": "explain", "maxFlows": "10"},
         {"queryText": "explain", "maxFlows": 0},
@@ -207,26 +208,6 @@ def test_query_rejects_invalid_optional_controls(tmp_path, payload) -> None:
     ("payload", "expected_payload"),
     [
         (query_payload(" explain JarvisGateway "), normalized_query_payload("explain JarvisGateway")),
-        (
-            {"queryText": " explain JarvisGateway ", "intent": "UNKNOWN", "answerLanguage": "uk", "includeTests": False},
-            normalized_query_payload("explain JarvisGateway", intent="UNKNOWN", answer_language="uk", include_tests=False, max_flows=10),
-        ),
-        (
-            {"queryText": " explain JarvisGateway ", "intent": "COMPONENT_USAGE", "answerLanguage": "uk", "includeTests": False},
-            normalized_query_payload("explain JarvisGateway", intent="COMPONENT_USAGE", answer_language="uk", include_tests=False, max_flows=10),
-        ),
-        (
-            {"queryText": " explain JarvisGateway ", "intent": "COMPONENT_RESPONSIBILITY", "answerLanguage": "uk", "includeTests": False},
-            normalized_query_payload("explain JarvisGateway", intent="COMPONENT_RESPONSIBILITY", answer_language="uk", include_tests=False, max_flows=10),
-        ),
-        (
-            {"queryText": " explain JarvisGateway ", "intent": "CODE_LOCATION", "answerLanguage": "uk", "includeTests": False},
-            normalized_query_payload("explain JarvisGateway", intent="CODE_LOCATION", answer_language="uk", include_tests=False, max_flows=10),
-        ),
-        (
-            {"queryText": " explain JarvisGateway ", "intent": "ARCHITECTURE_OVERVIEW", "answerLanguage": "uk", "includeTests": False},
-            normalized_query_payload("explain JarvisGateway", intent="ARCHITECTURE_OVERVIEW", answer_language="uk", include_tests=False, max_flows=10),
-        ),
         (
             flow_query_payload(" explain JarvisGateway "),
             normalized_query_payload("explain JarvisGateway", intent="FLOW_EXPLANATION", include_tests=False, max_flows=10),

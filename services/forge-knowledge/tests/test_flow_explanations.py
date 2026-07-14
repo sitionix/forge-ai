@@ -13,15 +13,14 @@ from knowledge_service.entrypoint_flow_engine import (
 )
 from knowledge_service.flow_explanations import (
     CompactFlowProjector,
-    FlowExplanationContextPacker,
     FlowExplanationProviderResult,
-    FlowExplanationValidator,
     HumanAnswerGenerationFailed,
     HumanAnswerPromptRenderer,
     HumanFlowAnswerService,
 )
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
+from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 
 SOURCE = "flow-explanation-source"
@@ -237,104 +236,16 @@ def human_execution(graph_flow: EntrypointFlow):
     return SimpleNamespace(flows=(graph_flow,))
 
 
-def valid_response_for(context):
-    steps = context.llm_input["steps"]
-    transitions = context.llm_input["transitions"]
-    boundaries = context.llm_input["boundaries"]
-    return {
-        "title": "Graph flow explanation",
-        "narrative": [
-            {
-                "text": "This graph slice is described through node references, transition references, and boundary references without adding a path order.",
-                "nodeRefs": [item["nodeRef"] for item in steps],
-                "transitionRefs": [item["transitionRef"] for item in transitions],
-                "boundaryRefs": [item["boundaryRef"] for item in boundaries],
-            },
-            {
-                "text": "The second grounded block explains that branches, shared descendants, and cycles remain graph structure rather than sequential steps.",
-                "nodeRefs": [item["nodeRef"] for item in steps],
-                "transitionRefs": [item["transitionRef"] for item in transitions],
-                "boundaryRefs": [item["boundaryRef"] for item in boundaries],
-            },
-        ],
-        "steps": [
-            {
-                "nodeRef": step["nodeRef"],
-                "explanation": f"`{step['symbol']}` is a node in the entrypoint-rooted graph.",
-                "transitionRefs": [
-                    item["transitionRef"]
-                    for item in transitions
-                    if item["fromNodeRef"] == step["nodeRef"]
-                ],
-                "evidenceRefs": [],
-            }
-            for step in steps
-        ],
-        "transitions": [
-            {
-                "transitionRef": item["transitionRef"],
-                "explanation": f"`{item['fromSymbol']}` has a CALLS transition to `{item['toSymbol']}`.",
-                "evidenceRefs": [],
-            }
-            for item in transitions
-        ],
-        "boundaries": [
-            {
-                "boundaryRef": item["boundaryRef"],
-                "kind": item["kind"],
-                "explanation": f"{item['kind']} remains a boundary in this graph slice.",
-                "evidenceRefs": [],
-            }
-            for item in boundaries
-        ],
-    }
-
-
-def assert_validator_accepts_graph(graph_flow: EntrypointFlow) -> None:
-    context = FlowExplanationContextPacker().pack(
-        request=KnowledgeQueryRequest(queryText="Alpha", intent="FLOW_EXPLANATION"),
-        flow=graph_flow,
-        flow_index=1,
-        source_display_name=SOURCE,
-    )
-    explanation, errors, code = FlowExplanationValidator().validate(json.dumps(valid_response_for(context)), context)
-    assert explanation is not None, (code, errors)
-
-
-def test_validator_accepts_sibling_branch_graph_refs():
-    assert_validator_accepts_graph(
-        flow(
-            [node("Alpha", entrypoint=True), node("Beta"), node("Gamma"), node("Delta")],
-            [edge("ab", "Alpha", "Beta"), edge("ag", "Alpha", "Gamma"), edge("ad", "Alpha", "Delta")],
-        )
-    )
-
-
-def test_validator_accepts_diamond_graph_refs():
-    assert_validator_accepts_graph(
-        flow(
-            [node("Alpha", entrypoint=True), node("Beta"), node("Gamma"), node("Delta")],
-            [edge("ab", "Alpha", "Beta"), edge("ag", "Alpha", "Gamma"), edge("bd", "Beta", "Delta"), edge("gd", "Gamma", "Delta")],
-        )
-    )
-
-
-def test_validator_accepts_cycle_graph_refs():
-    assert_validator_accepts_graph(
-        flow(
-            [node("Alpha", entrypoint=True), node("Beta"), node("Gamma")],
-            [edge("ab", "Alpha", "Beta"), edge("bg", "Beta", "Gamma"), edge("gb", "Gamma", "Beta")],
-        )
-    )
-
-
-def test_validator_accepts_external_boundary_graph_refs():
-    assert_validator_accepts_graph(
-        flow(
-            [node("Alpha", entrypoint=True)],
-            [],
-            [edge("outside", "Alpha", None, status="EXTERNAL_TARGET")],
-        )
+def retrieval_plan(query: str, *, detected_language: str = "en", response_language: str = "en") -> QueryRetrievalPlan:
+    return QueryRetrievalPlan(
+        original_query=query,
+        normalized_query=query,
+        search_queries=(query,),
+        code_identifiers=(),
+        concepts=(),
+        effective_intent="FLOW_EXPLANATION",
+        detected_language=detected_language,
+        response_language=response_language,
     )
 
 
@@ -413,7 +324,7 @@ def test_compact_projector_orders_resolved_and_boundary_children_by_callsite_lin
     assert [child["symbol"] for child in projected["tree"]["children"]] == ["SiteApiMapper.asCreateSiteCommand", "ResolvedLater"]
 
 
-def test_human_prompt_contract_requires_grounded_step_by_step_output():
+def test_human_prompt_contract_allows_natural_grounded_output():
     prompt = HumanAnswerPromptRenderer().render(
         CompactFlowProjector().human_llm_input(
             KnowledgeQueryRequest(queryText="Alpha", intent="FLOW_EXPLANATION", answerLanguage="en"),
@@ -425,18 +336,17 @@ def test_human_prompt_contract_requires_grounded_step_by_step_output():
         "technical walkthrough",
         "HTTP method and route",
         "trigger and entrypoint",
-        "Use numbered steps",
+        "Natural output may be one concise paragraph",
         "exact class or method symbol",
         "validation, persistence, or side effect",
         "Use only the requested responseLanguage",
         "exception classes, or error messages",
         "observable result",
         "escaped plain text",
-        "Do not use Markdown",
-        "Do not use repeated audit labels",
+        "Return strict JSON only",
         "Do not collapse the flow into a generic summary",
         "Do not invent validation",
-        "Do not mention graph terminology",
+        "Do not mention retrieval mechanics",
     ):
         assert required in prompt
 
@@ -460,6 +370,7 @@ def test_auto_language_resolves_ukrainian_and_accepts_ukrainian_prose():
     response = service.answer(
         KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="uk"),
     )
 
     assert response.answerLanguage == "uk"
@@ -507,6 +418,7 @@ def test_mixed_technical_query_resolves_to_surrounding_ukrainian_language():
     response = service.answer(
         KnowledgeQueryRequest(queryText="як працює SiteController.createSite", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як працює SiteController.createSite", detected_language="uk", response_language="uk"),
     )
 
     assert response.answerLanguage == "uk"
@@ -523,6 +435,7 @@ def test_language_violation_gets_one_repair_attempt_for_same_flow():
     response = service.answer(
         KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="uk"),
     )
 
     assert response.answerLanguage == "uk"
@@ -532,7 +445,7 @@ def test_language_violation_gets_one_repair_attempt_for_same_flow():
     assert "передає запит" in response.answers[0].text
 
 
-def test_markdown_and_language_violation_gets_bounded_plain_text_repair():
+def test_language_violation_gets_bounded_repair_without_format_policing():
     provider = SequenceHumanAnswerProvider([
         {"text": "**Flow**\n1. `SiteController.createSite` receives the request."},
         "1. SiteController.createSite приймає запит і передає його в наступний крок.\n2. Відповідь повертається клієнту.",
@@ -542,68 +455,67 @@ def test_markdown_and_language_violation_gets_bounded_plain_text_repair():
     response = service.answer(
         KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="uk"),
     )
 
     assert len(provider.calls) == 2
-    assert any("Markdown" in error for error in provider.calls[1]["validationErrors"])
+    assert any("Ukrainian" in error for error in provider.calls[1]["validationErrors"])
     assert "**" not in response.answers[0].text
     assert "`" not in response.answers[0].text
 
 
-def test_paragraph_walkthrough_gets_repaired_to_numbered_steps():
+def test_valid_single_paragraph_answer_is_accepted():
     provider = SequenceHumanAnswerProvider([
-        "SiteController.createSite приймає HTTP POST запит на /api/v1/sites і передає його в CreateSiteImpl.execute. Наприкінці контролер повертає створену відповідь.",
-        "1. SiteController.createSite приймає HTTP POST запит на /api/v1/sites і передає його в CreateSiteImpl.execute.\n2. Наприкінці контролер повертає створену відповідь.",
+        "SiteController.createSite приймає HTTP POST запит на /api/v1/sites і передає його в CreateSiteImpl.execute. Наприкінці контролер повертає створену відповідь."
     ])
     service = HumanFlowAnswerService(provider)
 
     response = service.answer(
         KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="uk"),
     )
 
-    assert len(provider.calls) == 2
-    assert any("numbered walkthrough" in error for error in provider.calls[1]["validationErrors"])
+    assert len(provider.calls) == 1
+    assert not provider.calls[0]["validationErrors"]
+    assert not response.answers[0].text.startswith("1.")
+
+
+def test_valid_single_step_answer_is_accepted():
+    provider = SequenceHumanAnswerProvider([
+        "1. SiteController.createSite приймає HTTP POST запит на /api/v1/sites і повертає створену відповідь."
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="uk"),
+    )
+
+    assert len(provider.calls) == 1
     assert response.answers[0].text.startswith("1.")
 
 
-def test_observable_result_label_gets_repaired_to_plain_numbered_prose():
+def test_valid_lettered_branch_explanation_is_accepted():
     provider = SequenceHumanAnswerProvider([
-        "1. SiteController.createSite приймає HTTP POST запит на /api/v1/sites.\n2. Observable result: контролер повертає створену відповідь.",
-        "1. SiteController.createSite приймає HTTP POST запит на /api/v1/sites.\n2. Наприкінці контролер повертає створену відповідь.",
+        "SiteController.createSite має дві гілки: а) SiteApiMapper.asCreateSiteCommand готує команду; б) CreateSiteImpl.execute валідує назву і зберігає результат. Після цього контролер повертає відповідь."
     ])
     service = HumanFlowAnswerService(provider)
 
     response = service.answer(
         KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="uk"),
     )
 
-    assert len(provider.calls) == 2
-    assert any("Observable result" in error for error in provider.calls[1]["validationErrors"])
-    assert "Observable result:" not in response.answers[0].text
+    assert len(provider.calls) == 1
+    assert "а)" in response.answers[0].text
 
 
-def test_lettered_substeps_get_repaired_to_numbered_walkthrough_only():
+def test_internal_ref_leak_gets_repaired_out_of_human_answer():
     provider = SequenceHumanAnswerProvider([
-        "1. SiteController.createSite приймає запит.\n   а) CreateSiteImpl.execute валідує назву.\n2. Контролер повертає відповідь.",
-        "1. SiteController.createSite приймає запит і передає його до CreateSiteImpl.execute.\n2. CreateSiteImpl.execute валідує назву, після чого контролер повертає відповідь.",
-    ])
-    service = HumanFlowAnswerService(provider)
-
-    response = service.answer(
-        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
-        human_execution(technical_create_site_flow()),
-    )
-
-    assert len(provider.calls) == 2
-    assert any("lettered" in error for error in provider.calls[1]["validationErrors"])
-    assert "а)" not in response.answers[0].text
-
-
-def test_graph_edge_terms_get_repaired_out_of_human_answer():
-    provider = SequenceHumanAnswerProvider([
-        "1. SiteController.getSiteOverview викликає UNRESOLVED_CALL GetSiteOverview.execute.\n2. Контролер повертає DTO.",
+        "1. SiteController.getSiteOverview викликає nodeRef n1.\n2. Контролер повертає DTO.",
         "1. SiteController.getSiteOverview викликає GetSiteOverview.execute.\n2. Контролер повертає DTO.",
     ])
     service = HumanFlowAnswerService(provider)
@@ -611,17 +523,17 @@ def test_graph_edge_terms_get_repaired_out_of_human_answer():
     response = service.answer(
         KnowledgeQueryRequest(queryText="як працює SiteController.getSiteOverview", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як працює SiteController.getSiteOverview", detected_language="uk", response_language="uk"),
     )
 
     assert len(provider.calls) == 2
-    assert any("graph terminology" in error for error in provider.calls[1]["validationErrors"])
-    assert "UNRESOLVED_CALL" not in response.answers[0].text
+    assert any("internal graph refs" in error for error in provider.calls[1]["validationErrors"])
+    assert "nodeRef" not in response.answers[0].text
 
 
-def test_unresolved_call_wording_gets_repaired_out_of_human_answer():
+def test_unresolved_call_wording_is_valid_when_not_internal_ref():
     provider = SequenceHumanAnswerProvider([
-        "1. SiteController.getSiteOverview reaches an unresolved call to GetSiteOverview.execute.\n2. The controller returns the DTO.",
-        "1. SiteController.getSiteOverview calls GetSiteOverview.execute.\n2. The controller returns the DTO.",
+        "1. SiteController.getSiteOverview reaches an unresolved call to GetSiteOverview.execute.\n2. The controller returns the DTO."
     ])
     service = HumanFlowAnswerService(provider)
 
@@ -630,43 +542,40 @@ def test_unresolved_call_wording_gets_repaired_out_of_human_answer():
         human_execution(technical_create_site_flow()),
     )
 
-    assert len(provider.calls) == 2
-    assert any("graph terminology" in error for error in provider.calls[1]["validationErrors"])
-    assert "unresolved call" not in response.answers[0].text
+    assert len(provider.calls) == 1
+    assert "unresolved call" in response.answers[0].text
 
 
-def test_unnumbered_paragraph_after_steps_gets_repaired():
+def test_natural_conclusion_after_steps_is_accepted():
     provider = SequenceHumanAnswerProvider([
-        "1. AgentProjectController.createAgentProject приймає запит.\n2. Контролер повертає DTO.\nVerified facts do not provide persistence details.",
-        "1. AgentProjectController.createAgentProject приймає запит.\n2. Контролер повертає DTO, а перевірені факти не надають деталей збереження.",
+        "1. AgentProjectController.createAgentProject приймає запит.\n2. Контролер повертає DTO.\nVerified facts do not provide persistence details."
     ])
     service = HumanFlowAnswerService(provider)
 
     response = service.answer(
         KnowledgeQueryRequest(queryText="як створити агентський проект", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як створити агентський проект", detected_language="uk", response_language="uk"),
     )
 
-    assert len(provider.calls) == 2
-    assert any("numbered walkthrough step" in error for error in provider.calls[1]["validationErrors"])
-    assert "Verified facts" not in response.answers[0].text
+    assert len(provider.calls) == 1
+    assert "Verified facts" in response.answers[0].text
 
 
-def test_graph_boundary_wording_gets_repaired_out_of_human_answer():
+def test_boundary_wording_is_valid_when_not_internal_ref():
     provider = SequenceHumanAnswerProvider([
-        "1. AgentController.createAgent доходить до external client boundary.\n2. Контролер повертає DTO.",
-        "1. AgentController.createAgent готує відповідь через ResponseEntity.status(HttpStatus.CREATED).\n2. Контролер повертає DTO.",
+        "1. AgentController.createAgent доходить до external client boundary.\n2. Контролер повертає DTO."
     ])
     service = HumanFlowAnswerService(provider)
 
     response = service.answer(
         KnowledgeQueryRequest(queryText="як створити агента", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як створити агента", detected_language="uk", response_language="uk"),
     )
 
-    assert len(provider.calls) == 2
-    assert any("graph terminology" in error for error in provider.calls[1]["validationErrors"])
-    assert "boundary" not in response.answers[0].text
+    assert len(provider.calls) == 1
+    assert "boundary" in response.answers[0].text
 
 
 def test_speculative_framework_behavior_gets_repaired():
@@ -698,6 +607,7 @@ def test_repair_failure_fails_flow_without_projecting_compact_tree():
         service.answer(
             KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
             human_execution(technical_create_site_flow()),
+            plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="uk"),
         )
     except HumanAnswerGenerationFailed:
         pass

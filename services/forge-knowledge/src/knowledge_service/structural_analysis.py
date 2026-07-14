@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from knowledge_service.api_contract_locator import ApiContractLocator
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.java_parser_adapter import JavaParserAdapter
@@ -112,9 +111,6 @@ class StaticGraphMaterializer:
         "Bean",
         "Test",
     }
-
-    def __init__(self, api_contract_locator: Optional[ApiContractLocator] = None) -> None:
-        self.api_contract_locator = api_contract_locator or ApiContractLocator()
 
     def to_graph(self, result: StructuralParseResult) -> GraphAnalysisResult:
         nodes: List[GraphNode] = []
@@ -280,9 +276,6 @@ class StaticGraphMaterializer:
             )
             owner_annotations = self._type_annotations(result, item.owner_type_local_id)
             claims.extend(self._entrypoint_claims(result, item.local_id, item.annotations, owner_annotations))
-            override_claim = self._controller_override_entrypoint_claim(result, item.local_id, item, types_by_id.get(item.owner_type_local_id or ""))
-            if override_claim:
-                claims.append(override_claim)
             main_claim = self._main_entrypoint_claim(result, item.local_id, item, owner_annotations)
             if main_claim:
                 claims.append(main_claim)
@@ -606,107 +599,6 @@ class StaticGraphMaterializer:
                 )
             )
         return claims
-
-    def _controller_override_entrypoint_claim(
-        self,
-        result: StructuralParseResult,
-        target_local_id: str,
-        callable_item: Any,
-        owner_type: Optional[StructuralType],
-    ) -> Optional[GraphClaim]:
-        if owner_type is None:
-            return None
-        owner_annotation_names = {annotation.name.rsplit(".", 1)[-1] for annotation in owner_type.annotations}
-        if not owner_annotation_names.intersection({"RestController", "Controller"}):
-            return None
-        if callable_item.visibility != "PUBLIC":
-            return None
-        callable_annotation_names = {annotation.name.rsplit(".", 1)[-1] for annotation in callable_item.annotations}
-        if "Override" not in callable_annotation_names:
-            return None
-        if not owner_type.implemented_interfaces:
-            return None
-        if callable_annotation_names.intersection(self.ENTRYPOINT_ANNOTATIONS):
-            return None
-        inherited = self._interface_method_entrypoint(result, owner_type, callable_item)
-        metadata = self._metadata(
-            result,
-            "ENTRYPOINT_HINT",
-            self._stable_key(result, "ENTRYPOINT", target_local_id, "CONTROLLER_OVERRIDE", str(callable_item.line_start)),
-            {
-                "entrypointKind": "HTTP",
-                "origin": "DERIVED",
-                "annotation": "Override",
-                "annotationName": "Override",
-                "httpMethod": inherited.get("httpMethod"),
-                "route": inherited.get("route"),
-                "interfaceMethod": inherited.get("interfaceMethod"),
-                "sourceAnnotationLine": callable_item.line_start,
-            },
-        )
-        evidence = [
-            self._evidence(annotation.line_start, annotation.line_end, f"@{annotation.name.rsplit('.', 1)[-1]}")
-            for annotation in owner_type.annotations
-            if annotation.name.rsplit(".", 1)[-1] in {"RestController", "Controller"}
-        ]
-        evidence.append(self._evidence(callable_item.line_start, callable_item.line_end, callable_item.signature))
-        return GraphClaim(
-            localId=metadata["stableKey"],
-            nodeLocalId=target_local_id,
-            claimKind="ENTRYPOINT_HINT",
-            summary=self._entrypoint_summary("RequestMapping", inherited.get("httpMethod"), inherited.get("route")),
-            evidence=evidence,
-            confidence=1.0,
-            metadata=metadata,
-        )
-
-    def _interface_method_entrypoint(self, result: StructuralParseResult, owner_type: StructuralType, callable_item: Any) -> Dict[str, Optional[str]]:
-        type_lookup = self._type_lookup(result)
-        for interface_name in owner_type.implemented_interfaces:
-            resolved_name = self._resolve_type_reference(result, interface_name)
-            interface = type_lookup.get(resolved_name) or type_lookup.get(self._simple_type(resolved_name))
-            if interface is None:
-                inherited = self._external_api_first_entrypoint(resolved_name, callable_item)
-                if inherited.get("interfaceMethod"):
-                    return inherited
-                continue
-            for candidate in result.callables:
-                if candidate.owner_type_local_id != interface.local_id:
-                    continue
-                if candidate.name != callable_item.name or len(candidate.parameters) != len(callable_item.parameters):
-                    continue
-                route_annotation = next(
-                    (
-                        annotation
-                        for annotation in candidate.annotations
-                        if annotation.name.rsplit(".", 1)[-1] in {"RequestMapping", *self.HTTP_METHODS.keys()}
-                    ),
-                    None,
-                )
-                if route_annotation is None:
-                    return {"httpMethod": None, "route": None, "interfaceMethod": candidate.qualified_name}
-                simple = route_annotation.name.rsplit(".", 1)[-1]
-                owner_route = self._route_from_annotations(interface.annotations)
-                return {
-                    "httpMethod": self.HTTP_METHODS.get(simple),
-                    "route": self._join_routes(owner_route, self._annotation_route(route_annotation)),
-                    "interfaceMethod": candidate.qualified_name,
-                }
-        return {"httpMethod": None, "route": None, "interfaceMethod": None}
-
-    def _external_api_first_entrypoint(self, interface_name: str, callable_item: Any) -> Dict[str, Optional[str]]:
-        operation_id = str(callable_item.name or "")
-        interface_method = self.api_contract_locator.interface_method(interface_name, operation_id)
-        if not interface_method:
-            return {"httpMethod": None, "route": None, "interfaceMethod": None}
-        operation = self.api_contract_locator.locate_operation(interface_name, operation_id)
-        if not operation:
-            return {"httpMethod": None, "route": None, "interfaceMethod": interface_method}
-        return {
-            "httpMethod": operation.http_method,
-            "route": operation.route,
-            "interfaceMethod": interface_method,
-        }
 
     def _main_entrypoint_claim(
         self, result: StructuralParseResult, target_local_id: str, callable_item, owner_annotations: List[StructuralAnnotation]

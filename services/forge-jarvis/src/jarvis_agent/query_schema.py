@@ -9,11 +9,6 @@ from pydantic import BaseModel, Field, StrictBool, validator
 class JarvisQueryIntent(str, Enum):
     AUTO = "AUTO"
     FLOW_EXPLANATION = "FLOW_EXPLANATION"
-    COMPONENT_USAGE = "COMPONENT_USAGE"
-    COMPONENT_RESPONSIBILITY = "COMPONENT_RESPONSIBILITY"
-    CODE_LOCATION = "CODE_LOCATION"
-    ARCHITECTURE_OVERVIEW = "ARCHITECTURE_OVERVIEW"
-    UNKNOWN = "UNKNOWN"
 
 
 class JarvisQueryRequest(BaseModel):
@@ -50,6 +45,11 @@ class JarvisQueryRequest(BaseModel):
         normalized = value.strip().lower()
         if not normalized:
             return None
+        if normalized == "auto":
+            return "auto"
+        normalized = normalized.split("-", 1)[0]
+        if normalized not in {"uk", "en"}:
+            raise ValueError("answerLanguage must be omitted, null, auto, uk, or en")
         return normalized
 
     @validator("includeTests", pre=True, always=True)

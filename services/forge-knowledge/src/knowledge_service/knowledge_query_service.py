@@ -46,6 +46,12 @@ class KnowledgeQueryPolicy:
     fuzzy_max_edit_distance: int = 3
     enable_fuzzy_search: bool = True
     enable_search_diagnostics: bool = True
+    plan_candidate_min_score: float = 0.42
+    plan_candidate_top_delta: float = 0.18
+    exact_identifier_min_score: float = 0.75
+    exact_identifier_top_delta: float = 0.12
+    plan_flow_min_relevance_score: float = 0.05
+    plan_flow_top_delta: float = 0.25
 
 
 class CandidatePoolKind(str, Enum):
@@ -57,77 +63,6 @@ class CandidatePoolKind(str, Enum):
     SEMANTIC = "SEMANTIC"
 
 
-_PLAN_GENERIC_TOKENS = {
-    "a",
-    "an",
-    "and",
-    "answer",
-    "architecture",
-    "class",
-    "code",
-    "component",
-    "describe",
-    "does",
-    "execute",
-    "execution",
-    "explain",
-    "flow",
-    "for",
-    "how",
-    "implementation",
-    "is",
-    "method",
-    "overview",
-    "process",
-    "query",
-    "response",
-    "service",
-    "step",
-    "steps",
-    "the",
-    "use",
-    "used",
-    "using",
-    "walkthrough",
-    "what",
-    "where",
-    "work",
-    "works",
-    "як",
-    "де",
-    "що",
-    "чому",
-    "який",
-    "яка",
-    "яке",
-    "працює",
-    "працювати",
-    "процес",
-    "виконання",
-    "поясни",
-    "пояснити",
-}
-_PLAN_ACTION_TOKENS = {
-    "create",
-    "created",
-    "creates",
-    "creating",
-    "creation",
-    "створити",
-    "створення",
-}
-_PLAN_TOKEN_ALIASES = {
-    "created": ("create", "created", "creation"),
-    "creates": ("create", "created", "creation"),
-    "creating": ("create", "created", "creation"),
-    "creation": ("create", "created", "creation"),
-    "сайт": ("site",),
-    "сайту": ("site",),
-    "сайти": ("site", "sites"),
-    "сайтів": ("site", "sites"),
-    "створити": ("create", "created", "creation"),
-    "створення": ("create", "created", "creation"),
-}
 _PRECISE_IDENTIFIER_REASONS = {
     "QUALIFIED_NAME_EXACT",
     "QUALIFIED_NAME_SUFFIX",
@@ -138,8 +73,6 @@ _PRECISE_IDENTIFIER_REASONS = {
     "STABLE_KEY_MATCH",
     "PATH_MATCH",
 }
-_PLAN_FILTER_MIN_SCORE = 0.42
-_PLAN_FILTER_TOP_DELTA = 0.18
 
 
 @dataclass(frozen=True)
@@ -368,7 +301,7 @@ class UnifiedAnchorSearcher:
 
         pools = self._candidate_pools(raw_candidates)
         merged_candidates = self.candidate_merger.merge(raw_candidates) if raw_candidates else []
-        merged_candidates = self._filter_plan_candidates(merged_candidates, plan)
+        merged_candidates = self._filter_plan_candidates(merged_candidates, plan, policy)
         all_candidates = [self._matched_node(candidate) for candidate in merged_candidates]
         display_limit = max(1, int(policy.max_display_candidates or 1))
         display_candidates = all_candidates[:display_limit]
@@ -414,6 +347,7 @@ class UnifiedAnchorSearcher:
         self,
         candidates: Sequence[MergedCandidate],
         plan: QueryRetrievalPlan,
+        policy: KnowledgeQueryPolicy,
     ) -> List[MergedCandidate]:
         ranked = list(candidates)
         if not ranked:
@@ -429,24 +363,16 @@ class UnifiedAnchorSearcher:
                 if callable_exact:
                     exact_identifier = callable_exact
                 top_exact = max(candidate.score for candidate in exact_identifier)
-                threshold = max(0.75, top_exact - 0.12)
+                threshold = max(policy.exact_identifier_min_score, top_exact - policy.exact_identifier_top_delta)
                 return [candidate for candidate in exact_identifier if candidate.score >= threshold] or exact_identifier
 
-        subject_tokens = self._plan_subject_tokens(plan)
-        if not subject_tokens:
-            return ranked
         top_score = max(candidate.score for candidate in ranked)
-        threshold = max(_PLAN_FILTER_MIN_SCORE, top_score - _PLAN_FILTER_TOP_DELTA)
-        filtered = [
+        threshold = max(policy.plan_candidate_min_score, top_score - policy.plan_candidate_top_delta)
+        return [
             candidate
             for candidate in ranked
-            if candidate.score >= threshold and self._candidate_matches_subject(candidate, subject_tokens)
+            if candidate.score >= threshold
         ]
-        if plan.effective_intent == "FLOW_EXPLANATION":
-            callable_filtered = [candidate for candidate in filtered if self._node_kind(candidate.document.node_kind) == "CALLABLE"]
-            if callable_filtered:
-                filtered = callable_filtered
-        return filtered or ranked
 
     def _is_precise_identifier_candidate(self, candidate: MergedCandidate) -> bool:
         reasons = set(candidate.reasons)
@@ -456,58 +382,6 @@ class UnifiedAnchorSearcher:
             (reason.startswith("EXACT") and reason != "EXACT_KIND")
             or reason in _PRECISE_IDENTIFIER_REASONS
             for reason in reasons
-        )
-
-    def _plan_subject_tokens(self, plan: QueryRetrievalPlan) -> tuple[str, ...]:
-        values = [
-            plan.original_query,
-            plan.normalized_query,
-            *plan.search_queries,
-            *plan.concepts,
-        ]
-        result: List[str] = []
-        seen: set[str] = set()
-        for value in values:
-            query = self.normalizer.normalize(value)
-            tokens = list(query.important_tokens)
-            if any(char.isspace() for char in str(value or "")):
-                tokens = [token for token in tokens if token != query.compact]
-            for token in tokens:
-                normalized = str(token or "").strip().lower()
-                if len(normalized) < 3 or normalized in _PLAN_GENERIC_TOKENS or normalized.isdigit():
-                    continue
-                aliases = _PLAN_TOKEN_ALIASES.get(normalized)
-                if aliases:
-                    for alias in aliases:
-                        if alias not in seen:
-                            seen.add(alias)
-                            result.append(alias)
-                    continue
-                if normalized not in seen:
-                    seen.add(normalized)
-                    result.append(normalized)
-        return tuple(result[:12])
-
-    def _candidate_matches_subject(self, candidate: MergedCandidate, subject_tokens: Sequence[str]) -> bool:
-        document_tokens = set(candidate.document.token_set)
-        if not document_tokens:
-            return False
-        matched_tokens = [token for token in subject_tokens if self._token_matches_document(token, document_tokens)]
-        non_action_tokens = [token for token in subject_tokens if token not in _PLAN_ACTION_TOKENS]
-        matched_non_action = [token for token in non_action_tokens if token in matched_tokens]
-        if non_action_tokens and len(matched_non_action) < min(2, len(non_action_tokens)):
-            return False
-        action_tokens = [token for token in subject_tokens if token in _PLAN_ACTION_TOKENS]
-        if action_tokens and not any(self._token_matches_document(token, document_tokens) for token in action_tokens):
-            return False
-        return bool(matched_tokens)
-
-    def _token_matches_document(self, token: str, document_tokens: set[str]) -> bool:
-        if token in document_tokens:
-            return True
-        return any(
-            len(document_token) >= 3 and (document_token.startswith(token) or token.startswith(document_token))
-            for document_token in document_tokens
         )
 
     def _node_kind(self, value: str) -> str:
@@ -1169,12 +1043,8 @@ class KnowledgeQueryService:
         flows = build_result.flows
         public_flows = build_result.public_flows
         if plan is not None:
-            filtered_flows = self._filter_flows_by_code_identifiers(flows, plan.code_identifiers)
-            if not filtered_flows and plan.effective_intent == "FLOW_EXPLANATION":
-                filtered_flows = self._filter_flows_by_subject(flows, plan)
-            if filtered_flows:
-                flows = filtered_flows
-                public_flows = self.flow_engine.public_flows(flows)
+            flows = self._select_plan_flows(flows, plan)
+            public_flows = self.flow_engine.public_flows(flows)
         diagnostics.extend(build_result.diagnostics)
         diagnostics.append(KnowledgeQueryDiagnostic(
             code="ENTRYPOINT_FLOW_TIMINGS",
@@ -1222,12 +1092,24 @@ class KnowledgeQueryService:
             flows=flows,
         )
 
+    def _select_plan_flows(
+        self,
+        flows: Sequence[EntrypointFlow],
+        plan: QueryRetrievalPlan,
+    ) -> tuple[EntrypointFlow, ...]:
+        if not flows:
+            return ()
+        exact = self._filter_flows_by_code_identifiers(flows, plan.code_identifiers)
+        if plan.code_identifiers:
+            return exact
+        return self._rank_flows_by_grounded_relevance(flows)
+
     def _filter_flows_by_code_identifiers(
         self,
         flows: Sequence[EntrypointFlow],
         identifiers: Sequence[str],
     ) -> tuple[EntrypointFlow, ...]:
-        exact_identifiers = [identifier for identifier in identifiers if "." in str(identifier or "")]
+        exact_identifiers = [identifier for identifier in identifiers if str(identifier or "").strip()]
         if not exact_identifiers:
             return ()
         result: List[EntrypointFlow] = []
@@ -1240,63 +1122,62 @@ class KnowledgeQueryService:
         normalized = str(identifier or "").strip()
         if not normalized:
             return False
-        candidates = {
-            str(flow.entrypoint.label or ""),
-            str(flow.entrypoint.qualified_name or ""),
-            str(flow.entrypoint.stable_key or ""),
-        }
-        for candidate in candidates:
+        for candidate in self._flow_identifier_candidates(flow):
             if candidate == normalized:
                 return True
             if candidate.endswith(f".{normalized}"):
                 return True
+            if normalized in candidate:
+                return True
         return False
 
-    def _filter_flows_by_subject(self, flows: Sequence[EntrypointFlow], plan: QueryRetrievalPlan) -> tuple[EntrypointFlow, ...]:
-        subject_tokens = self.anchor_searcher._plan_subject_tokens(
-            replace(plan, normalized_query="", search_queries=(), concepts=())
-        )
-        action_tokens = [token for token in subject_tokens if token in _PLAN_ACTION_TOKENS]
-        non_action_tokens = [token for token in subject_tokens if token not in _PLAN_ACTION_TOKENS]
-        if not action_tokens or not non_action_tokens:
-            return ()
-        result = [
-            flow
-            for flow in flows
-            if self._flow_matches_subject(flow, action_tokens, non_action_tokens)
-        ]
-        return tuple(result)
-
-    def _flow_matches_subject(
-        self,
-        flow: EntrypointFlow,
-        action_tokens: Sequence[str],
-        non_action_tokens: Sequence[str],
-    ) -> bool:
-        tokens = set(self.anchor_searcher.normalizer.unique_tokens(
-            " ".join(
-                str(value or "")
+    def _flow_identifier_candidates(self, flow: EntrypointFlow) -> set[str]:
+        candidates: set[str] = set()
+        for node in flow.nodes:
+            candidates.update(
+                str(value or "").strip()
                 for value in (
-                    flow.entrypoint.label,
-                    flow.entrypoint.qualified_name,
-                    flow.entrypoint.stable_key,
-                    flow.entrypoint.summary,
-                    flow.entrypoint.entrypoint_route,
-                    flow.entrypoint.entrypoint_topic,
+                    node.label,
+                    node.qualified_name,
+                    node.stable_key,
+                    node.node_id,
+                    node.entrypoint_route,
+                    node.entrypoint_topic,
+                    node.entrypoint_interface_method,
                 )
+                if str(value or "").strip()
             )
-        ))
-        if not any(self.anchor_searcher._token_matches_document(token, tokens) for token in action_tokens):
-            return False
-        required_non_action = min(2, len(non_action_tokens))
-        matched_non_action = [
-            token
-            for token in non_action_tokens
-            if self.anchor_searcher._token_matches_document(token, tokens)
+        for anchor in flow.anchors:
+            candidates.update(
+                str(value or "").strip()
+                for value in (anchor.label, anchor.node_id)
+                if str(value or "").strip()
+            )
+        return candidates
+
+    def _rank_flows_by_grounded_relevance(self, flows: Sequence[EntrypointFlow]) -> tuple[EntrypointFlow, ...]:
+        scored = [
+            (max(float(flow.relevance_score or 0.0), self._aggregate_anchor_score(flow)), flow)
+            for flow in flows
         ]
-        if len(non_action_tokens) <= 1:
-            return len(matched_non_action) >= required_non_action
-        return len(matched_non_action) == len(non_action_tokens)
+        if not scored:
+            return ()
+        top_score = max(score for score, _flow in scored)
+        threshold = max(self.policy.plan_flow_min_relevance_score, top_score - self.policy.plan_flow_top_delta)
+        selected = [
+            flow
+            for score, flow in sorted(scored, key=lambda item: (-item[0], item[1].key.source_id, item[1].key.entrypoint_node_id))
+            if score >= threshold
+        ]
+        return tuple(selected)
+
+    def _aggregate_anchor_score(self, flow: EntrypointFlow) -> float:
+        if not flow.anchors:
+            return 0.0
+        best = max(float(anchor.score or 0.0) for anchor in flow.anchors)
+        support = min(len(flow.anchors), 10) * 0.01
+        proximity = 0.01 / (1 + min(anchor.distance for anchor in flow.anchors))
+        return best + support + proximity
 
     def _matched_sources(
         self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], eligible_sources: Sequence[QuerySource]

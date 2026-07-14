@@ -51,9 +51,4 @@ def test_knowledge_query_request_schema_is_query_plan_v2() -> None:
     assert spec["components"]["schemas"]["KnowledgeQueryIntent"]["enum"] == [
         "AUTO",
         "FLOW_EXPLANATION",
-        "COMPONENT_USAGE",
-        "COMPONENT_RESPONSIBILITY",
-        "CODE_LOCATION",
-        "ARCHITECTURE_OVERVIEW",
-        "UNKNOWN",
     ]

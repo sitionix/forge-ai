@@ -120,15 +120,23 @@ class FlowExplanationQuerySettings(BaseModel):
     request_timeout_seconds: int = Field(default=DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS, ge=1)
 
 
+class QueryAuditSettings(BaseModel):
+    memory_max_records: int = Field(default=200, ge=0)
+    directory: Optional[Path] = None
+    max_retained_files: int = Field(default=200, ge=0)
+    max_file_age_seconds: Optional[int] = Field(default=None, ge=1)
+
+
 class QuerySettings(BaseModel):
     default_response_language: str = Field(default="en", min_length=2)
     flow_explanation: FlowExplanationQuerySettings = Field(default_factory=FlowExplanationQuerySettings)
+    audit: QueryAuditSettings = Field(default_factory=QueryAuditSettings)
 
     @validator("default_response_language")
     def normalize_default_response_language(cls, value: str) -> str:
         normalized = str(value or "").strip().lower().split("-", 1)[0]
-        if not re.match(r"^[a-z]{2,3}$", normalized) or normalized == "und":
-            raise ValueError("query.default_response_language must be a language code")
+        if normalized not in {"uk", "en"}:
+            raise ValueError("query.default_response_language must be uk or en")
         return normalized
 
 
@@ -174,6 +182,10 @@ class AppConfig(BaseModel):
     analysis_ai_call_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
     flow_explanation_request_timeout_seconds: int = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS
     query_default_response_language: str = "en"
+    query_audit_memory_max_records: int = 200
+    query_audit_directory: Optional[Path] = None
+    query_audit_max_retained_files: int = 200
+    query_audit_max_file_age_seconds: Optional[int] = None
     analysis_per_file_timeout_seconds: int = 120
     analysis_stall_threshold_seconds: int = 300
     analysis_context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS
@@ -258,6 +270,10 @@ class AppConfig(BaseModel):
             analysis_ai_call_timeout_seconds=analysis.ai_call_timeout_seconds or analysis.request_timeout_seconds,
             flow_explanation_request_timeout_seconds=settings.query.flow_explanation.request_timeout_seconds,
             query_default_response_language=settings.query.default_response_language,
+            query_audit_memory_max_records=settings.query.audit.memory_max_records,
+            query_audit_directory=settings.query.audit.directory,
+            query_audit_max_retained_files=settings.query.audit.max_retained_files,
+            query_audit_max_file_age_seconds=settings.query.audit.max_file_age_seconds,
             analysis_per_file_timeout_seconds=analysis.per_file_timeout_seconds,
             analysis_stall_threshold_seconds=analysis.stall_threshold_seconds,
             analysis_context_tokens=generative.context_tokens,
@@ -413,6 +429,7 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
     generative = _mapping_field(forge_ai, "generative")
     query = _mapping_field(forge_ai, "query")
     flow_explanation = _mapping_field(query, "flow-explanation", "flow_explanation")
+    audit = _mapping_field(query, "audit")
     inventory = _mapping_field(knowledge, "inventory")
     storage = _mapping_field(knowledge, "storage")
     analysis = _mapping_field(knowledge, "analysis")
@@ -452,7 +469,17 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                     env,
                     DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
                 )
-            }
+            },
+            "audit": {
+                "memory_max_records": int(audit.get("memory-max-records") or audit.get("memory_max_records") or 200),
+                "directory": _path(str(audit.get("directory")), env) if audit.get("directory") else None,
+                "max_retained_files": int(audit.get("max-retained-files") or audit.get("max_retained_files") or 200),
+                "max_file_age_seconds": (
+                    int(audit.get("max-file-age-seconds") or audit.get("max_file_age_seconds"))
+                    if (audit.get("max-file-age-seconds") or audit.get("max_file_age_seconds"))
+                    else None
+                ),
+            },
         },
         "services": {
             "knowledge": {
@@ -557,6 +584,14 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
         raw["query"]["flow_explanation"]["request_timeout_seconds"] = int(env["FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS"])
     if env.get("FORGE_QUERY_DEFAULT_RESPONSE_LANGUAGE"):
         raw["query"]["default_response_language"] = env["FORGE_QUERY_DEFAULT_RESPONSE_LANGUAGE"]
+    if env.get("FORGE_QUERY_AUDIT_MEMORY_MAX_RECORDS"):
+        raw["query"]["audit"]["memory_max_records"] = int(env["FORGE_QUERY_AUDIT_MEMORY_MAX_RECORDS"])
+    if env.get("FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR"):
+        raw["query"]["audit"]["directory"] = _path(env["FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR"], env)
+    if env.get("FORGE_QUERY_AUDIT_MAX_RETAINED_FILES"):
+        raw["query"]["audit"]["max_retained_files"] = int(env["FORGE_QUERY_AUDIT_MAX_RETAINED_FILES"])
+    if env.get("FORGE_QUERY_AUDIT_MAX_FILE_AGE_SECONDS"):
+        raw["query"]["audit"]["max_file_age_seconds"] = int(env["FORGE_QUERY_AUDIT_MAX_FILE_AGE_SECONDS"])
 
     knowledge = raw["services"]["knowledge"]
     if env.get("KNOWLEDGE_HOST"):
