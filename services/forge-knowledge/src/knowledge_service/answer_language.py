@@ -17,66 +17,112 @@ _SPECULATIVE_PROSE_RE = re.compile(r"(?i)\b(likely|probably|maybe|assuming|presu
 _INTERNAL_REF_RE = re.compile(r"(?i)\b(?:nodeRef|transitionRef|boundaryRef|evidenceRefs?|analysis-graph-[a-z-]+:[a-f0-9]+)\b")
 _RUSSIAN_SPECIFIC_RE = re.compile(r"[ыэёъЫЭЁЪ]")
 _UKRAINIAN_SPECIFIC_RE = re.compile(r"[іїєґІЇЄҐ]")
-_RUSSIAN_MARKERS = {
-    "базу",
-    "возвращает",
-    "выполняется",
-    "данные",
-    "для",
-    "записываться",
-    "записываются",
-    "запрос",
-    "имени",
+_RUSSIAN_FUNCTION_WORDS = {
+    "и",
+    "из",
+    "к",
     "как",
+    "после",
+    "при",
+    "с",
+    "это",
+    "этого",
+    "этот",
+    "затем",
+}
+_UKRAINIAN_FUNCTION_WORDS = {
+    "та",
+    "й",
+    "як",
+    "після",
+    "потім",
+    "через",
+    "його",
+}
+_RUSSIAN_EXACT_MARKERS = {
+    "база",
+    "базе",
+    "базу",
+    "данные",
+    "дальше",
+    "запрос",
+    "значение",
+    "код",
     "контроллер",
     "метод",
     "нужно",
-    "обработки",
     "обработчик",
+    "объект",
+    "операции",
+    "параметров",
+    "передается",
+    "приложение",
+    "процесс",
+    "результат",
+    "сайт",
+    "сайта",
+    "сервис",
+    "система",
+    "сообщение",
+    "создает",
     "ответ",
-    "отправить",
-    "перед",
     "пользователь",
     "пользователя",
-    "получает",
-    "после",
-    "проверка",
-    "приходит",
-    "работает",
-    "результат",
-    "сайта",
-    "сайт",
-    "система",
-    "сохранением",
-    "сохраняет",
-    "создать",
-    "создает",
-    "этого",
 }
-_UKRAINIAN_MARKERS = {
-    "відповідь",
-    "виконується",
+_UKRAINIAN_EXACT_MARKERS = {
+    "бере",
     "дані",
-    "записує",
+    "далі",
+    "додаток",
     "запит",
+    "значення",
+    "код",
     "контролер",
-    "користувач",
-    "надходить",
-    "обробки",
+    "маршрут",
     "обробник",
-    "отримує",
-    "перед",
-    "передає",
-    "перевірка",
-    "після",
-    "повертає",
-    "працює",
+    "потік",
     "результат",
     "сайт",
     "сервіс",
-    "створення",
-    "створює",
+    "статус",
 }
+_RUSSIAN_STEMS = (
+    "возвращ",
+    "выполн",
+    "вызыва",
+    "записыва",
+    "начина",
+    "обработ",
+    "обраща",
+    "операц",
+    "отправ",
+    "переда",
+    "получ",
+    "пользовател",
+    "провер",
+    "принима",
+    "приход",
+    "работа",
+    "сохраня",
+    "созда",
+    "формир",
+)
+_UKRAINIAN_STEMS = (
+    "виклика",
+    "викон",
+    "запис",
+    "має",
+    "надход",
+    "оброб",
+    "отриму",
+    "переда",
+    "перевір",
+    "поверта",
+    "працю",
+    "прийма",
+    "проход",
+    "створ",
+)
 
 
 @dataclass(frozen=True)
@@ -136,12 +182,38 @@ def is_russian_prose(value: str) -> bool:
     prose = " ".join(words)
     russian_specific = len(_RUSSIAN_SPECIFIC_RE.findall(prose))
     ukrainian_specific = len(_UKRAINIAN_SPECIFIC_RE.findall(prose))
-    russian_score = sum(1 for word in words if word in _RUSSIAN_MARKERS)
-    ukrainian_score = sum(1 for word in words if word in _UKRAINIAN_MARKERS)
-    if russian_specific >= 1 and ukrainian_specific == 0 and len(words) >= 3:
+    russian_score = _language_marker_score(
+        words,
+        exact_markers=_RUSSIAN_EXACT_MARKERS,
+        stems=_RUSSIAN_STEMS,
+        function_words=_RUSSIAN_FUNCTION_WORDS,
+    ) + (russian_specific * 2)
+    ukrainian_score = _language_marker_score(
+        words,
+        exact_markers=_UKRAINIAN_EXACT_MARKERS,
+        stems=_UKRAINIAN_STEMS,
+        function_words=_UKRAINIAN_FUNCTION_WORDS,
+    ) + (ukrainian_specific * 2)
+    if ukrainian_specific >= 2 and ukrainian_score >= russian_score:
+        return False
+    if russian_specific >= 1 and ukrainian_specific == 0:
         return True
-    if russian_score >= 3 and russian_score >= ukrainian_score + 2:
+    if russian_score >= 4 and russian_score >= ukrainian_score + 2:
         return True
-    if russian_score >= 2 and russian_specific >= 1 and russian_score > ukrainian_score:
+    if russian_score >= 3 and russian_specific >= 1 and russian_score > ukrainian_score:
+        return True
+    if ukrainian_specific == 0 and russian_score >= 3 and russian_score >= ukrainian_score + 2:
         return True
     return False
+
+
+def _language_marker_score(words: List[str], *, exact_markers: set[str], stems: tuple[str, ...], function_words: set[str]) -> int:
+    score = 0
+    for word in words:
+        if word in exact_markers:
+            score += 2
+        if word in function_words:
+            score += 1
+        if any(word.startswith(stem) for stem in stems):
+            score += 1
+    return score

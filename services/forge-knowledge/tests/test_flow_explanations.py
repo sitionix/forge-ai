@@ -251,7 +251,11 @@ def retrieval_plan(query: str, *, detected_language: str = "en", response_langua
 
 def test_complete_technical_flow_prompt_contains_grounded_trigger_and_steps():
     request = KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION", answerLanguage="uk")
-    llm_input = CompactFlowProjector().human_llm_input(request, technical_create_site_flow())
+    llm_input = CompactFlowProjector().human_llm_input(
+        request,
+        technical_create_site_flow(),
+        retrieval_plan(request.queryText, detected_language="uk", response_language="uk"),
+    )
     prompt = HumanAnswerPromptRenderer().render(llm_input)
     rendered = json.dumps(llm_input, ensure_ascii=False)
 
@@ -319,6 +323,7 @@ def test_compact_projector_orders_resolved_and_boundary_children_by_callsite_lin
                 evidence("e-resolved", "resolved-later", None, 20, "service.execute(command)"),
             ),
         ),
+        retrieval_plan("Alpha", detected_language="en", response_language="en"),
     )
 
     assert [child["symbol"] for child in projected["tree"]["children"]] == ["SiteApiMapper.asCreateSiteCommand", "ResolvedLater"]
@@ -329,6 +334,7 @@ def test_human_prompt_contract_allows_natural_grounded_output():
         CompactFlowProjector().human_llm_input(
             KnowledgeQueryRequest(queryText="Alpha", intent="FLOW_EXPLANATION", answerLanguage="en"),
             technical_create_site_flow(),
+            retrieval_plan("Alpha", detected_language="en", response_language="en"),
         )
     )
 
@@ -353,7 +359,11 @@ def test_human_prompt_contract_allows_natural_grounded_output():
 
 def test_missing_trigger_metadata_is_not_invented():
     request = KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION", answerLanguage="uk")
-    llm_input = CompactFlowProjector().human_llm_input(request, technical_create_site_flow(with_trigger=False))
+    llm_input = CompactFlowProjector().human_llm_input(
+        request,
+        technical_create_site_flow(with_trigger=False),
+        retrieval_plan(request.queryText, detected_language="uk", response_language="uk"),
+    )
 
     assert "trigger" not in llm_input["tree"]
     rendered = json.dumps(llm_input, ensure_ascii=False)
@@ -387,6 +397,7 @@ def test_auto_language_resolves_english_and_accepts_english_prose():
     response = service.answer(
         KnowledgeQueryRequest(queryText="how is a site created", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("how is a site created", detected_language="en", response_language="en"),
     )
 
     assert response.answerLanguage == "en"
@@ -403,6 +414,7 @@ def test_explicit_language_override_keeps_english_for_ukrainian_question():
     response = service.answer(
         KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION", answerLanguage="en"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="en"),
     )
 
     assert response.answerLanguage == "en"
@@ -494,6 +506,11 @@ def test_required_russian_prose_examples_are_rejected_after_one_repair_attempt()
         "Проверка имени выполняется перед сохранением.",
         "Пользователь получает результат после обработки.",
         "Данные записываются в базу.",
+        "Процесс начинается с проверки параметров.",
+        "Затем код обращается к базе и формирует результат.",
+        "Объект передается дальше для обработки.",
+        "Значение проверяется перед выполнением операции.",
+        "Приложение принимает сообщение и вызывает сервис.",
     ]
     for example in examples:
         provider = SequenceHumanAnswerProvider([example, example])
@@ -519,6 +536,9 @@ def test_ukrainian_prose_with_few_specific_letters_is_not_rejected_as_russian():
         "Код передає дані в сервіс та повертає результат.",
         "Система приймає запит, потім передає його далі.",
         "Контролер бере запит та викликає сервіс.",
+        "Код має маршрут та статус.",
+        "Запит має результат та опис.",
+        "Сервіс бере дані та дає результат.",
     ]
     for example in examples:
         provider = SequenceHumanAnswerProvider([example])
@@ -610,6 +630,7 @@ def test_unresolved_call_wording_is_valid_when_not_internal_ref():
     response = service.answer(
         KnowledgeQueryRequest(queryText="how does SiteController.getSiteOverview work", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("how does SiteController.getSiteOverview work", detected_language="en", response_language="en"),
     )
 
     assert len(provider.calls) == 1
@@ -658,6 +679,7 @@ def test_speculative_framework_behavior_gets_repaired():
     response = service.answer(
         KnowledgeQueryRequest(queryText="how does payment handling work", intent="FLOW_EXPLANATION"),
         human_execution(unrelated_listener_flow()),
+        plan=retrieval_plan("how does payment handling work", detected_language="en", response_language="en"),
     )
 
     assert len(provider.calls) == 2
@@ -697,6 +719,7 @@ def test_generic_prompt_and_projector_work_for_unrelated_flow_without_create_sit
     response = service.answer(
         KnowledgeQueryRequest(queryText="how is the payment event handled", intent="FLOW_EXPLANATION"),
         human_execution(graph_flow),
+        plan=retrieval_plan("how is the payment event handled", detected_language="en", response_language="en"),
     )
     prompt = HumanAnswerPromptRenderer().render(provider.calls[0]["llmInput"])
 

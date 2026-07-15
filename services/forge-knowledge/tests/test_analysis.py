@@ -3,6 +3,7 @@
 import hashlib
 import asyncio
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -40,6 +41,7 @@ from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepositor
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.graph_analysis import GraphAnalysisEngine
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
+from knowledge_service.graph_state_repository import GRAPH_STATE_FAILED, GraphStateRepository
 from knowledge_service.inventory_builder import InventoryBuilder
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
@@ -51,6 +53,7 @@ from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticInde
 from knowledge_service.semantic_index import SemanticIndexStore
 from knowledge_service.snippet_extractor import SnippetExtractor
 from knowledge_service.source_config import load_source_config
+from knowledge_service.source_graph_finalizer import CrossSourceGraphResolver, SourceGraphFinalizer
 from knowledge_service.structural_analysis import StaticGraphMaterializer
 from knowledge_service.structural_model import StructuralFileMetadata
 from knowledge_service.target_enrichment import (
@@ -958,8 +961,6 @@ def test_analysis_store_rebuilds_incompatible_graph_diagnostics_schema(tmp_path)
         assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics WHERE code = 'OLD_DIAGNOSTIC'").fetchone()[0] == 0
-        schema = [tuple(row) for row in conn.execute("SELECT version, name FROM analysis_schema_migrations").fetchall()]
-        assert schema == [(1, "current_analysis_schema")]
 
     AnalysisStore(db_path).init()
 
@@ -1050,10 +1051,8 @@ def test_analysis_store_current_schema_initializes_empty_db_idempotently(tmp_pat
     store.init()
 
     with sqlite3.connect(db_path) as conn:
-        schema = conn.execute("SELECT version, name FROM analysis_schema_migrations ORDER BY version").fetchall()
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
 
-    assert schema == [(1, "current_analysis_schema")]
     assert {"analysis_jobs", "analysis_graph_state", "analysis_graph_nodes", "analysis_graph_edges"}.issubset(tables)
 
 
@@ -1319,6 +1318,110 @@ def test_graph_store_retries_transient_sqlite_lock(monkeypatch, tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0] == len(graph["nodes"])
 
 
+def test_source_graph_finalizer_invokes_injected_resolver():
+    class FakeStore:
+        def __init__(self):
+            self.conn = object()
+            self.init_calls = 0
+
+        def init(self):
+            self.init_calls += 1
+
+        def _write_with_busy_retry(self, write):
+            write(self.conn)
+
+        def mark_source_graph_failed(self, source_id, exc):
+            raise AssertionError(f"unexpected finalization failure for {source_id}: {exc}")
+
+    class FakeStateRepository:
+        def __init__(self):
+            self.status_calls = []
+
+        def set_status_conn(self, conn, source_id, status, updated_at, diagnostics=None):
+            self.status_calls.append((conn, source_id, status, updated_at, diagnostics))
+
+    class FakeResolver:
+        def __init__(self):
+            self.calls = []
+
+        def finalize_source(self, conn, source_id, created_at):
+            self.calls.append((conn, source_id, created_at))
+
+    store = FakeStore()
+    state_repository = FakeStateRepository()
+    resolver = FakeResolver()
+
+    SourceGraphFinalizer(store, state_repository=state_repository, resolver=resolver).finalize_source_graph("edge-gateway")
+
+    assert store.init_calls == 1
+    assert len(state_repository.status_calls) == 1
+    assert state_repository.status_calls[0][0] is store.conn
+    assert state_repository.status_calls[0][1] == "edge-gateway"
+    assert state_repository.status_calls[0][2] == "FINALIZING"
+    assert state_repository.status_calls[0][4] is None
+    assert resolver.calls == [(store.conn, "edge-gateway", state_repository.status_calls[0][3])]
+
+
+def test_analysis_store_finalization_delegates_once(monkeypatch, tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    calls = []
+
+    class FakeFinalizer:
+        def __init__(self, delegated_store):
+            self.delegated_store = delegated_store
+
+        def finalize_source_graph(self, source_id):
+            calls.append((self.delegated_store, source_id))
+
+    monkeypatch.setattr("knowledge_service.analysis_store.SourceGraphFinalizer", FakeFinalizer)
+
+    store.finalize_source_graph("edge-gateway")
+
+    assert calls == [(store, "edge-gateway")]
+
+
+def test_graph_state_repository_mark_failed_persists_failed_state(tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+
+    GraphStateRepository(store).mark_failed(
+        "edge-gateway",
+        {"code": "SOURCE_GRAPH_FINALIZATION_FAILED", "message": "boom"},
+        "2026-07-15T00:00:00+00:00",
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT status, diagnostics_json
+            FROM analysis_graph_state
+            WHERE source_id = ?
+            """,
+            ("edge-gateway",),
+        ).fetchone()
+
+    assert row is not None
+    assert row["status"] == GRAPH_STATE_FAILED
+    assert json.loads(row["diagnostics_json"]) == [{"code": "SOURCE_GRAPH_FINALIZATION_FAILED", "message": "boom"}]
+
+
+def test_graph_state_repository_mark_failed_logs_when_persistence_fails(caplog):
+    class FailingStore:
+        def _write_with_busy_retry(self, write):
+            raise sqlite3.OperationalError("database is locked")
+
+    caplog.set_level(logging.WARNING, logger="knowledge_service.graph_state_repository")
+
+    GraphStateRepository(FailingStore()).mark_failed(
+        "edge-gateway",
+        {"code": "SOURCE_GRAPH_FINALIZATION_FAILED", "message": "boom"},
+        "2026-07-15T00:00:00+00:00",
+    )
+
+    assert "Failed to persist graph FAILED state for source edge-gateway" in caplog.text
+
+
 def test_source_graph_finalization_runs_once_and_resolves_many_calls_without_sql_n_plus_one(monkeypatch, tmp_path):
     service_store, _, _ = build_inventory_with_file_count(tmp_path / "service-finalize", 3)
     runner = SupervisorHarness(service_store, app_config(tmp_path / "service-finalize"))
@@ -1336,7 +1439,7 @@ def test_source_graph_finalization_runs_once_and_resolves_many_calls_without_sql
     assert service_finalize_calls == ["edge-gateway"]
 
     call_count = 120
-    caller_body = "\n".join(f"    worker.handle();" for _ in range(call_count))
+    caller_body = "\n".join("    worker.handle();" for _ in range(call_count))
     caller = f"""package example;
 
 class Dispatcher {{
@@ -1355,17 +1458,17 @@ class Worker {
 """
     store = AnalysisStore(tmp_path / "resolver-finalize.sqlite")
     store.init()
-    original_finalize = store._finalize_graph_replacement
+    original_finalize = CrossSourceGraphResolver.finalize_source
     original_connect = store._connect
     finalize_calls = []
     trace_active = {"value": False}
     traced_statements = []
 
-    def traced_finalize(conn, source_id, created_at):
+    def traced_finalize(self, conn, source_id, created_at):
         finalize_calls.append(source_id)
         trace_active["value"] = True
         try:
-            return original_finalize(conn, source_id, created_at)
+            return original_finalize(self, conn, source_id, created_at)
         finally:
             trace_active["value"] = False
 
@@ -1374,7 +1477,7 @@ class Worker {
         conn.set_trace_callback(lambda statement: traced_statements.append(statement) if trace_active["value"] else None)
         return conn
 
-    monkeypatch.setattr(store, "_finalize_graph_replacement", traced_finalize)
+    monkeypatch.setattr(CrossSourceGraphResolver, "finalize_source", traced_finalize)
     monkeypatch.setattr(store, "_connect", traced_connect)
 
     store.replace_file_graph_analysis(
@@ -2178,6 +2281,95 @@ class TaskWorkflow {
     assert dispatch_metadata["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH"
 
 
+def test_cross_source_graph_resolver_can_be_unit_tested_directly(tmp_path):
+    interface_source = """package generated.api;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+@RequestMapping("/sites")
+public interface SiteApi {
+  @GetMapping("/{id}")
+  String getSite(String id);
+}
+"""
+    implementation_source = """package service.impl;
+
+import generated.api.SiteApi;
+
+public class SiteController implements SiteApi {
+  @Override
+  public String getSite(String id) {
+    return id;
+  }
+}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(interface_source, "target/generated-sources/src/main/java/generated/api/SiteApi.java", "app-afesox"),
+        _materialize_static_java_for_test(
+            interface_source,
+            1,
+            "target/generated-sources/src/main/java/generated/api/SiteApi.java",
+            "app-afesox",
+        ),
+    )
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(implementation_source, "src/main/java/service/impl/SiteController.java", "site-service"),
+        _materialize_static_java_for_test(
+            implementation_source,
+            2,
+            "src/main/java/service/impl/SiteController.java",
+            "site-service",
+        ),
+    )
+    resolver = CrossSourceGraphResolver(store)
+
+    def finalize(conn):
+        resolver.finalize_source(conn, "app-afesox", "2026-07-15T00:00:00+00:00")
+        resolver.finalize_source(conn, "site-service", "2026-07-15T00:00:01+00:00")
+
+    store._write_with_busy_retry(finalize)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        override_edge = conn.execute(
+            """
+            SELECT impl.qualified_name AS implementation_method,
+                   iface.qualified_name AS interface_method
+            FROM analysis_graph_edges edge
+            JOIN analysis_graph_nodes impl ON impl.id = edge.from_node_id
+            JOIN analysis_graph_nodes iface ON iface.id = edge.to_node_id
+            WHERE edge.source_id = 'site-service'
+              AND edge.edge_type = 'OVERRIDES'
+            """
+        ).fetchone()
+        inherited_claim = conn.execute(
+            """
+            SELECT node.qualified_name, claim.entrypoint_http_method, claim.entrypoint_route,
+                   claim.entrypoint_interface_method, claim.entrypoint_execution_kind
+            FROM analysis_graph_claims claim
+            JOIN analysis_graph_nodes node ON node.id = claim.node_id
+            WHERE claim.source_id = 'site-service'
+              AND claim.claim_kind = 'ENTRYPOINT_HINT'
+              AND claim.status = 'DERIVED'
+            """
+        ).fetchone()
+
+    assert override_edge is not None
+    assert override_edge["implementation_method"] == "service.impl.SiteController.getSite"
+    assert override_edge["interface_method"] == "generated.api.SiteApi.getSite"
+    assert inherited_claim is not None
+    assert inherited_claim["qualified_name"] == "service.impl.SiteController.getSite"
+    assert inherited_claim["entrypoint_http_method"] == "GET"
+    assert inherited_claim["entrypoint_route"] == "/sites/{id}"
+    assert inherited_claim["entrypoint_interface_method"] == "generated.api.SiteApi.getSite"
+    assert inherited_claim["entrypoint_execution_kind"] == "EXECUTABLE"
+
+
 def test_cross_source_incoming_traversal_reaches_service_entrypoint_from_app_anchor(tmp_path):
     app_source = """package app.afesox;
 
@@ -2309,6 +2501,23 @@ public class SiteController {
         and edge.to_source_id == "app-afesox"
         for edge in flow.transitions
     )
+    with sqlite3.connect(store.db_path) as conn:
+        plan_rows = conn.execute(
+            """
+            EXPLAIN QUERY PLAN
+            SELECT e.id
+            FROM analysis_graph_edges e
+            WHERE e.edge_type = ?
+              AND e.status IN (?)
+              AND e.to_node_id IN (?)
+            ORDER BY e.to_node_id, e.relative_path, e.id
+            """,
+            ("CALLS", "TRUSTED", app_callable["id"]),
+        ).fetchall()
+    plan = "\n".join(str(row[-1]) for row in plan_rows)
+    assert "idx_analysis_graph_edges_incoming_lookup" in plan
+    assert "SCAN analysis_graph_edges" not in plan
+    assert "SCAN e" not in plan
 
 
 def test_resolver_does_not_fallback_when_first_class_arity_mismatches(tmp_path):
@@ -3172,18 +3381,13 @@ def test_analysis_jobs_incompatible_schema_is_recreated_without_lifecycle_rows(t
     store.init()
     with sqlite3.connect(db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(analysis_jobs)").fetchall()}
-        schema = conn.execute("SELECT version, name FROM analysis_schema_migrations ORDER BY version").fetchall()
     job = store.job("job-old")
     store.init()
-    with sqlite3.connect(db_path) as conn:
-        schema_count = conn.execute("SELECT COUNT(*) FROM analysis_schema_migrations").fetchone()[0]
 
     assert "skipped_unchanged_file_count" not in columns
     assert "source_ids_json" in columns
     assert "mode" in columns
     assert job is None
-    assert schema == [(1, "current_analysis_schema")]
-    assert schema_count == 1
 
 
 def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path):
@@ -3524,7 +3728,7 @@ def test_runtime_analysis_writes_job_file_flow_and_line_metadata(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     analyzer = StubAnalyzer(GraphAnalysisResult())
     runner = SupervisorHarness(store, app_config(tmp_path))
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
+    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -4995,7 +5199,7 @@ def test_current_file_progress_endpoint_returns_inactive_when_no_progress(tmp_pa
 
 
 def test_current_file_progress_endpoint_returns_sanitized_active_entry_during_analysis(tmp_path, monkeypatch):
-    store = configure_api(tmp_path, monkeypatch)
+    configure_api(tmp_path, monkeypatch)
     progress = {
         "active": True,
         "entries": [

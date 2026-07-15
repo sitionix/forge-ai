@@ -7,7 +7,7 @@ import time
 import urllib.parse
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Deque, Dict, List, Mapping, Sequence
 
 import httpx
 
@@ -22,40 +22,6 @@ QUERY_INTERPRETATION_FAILED = "QUERY_INTERPRETATION_FAILED"
 
 _LANGUAGE_CODE_RE = re.compile(r"^[a-z]{2,3}$")
 _CODE_LIKE_RE = re.compile(r"\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\b|\b(?:[A-Z][A-Za-z0-9_$]*[A-Z][A-Za-z0-9_$]*|[a-z]+[A-Z][A-Za-z0-9_$]*)\b")
-_CYRILLIC_WORD_RE = re.compile(r"[А-Яа-яЁёІіЇїЄєҐґ]+")
-_RUSSIAN_SPECIFIC_RE = re.compile(r"[ыэёъЫЭЁЪ]")
-_UKRAINIAN_SPECIFIC_RE = re.compile(r"[іїєґІЇЄҐ]")
-_LATIN_RE = re.compile(r"[A-Za-z]")
-_RUSSIAN_QUERY_MARKERS = {
-    "данные",
-    "для",
-    "запрос",
-    "как",
-    "контроллер",
-    "нужно",
-    "обработчик",
-    "пользователь",
-    "после",
-    "работает",
-    "сайт",
-    "сохраняет",
-    "создать",
-    "создания",
-}
-_UKRAINIAN_QUERY_MARKERS = {
-    "дані",
-    "для",
-    "запит",
-    "контролер",
-    "користувач",
-    "обробник",
-    "після",
-    "працює",
-    "сайт",
-    "створення",
-    "створити",
-    "як",
-}
 _DEFAULT_MIN_CALL_TIMEOUT_SECONDS = 0.01
 _DEADLINE_COMPLETION_GRACE_SECONDS = 0.005
 
@@ -210,22 +176,12 @@ class QueryInterpretationService:
         }
         validation_errors: Sequence[str] | None = None
         for attempt_count in (1, 2):
-            try:
-                result = self._complete_with_deadline(
-                    llm_input,
-                    deadline_at,
-                    validation_errors=validation_errors,
-                    attempt_count=attempt_count,
-                )
-            except QueryPlanningDeadlineExceeded:
-                raise
-            except QueryPlanningProviderUnavailable as exc:
-                return self._fallback_plan(
-                    request,
-                    explicit_language=explicit_language,
-                    reason="PROVIDER_UNAVAILABLE",
-                    errors=[str(exc)],
-                )
+            result = self._complete_with_deadline(
+                llm_input,
+                deadline_at,
+                validation_errors=validation_errors,
+                attempt_count=attempt_count,
+            )
             try:
                 interpretation = self._validate(
                     result.raw_text,
@@ -248,18 +204,8 @@ class QueryInterpretationService:
                 if attempt_count == 1:
                     validation_errors = exc.errors
                     continue
-                return self._fallback_plan(
-                    request,
-                    explicit_language=explicit_language,
-                    reason="REPAIR_EXHAUSTED",
-                    errors=exc.errors,
-                )
-        return self._fallback_plan(
-            request,
-            explicit_language=explicit_language,
-            reason="REPAIR_EXHAUSTED",
-            errors=["query interpretation repair failed validation"],
-        )
+                raise QueryPlanningRepairExhausted("query interpretation repair failed validation") from exc
+        raise QueryPlanningRepairExhausted("query interpretation repair failed validation")
 
     def _complete_with_deadline(
         self,
@@ -404,66 +350,6 @@ class QueryInterpretationService:
             if len(result) >= 10:
                 break
         return result
-
-    def _fallback_plan(
-        self,
-        request: KnowledgeQueryRequest,
-        *,
-        explicit_language: str | None,
-        reason: str,
-        errors: Sequence[str],
-    ) -> QueryRetrievalPlan:
-        query_text = request.queryText.strip()
-        detected = self._detect_language_without_provider(query_text)
-        response_language = explicit_language or self._automatic_response_language(detected) or self.default_response_language
-        code_identifiers = tuple(self._merge_exact_query_identifiers([], query_text, []))
-        self.audit_records.append(
-            {
-                "provider": self._provider_name(),
-                "model": self._provider_model(),
-                "promptLength": 0,
-                "promptHash": "",
-                "rawResponseLength": 0,
-                "rawResponseHash": "",
-                "attemptCount": len(self.audit_records) + 1,
-                "requestedLanguage": explicit_language or "AUTO",
-                "resolvedLanguage": response_language,
-                "detectedLanguage": detected,
-                "fallback": True,
-                "fallbackReason": reason,
-                "validationErrors": [str(error) for error in errors if str(error).strip()],
-            }
-        )
-        return QueryRetrievalPlan(
-            original_query=query_text,
-            normalized_query=query_text,
-            search_queries=(),
-            code_identifiers=code_identifiers,
-            concepts=(),
-            effective_intent=KnowledgeQueryIntent.FLOW_EXPLANATION.value,
-            detected_language=detected,
-            response_language=response_language,
-        )
-
-    def _detect_language_without_provider(self, query_text: str) -> str:
-        words = [item.lower().replace("ё", "е") for item in _CYRILLIC_WORD_RE.findall(query_text)]
-        if words:
-            russian_specific = len(_RUSSIAN_SPECIFIC_RE.findall(query_text))
-            ukrainian_specific = len(_UKRAINIAN_SPECIFIC_RE.findall(query_text))
-            russian_score = sum(1 for word in words if word in _RUSSIAN_QUERY_MARKERS)
-            ukrainian_score = sum(1 for word in words if word in _UKRAINIAN_QUERY_MARKERS)
-            if russian_specific and not ukrainian_specific:
-                return "ru"
-            if ukrainian_specific:
-                return "uk"
-            if russian_score >= ukrainian_score + 1:
-                return "ru"
-            if ukrainian_score:
-                return "uk"
-            return "und"
-        if _LATIN_RE.search(query_text):
-            return "en"
-        return "und"
 
     def _explicit_language(self, value: str | None) -> str | None:
         normalized = self._normalize_response_language(value)

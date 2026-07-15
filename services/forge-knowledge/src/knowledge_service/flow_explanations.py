@@ -29,7 +29,6 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeHumanQueryResponse,
     KnowledgeQueryDiagnostic,
     KnowledgeQueryRequest,
-    KnowledgeQueryResponse,
     KnowledgeQueryToolContextResponse,
 )
 from knowledge_service.query_interpretation import QueryRetrievalPlan
@@ -170,9 +169,7 @@ class CompactFlowProjector:
             diagnostics=self._diagnostics(execution),
         )
 
-    def human_llm_input(self, request: KnowledgeQueryRequest, flow: EntrypointFlow, plan: QueryRetrievalPlan | None = None) -> Dict[str, Any]:
-        if plan is None:
-            plan = fallback_human_answer_plan(request)
+    def human_llm_input(self, request: KnowledgeQueryRequest, flow: EntrypointFlow, plan: QueryRetrievalPlan) -> Dict[str, Any]:
         self._context_compacted = False
         tree = self._tree(flow)
         human_tree = self._human_tree_item(tree.entrypoint)
@@ -457,25 +454,6 @@ def replace_edge_boundary(edge: FlowGraphEdge) -> FlowGraphEdge:
     return replace(edge, boundary_reason="CURRENT_TARGET_NODE_MISSING")
 
 
-def fallback_human_answer_plan(request: KnowledgeQueryRequest) -> QueryRetrievalPlan:
-    response_language = _explicit_or_default_response_language(request.answerLanguage)
-    return QueryRetrievalPlan(
-        original_query=request.queryText,
-        normalized_query=request.queryText,
-        search_queries=(),
-        code_identifiers=(),
-        concepts=(),
-        effective_intent="FLOW_EXPLANATION",
-        detected_language="und",
-        response_language=response_language,
-    )
-
-
-def _explicit_or_default_response_language(value: str | None) -> str:
-    normalized = str(value or "").strip().lower().split("-", 1)[0]
-    return normalized if normalized in {"uk", "en"} else "en"
-
-
 class HumanFlowAnswerService:
     def __init__(
         self,
@@ -520,7 +498,9 @@ class HumanFlowAnswerService:
         answers: List[KnowledgeFlowAnswer] = []
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         deadline_failures = 0
-        effective_plan = plan or self._fallback_plan(request)
+        if plan is None:
+            raise HumanAnswerGenerationFailed("query retrieval plan is required")
+        effective_plan = plan
         resolved_language = effective_plan.response_language
         for flow in flows:
             source, entrypoint = self.projector.flow_answer_identity(flow)
@@ -554,9 +534,6 @@ class HumanFlowAnswerService:
         if deadline_failures:
             raise HumanAnswerDeadlineExceeded()
         raise HumanAnswerGenerationFailed("no grounded flow answers")
-
-    def _fallback_plan(self, request: KnowledgeQueryRequest) -> QueryRetrievalPlan:
-        return fallback_human_answer_plan(request)
 
     def _answer_one_flow(
         self,

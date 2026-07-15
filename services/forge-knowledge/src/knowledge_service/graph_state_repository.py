@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from typing import Any, List, Mapping, Optional, Sequence
 
@@ -12,6 +13,8 @@ GRAPH_STATE_DIRTY = "DIRTY"
 GRAPH_STATE_FINALIZING = "FINALIZING"
 GRAPH_STATE_READY = "READY"
 GRAPH_STATE_FAILED = "FAILED"
+
+LOGGER = logging.getLogger(__name__)
 
 
 class GraphStateRepository:
@@ -45,7 +48,7 @@ class GraphStateRepository:
         try:
             self.store._write_with_busy_retry(write)
         except Exception:
-            pass
+            LOGGER.warning("Failed to persist graph FAILED state for source %s", source_id, exc_info=True)
 
     def mark_dirty_conn(self, conn: sqlite3.Connection, source_id: str, updated_at: str) -> None:
         self.set_status_conn(conn, source_id, GRAPH_STATE_DIRTY, updated_at)

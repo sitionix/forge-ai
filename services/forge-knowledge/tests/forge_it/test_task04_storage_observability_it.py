@@ -33,7 +33,6 @@ IMPORTANT_TABLES = (
     "analysis_graph_evidence",
     "analysis_graph_claims",
     "analysis_graph_diagnostics",
-    "analysis_schema_migrations",
 )
 
 def _old(days: int = 90) -> str:
@@ -53,7 +52,7 @@ def test_it_storage_01_fresh_db_maintenance(tmp_path):
     assert deps.storage_operations.run_maintenance().integrity_check == "ok"
 
 
-def test_it_storage_02_current_state_migration_idempotency(tmp_path):
+def test_it_storage_02_current_state_initialization_idempotency(tmp_path):
     db_path = tmp_path / "representative.sqlite"
     InventoryStore(db_path).init()
     AnalysisStore(db_path).init()

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.query_interpretation import (
+    QueryPlanningProviderUnavailable,
+    QueryPlanningRepairExhausted,
     QueryInterpretationPromptRenderer,
     QueryInterpretationProviderResult,
     QueryInterpretationService,
@@ -127,33 +131,27 @@ def test_query_interpreter_repairs_invented_code_identifier_once():
     assert any("exact substring" in error for error in provider.calls[1]["validationErrors"])
 
 
-def test_query_interpreter_malformed_response_falls_back_with_audit_marker():
+def test_query_interpreter_malformed_response_repairs_once_then_fails_closed():
     provider = SequenceQueryInterpretationProvider(["not json", "still not json"])
     service = QueryInterpretationService(provider)
 
-    plan = service.interpret(KnowledgeQueryRequest(queryText="how does SiteController.createSite work", intent="AUTO"))
+    with pytest.raises(QueryPlanningRepairExhausted):
+        service.interpret(KnowledgeQueryRequest(queryText="how does SiteController.createSite work", intent="AUTO"))
 
-    assert plan.response_language == "en"
-    assert plan.code_identifiers == ("SiteController.createSite",)
     assert len(provider.calls) == 2
-    assert service.audit_records[-1]["fallback"] is True
-    assert service.audit_records[-1]["fallbackReason"] == "REPAIR_EXHAUSTED"
+    assert any("strict JSON" in error for error in provider.calls[1]["validationErrors"])
+    assert len(service.audit_records) == 2
 
 
-def test_query_interpreter_provider_unavailable_falls_back_to_exact_identifiers():
+def test_query_interpreter_provider_unavailable_fails_closed():
     provider = SequenceQueryInterpretationProvider([RuntimeError("provider unavailable")])
     service = QueryInterpretationService(provider)
 
-    plan = service.interpret(
-        KnowledgeQueryRequest(queryText="Как работает SiteController.createSite", intent="AUTO")
-    )
+    with pytest.raises(QueryPlanningProviderUnavailable):
+        service.interpret(KnowledgeQueryRequest(queryText="Как работает SiteController.createSite", intent="AUTO"))
 
-    assert plan.detected_language == "ru"
-    assert plan.response_language == "uk"
-    assert plan.code_identifiers == ("SiteController.createSite",)
     assert len(provider.calls) == 1
-    assert service.audit_records[-1]["fallback"] is True
-    assert service.audit_records[-1]["fallbackReason"] == "PROVIDER_UNAVAILABLE"
+    assert list(service.audit_records) == []
 
 
 def test_query_interpreter_prompt_is_generic():

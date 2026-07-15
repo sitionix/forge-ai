@@ -449,7 +449,7 @@ def test_query_audit_write_failure_warns_without_failing_query(tmp_path, caplog,
     assert any(record.message == "human_answer_audit_write_failed" for record in caplog.records) or "human_answer_audit_write_failed" in captured.err
 
 
-def test_query_interpretation_failure_falls_back_without_final_answer_call(tmp_path):
+def test_query_interpretation_failure_returns_502_without_final_answer_call(tmp_path):
     app, _, _app_config, _ = build_test_app(write_runtime_config(tmp_path))
     broken_interpreter = BrokenQueryInterpretationProvider()
     final_provider = SentinelAnswerProvider("should not be used")
@@ -462,8 +462,8 @@ def test_query_interpretation_failure_falls_back_without_final_answer_call(tmp_p
 
     response = asyncio.run(exercise())
 
-    assert response.status_code == 404
-    assert response.json()["code"] == "NO_GROUNDED_GRAPH_CANDIDATES"
+    assert response.status_code == 502
+    assert response.json()["code"] == "QUERY_INTERPRETATION_FAILED"
     assert len(broken_interpreter.calls) == 2
     assert final_provider.calls == []
 
