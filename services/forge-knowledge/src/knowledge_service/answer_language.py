@@ -15,6 +15,10 @@ _CONSTANT_RE = re.compile(r"\b[A-Z][A-Z0-9_]{2,}\b")
 _SPECULATIVE_PROSE_RE = re.compile(r"(?i)\b(likely|probably|maybe|assuming|presumably)\b|default\s+Spring\s+Boot")
 _INTERNAL_REF_RE = re.compile(r"(?i)\b(?:nodeRef|transitionRef|boundaryRef|evidenceRefs?|analysis-graph-[a-z-]+:[a-f0-9]+)\b")
 _RUSSIAN_ONLY_ORTHOGRAPHY_RE = re.compile(r"[ыэёъЫЭЁЪ]")
+_RUSSIAN_PROSE_RE = re.compile(
+    r"\b(?:как|работает|контроллер|система|создает|пользователя|после|этого|метод|возвращает|ответ)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -39,7 +43,7 @@ class HumanAnswerTextValidator:
     def _language_error(self, text: str, language: str) -> str | None:
         normalized_language = str(language or "").strip().lower().split("-", 1)[0]
         prose = strip_technical_tokens(text)
-        if _RUSSIAN_ONLY_ORTHOGRAPHY_RE.search(prose):
+        if _RUSSIAN_ONLY_ORTHOGRAPHY_RE.search(prose) or _RUSSIAN_PROSE_RE.search(prose):
             return "Response prose must not be Russian."
         cyrillic_count = len(_CYRILLIC_RE.findall(prose))
         latin_count = len(_LATIN_RE.findall(prose))

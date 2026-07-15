@@ -24,7 +24,7 @@ from knowledge_service.graph_analysis import GraphAnalysisEngine
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.snippet_extractor import SnippetExtractor
-from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer, StructuralAnalysisEngine
+from knowledge_service.structural_analysis import StaticGraphMaterializer, StructuralAnalysisEngine
 
 
 class AnalysisProvider(Protocol):
@@ -143,7 +143,6 @@ class AnalysisSupervisor:
                 "sourceIds": sorted(set(request.sourceIds)),
                 "lastProgressAt": now if selected_rows is not None else None,
                 "diagnostics": [],
-                "engineVersion": GRAPH_ENGINE_VERSION,
             }
             if selected_rows is None:
                 self.analysis_store.create_job(job)
@@ -153,7 +152,6 @@ class AnalysisSupervisor:
                     job,
                     selected_rows,
                     flow_domain_by_file_id,
-                    GRAPH_ENGINE_VERSION,
                     reset_failed_current_state=True,
                 )
                 job_files_precreated = True
@@ -230,6 +228,7 @@ class AnalysisSupervisor:
         self._queue = asyncio.Queue(maxsize=max(1, self.config.analysis_queue_capacity))
         self._stopping = False
         self.analysis_store.mark_interrupted_jobs()
+        self._finalize_dirty_sources(None)
         worker_count = max(1, self.config.analysis_concurrency)
         self._workers = [asyncio.create_task(self._worker(index), name=f"knowledge-analysis-worker-{index}") for index in range(worker_count)]
 
@@ -255,6 +254,14 @@ class AnalysisSupervisor:
         close = getattr(provider, "aclose", None)
         if close is not None:
             await close()
+
+    def _finalize_dirty_sources(self, source_ids: Optional[List[str]]) -> None:
+        dirty_source_ids = self.analysis_store.dirty_graph_source_ids(source_ids)
+        for source_id in dirty_source_ids:
+            try:
+                self.analysis_store.finalize_source_graph(source_id)
+            except Exception as exc:
+                self.logger.warning("Knowledge source graph finalization failed for %s: %s", source_id, exc)
 
     async def _worker(self, index: int) -> None:
         while not self._stopping:
@@ -297,13 +304,13 @@ class AnalysisSupervisor:
         if selected_rows is None:
             self.analysis_store.cleanup_stale_files(scoped_source_ids or None)
         if selected_rows is None and not request.force:
-            unchanged_ids = self.analysis_store.unchanged_file_ids(rows, analyzer.name, analyzer.version, GRAPH_ENGINE_VERSION)
+            unchanged_ids = self.analysis_store.unchanged_file_ids(rows, analyzer.name, analyzer.version)
             rows = [row for row in rows if row["id"] not in unchanged_ids]
         if request.maxFiles is not None:
             rows = rows[: max(0, request.maxFiles)]
         flow_domain_by_file_id = {int(row["id"]): self._row_flow_domain(row) for row in rows}
         if not job_files_precreated:
-            self.analysis_store.create_job_files(job_id, rows, flow_domain_by_file_id, GRAPH_ENGINE_VERSION)
+            self.analysis_store.create_job_files(job_id, rows, flow_domain_by_file_id)
         if self._stop_requested(job_id):
             self._mark_job_stopped(job_id)
             return
@@ -322,7 +329,6 @@ class AnalysisSupervisor:
         self._log("job_started", jobId=job_id, sourceId=None, processed=0, failed=0)
         processed = failed = 0
         diagnostics: List[Dict[str, Any]] = []
-        graph_dirty_source_ids: set[str] = set()
         try:
             for row in rows:
                 if self._stop_requested(job_id):
@@ -333,7 +339,6 @@ class AnalysisSupervisor:
                     row["content_hash"],
                     analyzer.name,
                     analyzer.version,
-                    GRAPH_ENGINE_VERSION,
                 ):
                     processed += 1
                     self.analysis_store.update_job_file(
@@ -342,7 +347,6 @@ class AnalysisSupervisor:
                         "SKIPPED_UNCHANGED",
                         analysis_file_id=int(row["id"]),
                         flow_domain=flow_domain_by_file_id.get(int(row["id"]), self._row_flow_domain(row)),
-                        engine_version=GRAPH_ENGINE_VERSION,
                         completed=True,
                     )
                     self.analysis_store.update_job(
@@ -377,7 +381,6 @@ class AnalysisSupervisor:
                     int(row["id"]),
                     "RUNNING",
                     flow_domain=flow_domain,
-                    engine_version=GRAPH_ENGINE_VERSION,
                     started=True,
                 )
                 metadata = json.loads(row["metadata_json"])
@@ -393,7 +396,6 @@ class AnalysisSupervisor:
                         "FAILED",
                         diagnostics=file_diagnostics,
                         flow_domain=flow_domain,
-                        engine_version=GRAPH_ENGINE_VERSION,
                         completed=True,
                     )
                     self.analysis_store.update_job(
@@ -461,7 +463,6 @@ class AnalysisSupervisor:
                         ),
                         graph,
                     )
-                    graph_dirty_source_ids.add(str(row["source_id"]))
                     job_file_status = "ANALYZED_WITH_DIAGNOSTICS" if file_diagnostics else "ANALYZED"
                     self.analysis_store.update_job_file(
                         job_id,
@@ -472,7 +473,6 @@ class AnalysisSupervisor:
                         diagnostics=file_diagnostics,
                         line_count=len(lines),
                         flow_domain=flow_domain,
-                        engine_version=GRAPH_ENGINE_VERSION,
                         completed=True,
                     )
                     processed += 1
@@ -496,7 +496,6 @@ class AnalysisSupervisor:
                         diagnostics=file_diagnostics,
                         line_count=len(lines),
                         flow_domain=flow_domain,
-                        engine_version=GRAPH_ENGINE_VERSION,
                         completed=True,
                     )
                     self._log(
@@ -523,8 +522,7 @@ class AnalysisSupervisor:
             if self._stop_requested(job_id):
                 self._mark_job_stopped(job_id, diagnostics)
                 return
-            for source_id in sorted(graph_dirty_source_ids):
-                self.analysis_store.finalize_source_graph(source_id)
+            self._finalize_dirty_sources(scoped_source_ids)
             completed_at = datetime.now(timezone.utc)
             self.analysis_store.update_job(
                 job_id,
@@ -971,7 +969,6 @@ class AnalysisSupervisor:
             "content_hash": row["content_hash"],
             "analyzer_name": analyzer.name,
             "analyzer_version": analyzer.version,
-            "engine_version": GRAPH_ENGINE_VERSION,
             "flow_domain": flow_domain or self._row_flow_domain(row),
             "status": status,
             "analyzed_at": datetime.now(timezone.utc).isoformat(),

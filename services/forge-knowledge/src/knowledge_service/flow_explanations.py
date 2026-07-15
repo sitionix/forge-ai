@@ -16,6 +16,7 @@ from knowledge_service.config import (
     DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
 )
+from knowledge_service.entrypoint_kinds import tree_kind_for_entrypoint, trigger_kind_for_entrypoint
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow
 from knowledge_service.flow_boundary_classifier import FlowBoundaryClassifier, FLOW_BOUNDARY_CLASSIFIER
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
@@ -46,11 +47,23 @@ class FlowExplanationProviderResult:
     prompt_char_length: int
 
 
-class FlowExplanationDeadlineExceeded(Exception):
+class HumanAnswerGenerationFailed(Exception):
     pass
 
 
-class HumanAnswerGenerationFailed(Exception):
+class HumanAnswerDeadlineExceeded(HumanAnswerGenerationFailed):
+    pass
+
+
+class HumanAnswerProviderUnavailable(HumanAnswerGenerationFailed):
+    pass
+
+
+class HumanAnswerRepairExhausted(HumanAnswerGenerationFailed):
+    pass
+
+
+class HumanAnswerContextBudgetExceeded(HumanAnswerGenerationFailed):
     pass
 
 
@@ -58,6 +71,14 @@ class HumanAnswerContractViolation(HumanAnswerGenerationFailed):
     def __init__(self, errors: Sequence[str]) -> None:
         self.errors = [str(error) for error in errors if str(error).strip()]
         super().__init__("; ".join(self.errors) or "human answer violated output contract")
+
+
+class HumanAnswerMalformedResponse(HumanAnswerContractViolation):
+    pass
+
+
+class HumanAnswerLanguagePolicyViolation(HumanAnswerContractViolation):
+    pass
 
 
 class HumanAnswerPromptRenderer:
@@ -318,26 +339,12 @@ class CompactFlowProjector:
         return node.node_kind
 
     def _entrypoint_kind(self, value: str | None) -> str:
-        normalized = str(value or "").strip().upper()
-        return {
-            "HTTP": "HTTP_ENDPOINT",
-            "KAFKA": "KAFKA_LISTENER",
-            "SCHEDULED": "SCHEDULED_TASK",
-            "MESSAGE": "MESSAGE_HANDLER",
-            "BOOTSTRAP": "APPLICATION_ENTRYPOINT",
-        }.get(normalized, "ENTRYPOINT")
+        return tree_kind_for_entrypoint(value)
 
     def _trigger(self, node: FlowGraphNode) -> FlowToolTrigger | None:
         if not node.entrypoint:
             return None
-        normalized = str(node.entrypoint_kind or "").strip().upper()
-        trigger_kind = {
-            "HTTP": "HTTP",
-            "KAFKA": "KAFKA",
-            "SCHEDULED": "SCHEDULED",
-            "MESSAGE": "MESSAGE",
-            "BOOTSTRAP": "BOOTSTRAP",
-        }.get(normalized)
+        trigger_kind = trigger_kind_for_entrypoint(node.entrypoint_kind)
         if trigger_kind is None:
             return None
         return FlowToolTrigger(
@@ -470,7 +477,7 @@ class HumanFlowAnswerService:
             source, entrypoint = self.projector.flow_answer_identity(flow)
             try:
                 if self._cancelled():
-                    raise FlowExplanationDeadlineExceeded()
+                    raise HumanAnswerDeadlineExceeded()
                 llm_input = self.projector.human_llm_input(request, flow, effective_plan)
                 text = self._answer_one_flow(
                     llm_input,
@@ -480,7 +487,7 @@ class HumanFlowAnswerService:
                     resolved_language=resolved_language,
                 )
                 answers.append(KnowledgeFlowAnswer(source=source, entrypoint=entrypoint, text=text))
-            except FlowExplanationDeadlineExceeded:
+            except HumanAnswerDeadlineExceeded:
                 deadline_failures += 1
                 diagnostics.append(self._flow_failure_diagnostic(source, entrypoint))
                 if self._cancelled():
@@ -495,7 +502,7 @@ class HumanFlowAnswerService:
                 diagnostics=diagnostics,
             )
         if deadline_failures:
-            raise FlowExplanationDeadlineExceeded()
+            raise HumanAnswerDeadlineExceeded()
         raise HumanAnswerGenerationFailed("no grounded flow answers")
 
     def _fallback_plan(self, request: KnowledgeQueryRequest) -> QueryRetrievalPlan:
@@ -528,8 +535,8 @@ class HumanFlowAnswerService:
                 if attempt_count == 1:
                     validation_errors = exc.errors
                     continue
-                raise HumanAnswerGenerationFailed("human answer repair failed validation") from exc
-        raise HumanAnswerGenerationFailed("human answer repair failed validation")
+                raise HumanAnswerRepairExhausted("human answer repair failed validation") from exc
+        raise HumanAnswerRepairExhausted("human answer repair failed validation")
 
     def _flow_failure_diagnostic(self, source: str, entrypoint: str) -> KnowledgeQueryDiagnostic:
         return KnowledgeQueryDiagnostic(
@@ -552,19 +559,19 @@ class HumanFlowAnswerService:
         resolved_language: str,
     ) -> FlowExplanationProviderResult:
         if self._cancelled() or self._remaining_seconds(deadline_at) <= self.min_call_timeout_seconds:
-            raise FlowExplanationDeadlineExceeded()
+            raise HumanAnswerDeadlineExceeded()
         prompt = self.renderer.render(llm_input, validation_errors)
         if len(prompt) > self.max_prompt_chars:
-            raise HumanAnswerGenerationFailed("human answer prompt exceeded budget")
+            raise HumanAnswerContextBudgetExceeded("human answer prompt exceeded budget")
         remaining = self._remaining_seconds(deadline_at)
         try:
             result = self.provider.complete(llm_input, validation_errors=validation_errors, timeout_seconds=remaining)
         except (TimeoutError, httpx.TimeoutException) as exc:
-            raise FlowExplanationDeadlineExceeded() from exc
+            raise HumanAnswerDeadlineExceeded() from exc
         except Exception as exc:
-            raise HumanAnswerGenerationFailed(str(type(exc).__name__)) from exc
+            raise HumanAnswerProviderUnavailable(str(type(exc).__name__)) from exc
         if self._cancelled() or time.monotonic() > deadline_at + _DEADLINE_COMPLETION_GRACE_SECONDS:
-            raise FlowExplanationDeadlineExceeded()
+            raise HumanAnswerDeadlineExceeded()
         self._record_audit(
             prompt,
             result.raw_text,
@@ -579,18 +586,20 @@ class HumanFlowAnswerService:
         try:
             payload = json.loads(raw_text)
         except Exception as exc:
-            raise HumanAnswerContractViolation(["Response must be strict JSON with a non-empty text string."]) from exc
+            raise HumanAnswerMalformedResponse(["Response must be strict JSON with a non-empty text string."]) from exc
         if not isinstance(payload, dict):
-            raise HumanAnswerContractViolation(["Response must be a JSON object."])
+            raise HumanAnswerMalformedResponse(["Response must be a JSON object."])
         text = payload.get("text")
         if not isinstance(text, str) or not text.strip():
-            raise HumanAnswerContractViolation(["Response JSON must contain a non-empty text string."])
+            raise HumanAnswerMalformedResponse(["Response JSON must contain a non-empty text string."])
         normalized = text.strip()
         forbidden = ("nodeRef", "transitionRef", "boundaryRef", "evidenceRef", "flowIndex", "analysis-graph-")
         if any(token in normalized for token in forbidden):
             raise HumanAnswerContractViolation(["Response must not expose internal graph refs, node ids, transition refs, evidence refs, or analysis ids."])
         text_validation = self.text_validator.validate(normalized, language)
         if not text_validation.valid:
+            if any("language" in error.lower() or "russian" in error.lower() for error in text_validation.errors):
+                raise HumanAnswerLanguagePolicyViolation(text_validation.errors)
             raise HumanAnswerContractViolation(text_validation.errors)
         return normalized
 

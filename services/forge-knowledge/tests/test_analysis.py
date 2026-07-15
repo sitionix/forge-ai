@@ -49,7 +49,7 @@ from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticInde
 from knowledge_service.semantic_index import SemanticIndexStore
 from knowledge_service.snippet_extractor import SnippetExtractor
 from knowledge_service.source_config import load_source_config
-from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer
+from knowledge_service.structural_analysis import StaticGraphMaterializer
 from knowledge_service.structural_model import StructuralFileMetadata
 from knowledge_service.target_enrichment import (
     BEGIN_INPUT_MARKER,
@@ -412,23 +412,29 @@ def shared_evidence_graph_result():
     )
 
 
-def materialize_graph_for_test(result, content=None, file_id=1, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java"):
+def materialize_graph_for_test(
+    result,
+    content=None,
+    file_id=1,
+    relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java",
+    source_id="edge-gateway",
+):
     content = (
         content
         or "class EmailVerificationLinkClientImpl {\n  WebClient client;\n  String createLink() {\n    helper(); helper();\n  }\n  void helper() {}\n}\n"
     )
     row = {
         "id": file_id,
-        "source_id": "edge-gateway",
+        "source_id": source_id,
         "relative_path": relative_path,
         "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
     }
     return GraphAnalysisEngine().materialize(row, "job-1", "test-analyzer", "1", result, content.splitlines())
 
 
-def _static_java_graph_result_for_test(content: str, file_id: int, relative_path: str):
+def _static_java_graph_result_for_test(content: str, file_id: int, relative_path: str, source_id: str = "edge-gateway"):
     file_metadata = StructuralFileMetadata(
-        source_id="edge-gateway",
+        source_id=source_id,
         inventory_file_id=file_id,
         relative_path=relative_path,
         language="java",
@@ -441,12 +447,13 @@ def _static_java_graph_result_for_test(content: str, file_id: int, relative_path
     return StaticGraphMaterializer().to_graph(structural)
 
 
-def _materialize_static_java_for_test(content: str, file_id: int, relative_path: str):
+def _materialize_static_java_for_test(content: str, file_id: int, relative_path: str, source_id: str = "edge-gateway"):
     return materialize_graph_for_test(
-        _static_java_graph_result_for_test(content, file_id, relative_path),
+        _static_java_graph_result_for_test(content, file_id, relative_path, source_id),
         content=content,
         file_id=file_id,
         relative_path=relative_path,
+        source_id=source_id,
     )
 
 
@@ -467,15 +474,14 @@ def _materialize_static_plus_enrichment_for_test(
     )
 
 
-def graph_state_for_test(content=None, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java"):
+def graph_state_for_test(content=None, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java", source_id="edge-gateway"):
     content = content or "class EmailVerificationLinkClientImpl {}\n"
     return {
-        "source_id": "edge-gateway",
+        "source_id": source_id,
         "relative_path": relative_path,
         "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
         "analyzer_name": "test-analyzer",
         "analyzer_version": "1",
-        "engine_version": GRAPH_ENGINE_VERSION,
         "flow_domain": "CODE",
         "status": "ANALYZED",
         "analyzed_at": "now",
@@ -814,7 +820,6 @@ def seed_analysis_file_statuses(db_path, statuses):
                     "content_hash": file_row["content_hash"],
                     "analyzer_name": StubAnalyzer.name,
                     "analyzer_version": StubAnalyzer.version,
-                    "engine_version": GRAPH_ENGINE_VERSION,
                     "flow_domain": "CODE",
                     "status": status,
                     "analyzed_at": "now",
@@ -863,7 +868,7 @@ def test_retry_failed_selects_only_current_failed_files_and_preserves_history(tm
             "sourceIds": ["edge-gateway"],
         }
     )
-    analysis_store.create_job_files("old-job", [failed_row], {int(failed_row["id"]): "CODE"}, GRAPH_ENGINE_VERSION)
+    analysis_store.create_job_files("old-job", [failed_row], {int(failed_row["id"]): "CODE"})
     analysis_store.update_job_file("old-job", int(failed_row["id"]), "FAILED", diagnostics=[{"code": "ANALYSIS_FILE_FAILED"}], completed=True)
     runner = SupervisorHarness(store, app_config(tmp_path))
 
@@ -1002,7 +1007,6 @@ def test_graph_persistence_failure_is_reported_as_graph_store_error(tmp_path):
                 "content_hash": "hash",
                 "analyzer_name": "ai-file-analyzer",
                 "analyzer_version": "1",
-                "engine_version": GRAPH_ENGINE_VERSION,
                 "flow_domain": "WORKFLOW",
                 "status": "ANALYZED",
                 "analyzed_at": "now",
@@ -1069,7 +1073,6 @@ def test_mark_file_retries_transient_sqlite_lock(monkeypatch, tmp_path):
             "content_hash": "hash",
             "analyzer_name": "ai-file-analyzer",
             "analyzer_version": "1",
-            "engine_version": GRAPH_ENGINE_VERSION,
             "status": "FAILED",
             "diagnostics": [{"code": "ANALYSIS_FILE_FAILED", "message": "failed"}],
         },
@@ -1123,7 +1126,7 @@ def test_graph_store_accepts_shared_evidence_ranges_and_replaces_file_twice(tmp_
     assert counts["analysis_graph_evidence"] == len(second_graph["evidence"])
 
 
-def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_replace(tmp_path):
+def test_current_graph_replace_marks_source_dirty_until_finalized(tmp_path):
     store = AnalysisStore(tmp_path / "knowledge.sqlite")
     store.init()
     content = "class EmailVerificationLinkClientImpl { void createLink() { helper(); } void helper() {} }\n"
@@ -1146,7 +1149,6 @@ def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_re
             "failedFileCount": 0,
             "sourceIds": ["edge-gateway"],
             "diagnostics": [],
-            "engineVersion": GRAPH_ENGINE_VERSION,
             "mode": "FULL",
         }
     )
@@ -1174,13 +1176,14 @@ def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_re
             "failedFileCount": 0,
             "sourceIds": ["edge-gateway"],
             "diagnostics": [],
-            "engineVersion": GRAPH_ENGINE_VERSION,
             "mode": "FULL",
         }
     )
     store.replace_file_graph_analysis(1, state, failed)
     store.update_job("job-2", {"status": "FAILED", "completedAt": "failed"})
-    assert store.graph_manifest("edge-gateway", "CODE")["graphId"] == first_manifest["graphId"]
+    dirty_manifest = store.graph_manifest("edge-gateway", "CODE")
+    assert dirty_manifest["graphId"] is None
+    assert "edge-gateway" in store.dirty_graph_source_ids(["edge-gateway"])
 
     third = json.loads(json.dumps(base_graph))
     third["nodes"] = third["nodes"][:-1]
@@ -1199,15 +1202,14 @@ def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_re
             "failedFileCount": 0,
             "sourceIds": ["edge-gateway"],
             "diagnostics": [],
-            "engineVersion": GRAPH_ENGINE_VERSION,
             "mode": "FULL",
         }
     )
     with pytest.raises(KnowledgeError):
         store.replace_file_graph_analysis(1, state, third)
     third_manifest = store.graph_manifest("edge-gateway", "CODE")
-    assert third_manifest["graphId"] == first_manifest["graphId"]
-    assert third_manifest["totalNodeCount"] == len(first["nodes"])
+    assert third_manifest["graphId"] is None
+    assert third_manifest["totalNodeCount"] == 0
     with sqlite3.connect(store.db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = 'edge-gateway'").fetchone()[0] == len(first["nodes"])
 
@@ -1385,6 +1387,35 @@ class Worker {
 
     assert finalize_calls == ["edge-gateway", "edge-gateway"]
     assert second_edges == first_edges
+
+
+def test_dirty_source_finalizes_after_supervisor_recovery_with_unchanged_files(tmp_path):
+    content = "package example;\npublic class ObjectHandler { public void handle() {} }\n"
+    store, _, _ = build_inventory(tmp_path, content=content)
+    row = store.search_rows([], [])[0][0]
+    analysis_store = AnalysisStore(store.db_path)
+    state = graph_state_for_test(content, row["relative_path"])
+    state["analyzer_name"] = StubAnalyzer.name
+    state["analyzer_version"] = StubAnalyzer.version
+    analysis_store.replace_file_graph_analysis(
+        int(row["id"]),
+        state,
+        _materialize_static_java_for_test(content, int(row["id"]), row["relative_path"]),
+    )
+
+    assert analysis_store.graph_manifest("edge-gateway", "CODE")["graphId"] is None
+    assert analysis_store.dirty_graph_source_ids(["edge-gateway"]) == ["edge-gateway"]
+
+    analyzer = StubAnalyzer()
+    runner = SupervisorHarness(store, app_config(tmp_path))
+    response = runner.start(AnalysisBuildRequest(force=False), analyzer)
+    final = wait_job(store, response["jobId"])
+    recovered_store = AnalysisStore(store.db_path)
+
+    assert final["status"] == "COMPLETED"
+    assert analyzer.calls == 0
+    assert recovered_store.dirty_graph_source_ids(["edge-gateway"]) == []
+    assert recovered_store.graph_manifest("edge-gateway", "CODE")["graphId"]
 
 
 def _resolved_call_edges_for_test(db_path):
@@ -1962,7 +1993,157 @@ class TicketDto {}
         assert edge["to_node_id"] is None
         metadata = json.loads(edge["metadata_json"])
         assert "argumentCount" not in metadata
-        assert "resolverSignals" not in metadata
+    assert "resolverSignals" not in metadata
+
+
+def test_cross_source_interface_override_uses_exact_fqn_and_typed_signature(tmp_path):
+    interface_source = """package generated.api;
+
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+@RequestMapping("/tasks")
+public interface TaskApi {
+  @PostMapping("/handle")
+  ResponseDTO handle(RequestDTO request);
+}
+
+class RequestDTO {}
+class ResponseDTO {}
+"""
+    implementation_source = """package service.impl;
+
+import generated.api.TaskApi;
+import generated.api.RequestDTO;
+import generated.api.ResponseDTO;
+
+public class TaskController implements TaskApi {
+  @Override
+  public ResponseDTO handle(RequestDTO request) {
+    return null;
+  }
+
+  public ResponseDTO handle(String request) {
+    return null;
+  }
+}
+
+class TaskWorkflow {
+  private final generated.api.TaskApi api;
+
+  TaskWorkflow(generated.api.TaskApi api) {
+    this.api = api;
+  }
+
+  public ResponseDTO run(RequestDTO request) {
+    return api.handle(request);
+  }
+}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(interface_source, "target/generated-sources/src/main/java/generated/api/TaskApi.java", "app-afesox"),
+        _materialize_static_java_for_test(
+            interface_source,
+            1,
+            "target/generated-sources/src/main/java/generated/api/TaskApi.java",
+            "app-afesox",
+        ),
+    )
+    store.finalize_source_graph("app-afesox")
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(implementation_source, "src/main/java/service/impl/TaskController.java", "task-service"),
+        _materialize_static_java_for_test(
+            implementation_source,
+            2,
+            "src/main/java/service/impl/TaskController.java",
+            "task-service",
+        ),
+    )
+    store.finalize_source_graph("task-service")
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        implements_edge = conn.execute(
+            """
+            SELECT e.resolution_status, target.source_id AS target_source, target.qualified_name AS target_name
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'task-service'
+              AND e.edge_type = 'IMPLEMENTS'
+            """
+        ).fetchone()
+        override_edges = conn.execute(
+            """
+            SELECT impl.qualified_name AS implementation_method,
+                   impl.parameter_types_json AS implementation_params,
+                   iface.source_id AS interface_source,
+                   iface.qualified_name AS interface_method,
+                   iface.parameter_types_json AS interface_params
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes impl ON impl.id = e.from_node_id
+            JOIN analysis_graph_nodes iface ON iface.id = e.to_node_id
+            WHERE e.source_id = 'task-service'
+              AND e.edge_type = 'OVERRIDES'
+            ORDER BY impl.signature
+            """
+        ).fetchall()
+        inherited_claims = conn.execute(
+            """
+            SELECT node.qualified_name, node.parameter_types_json, claim.entrypoint_kind,
+                   claim.entrypoint_http_method, claim.entrypoint_route, claim.entrypoint_interface_method
+            FROM analysis_graph_claims claim
+            JOIN analysis_graph_nodes node ON node.id = claim.node_id
+            WHERE claim.source_id = 'task-service'
+              AND claim.claim_kind = 'ENTRYPOINT_HINT'
+              AND claim.status = 'DERIVED'
+            ORDER BY node.signature
+            """
+        ).fetchall()
+        dispatch_edge = conn.execute(
+            """
+            SELECT caller.qualified_name AS caller_method,
+                   target.source_id AS target_source,
+                   target.qualified_name AS target_method,
+                   e.resolution_status,
+                   e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'task-service'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'service.impl.TaskWorkflow.run'
+              AND json_extract(e.metadata_json, '$.methodName') = 'handle'
+            """
+        ).fetchone()
+
+    assert implements_edge is not None
+    assert implements_edge["resolution_status"] == "RESOLVED"
+    assert implements_edge["target_source"] == "app-afesox"
+    assert implements_edge["target_name"] == "generated.api.TaskApi"
+    assert len(override_edges) == 1
+    assert override_edges[0]["implementation_method"] == "service.impl.TaskController.handle"
+    assert json.loads(override_edges[0]["implementation_params"]) == ["RequestDTO"]
+    assert override_edges[0]["interface_source"] == "app-afesox"
+    assert override_edges[0]["interface_method"] == "generated.api.TaskApi.handle"
+    assert json.loads(override_edges[0]["interface_params"]) == ["RequestDTO"]
+    assert len(inherited_claims) == 1
+    assert inherited_claims[0]["qualified_name"] == "service.impl.TaskController.handle"
+    assert json.loads(inherited_claims[0]["parameter_types_json"]) == ["RequestDTO"]
+    assert inherited_claims[0]["entrypoint_kind"] == "HTTP"
+    assert inherited_claims[0]["entrypoint_http_method"] == "POST"
+    assert inherited_claims[0]["entrypoint_route"] == "/tasks/handle"
+    assert inherited_claims[0]["entrypoint_interface_method"] == "generated.api.TaskApi.handle"
+    assert dispatch_edge is not None
+    assert dispatch_edge["resolution_status"] == "RESOLVED"
+    assert dispatch_edge["target_source"] == "task-service"
+    assert dispatch_edge["target_method"] == "service.impl.TaskController.handle"
+    dispatch_metadata = json.loads(dispatch_edge["metadata_json"])
+    assert dispatch_metadata["interfaceMethod"] == "generated.api.TaskApi.handle"
+    assert dispatch_metadata["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH"
 
 
 def test_resolver_does_not_fallback_when_first_class_arity_mismatches(tmp_path):
@@ -2449,13 +2630,12 @@ def test_unchanged_file_lookup_batches_large_inventory(tmp_path):
                 "content_hash": row["content_hash"],
                 "analyzer_name": StubAnalyzer.name,
                 "analyzer_version": StubAnalyzer.version,
-                "engine_version": GRAPH_ENGINE_VERSION,
                 "status": "ANALYZED",
                 "diagnostics": [],
             },
         )
 
-    unchanged_ids = analysis_store.unchanged_file_ids(rows, StubAnalyzer.name, StubAnalyzer.version, GRAPH_ENGINE_VERSION)
+    unchanged_ids = analysis_store.unchanged_file_ids(rows, StubAnalyzer.name, StubAnalyzer.version)
 
     assert unchanged_ids == {row["id"] for row in rows}
 
@@ -2507,7 +2687,7 @@ def test_per_file_guard_skips_current_file_if_candidate_filter_misses_it(tmp_pat
     first_analyzer = StubAnalyzer()
     wait_job(store, runner.start(AnalysisBuildRequest(), first_analyzer)["jobId"])
     second_analyzer = StubAnalyzer()
-    runner.analysis_store.unchanged_file_ids = lambda rows, analyzer_name, analyzer_version, engine_version=None: set()
+    runner.analysis_store.unchanged_file_ids = lambda rows, analyzer_name, analyzer_version: set()
 
     second = wait_job(store, runner.start(AnalysisBuildRequest(), second_analyzer)["jobId"])
 
@@ -3104,7 +3284,7 @@ def test_interrupted_running_jobs_are_marked_failed_on_startup_cleanup(tmp_path)
         }
     )
     row = store.search_rows([], [])[0][0]
-    analysis_store.create_job_files("job-running", [row], {int(row["id"]): "CODE"}, GRAPH_ENGINE_VERSION)
+    analysis_store.create_job_files("job-running", [row], {int(row["id"]): "CODE"})
     analysis_store.update_job_file("job-running", int(row["id"]), "RUNNING", started=True)
 
     analysis_store.mark_interrupted_jobs()
@@ -3133,7 +3313,7 @@ def test_init_reconciles_orphan_running_job_files_for_inactive_jobs(tmp_path):
         }
     )
     row = store.search_rows([], [])[0][0]
-    analysis_store.create_job_files("job-failed", [row], {int(row["id"]): "CODE"}, GRAPH_ENGINE_VERSION)
+    analysis_store.create_job_files("job-failed", [row], {int(row["id"]): "CODE"})
     analysis_store.update_job_file("job-failed", int(row["id"]), "RUNNING", started=True)
     AnalysisStore._initialized_paths.discard(str(store.db_path.resolve()))
 
@@ -3185,7 +3365,7 @@ def test_runtime_analysis_writes_graph_tables_and_not_legacy_symbols(tmp_path):
     assert counts["analysis_graph_evidence"] > 0
 
 
-def test_runtime_analysis_writes_graph_engine_job_file_flow_and_line_metadata(tmp_path):
+def test_runtime_analysis_writes_job_file_flow_and_line_metadata(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     analyzer = StubAnalyzer(GraphAnalysisResult())
     runner = SupervisorHarness(store, app_config(tmp_path))
@@ -3193,17 +3373,13 @@ def test_runtime_analysis_writes_graph_engine_job_file_flow_and_line_metadata(tm
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
-        job = conn.execute("SELECT engine_version FROM analysis_jobs WHERE job_id = ?", (final["jobId"],)).fetchone()
-        analysis_file = conn.execute("SELECT engine_version, flow_domain FROM analysis_files").fetchone()
-        job_file = conn.execute("SELECT status, engine_version, flow_domain, line_count FROM analysis_job_files").fetchone()
+        analysis_file = conn.execute("SELECT flow_domain FROM analysis_files").fetchone()
+        job_file = conn.execute("SELECT status, flow_domain, line_count FROM analysis_job_files").fetchone()
         inventory_file = conn.execute("SELECT line_count, decode_policy FROM files").fetchone()
         static_nodes = conn.execute("SELECT COUNT(*) AS count FROM analysis_graph_nodes WHERE fact_origin = 'STATIC'").fetchone()
 
-    assert job["engine_version"] == GRAPH_ENGINE_VERSION
-    assert analysis_file["engine_version"] == GRAPH_ENGINE_VERSION
     assert analysis_file["flow_domain"] == "CODE"
     assert job_file["status"] == "ANALYZED"
-    assert job_file["engine_version"] == GRAPH_ENGINE_VERSION
     assert job_file["flow_domain"] == "CODE"
     assert job_file["line_count"] > 0
     assert inventory_file["line_count"] > 0
@@ -3378,7 +3554,6 @@ class NestedCallFlow {
             "ownsBusinessAreas",
             "domainKeywords",
             "parser",
-            "engineVersion",
             "factOrigin",
             "flowDomain",
             "resolutionReason",
@@ -3848,10 +4023,10 @@ class FakeAnalysisStore:
     def cleanup_stale_files(self, source_ids):
         return None
 
-    def unchanged_file_ids(self, rows, analyzer_name, analyzer_version, engine_version):
+    def unchanged_file_ids(self, rows, analyzer_name, analyzer_version):
         return set()
 
-    def create_job_files(self, job_id, rows, flow_domain_by_file_id, engine_version):
+    def create_job_files(self, job_id, rows, flow_domain_by_file_id):
         return None
 
     def stop_requested(self, job_id):
@@ -3860,7 +4035,7 @@ class FakeAnalysisStore:
     def update_job(self, job_id, patch):
         self.job_updates.append((job_id, patch))
 
-    def unchanged(self, file_id, content_hash, analyzer_name, analyzer_version, engine_version):
+    def unchanged(self, file_id, content_hash, analyzer_name, analyzer_version):
         return False
 
     def update_job_file(self, job_id, file_id, status, **kwargs):

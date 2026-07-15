@@ -412,9 +412,9 @@ def _seed_active_analysis_job(db_path, source_id, *, job_status="RUNNING", file_
             INSERT OR REPLACE INTO analysis_job_files(
                 id, job_id, source_id, inventory_file_id, analysis_file_id, relative_path, extension,
                 content_hash, line_count, decode_policy, flow_domain, status, attempt_count,
-                started_at, completed_at, diagnostics_json, engine_version, created_at, updated_at
+                started_at, completed_at, diagnostics_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, '.py', ?, 100, 'utf-8:replace', 'CODE', ?, 1, ?, ?, '[]', 'GRAPH_V1', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, '.py', ?, 100, 'utf-8:replace', 'CODE', ?, 1, ?, ?, '[]', ?, ?)
             """,
             (
                 f"{job_id}:file",

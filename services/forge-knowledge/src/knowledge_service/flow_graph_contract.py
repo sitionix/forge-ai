@@ -42,6 +42,9 @@ class FlowGraphEdge:
     from_node_id: str
     to_node_id: str | None
     resolution_status: str
+    to_source_id: str | None = None
+    to_graph_id: str | None = None
+    to_graph_revision: str | None = None
     external: bool = False
     unresolved_target: dict[str, object] | None = None
     evidence_ids: tuple[str, ...] = ()

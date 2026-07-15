@@ -67,9 +67,9 @@ class EntrypointFlowGraphRepository:
         node_ids_by_source: dict[str, set[str]] = defaultdict(set)
         for flow in flows:
             for edge in (*flow.transitions, *flow.boundary_transitions):
-                edge_ids_by_source[flow.key.source_id].add(edge.edge_id)
+                edge_ids_by_source[edge.source_id].add(edge.edge_id)
             for node in flow.nodes:
-                node_ids_by_source[flow.key.source_id].add(node.node_id)
+                node_ids_by_source[node.source_id].add(node.node_id)
 
         edge_evidence_by_source: dict[str, list[FlowGraphEvidence]] = defaultdict(list)
         node_evidence_by_source: dict[str, list[FlowGraphEvidence]] = defaultdict(list)
@@ -90,18 +90,22 @@ class EntrypointFlowGraphRepository:
 
         hydrated: list[EntrypointFlow] = []
         for flow in flows:
-            edge_evidence = edge_evidence_by_source.get(flow.key.source_id, [])
-            node_evidence = node_evidence_by_source.get(flow.key.source_id, [])
+            flow_edge_ids = {edge.edge_id for edge in (*flow.transitions, *flow.boundary_transitions)}
+            flow_node_keys = {(node.source_id, node.node_id) for node in flow.nodes}
+            edge_evidence = [item for values in edge_evidence_by_source.values() for item in values if item.edge_id in flow_edge_ids]
+            node_evidence = [
+                item
+                for values in node_evidence_by_source.values()
+                for item in values
+                if item.node_id is not None and (item.source_id, item.node_id) in flow_node_keys
+            ]
             edge_ids_by_edge: dict[str, list[str]] = defaultdict(list)
             for item in edge_evidence:
                 if item.edge_id:
                     edge_ids_by_edge[item.edge_id].append(item.evidence_id)
             evidence = dedupe_evidence([
-                *[
-                    item for item in edge_evidence
-                    if item.edge_id in {edge.edge_id for edge in (*flow.transitions, *flow.boundary_transitions)}
-                ],
-                *[item for item in node_evidence if item.node_id in {node.node_id for node in flow.nodes}],
+                *edge_evidence,
+                *node_evidence,
             ])
             hydrated.append(replace(
                 flow,
@@ -248,7 +252,10 @@ class EntrypointFlowGraphRepository:
                    fn.name AS from_name,
                    tn.display_name AS to_display_name,
                    tn.qualified_name AS to_qualified_name,
-                   tn.name AS to_name
+                   tn.name AS to_name,
+                   tn.source_id AS to_source_id,
+                   target_state.graph_id AS to_graph_id,
+                   target_state.content_identity AS to_graph_revision
             FROM analysis_graph_edges e
             {source_node_join} analysis_graph_nodes fn
               ON fn.source_id = e.source_id
@@ -256,8 +263,10 @@ class EntrypointFlowGraphRepository:
              {source_node_membership}
              {source_node_test}
             LEFT JOIN analysis_graph_nodes tn
-              ON tn.source_id = e.source_id
-             AND tn.id = e.to_node_id
+              ON tn.id = e.to_node_id
+            LEFT JOIN analysis_graph_state target_state
+              ON target_state.source_id = tn.source_id
+             AND target_state.status = 'READY'
             WHERE e.source_id = ?
               AND e.edge_type = ?
               AND e.status IN ({current_status_sql})
@@ -303,8 +312,7 @@ class EntrypointFlowGraphRepository:
                 FROM analysis_graph_edges edge
                 JOIN analysis_graph_edge_evidence link ON link.edge_id = edge.id
                 JOIN analysis_graph_evidence ev
-                  ON ev.source_id = edge.source_id
-                 AND ev.id = link.evidence_id
+                  ON ev.id = link.evidence_id
                 LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
                 WHERE edge.source_id = ?
                   AND edge.edge_type = ?
@@ -350,8 +358,7 @@ class EntrypointFlowGraphRepository:
                 FROM analysis_graph_claims claim
                 JOIN analysis_graph_claim_evidence link ON link.claim_id = claim.id
                 JOIN analysis_graph_evidence ev
-                  ON ev.source_id = claim.source_id
-                 AND ev.id = link.evidence_id
+                  ON ev.id = link.evidence_id
                 LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
                 WHERE claim.source_id = ?
                   AND claim.status IN ({current_status_sql})
@@ -386,7 +393,11 @@ class EntrypointFlowGraphRepository:
     def _to_key(self, edge: FlowGraphEdge) -> FlowNodeKey | None:
         if not edge.to_node_id:
             return None
-        return (edge.source_id, edge.graph_revision or edge.graph_id, edge.to_node_id)
+        return (
+            edge.to_source_id or edge.source_id,
+            edge.to_graph_revision or edge.to_graph_id or edge.graph_revision or edge.graph_id,
+            edge.to_node_id,
+        )
 
     def _edge_sort_key(self, edge: FlowGraphEdge) -> tuple[str, str, str, str, str]:
         return (

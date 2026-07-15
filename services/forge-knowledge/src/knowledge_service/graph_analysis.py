@@ -82,7 +82,7 @@ class GraphAnalysisEngine:
                     "parent_local_id": node.parentLocalId or parent_by_local_id.get(node.localId),
                     "parameter_count": node.parameter_count,
                     "signature": metadata.get("signature"),
-                    "parameter_types": metadata.get("parameters"),
+                    "parameter_types": list(node.parameterTypes or []),
                     "line_start": node.lineStart,
                     "line_end": node.lineEnd,
                     "confidence": node.confidence,

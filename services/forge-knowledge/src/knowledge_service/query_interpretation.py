@@ -86,7 +86,23 @@ class QueryInterpretationFailed(Exception):
     pass
 
 
-class QueryInterpretationContractViolation(QueryInterpretationFailed):
+class QueryPlanningDeadlineExceeded(QueryInterpretationFailed):
+    pass
+
+
+class QueryPlanningProviderUnavailable(QueryInterpretationFailed):
+    pass
+
+
+class QueryPlanningMalformedResponse(QueryInterpretationFailed):
+    pass
+
+
+class QueryPlanningRepairExhausted(QueryInterpretationFailed):
+    pass
+
+
+class QueryInterpretationContractViolation(QueryPlanningMalformedResponse):
     def __init__(self, errors: Sequence[str]) -> None:
         self.errors = [str(error) for error in errors if str(error).strip()]
         super().__init__("; ".join(self.errors) or "query interpretation violated output contract")
@@ -188,8 +204,8 @@ class QueryInterpretationService:
                 if attempt_count == 1:
                     validation_errors = exc.errors
                     continue
-                raise QueryInterpretationFailed("query interpretation repair failed validation") from exc
-        raise QueryInterpretationFailed("query interpretation repair failed validation")
+                raise QueryPlanningRepairExhausted("query interpretation repair failed validation") from exc
+        raise QueryPlanningRepairExhausted("query interpretation repair failed validation")
 
     def _complete_with_deadline(
         self,
@@ -201,16 +217,16 @@ class QueryInterpretationService:
     ) -> QueryInterpretationProviderResult:
         remaining = max(0.0, deadline_at - time.monotonic())
         if remaining <= self.min_call_timeout_seconds:
-            raise QueryInterpretationFailed("query interpretation deadline exceeded")
+            raise QueryPlanningDeadlineExceeded("query interpretation deadline exceeded")
         prompt = self.renderer.render(llm_input, validation_errors)
         try:
             result = self.provider.complete(llm_input, validation_errors=validation_errors, timeout_seconds=remaining)
         except (TimeoutError, httpx.TimeoutException) as exc:
-            raise QueryInterpretationFailed("query interpretation deadline exceeded") from exc
+            raise QueryPlanningDeadlineExceeded("query interpretation deadline exceeded") from exc
         except Exception as exc:
-            raise QueryInterpretationFailed(str(type(exc).__name__)) from exc
+            raise QueryPlanningProviderUnavailable(str(type(exc).__name__)) from exc
         if time.monotonic() > deadline_at + _DEADLINE_COMPLETION_GRACE_SECONDS:
-            raise QueryInterpretationFailed("query interpretation deadline exceeded")
+            raise QueryPlanningDeadlineExceeded("query interpretation deadline exceeded")
         self._record_audit(prompt, result.raw_text, attempt_count=attempt_count, llm_input=llm_input)
         return QueryInterpretationProviderResult(
             raw_text=str(result.raw_text),

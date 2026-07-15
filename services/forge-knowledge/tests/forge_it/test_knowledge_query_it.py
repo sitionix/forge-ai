@@ -453,8 +453,8 @@ def test_real_stack_ignores_stale_inventory_revision_facts(tmp_path):
     with sqlite3.connect(config.store_path) as conn:
         stale_file_id = 999001
         conn.execute(
-            """INSERT INTO analysis_files(file_id,source_id,relative_path,content_hash,analyzer_name,analyzer_version,status,diagnostics_json,engine_version,flow_domain)
-               VALUES (?, 'neutral-e', 'src/stale.txt', 'stale-hash', 'fixture', '1', 'ANALYZED', '[]', 'GRAPH_V1', 'CODE')""",
+            """INSERT INTO analysis_files(file_id,source_id,relative_path,content_hash,analyzer_name,analyzer_version,status,diagnostics_json,flow_domain)
+               VALUES (?, 'neutral-e', 'src/stale.txt', 'stale-hash', 'fixture', '1', 'ANALYZED', '[]', 'CODE')""",
             (stale_file_id,),
         )
         now = "2026-01-01T00:00:00+00:00"

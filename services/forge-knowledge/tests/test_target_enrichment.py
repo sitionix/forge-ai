@@ -106,7 +106,6 @@ def test_llm_input_projection_includes_minimal_contract_and_excludes_internal_pa
         "stableKey",
         "metadata",
         "parser",
-        "engineVersion",
         "factOrigin",
         "flowDomain",
         "resolutionReason",

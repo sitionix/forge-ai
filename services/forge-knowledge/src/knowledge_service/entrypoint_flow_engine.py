@@ -658,7 +658,11 @@ class EntrypointFlowEngine:
     def _to_key(self, edge: FlowGraphEdge) -> FlowNodeKey | None:
         if not edge.to_node_id:
             return None
-        return (edge.source_id, edge.graph_revision or edge.graph_id, edge.to_node_id)
+        return (
+            edge.to_source_id or edge.source_id,
+            edge.to_graph_revision or edge.to_graph_id or edge.graph_revision or edge.graph_id,
+            edge.to_node_id,
+        )
 
     def _is_resolved_internal(self, edge: FlowGraphEdge) -> bool:
         return bool(edge.to_node_id) and not edge.external and str(edge.resolution_status or "").upper() == "RESOLVED"

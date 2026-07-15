@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from knowledge_service.file_metadata import FileMetadata
-from knowledge_service.graph_schema import GRAPH_ANALYSIS_ENGINE_VERSION
 from knowledge_service.observability import observed_connect
 from knowledge_service.overview_projection import ensure_overview_schema, rebuild_overview, refresh_overview_for_sources
 from knowledge_service.skipped_reasons import SkippedBreakdown, normalize_skipped_breakdown
@@ -413,7 +412,6 @@ class InventoryStore:
         analyzer_name: Optional[str] = None,
         analyzer_version: Optional[str] = None,
         only_needing_analysis: bool = False,
-        engine_version: str = GRAPH_ANALYSIS_ENGINE_VERSION,
     ) -> Tuple[List[sqlite3.Row], Dict[str, sqlite3.Row]]:
         self.init()
         if only_needing_analysis and (not analyzer_name or not analyzer_version or not self._table_exists("analysis_files")):
@@ -435,11 +433,10 @@ class InventoryStore:
                       AND af.content_hash = f.content_hash
                       AND af.analyzer_name = ?
                       AND af.analyzer_version = ?
-                      AND af.engine_version = ?
                       AND af.status = 'ANALYZED'
                 )
             """)
-            params.extend([analyzer_name or "", analyzer_version or "", engine_version])
+            params.extend([analyzer_name or "", analyzer_version or ""])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as conn:
             files = conn.execute(

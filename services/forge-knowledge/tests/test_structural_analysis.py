@@ -704,6 +704,23 @@ class TicketMapper {}
     assert {"CONFIGURATION_BEAN", "LIFECYCLE", "TEST"} <= kinds
 
 
+def test_static_graph_materializer_uses_kafka_listener_entrypoint_contract():
+    text = """package example;
+
+import org.springframework.kafka.annotation.KafkaListener;
+
+class PaymentListener {
+  @KafkaListener(topics = "payments.created")
+  void handle(String payload) {}
+}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    entrypoint = next(claim for claim in graph.claims if claim.claimKind == "ENTRYPOINT_HINT")
+
+    assert entrypoint.metadata["entrypointKind"] == "KAFKA"
+    assert entrypoint.metadata["topic"] == "payments.created"
+
+
 def test_anchor_validator_accepts_callable_claim_only_when_evidence_overlaps_method():
     static_graph = StaticGraphMaterializer().to_graph(parse_sample())
     get_node = next(node for node in static_graph.nodes if node.nodeKind == "CALLABLE" and node.name == "get")

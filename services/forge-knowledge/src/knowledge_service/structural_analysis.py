@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from knowledge_service.entrypoint_kinds import EntrypointKind, entrypoint_kind_for_annotation
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.java_parser_adapter import JavaParserAdapter
@@ -14,10 +15,6 @@ from knowledge_service.structural_model import (
     StructuralParseResult,
     StructuralType,
 )
-
-
-GRAPH_ENGINE_VERSION = "GRAPH_V2"
-
 
 class ParserAdapterRegistry:
     def __init__(self) -> None:
@@ -242,6 +239,7 @@ class StaticGraphMaterializer:
                     displayName=item.name,
                     parentLocalId=item.owner_type_local_id,
                     parameter_count=len(item.parameters),
+                    parameterTypes=list(item.parameters),
                     lineStart=item.line_start,
                     lineEnd=item.line_end,
                     confidence=1.0,
@@ -410,7 +408,6 @@ class StaticGraphMaterializer:
                         **(diagnostic.metadata or {}),
                         "factOrigin": "STATIC",
                         "flowDomain": result.file.flow_domain,
-                        "engineVersion": GRAPH_ENGINE_VERSION,
                     },
                     "factOrigin": "STATIC",
                     "flowDomain": result.file.flow_domain,
@@ -564,6 +561,7 @@ class StaticGraphMaterializer:
     ) -> List[GraphClaim]:
         claims: List[GraphClaim] = []
         owner_route = self._route_from_annotations(owner_annotations)
+        interface_method = self._interface_method_name(result, target_local_id)
         for annotation in annotations:
             simple = annotation.name.rsplit(".", 1)[-1]
             if simple not in self.ENTRYPOINT_ANNOTATIONS:
@@ -581,6 +579,7 @@ class StaticGraphMaterializer:
                     "annotationName": simple,
                     "httpMethod": http_method,
                     "route": route,
+                    "interfaceMethod": interface_method if http_method else None,
                     "exceptionType": self._annotation_first_identifier(annotation) if simple == "ExceptionHandler" else None,
                     "topic": self._annotation_route(annotation) if simple == "KafkaListener" else None,
                     "schedule": annotation.arguments_raw if simple == "Scheduled" else None,
@@ -600,6 +599,15 @@ class StaticGraphMaterializer:
             )
         return claims
 
+    def _interface_method_name(self, result: StructuralParseResult, target_local_id: str) -> Optional[str]:
+        target = next((item for item in result.callables if item.local_id == target_local_id), None)
+        if target is None or not target.owner_type_local_id:
+            return None
+        owner = next((item for item in result.types if item.local_id == target.owner_type_local_id), None)
+        if owner is None or owner.type_kind != "INTERFACE":
+            return None
+        return target.qualified_name
+
     def _main_entrypoint_claim(
         self, result: StructuralParseResult, target_local_id: str, callable_item, owner_annotations: List[StructuralAnnotation]
     ) -> Optional[GraphClaim]:
@@ -613,7 +621,7 @@ class StaticGraphMaterializer:
             "ENTRYPOINT_HINT",
             self._stable_key(result, "ENTRYPOINT", target_local_id, "MAIN", str(callable_item.line_start)),
             {
-                "entrypointKind": "BOOTSTRAP",
+                "entrypointKind": EntrypointKind.BOOTSTRAP.value,
                 "annotation": "SpringBootApplication" if "SpringBootApplication" in owner_annotation_names else None,
                 "sourceAnnotationLine": callable_item.line_start,
             },
@@ -761,21 +769,11 @@ class StaticGraphMaterializer:
         return f"Acts as an entrypoint via @{annotation_name}."
 
     def _entrypoint_kind(self, annotation_name: str) -> str:
-        if annotation_name in self.HTTP_METHODS or annotation_name == "RequestMapping":
-            return "HTTP"
-        if annotation_name == "ExceptionHandler":
-            return "EXCEPTION_HANDLER"
-        if annotation_name == "KafkaListener":
-            return "MESSAGE_CONSUMER"
-        if annotation_name == "Scheduled":
-            return "SCHEDULED"
-        if annotation_name == "Bean":
-            return "CONFIGURATION_BEAN"
-        if annotation_name == "Test":
-            return "TEST"
-        if annotation_name == "PostConstruct":
-            return "LIFECYCLE"
-        return "UNKNOWN"
+        kind = entrypoint_kind_for_annotation(
+            annotation_name,
+            is_http=annotation_name in self.HTTP_METHODS or annotation_name == "RequestMapping",
+        )
+        return kind or EntrypointKind.MESSAGE.value
 
     def _is_data_receiver(self, type_name: str) -> bool:
         value = str(type_name or "").lower()
@@ -788,7 +786,6 @@ class StaticGraphMaterializer:
             "factOrigin": "STATIC",
             "flowDomain": result.file.flow_domain,
             "parser": "tree-sitter-java" if result.file.language == "java" else "static-file",
-            "engineVersion": GRAPH_ENGINE_VERSION,
         }
         metadata.update({k: v for k, v in (extra or {}).items() if v is not None})
         return metadata

@@ -97,6 +97,25 @@ def test_query_interpreter_honors_explicit_response_language_override():
     assert provider.calls[0]["llmInput"]["explicitAnswerLanguage"] == "en"
 
 
+def test_query_interpreter_accepts_russian_detected_language_only_with_ukrainian_response():
+    provider = SequenceQueryInterpretationProvider([
+        interpretation_payload(
+            detectedLanguage="ru",
+            responseLanguage="uk",
+            normalizedQuery="як працює контролер",
+            searchQueries=["як працює контролер"],
+            codeIdentifiers=[],
+            concepts=["контролер"],
+        )
+    ])
+    service = QueryInterpretationService(provider)
+
+    plan = service.interpret(KnowledgeQueryRequest(queryText="Как работает контроллер", intent="AUTO"))
+
+    assert plan.detected_language == "ru"
+    assert plan.response_language == "uk"
+
+
 def test_query_interpreter_repairs_invented_code_identifier_once():
     provider = SequenceQueryInterpretationProvider([
         interpretation_payload(codeIdentifiers=["InventedController.run"]),

@@ -72,9 +72,9 @@ def seed_semantic_graph(
                 """
                 INSERT OR REPLACE INTO analysis_files(
                     file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status,
-                    analyzed_at, diagnostics_json, engine_version, flow_domain
+                    analyzed_at, diagnostics_json, flow_domain
                 )
-                VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', ?, '[]', 'GRAPH_V1', 'CODE')
+                VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', ?, '[]', 'CODE')
                 """,
                 (file_id, source_id, relative_path, content_hash, now),
             )

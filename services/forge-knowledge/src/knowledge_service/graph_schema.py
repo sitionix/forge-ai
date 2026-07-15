@@ -7,7 +7,6 @@ from pydantic import BaseModel, Extra, Field, validator
 
 
 GRAPH_SCHEMA_VERSION = "knowledge.graph.analysis.v1"
-GRAPH_ANALYSIS_ENGINE_VERSION = "GRAPH_V2"
 
 
 class GraphDiagnosticStage(str, Enum):
@@ -51,6 +50,7 @@ class GraphNode(BaseModel):
     displayName: Optional[str] = None
     parentLocalId: Optional[str] = None
     parameter_count: Optional[int] = None
+    parameterTypes: List[str] = Field(default_factory=list)
     lineStart: Optional[int] = None
     lineEnd: Optional[int] = None
     confidence: float = 1.0

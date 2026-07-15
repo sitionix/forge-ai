@@ -464,6 +464,50 @@ def test_language_violation_gets_bounded_repair_without_format_policing():
     assert "`" not in response.answers[0].text
 
 
+def test_russian_query_uses_ukrainian_response_language_and_repairs_russian_prose():
+    provider = SequenceHumanAnswerProvider([
+        "Как работает контроллер: SiteController.createSite получает запрос. После этого метод возвращает ответ.",
+        "SiteController.createSite приймає запит і повертає підтверджену відповідь.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="Как работает контроллер", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("Как работает контроллер", detected_language="ru", response_language="uk"),
+    )
+
+    assert response.answerLanguage == "uk"
+    assert len(provider.calls) == 2
+    assert any("Russian" in error for error in provider.calls[1]["validationErrors"])
+    assert "підтверджену відповідь" in response.answers[0].text
+
+
+def test_required_russian_prose_examples_are_rejected_after_one_repair_attempt():
+    examples = [
+        "Как создать сайт",
+        "Как работает контроллер",
+        "Система создает пользователя",
+        "После этого метод возвращает ответ",
+    ]
+    for example in examples:
+        provider = SequenceHumanAnswerProvider([example, example])
+        service = HumanFlowAnswerService(provider)
+
+        try:
+            service.answer(
+                KnowledgeQueryRequest(queryText="як працює потік", intent="FLOW_EXPLANATION"),
+                human_execution(technical_create_site_flow()),
+                plan=retrieval_plan("як працює потік", detected_language="uk", response_language="uk"),
+            )
+        except HumanAnswerGenerationFailed:
+            pass
+        else:
+            raise AssertionError(f"Expected Russian prose to fail: {example}")
+        assert len(provider.calls) == 2
+        assert all(any("Russian" in error for error in call["validationErrors"]) for call in provider.calls[1:])
+
+
 def test_valid_single_paragraph_answer_is_accepted():
     provider = SequenceHumanAnswerProvider([
         "SiteController.createSite приймає HTTP POST запит на /api/v1/sites і передає його в CreateSiteImpl.execute. Наприкінці контролер повертає створену відповідь."

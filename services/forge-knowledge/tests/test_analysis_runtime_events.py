@@ -285,7 +285,6 @@ def _runtime_store(tmp_path) -> AnalysisStore:
             "sourceIds": [SOURCE_ID],
             "lastProgressAt": None,
             "diagnostics": [],
-            "engineVersion": "TEST",
         }
     )
     return store

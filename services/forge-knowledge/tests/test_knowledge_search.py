@@ -268,6 +268,68 @@ def test_exact_downstream_identifier_selects_containing_flow():
     assert [item.entrypoint.label for item in filtered] == ["PaymentController.readPayment"]
 
 
+def test_exact_identifier_filter_does_not_use_substring_matches():
+    service = KnowledgeQueryService(
+        source_scope_resolver=object(),
+        anchor_searcher=UnifiedAnchorSearcher(graph_store=object()),
+        flow_repository=object(),
+        anchor_expander=object(),
+    )
+    settings = flow("UserController.readSettings", qualified_name="example.UserController.readSettings")
+    settings_node = FlowGraphNode(
+        source_id="source-a",
+        graph_id="graph-a",
+        graph_revision="rev-a",
+        node_id="settings-node",
+        stable_key="source-a|settings-node",
+        node_kind="CALLABLE",
+        label="User.getSettings",
+        qualified_name="example.User.getSettings",
+    )
+    containing_settings = settings.__class__(
+        key=settings.key,
+        entrypoint=settings.entrypoint,
+        origin=settings.origin,
+        anchors=settings.anchors,
+        nodes=(settings.entrypoint, settings_node),
+        transitions=settings.transitions,
+        boundary_transitions=settings.boundary_transitions,
+        evidence=settings.evidence,
+        complete=settings.complete,
+        coverage=settings.coverage,
+        diagnostics=settings.diagnostics,
+        relevance_score=settings.relevance_score,
+    )
+    save_flow = flow("AccountController.updateAccount", qualified_name="example.AccountController.updateAccount")
+    save_node = FlowGraphNode(
+        source_id="source-a",
+        graph_id="graph-a",
+        graph_revision="rev-a",
+        node_id="save-node",
+        stable_key="source-a|save-node",
+        node_kind="CALLABLE",
+        label="AccountRepository.saveAccount",
+        qualified_name="example.AccountRepository.saveAccount",
+    )
+    containing_save = save_flow.__class__(
+        key=save_flow.key,
+        entrypoint=save_flow.entrypoint,
+        origin=save_flow.origin,
+        anchors=save_flow.anchors,
+        nodes=(save_flow.entrypoint, save_node),
+        transitions=save_flow.transitions,
+        boundary_transitions=save_flow.boundary_transitions,
+        evidence=save_flow.evidence,
+        complete=save_flow.complete,
+        coverage=save_flow.coverage,
+        diagnostics=save_flow.diagnostics,
+        relevance_score=save_flow.relevance_score,
+    )
+
+    assert service._filter_flows_by_code_identifiers((containing_settings,), ("User.get",)) == ()
+    assert service._filter_flows_by_code_identifiers((containing_save,), ("save",)) == ()
+
+
 def test_fuzzy_matcher_finds_transposed_and_missing_character_identifiers():
     engine = DeterministicCodeSearchEngine()
     documents = [

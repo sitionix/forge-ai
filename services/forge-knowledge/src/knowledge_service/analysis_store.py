@@ -22,13 +22,13 @@ from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionRequest,
 )
 from knowledge_service.errors import KnowledgeError
+from knowledge_service.entrypoint_kinds import EntrypointKind, entrypoint_kind_value
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 from knowledge_service.observability import observed_connect
 from knowledge_service.overview_projection import ensure_overview_schema, rebuild_overview, refresh_overview_for_sources
 from knowledge_service.semantic_index import SemanticIndexStatus, SemanticIndexStore, ensure_semantic_index_schema
-from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION
 
 
 ANALYSIS_SCHEMA_MIGRATIONS = (
@@ -46,6 +46,10 @@ CURRENT_ANALYSIS_SCHEMA_VERSION = ANALYSIS_SCHEMA_MIGRATIONS[-1][0]
 SQLITE_WRITE_BUSY_TIMEOUT_MS = 5000
 SQLITE_STATUS_BUSY_TIMEOUT_MS = 500
 GRAPH_STORE_LOCK_RETRY_DELAYS_SECONDS = (0.05, 0.15, 0.3)
+GRAPH_STATE_DIRTY = "DIRTY"
+GRAPH_STATE_FINALIZING = "FINALIZING"
+GRAPH_STATE_READY = "READY"
+GRAPH_STATE_FAILED = "FAILED"
 GRAPH_CONTRACT_VERSION = "GRAPH_CURRENT_V1"
 GRAPH_SORT_VERSION = "ID_ASC_V1"
 GRAPH_CURSOR_SIGNATURE_CONTEXT = "knowledge-graph-cursor-v1"
@@ -208,7 +212,6 @@ class AnalysisStore:
                 "source_ids_json",
                 "last_progress_at",
                 "diagnostics_json",
-                "engine_version",
                 "mode",
             },
             "analysis_files": {
@@ -220,7 +223,6 @@ class AnalysisStore:
                 "analyzer_version",
                 "status",
                 "diagnostics_json",
-                "engine_version",
                 "flow_domain",
             },
             "analysis_job_files": {"id", "job_id", "source_id", "inventory_file_id", "analysis_file_id", "status"},
@@ -289,7 +291,6 @@ class AnalysisStore:
                 source_ids_json TEXT,
                 last_progress_at TEXT,
                 diagnostics_json TEXT NOT NULL,
-                engine_version TEXT,
                 mode TEXT NOT NULL DEFAULT 'FULL'
             )
         """)
@@ -297,7 +298,6 @@ class AnalysisStore:
         self._ensure_column(conn, "analysis_jobs", "current_relative_path", "TEXT")
         self._ensure_column(conn, "analysis_jobs", "source_ids_json", "TEXT")
         self._ensure_column(conn, "analysis_jobs", "last_progress_at", "TEXT")
-        self._ensure_column(conn, "analysis_jobs", "engine_version", "TEXT")
         self._ensure_column(conn, "analysis_jobs", "mode", "TEXT NOT NULL DEFAULT 'FULL'")
 
     def _create_graph_state_schema(self, conn: sqlite3.Connection) -> None:
@@ -310,9 +310,13 @@ class AnalysisStore:
                 edge_count INTEGER NOT NULL DEFAULT 0,
                 claim_count INTEGER NOT NULL DEFAULT 0,
                 evidence_count INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'READY',
+                diagnostics_json TEXT NOT NULL DEFAULT '[]',
                 updated_at TEXT NOT NULL
             )
         """)
+        self._ensure_column(conn, "analysis_graph_state", "status", "TEXT NOT NULL DEFAULT 'READY'")
+        self._ensure_column(conn, "analysis_graph_state", "diagnostics_json", "TEXT NOT NULL DEFAULT '[]'")
 
     def _create_analysis_file_schema(self, conn: sqlite3.Connection) -> None:
         conn.execute("""
@@ -331,7 +335,6 @@ class AnalysisStore:
                 last_error_message TEXT,
                 last_raw_response_preview TEXT,
                 diagnostics_json TEXT NOT NULL,
-                engine_version TEXT,
                 flow_domain TEXT
             )
         """)
@@ -340,7 +343,6 @@ class AnalysisStore:
         self._ensure_column(conn, "analysis_files", "last_error_code", "TEXT")
         self._ensure_column(conn, "analysis_files", "last_error_message", "TEXT")
         self._ensure_column(conn, "analysis_files", "last_raw_response_preview", "TEXT")
-        self._ensure_column(conn, "analysis_files", "engine_version", "TEXT")
         self._ensure_column(conn, "analysis_files", "flow_domain", "TEXT")
 
     def _create_job_file_schema(self, conn: sqlite3.Connection) -> None:
@@ -362,7 +364,6 @@ class AnalysisStore:
                 started_at TEXT,
                 completed_at TEXT,
                 diagnostics_json TEXT,
-                engine_version TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(job_id) REFERENCES analysis_jobs(job_id) ON DELETE CASCADE
@@ -567,7 +568,7 @@ class AnalysisStore:
         indexes_by_table = {
             "analysis_files": (
                 "CREATE INDEX IF NOT EXISTS idx_analysis_files_status ON analysis_files(source_id, status)",
-                "CREATE INDEX IF NOT EXISTS idx_analysis_files_current ON analysis_files(file_id, content_hash, analyzer_name, analyzer_version, engine_version, status)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_files_current ON analysis_files(file_id, content_hash, analyzer_name, analyzer_version, status)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_files_path ON analysis_files(source_id, relative_path)",
             ),
             "analysis_graph_state": (
@@ -673,8 +674,8 @@ class AnalysisStore:
         def write(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """
-                INSERT INTO analysis_jobs(job_id, status, started_at, completed_at, source_count, file_count, processed_file_count, failed_file_count, current_source_id, current_relative_path, source_ids_json, last_progress_at, diagnostics_json, engine_version, mode)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO analysis_jobs(job_id, status, started_at, completed_at, source_count, file_count, processed_file_count, failed_file_count, current_source_id, current_relative_path, source_ids_json, last_progress_at, diagnostics_json, mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 self._job_params(job),
             )
@@ -695,7 +696,7 @@ class AnalysisStore:
                 UPDATE analysis_jobs
                 SET status = ?, started_at = ?, completed_at = ?, source_count = ?, file_count = ?, processed_file_count = ?,
                     failed_file_count = ?, current_source_id = ?, current_relative_path = ?, source_ids_json = ?, last_progress_at = ?,
-                    diagnostics_json = ?, engine_version = ?, mode = ?
+                    diagnostics_json = ?, mode = ?
                 WHERE job_id = ?
                 """,
                 (*self._job_params(current)[1:], job_id),
@@ -704,7 +705,7 @@ class AnalysisStore:
 
         self._write_with_busy_retry(write)
 
-    def create_job_files(self, job_id: str, rows: List[sqlite3.Row], flow_domain_by_file_id: Dict[int, str], engine_version: str) -> None:
+    def create_job_files(self, job_id: str, rows: List[sqlite3.Row], flow_domain_by_file_id: Dict[int, str]) -> None:
         self.init()
         now = datetime.now(timezone.utc).isoformat()
 
@@ -718,9 +719,9 @@ class AnalysisStore:
                     INSERT OR REPLACE INTO analysis_job_files(
                         id, job_id, source_id, inventory_file_id, analysis_file_id, relative_path, extension,
                         content_hash, line_count, decode_policy, flow_domain, status, attempt_count,
-                        started_at, completed_at, diagnostics_json, engine_version, created_at, updated_at
+                        started_at, completed_at, diagnostics_json, created_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         job_file_id,
@@ -739,7 +740,6 @@ class AnalysisStore:
                         None,
                         None,
                         json.dumps([]),
-                        engine_version,
                         now,
                         now,
                     ),
@@ -753,7 +753,6 @@ class AnalysisStore:
         job: Dict[str, Any],
         rows: List[sqlite3.Row],
         flow_domain_by_file_id: Dict[int, str],
-        engine_version: str,
         *,
         reset_failed_current_state: bool = False,
     ) -> None:
@@ -764,8 +763,8 @@ class AnalysisStore:
         def write(conn: sqlite3.Connection) -> None:
             conn.execute(
                 """
-                INSERT INTO analysis_jobs(job_id, status, started_at, completed_at, source_count, file_count, processed_file_count, failed_file_count, current_source_id, current_relative_path, source_ids_json, last_progress_at, diagnostics_json, engine_version, mode)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO analysis_jobs(job_id, status, started_at, completed_at, source_count, file_count, processed_file_count, failed_file_count, current_source_id, current_relative_path, source_ids_json, last_progress_at, diagnostics_json, mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 job_params,
             )
@@ -778,9 +777,9 @@ class AnalysisStore:
                     INSERT OR REPLACE INTO analysis_job_files(
                         id, job_id, source_id, inventory_file_id, analysis_file_id, relative_path, extension,
                         content_hash, line_count, decode_policy, flow_domain, status, attempt_count,
-                        started_at, completed_at, diagnostics_json, engine_version, created_at, updated_at
+                        started_at, completed_at, diagnostics_json, created_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         job_file_id,
@@ -799,7 +798,6 @@ class AnalysisStore:
                         None,
                         None,
                         json.dumps([]),
-                        engine_version,
                         now,
                         now,
                     ),
@@ -835,7 +833,6 @@ class AnalysisStore:
         diagnostics: Optional[List[Dict[str, Any]]] = None,
         line_count: Optional[int] = None,
         flow_domain: Optional[str] = None,
-        engine_version: Optional[str] = None,
         started: bool = False,
         completed: bool = False,
     ) -> None:
@@ -857,9 +854,6 @@ class AnalysisStore:
         if flow_domain is not None:
             updates.append("flow_domain = ?")
             params.append(flow_domain)
-        if engine_version is not None:
-            updates.append("engine_version = ?")
-            params.append(engine_version)
         if started:
             updates.append("started_at = COALESCE(started_at, ?)")
             params.append(now)
@@ -1275,15 +1269,12 @@ class AnalysisStore:
             "failureCodeBreakdown": breakdown,
         }
 
-    def unchanged(self, file_id: int, content_hash: str, analyzer_name: str, analyzer_version: str, engine_version: Optional[str] = None) -> bool:
+    def unchanged(self, file_id: int, content_hash: str, analyzer_name: str, analyzer_version: str) -> bool:
         self.init()
-        engine_clause = "AND COALESCE(engine_version, '') = COALESCE(?, '')" if engine_version is not None else ""
         params: list[Any] = [file_id, content_hash, analyzer_name, analyzer_version]
-        if engine_version is not None:
-            params.append(engine_version)
         with self._connect() as conn:
             row = conn.execute(
-                f"""
+                """
                 SELECT af.file_id
                 FROM files f
                 JOIN analysis_files af
@@ -1295,13 +1286,12 @@ class AnalysisStore:
                   AND af.analyzer_name = ?
                   AND af.analyzer_version = ?
                   AND af.status = 'ANALYZED'
-                  {engine_clause}
             """,
                 params,
             ).fetchone()
         return row is not None
 
-    def unchanged_file_ids(self, rows: List[sqlite3.Row], analyzer_name: str, analyzer_version: str, engine_version: Optional[str] = None) -> set[int]:
+    def unchanged_file_ids(self, rows: List[sqlite3.Row], analyzer_name: str, analyzer_version: str) -> set[int]:
         if not rows:
             return set()
         self.init()
@@ -1311,10 +1301,6 @@ class AnalysisStore:
                 batch = rows[offset : offset + 400]
                 clauses: list[str] = []
                 params: list[Any] = [analyzer_name, analyzer_version]
-                engine_clause = ""
-                if engine_version is not None:
-                    engine_clause = "AND COALESCE(engine_version, '') = COALESCE(?, '')"
-                    params.append(engine_version)
                 for row in batch:
                     clauses.append("(f.id = ? AND f.source_id = ? AND f.relative_path = ? AND f.content_hash = ?)")
                     params.extend([row["id"], row["source_id"], row["relative_path"], row["content_hash"]])
@@ -1328,7 +1314,6 @@ class AnalysisStore:
                      AND af.content_hash = f.content_hash
                     WHERE af.analyzer_name = ?
                       AND af.analyzer_version = ?
-                      {engine_clause}
                       AND af.status = 'ANALYZED'
                       AND ({" OR ".join(clauses)})
                 """,
@@ -1384,15 +1369,94 @@ class AnalysisStore:
         self._insert_graph_diagnostics(conn, file_id, state, graph, created_at)
         self._insert_claim_evidence_links(conn, graph)
         self._insert_edge_evidence_links(conn, graph)
+        self._mark_source_graph_dirty_conn(conn, str(state["source_id"]), created_at)
 
     def finalize_source_graph(self, source_id: str) -> None:
         self.init()
         created_at = datetime.now(timezone.utc).isoformat()
 
         def write(conn: sqlite3.Connection) -> None:
+            self._set_graph_state_status_conn(conn, source_id, GRAPH_STATE_FINALIZING, created_at)
             self._finalize_graph_replacement(conn, source_id, created_at)
 
-        self._write_with_busy_retry(write)
+        try:
+            self._write_with_busy_retry(write)
+        except Exception as exc:
+            self.mark_source_graph_failed(source_id, exc)
+            raise
+
+    def dirty_graph_source_ids(self, source_ids: Optional[Sequence[str]] = None) -> List[str]:
+        self.init()
+        statuses = (GRAPH_STATE_DIRTY, GRAPH_STATE_FINALIZING, GRAPH_STATE_FAILED)
+        clauses = [f"status IN ({','.join('?' for _ in statuses)})"]
+        params: List[Any] = list(statuses)
+        if source_ids:
+            clauses.append(f"source_id IN ({','.join('?' for _ in source_ids)})")
+            params.extend(source_ids)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT source_id
+                FROM analysis_graph_state
+                WHERE {" AND ".join(clauses)}
+                ORDER BY source_id
+                """,
+                params,
+            ).fetchall()
+        return [str(row["source_id"]) for row in rows]
+
+    def mark_source_graph_failed(self, source_id: str, exc: Exception) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        diagnostic = {
+            "code": getattr(exc, "code", "SOURCE_GRAPH_FINALIZATION_FAILED"),
+            "message": str(getattr(exc, "message", str(exc))),
+        }
+
+        def write(conn: sqlite3.Connection) -> None:
+            self._set_graph_state_status_conn(conn, source_id, GRAPH_STATE_FAILED, now, [diagnostic])
+            refresh_overview_for_sources(conn, [source_id])
+
+        try:
+            self._write_with_busy_retry(write)
+        except Exception:
+            pass
+
+    def _mark_source_graph_dirty_conn(self, conn: sqlite3.Connection, source_id: str, updated_at: str) -> None:
+        self._set_graph_state_status_conn(conn, source_id, GRAPH_STATE_DIRTY, updated_at)
+        SemanticIndexStore.mark_current_graph_pending_conn(conn, source_id)
+
+    def _set_graph_state_status_conn(
+        self,
+        conn: sqlite3.Connection,
+        source_id: str,
+        status: str,
+        updated_at: str,
+        diagnostics: Optional[Sequence[Mapping[str, Any]]] = None,
+    ) -> None:
+        existing = conn.execute("SELECT * FROM analysis_graph_state WHERE source_id = ?", (source_id,)).fetchone()
+        diagnostics_json = json.dumps([dict(item) for item in diagnostics or []])
+        if existing is None:
+            conn.execute(
+                """
+                INSERT INTO analysis_graph_state(
+                    source_id, graph_id, content_identity, node_count, edge_count, claim_count, evidence_count,
+                    status, diagnostics_json, updated_at
+                )
+                VALUES (?, '', '', 0, 0, 0, 0, ?, ?, ?)
+                """,
+                (source_id, status, diagnostics_json, updated_at),
+            )
+            return
+        conn.execute(
+            """
+            UPDATE analysis_graph_state
+            SET status = ?,
+                diagnostics_json = ?,
+                updated_at = ?
+            WHERE source_id = ?
+            """,
+            (status, diagnostics_json, updated_at, source_id),
+        )
 
     def _run_graph_store_step(self, table: str, operation: str, action) -> Any:
         try:
@@ -1698,6 +1762,8 @@ class AnalysisStore:
                 continue
             for interface_method in interface_methods:
                 target_params = self._json_list(interface_method["parameter_types_json"])
+                if not target_params and int(interface_method["parameter_count"] or 0) > 0:
+                    continue
                 for implementation_type_id in sorted(implementation_type_ids):
                     for implementation_method in self._matching_methods(
                         methods_by_type.get(implementation_type_id, []),
@@ -1754,9 +1820,11 @@ class AnalysisStore:
 
     def _current_type_rows(self, conn: sqlite3.Connection, source_id: str) -> Dict[str, sqlite3.Row]:
         contract = graph_query_contract()
+        implements_edge_type = contract.required_edge_type("IMPLEMENTS")
+        extends_edge_type = contract.required_edge_type("EXTENDS")
         rows = conn.execute(
             """
-            SELECT id, name, qualified_name, type_kind
+            SELECT id, source_id, name, qualified_name, type_kind
             FROM analysis_graph_nodes
             WHERE source_id = ?
               AND node_kind = ?
@@ -1764,22 +1832,55 @@ class AnalysisStore:
             """,
             (source_id, contract.type_node_kind, contract.trusted_status),
         ).fetchall()
-        return {row["id"]: row for row in rows}
+        result = {row["id"]: row for row in rows}
+        target_rows = conn.execute(
+            """
+            SELECT DISTINCT target.id, target.source_id, target.name, target.qualified_name, target.type_kind
+            FROM analysis_graph_edges edge
+            JOIN analysis_graph_nodes target ON target.id = edge.to_node_id
+            WHERE edge.source_id = ?
+              AND edge.edge_type IN (?, ?)
+              AND edge.resolution_status = ?
+              AND edge.status = ?
+              AND target.node_kind = ?
+              AND target.status = ?
+            """,
+            (
+                source_id,
+                implements_edge_type,
+                extends_edge_type,
+                contract.resolved_status,
+                contract.trusted_status,
+                contract.type_node_kind,
+                contract.trusted_status,
+            ),
+        ).fetchall()
+        for row in target_rows:
+            result[row["id"]] = row
+        return result
 
     def _current_callables_by_type(self, conn: sqlite3.Connection, source_id: str) -> Dict[str, List[sqlite3.Row]]:
         contract = graph_query_contract()
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM analysis_graph_nodes
-            WHERE source_id = ?
-              AND node_kind = ?
-              AND status = ?
-              AND parent_node_id IS NOT NULL
-            ORDER BY parent_node_id, name, signature, id
-            """,
-            (source_id, contract.callable_node_kind, contract.trusted_status),
-        ).fetchall()
+        type_ids = sorted(self._current_type_rows(conn, source_id).keys())
+        if not type_ids:
+            return {}
+        rows: List[sqlite3.Row] = []
+        for batch in _chunks(type_ids, 400):
+            type_sql, type_params = sql_in_clause(batch)
+            rows.extend(
+                conn.execute(
+                    f"""
+                    SELECT *
+                    FROM analysis_graph_nodes
+                    WHERE parent_node_id IN ({type_sql})
+                      AND node_kind = ?
+                      AND status = ?
+                      AND parent_node_id IS NOT NULL
+                    ORDER BY parent_node_id, name, signature, id
+                    """,
+                    (*type_params, contract.callable_node_kind, contract.trusted_status),
+                ).fetchall()
+            )
         grouped: Dict[str, List[sqlite3.Row]] = defaultdict(list)
         for row in rows:
             grouped[row["parent_node_id"]].append(row)
@@ -1838,13 +1939,18 @@ class AnalysisStore:
         parameter_types: Sequence[str],
     ) -> List[sqlite3.Row]:
         normalized_params = self._normalized_parameter_types(parameter_types)
+        if not normalized_params and parameter_types:
+            return []
         result: List[sqlite3.Row] = []
         for candidate in candidates:
             if candidate["name"] != method_name:
                 continue
-            if normalized_params and self._normalized_parameter_types(self._json_list(candidate["parameter_types_json"])) != normalized_params:
+            candidate_params = self._normalized_parameter_types(self._json_list(candidate["parameter_types_json"]))
+            if not parameter_types and int(candidate["parameter_count"] or 0) > 0:
                 continue
-            if not normalized_params and candidate["parameter_count"] is not None and int(candidate["parameter_count"]) != len(parameter_types):
+            if not candidate_params and normalized_params:
+                continue
+            if candidate_params != normalized_params:
                 continue
             result.append(candidate)
         return result
@@ -1856,12 +1962,10 @@ class AnalysisStore:
             FROM analysis_graph_edges e
             JOIN analysis_graph_edge_evidence link ON link.edge_id = e.id
             JOIN analysis_graph_evidence ev ON ev.id = link.evidence_id
-            WHERE e.source_id = ?
-              AND e.edge_type = 'DECLARES'
+            WHERE e.edge_type = 'DECLARES'
               AND e.to_node_id IS NOT NULL
             ORDER BY e.to_node_id, ev.line_start, ev.id
             """,
-            (source_id,),
         ).fetchall()
         grouped: Dict[str, List[str]] = defaultdict(list)
         for row in rows:
@@ -1875,15 +1979,14 @@ class AnalysisStore:
             f"""
             SELECT *
             FROM analysis_graph_claims
-            WHERE source_id = ?
-              AND claim_kind = ?
+            WHERE claim_kind = ?
               AND status IN ({current_status_sql})
-              AND entrypoint_kind = 'HTTP'
+              AND entrypoint_kind = ?
               AND entrypoint_http_method IS NOT NULL
               AND entrypoint_route IS NOT NULL
             ORDER BY node_id, confidence DESC, id
             """,
-            (source_id, contract.entrypoint_claim_kind, *current_status_params),
+            (contract.entrypoint_claim_kind, *current_status_params, EntrypointKind.HTTP.value),
         ).fetchall()
         grouped: Dict[str, List[sqlite3.Row]] = defaultdict(list)
         for row in rows:
@@ -1897,11 +2000,10 @@ class AnalysisStore:
             f"""
             SELECT DISTINCT node_id
             FROM analysis_graph_claims
-            WHERE source_id = ?
-              AND claim_kind = ?
+            WHERE claim_kind = ?
               AND status IN ({current_status_sql})
             """,
-            (source_id, contract.entrypoint_claim_kind, *current_status_params),
+            (contract.entrypoint_claim_kind, *current_status_params),
         ).fetchall()
         return {row["node_id"] for row in rows}
 
@@ -2141,6 +2243,9 @@ class AnalysisStore:
                 conn.execute("DELETE FROM analysis_files WHERE file_id = ?", (row["file_id"],))
             overview_sources = source_ids or sorted({row["source_id"] for row in rows})
             self._mark_semantic_sources_stale(conn, affected_sources)
+            now = datetime.now(timezone.utc).isoformat()
+            for source_id in sorted(affected_sources):
+                self._mark_source_graph_dirty_conn(conn, source_id, now)
             refresh_overview_for_sources(conn, overview_sources)
 
     def files(self, source_id: Optional[str], status: Optional[str], path_contains: Optional[str], limit: int, offset: int) -> Dict[str, Any]:
@@ -2193,6 +2298,7 @@ class AnalysisStore:
                     UNION
                     SELECT source_id
                     FROM analysis_graph_state
+                    WHERE status = 'READY'
                     UNION
                     SELECT source_id
                     FROM analysis_graph_nodes
@@ -2205,7 +2311,9 @@ class AnalysisStore:
                        COALESCE(state.edge_count, 0) AS edge_count
                 FROM known_sources
                 LEFT JOIN sources ON sources.source_id = known_sources.source_id
-                LEFT JOIN analysis_graph_state state ON state.source_id = known_sources.source_id
+                LEFT JOIN analysis_graph_state state
+                  ON state.source_id = known_sources.source_id
+                 AND state.status = 'READY'
                 ORDER BY known_sources.source_id
                 """
             ).fetchall()
@@ -2800,6 +2908,9 @@ class AnalysisStore:
             from_node_id=from_node_id,
             to_node_id=str(item.get("toNodeId")) if item.get("toNodeId") else None,
             resolution_status=str(item.get("resolutionStatus") or "RESOLVED"),
+            to_source_id=str(item.get("toSourceId")) if item.get("toSourceId") else None,
+            to_graph_id=str(item.get("toGraphId")) if item.get("toGraphId") else None,
+            to_graph_revision=str(item.get("toGraphRevision")) if item.get("toGraphRevision") else None,
             external=bool(item.get("external")) or str(item.get("resolutionStatus") or "").upper() == graph_query_contract().external_target_status,
             unresolved_target=item.get("unresolvedTarget") if isinstance(item.get("unresolvedTarget"), dict) else None,
             evidence_ids=tuple(evidence_ids_by_edge.get(edge_id) or ()),
@@ -3459,7 +3570,9 @@ class AnalysisStore:
             """
             SELECT s.source_id, s.display_name, s.group_name, s.path, s.root_exists, s.last_seen_at
             FROM sources s
-            JOIN analysis_graph_state state ON state.source_id = s.source_id
+            JOIN analysis_graph_state state
+              ON state.source_id = s.source_id
+             AND state.status = 'READY'
             ORDER BY state.updated_at DESC, s.source_id
             LIMIT 1
             """
@@ -3479,7 +3592,10 @@ class AnalysisStore:
     def _current_graph_state(self, conn: sqlite3.Connection, source_id: Optional[str]) -> Optional[sqlite3.Row]:
         if not source_id or not self._table_exists(conn, "analysis_graph_state"):
             return None
-        return conn.execute("SELECT * FROM analysis_graph_state WHERE source_id = ?", (source_id,)).fetchone()
+        return conn.execute(
+            "SELECT * FROM analysis_graph_state WHERE source_id = ? AND status = ?",
+            (source_id, GRAPH_STATE_READY),
+        ).fetchone()
 
     def _represented_file_count_from_state(self, graph_state: Optional[sqlite3.Row]) -> int:
         return 0 if graph_state is None else int(graph_state["node_count"] or 0)
@@ -4209,6 +4325,9 @@ class AnalysisStore:
             "id": row["id"],
             "fromNodeId": row.get("from_node_id"),
             "toNodeId": row.get("to_node_id"),
+            "toSourceId": row.get("to_source_id"),
+            "toGraphId": row.get("to_graph_id"),
+            "toGraphRevision": row.get("to_graph_revision"),
             "fromLabel": row.get("from_display_name") or row.get("from_qualified_name") or row.get("from_name") or row.get("from_node_id"),
             "toLabel": row.get("to_display_name") or row.get("to_qualified_name") or row.get("to_name") or row.get("to_node_id"),
             "edgeType": row.get("edge_type"),
@@ -4373,7 +4492,6 @@ class AnalysisStore:
         return {
             "analysisStatus": analysis_status,
             "jobId": job_id,
-            "engineVersion": GRAPH_ENGINE_VERSION,
             "processedFileCount": processed,
             "processedFiles": processed,
             "fileCount": total_files,
@@ -4454,7 +4572,7 @@ class AnalysisStore:
         value = metadata.get("entrypointKind")
         if not isinstance(value, str) or not value.strip():
             return None
-        return value.strip().upper()
+        return entrypoint_kind_value(value)
 
     def _claim_entrypoint_metadata_value(
         self,
@@ -4483,8 +4601,9 @@ class AnalysisStore:
             SELECT source_id, graph_id, content_identity
             FROM analysis_graph_state
             WHERE source_id IN ({placeholders})
+              AND status = ?
             """,
-            source_ids,
+            [*source_ids, GRAPH_STATE_READY],
         ).fetchall()
         return {
             str(row["source_id"]): {
@@ -4831,9 +4950,10 @@ class AnalysisStore:
         conn.execute(
             """
             INSERT INTO analysis_graph_state(
-                source_id, graph_id, content_identity, node_count, edge_count, claim_count, evidence_count, updated_at
+                source_id, graph_id, content_identity, node_count, edge_count, claim_count, evidence_count,
+                status, diagnostics_json, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?)
             ON CONFLICT(source_id) DO UPDATE SET
                 graph_id = excluded.graph_id,
                 content_identity = excluded.content_identity,
@@ -4841,9 +4961,11 @@ class AnalysisStore:
                 edge_count = excluded.edge_count,
                 claim_count = excluded.claim_count,
                 evidence_count = excluded.evidence_count,
+                status = excluded.status,
+                diagnostics_json = excluded.diagnostics_json,
                 updated_at = excluded.updated_at
             """,
-            (source_id, graph_id, content_identity, node_count, edge_count, claim_count, evidence_count, updated_at),
+            (source_id, graph_id, content_identity, node_count, edge_count, claim_count, evidence_count, GRAPH_STATE_READY, updated_at),
         )
         return graph_id
 
@@ -5010,7 +5132,7 @@ class AnalysisStore:
         source_id: str,
     ) -> tuple[Dict[str, List[sqlite3.Row]], Dict[str, List[sqlite3.Row]]]:
         contract = graph_query_contract()
-        type_rows = conn.execute(
+        local_type_rows = conn.execute(
             """
             SELECT id, name, qualified_name, type_kind
             FROM analysis_graph_nodes
@@ -5020,10 +5142,22 @@ class AnalysisStore:
             """,
             (source_id, contract.type_node_kind, contract.trusted_status),
         ).fetchall()
+        qualified_type_rows = conn.execute(
+            """
+            SELECT id, source_id, name, qualified_name, type_kind
+            FROM analysis_graph_nodes
+            WHERE node_kind = ?
+              AND status = ?
+              AND qualified_name IS NOT NULL
+              AND qualified_name != ''
+            """,
+            (contract.type_node_kind, contract.trusted_status),
+        ).fetchall()
         types_by_simple: Dict[str, List[sqlite3.Row]] = {}
         types_by_qualified: Dict[str, List[sqlite3.Row]] = {}
-        for row in type_rows:
+        for row in local_type_rows:
             types_by_simple.setdefault(row["name"], []).append(row)
+        for row in qualified_type_rows:
             if row["qualified_name"]:
                 types_by_qualified.setdefault(row["qualified_name"], []).append(row)
         return types_by_simple, types_by_qualified
@@ -5033,7 +5167,7 @@ class AnalysisStore:
         pending_status_sql, pending_status_params = sql_in_clause(contract.resolver_pending_statuses())
         rows = conn.execute(
             f"""
-            SELECT id, metadata_json, unresolved_target_json, argument_count
+            SELECT id, file_id, metadata_json, unresolved_target_json, argument_count
             FROM analysis_graph_edges
             WHERE source_id = ?
               AND edge_type = ?
@@ -5045,6 +5179,11 @@ class AnalysisStore:
         if not rows:
             return
         types_by_simple, types_by_qualified = self._type_candidates_by_name(conn, source_id)
+        imported_qualified_types = self._imported_qualified_types_by_file(
+            conn,
+            source_id,
+            {int(row["file_id"]) for row in rows if row["file_id"] is not None},
+        )
         resolvable_edges: List[tuple[sqlite3.Row, Dict[str, Any], Dict[str, Any], str, Optional[int]]] = []
         callable_keys: Set[tuple[str, str, Optional[int]]] = set()
         for edge in rows:
@@ -5055,6 +5194,8 @@ class AnalysisStore:
             if not method_name or not type_hint:
                 continue
             type_text = str(type_hint)
+            if "." not in type_text and edge["file_id"] is not None:
+                type_text = imported_qualified_types.get((int(edge["file_id"]), type_text.rsplit(".", 1)[-1]), type_text)
             type_candidates = (
                 types_by_qualified.get(type_text, [])
                 if "." in type_text
@@ -5069,7 +5210,7 @@ class AnalysisStore:
             argument_count = edge["argument_count"]
             resolvable_edges.append((edge, metadata, unresolved_target, type_id, argument_count))
             callable_keys.add((type_id, method, argument_count))
-        candidates_by_key = self._callable_candidates_by_type_method(conn, source_id, callable_keys)
+        candidates_by_key = self._callable_candidates_by_type_method(conn, callable_keys)
         for edge, metadata, unresolved_target, type_id, argument_count in resolvable_edges:
             method_name = str(unresolved_target.get("name"))
             callable_candidates = candidates_by_key.get((type_id, method_name, argument_count), [])
@@ -5090,10 +5231,40 @@ class AnalysisStore:
             elif len(callable_candidates) > 1:
                 self._mark_call_edge_multiple(conn, edge["id"], metadata, len(callable_candidates))
 
-    def _callable_candidates_by_type_method(
+    def _imported_qualified_types_by_file(
         self,
         conn: sqlite3.Connection,
         source_id: str,
+        file_ids: Set[int],
+    ) -> Dict[tuple[int, str], str]:
+        if not file_ids:
+            return {}
+        contract = graph_query_contract()
+        values: Dict[tuple[int, str], Set[str]] = defaultdict(set)
+        for batch in _chunks(sorted(str(file_id) for file_id in file_ids), 400):
+            batch_sql, batch_params = sql_in_clause(batch)
+            rows = conn.execute(
+                f"""
+                SELECT file_id, unresolved_target_json
+                FROM analysis_graph_edges
+                WHERE source_id = ?
+                  AND edge_type = ?
+                  AND file_id IN ({batch_sql})
+                  AND status = ?
+                """,
+                (source_id, contract.required_edge_type("IMPORTS"), *batch_params, contract.trusted_status),
+            ).fetchall()
+            for row in rows:
+                target = self._json_dict(row["unresolved_target_json"])
+                qualified_name = str(target.get("qualifiedName") or "")
+                if "." not in qualified_name:
+                    continue
+                values[(int(row["file_id"]), qualified_name.rsplit(".", 1)[-1])].add(qualified_name)
+        return {key: next(iter(items)) for key, items in values.items() if len(items) == 1}
+
+    def _callable_candidates_by_type_method(
+        self,
+        conn: sqlite3.Connection,
         keys: Set[tuple[str, str, Optional[int]]],
     ) -> Dict[tuple[str, str, Optional[int]], List[sqlite3.Row]]:
         if not keys:
@@ -5111,16 +5282,15 @@ class AnalysisStore:
                 method_sql, method_params = sql_in_clause(method_batch)
                 rows = conn.execute(
                     f"""
-                    SELECT id, parent_node_id, qualified_name, name, parameter_count, signature, parameter_types_json
+                    SELECT id, source_id, parent_node_id, qualified_name, name, parameter_count, signature, parameter_types_json
                     FROM analysis_graph_nodes
-                    WHERE source_id = ?
-                      AND parent_node_id IN ({type_sql})
+                    WHERE parent_node_id IN ({type_sql})
                       AND node_kind = ?
                       AND name IN ({method_sql})
                       AND status = ?
                     ORDER BY qualified_name, id
                     """,
-                    (source_id, *type_params, contract.callable_node_kind, *method_params, contract.trusted_status),
+                    (*type_params, contract.callable_node_kind, *method_params, contract.trusted_status),
                 ).fetchall()
                 for row in rows:
                     lookup = (str(row["parent_node_id"]), str(row["name"]))
@@ -5227,8 +5397,7 @@ class AnalysisStore:
                 JOIN analysis_graph_nodes parent
                   ON parent.source_id = target.source_id
                  AND parent.id = target.parent_node_id
-                WHERE target.source_id = ?
-                  AND target.id IN ({batch_sql})
+                WHERE target.id IN ({batch_sql})
                   AND target.node_kind = ?
                   AND target.status = ?
                   AND parent.node_kind = ?
@@ -5236,7 +5405,7 @@ class AnalysisStore:
                   AND parent.status = ?
                 ORDER BY target.qualified_name, target.id
                 """,
-                (source_id, *batch_params, contract.callable_node_kind, contract.trusted_status, contract.type_node_kind, contract.trusted_status),
+                (*batch_params, contract.callable_node_kind, contract.trusted_status, contract.type_node_kind, contract.trusted_status),
             ).fetchall()
             for target in direct_rows:
                 for edge_id in edge_ids_by_target_id.get(str(target["target_id"]), []):
@@ -5258,8 +5427,7 @@ class AnalysisStore:
                        target.parameter_types_json AS target_parameter_types_json
                 FROM analysis_graph_edges override
                 JOIN analysis_graph_nodes target
-                  ON target.source_id = override.source_id
-                 AND target.id = override.to_node_id
+                  ON target.id = override.to_node_id
                 JOIN analysis_graph_nodes parent
                   ON parent.source_id = target.source_id
                  AND parent.id = target.parent_node_id
@@ -5319,8 +5487,7 @@ class AnalysisStore:
                 JOIN analysis_graph_nodes parent
                   ON parent.source_id = target.source_id
                  AND parent.id = target.parent_node_id
-                WHERE target.source_id = ?
-                  AND target.qualified_name IN ({method_sql})
+                WHERE target.qualified_name IN ({method_sql})
                   AND target.node_kind = ?
                   AND target.status = ?
                   AND parent.node_kind = ?
@@ -5328,7 +5495,7 @@ class AnalysisStore:
                   AND parent.status = ?
                 ORDER BY target.qualified_name, target.id
                 """,
-                (source_id, *method_params, contract.callable_node_kind, contract.trusted_status, contract.type_node_kind, contract.trusted_status),
+                (*method_params, contract.callable_node_kind, contract.trusted_status, contract.type_node_kind, contract.trusted_status),
             ).fetchall()
             metadata_by_method = {str(row["target_qualified_name"]): row for row in metadata_rows}
             for edge_id, method in metadata_method_by_edge_id.items():
@@ -5357,8 +5524,7 @@ class AnalysisStore:
             JOIN analysis_graph_nodes parent
               ON parent.source_id = target.source_id
              AND parent.id = target.parent_node_id
-            WHERE target.source_id = ?
-              AND target.id = ?
+            WHERE target.id = ?
               AND target.node_kind = ?
               AND target.status = ?
               AND parent.node_kind = ?
@@ -5366,7 +5532,6 @@ class AnalysisStore:
               AND parent.status = ?
             """,
             (
-                source_id,
                 edge["to_node_id"],
                 contract.callable_node_kind,
                 contract.trusted_status,
@@ -5401,8 +5566,7 @@ class AnalysisStore:
                    target.parameter_types_json AS target_parameter_types_json
             FROM analysis_graph_edges override
             JOIN analysis_graph_nodes target
-              ON target.source_id = override.source_id
-             AND target.id = override.to_node_id
+              ON target.id = override.to_node_id
             JOIN analysis_graph_nodes parent
               ON parent.source_id = target.source_id
              AND parent.id = target.parent_node_id
@@ -5458,8 +5622,7 @@ class AnalysisStore:
             JOIN analysis_graph_nodes parent
               ON parent.source_id = target.source_id
              AND parent.id = target.parent_node_id
-            WHERE target.source_id = ?
-              AND target.qualified_name = ?
+            WHERE target.qualified_name = ?
               AND target.node_kind = ?
               AND target.status = ?
               AND parent.node_kind = ?
@@ -5467,7 +5630,6 @@ class AnalysisStore:
               AND parent.status = ?
             """,
             (
-                source_id,
                 str(interface_method),
                 contract.callable_node_kind,
                 contract.trusted_status,
@@ -5579,33 +5741,6 @@ class AnalysisStore:
                 edge["id"],
             ),
         )
-
-    def _implementation_method_candidates_for_call_edge(
-        self,
-        conn: sqlite3.Connection,
-        source_id: str,
-        edge: sqlite3.Row,
-    ) -> List[sqlite3.Row]:
-        contract = graph_query_contract()
-        target = conn.execute(
-            """
-            SELECT id, name, parameter_count, parent_node_id, signature, parameter_types_json
-            FROM analysis_graph_nodes
-            WHERE source_id = ?
-              AND id = ?
-              AND node_kind = ?
-              AND status = ?
-            """,
-            (source_id, edge["to_node_id"], contract.callable_node_kind, contract.trusted_status),
-        ).fetchone()
-        if target is None or not target["parent_node_id"]:
-            return []
-        interface_target = {
-            "target_name": target["name"],
-            "interface_type_id": target["parent_node_id"],
-            "target_parameter_types_json": target["parameter_types_json"],
-        }
-        return self._implementation_method_candidates_for_interface_target(conn, source_id, edge, interface_target)
 
     def _implementation_method_candidates_for_interface_target(
         self,
@@ -5950,15 +6085,14 @@ class AnalysisStore:
             state.get("last_error_message"),
             state.get("last_raw_response_preview"),
             json.dumps(state.get("diagnostics") or []),
-            state.get("engine_version"),
             state.get("flow_domain"),
         )
 
     def _insert_file(self, conn: sqlite3.Connection, file_id: int, state: Dict[str, Any]) -> None:
         conn.execute(
             """
-            INSERT INTO analysis_files(file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status, analyzed_at, attempt_count, last_attempt_at, last_error_code, last_error_message, last_raw_response_preview, diagnostics_json, engine_version, flow_domain)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO analysis_files(file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status, analyzed_at, attempt_count, last_attempt_at, last_error_code, last_error_message, last_raw_response_preview, diagnostics_json, flow_domain)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             self._analysis_file_values(file_id, state),
         )
@@ -5980,7 +6114,6 @@ class AnalysisStore:
                 last_error_message = ?,
                 last_raw_response_preview = ?,
                 diagnostics_json = ?,
-                engine_version = ?,
                 flow_domain = ?
             WHERE file_id = ?
             """,
@@ -5998,7 +6131,6 @@ class AnalysisStore:
                 state.get("last_error_message"),
                 state.get("last_raw_response_preview"),
                 json.dumps(state.get("diagnostics") or []),
-                state.get("engine_version"),
                 state.get("flow_domain"),
                 file_id,
             ),
@@ -6028,8 +6160,8 @@ class AnalysisStore:
     def _upsert_file(self, conn: sqlite3.Connection, file_id: int, state: Dict[str, Any]) -> None:
         conn.execute(
             """
-            INSERT OR REPLACE INTO analysis_files(file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status, analyzed_at, attempt_count, last_attempt_at, last_error_code, last_error_message, last_raw_response_preview, diagnostics_json, engine_version, flow_domain)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO analysis_files(file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status, analyzed_at, attempt_count, last_attempt_at, last_error_code, last_error_message, last_raw_response_preview, diagnostics_json, flow_domain)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             self._analysis_file_values(file_id, state),
         )
@@ -6049,7 +6181,6 @@ class AnalysisStore:
             json.dumps(job.get("sourceIds") or []),
             job.get("lastProgressAt"),
             json.dumps(job.get("diagnostics") or []),
-            job.get("engineVersion"),
             job.get("mode") or "FULL",
         )
 
@@ -6080,7 +6211,6 @@ class AnalysisStore:
             "sourceIds": json.loads(row["source_ids_json"] or "[]"),
             "lastProgressAt": row["last_progress_at"],
             "diagnostics": json.loads(row["diagnostics_json"] or "[]"),
-            "engineVersion": row["engine_version"] if "engine_version" in row.keys() else None,
             "mode": row["mode"] if "mode" in row.keys() else "FULL",
         }
 
@@ -6097,7 +6227,6 @@ class AnalysisStore:
             "lastErrorMessage": row["last_error_message"],
             "lastRawResponsePreview": row["last_raw_response_preview"],
             "diagnostics": json.loads(row["diagnostics_json"] or "[]"),
-            "engineVersion": row["engine_version"] if "engine_version" in row.keys() else None,
             "flowDomain": row["flow_domain"] if "flow_domain" in row.keys() else None,
         }
 

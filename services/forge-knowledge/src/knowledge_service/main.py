@@ -35,9 +35,13 @@ from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.flow_explanations import (
     FLOW_EXPLANATION_LIMIT_REACHED,
     CompactFlowProjector,
-    FlowExplanationDeadlineExceeded,
+    HumanAnswerContextBudgetExceeded,
+    HumanAnswerDeadlineExceeded,
     HumanAnswerGenerationFailed,
+    HumanAnswerMalformedResponse,
+    HumanAnswerProviderUnavailable,
     HumanAnswerPromptRenderer,
+    HumanAnswerRepairExhausted,
     HumanFlowAnswerService,
     LocalOllamaFlowExplanationClient,
 )
@@ -67,6 +71,10 @@ from knowledge_service.query_interpretation import (
     QueryInterpretationFailed,
     QueryInterpretationPromptRenderer,
     QueryInterpretationService,
+    QueryPlanningDeadlineExceeded,
+    QueryPlanningMalformedResponse,
+    QueryPlanningProviderUnavailable,
+    QueryPlanningRepairExhausted,
 )
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_schema import SemanticIndexBuildRequest, SemanticIndexBuildResponse
@@ -691,19 +699,37 @@ def _knowledge_human_query_response(
             _record_human_answer_audits(request, body, answer_service.audit_records, interpretation_service.audit_records)
             if close_provider:
                 close_provider()
+    except QueryPlanningDeadlineExceeded:
+        return _public_error_response(
+            504,
+            "QUERY_PLANNING_TIMEOUT",
+            "Knowledge query planning timed out.",
+        )
+    except (QueryPlanningProviderUnavailable, QueryPlanningMalformedResponse, QueryPlanningRepairExhausted):
+        return _public_error_response(
+            502,
+            QUERY_INTERPRETATION_FAILED,
+            "The local model could not interpret the query.",
+        )
     except QueryInterpretationFailed:
         return _public_error_response(
             502,
             QUERY_INTERPRETATION_FAILED,
             "The local model could not interpret the query.",
         )
-    except FlowExplanationDeadlineExceeded:
+    except HumanAnswerDeadlineExceeded:
         return _public_error_response(
             504,
             "FLOW_EXPLANATION_TIMEOUT",
             "Knowledge flow explanation timed out.",
         )
-    except HumanAnswerGenerationFailed:
+    except HumanAnswerContextBudgetExceeded:
+        return _public_error_response(
+            503,
+            "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED",
+            "The grounded flow context exceeded the configured answer budget.",
+        )
+    except (HumanAnswerProviderUnavailable, HumanAnswerMalformedResponse, HumanAnswerRepairExhausted, HumanAnswerGenerationFailed):
         return _public_error_response(
             502,
             "HUMAN_ANSWER_GENERATION_FAILED",
@@ -740,7 +766,13 @@ def _knowledge_query_tool_context_response(
                 "No grounded graph candidates were found.",
             )
         return CompactFlowProjector().to_tool_response(body, query_result)
-    except QueryInterpretationFailed:
+    except QueryPlanningDeadlineExceeded:
+        return _public_error_response(
+            504,
+            "QUERY_PLANNING_TIMEOUT",
+            "Knowledge query planning timed out.",
+        )
+    except (QueryPlanningProviderUnavailable, QueryPlanningMalformedResponse, QueryPlanningRepairExhausted, QueryInterpretationFailed):
         return _public_error_response(
             502,
             QUERY_INTERPRETATION_FAILED,

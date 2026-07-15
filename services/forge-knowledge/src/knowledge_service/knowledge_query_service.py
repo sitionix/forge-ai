@@ -1125,11 +1125,15 @@ class KnowledgeQueryService:
         for candidate in self._flow_identifier_candidates(flow):
             if candidate == normalized:
                 return True
-            if candidate.endswith(f".{normalized}"):
-                return True
-            if normalized in candidate:
+            if self._has_symbol_suffix(candidate, normalized):
                 return True
         return False
+
+    def _has_symbol_suffix(self, candidate: str, identifier: str) -> bool:
+        if len(candidate) <= len(identifier) or not candidate.endswith(identifier):
+            return False
+        delimiter_index = len(candidate) - len(identifier) - 1
+        return delimiter_index >= 0 and candidate[delimiter_index] in {".", "#", ":", "/", "$"}
 
     def _flow_identifier_candidates(self, flow: EntrypointFlow) -> set[str]:
         candidates: set[str] = set()
@@ -1139,8 +1143,6 @@ class KnowledgeQueryService:
                 for value in (
                     node.label,
                     node.qualified_name,
-                    node.stable_key,
-                    node.node_id,
                     node.entrypoint_route,
                     node.entrypoint_topic,
                     node.entrypoint_interface_method,
@@ -1150,7 +1152,7 @@ class KnowledgeQueryService:
         for anchor in flow.anchors:
             candidates.update(
                 str(value or "").strip()
-                for value in (anchor.label, anchor.node_id)
+                for value in (anchor.label,)
                 if str(value or "").strip()
             )
         return candidates
