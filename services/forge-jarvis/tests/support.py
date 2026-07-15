@@ -124,14 +124,16 @@ class FakeModelClient:
 
 class FakeKnowledgeClient:
     def __init__(self, *, bundle: Optional[Dict[str, Any]] = None, error: Optional[Exception] = None) -> None:
-        self.bundle = bundle if bundle is not None else knowledge_query_bundle()
+        self.bundle = bundle if bundle is not None else human_answer_bundle()
         self.error = error
         self.calls: List[Dict[str, Any]] = []
+        self.paths: List[str] = []
 
     async def query(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self.paths.append("/api/v1/knowledge/query")
+        self.calls.append(dict(payload))
         if self.error:
             raise self.error
-        self.calls.append(dict(payload))
         return self.bundle
 
 
@@ -149,74 +151,20 @@ class RecordingActionExecutor:
         return ExecutionResult(executed=True, message=f"Action executed: {intent.action}.{intent.target}", output="ok")
 
 
-def knowledge_query_bundle(
+def human_answer_bundle(
     *,
-    status: str = "OK",
-    matched_nodes: Optional[List[Dict[str, Any]]] = None,
-    flows: Optional[List[Dict[str, Any]]] = None,
-    nodes: Optional[List[Dict[str, Any]]] = None,
-    edges: Optional[List[Dict[str, Any]]] = None,
-    evidence: Optional[List[Dict[str, Any]]] = None,
+    text: str = "JarvisGateway handles the request.",
+    answer_language: str = "uk",
+    answers: Optional[List[Dict[str, str]]] = None,
+    sources: Optional[List[Dict[str, str]]] = None,
     diagnostics: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
+    if answers is None:
+        source_items = sources if sources is not None else [{"source": "forge-ai", "entrypoint": "JarvisGateway"}]
+        answers = [{**item, "text": text} for item in source_items]
     return {
-        "queryId": "query-test",
-        "status": status,
-        "intent": "UNKNOWN",
-        "matchedSources": [
-            {
-                "sourceId": "forge-ai",
-                "displayName": "Forge AI",
-                "score": 0.95,
-            }
-        ]
-        if status != "NO_CANDIDATES"
-        else [],
-        "matchedNodes": matched_nodes
-        if matched_nodes is not None
-        else []
-        if status == "NO_CANDIDATES"
-        else [
-            {
-                "sourceId": "forge-ai",
-                "nodeKind": "CALLABLE",
-                "label": "JarvisGateway",
-                "score": 0.95,
-                "matchReasons": ["NAME_MATCH"],
-                "relativePath": "src/JarvisGateway.java",
-            }
-        ],
-        "flows": flows
-        if flows is not None
-        else []
-        if status == "NO_CANDIDATES"
-        else [
-            {
-                "flowIndex": 1,
-                "source": "forge-ai",
-                "entrypoint": {"nodeRef": "n1", "label": "JarvisGateway", "kind": "CALLABLE"},
-                "entrypointOrigin": "EXPLICIT_GRAPH_FACT",
-                "matchedAnchors": [{"anchorRef": "n1", "label": "JarvisGateway", "score": 0.95, "distance": 0, "matchReasons": ["NAME_MATCH"]}],
-                "nodes": nodes if nodes is not None else [{"nodeRef": "n1", "label": "JarvisGateway", "kind": "CALLABLE"}],
-                "transitions": edges if edges is not None else [],
-                "boundaries": [],
-                "evidence": [],
-                "complete": True,
-                "coverage": {"nodeCount": 1, "transitionCount": 0, "boundaryCount": 0, "anchorCount": 1, "maxDepthReached": 0, "cycleDetected": False, "truncated": False},
-                "diagnostics": [],
-            }
-        ],
-        "coverage": {
-            "searchedSourceCount": 1,
-            "matchedSourceCount": 0 if status == "NO_CANDIDATES" else 1,
-            "matchedNodeCount": 0 if status == "NO_CANDIDATES" else 1,
-            "flowCount": 0 if status == "NO_CANDIDATES" else 1,
-            "nodeCount": 0 if status == "NO_CANDIDATES" else 1,
-            "edgeCount": 0,
-            "evidenceCount": len(evidence or []),
-            "truncated": False,
-            "continuationAvailable": False,
-        },
+        "answerLanguage": answer_language,
+        "answers": answers,
         "diagnostics": diagnostics or [],
     }
 
@@ -225,21 +173,42 @@ def query_payload(query_text: str) -> Dict[str, Any]:
     return {"queryText": query_text}
 
 
+def flow_query_payload(
+    query_text: str,
+    *,
+    answer_language: Optional[str] = None,
+    include_tests: bool = False,
+    max_flows: Optional[int] = None,
+) -> Dict[str, Any]:
+    payload = {
+        "queryText": query_text,
+        "intent": "FLOW_EXPLANATION",
+        "includeTests": include_tests,
+    }
+    if answer_language is not None:
+        payload["answerLanguage"] = answer_language
+    if max_flows is not None:
+        payload["maxFlows"] = max_flows
+    return payload
+
+
 def normalized_query_payload(
     query_text: str,
     *,
-    intent: str = "UNKNOWN",
-    answer_language: str = "en",
+    intent: str = "AUTO",
+    answer_language: Optional[str] = None,
     include_tests: bool = False,
     max_flows: int = 10,
 ) -> Dict[str, Any]:
-    return {
+    payload = {
         "queryText": query_text.strip(),
         "intent": intent,
-        "answerLanguage": answer_language,
         "includeTests": include_tests,
         "maxFlows": max_flows,
     }
+    if answer_language is not None:
+        payload["answerLanguage"] = answer_language
+    return payload
 
 
 def write_runtime_config(tmp_path: Path) -> Path:
@@ -283,6 +252,9 @@ forge:
       base-url: http://localhost:11434
       model: qwen2.5-coder:14b
       context-tokens: 32768
+    query:
+      human-query:
+        request-timeout-seconds: 180
     services:
       jarvis:
         host: 127.0.0.1
@@ -292,6 +264,7 @@ forge:
           request-timeout-seconds: 120
         knowledge:
           request-timeout-seconds: 120
+          human-query-transport-grace-seconds: 5
         actions-file: "{jarvis_dir / "allowed-actions.yaml"}"
         system-prompt-path: "{jarvis_dir / "system-prompt.md"}"
 """.lstrip(),

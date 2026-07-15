@@ -14,7 +14,7 @@ from jarvis_agent.bootstrap import JarvisDependencies, build_dependencies, confi
 from jarvis_agent.config import AppConfig, ForgeSettings, load_forge_settings
 from jarvis_agent.intent_parser import IntentParseError, parse_intent
 from jarvis_agent.intent_schema import CommandRequest, CommandResponse
-from jarvis_agent.knowledge_client import KnowledgeBadResponseError, KnowledgeUnavailableError
+from jarvis_agent.knowledge_client import KnowledgeBadResponseError, KnowledgeUnavailableError, KnowledgeUpstreamResponseError
 from jarvis_agent.observability import (
     CORRELATION_HEADER,
     ObservabilityMiddleware,
@@ -23,7 +23,7 @@ from jarvis_agent.observability import (
     track_dependency,
 )
 from jarvis_agent.ollama_client import OllamaBadResponseError, OllamaUnavailableError
-from jarvis_agent.query_schema import JarvisQueryRequest, JarvisQueryResponse
+from jarvis_agent.query_schema import JarvisHumanAnswerResponse, JarvisQueryRequest
 from jarvis_agent.query_service import JarvisQueryService
 from jarvis_agent.security import SecurityError
 
@@ -140,7 +140,7 @@ def create_app(
 
         return CommandResponse(input=text, intent=intent, execution=execution)
 
-    @app.post("/api/v1/jarvis/query", response_model=JarvisQueryResponse)
+    @app.post("/api/v1/jarvis/query", response_model=JarvisHumanAnswerResponse)
     async def query(request: Request, body: JarvisQueryRequest):
         _, deps = _state(request)
         logging.getLogger("jarvis_agent").info("knowledge query received")
@@ -152,6 +152,9 @@ def create_app(
         except KnowledgeBadResponseError:
             logging.getLogger("jarvis_agent").warning("knowledge returned malformed response")
             return error_response(502, "KNOWLEDGE_BAD_RESPONSE", "Knowledge returned a malformed query response", request)
+        except KnowledgeUpstreamResponseError as exc:
+            logging.getLogger("jarvis_agent").warning("knowledge returned controlled upstream response: %s", exc.status_code)
+            return JSONResponse(status_code=exc.status_code, content=exc.body)
 
     return app
 

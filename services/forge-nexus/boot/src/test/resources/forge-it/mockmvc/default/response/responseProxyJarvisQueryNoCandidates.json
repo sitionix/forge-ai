@@ -1,1 +1,1 @@
-{"queryId":"query-no-candidates","status":"NO_CANDIDATES","intent":"UNKNOWN","matchedSources":[],"matchedNodes":[],"flows":[],"coverage":{"searchedSourceCount":2,"matchedSourceCount":0,"matchedNodeCount":0,"flowCount":0,"nodeCount":0,"edgeCount":0,"evidenceCount":0,"truncated":false,"continuationAvailable":false},"diagnostics":[{"code":"NO_GRAPH_CANDIDATES","severity":"INFO","message":"No graph candidates found"}]}
+{"code":"NO_GROUNDED_GRAPH_CANDIDATES","message":"No grounded graph candidates were found."}

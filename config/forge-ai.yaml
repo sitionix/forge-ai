@@ -15,14 +15,15 @@ forge:
       model: qwen2.5-coder:14b
       context-tokens: 32768
     query:
-      flow-explanation:
-        request-timeout-seconds: ${FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS:180}
+      human-query:
+        request-timeout-seconds: ${FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS:180}
     launcher:
       default-base-url: ${FORGE_NEXUS_BASE_URL:http://127.0.0.1:9099/fgaisox}
       services-config-resource: ${FORGE_SERVICES_CONFIG_RESOURCE:classpath:services.yaml}
     infrastructure:
       proxy:
-        knowledge-explanation-transport-grace: 5s
+        knowledge-human-query-transport-grace: 5s
+        jarvis-query-transport-grace: 5s
       jarvis:
         enabled: true
         base-url: ${FORGE_JARVIS_BASE_URL:http://127.0.0.1:7071}
@@ -63,6 +64,7 @@ forge:
           request-timeout-seconds: 120
         knowledge:
           request-timeout-seconds: 120
+          human-query-transport-grace-seconds: 5
         actions-file: ${FORGE_CONFIG_DIR:./config}/jarvis/allowed-actions.yaml
         system-prompt-path: ${FORGE_CONFIG_DIR:./config}/jarvis/system-prompt.md
       console:

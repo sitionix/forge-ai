@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, StrictBool, validator
 
+from knowledge_service.language_policy import normalize_language_code
+
 
 class KnowledgeQueryStatus(str, Enum):
     OK = "OK"
@@ -15,12 +17,8 @@ class KnowledgeQueryStatus(str, Enum):
 
 
 class KnowledgeQueryIntent(str, Enum):
+    AUTO = "AUTO"
     FLOW_EXPLANATION = "FLOW_EXPLANATION"
-    COMPONENT_USAGE = "COMPONENT_USAGE"
-    COMPONENT_RESPONSIBILITY = "COMPONENT_RESPONSIBILITY"
-    CODE_LOCATION = "CODE_LOCATION"
-    ARCHITECTURE_OVERVIEW = "ARCHITECTURE_OVERVIEW"
-    UNKNOWN = "UNKNOWN"
 
 
 class KnowledgeQueryEntrypointOrigin(str, Enum):
@@ -28,15 +26,10 @@ class KnowledgeQueryEntrypointOrigin(str, Enum):
     INFERRED_ROOT = "INFERRED_ROOT"
 
 
-class FlowExplanationStatus(str, Enum):
-    OK = "OK"
-    FAILED = "FAILED"
-
-
 class KnowledgeQueryRequest(BaseModel):
     queryText: str = Field(..., min_length=1)
-    intent: KnowledgeQueryIntent = KnowledgeQueryIntent.UNKNOWN
-    answerLanguage: str = Field("en", min_length=1)
+    intent: KnowledgeQueryIntent = KnowledgeQueryIntent.AUTO
+    answerLanguage: Optional[str] = None
     includeTests: StrictBool = False
     maxFlows: int = Field(10, ge=1, le=10)
 
@@ -55,18 +48,22 @@ class KnowledgeQueryRequest(BaseModel):
     @validator("intent", pre=True, always=True)
     def default_missing_intent(cls, value: KnowledgeQueryIntent) -> KnowledgeQueryIntent:
         if value is None:
-            return KnowledgeQueryIntent.UNKNOWN
+            return KnowledgeQueryIntent.AUTO
         return value
 
     @validator("answerLanguage", pre=True, always=True)
-    def normalize_answer_language(cls, value: str) -> str:
+    def normalize_answer_language(cls, value: str | None) -> Optional[str]:
         if value is None:
-            return "en"
+            return None
         if not isinstance(value, str):
             raise ValueError("answerLanguage must be a string")
-        normalized = value.strip().lower()
+        if not value.strip():
+            return None
+        normalized = normalize_language_code(value, allow_auto=True)
+        if normalized == "auto":
+            return "auto"
         if not normalized:
-            return "en"
+            raise ValueError("answerLanguage must be omitted, null, auto, or a valid language code")
         return normalized
 
     @validator("includeTests", pre=True, always=True)
@@ -215,109 +212,66 @@ class KnowledgeQueryResponse(BaseModel):
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 
-class FlowExplanationStep(BaseModel):
-    nodeRef: str
-    nodeLabel: str
-    explanation: Optional[str] = None
-    transitionRefs: List[str] = Field(default_factory=list)
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class FlowExplanationNarrative(BaseModel):
+class KnowledgeHumanAnswer(BaseModel):
     text: str
-    nodeRefs: List[str] = Field(default_factory=list)
-    transitionRefs: List[str] = Field(default_factory=list)
-    boundaryRefs: List[str] = Field(default_factory=list)
 
 
-class FlowExplanationTransition(BaseModel):
-    transitionRef: str
-    explanation: Optional[str] = None
-    evidenceRefs: List[str] = Field(default_factory=list)
+class KnowledgeHumanAnswerSource(BaseModel):
+    source: str
+    entrypoint: str
 
 
-class FlowExplanationBoundary(BaseModel):
-    boundaryRef: str
-    fromNodeRef: str
-    kind: str
-    resolutionStatus: str
-    target: Optional[str] = None
-    explanation: Optional[str] = None
-    evidenceRefs: List[str] = Field(default_factory=list)
+class KnowledgeFlowAnswer(BaseModel):
+    source: str
+    entrypoint: str
+    text: str
 
 
-class FlowExplanation(BaseModel):
-    flowIndex: int
-    title: str = ""
-    narrative: List[FlowExplanationNarrative] = Field(default_factory=list)
-    steps: List[FlowExplanationStep] = Field(default_factory=list)
-    transitionExplanations: List[FlowExplanationTransition] = Field(default_factory=list)
-    boundaries: List[FlowExplanationBoundary] = Field(default_factory=list)
-    status: FlowExplanationStatus = FlowExplanationStatus.OK
-
-
-class KnowledgeQueryFlowExplanationResponse(KnowledgeQueryResponse):
-    flowExplanations: List[FlowExplanation] = Field(default_factory=list)
-
-
-class FlowToolAddress(BaseModel):
-    service: Optional[str] = None
-    relativePath: Optional[str] = None
-    lineStart: Optional[int] = None
-    lineEnd: Optional[int] = None
+class KnowledgeHumanQueryResponse(BaseModel):
+    answerLanguage: str
+    answers: List[KnowledgeFlowAnswer] = Field(default_factory=list)
+    diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 
 class FlowToolEvidence(BaseModel):
-    ref: str
-    relativePath: Optional[str] = None
+    path: Optional[str] = None
     lineStart: Optional[int] = None
     lineEnd: Optional[int] = None
     excerpt: Optional[str] = None
 
 
-class FlowToolStep(BaseModel):
-    nodeRef: str
+class FlowToolTrigger(BaseModel):
+    kind: str
+    method: Optional[str] = None
+    route: Optional[str] = None
+    topic: Optional[str] = None
+    schedule: Optional[str] = None
+    interfaceMethod: Optional[str] = None
+
+
+class FlowToolTreeItem(BaseModel):
     symbol: str
     kind: str
-    address: FlowToolAddress = Field(default_factory=FlowToolAddress)
-    explanation: Optional[str] = None
+    trigger: Optional[FlowToolTrigger] = None
+    path: Optional[str] = None
+    lineStart: Optional[int] = None
+    lineEnd: Optional[int] = None
+    description: Optional[str] = None
     evidence: List[FlowToolEvidence] = Field(default_factory=list)
+    children: List["FlowToolTreeItem"] = Field(default_factory=list)
+    cycle: Optional[bool] = None
+    shared: Optional[bool] = None
 
 
-class FlowToolTransition(BaseModel):
-    transitionRef: str
-    fromNodeRef: str
-    toNodeRef: str
-    fromSymbol: str
-    toSymbol: str
-    explanation: Optional[str] = None
-    evidence: List[FlowToolEvidence] = Field(default_factory=list)
-
-
-class FlowToolBoundary(BaseModel):
-    boundaryRef: str
-    fromNodeRef: str
-    kind: str
-    resolutionStatus: str
-    target: Optional[str] = None
-    explanation: Optional[str] = None
-    evidence: List[FlowToolEvidence] = Field(default_factory=list)
-
-
-class FlowToolContext(BaseModel):
-    flowIndex: int
-    status: FlowExplanationStatus = FlowExplanationStatus.OK
-    title: str = ""
-    narrative: List[FlowExplanationNarrative] = Field(default_factory=list)
-    steps: List[FlowToolStep] = Field(default_factory=list)
-    transitions: List[FlowToolTransition] = Field(default_factory=list)
-    boundaries: List[FlowToolBoundary] = Field(default_factory=list)
-    diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
+class FlowToolTree(BaseModel):
+    source: str
+    entrypoint: FlowToolTreeItem
 
 
 class KnowledgeQueryToolContextResponse(BaseModel):
     queryText: str
-    answerLanguage: str
-    status: KnowledgeQueryStatus
-    flows: List[FlowToolContext] = Field(default_factory=list)
+    trees: List[FlowToolTree] = Field(default_factory=list)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
+
+
+FlowToolTreeItem.update_forward_refs()

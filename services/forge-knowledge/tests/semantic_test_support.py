@@ -72,9 +72,9 @@ def seed_semantic_graph(
                 """
                 INSERT OR REPLACE INTO analysis_files(
                     file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status,
-                    analyzed_at, diagnostics_json, engine_version, flow_domain
+                    analyzed_at, diagnostics_json, flow_domain
                 )
-                VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', ?, '[]', 'GRAPH_V1', 'CODE')
+                VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', ?, '[]', 'CODE')
                 """,
                 (file_id, source_id, relative_path, content_hash, now),
             )
@@ -167,9 +167,11 @@ def seed_semantic_graph(
                 """
                 INSERT OR REPLACE INTO analysis_graph_claims(
                     id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
-                    rejection_reason, created_at, updated_at, fact_origin, flow_domain
+                    rejection_reason, created_at, updated_at, entrypoint_kind,
+                    entrypoint_http_method, entrypoint_route, entrypoint_topic, entrypoint_schedule,
+                    entrypoint_interface_method, entrypoint_execution_kind, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 0.9, ?, ?, ?, ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, 0.9, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STATIC', 'CODE')
                 """,
                 (
                     claim["id"],
@@ -182,6 +184,13 @@ def seed_semantic_graph(
                     claim.get("rejection_reason"),
                     now,
                     now,
+                    claim.get("entrypointKind") or claim.get("entrypoint_kind"),
+                    claim.get("httpMethod") or claim.get("http_method"),
+                    claim.get("route"),
+                    claim.get("topic"),
+                    claim.get("schedule"),
+                    claim.get("interfaceMethod") or claim.get("interface_method"),
+                    claim.get("entrypointExecutionKind") or claim.get("entrypoint_execution_kind") or "EXECUTABLE",
                 ),
             )
             for evidence_id in claim.get("evidence_ids", []):

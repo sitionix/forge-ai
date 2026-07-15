@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from knowledge_service.entrypoint_kinds import EntrypointExecutionKind, EntrypointKind, entrypoint_kind_for_annotation
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.java_parser_adapter import JavaParserAdapter
@@ -12,11 +13,8 @@ from knowledge_service.structural_model import (
     StructuralFileMetadata,
     StructuralParseDiagnostic,
     StructuralParseResult,
+    StructuralType,
 )
-
-
-GRAPH_ENGINE_VERSION = "GRAPH_V1"
-
 
 class ParserAdapterRegistry:
     def __init__(self) -> None:
@@ -118,11 +116,13 @@ class StaticGraphMaterializer:
         diagnostics: List[Dict[str, Any]] = []
         file_local_id = result.file_stable_key
         callables_by_id = {item.local_id: item for item in result.callables}
+        types_by_id = {item.local_id: item for item in result.types}
         fields_by_id = {item.local_id: item for item in result.fields}
         fields_by_owner: Dict[str, List[Any]] = {}
         for item in result.fields:
             fields_by_owner.setdefault(item.owner_type_local_id, []).append(item)
         field_usages: Dict[tuple[str, str], Dict[str, Any]] = {}
+        type_lookup = self._type_lookup(result)
         nodes.append(
             GraphNode(
                 localId=file_local_id,
@@ -227,6 +227,7 @@ class StaticGraphMaterializer:
                     metadata=self._metadata(result, "DECLARATION", item.stable_key),
                 )
             )
+            edges.extend(self._type_relation_edges(result, item, type_lookup))
         for item in result.callables:
             nodes.append(
                 GraphNode(
@@ -238,6 +239,7 @@ class StaticGraphMaterializer:
                     displayName=item.name,
                     parentLocalId=item.owner_type_local_id,
                     parameter_count=len(item.parameters),
+                    parameterTypes=list(item.parameters),
                     lineStart=item.line_start,
                     lineEnd=item.line_end,
                     confidence=1.0,
@@ -406,7 +408,6 @@ class StaticGraphMaterializer:
                         **(diagnostic.metadata or {}),
                         "factOrigin": "STATIC",
                         "flowDomain": result.file.flow_domain,
-                        "engineVersion": GRAPH_ENGINE_VERSION,
                     },
                     "factOrigin": "STATIC",
                     "flowDomain": result.file.flow_domain,
@@ -469,27 +470,118 @@ class StaticGraphMaterializer:
             return False
         return re.search(r"(?<![\w$])this\." + re.escape(field_name) + r"\b", value) is not None
 
+    def _type_relation_edges(
+        self,
+        result: StructuralParseResult,
+        item: StructuralType,
+        type_lookup: Dict[str, StructuralType],
+    ) -> List[GraphEdge]:
+        edges: List[GraphEdge] = []
+        for target_name in item.implemented_interfaces:
+            edges.append(self._type_relation_edge(result, item, target_name, "IMPLEMENTS", "IMPLEMENTED_INTERFACE", type_lookup))
+        for target_name in item.extended_classes:
+            edges.append(self._type_relation_edge(result, item, target_name, "EXTENDS", "EXTENDED_CLASS", type_lookup))
+        for target_name in item.extended_interfaces:
+            edges.append(self._type_relation_edge(result, item, target_name, "EXTENDS", "EXTENDED_INTERFACE", type_lookup))
+        return edges
+
+    def _type_relation_edge(
+        self,
+        result: StructuralParseResult,
+        source_type: StructuralType,
+        target_name: str,
+        edge_type: str,
+        relation_kind: str,
+        type_lookup: Dict[str, StructuralType],
+    ) -> GraphEdge:
+        resolved_name = self._resolve_type_reference(result, target_name)
+        target_type = type_lookup.get(resolved_name) or type_lookup.get(self._simple_type(resolved_name))
+        unresolved = None
+        resolution_status = "RESOLVED" if target_type is not None else "UNRESOLVED"
+        if target_type is None:
+            unresolved = {
+                "name": self._simple_type(resolved_name),
+                "qualifiedName": resolved_name if "." in resolved_name else None,
+                "targetTypeText": resolved_name,
+                "kindHint": "TYPE",
+            }
+        stable_key = self._stable_key(result, edge_type, source_type.local_id, relation_kind, resolved_name)
+        return GraphEdge(
+            localId=stable_key,
+            fromNodeLocalId=source_type.local_id,
+            toNodeLocalId=target_type.local_id if target_type is not None else None,
+            edgeType=edge_type,
+            resolutionStatus=resolution_status,
+            confidence=1.0,
+            evidence=[self._evidence(source_type.line_start, source_type.line_end)],
+            unresolvedTarget=unresolved,
+            metadata=self._metadata(
+                result,
+                relation_kind,
+                stable_key,
+                {
+                    "relationKind": relation_kind,
+                    "targetTypeText": resolved_name,
+                    "resolutionReason": "SAME_FILE_TYPE" if target_type is not None else "NOT_RESOLVED",
+                    "unresolvedReason": None if target_type is not None else "TARGET_NOT_ANALYZED",
+                },
+            ),
+        )
+
+    def _type_lookup(self, result: StructuralParseResult) -> Dict[str, StructuralType]:
+        lookup: Dict[str, StructuralType] = {}
+        for item in result.types:
+            lookup[item.name] = item
+            lookup[item.qualified_name] = item
+        return lookup
+
+    def _resolve_type_reference(self, result: StructuralParseResult, type_name: str) -> str:
+        value = str(type_name or "").strip()
+        if not value:
+            return value
+        simple = self._simple_type(value)
+        for item in result.imports:
+            if item.is_wildcard:
+                continue
+            if item.imported_name.rsplit(".", 1)[-1] == simple:
+                return item.imported_name
+        if "." in value:
+            return value
+        if result.package_name:
+            return f"{result.package_name}.{value}"
+        return value
+
+    def _simple_type(self, value: str) -> str:
+        value = str(value or "").strip()
+        value = value.split("<", 1)[0]
+        return value.rsplit(".", 1)[-1]
+
     def _entrypoint_claims(
         self, result: StructuralParseResult, target_local_id: str, annotations: List[StructuralAnnotation], owner_annotations: List[StructuralAnnotation]
     ) -> List[GraphClaim]:
         claims: List[GraphClaim] = []
         owner_route = self._route_from_annotations(owner_annotations)
+        interface_method = self._interface_method_name(result, target_local_id)
+        execution_kind = EntrypointExecutionKind.CONTRACT_DECLARATION.value if interface_method else EntrypointExecutionKind.EXECUTABLE.value
         for annotation in annotations:
             simple = annotation.name.rsplit(".", 1)[-1]
             if simple not in self.ENTRYPOINT_ANNOTATIONS:
                 continue
             route = self._join_routes(owner_route, self._annotation_route(annotation))
-            http_method = self.HTTP_METHODS.get(simple)
+            http_method = self._http_method_from_annotation(simple, annotation)
             metadata = self._metadata(
                 result,
                 "ENTRYPOINT_HINT",
                 self._stable_key(result, "ENTRYPOINT", target_local_id, simple, str(annotation.line_start)),
                 {
                     "entrypointKind": self._entrypoint_kind(simple),
+                    "entrypointExecutionKind": execution_kind,
+                    "origin": "STATIC",
                     "annotation": simple,
                     "annotationName": simple,
                     "httpMethod": http_method,
                     "route": route,
+                    "interfaceMethod": interface_method if http_method else None,
                     "exceptionType": self._annotation_first_identifier(annotation) if simple == "ExceptionHandler" else None,
                     "topic": self._annotation_route(annotation) if simple == "KafkaListener" else None,
                     "schedule": annotation.arguments_raw if simple == "Scheduled" else None,
@@ -509,6 +601,15 @@ class StaticGraphMaterializer:
             )
         return claims
 
+    def _interface_method_name(self, result: StructuralParseResult, target_local_id: str) -> Optional[str]:
+        target = next((item for item in result.callables if item.local_id == target_local_id), None)
+        if target is None or not target.owner_type_local_id:
+            return None
+        owner = next((item for item in result.types if item.local_id == target.owner_type_local_id), None)
+        if owner is None or owner.type_kind != "INTERFACE":
+            return None
+        return target.qualified_name
+
     def _main_entrypoint_claim(
         self, result: StructuralParseResult, target_local_id: str, callable_item, owner_annotations: List[StructuralAnnotation]
     ) -> Optional[GraphClaim]:
@@ -522,7 +623,8 @@ class StaticGraphMaterializer:
             "ENTRYPOINT_HINT",
             self._stable_key(result, "ENTRYPOINT", target_local_id, "MAIN", str(callable_item.line_start)),
             {
-                "entrypointKind": "BOOTSTRAP",
+                "entrypointKind": EntrypointKind.BOOTSTRAP.value,
+                "entrypointExecutionKind": EntrypointExecutionKind.EXECUTABLE.value,
                 "annotation": "SpringBootApplication" if "SpringBootApplication" in owner_annotation_names else None,
                 "sourceAnnotationLine": callable_item.line_start,
             },
@@ -538,59 +640,7 @@ class StaticGraphMaterializer:
         )
 
     def _call_boundary_claims(self, result: StructuralParseResult, callsite: StructuralCallsite) -> List[GraphClaim]:
-        receiver_type = str(callsite.receiver_type_hint or callsite.target_type_text or "")
-        method = str(callsite.method_name or "")
-        raw = str(callsite.raw_text or "")
-        receiver_lower = receiver_type.lower()
-        method_lower = method.lower()
-        claim_kind: Optional[str] = None
-        summary: Optional[str] = None
-        quality = "TRUSTED"
-        confidence = 0.78
-        if self._is_data_receiver(receiver_type) and any(token in method_lower for token in ("save", "delete", "update", "insert", "persist", "remove")):
-            claim_kind = "DATA_ACCESS_HINT"
-            summary = "Writes data through a typed persistence receiver."
-        elif self._is_data_receiver(receiver_type) and any(
-            token in method_lower for token in ("find", "get", "load", "query", "read", "select", "exists", "count")
-        ):
-            claim_kind = "DATA_ACCESS_HINT"
-            summary = "Reads data through a typed persistence receiver."
-        elif "kafkatemplate" in receiver_lower and method == "send":
-            claim_kind = "SIDE_EFFECT"
-            summary = "Publishes a message through a Kafka template."
-        elif any(token in receiver_type for token in ("WebClient", "RestClient", "Feign")) or any(token in raw for token in ("WebClient", "RestClient")):
-            claim_kind = "EXTERNAL_BOUNDARY_HINT"
-            summary = "Calls an external service/client boundary."
-            confidence = 0.72
-        elif method == "getProperty" or "@Value" in raw:
-            claim_kind = "CONFIG_REFERENCE"
-            summary = "References configuration at runtime."
-            confidence = 0.72
-        if not claim_kind or not summary:
-            return []
-        metadata = self._metadata(
-            result,
-            claim_kind,
-            self._stable_key(result, claim_kind, callsite.caller_callable_local_id, callsite.stable_key),
-            {
-                "callsiteStableKey": callsite.stable_key,
-                "receiverText": callsite.receiver_text,
-                "receiverTypeHint": callsite.receiver_type_hint,
-                "methodName": callsite.method_name,
-                "status": quality,
-            },
-        )
-        return [
-            GraphClaim(
-                localId=metadata["stableKey"],
-                nodeLocalId=callsite.caller_callable_local_id,
-                claimKind=claim_kind,
-                summary=summary,
-                evidence=[self._evidence(callsite.line_start, callsite.line_end, callsite.raw_text)],
-                confidence=confidence,
-                metadata=metadata,
-            )
-        ]
+        return []
 
     def _field_config_claims(self, result: StructuralParseResult, target_local_id: str, annotations: List[StructuralAnnotation]) -> List[GraphClaim]:
         claims: List[GraphClaim] = []
@@ -640,6 +690,14 @@ class StaticGraphMaterializer:
         match = re.search(r'"([^"]*)"', raw)
         return match.group(1) if match else None
 
+    def _http_method_from_annotation(self, annotation_name: str, annotation: StructuralAnnotation) -> Optional[str]:
+        method = self.HTTP_METHODS.get(annotation_name)
+        if method is not None or annotation_name != "RequestMapping":
+            return method
+        raw = annotation.arguments_raw or ""
+        match = re.search(r"\bRequestMethod\s*\.\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE)\b", raw)
+        return match.group(1) if match else None
+
     def _annotation_first_identifier(self, annotation: StructuralAnnotation) -> Optional[str]:
         raw = annotation.arguments_raw or ""
         match = re.search(r"([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.class", raw)
@@ -670,25 +728,11 @@ class StaticGraphMaterializer:
         return f"Acts as an entrypoint via @{annotation_name}."
 
     def _entrypoint_kind(self, annotation_name: str) -> str:
-        if annotation_name in self.HTTP_METHODS or annotation_name == "RequestMapping":
-            return "HTTP"
-        if annotation_name == "ExceptionHandler":
-            return "EXCEPTION_HANDLER"
-        if annotation_name == "KafkaListener":
-            return "MESSAGE_CONSUMER"
-        if annotation_name == "Scheduled":
-            return "SCHEDULED"
-        if annotation_name == "Bean":
-            return "CONFIGURATION_BEAN"
-        if annotation_name == "Test":
-            return "TEST"
-        if annotation_name == "PostConstruct":
-            return "LIFECYCLE"
-        return "UNKNOWN"
-
-    def _is_data_receiver(self, type_name: str) -> bool:
-        value = str(type_name or "").lower()
-        return any(token in value for token in ("repository", "entitymanager", "jdbctemplate", "mongotemplate", "dao"))
+        kind = entrypoint_kind_for_annotation(
+            annotation_name,
+            is_http=annotation_name in self.HTTP_METHODS or annotation_name == "RequestMapping",
+        )
+        return kind or EntrypointKind.MESSAGE.value
 
     def _metadata(self, result: StructuralParseResult, source_kind: str, stable_key: str, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         metadata = {
@@ -697,7 +741,6 @@ class StaticGraphMaterializer:
             "factOrigin": "STATIC",
             "flowDomain": result.file.flow_domain,
             "parser": "tree-sitter-java" if result.file.language == "java" else "static-file",
-            "engineVersion": GRAPH_ENGINE_VERSION,
         }
         metadata.update({k: v for k, v in (extra or {}).items() if v is not None})
         return metadata

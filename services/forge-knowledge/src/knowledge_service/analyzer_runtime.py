@@ -16,7 +16,7 @@ from knowledge_service.anchor_enrichment import AnchorAwareGraphValidator
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_policy_validator import GraphPolicyValidator
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphNode
-from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer, StructuralAnalysisEngine
+from knowledge_service.structural_analysis import StaticGraphMaterializer, StructuralAnalysisEngine
 from knowledge_service.target_enrichment import FileEnrichmentMerger, LlmEnrichmentInputBuilder, LlmEnrichmentPlanner, TargetPromptRenderer
 
 
@@ -313,7 +313,6 @@ class ExtractorRegistry:
             "stableKey": self._file_stable_key(context),
             "factOrigin": "STATIC",
             "parser": extractor_id,
-            "engineVersion": GRAPH_ENGINE_VERSION,
         }
         flow_domain = _row_value(context.row, "flow_domain")
         if flow_domain:

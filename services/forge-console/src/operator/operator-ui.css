@@ -1317,6 +1317,99 @@ body.sidebar-collapsed .sidebar-link {
   gap: 12px;
 }
 
+.jarvis-chat-message {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+
+.jarvis-chat-role {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.jarvis-chat-bubble {
+  min-width: 0;
+  border: 1px solid rgba(27, 36, 31, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 252, 235, 0.78);
+  padding: 16px;
+  overflow-wrap: anywhere;
+}
+
+.jarvis-chat-user {
+  justify-items: end;
+}
+
+.jarvis-chat-user .jarvis-chat-bubble {
+  max-width: min(760px, 88%);
+  background: rgba(104, 211, 145, 0.18);
+}
+
+.jarvis-chat-assistant .jarvis-chat-bubble {
+  background: rgba(255, 252, 235, 0.9);
+}
+
+.jarvis-chat-pending {
+  color: var(--muted);
+}
+
+.jarvis-chat-bubble p {
+  margin: 0;
+  color: #304039;
+  line-height: 1.55;
+}
+
+.jarvis-answer-card + .jarvis-answer-card,
+.jarvis-answer-warning {
+  margin-top: 12px;
+}
+
+.jarvis-answer-card strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #1c2f27;
+  font-size: 13px;
+}
+
+.jarvis-answer-text {
+  white-space: pre-wrap;
+}
+
+.jarvis-answer-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.jarvis-answer-warning {
+  border-left: 3px solid #c48a2c;
+  padding-left: 10px;
+  color: #6c4a12;
+}
+
+.jarvis-answer-warning p {
+  color: inherit;
+}
+
+.jarvis-error-card {
+  border: 1px solid rgba(225, 82, 65, 0.34);
+  border-radius: 8px;
+  background: rgba(225, 82, 65, 0.08);
+  padding: 14px;
+}
+
+.jarvis-error-card p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
 .agents-grid {
   display: grid;
   grid-template-columns: minmax(220px, 0.72fr) minmax(390px, 1.12fr) minmax(320px, 0.92fr);
@@ -3435,6 +3528,20 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
 
   .services-grid {
     grid-template-columns: 1fr;
+  }
+
+  .jarvis-grid,
+  .jarvis-status-grid,
+  .jarvis-query-form {
+    grid-template-columns: 1fr;
+  }
+
+  .jarvis-chat-user {
+    justify-items: stretch;
+  }
+
+  .jarvis-chat-user .jarvis-chat-bubble {
+    max-width: none;
   }
 
   .service-options {

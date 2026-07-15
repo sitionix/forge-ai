@@ -3,6 +3,7 @@
 import hashlib
 import asyncio
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -35,21 +36,25 @@ from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
 from knowledge_service.errors import KnowledgeError
+from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
+from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.graph_analysis import GraphAnalysisEngine
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
+from knowledge_service.graph_state_repository import GRAPH_STATE_FAILED, GraphStateRepository
 from knowledge_service.inventory_builder import InventoryBuilder
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.java_parser_adapter import JavaParserAdapter
-from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
+from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode, KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import build_knowledge_query_service
 from knowledge_service.overview_projection import read_overview, refresh_overview_for_sources
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_index import SemanticIndexStore
 from knowledge_service.snippet_extractor import SnippetExtractor
 from knowledge_service.source_config import load_source_config
-from knowledge_service.structural_analysis import GRAPH_ENGINE_VERSION, StaticGraphMaterializer
+from knowledge_service.source_graph_finalizer import CrossSourceGraphResolver, SourceGraphFinalizer
+from knowledge_service.structural_analysis import StaticGraphMaterializer
 from knowledge_service.structural_model import StructuralFileMetadata
 from knowledge_service.target_enrichment import (
     BEGIN_INPUT_MARKER,
@@ -62,7 +67,7 @@ from knowledge_service.target_enrichment import (
 def knowledge_query_request(query_text: str) -> KnowledgeQueryRequest:
     return KnowledgeQueryRequest(
         queryText=query_text,
-        intent="UNKNOWN",
+        intent="AUTO",
         answerLanguage="en",
         includeTests=False,
         maxFlows=10,
@@ -72,7 +77,7 @@ def knowledge_query_request(query_text: str) -> KnowledgeQueryRequest:
 def knowledge_query_payload(query_text: str):
     return {
         "queryText": query_text,
-        "intent": "UNKNOWN",
+        "intent": "AUTO",
         "answerLanguage": "en",
         "includeTests": False,
         "maxFlows": 10,
@@ -412,23 +417,29 @@ def shared_evidence_graph_result():
     )
 
 
-def materialize_graph_for_test(result, content=None, file_id=1, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java"):
+def materialize_graph_for_test(
+    result,
+    content=None,
+    file_id=1,
+    relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java",
+    source_id="edge-gateway",
+):
     content = (
         content
         or "class EmailVerificationLinkClientImpl {\n  WebClient client;\n  String createLink() {\n    helper(); helper();\n  }\n  void helper() {}\n}\n"
     )
     row = {
         "id": file_id,
-        "source_id": "edge-gateway",
+        "source_id": source_id,
         "relative_path": relative_path,
         "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
     }
     return GraphAnalysisEngine().materialize(row, "job-1", "test-analyzer", "1", result, content.splitlines())
 
 
-def _static_java_graph_result_for_test(content: str, file_id: int, relative_path: str):
+def _static_java_graph_result_for_test(content: str, file_id: int, relative_path: str, source_id: str = "edge-gateway"):
     file_metadata = StructuralFileMetadata(
-        source_id="edge-gateway",
+        source_id=source_id,
         inventory_file_id=file_id,
         relative_path=relative_path,
         language="java",
@@ -441,12 +452,13 @@ def _static_java_graph_result_for_test(content: str, file_id: int, relative_path
     return StaticGraphMaterializer().to_graph(structural)
 
 
-def _materialize_static_java_for_test(content: str, file_id: int, relative_path: str):
+def _materialize_static_java_for_test(content: str, file_id: int, relative_path: str, source_id: str = "edge-gateway"):
     return materialize_graph_for_test(
-        _static_java_graph_result_for_test(content, file_id, relative_path),
+        _static_java_graph_result_for_test(content, file_id, relative_path, source_id),
         content=content,
         file_id=file_id,
         relative_path=relative_path,
+        source_id=source_id,
     )
 
 
@@ -467,15 +479,14 @@ def _materialize_static_plus_enrichment_for_test(
     )
 
 
-def graph_state_for_test(content=None, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java"):
+def graph_state_for_test(content=None, relative_path="src/main/java/example/EmailVerificationLinkClientImpl.java", source_id="edge-gateway"):
     content = content or "class EmailVerificationLinkClientImpl {}\n"
     return {
-        "source_id": "edge-gateway",
+        "source_id": source_id,
         "relative_path": relative_path,
         "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
         "analyzer_name": "test-analyzer",
         "analyzer_version": "1",
-        "engine_version": GRAPH_ENGINE_VERSION,
         "flow_domain": "CODE",
         "status": "ANALYZED",
         "analyzed_at": "now",
@@ -814,7 +825,6 @@ def seed_analysis_file_statuses(db_path, statuses):
                     "content_hash": file_row["content_hash"],
                     "analyzer_name": StubAnalyzer.name,
                     "analyzer_version": StubAnalyzer.version,
-                    "engine_version": GRAPH_ENGINE_VERSION,
                     "flow_domain": "CODE",
                     "status": status,
                     "analyzed_at": "now",
@@ -863,7 +873,7 @@ def test_retry_failed_selects_only_current_failed_files_and_preserves_history(tm
             "sourceIds": ["edge-gateway"],
         }
     )
-    analysis_store.create_job_files("old-job", [failed_row], {int(failed_row["id"]): "CODE"}, GRAPH_ENGINE_VERSION)
+    analysis_store.create_job_files("old-job", [failed_row], {int(failed_row["id"]): "CODE"})
     analysis_store.update_job_file("old-job", int(failed_row["id"]), "FAILED", diagnostics=[{"code": "ANALYSIS_FILE_FAILED"}], completed=True)
     runner = SupervisorHarness(store, app_config(tmp_path))
 
@@ -891,7 +901,7 @@ def test_retry_failed_selects_only_current_failed_files_and_preserves_history(tm
     assert current_failed == 0
 
 
-def test_analysis_store_migrates_old_integer_graph_diagnostics_schema(tmp_path):
+def test_analysis_store_rebuilds_incompatible_graph_diagnostics_schema(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE sources (source_id TEXT PRIMARY KEY, display_name TEXT)")
@@ -951,7 +961,6 @@ def test_analysis_store_migrates_old_integer_graph_diagnostics_schema(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics WHERE code = 'OLD_DIAGNOSTIC'").fetchone()[0] == 0
-        assert conn.execute("SELECT 1 FROM analysis_schema_migrations WHERE version = 4").fetchone()
 
     AnalysisStore(db_path).init()
 
@@ -1002,7 +1011,6 @@ def test_graph_persistence_failure_is_reported_as_graph_store_error(tmp_path):
                 "content_hash": "hash",
                 "analyzer_name": "ai-file-analyzer",
                 "analyzer_version": "1",
-                "engine_version": GRAPH_ENGINE_VERSION,
                 "flow_domain": "WORKFLOW",
                 "status": "ANALYZED",
                 "analyzed_at": "now",
@@ -1033,6 +1041,19 @@ def test_analysis_store_init_is_safe_for_parallel_graph_requests(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_nodes'").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_edges'").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_diagnostics'").fetchone()[0] == 1
+
+
+def test_analysis_store_current_schema_initializes_empty_db_idempotently(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    store = AnalysisStore(db_path)
+
+    store.init()
+    store.init()
+
+    with sqlite3.connect(db_path) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+
+    assert {"analysis_jobs", "analysis_graph_state", "analysis_graph_nodes", "analysis_graph_edges"}.issubset(tables)
 
 
 def test_analysis_store_uses_wal_and_configurable_busy_timeout(tmp_path):
@@ -1069,7 +1090,6 @@ def test_mark_file_retries_transient_sqlite_lock(monkeypatch, tmp_path):
             "content_hash": "hash",
             "analyzer_name": "ai-file-analyzer",
             "analyzer_version": "1",
-            "engine_version": GRAPH_ENGINE_VERSION,
             "status": "FAILED",
             "diagnostics": [{"code": "ANALYSIS_FILE_FAILED", "message": "failed"}],
         },
@@ -1123,7 +1143,7 @@ def test_graph_store_accepts_shared_evidence_ranges_and_replaces_file_twice(tmp_
     assert counts["analysis_graph_evidence"] == len(second_graph["evidence"])
 
 
-def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_replace(tmp_path):
+def test_current_graph_replace_marks_source_dirty_until_finalized(tmp_path):
     store = AnalysisStore(tmp_path / "knowledge.sqlite")
     store.init()
     content = "class EmailVerificationLinkClientImpl { void createLink() { helper(); } void helper() {} }\n"
@@ -1146,11 +1166,11 @@ def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_re
             "failedFileCount": 0,
             "sourceIds": ["edge-gateway"],
             "diagnostics": [],
-            "engineVersion": GRAPH_ENGINE_VERSION,
             "mode": "FULL",
         }
     )
     store.replace_file_graph_analysis(1, state, first)
+    store.finalize_source_graph("edge-gateway")
     assert store.graph_manifest("edge-gateway", "CODE")["totalNodeCount"] == len(first["nodes"])
     store.update_job("job-1", {"status": "COMPLETED", "completedAt": "done"})
     first_manifest = store.graph_manifest("edge-gateway", "CODE")
@@ -1173,13 +1193,14 @@ def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_re
             "failedFileCount": 0,
             "sourceIds": ["edge-gateway"],
             "diagnostics": [],
-            "engineVersion": GRAPH_ENGINE_VERSION,
             "mode": "FULL",
         }
     )
     store.replace_file_graph_analysis(1, state, failed)
     store.update_job("job-2", {"status": "FAILED", "completedAt": "failed"})
-    assert store.graph_manifest("edge-gateway", "CODE")["graphId"] == first_manifest["graphId"]
+    dirty_manifest = store.graph_manifest("edge-gateway", "CODE")
+    assert dirty_manifest["graphId"] is None
+    assert "edge-gateway" in store.dirty_graph_source_ids(["edge-gateway"])
 
     third = json.loads(json.dumps(base_graph))
     third["nodes"] = third["nodes"][:-1]
@@ -1198,20 +1219,19 @@ def test_current_graph_replace_is_atomic_and_keeps_previous_current_on_failed_re
             "failedFileCount": 0,
             "sourceIds": ["edge-gateway"],
             "diagnostics": [],
-            "engineVersion": GRAPH_ENGINE_VERSION,
             "mode": "FULL",
         }
     )
     with pytest.raises(KnowledgeError):
         store.replace_file_graph_analysis(1, state, third)
     third_manifest = store.graph_manifest("edge-gateway", "CODE")
-    assert third_manifest["graphId"] == first_manifest["graphId"]
-    assert third_manifest["totalNodeCount"] == len(first["nodes"])
+    assert third_manifest["graphId"] is None
+    assert third_manifest["totalNodeCount"] == 0
     with sqlite3.connect(store.db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = 'edge-gateway'").fetchone()[0] == len(first["nodes"])
 
 
-def test_graph_storage_migration_rebuilds_incompatible_primary_key_tables(tmp_path):
+def test_graph_storage_rebuilds_incompatible_primary_key_tables(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -1296,6 +1316,245 @@ def test_graph_store_retries_transient_sqlite_lock(monkeypatch, tmp_path):
     assert calls["count"] == 2
     with sqlite3.connect(store.db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes").fetchone()[0] == len(graph["nodes"])
+
+
+def test_source_graph_finalizer_invokes_injected_resolver():
+    class FakeStore:
+        def __init__(self):
+            self.conn = object()
+            self.init_calls = 0
+
+        def init(self):
+            self.init_calls += 1
+
+        def _write_with_busy_retry(self, write):
+            write(self.conn)
+
+        def mark_source_graph_failed(self, source_id, exc):
+            raise AssertionError(f"unexpected finalization failure for {source_id}: {exc}")
+
+    class FakeStateRepository:
+        def __init__(self):
+            self.status_calls = []
+
+        def set_status_conn(self, conn, source_id, status, updated_at, diagnostics=None):
+            self.status_calls.append((conn, source_id, status, updated_at, diagnostics))
+
+    class FakeResolver:
+        def __init__(self):
+            self.calls = []
+
+        def finalize_source(self, conn, source_id, created_at):
+            self.calls.append((conn, source_id, created_at))
+
+    store = FakeStore()
+    state_repository = FakeStateRepository()
+    resolver = FakeResolver()
+
+    SourceGraphFinalizer(store, state_repository=state_repository, resolver=resolver).finalize_source_graph("edge-gateway")
+
+    assert store.init_calls == 1
+    assert len(state_repository.status_calls) == 1
+    assert state_repository.status_calls[0][0] is store.conn
+    assert state_repository.status_calls[0][1] == "edge-gateway"
+    assert state_repository.status_calls[0][2] == "FINALIZING"
+    assert state_repository.status_calls[0][4] is None
+    assert resolver.calls == [(store.conn, "edge-gateway", state_repository.status_calls[0][3])]
+
+
+def test_analysis_store_finalization_delegates_once(monkeypatch, tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    calls = []
+
+    class FakeFinalizer:
+        def __init__(self, delegated_store):
+            self.delegated_store = delegated_store
+
+        def finalize_source_graph(self, source_id):
+            calls.append((self.delegated_store, source_id))
+
+    monkeypatch.setattr("knowledge_service.analysis_store.SourceGraphFinalizer", FakeFinalizer)
+
+    store.finalize_source_graph("edge-gateway")
+
+    assert calls == [(store, "edge-gateway")]
+
+
+def test_graph_state_repository_mark_failed_persists_failed_state(tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+
+    GraphStateRepository(store).mark_failed(
+        "edge-gateway",
+        {"code": "SOURCE_GRAPH_FINALIZATION_FAILED", "message": "boom"},
+        "2026-07-15T00:00:00+00:00",
+    )
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT status, diagnostics_json
+            FROM analysis_graph_state
+            WHERE source_id = ?
+            """,
+            ("edge-gateway",),
+        ).fetchone()
+
+    assert row is not None
+    assert row["status"] == GRAPH_STATE_FAILED
+    assert json.loads(row["diagnostics_json"]) == [{"code": "SOURCE_GRAPH_FINALIZATION_FAILED", "message": "boom"}]
+
+
+def test_graph_state_repository_mark_failed_logs_when_persistence_fails(caplog, monkeypatch):
+    class FailingStore:
+        def _write_with_busy_retry(self, write):
+            raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(logging.getLogger("knowledge_service"), "propagate", True)
+    caplog.set_level(logging.WARNING, logger="knowledge_service.graph_state_repository")
+
+    GraphStateRepository(FailingStore()).mark_failed(
+        "edge-gateway",
+        {"code": "SOURCE_GRAPH_FINALIZATION_FAILED", "message": "boom"},
+        "2026-07-15T00:00:00+00:00",
+    )
+
+    assert "Failed to persist graph FAILED state for source edge-gateway" in caplog.text
+
+
+def test_source_graph_finalization_runs_once_and_resolves_many_calls_without_sql_n_plus_one(monkeypatch, tmp_path):
+    service_store, _, _ = build_inventory_with_file_count(tmp_path / "service-finalize", 3)
+    runner = SupervisorHarness(service_store, app_config(tmp_path / "service-finalize"))
+    service_finalize_calls = []
+
+    def record_service_finalize(source_id):
+        service_finalize_calls.append(source_id)
+
+    monkeypatch.setattr(runner.analysis_store, "finalize_source_graph", record_service_finalize)
+
+    final = wait_job(service_store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    assert final["status"] == "COMPLETED"
+    assert final["processedFileCount"] == 3
+    assert service_finalize_calls == ["edge-gateway"]
+
+    call_count = 120
+    caller_body = "\n".join("    worker.handle();" for _ in range(call_count))
+    caller = f"""package example;
+
+class Dispatcher {{
+  private final Worker worker;
+
+  void dispatch() {{
+{caller_body}
+  }}
+}}
+"""
+    worker = """package example;
+
+class Worker {
+  void handle() {}
+}
+"""
+    store = AnalysisStore(tmp_path / "resolver-finalize.sqlite")
+    store.init()
+    original_finalize = CrossSourceGraphResolver.finalize_source
+    original_connect = store._connect
+    finalize_calls = []
+    trace_active = {"value": False}
+    traced_statements = []
+
+    def traced_finalize(self, conn, source_id, created_at):
+        finalize_calls.append(source_id)
+        trace_active["value"] = True
+        try:
+            return original_finalize(self, conn, source_id, created_at)
+        finally:
+            trace_active["value"] = False
+
+    def traced_connect(*args, **kwargs):
+        conn = original_connect(*args, **kwargs)
+        conn.set_trace_callback(lambda statement: traced_statements.append(statement) if trace_active["value"] else None)
+        return conn
+
+    monkeypatch.setattr(CrossSourceGraphResolver, "finalize_source", traced_finalize)
+    monkeypatch.setattr(store, "_connect", traced_connect)
+
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(caller, "src/main/java/example/Dispatcher.java"),
+        _materialize_static_java_for_test(caller, 1, "src/main/java/example/Dispatcher.java"),
+    )
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(worker, "src/main/java/example/Worker.java"),
+        _materialize_static_java_for_test(worker, 2, "src/main/java/example/Worker.java"),
+    )
+
+    assert finalize_calls == []
+
+    store.finalize_source_graph("edge-gateway")
+    first_edges = _resolved_call_edges_for_test(store.db_path)
+    select_count = sum(1 for statement in traced_statements if statement.lstrip().upper().startswith("SELECT"))
+
+    assert finalize_calls == ["edge-gateway"]
+    assert len(first_edges) == call_count
+    assert all(edge["resolution_status"] == "RESOLVED" and edge["to_node_id"] for edge in first_edges)
+    assert select_count < call_count
+
+    traced_statements.clear()
+    store.finalize_source_graph("edge-gateway")
+    second_edges = _resolved_call_edges_for_test(store.db_path)
+
+    assert finalize_calls == ["edge-gateway", "edge-gateway"]
+    assert second_edges == first_edges
+
+
+def test_dirty_source_finalizes_after_supervisor_recovery_with_unchanged_files(tmp_path):
+    content = "package example;\npublic class ObjectHandler { public void handle() {} }\n"
+    store, _, _ = build_inventory(tmp_path, content=content)
+    row = store.search_rows([], [])[0][0]
+    analysis_store = AnalysisStore(store.db_path)
+    state = graph_state_for_test(content, row["relative_path"])
+    state["analyzer_name"] = StubAnalyzer.name
+    state["analyzer_version"] = StubAnalyzer.version
+    analysis_store.replace_file_graph_analysis(
+        int(row["id"]),
+        state,
+        _materialize_static_java_for_test(content, int(row["id"]), row["relative_path"]),
+    )
+
+    assert analysis_store.graph_manifest("edge-gateway", "CODE")["graphId"] is None
+    assert analysis_store.dirty_graph_source_ids(["edge-gateway"]) == ["edge-gateway"]
+
+    analyzer = StubAnalyzer()
+    runner = SupervisorHarness(store, app_config(tmp_path))
+    response = runner.start(AnalysisBuildRequest(force=False), analyzer)
+    final = wait_job(store, response["jobId"])
+    recovered_store = AnalysisStore(store.db_path)
+
+    assert final["status"] == "COMPLETED"
+    assert analyzer.calls == 0
+    assert recovered_store.dirty_graph_source_ids(["edge-gateway"]) == []
+    assert recovered_store.graph_manifest("edge-gateway", "CODE")["graphId"]
+
+
+def _resolved_call_edges_for_test(db_path):
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        return [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT id, from_node_id, to_node_id, resolution_status, metadata_json
+                FROM analysis_graph_edges
+                WHERE source_id = 'edge-gateway'
+                  AND edge_type = 'CALLS'
+                ORDER BY id
+                """
+            ).fetchall()
+        ]
 
 
 def test_duplicate_evidence_id_is_reported_as_graph_store_error_without_partial_rows(tmp_path):
@@ -1397,6 +1656,7 @@ class TicketDto {}
         graph_state_for_test(mapper, "src/main/java/example/TicketMapper.java"),
         _materialize_static_java_for_test(mapper, 2, "src/main/java/example/TicketMapper.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -1450,6 +1710,12 @@ interface SiteInfraMapper {
   Site asSite(SiteEntity entity);
 }
 
+class SiteInfraMapperImpl implements SiteInfraMapper {
+  public Site asSite(SiteEntity entity) {
+    return new Site();
+  }
+}
+
 class Site {}
 class SiteEntity {}
 """
@@ -1465,13 +1731,14 @@ class SiteEntity {}
         graph_state_for_test(mapper, "src/main/java/example/SiteInfraMapper.java"),
         _materialize_static_java_for_test(mapper, 2, "src/main/java/example/SiteInfraMapper.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
         edge = conn.execute(
             """
             SELECT e.resolution_status, e.to_node_id, e.argument_count, e.metadata_json,
-                   e.unresolved_target_json, target.name AS target_name, ev.line_start, ev.excerpt
+                   e.unresolved_target_json, target.name AS target_name, target.qualified_name AS target_qualified_name, ev.line_start, ev.excerpt
             FROM analysis_graph_edges e
             JOIN analysis_graph_nodes target ON target.id = e.to_node_id
             JOIN analysis_graph_edge_evidence ee ON ee.edge_id = e.id
@@ -1485,6 +1752,7 @@ class SiteEntity {}
         assert edge is not None
         assert edge["resolution_status"] == "RESOLVED"
         assert edge["target_name"] == "asSite"
+        assert edge["target_qualified_name"] == "example.SiteInfraMapperImpl.asSite"
         assert edge["argument_count"] is None
         assert edge["unresolved_target_json"] is None
         assert edge["line_start"] == 11
@@ -1493,8 +1761,303 @@ class SiteEntity {}
         assert metadata["receiverText"] == "this.siteInfraMapper"
         assert metadata["receiverTypeHint"] == "SiteInfraMapper"
         assert metadata["targetTypeText"] == "SiteInfraMapper"
-        assert metadata["resolutionReason"] == "FIELD_TYPE_HINT"
+        assert metadata["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH"
         assert "unresolvedReason" not in metadata
+
+
+def test_resolver_dispatches_interface_calls_to_unique_implementation(tmp_path):
+    content = """package example;
+
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+class Controller implements GeneratedApi {
+  private final UseCase useCase;
+
+  @Override
+  public Response handle(Request request) {
+    return useCase.execute(new Command());
+  }
+}
+
+interface GeneratedApi {
+  Response handle(Request request);
+}
+
+interface UseCase {
+  Response execute(Command command);
+}
+
+class UseCaseImpl implements UseCase {
+  private final Repository repository;
+
+  public Response execute(Command command) {
+    return repository.save(command);
+  }
+}
+
+interface Repository {
+  Response save(Command command);
+}
+
+class RepositoryImpl implements Repository {
+  public Response save(Command command) {
+    return new Response();
+  }
+}
+
+class Request {}
+class Command {}
+class Response {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(content, "src/main/java/example/Controller.java"),
+        _materialize_static_java_for_test(content, 1, "src/main/java/example/Controller.java"),
+    )
+    store.finalize_source_graph("edge-gateway")
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT caller.qualified_name AS caller, target.qualified_name AS target, e.resolution_status, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND json_extract(e.metadata_json, '$.methodName') IN ('execute', 'save')
+            ORDER BY caller.qualified_name, target.qualified_name
+            """
+        ).fetchall()
+
+    targets = {(row["caller"], row["target"]): row for row in rows}
+    assert ("example.Controller.handle", "example.UseCaseImpl.execute") in targets
+    assert ("example.UseCaseImpl.execute", "example.RepositoryImpl.save") in targets
+    assert all(row["resolution_status"] == "RESOLVED" for row in targets.values())
+    assert all(json.loads(row["metadata_json"])["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH" for row in targets.values())
+
+
+def test_resolver_revisits_unresolved_interface_calls_when_implementation_arrives_later(tmp_path):
+    api_content = """package example;
+
+class Controller {
+  private final UseCase useCase;
+
+  Response handle(Command command) {
+    return useCase.execute(command);
+  }
+}
+
+interface UseCase {
+  Response execute(Command command);
+}
+
+class Command {}
+class Response {}
+"""
+    implementation_content = """package example;
+
+class UseCaseImpl implements UseCase {
+  public Response execute(Command command) {
+    return new Response();
+  }
+}
+
+class Command {}
+class Response {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(api_content, "src/main/java/example/Controller.java"),
+        _materialize_static_java_for_test(api_content, 1, "src/main/java/example/Controller.java"),
+    )
+    store.finalize_source_graph("edge-gateway")
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        unresolved = conn.execute(
+            """
+            SELECT e.resolution_status, e.to_node_id, e.unresolved_target_json, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'example.Controller.handle'
+              AND json_extract(e.metadata_json, '$.methodName') = 'execute'
+            """
+        ).fetchone()
+    assert unresolved is not None
+    assert unresolved["resolution_status"] == "UNRESOLVED"
+    assert unresolved["to_node_id"] is None
+    assert json.loads(unresolved["unresolved_target_json"])["interfaceType"] == "example.UseCase"
+
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(implementation_content, "src/main/java/example/UseCaseImpl.java"),
+        _materialize_static_java_for_test(implementation_content, 2, "src/main/java/example/UseCaseImpl.java"),
+    )
+    store.finalize_source_graph("edge-gateway")
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        resolved = conn.execute(
+            """
+            SELECT target.qualified_name AS target, e.resolution_status, e.unresolved_target_json, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'example.Controller.handle'
+              AND json_extract(e.metadata_json, '$.methodName') = 'execute'
+            """
+        ).fetchone()
+
+    assert resolved is not None
+    assert resolved["target"] == "example.UseCaseImpl.execute"
+    assert resolved["resolution_status"] == "RESOLVED"
+    assert resolved["unresolved_target_json"] is None
+    assert json.loads(resolved["metadata_json"])["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH"
+
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(implementation_content, "src/main/java/example/UseCaseImpl.java"),
+        _materialize_static_java_for_test(implementation_content, 2, "src/main/java/example/UseCaseImpl.java"),
+    )
+    store.finalize_source_graph("edge-gateway")
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        refreshed = conn.execute(
+            """
+            SELECT target.qualified_name AS target, e.resolution_status, e.unresolved_target_json, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'example.Controller.handle'
+              AND json_extract(e.metadata_json, '$.methodName') = 'execute'
+            """
+        ).fetchone()
+
+    assert refreshed is not None
+    assert refreshed["target"] == "example.UseCaseImpl.execute"
+    assert refreshed["resolution_status"] == "RESOLVED"
+    assert refreshed["unresolved_target_json"] is None
+    assert json.loads(refreshed["metadata_json"])["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH"
+
+
+def test_resolver_retains_all_interface_implementation_branches(tmp_path):
+    content = """package example;
+
+class Controller {
+  private final UseCase useCase;
+
+  Response handle(Command command) {
+    return useCase.execute(command);
+  }
+}
+
+interface UseCase {
+  Response execute(Command command);
+}
+
+class FirstUseCase implements UseCase {
+  public Response execute(Command command) { return new Response(); }
+}
+
+class SecondUseCase implements UseCase {
+  public Response execute(Command command) { return new Response(); }
+}
+
+class Command {}
+class Response {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(content, "src/main/java/example/Controller.java"),
+        _materialize_static_java_for_test(content, 1, "src/main/java/example/Controller.java"),
+    )
+    store.finalize_source_graph("edge-gateway")
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT target.qualified_name AS target, e.resolution_status, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'example.Controller.handle'
+              AND json_extract(e.metadata_json, '$.methodName') = 'execute'
+            ORDER BY target.qualified_name
+            """
+        ).fetchall()
+
+    assert [row["target"] for row in rows] == ["example.FirstUseCase.execute", "example.SecondUseCase.execute"]
+    assert all(row["resolution_status"] == "RESOLVED" for row in rows)
+    assert all(json.loads(row["metadata_json"])["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH" for row in rows)
+
+
+def test_resolver_keeps_missing_interface_implementation_as_terminal_unresolved_call(tmp_path):
+    content = """package example;
+
+class Service {
+  private final GeneratedMapper mapper;
+
+  Dto map(Entity entity) {
+    return mapper.asDto(entity);
+  }
+}
+
+interface GeneratedMapper {
+  Dto asDto(Entity entity);
+}
+
+class Entity {}
+class Dto {}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(content, "src/main/java/example/Service.java"),
+        _materialize_static_java_for_test(content, 1, "src/main/java/example/Service.java"),
+    )
+    store.finalize_source_graph("edge-gateway")
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        edge = conn.execute(
+            """
+            SELECT e.resolution_status, e.to_node_id, e.unresolved_target_json, e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            WHERE e.source_id = 'edge-gateway'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'example.Service.map'
+              AND json_extract(e.metadata_json, '$.methodName') = 'asDto'
+            """
+        ).fetchone()
+
+    assert edge is not None
+    assert edge["resolution_status"] == "UNRESOLVED"
+    assert edge["to_node_id"] is None
+    assert json.loads(edge["unresolved_target_json"])["qualifiedName"] == "example.GeneratedMapper.asDto"
+    metadata = json.loads(edge["metadata_json"])
+    assert metadata["resolutionReason"] == "INTERFACE_IMPLEMENTATION_NOT_FOUND"
+    assert metadata["unresolvedReason"] == "NO_ANALYZED_IMPLEMENTATION"
 
 
 def test_resolver_does_not_fake_success_for_same_arity_overloads(tmp_path):
@@ -1533,6 +2096,7 @@ class TicketDto {}
         graph_state_for_test(mapper, "src/main/java/example/TicketMapper.java"),
         _materialize_static_java_for_test(mapper, 2, "src/main/java/example/TicketMapper.java"),
     )
+    store.finalize_source_graph("edge-gateway")
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -1551,7 +2115,410 @@ class TicketDto {}
         assert edge["to_node_id"] is None
         metadata = json.loads(edge["metadata_json"])
         assert "argumentCount" not in metadata
-        assert "resolverSignals" not in metadata
+    assert "resolverSignals" not in metadata
+
+
+def test_cross_source_interface_override_uses_exact_fqn_and_typed_signature(tmp_path):
+    interface_source = """package generated.api;
+
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+@RequestMapping("/tasks")
+public interface TaskApi {
+  @PostMapping("/handle")
+  ResponseDTO handle(RequestDTO request);
+}
+
+class RequestDTO {}
+class ResponseDTO {}
+"""
+    implementation_source = """package service.impl;
+
+import generated.api.TaskApi;
+import generated.api.RequestDTO;
+import generated.api.ResponseDTO;
+
+public class TaskController implements TaskApi {
+  @Override
+  public ResponseDTO handle(RequestDTO request) {
+    return null;
+  }
+
+  public ResponseDTO handle(String request) {
+    return null;
+  }
+}
+
+class TaskWorkflow {
+  private final generated.api.TaskApi api;
+
+  TaskWorkflow(generated.api.TaskApi api) {
+    this.api = api;
+  }
+
+  public ResponseDTO run(RequestDTO request) {
+    return api.handle(request);
+  }
+}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(interface_source, "target/generated-sources/src/main/java/generated/api/TaskApi.java", "app-afesox"),
+        _materialize_static_java_for_test(
+            interface_source,
+            1,
+            "target/generated-sources/src/main/java/generated/api/TaskApi.java",
+            "app-afesox",
+        ),
+    )
+    store.finalize_source_graph("app-afesox")
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(implementation_source, "src/main/java/service/impl/TaskController.java", "task-service"),
+        _materialize_static_java_for_test(
+            implementation_source,
+            2,
+            "src/main/java/service/impl/TaskController.java",
+            "task-service",
+        ),
+    )
+    store.finalize_source_graph("task-service")
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        implements_edge = conn.execute(
+            """
+            SELECT e.resolution_status, target.source_id AS target_source, target.qualified_name AS target_name
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'task-service'
+              AND e.edge_type = 'IMPLEMENTS'
+            """
+        ).fetchone()
+        override_edges = conn.execute(
+            """
+            SELECT impl.qualified_name AS implementation_method,
+                   impl.parameter_types_json AS implementation_params,
+                   iface.source_id AS interface_source,
+                   iface.qualified_name AS interface_method,
+                   iface.parameter_types_json AS interface_params
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes impl ON impl.id = e.from_node_id
+            JOIN analysis_graph_nodes iface ON iface.id = e.to_node_id
+            WHERE e.source_id = 'task-service'
+              AND e.edge_type = 'OVERRIDES'
+            ORDER BY impl.signature
+            """
+        ).fetchall()
+        inherited_claims = conn.execute(
+            """
+            SELECT node.qualified_name, node.parameter_types_json, claim.entrypoint_kind,
+                   claim.entrypoint_http_method, claim.entrypoint_route, claim.entrypoint_interface_method,
+                   claim.entrypoint_execution_kind
+            FROM analysis_graph_claims claim
+            JOIN analysis_graph_nodes node ON node.id = claim.node_id
+            WHERE claim.source_id = 'task-service'
+              AND claim.claim_kind = 'ENTRYPOINT_HINT'
+              AND claim.status = 'DERIVED'
+            ORDER BY node.signature
+            """
+        ).fetchall()
+        dispatch_edge = conn.execute(
+            """
+            SELECT caller.qualified_name AS caller_method,
+                   target.source_id AS target_source,
+                   target.qualified_name AS target_method,
+                   e.resolution_status,
+                   e.metadata_json
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes caller ON caller.id = e.from_node_id
+            JOIN analysis_graph_nodes target ON target.id = e.to_node_id
+            WHERE e.source_id = 'task-service'
+              AND e.edge_type = 'CALLS'
+              AND caller.qualified_name = 'service.impl.TaskWorkflow.run'
+              AND json_extract(e.metadata_json, '$.methodName') = 'handle'
+            """
+        ).fetchone()
+        interface_claim = conn.execute(
+            """
+            SELECT claim.entrypoint_execution_kind
+            FROM analysis_graph_claims claim
+            JOIN analysis_graph_nodes node ON node.id = claim.node_id
+            WHERE claim.source_id = 'app-afesox'
+              AND node.qualified_name = 'generated.api.TaskApi.handle'
+              AND claim.claim_kind = 'ENTRYPOINT_HINT'
+            """
+        ).fetchone()
+
+    assert implements_edge is not None
+    assert implements_edge["resolution_status"] == "RESOLVED"
+    assert implements_edge["target_source"] == "app-afesox"
+    assert implements_edge["target_name"] == "generated.api.TaskApi"
+    assert len(override_edges) == 1
+    assert override_edges[0]["implementation_method"] == "service.impl.TaskController.handle"
+    assert json.loads(override_edges[0]["implementation_params"]) == ["RequestDTO"]
+    assert override_edges[0]["interface_source"] == "app-afesox"
+    assert override_edges[0]["interface_method"] == "generated.api.TaskApi.handle"
+    assert json.loads(override_edges[0]["interface_params"]) == ["RequestDTO"]
+    assert len(inherited_claims) == 1
+    assert inherited_claims[0]["qualified_name"] == "service.impl.TaskController.handle"
+    assert json.loads(inherited_claims[0]["parameter_types_json"]) == ["RequestDTO"]
+    assert inherited_claims[0]["entrypoint_kind"] == "HTTP"
+    assert inherited_claims[0]["entrypoint_http_method"] == "POST"
+    assert inherited_claims[0]["entrypoint_route"] == "/tasks/handle"
+    assert inherited_claims[0]["entrypoint_interface_method"] == "generated.api.TaskApi.handle"
+    assert inherited_claims[0]["entrypoint_execution_kind"] == "EXECUTABLE"
+    assert interface_claim is not None
+    assert interface_claim["entrypoint_execution_kind"] == "CONTRACT_DECLARATION"
+    assert dispatch_edge is not None
+    assert dispatch_edge["resolution_status"] == "RESOLVED"
+    assert dispatch_edge["target_source"] == "task-service"
+    assert dispatch_edge["target_method"] == "service.impl.TaskController.handle"
+    dispatch_metadata = json.loads(dispatch_edge["metadata_json"])
+    assert dispatch_metadata["interfaceMethod"] == "generated.api.TaskApi.handle"
+    assert dispatch_metadata["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH"
+
+
+def test_cross_source_graph_resolver_can_be_unit_tested_directly(tmp_path):
+    interface_source = """package generated.api;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+@RequestMapping("/sites")
+public interface SiteApi {
+  @GetMapping("/{id}")
+  String getSite(String id);
+}
+"""
+    implementation_source = """package service.impl;
+
+import generated.api.SiteApi;
+
+public class SiteController implements SiteApi {
+  @Override
+  public String getSite(String id) {
+    return id;
+  }
+}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(interface_source, "target/generated-sources/src/main/java/generated/api/SiteApi.java", "app-afesox"),
+        _materialize_static_java_for_test(
+            interface_source,
+            1,
+            "target/generated-sources/src/main/java/generated/api/SiteApi.java",
+            "app-afesox",
+        ),
+    )
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(implementation_source, "src/main/java/service/impl/SiteController.java", "site-service"),
+        _materialize_static_java_for_test(
+            implementation_source,
+            2,
+            "src/main/java/service/impl/SiteController.java",
+            "site-service",
+        ),
+    )
+    resolver = CrossSourceGraphResolver(store)
+
+    def finalize(conn):
+        resolver.finalize_source(conn, "app-afesox", "2026-07-15T00:00:00+00:00")
+        resolver.finalize_source(conn, "site-service", "2026-07-15T00:00:01+00:00")
+
+    store._write_with_busy_retry(finalize)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        override_edge = conn.execute(
+            """
+            SELECT impl.qualified_name AS implementation_method,
+                   iface.qualified_name AS interface_method
+            FROM analysis_graph_edges edge
+            JOIN analysis_graph_nodes impl ON impl.id = edge.from_node_id
+            JOIN analysis_graph_nodes iface ON iface.id = edge.to_node_id
+            WHERE edge.source_id = 'site-service'
+              AND edge.edge_type = 'OVERRIDES'
+            """
+        ).fetchone()
+        inherited_claim = conn.execute(
+            """
+            SELECT node.qualified_name, claim.entrypoint_http_method, claim.entrypoint_route,
+                   claim.entrypoint_interface_method, claim.entrypoint_execution_kind
+            FROM analysis_graph_claims claim
+            JOIN analysis_graph_nodes node ON node.id = claim.node_id
+            WHERE claim.source_id = 'site-service'
+              AND claim.claim_kind = 'ENTRYPOINT_HINT'
+              AND claim.status = 'DERIVED'
+            """
+        ).fetchone()
+
+    assert override_edge is not None
+    assert override_edge["implementation_method"] == "service.impl.SiteController.getSite"
+    assert override_edge["interface_method"] == "generated.api.SiteApi.getSite"
+    assert inherited_claim is not None
+    assert inherited_claim["qualified_name"] == "service.impl.SiteController.getSite"
+    assert inherited_claim["entrypoint_http_method"] == "GET"
+    assert inherited_claim["entrypoint_route"] == "/sites/{id}"
+    assert inherited_claim["entrypoint_interface_method"] == "generated.api.SiteApi.getSite"
+    assert inherited_claim["entrypoint_execution_kind"] == "EXECUTABLE"
+
+
+def test_cross_source_incoming_traversal_reaches_service_entrypoint_from_app_anchor(tmp_path):
+    app_source = """package app.afesox;
+
+public class SiteUseCase {
+  public void createSite() {
+  }
+}
+"""
+    service_source = """package service.api;
+
+import app.afesox.SiteUseCase;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+@RequestMapping("/sites")
+public class SiteController {
+  private final SiteUseCase useCase;
+
+  @PostMapping
+  public void create() {
+    useCase.createSite();
+  }
+}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    InventoryStore(store.db_path).init()
+    store.init()
+    now = "now"
+    with sqlite3.connect(store.db_path) as conn:
+        for source_id, display_name in (("app-afesox", "App AFESOX"), ("site-service", "Site Service")):
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at)
+                VALUES (?, ?, 'test', '.', 1, '[]', '{}', ?)
+                """,
+                (source_id, display_name, now),
+            )
+        for file_id, source_id, relative_path, content in (
+            (1, "app-afesox", "src/main/java/app/afesox/SiteUseCase.java", app_source),
+            (2, "site-service", "src/main/java/service/api/SiteController.java", service_source),
+        ):
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO files(
+                    id, source_id, source_path, absolute_path, relative_path, extension, language, flow_domain,
+                    size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at
+                )
+                VALUES (?, ?, '.', '.', ?, '.java', 'java', 'CODE', ?, ?, ?, ?, 'utf-8:replace', ?)
+                """,
+                (
+                    file_id,
+                    source_id,
+                    relative_path,
+                    len(content.encode("utf-8")),
+                    hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    now,
+                    len(content.splitlines()),
+                    now,
+                ),
+            )
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(app_source, "src/main/java/app/afesox/SiteUseCase.java", "app-afesox"),
+        _materialize_static_java_for_test(app_source, 1, "src/main/java/app/afesox/SiteUseCase.java", "app-afesox"),
+    )
+    store.finalize_source_graph("app-afesox")
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(service_source, "src/main/java/service/api/SiteController.java", "site-service"),
+        _materialize_static_java_for_test(service_source, 2, "src/main/java/service/api/SiteController.java", "site-service"),
+    )
+    store.finalize_source_graph("site-service")
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        app_state = conn.execute("SELECT graph_id, content_identity FROM analysis_graph_state WHERE source_id = 'app-afesox'").fetchone()
+        app_callable = conn.execute(
+            """
+            SELECT id, stable_key, node_kind, display_name, qualified_name
+            FROM analysis_graph_nodes
+            WHERE source_id = 'app-afesox'
+              AND qualified_name = 'app.afesox.SiteUseCase.createSite'
+            """
+        ).fetchone()
+        call_edge = conn.execute(
+            """
+            SELECT caller.source_id AS caller_source,
+                   caller.qualified_name AS caller_method,
+                   target.source_id AS target_source,
+                   target.qualified_name AS target_method,
+                   edge.resolution_status
+            FROM analysis_graph_edges edge
+            JOIN analysis_graph_nodes caller ON caller.source_id = edge.source_id AND caller.id = edge.from_node_id
+            JOIN analysis_graph_nodes target ON target.id = edge.to_node_id
+            WHERE edge.edge_type = 'CALLS'
+              AND target.qualified_name = 'app.afesox.SiteUseCase.createSite'
+            """
+        ).fetchone()
+
+    assert app_state is not None
+    assert app_callable is not None
+    assert call_edge is not None
+    assert call_edge["caller_source"] == "site-service"
+    assert call_edge["target_source"] == "app-afesox"
+    assert call_edge["resolution_status"] == "RESOLVED"
+
+    anchor = KnowledgeQueryMatchedNode(
+        sourceId="app-afesox",
+        nodeId=app_callable["id"],
+        stableKey=app_callable["stable_key"],
+        nodeKind=app_callable["node_kind"],
+        label=app_callable["display_name"],
+        qualifiedName=app_callable["qualified_name"],
+        score=1.0,
+        matchReasons=["EXACT"],
+        graphId=app_state["graph_id"],
+        graphRevision=app_state["content_identity"],
+    )
+    result = EntrypointFlowEngine(EntrypointFlowGraphRepository(store)).build([anchor], max_flows=10, include_tests=False)
+
+    assert len(result.flows) == 1
+    flow = result.flows[0]
+    assert flow.entrypoint.source_id == "site-service"
+    assert flow.entrypoint.qualified_name == "service.api.SiteController.create"
+    assert any(node.source_id == "app-afesox" and node.qualified_name == "app.afesox.SiteUseCase.createSite" for node in flow.nodes)
+    assert any(
+        edge.source_id == "site-service"
+        and edge.from_node_id == flow.entrypoint.node_id
+        and edge.to_source_id == "app-afesox"
+        for edge in flow.transitions
+    )
+    with sqlite3.connect(store.db_path) as conn:
+        plan_rows = conn.execute(
+            """
+            EXPLAIN QUERY PLAN
+            SELECT e.id
+            FROM analysis_graph_edges e
+            WHERE e.edge_type = ?
+              AND e.status IN (?)
+              AND e.to_node_id IN (?)
+            ORDER BY e.to_node_id, e.relative_path, e.id
+            """,
+            ("CALLS", "TRUSTED", app_callable["id"]),
+        ).fetchall()
+    plan = "\n".join(str(row[-1]) for row in plan_rows)
+    assert "idx_analysis_graph_edges_incoming_lookup" in plan
+    assert "SCAN analysis_graph_edges" not in plan
+    assert "SCAN e" not in plan
 
 
 def test_resolver_does_not_fallback_when_first_class_arity_mismatches(tmp_path):
@@ -2038,13 +3005,12 @@ def test_unchanged_file_lookup_batches_large_inventory(tmp_path):
                 "content_hash": row["content_hash"],
                 "analyzer_name": StubAnalyzer.name,
                 "analyzer_version": StubAnalyzer.version,
-                "engine_version": GRAPH_ENGINE_VERSION,
                 "status": "ANALYZED",
                 "diagnostics": [],
             },
         )
 
-    unchanged_ids = analysis_store.unchanged_file_ids(rows, StubAnalyzer.name, StubAnalyzer.version, GRAPH_ENGINE_VERSION)
+    unchanged_ids = analysis_store.unchanged_file_ids(rows, StubAnalyzer.name, StubAnalyzer.version)
 
     assert unchanged_ids == {row["id"] for row in rows}
 
@@ -2096,7 +3062,7 @@ def test_per_file_guard_skips_current_file_if_candidate_filter_misses_it(tmp_pat
     first_analyzer = StubAnalyzer()
     wait_job(store, runner.start(AnalysisBuildRequest(), first_analyzer)["jobId"])
     second_analyzer = StubAnalyzer()
-    runner.analysis_store.unchanged_file_ids = lambda rows, analyzer_name, analyzer_version, engine_version=None: set()
+    runner.analysis_store.unchanged_file_ids = lambda rows, analyzer_name, analyzer_version: set()
 
     second = wait_job(store, runner.start(AnalysisBuildRequest(), second_analyzer)["jobId"])
 
@@ -2384,7 +3350,7 @@ def test_background_job_returns_id_and_updates_progress(tmp_path):
     assert final["processedFiles"] == 1
 
 
-def test_analysis_jobs_outdated_schema_is_recreated_without_lifecycle_rows(tmp_path):
+def test_analysis_jobs_incompatible_schema_is_recreated_without_lifecycle_rows(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     with sqlite3.connect(db_path) as conn:
         conn.execute("""
@@ -2416,28 +3382,13 @@ def test_analysis_jobs_outdated_schema_is_recreated_without_lifecycle_rows(tmp_p
     store.init()
     with sqlite3.connect(db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(analysis_jobs)").fetchall()}
-        migrations = conn.execute("SELECT version, name FROM analysis_schema_migrations ORDER BY version").fetchall()
     job = store.job("job-old")
     store.init()
-    with sqlite3.connect(db_path) as conn:
-        migration_count = conn.execute("SELECT COUNT(*) FROM analysis_schema_migrations").fetchone()[0]
 
     assert "skipped_unchanged_file_count" not in columns
     assert "source_ids_json" in columns
     assert "mode" in columns
     assert job is None
-    assert migrations == [
-        (1, "remove_legacy_analysis_job_counter"),
-        (2, "add_analysis_job_source_scope"),
-        (3, "reset_analysis_cache_for_graph_v1_cutover"),
-        (4, "reconcile_graph_diagnostics_schema"),
-        (5, "add_analysis_job_mode"),
-        (6, "remove_legacy_graph_lifecycle"),
-        (7, "current_state_graph_storage"),
-        (8, "yaml_graph_contract_cleanup"),
-        (9, "clean_yaml_graph_contract_persistence"),
-    ]
-    assert migration_count == 9
 
 
 def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path):
@@ -2693,7 +3644,7 @@ def test_interrupted_running_jobs_are_marked_failed_on_startup_cleanup(tmp_path)
         }
     )
     row = store.search_rows([], [])[0][0]
-    analysis_store.create_job_files("job-running", [row], {int(row["id"]): "CODE"}, GRAPH_ENGINE_VERSION)
+    analysis_store.create_job_files("job-running", [row], {int(row["id"]): "CODE"})
     analysis_store.update_job_file("job-running", int(row["id"]), "RUNNING", started=True)
 
     analysis_store.mark_interrupted_jobs()
@@ -2722,7 +3673,7 @@ def test_init_reconciles_orphan_running_job_files_for_inactive_jobs(tmp_path):
         }
     )
     row = store.search_rows([], [])[0][0]
-    analysis_store.create_job_files("job-failed", [row], {int(row["id"]): "CODE"}, GRAPH_ENGINE_VERSION)
+    analysis_store.create_job_files("job-failed", [row], {int(row["id"]): "CODE"})
     analysis_store.update_job_file("job-failed", int(row["id"]), "RUNNING", started=True)
     AnalysisStore._initialized_paths.discard(str(store.db_path.resolve()))
 
@@ -2774,25 +3725,21 @@ def test_runtime_analysis_writes_graph_tables_and_not_legacy_symbols(tmp_path):
     assert counts["analysis_graph_evidence"] > 0
 
 
-def test_runtime_analysis_writes_graph_engine_job_file_flow_and_line_metadata(tmp_path):
+def test_runtime_analysis_writes_job_file_flow_and_line_metadata(tmp_path):
     store, _, _ = build_inventory(tmp_path)
     analyzer = StubAnalyzer(GraphAnalysisResult())
     runner = SupervisorHarness(store, app_config(tmp_path))
-    final = wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
+    wait_job(store, runner.start(AnalysisBuildRequest(), analyzer)["jobId"])
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
-        job = conn.execute("SELECT engine_version FROM analysis_jobs WHERE job_id = ?", (final["jobId"],)).fetchone()
-        analysis_file = conn.execute("SELECT engine_version, flow_domain FROM analysis_files").fetchone()
-        job_file = conn.execute("SELECT status, engine_version, flow_domain, line_count FROM analysis_job_files").fetchone()
+        analysis_file = conn.execute("SELECT flow_domain FROM analysis_files").fetchone()
+        job_file = conn.execute("SELECT status, flow_domain, line_count FROM analysis_job_files").fetchone()
         inventory_file = conn.execute("SELECT line_count, decode_policy FROM files").fetchone()
         static_nodes = conn.execute("SELECT COUNT(*) AS count FROM analysis_graph_nodes WHERE fact_origin = 'STATIC'").fetchone()
 
-    assert job["engine_version"] == GRAPH_ENGINE_VERSION
-    assert analysis_file["engine_version"] == GRAPH_ENGINE_VERSION
     assert analysis_file["flow_domain"] == "CODE"
     assert job_file["status"] == "ANALYZED"
-    assert job_file["engine_version"] == GRAPH_ENGINE_VERSION
     assert job_file["flow_domain"] == "CODE"
     assert job_file["line_count"] > 0
     assert inventory_file["line_count"] > 0
@@ -2967,7 +3914,6 @@ class NestedCallFlow {
             "ownsBusinessAreas",
             "domainKeywords",
             "parser",
-            "engineVersion",
             "factOrigin",
             "flowDomain",
             "resolutionReason",
@@ -3437,10 +4383,10 @@ class FakeAnalysisStore:
     def cleanup_stale_files(self, source_ids):
         return None
 
-    def unchanged_file_ids(self, rows, analyzer_name, analyzer_version, engine_version):
+    def unchanged_file_ids(self, rows, analyzer_name, analyzer_version):
         return set()
 
-    def create_job_files(self, job_id, rows, flow_domain_by_file_id, engine_version):
+    def create_job_files(self, job_id, rows, flow_domain_by_file_id):
         return None
 
     def stop_requested(self, job_id):
@@ -3449,7 +4395,7 @@ class FakeAnalysisStore:
     def update_job(self, job_id, patch):
         self.job_updates.append((job_id, patch))
 
-    def unchanged(self, file_id, content_hash, analyzer_name, analyzer_version, engine_version):
+    def unchanged(self, file_id, content_hash, analyzer_name, analyzer_version):
         return False
 
     def update_job_file(self, job_id, file_id, status, **kwargs):
@@ -4254,7 +5200,7 @@ def test_current_file_progress_endpoint_returns_inactive_when_no_progress(tmp_pa
 
 
 def test_current_file_progress_endpoint_returns_sanitized_active_entry_during_analysis(tmp_path, monkeypatch):
-    store = configure_api(tmp_path, monkeypatch)
+    configure_api(tmp_path, monkeypatch)
     progress = {
         "active": True,
         "entries": [
@@ -4547,21 +5493,20 @@ def test_knowledge_query_works_with_missing_pending_and_stale_semantic_index(tmp
     monkeypatch.setattr(main, "app_config", cfg)
     monkeypatch.setattr(main, "store", store)
 
-    missing = post_json("/api/v1/knowledge/query", knowledge_query_payload("ObjectHandler"))
-    assert missing["status"] == 200
-    assert missing["json"]["status"] != "QUERY_FAILED"
+    query_service = build_knowledge_query_service(AnalysisStore(store.db_path), cfg)
+
+    missing = query_service.query(knowledge_query_request("ObjectHandler")).dict()
+    assert missing["status"] != "QUERY_FAILED"
 
     wait_job(store, SupervisorHarness(store, cfg).start(AnalysisBuildRequest(), StubAnalyzer())["jobId"])
-    pending = post_json("/api/v1/knowledge/query", knowledge_query_payload("ObjectHandler"))
-    assert pending["status"] == 200
-    assert pending["json"]["status"] in {"OK", "AMBIGUOUS"}
+    pending = query_service.query(knowledge_query_request("ObjectHandler")).dict()
+    assert pending["status"] in {"OK", "AMBIGUOUS"}
 
     semantic_store = SemanticIndexStore(store.db_path)
     state = semantic_store.get_state("edge-gateway")
     semantic_store.mark_source_stale("edge-gateway", f"{state['graph_revision']}:manual-stale", state["total_node_count"])
-    stale = post_json("/api/v1/knowledge/query", knowledge_query_payload("ObjectHandler"))
-    assert stale["status"] == 200
-    assert stale["json"]["status"] in {"OK", "AMBIGUOUS"}
+    stale = query_service.query(knowledge_query_request("ObjectHandler")).dict()
+    assert stale["status"] in {"OK", "AMBIGUOUS"}
 
 
 def test_services_status_returns_inventory_analysis_and_facts_counts(tmp_path, monkeypatch):

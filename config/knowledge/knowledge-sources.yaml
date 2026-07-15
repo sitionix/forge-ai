@@ -22,3 +22,5 @@ indexing:
     - "**/*.xml"
     - "**/pom.xml"
     - "**/README*"
+  exclude_exceptions:
+    - "target/generated-sources/src/main/java/**/*.java"

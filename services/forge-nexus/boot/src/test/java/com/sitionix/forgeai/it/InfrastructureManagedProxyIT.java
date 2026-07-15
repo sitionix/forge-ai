@@ -29,8 +29,11 @@ import static org.hamcrest.Matchers.not;
         "forge.ai.infrastructure.jarvis.base-url=${forge-it.wiremock.base-url}",
         "forge.ai.infrastructure.knowledge.read-timeout=2500ms",
         "forge.ai.infrastructure.jarvis.read-timeout=2500ms",
+        "forge.ai.query.human-query.request-timeout=1000ms",
+        "forge.ai.infrastructure.proxy.knowledge-human-query-transport-grace=750ms",
+        "forge.ai.infrastructure.proxy.jarvis-query-transport-grace=750ms",
         "forge.ai.infrastructure.proxy.max-request-body-bytes=128",
-        "forge.ai.infrastructure.proxy.max-response-body-bytes=1600"
+        "forge.ai.infrastructure.proxy.max-response-body-bytes=6500"
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
@@ -307,7 +310,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                         .responseStatus(HttpStatus.OK.value())
                         .responseBody("responseProxyGraphEdgeDetailContract.json"))
                 .create();
-        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeQueryFlowExplanations()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeQuery()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamKnowledgeQueryToolContext()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisCommand()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
@@ -348,7 +351,7 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .withQueryParameters(InfrastructureProxyQuery.graphNodeDetailContract())
                 .header("X-Correlation-Id", "corr-parity")
                 .assertDefault();
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeQueryFlowExplanations())
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeQuery())
                 .header("X-Correlation-Id", "corr-parity")
                 .assertDefault();
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusKnowledgeQueryToolContext())
@@ -877,47 +880,64 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
     }
 
     @Test
-    void itProxy10JarvisQueryPositiveFactualBundlePreservesFields() {
+    void itProxy10JarvisQueryPositiveHumanContractPreservesFields() {
         //given
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryOptionalControls()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryNoCandidates()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryGerman()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryFrench()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryForbiddenLanguage()).createDefault();
 
         //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery())
                 .header("X-Correlation-Id", "corr-jarvis-query-positive")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedSources[0].sourceId").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].sourceId").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].label").value("JarvisGateway"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].flowIndex").value(1))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].entrypoint.label").value("JarvisGateway"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].nodes[0].nodeRef").value("n1"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].transitions[0].transitionRef").value("t1"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].source").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows[0].evidence[0].ownerRef").value("t1"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answerLanguage").value("uk"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].source").value("source-a"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].entrypoint").value("JarvisGateway"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics").isEmpty())
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.matchedNodeCount").value(1))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.flowCount").value(1))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.nodeCount").value(2))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.edgeCount").value(1))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.evidenceCount").value(1))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").doesNotExist())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answer").doesNotExist())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.sources").doesNotExist())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows").doesNotExist())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flowExplanations").doesNotExist())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes").doesNotExist())
+                .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("nodeRef"))))
+                .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("transitionRef"))))
                 .assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryOptionalControls())
                 .header("X-Correlation-Id", "corr-jarvis-query-optional")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("OK"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].label").value("JarvisGateway"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").doesNotExist())
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryGerman())
+                .header("X-Correlation-Id", "corr-jarvis-query-de")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answerLanguage").value("de"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryFrench())
+                .header("X-Correlation-Id", "corr-jarvis-query-fr")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answerLanguage").value("fr"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryForbiddenLanguage())
+                .header("X-Correlation-Id", "corr-jarvis-query-ru")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("RESPONSE_LANGUAGE_NOT_ALLOWED"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("The requested response language is not allowed."))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.correlationId").doesNotExist())
                 .assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryNoCandidates())
                 .header("X-Correlation-Id", "corr-jarvis-query-no-candidates")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").value("NO_CANDIDATES"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes").isEmpty())
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows").isEmpty())
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.matchedNodeCount").value(0))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.coverage.flowCount").value(0))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.diagnostics[0].code").value("NO_GRAPH_CANDIDATES"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("NO_GROUNDED_GRAPH_CANDIDATES"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("No grounded graph candidates were found."))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").doesNotExist())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows").doesNotExist())
                 .assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryBlank())
@@ -959,8 +979,8 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery())
                 .header("X-Correlation-Id", "corr-jarvis-redaction")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes[0].sourceId").value("source-a"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answer").doesNotExist())
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.matchedNodes").doesNotExist())
                 .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("SYSTEM PROMPT"))))
                 .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("source content"))))
                 .andExpectPath(MockMvcResultMatchers.content().string(not(containsString("127.0.0.1"))))

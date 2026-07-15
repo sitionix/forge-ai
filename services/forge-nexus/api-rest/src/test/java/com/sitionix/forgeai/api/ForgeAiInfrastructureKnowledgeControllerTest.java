@@ -42,13 +42,13 @@ class ForgeAiInfrastructureKnowledgeControllerTest {
     }
 
     @Test
-    void queryFlowExplanationsDelegatesRawBodyToGenericProxyRoute() {
+    void queryDelegatesRawBodyToGenericProxyRoute() {
         this.stub();
         final byte[] body = "{\"queryText\":\"A.start\"}".getBytes(StandardCharsets.UTF_8);
 
-        this.controller.queryFlowExplanations(body, this.headers, this.request);
+        this.controller.query(body, this.headers, this.request);
 
-        verify(this.transport).forward("knowledge.query.flow-explanations", Map.of(), body, this.headers, this.request);
+        verify(this.transport).forward("knowledge.query", Map.of(), body, this.headers, this.request);
     }
 
     @Test

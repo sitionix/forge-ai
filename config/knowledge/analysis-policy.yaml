@@ -77,11 +77,26 @@ analysis:
         from: [CALLABLE]
         to: [CALLABLE]
         semanticEligible: true
+      OVERRIDES:
+        description: Callable source implements or overrides another callable declared by a parent type or interface.
+        from: [CALLABLE]
+        to: [CALLABLE]
+        semanticEligible: false
       USES_FIELD:
         description: Callable source reads from, invokes through, or otherwise uses a declared field in its body.
         from: [CALLABLE]
         to: [FIELD]
         semanticEligible: true
+      IMPLEMENTS:
+        description: Type source implements an interface type.
+        from: [TYPE]
+        to: [TYPE]
+        semanticEligible: false
+      EXTENDS:
+        description: Type source extends a class or interface type.
+        from: [TYPE]
+        to: [TYPE]
+        semanticEligible: false
       CONFIGURES:
         description: Source anchor configures a module, data object, resource, or configuration target.
         from: [FILE, CONFIG, MODULE]
@@ -326,7 +341,7 @@ analysis:
 
     java_code_graph:
       nodes: [FILE, TYPE, CALLABLE, FIELD]
-      edges: [DECLARES, IMPORTS, REFERENCES, CALLS, USES_FIELD, DEPENDS_ON]
+      edges: [DECLARES, IMPORTS, REFERENCES, CALLS, OVERRIDES, USES_FIELD, IMPLEMENTS, EXTENDS, DEPENDS_ON]
       claims: [RESPONSIBILITY, ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
 
     code_text_graph:
@@ -371,7 +386,7 @@ analysis:
       trust: structural
       produces:
         nodes: [FILE, TYPE, CALLABLE, FIELD]
-        edges: [DECLARES, IMPORTS, REFERENCES, CALLS, USES_FIELD]
+        edges: [DECLARES, IMPORTS, REFERENCES, CALLS, OVERRIDES, USES_FIELD, IMPLEMENTS, EXTENDS]
         claims: [ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
 
     structured_text_light:

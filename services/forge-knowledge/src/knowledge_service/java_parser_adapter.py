@@ -149,6 +149,7 @@ class JavaParserAdapter:
             body_line_start, body_line_end = self._body_line_range(body)
             local_id = self._stable_key(file.source_id, file.relative_path, "TYPE", qualified)
             node_annotations = self._annotations(node, content, local_id)
+            implemented_interfaces, extended_classes, extended_interfaces = self._type_relations(node, content)
             structural_type = StructuralType(
                 local_id=local_id,
                 name=name,
@@ -159,6 +160,9 @@ class JavaParserAdapter:
                 body_line_start=body_line_start,
                 body_line_end=body_line_end,
                 annotations=node_annotations,
+                implemented_interfaces=implemented_interfaces,
+                extended_classes=extended_classes,
+                extended_interfaces=extended_interfaces,
                 parent_type_local_id=parent_type.local_id if parent_type else None,
                 stable_key=local_id,
             )
@@ -653,6 +657,56 @@ class JavaParserAdapter:
         if status == "MULTIPLE_CANDIDATES":
             return UnresolvedReason.MULTIPLE_METHODS_MATCH.value
         return default
+
+    def _type_relations(self, node, content: bytes) -> Tuple[List[str], List[str], List[str]]:
+        implemented_interfaces: List[str] = []
+        extended_classes: List[str] = []
+        extended_interfaces: List[str] = []
+        for child in node.named_children:
+            if child.type == "superclass":
+                extended_classes.extend(self._type_names_in_relation(child, content))
+            elif child.type == "super_interfaces":
+                implemented_interfaces.extend(self._type_names_in_relation(child, content))
+            elif child.type == "extends_interfaces":
+                extended_interfaces.extend(self._type_names_in_relation(child, content))
+        return (
+            self._dedupe_preserving_order(implemented_interfaces),
+            self._dedupe_preserving_order(extended_classes),
+            self._dedupe_preserving_order(extended_interfaces),
+        )
+
+    def _type_names_in_relation(self, node, content: bytes) -> List[str]:
+        names: List[str] = []
+        for child in node.named_children:
+            if child.type == "type_list":
+                for item in child.named_children:
+                    value = self._type_name_from_type_node(item, content)
+                    if value:
+                        names.append(value)
+            else:
+                value = self._type_name_from_type_node(child, content)
+                if value:
+                    names.append(value)
+        return names
+
+    def _type_name_from_type_node(self, node, content: bytes) -> Optional[str]:
+        if node is None:
+            return None
+        if node.type == "generic_type":
+            name_node = node.child_by_field_name("type") or next((child for child in node.named_children if child.type.endswith("identifier")), None)
+            return self._text(name_node, content) if name_node is not None else self._text(node, content).split("<", 1)[0].strip()
+        value = self._text(node, content)
+        return value.strip() or None
+
+    def _dedupe_preserving_order(self, values: List[str]) -> List[str]:
+        result: List[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
 
     def _annotations(self, node, content: bytes, target_local_id: Optional[str]) -> List[StructuralAnnotation]:
         result: List[StructuralAnnotation] = []

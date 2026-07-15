@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, Iterator, Optional, Tuple
 
 from knowledge_service.file_classification import FileClassifier, UNKNOWN_FLOW_DOMAIN
-from knowledge_service.file_filters import is_excluded_file, is_included_file
+from knowledge_service.file_filters import is_excluded_file, is_excluded_file_exception, is_included_file
 from knowledge_service.file_metadata import ContextChunk, FileMetadata
 from knowledge_service.path_security import is_under_root, safe_relative_path
 from knowledge_service.skipped_reasons import SkippedBreakdown, SkippedReason
@@ -43,7 +43,8 @@ def scan_source(
         except OSError:
             skipped.increment(SkippedReason.UNREADABLE)
             continue
-        if is_excluded_file(relative_path, indexing.exclude):
+        excluded = is_excluded_file(relative_path, indexing.exclude)
+        if excluded and not is_excluded_file_exception(relative_path, indexing.exclude_exceptions):
             skipped.increment(SkippedReason.EXCLUDED_BY_PATTERN)
             continue
         if not is_included_file(relative_path, indexing.include):

@@ -15,6 +15,7 @@ from knowledge_service.config import AppConfig, ForgeSettings, load_forge_settin
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.main import create_app
+from knowledge_service.query_interpretation import QueryInterpretationProviderResult
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,55 @@ class FailingAnalysisProvider:
             severity="ERROR",
             raw_preview="provider failed",
         )
+
+
+class DeterministicQueryInterpretationProvider:
+    name = "deterministic-query-interpretation"
+    model = "deterministic"
+
+    def __init__(self) -> None:
+        self.calls: List[Dict[str, Any]] = []
+
+    def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+        self.calls.append(
+            {
+                "llmInput": dict(llm_input),
+                "validationErrors": list(validation_errors or []),
+                "timeoutSeconds": timeout_seconds,
+            }
+        )
+        query_text = str(llm_input.get("queryText") or "").strip()
+        explicit_language = llm_input.get("explicitAnswerLanguage")
+        detected = "uk" if any("\u0400" <= char <= "\u04ff" for char in _strip_code_symbols(query_text)) else "en"
+        if not _strip_code_symbols(query_text).strip():
+            detected = "und"
+        response_language = str(explicit_language or "").strip().lower() or ("uk" if detected in {"uk", "ru"} else "en")
+        identifiers = _query_identifiers(query_text)
+        payload = {
+            "detectedLanguage": detected,
+            "responseLanguage": response_language,
+            "normalizedQuery": query_text,
+            "searchQueries": [query_text],
+            "codeIdentifiers": identifiers,
+            "concepts": [],
+        }
+        return QueryInterpretationProviderResult(raw_text=json.dumps(payload), prompt_char_length=100)
+
+
+def _strip_code_symbols(value: str) -> str:
+    result = value
+    for identifier in _query_identifiers(value):
+        result = result.replace(identifier, " ")
+    return result
+
+
+def _query_identifiers(value: str) -> List[str]:
+    import re
+
+    identifiers: List[str] = []
+    for match in re.finditer(r"\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\b", value):
+        identifiers.append(match.group(0))
+    return identifiers
 
 
 def write_runtime_config(
@@ -293,7 +343,9 @@ def build_test_app(
         app_config,
         analysis_provider=provider or DeterministicAnalysisProvider(),
     )
-    return create_app(settings=settings, dependencies=deps), settings, app_config, deps
+    app = create_app(settings=settings, dependencies=deps)
+    app.state.query_interpretation_provider = DeterministicQueryInterpretationProvider()
+    return app, settings, app_config, deps
 
 
 def sqlite_table_counts(db_path: Path, tables: List[str]) -> Dict[str, int]:

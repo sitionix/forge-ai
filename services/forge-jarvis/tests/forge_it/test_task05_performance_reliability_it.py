@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from support import AsgiResponse
 from support import AsgiTestClient as TestClient
-from support import FakeKnowledgeClient, FakeModelClient, build_test_app, knowledge_query_bundle, query_payload, write_runtime_config
+from support import FakeKnowledgeClient, FakeModelClient, build_test_app, human_answer_bundle, query_payload, write_runtime_config
 
 from jarvis_agent.action_executor import ActionExecutionError, ActionExecutor
 from jarvis_agent.action_registry import ActionRegistry
@@ -38,12 +38,9 @@ def test_perf_jar_01_status_and_actions_are_bounded_and_do_not_call_ollama(tmp_p
         assert timing["action"] == 0
 
 
-def test_perf_jar_02_query_records_knowledge_timing_and_does_not_generate_answer(tmp_path):
+def test_perf_jar_02_query_records_knowledge_timing_and_returns_human_answer(tmp_path):
     knowledge = DelayedKnowledgeClient(
-        bundle=knowledge_query_bundle(
-                nodes=[{"nodeRef": "n1", "label": "JarvisGateway", "kind": "CALLABLE"}],
-            evidence=[{"id": "ev1", "sourceId": "forge-ai", "relativePath": "src/JarvisGateway.java", "lineStart": 1, "lineEnd": 3}],
-        )
+        bundle=human_answer_bundle(text="JarvisGateway handles the request.")
     )
     model = DelayedModelClient(generate_response="Answer should not be generated")
     app, *_ = build_test_app(write_runtime_config(tmp_path), model=model, knowledge=knowledge)
@@ -56,9 +53,14 @@ def test_perf_jar_02_query_records_knowledge_timing_and_does_not_generate_answer
         timing = _parse_server_timing(sample.response.headers["server-timing"])
         assert timing["knowledge"] > 0
         assert timing["ollama"] == 0
-        assert body["matchedNodes"]
-        assert body["flows"]
-        assert "answer" not in body
+        assert body == {
+            "answerLanguage": "uk",
+            "answers": [{"source": "forge-ai", "entrypoint": "JarvisGateway", "text": "JarvisGateway handles the request."}],
+            "diagnostics": [],
+        }
+        assert "status" not in body
+        assert "matchedNodes" not in body
+        assert "flows" not in body
         text = sample.response.body.decode("utf-8")
         assert "Answer should not be generated" not in text
         assert "http://localhost" not in text

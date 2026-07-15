@@ -8,6 +8,7 @@ export interface OperatorRuntimeConfig {
   statusPollIntervalMs: number;
   activeJobPollIntervalMs: number;
   graphPollIntervalMs: number;
+  jarvisQueryIncludeTests: boolean;
 }
 
 declare global {
@@ -23,7 +24,8 @@ export const defaultRuntimeConfig: OperatorRuntimeConfig = {
   infrastructureApiBasePath: '/api/v1/infrastructure',
   statusPollIntervalMs: 15000,
   activeJobPollIntervalMs: 1500,
-  graphPollIntervalMs: 30000
+  graphPollIntervalMs: 30000,
+  jarvisQueryIncludeTests: false
 };
 
 export function contextPathFromLocation(pathname: string = window.location.pathname): string {
@@ -56,7 +58,8 @@ function normalizeRuntimeConfig(config: OperatorRuntimeConfig): OperatorRuntimeC
     infrastructureApiBasePath: normalizeBasePath(config.infrastructureApiBasePath),
     statusPollIntervalMs: positiveInteger(config.statusPollIntervalMs, defaultRuntimeConfig.statusPollIntervalMs),
     activeJobPollIntervalMs: positiveInteger(config.activeJobPollIntervalMs, defaultRuntimeConfig.activeJobPollIntervalMs),
-    graphPollIntervalMs: positiveInteger(config.graphPollIntervalMs, defaultRuntimeConfig.graphPollIntervalMs)
+    graphPollIntervalMs: positiveInteger(config.graphPollIntervalMs, defaultRuntimeConfig.graphPollIntervalMs),
+    jarvisQueryIncludeTests: Boolean(config.jarvisQueryIncludeTests)
   };
 }
 

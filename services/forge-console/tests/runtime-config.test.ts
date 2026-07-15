@@ -18,5 +18,14 @@ describe('runtime config', () => {
     expect(config.activeJobPollIntervalMs).toBe(1500);
     expect(config.statusPollIntervalMs).toBe(25000);
     expect(config.apiMode).toBe('same-origin');
+    expect(config.jarvisQueryIncludeTests).toBe(false);
+  });
+
+  it('normalizes Jarvis human query defaults', () => {
+    const config = runtimeConfigFromWindow({
+      jarvisQueryIncludeTests: true
+    });
+
+    expect(config.jarvisQueryIncludeTests).toBe(true);
   });
 });

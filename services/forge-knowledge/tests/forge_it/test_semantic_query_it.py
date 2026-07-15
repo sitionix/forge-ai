@@ -18,7 +18,7 @@ pytestmark = pytest.mark.forge_it
 def query_request(query_text):
     return KnowledgeQueryRequest(
         queryText=query_text,
-        intent="UNKNOWN",
+        intent="AUTO",
         answerLanguage="en",
         includeTests=False,
         maxFlows=10,

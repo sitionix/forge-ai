@@ -32,7 +32,6 @@ PUBLIC_ENDPOINTS = {
     ("GET", "/api/v1/knowledge/inventory/files"),
     ("POST", "/api/v1/knowledge/context"),
     ("POST", "/api/v1/knowledge/query"),
-    ("POST", "/api/v1/knowledge/query/flow-explanations"),
     ("POST", "/api/v1/knowledge/query/tool-context"),
     ("POST", "/api/v1/knowledge/semantic/index/build"),
     ("GET", "/api/v1/knowledge/semantic/index/jobs/{job_id}"),

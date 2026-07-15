@@ -23,6 +23,12 @@ class FlowGraphNode:
     line_end: int | None = None
     summary: str | None = None
     entrypoint: bool = False
+    entrypoint_kind: str | None = None
+    entrypoint_http_method: str | None = None
+    entrypoint_route: str | None = None
+    entrypoint_topic: str | None = None
+    entrypoint_schedule: str | None = None
+    entrypoint_interface_method: str | None = None
     flow_domain: str | None = None
 
 
@@ -36,6 +42,9 @@ class FlowGraphEdge:
     from_node_id: str
     to_node_id: str | None
     resolution_status: str
+    to_source_id: str | None = None
+    to_graph_id: str | None = None
+    to_graph_revision: str | None = None
     external: bool = False
     unresolved_target: dict[str, object] | None = None
     evidence_ids: tuple[str, ...] = ()

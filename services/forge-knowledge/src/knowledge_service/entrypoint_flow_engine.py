@@ -181,8 +181,13 @@ class EntrypointFlowEngine:
         candidates, discovery_diagnostics, reverse_rounds = self._discover_entrypoints(resolved_anchors, dict(anchor_nodes), include_tests)
         discovery_ms = (time.monotonic() - discovery_started) * 1000
         ranked = sorted(candidates.items(), key=self._candidate_sort_key)
-        discovered_count = len(ranked)
-        selected = ranked[:max(1, int(max_flows or 1))]
+        explicit_ranked = [
+            item for item in ranked
+            if item[0][1] is EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT
+        ]
+        selectable = explicit_ranked or ranked
+        discovered_count = len(selectable)
+        selected = selectable[:max(1, int(max_flows or 1))]
         diagnostics = list(discovery_diagnostics)
         omitted_count = max(0, discovered_count - len(selected))
         if omitted_count:
@@ -653,7 +658,11 @@ class EntrypointFlowEngine:
     def _to_key(self, edge: FlowGraphEdge) -> FlowNodeKey | None:
         if not edge.to_node_id:
             return None
-        return (edge.source_id, edge.graph_revision or edge.graph_id, edge.to_node_id)
+        return (
+            edge.to_source_id or edge.source_id,
+            edge.to_graph_revision or edge.to_graph_id or edge.graph_revision or edge.graph_id,
+            edge.to_node_id,
+        )
 
     def _is_resolved_internal(self, edge: FlowGraphEdge) -> bool:
         return bool(edge.to_node_id) and not edge.external and str(edge.resolution_status or "").upper() == "RESOLVED"

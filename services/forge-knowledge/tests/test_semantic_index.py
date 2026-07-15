@@ -157,9 +157,9 @@ def _seed_inventory_membership_lifecycle(
             """
             INSERT OR REPLACE INTO analysis_files(
                 file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status,
-                analyzed_at, diagnostics_json, engine_version, flow_domain
+                analyzed_at, diagnostics_json, flow_domain
             )
-            VALUES (?, ?, ?, ?, 'fixture-analyzer', '1', 'ANALYZED', ?, '[]', 'GRAPH_V1', 'CODE')
+            VALUES (?, ?, ?, ?, 'fixture-analyzer', '1', 'ANALYZED', ?, '[]', 'CODE')
             """,
             (analysis_file_id, source_id, analysis_relative_path, analysis_content_hash, now),
         )
@@ -1287,9 +1287,9 @@ def _overview_progress_fixture(
                     """
                     INSERT OR REPLACE INTO analysis_files(
                         file_id, source_id, relative_path, content_hash, analyzer_name, analyzer_version, status,
-                        analyzed_at, diagnostics_json, engine_version, flow_domain
+                        analyzed_at, diagnostics_json, flow_domain
                     )
-                    VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', 'now', '[]', 'GRAPH_V1', 'CODE')
+                    VALUES (?, ?, ?, ?, 'semantic-fixture', '1', 'ANALYZED', 'now', '[]', 'CODE')
                     """,
                     (file_id, source_id, relative_path, content_hash),
                 )

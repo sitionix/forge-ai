@@ -1,0 +1,11 @@
+{
+  "answerLanguage": "uk",
+  "answers": [
+    {
+      "source": "source-a",
+      "entrypoint": "PublicEntry.start",
+      "text": "Public Entry обробляє запит і запускає три гілки виконання."
+    }
+  ],
+  "diagnostics": []
+}

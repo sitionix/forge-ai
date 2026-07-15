@@ -9,6 +9,8 @@ import httpx
 import pytest
 
 from knowledge_service.flow_explanations import FlowExplanationProviderResult
+from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
+from knowledge_service.knowledge_query_service import build_knowledge_query_service
 from knowledge_service.semantic_index import SemanticIndexStore
 from semantic_test_support import seed_semantic_graph
 from support import build_test_app, write_runtime_config
@@ -27,21 +29,28 @@ def post(app, path: str, payload: dict):
     return asyncio.run(exercise())
 
 
-def request(query: str, *, max_flows: int = 10, include_tests: bool = False):
-    return {
+def request(query: str, *, max_flows: int = 10, include_tests: bool = False, answer_language: str | None = None):
+    payload = {
         "queryText": query,
         "intent": "FLOW_EXPLANATION",
-        "answerLanguage": "uk",
         "includeTests": include_tests,
         "maxFlows": max_flows,
     }
+    if answer_language is not None:
+        payload["answerLanguage"] = answer_language
+    return payload
+
+
+def graph_query(app, payload: dict) -> dict:
+    service = build_knowledge_query_service(app.state.knowledge_dependencies.graph_store, app.state.app_config)
+    return service.query(KnowledgeQueryRequest(**payload)).dict()
 
 
 def query_all_surfaces(app, query: str):
     payload = request(query)
     return (
+        graph_query(app, payload),
         post(app, "/api/v1/knowledge/query", payload).json(),
-        post(app, "/api/v1/knowledge/query/flow-explanations", payload).json(),
         post(app, "/api/v1/knowledge/query/tool-context", payload).json(),
     )
 
@@ -49,7 +58,7 @@ def query_all_surfaces(app, query: str):
 def explicit(node_id: str, evidence_id: str):
     return {
         "id": f"claim-{node_id}", "node_id": node_id, "claimKind": "ENTRYPOINT_HINT",
-        "summary": "typed execution root", "evidence_ids": [evidence_id],
+        "summary": "typed execution root", "evidence_ids": [evidence_id], "entrypointKind": "HTTP",
     }
 
 
@@ -189,6 +198,36 @@ def assert_no_slice_truncation(payload: dict) -> None:
         assert flow["coverage"]["truncated"] is False
 
 
+def compact_tree_items(tool_payload: dict) -> list[dict]:
+    items: list[dict] = []
+    stack = [tree["entrypoint"] for tree in tool_payload.get("trees", [])]
+    while stack:
+        item = stack.pop()
+        items.append(item)
+        stack.extend(reversed(item.get("children", [])))
+    return items
+
+
+def compact_tree_symbols(tool_payload: dict) -> set[str]:
+    return {item.get("symbol") for item in compact_tree_items(tool_payload)}
+
+
+def assert_compact_human_contract(payload: dict) -> None:
+    assert set(payload) == {"answerLanguage", "answers", "diagnostics"}
+    assert payload["answers"]
+    assert all(answer["text"] for answer in payload["answers"])
+    rendered = json.dumps(payload, ensure_ascii=False)
+    for forbidden in ("status", "flows", "flowExplanations", "nodeRef", "transitionRef", "boundaryRef", "evidenceRef"):
+        assert forbidden not in rendered
+
+
+def assert_compact_tool_contract(payload: dict) -> None:
+    assert set(payload) == {"queryText", "trees", "diagnostics"}
+    rendered = json.dumps(payload, ensure_ascii=False)
+    for forbidden in ("status", "nodeRef", "transitionRef", "boundaryRef", "evidenceRef", "flowIndex"):
+        assert forbidden not in rendered
+
+
 def append_stale_resolved_call_boundary(
     store_path,
     *,
@@ -290,62 +329,9 @@ class FailingProvider:
 
 class GroundedProvider:
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
-        steps = [step for step in llm_input.get("steps", []) if isinstance(step, dict)]
-        transitions = [item for item in llm_input.get("transitions", []) if isinstance(item, dict)]
-        boundaries = [item for item in llm_input.get("boundaries", []) if isinstance(item, dict)]
-        response = {
-            "title": "Grounded entrypoint flow",
-            "narrative": [
-                {
-                    "text": (
-                        "The entrypoint rooted graph is explained through persisted nodes, CALLS transitions, and explicit "
-                        "boundaries without turning sibling branches into a sequential path."
-                    ),
-                    "nodeRefs": [item["nodeRef"] for item in steps],
-                    "transitionRefs": [item["transitionRef"] for item in transitions],
-                    "boundaryRefs": [item["boundaryRef"] for item in boundaries],
-                },
-                {
-                    "text": (
-                        "Each grounding reference points back to the same response local flow catalog, so the UI can bind "
-                        "prose to graph facts and evidence deterministically."
-                    ),
-                    "nodeRefs": [item["nodeRef"] for item in steps[:2]],
-                    "transitionRefs": [item["transitionRef"] for item in transitions[:2]],
-                    "boundaryRefs": [item["boundaryRef"] for item in boundaries[:1]],
-                },
-            ],
-            "steps": [
-                {
-                    "nodeRef": step["nodeRef"],
-                    "explanation": "This node belongs to the entrypoint rooted graph slice.",
-                    "transitionRefs": [
-                        item["transitionRef"]
-                        for item in transitions
-                        if item.get("fromNodeRef") == step["nodeRef"]
-                    ],
-                    "evidenceRefs": [item["ref"] for item in step.get("evidence", []) if isinstance(item, dict)],
-                }
-                for step in steps
-            ],
-            "transitions": [
-                {
-                    "transitionRef": item["transitionRef"],
-                    "explanation": "This CALLS transition links the referenced caller node to the referenced callee node.",
-                    "evidenceRefs": [evidence["ref"] for evidence in item.get("evidence", []) if isinstance(evidence, dict)],
-                }
-                for item in transitions
-            ],
-            "boundaries": [
-                {
-                    "boundaryRef": item["boundaryRef"],
-                    "kind": item["kind"],
-                    "explanation": "This boundary is preserved as a graph edge without an internal resolved target node.",
-                    "evidenceRefs": [evidence["ref"] for evidence in item.get("evidence", []) if isinstance(evidence, dict)],
-                }
-                for item in boundaries
-            ],
-        }
+        sources = str(llm_input.get("entrypoint") or "")
+        target = sources or "the selected flow"
+        response = {"text": f"1. {target} starts the grounded flow.\n2. The grounded answer for {target} is returned."}
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=128)
 
 
@@ -372,8 +358,8 @@ def test_real_stack_one_entrypoint_many_branches_and_failed_explanation_preserve
             raise RuntimeError("expected")
 
     app.state.flow_explanation_provider = FailingProvider()
-    base = post(app, "/api/v1/knowledge/query", request("Gamma")).json()
-    explained = post(app, "/api/v1/knowledge/query/flow-explanations", request("Gamma")).json()
+    base = graph_query(app, request("Gamma"))
+    explained = post(app, "/api/v1/knowledge/query", request("Gamma")).json()
     tool = post(app, "/api/v1/knowledge/query/tool-context", request("Gamma")).json()
 
     assert len(base["flows"]) == 1
@@ -382,14 +368,14 @@ def test_real_stack_one_entrypoint_many_branches_and_failed_explanation_preserve
     assert {node["label"] for node in flow["nodes"]} == {"Alpha", "Beta", "Gamma", "Delta", "Epsilon"}
     assert len(flow["transitions"]) == 4
     assert len(flow["boundaries"]) == 1
-    assert explained["flows"] == base["flows"]
-    assert explained["flowExplanations"][0]["status"] == "FAILED"
-    assert len(tool["flows"]) == 1
-    assert tool["flows"][0]["status"] == "FAILED"
-    assert len(tool["flows"][0]["steps"]) == 5
-    assert len(tool["flows"][0]["transitions"]) == 4
+    assert explained == {
+        "code": "HUMAN_ANSWER_GENERATION_FAILED",
+        "message": "The local model could not produce any grounded flow answers.",
+    }
+    assert_compact_tool_contract(tool)
+    assert len(tool["trees"]) == 1
+    assert compact_tree_symbols(tool) >= {"Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Omega"}
     assert_flow_refs_close(base)
-    assert_flow_refs_close(explained)
     assert_no_slice_truncation(base)
 
 
@@ -405,8 +391,8 @@ def test_real_stack_three_roots_shared_suffix_and_max_flows(tmp_path):
     claims = [explicit(root, "ev-node-query") for root in roots]
     seed_semantic_graph(config.store_path, source_id="neutral-b", nodes=nodes, edges=edges, claims=claims)
 
-    all_flows = post(app, "/api/v1/knowledge/query", request("Delta")).json()
-    limited = post(app, "/api/v1/knowledge/query", request("Delta", max_flows=2)).json()
+    all_flows = graph_query(app, request("Delta"))
+    limited = graph_query(app, request("Delta", max_flows=2))
 
     assert len(all_flows["flows"]) == 3
     assert {flow["entrypoint"]["label"] for flow in all_flows["flows"]} == set(roots)
@@ -431,8 +417,8 @@ def test_real_stack_include_tests_uses_persisted_classification(tmp_path):
         conn.execute("UPDATE analysis_graph_claims SET flow_domain='TEST' WHERE source_id='neutral-c' AND node_id='Beta'")
         conn.execute("UPDATE analysis_graph_edges SET flow_domain='TEST' WHERE source_id='neutral-c' AND id='bg'")
 
-    excluded = post(app, "/api/v1/knowledge/query", request("Gamma", include_tests=False)).json()
-    included = post(app, "/api/v1/knowledge/query", request("Gamma", include_tests=True)).json()
+    excluded = graph_query(app, request("Gamma", include_tests=False))
+    included = graph_query(app, request("Gamma", include_tests=True))
     assert {flow["entrypoint"]["label"] for flow in excluded["flows"]} == {"Alpha"}
     assert {flow["entrypoint"]["label"] for flow in included["flows"]} == {"Alpha", "Beta"}
 
@@ -447,7 +433,7 @@ def test_real_stack_without_explicit_fact_returns_diagnosed_inferred_root(tmp_pa
         ],
         edges=[{"id": "ab", "fromNodeId": "Alpha", "toNodeId": "Beta", "edgeType": "CALLS"}],
     )
-    body = post(app, "/api/v1/knowledge/query", request("Beta")).json()
+    body = graph_query(app, request("Beta"))
     assert len(body["flows"]) == 1
     assert body["flows"][0]["entrypointOrigin"] == "INFERRED_ROOT"
     assert any(item["code"] == "ENTRYPOINT_FLOW_INFERRED_ROOT" for item in body["flows"][0]["diagnostics"])
@@ -467,8 +453,8 @@ def test_real_stack_ignores_stale_inventory_revision_facts(tmp_path):
     with sqlite3.connect(config.store_path) as conn:
         stale_file_id = 999001
         conn.execute(
-            """INSERT INTO analysis_files(file_id,source_id,relative_path,content_hash,analyzer_name,analyzer_version,status,diagnostics_json,engine_version,flow_domain)
-               VALUES (?, 'neutral-e', 'src/stale.txt', 'stale-hash', 'fixture', '1', 'ANALYZED', '[]', 'GRAPH_V1', 'CODE')""",
+            """INSERT INTO analysis_files(file_id,source_id,relative_path,content_hash,analyzer_name,analyzer_version,status,diagnostics_json,flow_domain)
+               VALUES (?, 'neutral-e', 'src/stale.txt', 'stale-hash', 'fixture', '1', 'ANALYZED', '[]', 'CODE')""",
             (stale_file_id,),
         )
         now = "2026-01-01T00:00:00+00:00"
@@ -482,7 +468,7 @@ def test_real_stack_ignores_stale_inventory_revision_facts(tmp_path):
                VALUES ('stale-beta','job-stale','neutral-e',?,?,?,'src/stale.txt','stale-hash','Stale','Beta','CALLS','RESOLVED',1,'{}','TRUSTED',?,?,'STATIC','CODE')""",
             (stale_file_id, stale_file_id, stale_file_id, now, now),
         )
-    body = post(app, "/api/v1/knowledge/query", request("Beta")).json()
+    body = graph_query(app, request("Beta"))
     assert {flow["entrypoint"]["label"] for flow in body["flows"]} == {"Alpha"}
     assert "Stale" not in str(body)
 
@@ -509,19 +495,18 @@ def test_real_stack_deep_flow_is_complete_across_all_endpoints(tmp_path):
             raise RuntimeError("expected")
 
     app.state.flow_explanation_provider = FailingProvider()
-    base = post(app, "/api/v1/knowledge/query", request(f"Node{depth}")).json()
-    explained = post(app, "/api/v1/knowledge/query/flow-explanations", request(f"Node{depth}")).json()
+    base = graph_query(app, request(f"Node{depth}"))
+    explained = post(app, "/api/v1/knowledge/query", request(f"Node{depth}")).json()
     tool = post(app, "/api/v1/knowledge/query/tool-context", request(f"Node{depth}")).json()
 
     assert len(base["flows"]) == 1
     assert base["flows"][0]["coverage"]["nodeCount"] == depth + 1
     assert base["flows"][0]["coverage"]["transitionCount"] == depth
-    assert explained["flows"] == base["flows"]
-    assert explained["flowExplanations"][0]["status"] == "FAILED"
-    assert len(tool["flows"][0]["steps"]) == depth + 1
-    assert len(tool["flows"][0]["transitions"]) == depth
+    assert explained["code"] == "HUMAN_ANSWER_GENERATION_FAILED"
+    assert_compact_tool_contract(tool)
+    assert len(compact_tree_items(tool)) == depth + 1
+    assert {f"Node{depth}", "Alpha"} <= compact_tree_symbols(tool)
     assert_flow_refs_close(base)
-    assert_flow_refs_close(explained)
     assert_no_slice_truncation(base)
 
 
@@ -545,7 +530,7 @@ def test_real_stack_large_fanout_and_boundaries_are_one_complete_flow(tmp_path):
     )
     seed_semantic_graph(config.store_path, source_id="neutral-wide", nodes=nodes, edges=edges, claims=[explicit("Alpha", "ev-node-query")])
 
-    body = post(app, "/api/v1/knowledge/query", request("Alpha")).json()
+    body = graph_query(app, request("Alpha"))
 
     assert len(body["flows"]) == 1
     assert body["flows"][0]["coverage"]["nodeCount"] == width + 1
@@ -570,7 +555,7 @@ def test_real_stack_many_entrypoints_discovers_all_before_max_flows(tmp_path):
     edges.append({"id": "shared-anchor", "fromNodeId": "Shared", "toNodeId": "Anchor", "edgeType": "CALLS"})
     seed_semantic_graph(config.store_path, source_id="neutral-many", nodes=nodes, edges=edges, claims=[explicit(root, "ev-node-query") for root in roots])
 
-    body = post(app, "/api/v1/knowledge/query", request("Anchor", max_flows=10)).json()
+    body = graph_query(app, request("Anchor", max_flows=10))
 
     diagnostic = next(item for item in body["diagnostics"] if item["code"] == "ENTRYPOINT_FLOW_MAX_FLOWS_REACHED")
     assert diagnostic["metadata"]["discoveredEntrypointCount"] == 40
@@ -607,7 +592,7 @@ def test_real_stack_public_contract_has_no_internal_id_leakage(tmp_path):
             "UPDATE analysis_graph_evidence SET excerpt='public call evidence', excerpt_hash='public-call-evidence' WHERE id='secret-evidence-db-id'"
         )
 
-    body = post(app, "/api/v1/knowledge/query", request("Public Anchor")).json()
+    body = graph_query(app, request("Public Anchor"))
 
     rendered = str(body)
     for secret in ("secret-node-db-id", "secret-target-node-db-id", "secret-edge-db-id", "secret-evidence-db-id", "secret-vector-db-id"):
@@ -665,8 +650,8 @@ def test_real_stack_missing_current_target_does_not_leak_internal_target_id(tmp_
     )
     app.state.flow_explanation_provider = FailingProvider()
 
-    base = post(app, "/api/v1/knowledge/query", request("Public Entry")).json()
-    explained = post(app, "/api/v1/knowledge/query/flow-explanations", request("Public Entry")).json()
+    base = graph_query(app, request("Public Entry"))
+    explained = post(app, "/api/v1/knowledge/query", request("Public Entry")).json()
     tool = post(app, "/api/v1/knowledge/query/tool-context", request("Public Entry")).json()
 
     assert base["status"] == "OK"
@@ -677,14 +662,10 @@ def test_real_stack_missing_current_target_does_not_leak_internal_target_id(tmp_
     assert boundary["kind"] == "CURRENT_TARGET_NODE_MISSING"
     assert boundary["target"] is None
     assert "toNodeRef" not in boundary
-    assert explained["status"] == "OK"
-    assert explained["flowExplanations"][0]["status"] == "FAILED"
-    assert tool["flows"][0]["status"] == "FAILED"
+    assert explained["code"] == "HUMAN_ANSWER_GENERATION_FAILED"
+    assert_compact_tool_contract(tool)
+    assert "Target missing from current graph" in compact_tree_symbols(tool)
     assert_flow_refs_close(base)
-    assert_flow_refs_close(explained)
-    assert_explanation_refs_close(explained)
-    assert_tool_refs_close(tool, base)
-    assert_boundary_facts_match(base, explained, tool)
     assert_no_internal_ids(base, secrets)
     assert_no_internal_ids(explained, secrets)
     assert_no_internal_ids(tool, secrets)
@@ -747,10 +728,13 @@ def test_real_stack_external_boundary_kind_target_and_evidence_are_canonical_acr
     assert boundary["kind"] == "EXTERNAL"
     assert boundary["target"] == descriptor
     assert boundary["resolutionStatus"] == "EXTERNAL_TARGET"
-    assert_boundary_facts_match(base, explained, tool)
     assert_flow_refs_close(base)
-    assert_explanation_refs_close(explained)
-    assert_tool_refs_close(tool, base)
+    assert_compact_human_contract(explained)
+    assert "PublicExternalEntry" in explained["answers"][0]["text"]
+    assert_compact_tool_contract(tool)
+    external_item = next(item for item in compact_tree_items(tool) if item["symbol"] == descriptor)
+    assert external_item["kind"] == "EXTERNAL_CALL"
+    assert external_item["evidence"][0]["excerpt"] == "public external boundary evidence"
     assert_no_internal_ids(base, secrets)
     assert_no_internal_ids(explained, secrets)
     assert_no_internal_ids(tool, secrets)
@@ -813,10 +797,13 @@ def test_real_stack_dynamic_unresolved_boundary_kind_target_are_canonical_across
     assert boundary["kind"] == "UNRESOLVED"
     assert boundary["target"] == descriptor
     assert boundary["resolutionStatus"] == "DYNAMIC_TARGET"
-    assert_boundary_facts_match(base, explained, tool)
     assert_flow_refs_close(base)
-    assert_explanation_refs_close(explained)
-    assert_tool_refs_close(tool, base)
+    assert_compact_human_contract(explained)
+    assert "PublicDynamicEntry" in explained["answers"][0]["text"]
+    assert_compact_tool_contract(tool)
+    unresolved_item = next(item for item in compact_tree_items(tool) if item["symbol"] == descriptor)
+    assert unresolved_item["kind"] == "UNRESOLVED_CALL"
+    assert unresolved_item["evidence"][0]["excerpt"] == "public unresolved boundary evidence"
     assert_no_internal_ids(base, secrets)
     assert_no_internal_ids(explained, secrets)
     assert_no_internal_ids(tool, secrets)
@@ -921,11 +908,13 @@ def test_real_stack_mixed_boundary_flow_preserves_distinct_canonical_boundaries(
         ("UNRESOLVED", unresolved_descriptor),
     }
     assert not any(item.get("toNodeRef") for item in flow["boundaries"])
-    assert_boundary_facts_match(base, explained, tool)
     assert_flow_refs_close(base)
-    assert_flow_refs_close(explained)
-    assert_explanation_refs_close(explained)
-    assert_tool_refs_close(tool, base)
+    assert_compact_human_contract(explained)
+    assert_compact_tool_contract(tool)
+    items = compact_tree_items(tool)
+    assert next(item for item in items if item["symbol"] == external_descriptor)["kind"] == "EXTERNAL_CALL"
+    assert next(item for item in items if item["symbol"] == unresolved_descriptor)["kind"] == "UNRESOLVED_CALL"
+    assert next(item for item in items if item["symbol"] == "Target missing from current graph")["kind"] == "UNRESOLVED_CALL"
     assert_no_internal_ids(base, secrets)
     assert_no_internal_ids(explained, secrets)
     assert_no_internal_ids(tool, secrets)
@@ -1031,36 +1020,19 @@ def test_real_stack_shared_evidence_row_has_owner_specific_public_refs(tmp_path)
     assert evidence_a["lineEnd"] == evidence_b["lineEnd"]
     assert evidence_a["excerpt"] == evidence_b["excerpt"] == "shared call evidence"
 
-    explanation = explained["flowExplanations"][0]
-    assert explanation["status"] == "OK"
-    explanation_by_transition = {item["transitionRef"]: item for item in explanation["transitionExplanations"]}
-    assert set(explanation_by_transition) == {transition_a["transitionRef"], transition_b["transitionRef"]}
-    assert explanation_by_transition[transition_a["transitionRef"]]["evidenceRefs"] == [transition_a_evidence_ref]
-    assert explanation_by_transition[transition_b["transitionRef"]]["evidenceRefs"] == [transition_b_evidence_ref]
-    assert transition_b_evidence_ref not in explanation_by_transition[transition_a["transitionRef"]]["evidenceRefs"]
-    assert transition_a_evidence_ref not in explanation_by_transition[transition_b["transitionRef"]]["evidenceRefs"]
-    for transition in flow["transitions"]:
-        for evidence_ref in explanation_by_transition[transition["transitionRef"]]["evidenceRefs"]:
-            assert flow_evidence_owner(flow, evidence_ref) == transition["transitionRef"]
-
-    tool_flow = tool["flows"][0]
-    assert tool_flow["status"] == "OK"
-    tool_by_transition = {item["transitionRef"]: item for item in tool_flow["transitions"]}
-    assert set(tool_by_transition) == {transition_a["transitionRef"], transition_b["transitionRef"]}
-    tool_transition_a_refs = [item["ref"] for item in tool_by_transition[transition_a["transitionRef"]]["evidence"]]
-    tool_transition_b_refs = [item["ref"] for item in tool_by_transition[transition_b["transitionRef"]]["evidence"]]
-    assert tool_transition_a_refs == [transition_a_evidence_ref]
-    assert tool_transition_b_refs == [transition_b_evidence_ref]
-    assert tool_transition_a_refs[0] != tool_transition_b_refs[0]
-    assert tool_by_transition[transition_a["transitionRef"]]["evidence"][0]["excerpt"] == "shared call evidence"
-    assert tool_by_transition[transition_b["transitionRef"]]["evidence"][0]["excerpt"] == "shared call evidence"
-    assert flow_evidence_owner(flow, tool_transition_a_refs[0]) == transition_a["transitionRef"]
-    assert flow_evidence_owner(flow, tool_transition_b_refs[0]) == transition_b["transitionRef"]
+    assert_compact_human_contract(explained)
+    assert "PublicEntry" in explained["answers"][0]["text"]
+    assert_compact_tool_contract(tool)
+    worker_items = [
+        item
+        for item in compact_tree_items(tool)
+        if item["symbol"] in {"PublicWorkerA", "PublicWorkerB"}
+    ]
+    assert len(worker_items) == 2
+    assert [item["evidence"][0]["excerpt"] for item in worker_items] == ["shared call evidence", "shared call evidence"]
+    assert all(set(item["evidence"][0]) == {"path", "lineStart", "lineEnd", "excerpt"} for item in worker_items)
 
     assert_flow_refs_close(base)
-    assert_flow_refs_close(explained)
-    assert_explanation_refs_close(explained)
-    assert_tool_refs_close(tool, base)
     assert_no_internal_ids(base, secrets)
     assert_no_internal_ids(explained, secrets)
     assert_no_internal_ids(tool, secrets)
@@ -1095,10 +1067,8 @@ def test_real_stack_large_edge_evidence_does_not_exceed_sqlite_bind_limit(tmp_pa
         evidence_ids=["root-claim-evidence"],
     )
 
-    response = post(app, "/api/v1/knowledge/query", request("Public Root"))
-    body = response.json()
+    body = graph_query(app, request("Public Root"))
 
-    assert response.status_code == 200
     assert body["status"] == "OK"
     assert "too many SQL variables" not in json.dumps(body)
     assert len(body["flows"]) == 1
@@ -1115,7 +1085,7 @@ def test_real_stack_large_edge_evidence_does_not_exceed_sqlite_bind_limit(tmp_pa
     assert_no_slice_truncation(body)
 
 
-def test_real_stack_branching_explanation_preserves_narrative_and_transition_refs(tmp_path):
+def test_real_stack_branching_explanation_returns_one_human_answer_without_refs(tmp_path):
     app, _, config, _ = build_test_app(write_runtime_config(tmp_path))
     nodes = [
         {"id": "Alpha", "nodeKind": "CALLABLE", "name": "Alpha", "path": "src/Alpha.txt"},
@@ -1134,15 +1104,14 @@ def test_real_stack_branching_explanation_preserves_narrative_and_transition_ref
     seed_semantic_graph(config.store_path, source_id="neutral-explain", nodes=nodes, edges=edges, claims=[explicit("Alpha", "ev-node-query")])
     app.state.flow_explanation_provider = GroundedProvider()
 
-    base = post(app, "/api/v1/knowledge/query", request("Gamma")).json()
-    explained = post(app, "/api/v1/knowledge/query/flow-explanations", request("Gamma")).json()
+    base = graph_query(app, request("Gamma"))
+    explained = post(app, "/api/v1/knowledge/query", request("Gamma")).json()
 
-    assert explained["flows"] == base["flows"]
-    explanation = explained["flowExplanations"][0]
-    assert explanation["status"] == "OK"
-    assert explanation["narrative"]
-    assert set(explanation["narrative"][0]) == {"text", "nodeRefs", "transitionRefs", "boundaryRefs"}
-    assert len(explanation["transitionExplanations"]) == len(base["flows"][0]["transitions"])
+    assert len(base["flows"]) == 1
+    assert_compact_human_contract(explained)
+    assert explained["answers"][0]["source"] == "neutral-explain"
+    assert explained["answers"][0]["entrypoint"] == "Alpha"
+    assert "Alpha" in explained["answers"][0]["text"]
     transition_pairs = {
         (item["fromNodeRef"], item["toNodeRef"])
         for item in base["flows"][0]["transitions"]
@@ -1157,8 +1126,6 @@ def test_real_stack_branching_explanation_preserves_narrative_and_transition_ref
         }
         for item in base["flows"][0]["transitions"]
     )
-    assert_flow_refs_close(explained)
-    assert_explanation_refs_close(explained)
     assert_no_internal_ids(explained, ("secret-node-db-id", "secret-edge-db-id", "secret-evidence-db-id"))
 
 
@@ -1179,25 +1146,19 @@ def test_real_stack_branching_tool_context_preserves_graph_contract(tmp_path):
     seed_semantic_graph(config.store_path, source_id="neutral-tool", nodes=nodes, edges=edges, claims=[explicit("Alpha", "ev-node-query")])
     app.state.flow_explanation_provider = FailingProvider()
 
-    base = post(app, "/api/v1/knowledge/query", request("Gamma")).json()
+    base = graph_query(app, request("Gamma"))
     tool = post(app, "/api/v1/knowledge/query/tool-context", request("Gamma")).json()
 
-    flow = base["flows"][0]
-    tool_flow = tool["flows"][0]
-    assert tool_flow["status"] == "FAILED"
-    assert {item["nodeRef"] for item in tool_flow["steps"]} == {item["nodeRef"] for item in flow["nodes"]}
-    assert {
-        (item["fromNodeRef"], item["toNodeRef"])
-        for item in tool_flow["transitions"]
-    } == {
-        (item["fromNodeRef"], item["toNodeRef"])
-        for item in flow["transitions"]
-    }
-    assert not any(item["fromNodeRef"] == "n2" and item["toNodeRef"] == "n3" for item in tool_flow["transitions"])
-    assert all(item["evidence"] for item in tool_flow["transitions"])
-    assert any(step["address"]["relativePath"] for step in tool_flow["steps"])
-    assert tool_flow["boundaries"][0]["evidence"]
-    assert_tool_refs_close(tool, base)
+    assert len(base["flows"]) == 1
+    assert_compact_tool_contract(tool)
+    assert len(tool["trees"]) == 1
+    root = tool["trees"][0]["entrypoint"]
+    assert root["symbol"] == "Alpha"
+    child_symbols = {child["symbol"] for child in root["children"]}
+    assert {"Beta", "Gamma", "Delta"} <= child_symbols
+    gamma = next(child for child in root["children"] if child["symbol"] == "Gamma")
+    assert {child["symbol"] for child in gamma["children"]} == {"ExternalTarget"}
+    assert all(child["evidence"] for child in root["children"])
     assert_no_internal_ids(tool, ("secret-node-db-id", "secret-edge-db-id", "secret-evidence-db-id"))
 
 
@@ -1223,7 +1184,7 @@ def test_real_stack_anchor_expansion_processes_all_declared_callables(tmp_path):
         claims=[explicit(f"Callable{i:02d}", "ev-node-query") for i in range(count)],
     )
 
-    body = post(app, "/api/v1/knowledge/query", request("Public Type", max_flows=10)).json()
+    body = graph_query(app, request("Public Type", max_flows=10))
 
     diagnostic = next(item for item in body["diagnostics"] if item["code"] == "ENTRYPOINT_FLOW_MAX_FLOWS_REACHED")
     assert diagnostic["metadata"]["discoveredEntrypointCount"] == count

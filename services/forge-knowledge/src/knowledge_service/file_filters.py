@@ -18,9 +18,14 @@ def matches_any(relative_path: str, patterns: Iterable[str]) -> bool:
     return False
 
 
-def should_include_file(relative_path: str, include: Iterable[str], exclude: Iterable[str]) -> bool:
+def should_include_file(
+    relative_path: str,
+    include: Iterable[str],
+    exclude: Iterable[str],
+    exclude_exceptions: Iterable[str] = (),
+) -> bool:
     normalized = relative_path.replace("\\", "/")
-    if is_excluded_file(normalized, exclude):
+    if is_excluded_file(normalized, exclude) and not is_excluded_file_exception(normalized, exclude_exceptions):
         return False
     return is_included_file(normalized, include)
 
@@ -29,6 +34,11 @@ def is_excluded_file(relative_path: str, exclude: Iterable[str]) -> bool:
     normalized = relative_path.replace("\\", "/")
     parts = normalized.split("/")
     return matches_any(normalized, exclude) or any(part in EXCLUDED_DIR_NAMES for part in parts[:-1])
+
+
+def is_excluded_file_exception(relative_path: str, exclude_exceptions: Iterable[str]) -> bool:
+    normalized = relative_path.replace("\\", "/")
+    return matches_any(normalized, exclude_exceptions)
 
 
 def is_included_file(relative_path: str, include: Iterable[str]) -> bool:

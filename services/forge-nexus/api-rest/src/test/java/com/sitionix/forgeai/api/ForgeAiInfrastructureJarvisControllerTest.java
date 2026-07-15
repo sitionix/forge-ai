@@ -15,6 +15,7 @@ import com.sitionix.forgeai.api.proxy.InfrastructureProxyTransport;
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
@@ -59,7 +60,7 @@ class ForgeAiInfrastructureJarvisControllerTest {
 
     @Test
     void querySerializesMinimalRequestAndDelegatesToGenericProxyRoute() {
-        this.stub("{\"queryId\":\"q1\",\"status\":\"OK\",\"intent\":\"UNKNOWN\",\"matchedSources\":[]}");
+        this.stub("{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
         final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
                 "JarvisGateway",
                 null,
@@ -81,8 +82,98 @@ class ForgeAiInfrastructureJarvisControllerTest {
     }
 
     @Test
-    void queryPreservesSuccessfulFactualBundleBytes() throws Exception {
-        final String response = "{\"queryId\":\"q1\",\"status\":\"OK\",\"intent\":\"UNKNOWN\",\"matchedSources\":[]}";
+    void querySerializesFullFlowExplanationRequestAndDelegatesToGenericProxyRoute() {
+        this.stub("{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
+        final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
+                "JarvisGateway",
+                JarvisKnowledgeQueryIntent.FLOW_EXPLANATION,
+                "uk",
+                false,
+                null
+        );
+
+        this.controller.query(body, this.headers, this.request);
+
+        final byte[] expectedBody = ("{\"queryText\":\"JarvisGateway\",\"intent\":\"FLOW_EXPLANATION\","
+                + "\"answerLanguage\":\"uk\",\"includeTests\":false}").getBytes(StandardCharsets.UTF_8);
+        verify(this.transport).forward(
+                eq("jarvis.query"),
+                eq(Map.of()),
+                argThat(actual -> Arrays.equals(actual, expectedBody)),
+                same(this.headers),
+                same(this.request)
+        );
+    }
+
+    @Test
+    void queryAcceptsDynamicExplicitLanguagesAndDelegatesToJarvis() {
+        for (final String answerLanguage : List.of("de", "fr", "ru")) {
+            this.stub("{\"answerLanguage\":\"" + answerLanguage + "\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
+            final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
+                    "JarvisGateway",
+                    JarvisKnowledgeQueryIntent.FLOW_EXPLANATION,
+                    answerLanguage,
+                    false,
+                    null
+            );
+
+            this.controller.query(body, this.headers, this.request);
+
+            final byte[] expectedBody = ("{\"queryText\":\"JarvisGateway\",\"intent\":\"FLOW_EXPLANATION\","
+                    + "\"answerLanguage\":\"" + answerLanguage + "\",\"includeTests\":false}").getBytes(StandardCharsets.UTF_8);
+            verify(this.transport).forward(
+                    eq("jarvis.query"),
+                    eq(Map.of()),
+                    argThat(actual -> Arrays.equals(actual, expectedBody)),
+                    same(this.headers),
+                    same(this.request)
+            );
+        }
+    }
+
+    @Test
+    void queryPreservesCanonicalForbiddenLanguageResponseFromJarvisAndKnowledge() throws Exception {
+        final String response = "{\"code\":\"RESPONSE_LANGUAGE_NOT_ALLOWED\",\"message\":\"The requested response language is not allowed.\"}";
+        this.stub(422, response);
+
+        final ResponseEntity<byte[]> result = this.controller.query(
+                new JarvisKnowledgeQueryRequest("JarvisGateway", JarvisKnowledgeQueryIntent.FLOW_EXPLANATION, "ru", false, null),
+                this.headers,
+                this.request
+        ).join();
+
+        assertThat(result.getStatusCode().value()).isEqualTo(422);
+        assertThat(this.objectMapper.readValue(result.getBody(), Map.class)).containsEntry("code", "RESPONSE_LANGUAGE_NOT_ALLOWED")
+                .containsEntry("message", "The requested response language is not allowed.");
+    }
+
+    @Test
+    void querySerializesAutoIntentAndDelegatesToGenericProxyRoute() {
+        this.stub("{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
+        final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
+                "як створити сайт",
+                JarvisKnowledgeQueryIntent.AUTO,
+                null,
+                false,
+                null
+        );
+
+        this.controller.query(body, this.headers, this.request);
+
+        final byte[] expectedBody = ("{\"queryText\":\"як створити сайт\",\"intent\":\"AUTO\","
+                + "\"includeTests\":false}").getBytes(StandardCharsets.UTF_8);
+        verify(this.transport).forward(
+                eq("jarvis.query"),
+                eq(Map.of()),
+                argThat(actual -> Arrays.equals(actual, expectedBody)),
+                same(this.headers),
+                same(this.request)
+        );
+    }
+
+    @Test
+    void queryPreservesSuccessfulHumanAnswerBytes() throws Exception {
+        final String response = "{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}";
         this.stub(response);
 
         final ResponseEntity<byte[]> result = this.controller.query(
@@ -92,8 +183,12 @@ class ForgeAiInfrastructureJarvisControllerTest {
         ).join();
         final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
 
-        assertThat(body.get("queryId")).isEqualTo("q1");
-        assertThat(body.get("status")).isEqualTo("OK");
+        assertThat(body.get("answerLanguage")).isEqualTo("uk");
+        assertThat(body.containsKey("queryId")).isFalse();
+        assertThat(body.containsKey("status")).isFalse();
+        assertThat(body.containsKey("matchedNodes")).isFalse();
+        assertThat(body.containsKey("flows")).isFalse();
+        assertThat((List<?>) body.get("answers")).hasSize(1);
     }
 
     @Test
@@ -104,10 +199,25 @@ class ForgeAiInfrastructureJarvisControllerTest {
                 this.request
         ).join();
 
-        assertThat(result.getStatusCode().value()).isEqualTo(400);
+        assertThat(result.getStatusCode().value()).isEqualTo(422);
         final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
         assertThat(body.get("title")).isEqualTo("VALIDATION_FAILED");
         assertThat(body.get("details")).asString().contains("queryText");
+        verifyNoInteractions(this.transport);
+    }
+
+    @Test
+    void queryValidationErrorDoesNotProxyOutOfRangeMaxFlows() throws Exception {
+        final ResponseEntity<byte[]> result = this.controller.query(
+                new JarvisKnowledgeQueryRequest("JarvisGateway", JarvisKnowledgeQueryIntent.FLOW_EXPLANATION, "uk", false, 11),
+                this.headers,
+                this.request
+        ).join();
+
+        assertThat(result.getStatusCode().value()).isEqualTo(422);
+        final Map<?, ?> body = this.objectMapper.readValue(result.getBody(), Map.class);
+        assertThat(body.get("title")).isEqualTo("VALIDATION_FAILED");
+        assertThat(body.get("details")).asString().contains("maxFlows");
         verifyNoInteractions(this.transport);
     }
 
@@ -116,7 +226,11 @@ class ForgeAiInfrastructureJarvisControllerTest {
     }
 
     private void stub(final String body) {
+        this.stub(200, body);
+    }
+
+    private void stub(final int status, final String body) {
         when(this.transport.forward(any(), any(), any(), any(), any()))
-                .thenReturn(CompletableFuture.completedFuture(ResponseEntity.ok(body.getBytes(StandardCharsets.UTF_8))));
+                .thenReturn(CompletableFuture.completedFuture(ResponseEntity.status(status).body(body.getBytes(StandardCharsets.UTF_8))));
     }
 }

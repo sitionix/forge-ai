@@ -13,6 +13,7 @@ EDGE_METADATA_ALLOWLIST = {
     "callKind",
     "callTargetCategory",
     "methodName",
+    "relationKind",
     "receiverText",
     "receiverTypeHint",
     "resolutionReason",
@@ -22,9 +23,11 @@ EDGE_METADATA_ALLOWLIST = {
     "unresolvedReason",
 }
 CLAIM_METADATA_ALLOWLIST = {
+    "entrypointExecutionKind",
     "entrypointKind",
     "exceptionType",
     "httpMethod",
+    "interfaceMethod",
     "route",
     "schedule",
     "topic",
@@ -58,6 +61,8 @@ class GraphAnalysisEngine:
             metadata.setdefault("sourceKind", metadata.get("sourceKind") or node.nodeKind)
             metadata.setdefault("analyzerName", analyzer_name)
             metadata.setdefault("analyzerVersion", analyzer_version)
+            source_kind = str(metadata.get("sourceKind") or "").upper()
+            type_kind = source_kind if node.nodeKind == "TYPE" and source_kind in {"CLASS", "INTERFACE", "ENUM", "RECORD", "ANNOTATION"} else None
             fact_origin = self._fact_origin(metadata)
             flow_domain = self._flow_domain(row, metadata)
             nodes.append(
@@ -69,6 +74,7 @@ class GraphAnalysisEngine:
                     "analysis_file_id": row["id"],
                     "stable_key": metadata.get("stableKey") or node_id,
                     "node_kind": node.nodeKind,
+                    "type_kind": type_kind,
                     "language": node.language or metadata.get("language"),
                     "name": node.name,
                     "qualified_name": node.qualifiedName,
@@ -76,6 +82,8 @@ class GraphAnalysisEngine:
                     "parent_node_id": None,
                     "parent_local_id": node.parentLocalId or parent_by_local_id.get(node.localId),
                     "parameter_count": node.parameter_count,
+                    "signature": metadata.get("signature"),
+                    "parameter_types": list(node.parameterTypes or []),
                     "line_start": node.lineStart,
                     "line_end": node.lineEnd,
                     "confidence": node.confidence,

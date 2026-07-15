@@ -1,1 +1,11 @@
-{"queryId":"query-fixture","status":"OK","intent":"UNKNOWN","matchedSources":[{"sourceId":"source-a","displayName":"Source A","score":0.95}],"matchedNodes":[{"sourceId":"source-a","nodeKind":"CALLABLE","label":"JarvisGateway","score":0.95,"matchReasons":["NAME_MATCH"]}],"flows":[{"flowIndex":1,"source":"source-a","entrypoint":{"nodeRef":"n1","label":"JarvisGateway","kind":"CALLABLE"},"entrypointOrigin":"EXPLICIT_GRAPH_FACT","matchedAnchors":[{"anchorRef":"n1","label":"JarvisGateway","score":0.95,"distance":0,"matchReasons":["NAME_MATCH"]}],"nodes":[{"nodeRef":"n1","label":"JarvisGateway","kind":"CALLABLE"},{"nodeRef":"n2","label":"KnowledgeQueryGateway","kind":"CALLABLE"}],"transitions":[{"transitionRef":"t1","fromNodeRef":"n1","toNodeRef":"n2","evidenceRefs":["e1"]}],"boundaries":[],"evidence":[{"evidenceRef":"e1","ownerRef":"t1","relativePath":"src/JarvisGateway.java","lineStart":10,"lineEnd":10,"excerpt":"call"}],"complete":true,"coverage":{"nodeCount":2,"transitionCount":1,"boundaryCount":0,"anchorCount":1,"maxDepthReached":1,"cycleDetected":false,"truncated":false},"diagnostics":[]}],"coverage":{"searchedSourceCount":2,"matchedSourceCount":1,"matchedNodeCount":1,"flowCount":1,"nodeCount":2,"edgeCount":1,"evidenceCount":1,"truncated":false,"continuationAvailable":false},"diagnostics":[]}
+{
+  "answerLanguage": "uk",
+  "answers": [
+    {
+      "source": "source-a",
+      "entrypoint": "JarvisGateway",
+      "text": "Сайт створюється через JarvisGateway, який делегує роботу внутрішнім компонентам."
+    }
+  ],
+  "diagnostics": []
+}

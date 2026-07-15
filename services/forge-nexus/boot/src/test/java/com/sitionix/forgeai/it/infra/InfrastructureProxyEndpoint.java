@@ -76,9 +76,9 @@ public final class InfrastructureProxyEndpoint {
         return nexusGet("/api/v1/infrastructure/knowledge/analysis/diagnostics", "responseProxyAnalysisDiagnostics.json");
     }
 
-    public static Endpoint<Object, Object> nexusKnowledgeQueryFlowExplanations() {
-        return nexusPost("/api/v1/infrastructure/knowledge/query/flow-explanations", "requestProxyKnowledgeFlowQuery.json",
-                "responseProxyKnowledgeFlowExplanations.json");
+    public static Endpoint<Object, Object> nexusKnowledgeQuery() {
+        return nexusPost("/api/v1/infrastructure/knowledge/query", "requestProxyKnowledgeFlowQuery.json",
+                "responseProxyKnowledgeQuery.json");
     }
 
     public static Endpoint<Object, Object> nexusKnowledgeQueryToolContext() {
@@ -182,8 +182,22 @@ public final class InfrastructureProxyEndpoint {
         return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryOptionalControls.json", "responseProxyJarvisQuery.json");
     }
 
+    public static Endpoint<Object, Object> nexusJarvisQueryGerman() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryGerman.json", "responseProxyJarvisQueryGerman.json");
+    }
+
+    public static Endpoint<Object, Object> nexusJarvisQueryFrench() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryFrench.json", "responseProxyJarvisQueryFrench.json");
+    }
+
+    public static Endpoint<Object, Object> nexusJarvisQueryForbiddenLanguage() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryForbiddenLanguage.json", HttpStatus.UNPROCESSABLE_ENTITY,
+                "responseProxyForbiddenLanguage.json");
+    }
+
     public static Endpoint<Object, Object> nexusJarvisQueryNoCandidates() {
-        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", "responseProxyJarvisQueryNoCandidates.json");
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", HttpStatus.NOT_FOUND,
+                "responseProxyJarvisQueryNoCandidates.json");
     }
 
     public static Endpoint<Object, Object> nexusJarvisQueryBlank() {
@@ -328,9 +342,9 @@ public final class InfrastructureProxyEndpoint {
         return upstreamGet("/api/v1/knowledge/analysis/diagnostics", "responseProxyAnalysisDiagnostics.json");
     }
 
-    public static Endpoint<Object, Object> upstreamKnowledgeQueryFlowExplanations() {
-        return upstreamPost("/api/v1/knowledge/query/flow-explanations", "requestProxyKnowledgeFlowQuery.json",
-                "responseProxyKnowledgeFlowExplanations.json");
+    public static Endpoint<Object, Object> upstreamKnowledgeQuery() {
+        return upstreamPost("/api/v1/knowledge/query", "requestProxyKnowledgeFlowQuery.json",
+                "responseProxyKnowledgeQuery.json");
     }
 
     public static Endpoint<Object, Object> upstreamKnowledgeQueryToolContext() {
@@ -434,8 +448,22 @@ public final class InfrastructureProxyEndpoint {
         return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryOptionalControls.json", "responseProxyJarvisQuery.json");
     }
 
+    public static Endpoint<Object, Object> upstreamJarvisQueryGerman() {
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryGerman.json", "responseProxyJarvisQueryGerman.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamJarvisQueryFrench() {
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryFrench.json", "responseProxyJarvisQueryFrench.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamJarvisQueryForbiddenLanguage() {
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryForbiddenLanguage.json", HttpStatus.UNPROCESSABLE_ENTITY,
+                "responseProxyForbiddenLanguage.json");
+    }
+
     public static Endpoint<Object, Object> upstreamJarvisQueryNoCandidates() {
-        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", "responseProxyJarvisQueryNoCandidates.json");
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", HttpStatus.NOT_FOUND,
+                "responseProxyJarvisQueryNoCandidates.json");
     }
 
     public static Endpoint<Object, Object> upstreamTooLargeKnowledgeStatus() {

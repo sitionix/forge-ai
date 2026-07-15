@@ -36,11 +36,23 @@ async function flushAsync() {
 }
 
 function queryPayload(queryText: string) {
-  return { queryText };
+  return {
+    queryText,
+    intent: 'AUTO',
+    includeTests: false
+  };
+}
+
+function humanAnswer(text = 'JarvisGateway answers from compact human context.') {
+  return {
+    answerLanguage: 'uk',
+    answers: [{ source: 'forge-ai', entrypoint: 'JarvisGateway', text }],
+    diagnostics: []
+  };
 }
 
 describe('Jarvis runtime rendering', () => {
-  it('PERF-CON-06 renders Jarvis responses without source content or command arrays', async () => {
+  it('PERF-CON-06 renders human responses without graph internals or command arrays', async () => {
     const dom = jarvisDom();
     const http = {
       get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'UP', model: {}, ollama: {}, actions: { count: 1 } } : { actions: [] })),
@@ -51,41 +63,7 @@ describe('Jarvis runtime rendering', () => {
             execution: { executed: true, message: 'Action executed: safe.run', output: 'done' }
           });
         }
-        return Promise.resolve({
-          status: 'OK',
-          intent: 'UNKNOWN',
-          matchedSources: [{ sourceId: 'forge-ai', displayName: 'Forge AI', score: 0.95 }],
-          matchedNodes: [{
-            sourceId: 'forge-ai',
-            nodeKind: 'CALLABLE',
-            label: 'JarvisGateway',
-            score: 1,
-            matchReasons: ['NAME_MATCH'],
-            relativePath: 'src/JarvisGateway.java',
-            content: 'SECRET_SOURCE_CONTENT'
-          }],
-          flows: [{
-            flowIndex: 1,
-            source: 'forge-ai',
-            entrypoint: { nodeRef: 'n1', label: 'Controller.create', kind: 'CALLABLE' },
-            entrypointOrigin: 'EXPLICIT_GRAPH_FACT',
-            matchedAnchors: [],
-            nodes: [
-              { nodeRef: 'n1', label: 'Controller.create', kind: 'CALLABLE' },
-              { nodeRef: 'n2', label: 'UseCase.execute', kind: 'CALLABLE' },
-              { nodeRef: 'n3', label: 'Repository.save', kind: 'CALLABLE' }
-            ],
-            transitions: [
-              { transitionRef: 't1', fromNodeRef: 'n1', toNodeRef: 'n2' },
-              { transitionRef: 't2', fromNodeRef: 'n2', toNodeRef: 'n3' }
-            ],
-            boundaries: [], evidence: [],
-            complete: true,
-            coverage: {}, diagnostics: []
-          }],
-          coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowCount: 1, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
-          diagnostics: [{ code: 'OK', message: 'No sensitive data' }]
-        });
+        return Promise.resolve(humanAnswer('JarvisGateway explains the request in normal language.'));
       })
     };
     const page = new JarvisPage({ document: dom.window.document, http });
@@ -98,10 +76,11 @@ describe('Jarvis runtime rendering', () => {
     await page.submitCommand({ preventDefault: () => undefined });
 
     const text = dom.window.document.body.textContent || '';
-    expect(text).toContain('JarvisGateway');
-    expect(text).toContain('src/JarvisGateway.java');
-    expect(text).toContain('Entrypoint Flows (1)');
-    expect(text).toContain('Controller.create, UseCase.execute, Repository.save');
+    expect(text).toContain('JarvisGateway explains the request in normal language.');
+    expect(text).toContain('forge-ai');
+    expect(text).not.toContain('CALLS structure');
+    expect(text).not.toContain('flowExplanations');
+    expect(text).not.toContain('nodeRef');
     expect(text).not.toContain('SECRET_SOURCE_CONTENT');
     expect(text).not.toContain('["bash"');
     expect(text).not.toContain('sleep 0.2');
@@ -109,19 +88,11 @@ describe('Jarvis runtime rendering', () => {
     page.dispose();
   });
 
-  it('renders no-candidates response and does not call Knowledge directly', async () => {
+  it('renders controlled query errors and does not call Knowledge directly', async () => {
     const dom = jarvisDom();
     const http = {
       get: vi.fn(() => Promise.resolve({ status: 'UP', model: {}, ollama: {}, actions: { count: 0 } })),
-      post: vi.fn(() => Promise.resolve({
-        status: 'NO_CANDIDATES',
-        intent: 'UNKNOWN',
-        matchedSources: [],
-        matchedNodes: [],
-        flows: [],
-        coverage: { searchedSourceCount: 2, matchedSourceCount: 0, matchedNodeCount: 0, flowCount: 0, nodeCount: 0, edgeCount: 0, evidenceCount: 0 },
-        diagnostics: [{ code: 'NO_GRAPH_CANDIDATES', message: 'No matches' }]
-      }))
+      post: vi.fn(() => Promise.reject(new Error('No grounded graph candidates were found.')))
     };
     const page = new JarvisPage({ document: dom.window.document, http });
     page.mount();
@@ -131,46 +102,11 @@ describe('Jarvis runtime rendering', () => {
     await page.submitQuery({ preventDefault: () => undefined });
 
     const text = dom.window.document.body.textContent || '';
-    expect(text).toContain('No graph matches found');
-    expect(text).toContain('NO_GRAPH_CANDIDATES');
+    expect(text).toContain('No grounded graph candidates were found.');
     expect(http.post).toHaveBeenCalledWith('/jarvis/query', expect.any(Object), expect.any(Object));
     const calls = http.post.mock.calls as unknown as Array<[string, unknown?, unknown?]>;
     expect(calls.some(([path]) => path.includes('/knowledge/query'))).toBe(false);
     expect(calls.some(([path]) => path.includes(`/jarvis/${'chat'}`))).toBe(false);
-    page.dispose();
-  });
-
-  it('renders flow extraction diagnostics when matched nodes have no paths', async () => {
-    const dom = jarvisDom();
-    const http = {
-      get: vi.fn(() => Promise.resolve({ status: 'UP', model: {}, ollama: {}, actions: { count: 0 } })),
-      post: vi.fn(() => Promise.resolve({
-        status: 'OK',
-        intent: 'UNKNOWN',
-        matchedSources: [{ sourceId: 'svc', displayName: 'Service', score: 1 }],
-        matchedNodes: [{
-          sourceId: 'svc',
-          nodeKind: 'CALLABLE',
-          label: 'Lonely.execute',
-          score: 1,
-          matchReasons: ['NAME_MATCH']
-        }],
-        flows: [],
-        coverage: { matchedSourceCount: 1, matchedNodeCount: 1, flowCount: 0, nodeCount: 1, edgeCount: 0, evidenceCount: 0 },
-        diagnostics: [{ code: 'ENTRYPOINT_FLOW_ROOT_NOT_FOUND', message: 'No bounded entrypoint root could be built.' }]
-      }))
-    };
-    const page = new JarvisPage({ document: dom.window.document, http });
-    page.mount();
-    await flushAsync();
-    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'lonely';
-
-    await page.submitQuery({ preventDefault: () => undefined });
-
-    const text = dom.window.document.body.textContent || '';
-    expect(text).toContain('Entrypoint Flows (0)');
-    expect(text).toContain('No bounded entrypoint root could be built.');
-    expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('lonely'), expect.any(Object));
     page.dispose();
   });
 

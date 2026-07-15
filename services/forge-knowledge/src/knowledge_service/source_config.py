@@ -29,6 +29,7 @@ class SelectionConfig:
 class IndexingConfig:
     include: List[str] = field(default_factory=list)
     exclude: List[str] = field(default_factory=list)
+    exclude_exceptions: List[str] = field(default_factory=list)
     max_file_size_bytes: int = 500000
     chunk_size_chars: int = 3000
     chunk_overlap_chars: int = 300
@@ -85,6 +86,7 @@ def load_source_config(path: Path) -> Optional[SourceConfig]:
         indexing=IndexingConfig(
             include=_string_list(indexing.get("include")) or default_include,
             exclude=_string_list(indexing.get("exclude")) or default_exclude,
+            exclude_exceptions=_string_list(indexing.get("exclude_exceptions")),
             max_file_size_bytes=int(indexing.get("max_file_size_bytes") or indexing_defaults.get("max_file_size_bytes") or 500000),
             chunk_size_chars=int(indexing.get("chunk_size_chars") or indexing_defaults.get("chunk_size_chars") or 3000),
             chunk_overlap_chars=int(indexing.get("chunk_overlap_chars") or indexing_defaults.get("chunk_overlap_chars") or 300),

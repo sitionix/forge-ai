@@ -46,6 +46,9 @@ class StructuralType:
     body_line_start: Optional[int]
     body_line_end: Optional[int]
     annotations: List[StructuralAnnotation] = field(default_factory=list)
+    implemented_interfaces: List[str] = field(default_factory=list)
+    extended_classes: List[str] = field(default_factory=list)
+    extended_interfaces: List[str] = field(default_factory=list)
     parent_type_local_id: Optional[str] = None
     stable_key: str = ""
 

@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
+import logging
+import os
 import sqlite3
 import threading
 import time
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import anyio
@@ -27,20 +32,31 @@ from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
-from knowledge_service.flow_explanations import FLOW_EXPLANATION_LIMIT_REACHED, FlowExplanationService, LocalOllamaFlowExplanationClient
+from knowledge_service.flow_explanations import (
+    FLOW_EXPLANATION_LIMIT_REACHED,
+    CompactFlowProjector,
+    HumanAnswerContextBudgetExceeded,
+    HumanAnswerDeadlineExceeded,
+    HumanAnswerGenerationFailed,
+    HumanAnswerMalformedResponse,
+    HumanAnswerProviderUnavailable,
+    HumanAnswerPromptRenderer,
+    HumanAnswerRepairExhausted,
+    HumanFlowAnswerService,
+    LocalOllamaFlowExplanationClient,
+)
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_schema import InventoryBuildRequest
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.knowledge_query_schema import (
+    KnowledgeHumanQueryResponse,
     KnowledgeQueryDiagnostic,
-    KnowledgeQueryFlowExplanationResponse,
     KnowledgeQueryRequest,
-    KnowledgeQueryResponse,
-    KnowledgeQueryStatus,
     KnowledgeQueryToolContextResponse,
 )
 from knowledge_service.knowledge_query_service import build_knowledge_query_service
+from knowledge_service.language_policy import is_forbidden_response_language
 from knowledge_service.observability import (
     CORRELATION_HEADER,
     ObservabilityMiddleware,
@@ -48,6 +64,17 @@ from knowledge_service.observability import (
     sanitize_correlation_id,
 )
 from knowledge_service.overview_projection import read_overview
+from knowledge_service.query_interpretation import (
+    QUERY_INTERPRETATION_FAILED,
+    LocalOllamaQueryInterpretationClient,
+    QueryInterpretationFailed,
+    QueryInterpretationPromptRenderer,
+    QueryInterpretationService,
+    QueryPlanningDeadlineExceeded,
+    QueryPlanningMalformedResponse,
+    QueryPlanningProviderUnavailable,
+    QueryPlanningRepairExhausted,
+)
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
 from knowledge_service.semantic_schema import SemanticIndexBuildRequest, SemanticIndexBuildResponse
 from knowledge_service.semantic_worker import SemanticBuildCoordinator, SemanticIndexBackgroundWorker
@@ -59,6 +86,7 @@ from knowledge_service.storage_operations import StorageOperations
 app_config: Optional[AppConfig] = None
 store: Optional[InventoryStore] = None
 analysis_supervisor: Optional[AnalysisSupervisor] = None
+LOGGER = logging.getLogger(__name__)
 
 
 def create_app(
@@ -172,7 +200,7 @@ def create_app(
                 "provider": config.analysis_provider,
                 "model": config.analysis_model,
                 "contextTokens": config.analysis_context_tokens,
-                "flowExplanationRequestTimeoutSeconds": config.flow_explanation_request_timeout_seconds,
+                "humanQueryRequestTimeoutSeconds": config.human_query_request_timeout_seconds,
             },
             "semantic": _semantic_status(request.app, config),
         }
@@ -233,17 +261,19 @@ def create_app(
                 raise
             raise KnowledgeError("CONTEXT_BUILD_FAILED", "Context build failed") from exc
 
-    @app.post("/api/v1/knowledge/query", response_model=KnowledgeQueryResponse)
-    async def knowledge_query(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-        return await _run_in_thread(_knowledge_query_response, request, body)
-
-    @app.post("/api/v1/knowledge/query/flow-explanations", response_model=KnowledgeQueryFlowExplanationResponse)
-    async def knowledge_query_flow_explanations(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryFlowExplanationResponse:
+    @app.post(
+        "/api/v1/knowledge/query",
+        response_model=KnowledgeHumanQueryResponse,
+        response_model_exclude_none=True,
+    )
+    async def knowledge_query(request: Request, body: KnowledgeQueryRequest):
+        if is_forbidden_response_language(body.answerLanguage):
+            return _forbidden_response_language_response()
         config, _ = _state(request)
-        deadline_at = time.monotonic() + _flow_explanation_request_deadline_seconds(config)
+        deadline_at = time.monotonic() + _human_query_request_deadline_seconds(config)
         cancel_event = threading.Event()
         return await _run_in_thread(
-            _knowledge_query_flow_explanations_response,
+            _knowledge_human_query_response,
             request,
             body,
             cancel_event,
@@ -251,18 +281,18 @@ def create_app(
             request_cancel_event=cancel_event,
         )
 
-    @app.post("/api/v1/knowledge/query/tool-context", response_model=KnowledgeQueryToolContextResponse)
-    async def knowledge_query_tool_context(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryToolContextResponse:
-        config, _ = _state(request)
-        deadline_at = time.monotonic() + _flow_explanation_request_deadline_seconds(config)
-        cancel_event = threading.Event()
+    @app.post(
+        "/api/v1/knowledge/query/tool-context",
+        response_model=KnowledgeQueryToolContextResponse,
+        response_model_exclude_none=True,
+    )
+    async def knowledge_query_tool_context(request: Request, body: KnowledgeQueryRequest):
+        if is_forbidden_response_language(body.answerLanguage):
+            return _forbidden_response_language_response()
         return await _run_in_thread(
             _knowledge_query_tool_context_response,
             request,
             body,
-            cancel_event,
-            deadline_at,
-            request_cancel_event=cancel_event,
         )
 
     @app.post("/api/v1/knowledge/semantic/index/build", response_model=SemanticIndexBuildResponse)
@@ -619,120 +649,256 @@ def _graph_view_response(
     )
 
 
-def _knowledge_query_response(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-    config, deps = _state(request)
-    try:
-        return build_knowledge_query_service(deps.graph_store, config).query(body)
-    except Exception:
-        return KnowledgeQueryResponse(
-            queryId="query-failed",
-            status=KnowledgeQueryStatus.QUERY_FAILED,
-            intent=body.intent,
-            diagnostics=[
-                KnowledgeQueryDiagnostic(
-                    code="KNOWLEDGE_QUERY_FAILED",
-                    message="Knowledge query failed before a factual bundle could be built.",
-                    severity="ERROR",
-                )
-            ],
-        )
-
-
-def _knowledge_query_flow_explanations_response(
+def _knowledge_human_query_response(
     request: Request,
     body: KnowledgeQueryRequest,
     cancel_event: threading.Event | None = None,
     deadline_at: float | None = None,
-) -> KnowledgeQueryFlowExplanationResponse:
+):
     config, deps = _state(request)
-    request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
+    if is_forbidden_response_language(body.answerLanguage):
+        return _forbidden_response_language_response()
+    request_deadline_seconds = _human_query_request_deadline_seconds(config)
     deadline_at = deadline_at if deadline_at is not None else time.monotonic() + request_deadline_seconds
     if time.monotonic() >= deadline_at:
-        return _expired_flow_explanation_response(body)
+        return _expired_human_query_response(body)
     try:
-        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body)
-        explanation_service, close_provider = _flow_explanation_service(request, config, cancel_event)
+        interpretation_service, close_interpreter = _query_interpretation_service(request, config)
         try:
-            run = explanation_service.explain(body, query_result, deadline_at=deadline_at)
-            return explanation_service.to_ui_response(run)
+            retrieval_plan = interpretation_service.interpret(body, deadline_at=deadline_at)
         finally:
+            if close_interpreter:
+                close_interpreter()
+        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
+        if not tuple(query_result.flows or ()):
+            _record_query_interpretation_audits(request, body, interpretation_service.audit_records)
+            return _public_error_response(
+                404,
+                "NO_GROUNDED_GRAPH_CANDIDATES",
+                "No grounded graph candidates were found.",
+            )
+        answer_service, close_provider = _human_answer_service(request, config, cancel_event)
+        try:
+            response = answer_service.answer(body, query_result, plan=retrieval_plan, deadline_at=deadline_at)
+            return response
+        finally:
+            _record_human_answer_audits(request, body, answer_service.audit_records, interpretation_service.audit_records)
             if close_provider:
                 close_provider()
+    except QueryPlanningDeadlineExceeded:
+        return _public_error_response(
+            504,
+            "QUERY_PLANNING_TIMEOUT",
+            "Knowledge query planning timed out.",
+        )
+    except (QueryPlanningProviderUnavailable, QueryPlanningMalformedResponse, QueryPlanningRepairExhausted):
+        return _public_error_response(
+            502,
+            QUERY_INTERPRETATION_FAILED,
+            "The local model could not interpret the query.",
+        )
+    except QueryInterpretationFailed:
+        return _public_error_response(
+            502,
+            QUERY_INTERPRETATION_FAILED,
+            "The local model could not interpret the query.",
+        )
+    except HumanAnswerDeadlineExceeded:
+        return _public_error_response(
+            504,
+            "HUMAN_QUERY_TIMEOUT",
+            "Knowledge human query timed out.",
+        )
+    except HumanAnswerContextBudgetExceeded:
+        return _public_error_response(
+            503,
+            "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED",
+            "The grounded flow context exceeded the configured answer budget.",
+        )
+    except (HumanAnswerProviderUnavailable, HumanAnswerMalformedResponse, HumanAnswerRepairExhausted, HumanAnswerGenerationFailed):
+        return _public_error_response(
+            502,
+            "HUMAN_ANSWER_GENERATION_FAILED",
+            "The local model could not produce any grounded flow answers.",
+        )
     except Exception:
-        return KnowledgeQueryFlowExplanationResponse(
-            queryId="query-failed",
-            status=KnowledgeQueryStatus.QUERY_FAILED,
-            intent=body.intent,
-            diagnostics=[
-                KnowledgeQueryDiagnostic(
-                    code="KNOWLEDGE_QUERY_FAILED",
-                    message="Knowledge query failed before a factual bundle could be built.",
-                    severity="ERROR",
-                )
-            ],
+        return _public_error_response(
+            503,
+            "KNOWLEDGE_QUERY_FAILED",
+            "Knowledge query failed before a factual answer could be built.",
         )
 
 
 def _knowledge_query_tool_context_response(
     request: Request,
     body: KnowledgeQueryRequest,
-    cancel_event: threading.Event | None = None,
-    deadline_at: float | None = None,
-) -> KnowledgeQueryToolContextResponse:
+):
     config, deps = _state(request)
-    request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
-    deadline_at = deadline_at if deadline_at is not None else time.monotonic() + request_deadline_seconds
-    if time.monotonic() >= deadline_at:
-        return _expired_tool_context_response(body)
+    if is_forbidden_response_language(body.answerLanguage):
+        return _forbidden_response_language_response()
     try:
-        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body)
-        explanation_service, close_provider = _flow_explanation_service(request, config, cancel_event)
+        deadline_at = time.monotonic() + _human_query_request_deadline_seconds(config)
+        interpretation_service, close_interpreter = _query_interpretation_service(request, config)
         try:
-            run = explanation_service.explain(body, query_result, deadline_at=deadline_at)
-            return explanation_service.to_tool_response(body, run)
+            retrieval_plan = interpretation_service.interpret(body, deadline_at=deadline_at)
         finally:
-            if close_provider:
-                close_provider()
+            _record_query_interpretation_audits(request, body, interpretation_service.audit_records)
+            _write_human_answer_audit_artifact(config, body, [], interpretation_service.audit_records)
+            if close_interpreter:
+                close_interpreter()
+        query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
+        if not tuple(query_result.flows or ()):
+            return _public_error_response(
+                404,
+                "NO_GROUNDED_GRAPH_CANDIDATES",
+                "No grounded graph candidates were found.",
+            )
+        return CompactFlowProjector().to_tool_response(body, query_result)
+    except QueryPlanningDeadlineExceeded:
+        return _public_error_response(
+            504,
+            "QUERY_PLANNING_TIMEOUT",
+            "Knowledge query planning timed out.",
+        )
+    except (QueryPlanningProviderUnavailable, QueryPlanningMalformedResponse, QueryPlanningRepairExhausted, QueryInterpretationFailed):
+        return _public_error_response(
+            502,
+            QUERY_INTERPRETATION_FAILED,
+            "The local model could not interpret the query.",
+        )
     except Exception:
-        return KnowledgeQueryToolContextResponse(
-            queryText=body.queryText,
-            answerLanguage=body.answerLanguage,
-            status=KnowledgeQueryStatus.QUERY_FAILED,
-            diagnostics=[
-                KnowledgeQueryDiagnostic(
-                    code="KNOWLEDGE_QUERY_FAILED",
-                    message="Knowledge query failed before a factual bundle could be built.",
-                    severity="ERROR",
-                )
-            ],
+        return _public_error_response(
+            503,
+            "KNOWLEDGE_QUERY_FAILED",
+            "Knowledge query failed before tool context could be built.",
         )
 
 
 def _deadline_exhausted_diagnostic() -> KnowledgeQueryDiagnostic:
     return KnowledgeQueryDiagnostic(
         code=FLOW_EXPLANATION_LIMIT_REACHED,
-        message="Flow explanation request deadline was exhausted before flow explanation work could start.",
+        message="Human query request deadline was exhausted before human answer work could start.",
         severity="WARN",
         metadata={"stage": "BEFORE_QUERY"},
     )
 
 
-def _expired_flow_explanation_response(body: KnowledgeQueryRequest) -> KnowledgeQueryFlowExplanationResponse:
-    return KnowledgeQueryFlowExplanationResponse(
-        queryId="query-deadline-exhausted",
-        status=KnowledgeQueryStatus.OK,
-        intent=body.intent,
-        diagnostics=[_deadline_exhausted_diagnostic()],
+def _expired_human_query_response(body: KnowledgeQueryRequest) -> JSONResponse:
+    return _public_error_response(
+        504,
+        "HUMAN_QUERY_TIMEOUT",
+        "Knowledge human query timed out.",
     )
 
 
-def _expired_tool_context_response(body: KnowledgeQueryRequest) -> KnowledgeQueryToolContextResponse:
-    return KnowledgeQueryToolContextResponse(
-        queryText=body.queryText,
-        answerLanguage=body.answerLanguage,
-        status=KnowledgeQueryStatus.OK,
-        diagnostics=[_deadline_exhausted_diagnostic()],
+def _expired_tool_context_response(body: KnowledgeQueryRequest) -> JSONResponse:
+    return _public_error_response(
+        504,
+        "TOOL_CONTEXT_TIMEOUT",
+        "Knowledge tool context timed out.",
     )
+
+
+def _public_error_response(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"code": code, "message": message})
+
+
+def _forbidden_response_language_response() -> JSONResponse:
+    return _public_error_response(
+        422,
+        "RESPONSE_LANGUAGE_NOT_ALLOWED",
+        "The requested response language is not allowed.",
+    )
+
+
+def _record_human_answer_audits(
+    request: Request,
+    body: KnowledgeQueryRequest,
+    records,
+    interpretation_records=None,
+) -> None:
+    interpretation_records = list(interpretation_records or [])
+    if not records and not interpretation_records:
+        return
+    config, _ = _state(request)
+    _record_query_interpretation_audits(request, body, interpretation_records)
+    existing = getattr(request.app.state, "human_answer_audit_artifacts", None)
+    if existing is None:
+        existing = deque(maxlen=max(0, int(config.query_audit_memory_max_records)))
+        request.app.state.human_answer_audit_artifacts = existing
+    existing.extend(dict(record) for record in records)
+    _write_human_answer_audit_artifact(config, body, records, interpretation_records)
+
+
+def _record_query_interpretation_audits(request: Request, body: KnowledgeQueryRequest, records) -> None:
+    if not records:
+        return
+    config, _ = _state(request)
+    existing = getattr(request.app.state, "query_interpretation_audit_artifacts", None)
+    if existing is None:
+        existing = deque(maxlen=max(0, int(config.query_audit_memory_max_records)))
+        request.app.state.query_interpretation_audit_artifacts = existing
+    existing.extend(dict(record) for record in records)
+
+
+def _write_human_answer_audit_artifact(
+    config: AppConfig,
+    body: KnowledgeQueryRequest,
+    records,
+    interpretation_records=None,
+) -> None:
+    configured_directory = config.query_audit_directory
+    directory = str(configured_directory or os.environ.get("FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR") or "").strip()
+    if not directory or int(config.query_audit_max_retained_files) <= 0:
+        return
+    try:
+        root = Path(directory)
+        root.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "requestPayload": body.dict(exclude_none=True),
+            "providerCallCount": len(records),
+            "queryInterpretationProviderCallCount": len(interpretation_records or []),
+            "interpretationRecords": [dict(record) for record in (interpretation_records or [])],
+            "records": [dict(record) for record in records],
+        }
+        filename = f"human-answer-{int(time.time() * 1000)}-{uuid.uuid4().hex}.json"
+        target = root / filename
+        tmp = root / f".{filename}.tmp"
+        with tmp.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, target)
+        _cleanup_human_answer_audit_files(
+            root,
+            max_retained_files=config.query_audit_max_retained_files,
+            max_file_age_seconds=config.query_audit_max_file_age_seconds,
+        )
+    except Exception as exc:
+        LOGGER.warning("human_answer_audit_write_failed", extra={"error": type(exc).__name__, "directory": directory})
+
+
+def _cleanup_human_answer_audit_files(
+    root: Path,
+    *,
+    max_retained_files: int,
+    max_file_age_seconds: Optional[int],
+) -> None:
+    now = time.time()
+    files = sorted(
+        (path for path in root.glob("human-answer-*.json") if path.is_file()),
+        key=lambda path: (path.stat().st_mtime, path.name),
+        reverse=True,
+    )
+    for path in files:
+        if max_file_age_seconds is not None and now - path.stat().st_mtime > max_file_age_seconds:
+            path.unlink(missing_ok=True)
+    files = sorted(
+        (path for path in root.glob("human-answer-*.json") if path.is_file()),
+        key=lambda path: (path.stat().st_mtime, path.name),
+        reverse=True,
+    )
+    for path in files[max(0, int(max_retained_files)):]:
+        path.unlink(missing_ok=True)
 
 
 async def _run_in_thread(func, *args, request_cancel_event: threading.Event | None = None, **kwargs):
@@ -766,40 +932,80 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
     raise RuntimeError("Knowledge app dependencies are not initialized")
 
 
-def _flow_explanation_service(
+def _human_answer_service(
     request: Request,
     config: AppConfig,
     cancel_event: threading.Event | None = None,
-) -> tuple[FlowExplanationService, Optional[Any]]:
+) -> tuple[HumanFlowAnswerService, Optional[Any]]:
     injected_provider = getattr(request.app.state, "flow_explanation_provider", None)
     max_prompt_chars = max(
         DEFAULT_GENERATIVE_CONTEXT_TOKENS,
         int(config.analysis_context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS) * 4,
     )
-    request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
+    request_deadline_seconds = _human_query_request_deadline_seconds(config)
     if injected_provider is not None:
-        return FlowExplanationService(
+        return HumanFlowAnswerService(
             injected_provider,
             max_prompt_chars=max_prompt_chars,
             request_deadline_seconds=request_deadline_seconds,
+            provider_name=config.analysis_provider,
+            provider_model=config.analysis_model,
             cancel_event=cancel_event,
+            audit_max_records=config.query_audit_memory_max_records,
         ), None
     provider = LocalOllamaFlowExplanationClient(
         config.analysis_base_url,
         config.analysis_model,
         config.analysis_ai_call_timeout_seconds,
         config.analysis_context_tokens,
+        renderer=HumanAnswerPromptRenderer(),
     )
-    return FlowExplanationService(
+    return HumanFlowAnswerService(
         provider,
         max_prompt_chars=max_prompt_chars,
         request_deadline_seconds=request_deadline_seconds,
+        provider_name=config.analysis_provider,
+        provider_model=config.analysis_model,
         cancel_event=cancel_event,
+        audit_max_records=config.query_audit_memory_max_records,
     ), provider.close
 
 
-def _flow_explanation_request_deadline_seconds(config: AppConfig) -> float:
-    return max(0.001, float(config.flow_explanation_request_timeout_seconds))
+def _query_interpretation_service(
+    request: Request,
+    config: AppConfig,
+) -> tuple[QueryInterpretationService, Optional[Any]]:
+    injected_provider = getattr(request.app.state, "query_interpretation_provider", None)
+    request_deadline_seconds = _human_query_request_deadline_seconds(config)
+    default_response_language = getattr(config, "query_default_response_language", "en")
+    if injected_provider is not None:
+        return QueryInterpretationService(
+            injected_provider,
+            default_response_language=default_response_language,
+            request_deadline_seconds=request_deadline_seconds,
+            provider_name=config.analysis_provider,
+            provider_model=config.analysis_model,
+            audit_max_records=config.query_audit_memory_max_records,
+        ), None
+    provider = LocalOllamaQueryInterpretationClient(
+        config.analysis_base_url,
+        config.analysis_model,
+        config.analysis_ai_call_timeout_seconds,
+        config.analysis_context_tokens,
+        renderer=QueryInterpretationPromptRenderer(),
+    )
+    return QueryInterpretationService(
+        provider,
+        default_response_language=default_response_language,
+        request_deadline_seconds=request_deadline_seconds,
+        provider_name=config.analysis_provider,
+        provider_model=config.analysis_model,
+        audit_max_records=config.query_audit_memory_max_records,
+    ), provider.close
+
+
+def _human_query_request_deadline_seconds(config: AppConfig) -> float:
+    return max(0.001, float(config.human_query_request_timeout_seconds))
 
 
 def _current_file_progress(dependencies: KnowledgeDependencies) -> Dict[str, Any]:

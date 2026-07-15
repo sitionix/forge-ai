@@ -126,6 +126,184 @@ def test_java_parser_extracts_package_imports_types_callables_fields_and_annotat
     assert get.body_line_end == 20
 
 
+def test_java_parser_extracts_type_relations_controller_annotations_override_and_signatures():
+    text = """package example;
+
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+
+@RestController
+class GeneratedController implements GeneratedApi {
+  @Override
+  public ResponseEntity<ResponseDto> create(RequestDto request) {
+    return null;
+  }
+}
+
+interface GeneratedApi extends BaseApi {
+  @PostMapping("/items")
+  ResponseEntity<ResponseDto> create(RequestDto request);
+}
+
+interface BaseApi {}
+
+class SpecializedController extends GeneratedController {}
+
+class RequestDto {}
+class ResponseDto {}
+"""
+    result = JavaParserAdapter().parse(text, metadata(text))
+    types = {item.name: item for item in result.types}
+
+    assert types["GeneratedController"].implemented_interfaces == ["GeneratedApi"]
+    assert types["GeneratedApi"].extended_interfaces == ["BaseApi"]
+    assert types["SpecializedController"].extended_classes == ["GeneratedController"]
+    assert any(annotation.name == "RestController" for annotation in types["GeneratedController"].annotations)
+    create = next(item for item in result.callables if item.qualified_name == "example.GeneratedController.create")
+    assert create.visibility == "PUBLIC"
+    assert create.signature == "create(RequestDto)"
+    assert create.parameters == ["RequestDto"]
+    assert any(annotation.name == "Override" for annotation in create.annotations)
+
+
+def test_static_graph_materializer_persists_type_relations_without_controller_override_entrypoint():
+    text = """package example;
+
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+
+@RestController
+class GeneratedController implements GeneratedApi {
+  @Override
+  public ResponseEntity<ResponseDto> create(RequestDto request) {
+    return null;
+  }
+}
+
+interface GeneratedApi extends BaseApi {
+  @PostMapping("/items")
+  ResponseEntity<ResponseDto> create(RequestDto request);
+}
+
+interface BaseApi {}
+
+class SpecializedController extends GeneratedController {}
+
+class RequestDto {}
+class ResponseDto {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    types = {node.name: node for node in graph.nodes if node.nodeKind == "TYPE"}
+
+    implements_edge = next(edge for edge in graph.edges if edge.edgeType == "IMPLEMENTS")
+    extends_edges = [edge for edge in graph.edges if edge.edgeType == "EXTENDS"]
+    assert implements_edge.fromNodeLocalId == types["GeneratedController"].localId
+    assert implements_edge.toNodeLocalId == types["GeneratedApi"].localId
+    assert implements_edge.unresolvedTarget is None
+    assert implements_edge.metadata["relationKind"] == "IMPLEMENTED_INTERFACE"
+    assert [item.lineStart for item in implements_edge.evidence] == [7]
+    assert {edge.metadata["relationKind"] for edge in extends_edges} == {"EXTENDED_INTERFACE", "EXTENDED_CLASS"}
+    assert {edge.toNodeLocalId for edge in extends_edges} == {types["BaseApi"].localId, types["GeneratedController"].localId}
+
+    interface_create = next(
+        node
+        for node in graph.nodes
+        if node.nodeKind == "CALLABLE" and node.qualifiedName == "example.GeneratedApi.create"
+    )
+    entrypoint = next(
+        claim
+        for claim in graph.claims
+        if claim.claimKind == "ENTRYPOINT_HINT" and claim.nodeLocalId == interface_create.localId
+    )
+    assert entrypoint.metadata["entrypointKind"] == "HTTP"
+    assert entrypoint.metadata["origin"] == "STATIC"
+    assert entrypoint.metadata["route"] == "/items"
+    assert entrypoint.metadata["httpMethod"] == "POST"
+    assert entrypoint.metadata["entrypointExecutionKind"] == "CONTRACT_DECLARATION"
+    controller_create = next(
+        node
+        for node in graph.nodes
+        if node.nodeKind == "CALLABLE" and node.qualifiedName == "example.GeneratedController.create"
+    )
+    assert not [
+        claim
+        for claim in graph.claims
+        if claim.claimKind == "ENTRYPOINT_HINT" and claim.nodeLocalId == controller_create.localId
+    ]
+
+
+def test_static_graph_materializer_extracts_request_mapping_request_method_on_interface():
+    text = """package example;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+interface SiteApi {
+  @RequestMapping(
+      method = RequestMethod.POST,
+      value = "/api/v1/sites",
+      produces = { "application/json" },
+      consumes = { "application/json" }
+  )
+  ResponseEntity<ResponseDto> createSite(RequestDto request);
+}
+
+class RequestDto {}
+class ResponseDto {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    interface_create = next(
+        node
+        for node in graph.nodes
+        if node.nodeKind == "CALLABLE" and node.qualifiedName == "example.SiteApi.createSite"
+    )
+    entrypoint = next(
+        claim
+        for claim in graph.claims
+        if claim.claimKind == "ENTRYPOINT_HINT" and claim.nodeLocalId == interface_create.localId
+    )
+
+    assert entrypoint.metadata["entrypointKind"] == "HTTP"
+    assert entrypoint.metadata["httpMethod"] == "POST"
+    assert entrypoint.metadata["route"] == "/api/v1/sites"
+    assert entrypoint.metadata["entrypointExecutionKind"] == "CONTRACT_DECLARATION"
+    assert entrypoint.metadata["interfaceMethod"] == "example.SiteApi.createSite"
+
+
+def test_static_graph_materializer_does_not_guess_external_api_contract_from_package_path():
+    text = """package example;
+
+import com.app_afesox.stsssox.api_first.api.SiteApi;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+
+@RestController
+class SiteController implements SiteApi {
+  @Override
+  public ResponseEntity<CreateSiteResponseDTO> createSite(CreateSiteRequestDTO request) {
+    return null;
+  }
+}
+
+class CreateSiteRequestDTO {}
+class CreateSiteResponseDTO {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    controller_create = next(
+        node
+        for node in graph.nodes
+        if node.nodeKind == "CALLABLE" and node.qualifiedName == "example.SiteController.createSite"
+    )
+    assert not [
+        claim
+        for claim in graph.claims
+        if claim.claimKind == "ENTRYPOINT_HINT" and claim.nodeLocalId == controller_create.localId
+    ]
+
+
 def test_java_parser_extracts_static_callsites_with_conservative_resolution():
     result = parse_sample()
     calls = {(call.method_name, call.receiver_text): call for call in result.callsites}
@@ -161,6 +339,7 @@ def test_static_graph_materializer_creates_static_nodes_edges_evidence_and_entry
     assert entrypoint.nodeLocalId.endswith("|CALLABLE|example.TicketController|get|get(String)")
     assert entrypoint.metadata["httpMethod"] == "GET"
     assert entrypoint.metadata["route"] == "/tickets/{id}"
+    assert entrypoint.metadata["entrypointExecutionKind"] == "EXECUTABLE"
     assert all("flowScore" not in edge.metadata for edge in call_edges)
     assert next(edge for edge in call_edges if edge.metadata["methodName"] == "toApi").metadata["callKind"] == "FIELD_RECEIVER"
     uses_field_edges = [edge for edge in graph.edges if edge.edgeType == "USES_FIELD"]
@@ -170,6 +349,58 @@ def test_static_graph_materializer_creates_static_nodes_edges_evidence_and_entry
     assert mapper_usage.resolutionStatus == "RESOLVED"
     assert mapper_usage.metadata["factOrigin"] == "STATIC"
     assert [item.lineStart for item in mapper_usage.evidence] == [19]
+
+
+def test_static_graph_materializer_does_not_create_trusted_behavior_claims_from_names():
+    text = """package example;
+
+class ArbitraryRepository {
+  void save(Object value) {}
+  Object find(Object value) { return value; }
+  void delete(Object value) {}
+}
+
+class KafkaTemplate {
+  void send(String topic, Object value) {}
+}
+
+class WebClient {
+  void get() {}
+}
+
+class Config {
+  String getProperty(String name) { return name; }
+}
+
+class Handler {
+  private final ArbitraryRepository repository;
+  private final KafkaTemplate kafkaTemplate;
+  private final WebClient webClient;
+  private final Config config;
+
+  Handler(ArbitraryRepository repository, KafkaTemplate kafkaTemplate, WebClient webClient, Config config) {
+    this.repository = repository;
+    this.kafkaTemplate = kafkaTemplate;
+    this.webClient = webClient;
+    this.config = config;
+  }
+
+  void handle(Object value) {
+    repository.save(value);
+    repository.find(value);
+    repository.delete(value);
+    kafkaTemplate.send("topic", value);
+    webClient.get();
+    config.getProperty("feature");
+  }
+}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+
+    forbidden = {"DATA_ACCESS_HINT", "SIDE_EFFECT", "EXTERNAL_BOUNDARY_HINT", "CONFIG_REFERENCE"}
+    assert not [claim for claim in graph.claims if claim.claimKind in forbidden]
+    assert any(edge.edgeType == "CALLS" and edge.metadata.get("methodName") == "save" for edge in graph.edges)
+    assert any(edge.edgeType == "CALLS" and edge.metadata.get("methodName") == "send" for edge in graph.edges)
 
 
 def test_static_graph_materializer_materializes_uses_field_for_this_receiver_and_dedupes_lines():
@@ -564,6 +795,23 @@ class TicketMapper {}
     kinds = {claim.metadata["entrypointKind"] for claim in entrypoints}
 
     assert {"CONFIGURATION_BEAN", "LIFECYCLE", "TEST"} <= kinds
+
+
+def test_static_graph_materializer_uses_kafka_listener_entrypoint_contract():
+    text = """package example;
+
+import org.springframework.kafka.annotation.KafkaListener;
+
+class PaymentListener {
+  @KafkaListener(topics = "payments.created")
+  void handle(String payload) {}
+}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    entrypoint = next(claim for claim in graph.claims if claim.claimKind == "ENTRYPOINT_HINT")
+
+    assert entrypoint.metadata["entrypointKind"] == "KAFKA"
+    assert entrypoint.metadata["topic"] == "payments.created"
 
 
 def test_anchor_validator_accepts_callable_claim_only_when_evidence_overlaps_method():

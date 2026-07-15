@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -32,6 +32,7 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryResponse,
     KnowledgeQueryStatus,
 )
+from knowledge_service.query_interpretation import QueryRetrievalPlan
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 
@@ -45,6 +46,12 @@ class KnowledgeQueryPolicy:
     fuzzy_max_edit_distance: int = 3
     enable_fuzzy_search: bool = True
     enable_search_diagnostics: bool = True
+    plan_candidate_min_score: float = 0.42
+    plan_candidate_top_delta: float = 0.18
+    exact_identifier_min_score: float = 0.75
+    exact_identifier_top_delta: float = 0.12
+    plan_flow_min_relevance_score: float = 0.05
+    plan_flow_top_delta: float = 0.25
 
 
 class CandidatePoolKind(str, Enum):
@@ -54,6 +61,18 @@ class CandidatePoolKind(str, Enum):
     LEXICAL = "LEXICAL"
     FUZZY = "FUZZY"
     SEMANTIC = "SEMANTIC"
+
+
+_PRECISE_IDENTIFIER_REASONS = {
+    "QUALIFIED_NAME_EXACT",
+    "QUALIFIED_NAME_SUFFIX",
+    "QUALIFIED_NAME_LEAF",
+    "QUALIFIED_SEGMENT_SUFFIX",
+    "QUALIFIED_NAME_MATCH",
+    "NAME_MATCH",
+    "STABLE_KEY_MATCH",
+    "PATH_MATCH",
+}
 
 
 @dataclass(frozen=True)
@@ -79,6 +98,7 @@ class AnchorExpansionReason(str, Enum):
     TYPE_DECLARED_FIELD = "TYPE_DECLARED_FIELD"
     FIELD_USED_BY_CALLABLE = "FIELD_USED_BY_CALLABLE"
     CALLABLE_PARENT_CONTEXT = "CALLABLE_PARENT_CONTEXT"
+    CALLABLE_OVERRIDE_IMPLEMENTATION = "CALLABLE_OVERRIDE_IMPLEMENTATION"
     CLAIM_ATTACHED_NODE = "CLAIM_ATTACHED_NODE"
     ENTRYPOINT_HINT = "ENTRYPOINT_HINT"
 
@@ -252,6 +272,153 @@ class UnifiedAnchorSearcher:
             diagnostics=diagnostics,
             truncated=truncated,
         )
+
+    def search_plan(
+        self,
+        plan: QueryRetrievalPlan,
+        eligible_sources: Sequence[QuerySource],
+        policy: KnowledgeQueryPolicy,
+        include_tests: bool = False,
+    ) -> CandidateRetrievalResult:
+        query_inputs = plan.query_inputs()
+        combined_tokens = self.normalizer.normalize(" ".join(value for _, value in query_inputs)).tokens
+        if not combined_tokens or not eligible_sources:
+            return self._empty_result()
+        raw_documents, document_truncated = self._load_search_documents(combined_tokens, eligible_sources, policy)
+        if not include_tests:
+            raw_documents = [item for item in raw_documents if str(item.get("flowDomain") or "").upper() != "TEST"]
+        documents = [SearchDocument.from_graph_node(candidate) for candidate in raw_documents if candidate.get("sourceId") or candidate.get("source_id")]
+        config = self._search_config(policy, eligible_sources, include_tests)
+        raw_candidates: List[SearchCandidate] = []
+        diagnostics: List[KnowledgeQueryDiagnostic] = []
+        candidate_limit_reached = False
+        for query_reason, query_value in query_inputs:
+            result = self.search_engine.search(query_value, documents, config)
+            candidate_limit_reached = candidate_limit_reached or bool(getattr(result, "candidate_limit_reached", False))
+            for item in result.diagnostics:
+                metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+                diagnostics.append(self._search_diagnostic({**item, "metadata": {**metadata, "queryReason": query_reason}}))
+            raw_candidates.extend(self._annotated_candidates(getattr(result, "raw_candidates", []) or [], query_reason))
+
+        pools = self._candidate_pools(raw_candidates)
+        merged_candidates = self.candidate_merger.merge(raw_candidates) if raw_candidates else []
+        merged_candidates = self._filter_plan_candidates(merged_candidates, plan, policy)
+        all_candidates = [self._matched_node(candidate) for candidate in merged_candidates]
+        display_limit = max(1, int(policy.max_display_candidates or 1))
+        display_candidates = all_candidates[:display_limit]
+        truncated = document_truncated or candidate_limit_reached
+        if policy.enable_search_diagnostics and truncated:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="SEARCH_CANDIDATE_LIMIT_REACHED",
+                    message="Search reached an internal candidate safety limit before ranking completed.",
+                    severity="INFO",
+                    metadata={
+                        "maxSearchDocuments": policy.max_search_documents,
+                        "maxCandidatesPerProvider": policy.max_candidates_per_provider,
+                    },
+                )
+            )
+        if policy.enable_search_diagnostics and documents and not all_candidates:
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="SEARCH_MATCHES_BELOW_THRESHOLD",
+                    message="Search inspected current graph facts, but deterministic matches did not clear ranking thresholds.",
+                    severity="INFO",
+                )
+            )
+        if policy.enable_search_diagnostics and len(display_candidates) < len(all_candidates):
+            diagnostics.append(
+                KnowledgeQueryDiagnostic(
+                    code="MATCHED_NODE_PREVIEW_LIMITED",
+                    message="Matched node preview is limited for response size; graph processing used the full candidate set.",
+                    severity="INFO",
+                    metadata={"displayed": len(display_candidates), "internalCandidates": len(all_candidates)},
+                )
+            )
+        return CandidateRetrievalResult(
+            pools=pools,
+            all_candidates=all_candidates,
+            display_candidates=display_candidates,
+            diagnostics=diagnostics,
+            truncated=truncated,
+        )
+
+    def _filter_plan_candidates(
+        self,
+        candidates: Sequence[MergedCandidate],
+        plan: QueryRetrievalPlan,
+        policy: KnowledgeQueryPolicy,
+    ) -> List[MergedCandidate]:
+        ranked = list(candidates)
+        if not ranked:
+            return []
+        if plan.code_identifiers:
+            exact_identifier = [
+                candidate
+                for candidate in ranked
+                if self._is_precise_identifier_candidate(candidate)
+            ]
+            if exact_identifier:
+                callable_exact = [candidate for candidate in exact_identifier if self._node_kind(candidate.document.node_kind) == "CALLABLE"]
+                if callable_exact:
+                    exact_identifier = callable_exact
+                top_exact = max(candidate.score for candidate in exact_identifier)
+                threshold = max(policy.exact_identifier_min_score, top_exact - policy.exact_identifier_top_delta)
+                return [candidate for candidate in exact_identifier if candidate.score >= threshold] or exact_identifier
+
+        top_score = max(candidate.score for candidate in ranked)
+        threshold = max(policy.plan_candidate_min_score, top_score - policy.plan_candidate_top_delta)
+        return [
+            candidate
+            for candidate in ranked
+            if candidate.score >= threshold
+        ]
+
+    def _is_precise_identifier_candidate(self, candidate: MergedCandidate) -> bool:
+        reasons = set(candidate.reasons)
+        if "QUERY_EXACT_IDENTIFIER" not in reasons:
+            return False
+        return any(
+            (reason.startswith("EXACT") and reason != "EXACT_KIND")
+            or reason in _PRECISE_IDENTIFIER_REASONS
+            for reason in reasons
+        )
+
+    def _node_kind(self, value: str) -> str:
+        return str(value or "").upper()
+
+    def _annotated_candidates(self, candidates: Sequence[SearchCandidate], query_reason: str) -> List[SearchCandidate]:
+        result: List[SearchCandidate] = []
+        marker_reason = {
+            "ORIGINAL_QUERY": "QUERY_ORIGINAL",
+            "NORMALIZED_QUERY": "QUERY_NORMALIZED",
+            "SEARCH_QUERY": "QUERY_EXPANSION",
+            "CODE_IDENTIFIER": "QUERY_EXACT_IDENTIFIER",
+        }.get(query_reason, "QUERY_EXPANSION")
+        score_bonus = {
+            "ORIGINAL_QUERY": 0.015,
+            "NORMALIZED_QUERY": 0.0,
+            "SEARCH_QUERY": 0.0,
+            "CODE_IDENTIFIER": 0.045,
+        }.get(query_reason, 0.0)
+        priority_bonus = -2 if query_reason == "CODE_IDENTIFIER" else 0
+        for candidate in candidates:
+            adjusted_score = min(1.0, float(candidate.score) + score_bonus)
+            adjusted_priority = max(1, int(candidate.priority) + priority_bonus)
+            adjusted = replace(candidate, score=adjusted_score, priority=adjusted_priority)
+            result.append(adjusted)
+            result.append(
+                SearchCandidate(
+                    document=candidate.document,
+                    provider="QueryPlanCandidateProvider",
+                    reason=marker_reason,
+                    score=adjusted_score,
+                    confidence=candidate.confidence,
+                    priority=adjusted_priority,
+                )
+            )
+        return result
 
     def _empty_result(self) -> CandidateRetrievalResult:
         return CandidateRetrievalResult(
@@ -478,6 +645,12 @@ class _AnchorAccumulator:
         item.roles.add(role)
         item.reasons.add(reason)
 
+    def discard_role(self, key: AnchorNodeKey, role: AnchorRole) -> None:
+        item = self.items.get(key)
+        if item is None:
+            return
+        item.roles.discard(role)
+
     def has_key(self, key: AnchorNodeKey | None) -> bool:
         return key is not None and key in self.items
 
@@ -544,7 +717,7 @@ class AnchorExpansionService:
             )
 
         graph_nodes = self._bundle_nodes(bundle)
-        declares_out, declares_in, uses_field_in = self._structural_edge_indexes(bundle)
+        declares_out, declares_in, uses_field_in, overrides_by_contract = self._structural_edge_indexes(bundle)
         truncated = bool(bundle.truncated)
         diagnostics: List[KnowledgeQueryDiagnostic] = []
 
@@ -569,8 +742,19 @@ class AnchorExpansionService:
                 continue
             kind = self._node_kind(candidate.nodeKind)
             if kind == "CALLABLE":
+                candidate_graph_node = graph_nodes.get(origin_key)
+                if candidate_graph_node and candidate_graph_node.entrypoint_contract:
+                    accumulator.discard_role(origin_key, AnchorRole.FLOW_SEED)
+                    accumulator.add_role_reason(origin_key, AnchorRole.CONTEXT, AnchorExpansionReason.CALLABLE_PARENT_CONTEXT)
                 for parent_key in self._parent_keys(origin_key, graph_nodes, declares_in):
                     add_expanded(candidate, graph_nodes.get(parent_key), {AnchorRole.CONTEXT}, AnchorExpansionReason.CALLABLE_PARENT_CONTEXT)
+                for implementation_key in overrides_by_contract.get(origin_key, []):
+                    add_expanded(
+                        candidate,
+                        graph_nodes.get(implementation_key),
+                        {AnchorRole.FLOW_SEED, AnchorRole.ENTRYPOINT_CANDIDATE},
+                        AnchorExpansionReason.CALLABLE_OVERRIDE_IMPLEMENTATION,
+                    )
                 continue
             if kind == "TYPE":
                 for child_key in declares_out.get(origin_key, []):
@@ -704,10 +888,16 @@ class AnchorExpansionService:
     def _structural_edge_indexes(
         self,
         bundle: AnchorExpansionBundle,
-    ) -> tuple[Dict[AnchorNodeKey, List[AnchorNodeKey]], Dict[AnchorNodeKey, List[AnchorNodeKey]], Dict[AnchorNodeKey, List[AnchorNodeKey]]]:
+    ) -> tuple[
+        Dict[AnchorNodeKey, List[AnchorNodeKey]],
+        Dict[AnchorNodeKey, List[AnchorNodeKey]],
+        Dict[AnchorNodeKey, List[AnchorNodeKey]],
+        Dict[AnchorNodeKey, List[AnchorNodeKey]],
+    ]:
         declares_out: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
         declares_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
         uses_field_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
+        overrides_by_contract: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
         for edge in sorted(bundle.edges, key=self._edge_sort_key):
             edge_type = str(edge.edge_type or "").upper()
             from_key = self._edge_from_key(edge)
@@ -719,7 +909,9 @@ class AnchorExpansionService:
                 declares_in[to_key].append(from_key)
             elif edge_type == "USES_FIELD":
                 uses_field_in[to_key].append(from_key)
-        return declares_out, declares_in, uses_field_in
+            elif edge_type == "OVERRIDES":
+                overrides_by_contract[to_key].append(from_key)
+        return declares_out, declares_in, uses_field_in, overrides_by_contract
 
     def _parent_keys(
         self,
@@ -788,11 +980,18 @@ class AnchorExpansionService:
         return self._edge_node_key(edge, edge.from_node_id)
 
     def _edge_to_key(self, edge: AnchorExpansionEdge) -> AnchorNodeKey | None:
-        return self._edge_node_key(edge, edge.to_node_id)
+        return self._edge_node_key(edge, edge.to_node_id, source_id=edge.to_source_id, graph_id=edge.to_graph_revision or edge.to_graph_id)
 
-    def _edge_node_key(self, edge: AnchorExpansionEdge, node_id_value: str) -> AnchorNodeKey | None:
-        source_id = str(edge.source_id or "")
-        graph_id = str(edge.graph_id or "")
+    def _edge_node_key(
+        self,
+        edge: AnchorExpansionEdge,
+        node_id_value: str,
+        *,
+        source_id: str | None = None,
+        graph_id: str | None = None,
+    ) -> AnchorNodeKey | None:
+        source_id = str(source_id or edge.source_id or "")
+        graph_id = str(graph_id or edge.graph_id or "")
         node_id = str(node_id_value or "")
         if not source_id or not graph_id or not node_id:
             return None
@@ -828,16 +1027,21 @@ class KnowledgeQueryService:
         self.policy = policy or KnowledgeQueryPolicy()
         self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_repository, "graph_store", None))
 
-    def query(self, request: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-        return self.query_with_flows(request).response
+    def query(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryResponse:
+        return self.query_with_flows(request, plan=plan).response
 
-    def query_with_flows(self, request: KnowledgeQueryRequest) -> KnowledgeQueryExecutionResult:
+    def query_with_flows(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryExecutionResult:
         query_started = time.monotonic()
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         eligible_sources, scope_diagnostics = self.source_scope_resolver.resolve()
         diagnostics.extend(scope_diagnostics)
         candidate_started = time.monotonic()
-        candidate_result = self.anchor_searcher.search(request.queryText, eligible_sources, self.policy, bool(request.includeTests))
+        if plan is not None:
+            candidate_result = self.anchor_searcher.search_plan(plan, eligible_sources, self.policy, bool(request.includeTests))
+            effective_intent = plan.effective_intent
+        else:
+            candidate_result = self.anchor_searcher.search(request.queryText, eligible_sources, self.policy, bool(request.includeTests))
+            effective_intent = request.intent.value
         candidate_ms = (time.monotonic() - candidate_started) * 1000
         diagnostics.extend(candidate_result.diagnostics)
         if not candidate_result.all_candidates:
@@ -845,7 +1049,7 @@ class KnowledgeQueryService:
                 response=KnowledgeQueryResponse(
                     queryId=self._query_id(),
                     status=KnowledgeQueryStatus.NO_CANDIDATES,
-                    intent=request.intent.value,
+                    intent=effective_intent,
                     coverage=KnowledgeQueryCoverage(searchedSourceCount=len(eligible_sources), matchedSourceCount=0),
                     diagnostics=[
                         *diagnostics,
@@ -869,6 +1073,11 @@ class KnowledgeQueryService:
             max_flows=request_flow_limit,
             include_tests=bool(request.includeTests),
         )
+        flows = build_result.flows
+        public_flows = build_result.public_flows
+        if plan is not None:
+            flows = self._select_plan_flows(flows, plan)
+            public_flows = self.flow_engine.public_flows(flows)
         diagnostics.extend(build_result.diagnostics)
         diagnostics.append(KnowledgeQueryDiagnostic(
             code="ENTRYPOINT_FLOW_TIMINGS",
@@ -896,25 +1105,114 @@ class KnowledgeQueryService:
             response=KnowledgeQueryResponse(
                 queryId=self._query_id(),
                 status=status,
-                intent=request.intent.value,
+                intent=effective_intent,
                 matchedSources=matched_sources,
                 matchedNodes=[self._matched_node_preview(item) for item in display_matched_nodes],
-                flows=build_result.public_flows,
+                flows=public_flows,
                 coverage=KnowledgeQueryCoverage(
                     searchedSourceCount=len(eligible_sources),
                     matchedSourceCount=len(matched_sources),
                     matchedNodeCount=len(matched_nodes),
-                    flowCount=len(build_result.public_flows),
-                    nodeCount=sum(flow.coverage.node_count for flow in build_result.flows),
-                    edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in build_result.flows),
-                    evidenceCount=sum(len(flow.evidence) for flow in build_result.flows),
+                    flowCount=len(public_flows),
+                    nodeCount=sum(flow.coverage.node_count for flow in flows),
+                    edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in flows),
+                    evidenceCount=sum(len(flow.evidence) for flow in flows),
                     truncated=candidate_result.truncated or anchor_result.truncated or build_result.truncated,
                     continuationAvailable=candidate_result.truncated or anchor_result.truncated or build_result.truncated,
                 ),
                 diagnostics=diagnostics,
             ),
-            flows=build_result.flows,
+            flows=flows,
         )
+
+    def _select_plan_flows(
+        self,
+        flows: Sequence[EntrypointFlow],
+        plan: QueryRetrievalPlan,
+    ) -> tuple[EntrypointFlow, ...]:
+        if not flows:
+            return ()
+        exact = self._filter_flows_by_code_identifiers(flows, plan.code_identifiers)
+        if plan.code_identifiers:
+            return exact
+        return self._rank_flows_by_grounded_relevance(flows)
+
+    def _filter_flows_by_code_identifiers(
+        self,
+        flows: Sequence[EntrypointFlow],
+        identifiers: Sequence[str],
+    ) -> tuple[EntrypointFlow, ...]:
+        exact_identifiers = [identifier for identifier in identifiers if str(identifier or "").strip()]
+        if not exact_identifiers:
+            return ()
+        result: List[EntrypointFlow] = []
+        for flow in flows:
+            if any(self._flow_matches_identifier(flow, identifier) for identifier in exact_identifiers):
+                result.append(flow)
+        return tuple(result)
+
+    def _flow_matches_identifier(self, flow: EntrypointFlow, identifier: str) -> bool:
+        normalized = str(identifier or "").strip()
+        if not normalized:
+            return False
+        for candidate in self._flow_identifier_candidates(flow):
+            if candidate == normalized:
+                return True
+            if self._has_symbol_suffix(candidate, normalized):
+                return True
+        return False
+
+    def _has_symbol_suffix(self, candidate: str, identifier: str) -> bool:
+        if len(candidate) <= len(identifier) or not candidate.endswith(identifier):
+            return False
+        delimiter_index = len(candidate) - len(identifier) - 1
+        return delimiter_index >= 0 and candidate[delimiter_index] in {".", "#", ":", "/", "$"}
+
+    def _flow_identifier_candidates(self, flow: EntrypointFlow) -> set[str]:
+        candidates: set[str] = set()
+        for node in flow.nodes:
+            candidates.update(
+                str(value or "").strip()
+                for value in (
+                    node.label,
+                    node.qualified_name,
+                    node.entrypoint_route,
+                    node.entrypoint_topic,
+                    node.entrypoint_interface_method,
+                )
+                if str(value or "").strip()
+            )
+        for anchor in flow.anchors:
+            candidates.update(
+                str(value or "").strip()
+                for value in (anchor.label,)
+                if str(value or "").strip()
+            )
+        return candidates
+
+    def _rank_flows_by_grounded_relevance(self, flows: Sequence[EntrypointFlow]) -> tuple[EntrypointFlow, ...]:
+        scored = [
+            (max(float(flow.relevance_score or 0.0), self._aggregate_anchor_score(flow)), flow)
+            for flow in flows
+        ]
+        if not scored:
+            return ()
+        top_score = max(score for score, _flow in scored)
+        threshold = max(self.policy.plan_flow_min_relevance_score, top_score - self.policy.plan_flow_top_delta)
+        selected = [
+            flow
+            for score, flow in sorted(scored, key=lambda item: (-item[0], item[1].key.source_id, item[1].key.entrypoint_node_id))
+            if score >= threshold
+        ]
+        return tuple(selected)
+
+    def _aggregate_anchor_score(self, flow: EntrypointFlow) -> float:
+        if not flow.anchors:
+            return 0.0
+        best = max(float(anchor.score or 0.0) for anchor in flow.anchors)
+        support = min(len(flow.anchors), 10) * 0.01
+        proximity = 0.01 / (1 + min(anchor.distance for anchor in flow.anchors))
+        return best + support + proximity
 
     def _matched_sources(
         self, matched_nodes: Sequence[KnowledgeQueryMatchedNode], eligible_sources: Sequence[QuerySource]

@@ -16,6 +16,7 @@ export function bootstrapOperatorConsole(options = {}) {
     statusPollIntervalMs: 15000,
     activeJobPollIntervalMs: 2000,
     graphPollIntervalMs: 30000,
+    jarvisQueryIncludeTests: false,
     ...(windowRef.FORGE_OPERATOR_RUNTIME_CONFIG || {}),
     ...(options.runtimeConfig || {})
   };
@@ -29,7 +30,7 @@ export function bootstrapOperatorConsole(options = {}) {
   const registry = {
     knowledge: () => new KnowledgeOverviewPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
     'knowledge-graph': () => new KnowledgeGraphPage({ document: documentRef, window: windowRef, http, runtimeConfig }),
-    jarvis: () => new JarvisPage({ document: documentRef, http })
+    jarvis: () => new JarvisPage({ document: documentRef, http, runtimeConfig })
   };
   const router = new OperatorRouter(registry, { document: documentRef });
   const mountedPage = router.mount(pageName);
@@ -100,4 +101,3 @@ export function initSidebar(documentRef = document, windowRef = window, page = d
     }
   });
 }
-

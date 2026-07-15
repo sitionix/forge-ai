@@ -1,37 +1,36 @@
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, StrictBool, validator
 
 
-class JarvisQueryStatus(str, Enum):
-    OK = "OK"
-    NO_CANDIDATES = "NO_CANDIDATES"
-    AMBIGUOUS = "AMBIGUOUS"
-    INVALID_REQUEST = "INVALID_REQUEST"
-    QUERY_FAILED = "QUERY_FAILED"
+_LANGUAGE_CODE_RE = re.compile(r"^[a-z]{2,3}$")
+
+
+def _normalize_language_code(value: str) -> str:
+    normalized = value.strip().lower()
+    if not normalized:
+        return ""
+    if normalized == "auto":
+        return "auto"
+    normalized = normalized.split("-", 1)[0]
+    if _LANGUAGE_CODE_RE.match(normalized):
+        return normalized
+    return ""
 
 
 class JarvisQueryIntent(str, Enum):
+    AUTO = "AUTO"
     FLOW_EXPLANATION = "FLOW_EXPLANATION"
-    COMPONENT_USAGE = "COMPONENT_USAGE"
-    COMPONENT_RESPONSIBILITY = "COMPONENT_RESPONSIBILITY"
-    CODE_LOCATION = "CODE_LOCATION"
-    ARCHITECTURE_OVERVIEW = "ARCHITECTURE_OVERVIEW"
-    UNKNOWN = "UNKNOWN"
-
-
-class JarvisEntrypointOrigin(str, Enum):
-    EXPLICIT_GRAPH_FACT = "EXPLICIT_GRAPH_FACT"
-    INFERRED_ROOT = "INFERRED_ROOT"
 
 
 class JarvisQueryRequest(BaseModel):
     queryText: str = Field(..., min_length=1)
-    intent: JarvisQueryIntent = JarvisQueryIntent.UNKNOWN
-    answerLanguage: str = Field("en", min_length=1)
+    intent: JarvisQueryIntent = JarvisQueryIntent.AUTO
+    answerLanguage: Optional[str] = None
     includeTests: StrictBool = False
     maxFlows: int = Field(10, ge=1, le=10)
 
@@ -50,18 +49,20 @@ class JarvisQueryRequest(BaseModel):
     @validator("intent", pre=True, always=True)
     def default_missing_intent(cls, value: JarvisQueryIntent) -> JarvisQueryIntent:
         if value is None:
-            return JarvisQueryIntent.UNKNOWN
+            return JarvisQueryIntent.AUTO
         return value
 
     @validator("answerLanguage", pre=True, always=True)
-    def normalize_answer_language(cls, value: str) -> str:
+    def normalize_answer_language(cls, value: str | None) -> Optional[str]:
         if value is None:
-            return "en"
+            return None
         if not isinstance(value, str):
             raise ValueError("answerLanguage must be a string")
-        normalized = value.strip().lower()
+        if not value.strip():
+            return None
+        normalized = _normalize_language_code(value)
         if not normalized:
-            return "en"
+            raise ValueError("answerLanguage must be omitted, null, auto, or a valid language code")
         return normalized
 
     @validator("includeTests", pre=True, always=True)
@@ -87,94 +88,18 @@ class JarvisQueryDiagnostic(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-class JarvisFlowNode(BaseModel):
-    nodeRef: str
-    label: str
-    kind: str
-    qualifiedName: Optional[str] = None
-    relativePath: Optional[str] = None
-    lineStart: Optional[int] = None
-    lineEnd: Optional[int] = None
-
-
-class JarvisFlowOrigin(BaseModel):
-    anchorRef: str
-    label: str
-    score: float
-    distance: int
-    matchReasons: List[str] = Field(default_factory=list)
-
-
-class JarvisFlowTransition(BaseModel):
-    transitionRef: str
-    fromNodeRef: str
-    toNodeRef: str
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class JarvisFlowBoundary(BaseModel):
-    boundaryRef: str
-    fromNodeRef: str
-    kind: str
-    resolutionStatus: str
-    target: Optional[str] = None
-    evidenceRefs: List[str] = Field(default_factory=list)
-
-
-class JarvisFlowEvidence(BaseModel):
-    evidenceRef: str
-    ownerRef: str
-    relativePath: Optional[str] = None
-    lineStart: Optional[int] = None
-    lineEnd: Optional[int] = None
-    excerpt: Optional[str] = None
-
-
-class JarvisFlowCoverage(BaseModel):
-    nodeCount: int = 0
-    transitionCount: int = 0
-    boundaryCount: int = 0
-    anchorCount: int = 0
-    maxDepthReached: int = 0
-    cycleDetected: bool = False
-    truncated: bool = False
-
-
-class JarvisKnowledgeFlow(BaseModel):
-    flowIndex: int
+class JarvisFlowAnswer(BaseModel):
     source: str
-    entrypoint: JarvisFlowNode
-    entrypointOrigin: JarvisEntrypointOrigin
-    matchedAnchors: List[JarvisFlowOrigin] = Field(default_factory=list)
-    nodes: List[JarvisFlowNode] = Field(default_factory=list)
-    transitions: List[JarvisFlowTransition] = Field(default_factory=list)
-    boundaries: List[JarvisFlowBoundary] = Field(default_factory=list)
-    evidence: List[JarvisFlowEvidence] = Field(default_factory=list)
-    complete: bool = True
-    coverage: JarvisFlowCoverage = Field(default_factory=JarvisFlowCoverage)
-    diagnostics: List[JarvisQueryDiagnostic] = Field(default_factory=list)
+    entrypoint: str
+    text: str
+
+    class Config:
+        extra = "forbid"
 
 
-class JarvisQueryCoverage(BaseModel):
-    searchedSourceCount: int = 0
-    matchedSourceCount: int = 0
-    matchedNodeCount: int = 0
-    flowCount: int = 0
-    nodeCount: int = 0
-    edgeCount: int = 0
-    evidenceCount: int = 0
-    truncated: bool = False
-    continuationAvailable: bool = False
-
-
-class JarvisQueryResponse(BaseModel):
-    queryId: str
-    status: JarvisQueryStatus
-    intent: str
-    matchedSources: List[Dict[str, Any]] = Field(default_factory=list)
-    matchedNodes: List[Dict[str, Any]] = Field(default_factory=list)
-    flows: List[JarvisKnowledgeFlow] = Field(default_factory=list)
-    coverage: JarvisQueryCoverage = Field(default_factory=JarvisQueryCoverage)
+class JarvisHumanAnswerResponse(BaseModel):
+    answerLanguage: str
+    answers: List[JarvisFlowAnswer] = Field(default_factory=list)
     diagnostics: List[JarvisQueryDiagnostic] = Field(default_factory=list)
 
     class Config:
