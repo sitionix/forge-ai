@@ -227,6 +227,59 @@ def test_query_intents_call_knowledge_human_endpoint_once(tmp_path, payload, exp
     assert_compact_human_response(response.json())
 
 
+@pytest.mark.parametrize("answer_language", ["de", "fr"])
+def test_query_accepts_explicit_dynamic_language_and_forwards_unchanged(tmp_path, answer_language) -> None:
+    knowledge = FakeKnowledgeClient(bundle=human_answer_bundle(answer_language=answer_language))
+    app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/jarvis/query",
+            json=flow_query_payload("explain JarvisGateway", answer_language=answer_language),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["answerLanguage"] == answer_language
+    assert knowledge.calls == [
+        normalized_query_payload(
+            "explain JarvisGateway",
+            intent="FLOW_EXPLANATION",
+            answer_language=answer_language,
+            include_tests=False,
+            max_flows=10,
+        )
+    ]
+    assert knowledge.paths == ["/api/v1/knowledge/query"]
+
+
+def test_query_forwards_explicit_ru_and_preserves_knowledge_422(tmp_path) -> None:
+    body = {
+        "code": "RESPONSE_LANGUAGE_NOT_ALLOWED",
+        "message": "The requested response language is not allowed.",
+    }
+    knowledge = FakeKnowledgeClient(error=KnowledgeUpstreamResponseError(422, body))
+    app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/jarvis/query",
+            json=flow_query_payload("explain JarvisGateway", answer_language="ru"),
+        )
+
+    assert response.status_code == 422
+    assert response.json() == body
+    assert knowledge.calls == [
+        normalized_query_payload(
+            "explain JarvisGateway",
+            intent="FLOW_EXPLANATION",
+            answer_language="ru",
+            include_tests=False,
+            max_flows=10,
+        )
+    ]
+    assert knowledge.paths == ["/api/v1/knowledge/query"]
+
+
 def test_human_query_generation_failure_preserves_upstream_error(tmp_path) -> None:
     knowledge = FakeKnowledgeClient(
         error=KnowledgeUpstreamResponseError(

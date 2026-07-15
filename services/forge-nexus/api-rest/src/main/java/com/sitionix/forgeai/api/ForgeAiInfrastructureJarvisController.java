@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -22,6 +23,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequiredArgsConstructor
 public class ForgeAiInfrastructureJarvisController {
+
+    private static final Pattern LANGUAGE_CODE_PATTERN = Pattern.compile("^[a-z]{2,3}$");
 
     private final InfrastructureProxyTransport proxyTransport;
     private final ObjectMapper objectMapper;
@@ -95,18 +98,22 @@ public class ForgeAiInfrastructureJarvisController {
         if (body.maxFlows() != null && (body.maxFlows() < 1 || body.maxFlows() > 10)) {
             return this.validationError("maxFlows must be between 1 and 10");
         }
-        if (!this.validAnswerLanguage(body.answerLanguage())) {
-            return this.validationError("answerLanguage must be omitted, null, auto, uk, or en");
+        if (!this.validLanguageCode(body.answerLanguage())) {
+            return this.validationError("answerLanguage must be omitted, null, auto, or a valid language code");
         }
         return null;
     }
 
-    private boolean validAnswerLanguage(final String answerLanguage) {
+    private boolean validLanguageCode(final String answerLanguage) {
         if (answerLanguage == null || answerLanguage.isBlank()) {
             return true;
         }
         final String normalized = answerLanguage.trim().toLowerCase();
-        return "auto".equals(normalized) || "uk".equals(normalized) || "en".equals(normalized);
+        if ("auto".equals(normalized)) {
+            return true;
+        }
+        final String primarySubtag = normalized.split("-", 2)[0];
+        return LANGUAGE_CODE_PATTERN.matcher(primarySubtag).matches();
     }
 
     private ResponseEntity<byte[]> validationError(final String details) {

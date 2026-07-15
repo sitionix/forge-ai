@@ -1,0 +1,11 @@
+{
+  "answerLanguage": "de",
+  "answers": [
+    {
+      "source": "source-a",
+      "entrypoint": "JarvisGateway",
+      "text": "JarvisGateway verarbeitet die Anfrage."
+    }
+  ],
+  "diagnostics": []
+}

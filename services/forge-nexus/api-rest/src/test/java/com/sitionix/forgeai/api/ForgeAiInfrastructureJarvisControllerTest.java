@@ -106,6 +106,48 @@ class ForgeAiInfrastructureJarvisControllerTest {
     }
 
     @Test
+    void queryAcceptsDynamicExplicitLanguagesAndDelegatesToJarvis() {
+        for (final String answerLanguage : List.of("de", "fr", "ru")) {
+            this.stub("{\"answerLanguage\":\"" + answerLanguage + "\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
+            final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
+                    "JarvisGateway",
+                    JarvisKnowledgeQueryIntent.FLOW_EXPLANATION,
+                    answerLanguage,
+                    false,
+                    null
+            );
+
+            this.controller.query(body, this.headers, this.request);
+
+            final byte[] expectedBody = ("{\"queryText\":\"JarvisGateway\",\"intent\":\"FLOW_EXPLANATION\","
+                    + "\"answerLanguage\":\"" + answerLanguage + "\",\"includeTests\":false}").getBytes(StandardCharsets.UTF_8);
+            verify(this.transport).forward(
+                    eq("jarvis.query"),
+                    eq(Map.of()),
+                    argThat(actual -> Arrays.equals(actual, expectedBody)),
+                    same(this.headers),
+                    same(this.request)
+            );
+        }
+    }
+
+    @Test
+    void queryPreservesCanonicalForbiddenLanguageResponseFromJarvisAndKnowledge() throws Exception {
+        final String response = "{\"code\":\"RESPONSE_LANGUAGE_NOT_ALLOWED\",\"message\":\"The requested response language is not allowed.\"}";
+        this.stub(422, response);
+
+        final ResponseEntity<byte[]> result = this.controller.query(
+                new JarvisKnowledgeQueryRequest("JarvisGateway", JarvisKnowledgeQueryIntent.FLOW_EXPLANATION, "ru", false, null),
+                this.headers,
+                this.request
+        ).join();
+
+        assertThat(result.getStatusCode().value()).isEqualTo(422);
+        assertThat(this.objectMapper.readValue(result.getBody(), Map.class)).containsEntry("code", "RESPONSE_LANGUAGE_NOT_ALLOWED")
+                .containsEntry("message", "The requested response language is not allowed.");
+    }
+
+    @Test
     void querySerializesAutoIntentAndDelegatesToGenericProxyRoute() {
         this.stub("{\"answerLanguage\":\"uk\",\"answers\":[{\"source\":\"source-a\",\"entrypoint\":\"JarvisGateway\",\"text\":\"ok\"}],\"diagnostics\":[]}");
         final JarvisKnowledgeQueryRequest body = new JarvisKnowledgeQueryRequest(
@@ -184,7 +226,11 @@ class ForgeAiInfrastructureJarvisControllerTest {
     }
 
     private void stub(final String body) {
+        this.stub(200, body);
+    }
+
+    private void stub(final int status, final String body) {
         when(this.transport.forward(any(), any(), any(), any(), any()))
-                .thenReturn(CompletableFuture.completedFuture(ResponseEntity.ok(body.getBytes(StandardCharsets.UTF_8))));
+                .thenReturn(CompletableFuture.completedFuture(ResponseEntity.status(status).body(body.getBytes(StandardCharsets.UTF_8))));
     }
 }

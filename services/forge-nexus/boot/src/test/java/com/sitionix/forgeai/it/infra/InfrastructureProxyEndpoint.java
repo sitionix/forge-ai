@@ -182,6 +182,19 @@ public final class InfrastructureProxyEndpoint {
         return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryOptionalControls.json", "responseProxyJarvisQuery.json");
     }
 
+    public static Endpoint<Object, Object> nexusJarvisQueryGerman() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryGerman.json", "responseProxyJarvisQueryGerman.json");
+    }
+
+    public static Endpoint<Object, Object> nexusJarvisQueryFrench() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryFrench.json", "responseProxyJarvisQueryFrench.json");
+    }
+
+    public static Endpoint<Object, Object> nexusJarvisQueryForbiddenLanguage() {
+        return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryForbiddenLanguage.json", HttpStatus.UNPROCESSABLE_ENTITY,
+                "responseProxyForbiddenLanguage.json");
+    }
+
     public static Endpoint<Object, Object> nexusJarvisQueryNoCandidates() {
         return nexusPost("/api/v1/infrastructure/jarvis/query", "requestProxyJarvisQueryNoCandidates.json", HttpStatus.NOT_FOUND,
                 "responseProxyJarvisQueryNoCandidates.json");
@@ -433,6 +446,19 @@ public final class InfrastructureProxyEndpoint {
 
     public static Endpoint<Object, Object> upstreamJarvisQueryOptionalControls() {
         return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryOptionalControls.json", "responseProxyJarvisQuery.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamJarvisQueryGerman() {
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryGerman.json", "responseProxyJarvisQueryGerman.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamJarvisQueryFrench() {
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryFrench.json", "responseProxyJarvisQueryFrench.json");
+    }
+
+    public static Endpoint<Object, Object> upstreamJarvisQueryForbiddenLanguage() {
+        return upstreamPost("/api/v1/jarvis/query", "requestProxyJarvisQueryForbiddenLanguage.json", HttpStatus.UNPROCESSABLE_ENTITY,
+                "responseProxyForbiddenLanguage.json");
     }
 
     public static Endpoint<Object, Object> upstreamJarvisQueryNoCandidates() {

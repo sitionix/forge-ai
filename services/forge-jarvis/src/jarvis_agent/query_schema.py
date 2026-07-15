@@ -1,9 +1,25 @@
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, StrictBool, validator
+
+
+_LANGUAGE_CODE_RE = re.compile(r"^[a-z]{2,3}$")
+
+
+def _normalize_language_code(value: str) -> str:
+    normalized = value.strip().lower()
+    if not normalized:
+        return ""
+    if normalized == "auto":
+        return "auto"
+    normalized = normalized.split("-", 1)[0]
+    if _LANGUAGE_CODE_RE.match(normalized):
+        return normalized
+    return ""
 
 
 class JarvisQueryIntent(str, Enum):
@@ -42,14 +58,11 @@ class JarvisQueryRequest(BaseModel):
             return None
         if not isinstance(value, str):
             raise ValueError("answerLanguage must be a string")
-        normalized = value.strip().lower()
-        if not normalized:
+        if not value.strip():
             return None
-        if normalized == "auto":
-            return "auto"
-        normalized = normalized.split("-", 1)[0]
-        if normalized not in {"uk", "en"}:
-            raise ValueError("answerLanguage must be omitted, null, auto, uk, or en")
+        normalized = _normalize_language_code(value)
+        if not normalized:
+            raise ValueError("answerLanguage must be omitted, null, auto, or a valid language code")
         return normalized
 
     @validator("includeTests", pre=True, always=True)

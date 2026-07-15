@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 from dataclasses import replace
 
+from knowledge_service import answer_language
+from knowledge_service.answer_language import HumanAnswerTextValidator
 from knowledge_service.entrypoint_flow_engine import (
     EntrypointFlow,
     EntrypointFlowAnchor,
@@ -561,6 +563,24 @@ def test_final_english_prose_when_german_response_gets_repaired():
     assert "bestätigte Antwort" in response.answers[0].text
 
 
+def test_correct_long_german_text_is_accepted_for_german_response_language():
+    provider = SequenceHumanAnswerProvider([
+        "POST /api/v1/sites kommt in SiteController.createSite an und verarbeitet die Anfrage. "
+        "Danach ruft der Controller CreateSiteImpl.execute auf, speichert die geprüften Daten und gibt die bestätigte Antwort zurück."
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="wie wird eine site erstellt", intent="FLOW_EXPLANATION", answerLanguage="de"),
+        human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("wie wird eine site erstellt", detected_language="de", response_language="de"),
+    )
+
+    assert len(provider.calls) == 1
+    assert response.answerLanguage == "de"
+    assert "bestätigte Antwort" in response.answers[0].text
+
+
 def test_final_english_prose_when_german_response_fails_after_repair():
     provider = SequenceHumanAnswerProvider([
         "POST /api/v1/sites enters SiteController.createSite and maps the request. The final result is returned to the caller.",
@@ -581,6 +601,55 @@ def test_final_english_prose_when_german_response_fails_after_repair():
 
     assert len(provider.calls) == 2
     assert any("detected dominant prose language en" in error for error in provider.calls[1]["validationErrors"])
+
+
+def test_undetermined_short_output_gets_one_repair_attempt():
+    provider = SequenceHumanAnswerProvider([
+        "OK",
+        "SiteController.createSite приймає запит і передає його в CreateSiteImpl.execute. Після обробки контролер повертає підтверджену відповідь.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="uk"),
+    )
+
+    assert len(provider.calls) == 2
+    assert any("could not be determined" in error for error in provider.calls[1]["validationErrors"])
+    assert "підтверджену відповідь" in response.answers[0].text
+
+
+def test_repeated_undetermined_short_output_fails_flow():
+    provider = SequenceHumanAnswerProvider(["OK", "OK"])
+    service = HumanFlowAnswerService(provider)
+
+    try:
+        service.answer(
+            KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
+            human_execution(technical_create_site_flow()),
+            plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="uk"),
+        )
+    except HumanAnswerGenerationFailed:
+        pass
+    else:
+        raise AssertionError("Expected repeated undetermined final answer language to fail")
+
+    assert len(provider.calls) == 2
+    assert any("could not be determined" in error for error in provider.calls[1]["validationErrors"])
+
+
+def test_missing_language_detector_dependency_cannot_silently_accept_output(monkeypatch):
+    monkeypatch.setattr(answer_language, "detect_langs", None)
+
+    result = HumanAnswerTextValidator().validate(
+        "SiteController.createSite приймає запит і повертає підтверджену відповідь після обробки.",
+        "uk",
+    )
+
+    assert result.valid is False
+    assert result.errors == ["Response prose language validator is unavailable."]
 
 
 def test_code_identifiers_do_not_affect_prose_language_validation():
@@ -686,7 +755,7 @@ def test_unresolved_call_wording_is_valid_when_not_internal_ref():
 
 def test_natural_conclusion_after_steps_is_accepted():
     provider = SequenceHumanAnswerProvider([
-        "1. AgentProjectController.createAgentProject приймає запит.\n2. Контролер повертає DTO.\nVerified facts do not provide persistence details."
+        "1. AgentProjectController.createAgentProject приймає запит.\n2. Контролер повертає DTO.\nПеревірені факти не містять деталей збереження."
     ])
     service = HumanFlowAnswerService(provider)
 
@@ -697,7 +766,7 @@ def test_natural_conclusion_after_steps_is_accepted():
     )
 
     assert len(provider.calls) == 1
-    assert "Verified facts" in response.answers[0].text
+    assert "не містять деталей збереження" in response.answers[0].text
 
 
 def test_boundary_wording_is_valid_when_not_internal_ref():

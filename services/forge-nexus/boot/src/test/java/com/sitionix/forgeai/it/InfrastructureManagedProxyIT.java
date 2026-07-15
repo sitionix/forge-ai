@@ -885,6 +885,9 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQuery()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryOptionalControls()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryNoCandidates()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryGerman()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryFrench()).createDefault();
+        this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryForbiddenLanguage()).createDefault();
 
         //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery())
@@ -908,6 +911,25 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .header("X-Correlation-Id", "corr-jarvis-query-optional")
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").doesNotExist())
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryGerman())
+                .header("X-Correlation-Id", "corr-jarvis-query-de")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answerLanguage").value("de"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryFrench())
+                .header("X-Correlation-Id", "corr-jarvis-query-fr")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answerLanguage").value("fr"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.answers[0].text", containsString("JarvisGateway")))
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryForbiddenLanguage())
+                .header("X-Correlation-Id", "corr-jarvis-query-ru")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("RESPONSE_LANGUAGE_NOT_ALLOWED"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("The requested response language is not allowed."))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.correlationId").doesNotExist())
                 .assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryNoCandidates())

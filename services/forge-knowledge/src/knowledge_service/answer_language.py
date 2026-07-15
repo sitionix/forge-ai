@@ -6,16 +6,10 @@ from typing import List
 
 from knowledge_service.language_policy import is_forbidden_response_language, normalize_detected_language, normalize_response_language
 
+from langdetect import DetectorFactory, LangDetectException, detect_langs
 
-try:  # pragma: no cover - dependency presence is covered by validator behavior tests.
-    from langdetect import DetectorFactory, LangDetectException, detect_langs
 
-    DetectorFactory.seed = 0
-except ImportError:  # pragma: no cover
-    detect_langs = None
-
-    class LangDetectException(Exception):
-        pass
+DetectorFactory.seed = 0
 
 
 _CODE_SPAN_RE = re.compile(r"`[^`]*`")
@@ -31,12 +25,19 @@ _INTERNAL_REF_RE = re.compile(r"(?i)\b(?:nodeRef|transitionRef|boundaryRef|evide
 _MIN_PROSE_WORDS = 3
 _MIN_PROSE_LETTERS = 18
 _MIN_DETECTION_PROBABILITY = 0.55
+_UNDETERMINED_LANGUAGE_ERROR = (
+    "Response prose language could not be determined; rewrite with sufficient prose in the requested response language."
+)
 
 
 @dataclass(frozen=True)
 class HumanAnswerValidationResult:
     valid: bool
     errors: List[str]
+
+
+class HumanAnswerLanguageDetectorUnavailable(RuntimeError):
+    pass
 
 
 class HumanAnswerTextValidator:
@@ -56,9 +57,12 @@ class HumanAnswerTextValidator:
         expected_language = normalize_response_language(language)
         if not expected_language:
             return "Resolved response language must be a valid non-forbidden language code."
-        detected_language = detect_dominant_prose_language(text)
+        try:
+            detected_language = detect_dominant_prose_language(text)
+        except HumanAnswerLanguageDetectorUnavailable:
+            return "Response prose language validator is unavailable."
         if not detected_language:
-            return None
+            return _UNDETERMINED_LANGUAGE_ERROR
         if is_forbidden_response_language(detected_language):
             return f"Detected response prose language {detected_language} is not allowed."
         if detected_language != expected_language:
@@ -83,7 +87,7 @@ def strip_technical_tokens(value: str) -> str:
 
 def detect_dominant_prose_language(value: str) -> str:
     if detect_langs is None:
-        return ""
+        raise HumanAnswerLanguageDetectorUnavailable("language detector dependency is unavailable")
     prose = _language_detection_text(strip_technical_tokens(value))
     words = _PROSE_WORD_RE.findall(prose)
     if len(words) < _MIN_PROSE_WORDS:
