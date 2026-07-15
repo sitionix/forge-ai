@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, StrictBool, validator
 
+from knowledge_service.language_policy import normalize_language_code
+
 
 class KnowledgeQueryStatus(str, Enum):
     OK = "OK"
@@ -55,14 +57,13 @@ class KnowledgeQueryRequest(BaseModel):
             return None
         if not isinstance(value, str):
             raise ValueError("answerLanguage must be a string")
-        normalized = value.strip().lower()
-        if not normalized:
+        if not value.strip():
             return None
+        normalized = normalize_language_code(value, allow_auto=True)
         if normalized == "auto":
             return "auto"
-        normalized = normalized.split("-", 1)[0]
-        if normalized not in {"uk", "en"}:
-            raise ValueError("answerLanguage must be omitted, null, auto, uk, or en")
+        if not normalized:
+            raise ValueError("answerLanguage must be omitted, null, auto, or a valid language code")
         return normalized
 
     @validator("includeTests", pre=True, always=True)

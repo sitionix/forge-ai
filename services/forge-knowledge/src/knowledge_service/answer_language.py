@@ -4,125 +4,33 @@ import re
 from dataclasses import dataclass
 from typing import List
 
+from knowledge_service.language_policy import is_forbidden_response_language, normalize_detected_language, normalize_response_language
 
-_CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
-_LATIN_RE = re.compile(r"[A-Za-z]")
-_CYRILLIC_WORD_RE = re.compile(r"[А-Яа-яЁёІіЇїЄєҐґ]+")
+
+try:  # pragma: no cover - dependency presence is covered by validator behavior tests.
+    from langdetect import DetectorFactory, LangDetectException, detect_langs
+
+    DetectorFactory.seed = 0
+except ImportError:  # pragma: no cover
+    detect_langs = None
+
+    class LangDetectException(Exception):
+        pass
+
+
+_CODE_SPAN_RE = re.compile(r"`[^`]*`")
 _HTTP_ROUTE_RE = re.compile(r"(?<!\w)/(?:[A-Za-z0-9._~!$&'()*+,;=:@%-]+/?)+")
 _QUOTED_LITERAL_RE = re.compile(r"(['\"])(?:\\.|(?!\1).)*\1")
 _DOTTED_SYMBOL_RE = re.compile(r"\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\b")
 _CAMEL_SYMBOL_RE = re.compile(r"\b(?:[A-Z][A-Za-z0-9_$]*[A-Z][A-Za-z0-9_$]*|[a-z]+[A-Z][A-Za-z0-9_$]*)\b")
 _CONSTANT_RE = re.compile(r"\b[A-Z][A-Z0-9_]{2,}\b")
+_TECH_TOPIC_RE = re.compile(r"\b[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+\b")
+_PROSE_WORD_RE = re.compile(r"[^\W\d_]+(?:['-][^\W\d_]+)?", re.UNICODE)
 _SPECULATIVE_PROSE_RE = re.compile(r"(?i)\b(likely|probably|maybe|assuming|presumably)\b|default\s+Spring\s+Boot")
 _INTERNAL_REF_RE = re.compile(r"(?i)\b(?:nodeRef|transitionRef|boundaryRef|evidenceRefs?|analysis-graph-[a-z-]+:[a-f0-9]+)\b")
-_RUSSIAN_SPECIFIC_RE = re.compile(r"[ыэёъЫЭЁЪ]")
-_UKRAINIAN_SPECIFIC_RE = re.compile(r"[іїєґІЇЄҐ]")
-_RUSSIAN_FUNCTION_WORDS = {
-    "и",
-    "из",
-    "к",
-    "как",
-    "после",
-    "при",
-    "с",
-    "это",
-    "этого",
-    "этот",
-    "затем",
-}
-_UKRAINIAN_FUNCTION_WORDS = {
-    "та",
-    "й",
-    "як",
-    "після",
-    "потім",
-    "через",
-    "його",
-}
-_RUSSIAN_EXACT_MARKERS = {
-    "база",
-    "базе",
-    "базу",
-    "данные",
-    "дальше",
-    "запрос",
-    "значение",
-    "код",
-    "контроллер",
-    "метод",
-    "нужно",
-    "обработчик",
-    "объект",
-    "операции",
-    "параметров",
-    "передается",
-    "приложение",
-    "процесс",
-    "результат",
-    "сайт",
-    "сайта",
-    "сервис",
-    "система",
-    "сообщение",
-    "создает",
-    "ответ",
-    "пользователь",
-    "пользователя",
-}
-_UKRAINIAN_EXACT_MARKERS = {
-    "бере",
-    "дані",
-    "далі",
-    "додаток",
-    "запит",
-    "значення",
-    "код",
-    "контролер",
-    "маршрут",
-    "обробник",
-    "потік",
-    "результат",
-    "сайт",
-    "сервіс",
-    "статус",
-}
-_RUSSIAN_STEMS = (
-    "возвращ",
-    "выполн",
-    "вызыва",
-    "записыва",
-    "начина",
-    "обработ",
-    "обраща",
-    "операц",
-    "отправ",
-    "переда",
-    "получ",
-    "пользовател",
-    "провер",
-    "принима",
-    "приход",
-    "работа",
-    "сохраня",
-    "созда",
-    "формир",
-)
-_UKRAINIAN_STEMS = (
-    "виклика",
-    "викон",
-    "запис",
-    "має",
-    "надход",
-    "оброб",
-    "отриму",
-    "переда",
-    "перевір",
-    "поверта",
-    "працю",
-    "прийма",
-    "проход",
-    "створ",
-)
+_MIN_PROSE_WORDS = 3
+_MIN_PROSE_LETTERS = 18
+_MIN_DETECTION_PROBABILITY = 0.55
 
 
 @dataclass(frozen=True)
@@ -145,75 +53,55 @@ class HumanAnswerTextValidator:
         return HumanAnswerValidationResult(valid=not errors, errors=errors)
 
     def _language_error(self, text: str, language: str) -> str | None:
-        normalized_language = str(language or "").strip().lower().split("-", 1)[0]
-        prose = strip_technical_tokens(text)
-        if is_russian_prose(prose):
-            return "Response prose must not be Russian."
-        cyrillic_count = len(_CYRILLIC_RE.findall(prose))
-        latin_count = len(_LATIN_RE.findall(prose))
-        if normalized_language == "uk":
-            if cyrillic_count < 8:
-                return "Response prose must be in Ukrainian for the resolved answer language uk."
+        expected_language = normalize_response_language(language)
+        if not expected_language:
+            return "Resolved response language must be a valid non-forbidden language code."
+        detected_language = detect_dominant_prose_language(text)
+        if not detected_language:
             return None
-        if normalized_language == "en":
-            if latin_count < 8 or cyrillic_count > 5:
-                return "Response prose must be in English for the resolved answer language en."
-            return None
+        if is_forbidden_response_language(detected_language):
+            return f"Detected response prose language {detected_language} is not allowed."
+        if detected_language != expected_language:
+            return f"Response prose must be in {expected_language}; detected dominant prose language {detected_language}."
         return None
 
 
 def strip_technical_tokens(value: str) -> str:
     text = str(value or "")
     for pattern in (
+        _CODE_SPAN_RE,
         _QUOTED_LITERAL_RE,
         _HTTP_ROUTE_RE,
         _DOTTED_SYMBOL_RE,
         _CAMEL_SYMBOL_RE,
         _CONSTANT_RE,
+        _TECH_TOPIC_RE,
     ):
         text = pattern.sub(" ", text)
     return text
 
 
-def is_russian_prose(value: str) -> bool:
-    words = [item.lower().replace("ё", "е") for item in _CYRILLIC_WORD_RE.findall(str(value or ""))]
-    if len(words) < 3:
-        return False
-    prose = " ".join(words)
-    russian_specific = len(_RUSSIAN_SPECIFIC_RE.findall(prose))
-    ukrainian_specific = len(_UKRAINIAN_SPECIFIC_RE.findall(prose))
-    russian_score = _language_marker_score(
-        words,
-        exact_markers=_RUSSIAN_EXACT_MARKERS,
-        stems=_RUSSIAN_STEMS,
-        function_words=_RUSSIAN_FUNCTION_WORDS,
-    ) + (russian_specific * 2)
-    ukrainian_score = _language_marker_score(
-        words,
-        exact_markers=_UKRAINIAN_EXACT_MARKERS,
-        stems=_UKRAINIAN_STEMS,
-        function_words=_UKRAINIAN_FUNCTION_WORDS,
-    ) + (ukrainian_specific * 2)
-    if ukrainian_specific >= 2 and ukrainian_score >= russian_score:
-        return False
-    if russian_specific >= 1 and ukrainian_specific == 0:
-        return True
-    if russian_score >= 4 and russian_score >= ukrainian_score + 2:
-        return True
-    if russian_score >= 3 and russian_specific >= 1 and russian_score > ukrainian_score:
-        return True
-    if ukrainian_specific == 0 and russian_score >= 3 and russian_score >= ukrainian_score + 2:
-        return True
-    return False
+def detect_dominant_prose_language(value: str) -> str:
+    if detect_langs is None:
+        return ""
+    prose = _language_detection_text(strip_technical_tokens(value))
+    words = _PROSE_WORD_RE.findall(prose)
+    if len(words) < _MIN_PROSE_WORDS:
+        return ""
+    if sum(1 for char in prose if char.isalpha()) < _MIN_PROSE_LETTERS:
+        return ""
+    try:
+        candidates = detect_langs(prose)
+    except LangDetectException:
+        return ""
+    if not candidates:
+        return ""
+    best = candidates[0]
+    if float(getattr(best, "prob", 0.0) or 0.0) < _MIN_DETECTION_PROBABILITY:
+        return ""
+    return normalize_detected_language(getattr(best, "lang", ""))
 
 
-def _language_marker_score(words: List[str], *, exact_markers: set[str], stems: tuple[str, ...], function_words: set[str]) -> int:
-    score = 0
-    for word in words:
-        if word in exact_markers:
-            score += 2
-        if word in function_words:
-            score += 1
-        if any(word.startswith(stem) for stem in stems):
-            score += 1
-    return score
+def _language_detection_text(value: str) -> str:
+    words = _PROSE_WORD_RE.findall(str(value or ""))
+    return " ".join(words)

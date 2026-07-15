@@ -345,7 +345,8 @@ def test_human_prompt_contract_allows_natural_grounded_output():
         "Natural output may be one concise paragraph",
         "exact class or method symbol",
         "validation, persistence, or side effect",
-        "Use only the requested responseLanguage",
+        "Write all natural-language prose in the supplied responseLanguage",
+        "Preserve code identifiers",
         "exception classes, or error messages",
         "observable result",
         "escaped plain text",
@@ -405,20 +406,20 @@ def test_auto_language_resolves_english_and_accepts_english_prose():
     assert "enters SiteController.createSite" in response.answers[0].text
 
 
-def test_explicit_language_override_keeps_english_for_ukrainian_question():
+def test_explicit_language_override_keeps_german_for_ukrainian_question():
     provider = SequenceHumanAnswerProvider([
-        "1. POST /api/v1/sites enters SiteController.createSite and maps the request.\n2. The final result is returned to the caller."
+        "1. POST /api/v1/sites kommt in SiteController.createSite an und verarbeitet die Anfrage.\n2. Am Ende wird die bestätigte Antwort zurückgegeben."
     ])
     service = HumanFlowAnswerService(provider)
 
     response = service.answer(
-        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION", answerLanguage="en"),
+        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION", answerLanguage="de"),
         human_execution(technical_create_site_flow()),
-        plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="en"),
+        plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="de"),
     )
 
-    assert response.answerLanguage == "en"
-    assert provider.calls[0]["llmInput"]["responseLanguage"] == "en"
+    assert response.answerLanguage == "de"
+    assert provider.calls[0]["llmInput"]["responseLanguage"] == "de"
 
 
 def test_mixed_technical_query_resolves_to_surrounding_ukrainian_language():
@@ -453,7 +454,7 @@ def test_language_violation_gets_one_repair_attempt_for_same_flow():
     assert response.answerLanguage == "uk"
     assert len(provider.calls) == 2
     assert provider.calls[1]["validationErrors"]
-    assert "Ukrainian" in provider.calls[1]["validationErrors"][0]
+    assert "language" in provider.calls[1]["validationErrors"][0].lower()
     assert "передає запит" in response.answers[0].text
 
 
@@ -471,12 +472,12 @@ def test_language_violation_gets_bounded_repair_without_format_policing():
     )
 
     assert len(provider.calls) == 2
-    assert any("Ukrainian" in error for error in provider.calls[1]["validationErrors"])
+    assert any("language" in error.lower() for error in provider.calls[1]["validationErrors"])
     assert "**" not in response.answers[0].text
     assert "`" not in response.answers[0].text
 
 
-def test_russian_query_uses_ukrainian_response_language_and_repairs_russian_prose():
+def test_final_forbidden_language_gets_one_repair_attempt_for_ukrainian_response():
     provider = SequenceHumanAnswerProvider([
         "Как работает контроллер: SiteController.createSite получает запрос. После этого метод возвращает ответ.",
         "SiteController.createSite приймає запит і повертає підтверджену відповідь.",
@@ -491,46 +492,33 @@ def test_russian_query_uses_ukrainian_response_language_and_repairs_russian_pros
 
     assert response.answerLanguage == "uk"
     assert len(provider.calls) == 2
-    assert any("Russian" in error for error in provider.calls[1]["validationErrors"])
+    assert any("not allowed" in error for error in provider.calls[1]["validationErrors"])
     assert "підтверджену відповідь" in response.answers[0].text
 
 
-def test_required_russian_prose_examples_are_rejected_after_one_repair_attempt():
-    examples = [
-        "Как создать сайт",
-        "Как работает контроллер",
-        "Система создает пользователя",
-        "После этого метод возвращает ответ",
-        "Для создания сайта нужно отправить запрос.",
-        "Запрос приходит в обработчик и сохраняет данные.",
-        "Проверка имени выполняется перед сохранением.",
-        "Пользователь получает результат после обработки.",
-        "Данные записываются в базу.",
-        "Процесс начинается с проверки параметров.",
-        "Затем код обращается к базе и формирует результат.",
-        "Объект передается дальше для обработки.",
-        "Значение проверяется перед выполнением операции.",
-        "Приложение принимает сообщение и вызывает сервис.",
-    ]
-    for example in examples:
-        provider = SequenceHumanAnswerProvider([example, example])
-        service = HumanFlowAnswerService(provider)
+def test_final_forbidden_language_fails_after_second_violation():
+    provider = SequenceHumanAnswerProvider([
+        "Процесс начинается с проверки параметров. Затем код обращается к базе и формирует результат.",
+        "Объект передается дальше для обработки. Приложение принимает сообщение и вызывает сервис.",
+    ])
+    service = HumanFlowAnswerService(provider)
 
-        try:
-            service.answer(
-                KnowledgeQueryRequest(queryText="як працює потік", intent="FLOW_EXPLANATION"),
-                human_execution(technical_create_site_flow()),
-                plan=retrieval_plan("як працює потік", detected_language="uk", response_language="uk"),
-            )
-        except HumanAnswerGenerationFailed:
-            pass
-        else:
-            raise AssertionError(f"Expected Russian prose to fail: {example}")
-        assert len(provider.calls) == 2
-        assert all(any("Russian" in error for error in call["validationErrors"]) for call in provider.calls[1:])
+    try:
+        service.answer(
+            KnowledgeQueryRequest(queryText="як працює потік", intent="FLOW_EXPLANATION"),
+            human_execution(technical_create_site_flow()),
+            plan=retrieval_plan("як працює потік", detected_language="uk", response_language="uk"),
+        )
+    except HumanAnswerGenerationFailed:
+        pass
+    else:
+        raise AssertionError("Expected forbidden final answer language to fail")
+
+    assert len(provider.calls) == 2
+    assert all(any("not allowed" in error for error in call["validationErrors"]) for call in provider.calls[1:])
 
 
-def test_ukrainian_prose_with_few_specific_letters_is_not_rejected_as_russian():
+def test_ukrainian_prose_with_few_language_specific_characters_is_accepted():
     examples = [
         "Запит проходить через контролер і сервіс.",
         "Код передає дані в сервіс та повертає результат.",
@@ -552,6 +540,65 @@ def test_ukrainian_prose_with_few_specific_letters_is_not_rejected_as_russian():
 
         assert response.answers[0].text == example
         assert len(provider.calls) == 1
+
+
+def test_final_english_prose_when_german_response_gets_repaired():
+    provider = SequenceHumanAnswerProvider([
+        "POST /api/v1/sites enters SiteController.createSite and maps the request. The final result is returned to the caller.",
+        "POST /api/v1/sites kommt in SiteController.createSite an und verarbeitet die Anfrage. Am Ende wird die bestätigte Antwort zurückgegeben.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="wie wird eine site erstellt", intent="FLOW_EXPLANATION", answerLanguage="de"),
+        human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("wie wird eine site erstellt", detected_language="de", response_language="de"),
+    )
+
+    assert response.answerLanguage == "de"
+    assert len(provider.calls) == 2
+    assert any("detected dominant prose language en" in error for error in provider.calls[1]["validationErrors"])
+    assert "bestätigte Antwort" in response.answers[0].text
+
+
+def test_final_english_prose_when_german_response_fails_after_repair():
+    provider = SequenceHumanAnswerProvider([
+        "POST /api/v1/sites enters SiteController.createSite and maps the request. The final result is returned to the caller.",
+        "The controller receives the request and returns the confirmed result after processing.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    try:
+        service.answer(
+            KnowledgeQueryRequest(queryText="wie wird eine site erstellt", intent="FLOW_EXPLANATION", answerLanguage="de"),
+            human_execution(technical_create_site_flow()),
+            plan=retrieval_plan("wie wird eine site erstellt", detected_language="de", response_language="de"),
+        )
+    except HumanAnswerGenerationFailed:
+        pass
+    else:
+        raise AssertionError("Expected repeated wrong final answer language to fail")
+
+    assert len(provider.calls) == 2
+    assert any("detected dominant prose language en" in error for error in provider.calls[1]["validationErrors"])
+
+
+def test_code_identifiers_do_not_affect_prose_language_validation():
+    provider = SequenceHumanAnswerProvider([
+        "SiteController.createSite verarbeitet die Anfrage für /api/v1/sites und ruft CreateSiteImpl.execute auf. "
+        "Danach speichert SiteRepositoryImpl.save den Stand SITE_STATUS und das Thema payments.created bleibt unverändert."
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="wie wird eine site erstellt", intent="FLOW_EXPLANATION", answerLanguage="de"),
+        human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("wie wird eine site erstellt", detected_language="de", response_language="de"),
+    )
+
+    assert len(provider.calls) == 1
+    assert response.answerLanguage == "de"
+    assert "SiteController.createSite" in response.answers[0].text
 
 
 def test_valid_single_paragraph_answer_is_accepted():
@@ -655,14 +702,14 @@ def test_natural_conclusion_after_steps_is_accepted():
 
 def test_boundary_wording_is_valid_when_not_internal_ref():
     provider = SequenceHumanAnswerProvider([
-        "1. AgentController.createAgent доходить до external client boundary.\n2. Контролер повертає DTO."
+        "1. AgentController.createAgent reaches an external client boundary.\n2. The controller returns the DTO."
     ])
     service = HumanFlowAnswerService(provider)
 
     response = service.answer(
-        KnowledgeQueryRequest(queryText="як створити агента", intent="FLOW_EXPLANATION"),
+        KnowledgeQueryRequest(queryText="how is an agent created", intent="FLOW_EXPLANATION"),
         human_execution(technical_create_site_flow()),
-        plan=retrieval_plan("як створити агента", detected_language="uk", response_language="uk"),
+        plan=retrieval_plan("how is an agent created", detected_language="en", response_language="en"),
     )
 
     assert len(provider.calls) == 1

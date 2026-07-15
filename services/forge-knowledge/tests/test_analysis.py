@@ -1406,11 +1406,12 @@ def test_graph_state_repository_mark_failed_persists_failed_state(tmp_path):
     assert json.loads(row["diagnostics_json"]) == [{"code": "SOURCE_GRAPH_FINALIZATION_FAILED", "message": "boom"}]
 
 
-def test_graph_state_repository_mark_failed_logs_when_persistence_fails(caplog):
+def test_graph_state_repository_mark_failed_logs_when_persistence_fails(caplog, monkeypatch):
     class FailingStore:
         def _write_with_busy_retry(self, write):
             raise sqlite3.OperationalError("database is locked")
 
+    monkeypatch.setattr(logging.getLogger("knowledge_service"), "propagate", True)
     caplog.set_level(logging.WARNING, logger="knowledge_service.graph_state_repository")
 
     GraphStateRepository(FailingStore()).mark_failed(

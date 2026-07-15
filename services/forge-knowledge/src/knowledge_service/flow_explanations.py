@@ -131,7 +131,8 @@ class HumanAnswerPromptRenderer:
         return (
             "Answer the user's code-flow question as a concise technical walkthrough for exactly one supplied flow.\n"
             "Return strict JSON only with exactly this shape: {\"text\":\"human-readable answer\"}.\n"
-            "Use only the requested responseLanguage for prose. Exact code symbols, HTTP routes, and quoted literals may stay as-is.\n"
+            "Write all natural-language prose in the supplied responseLanguage. "
+            "Preserve code identifiers, class names, method names, routes, constants, topic names, and quoted code literals exactly as supplied.\n"
             "Directly answer the question using only the supplied verified flow facts.\n"
             "The tree kind fields are internal classifier labels for grounding only. Never copy labels such as UNRESOLVED_CALL, EXTERNAL_CALL, METHOD, HTTP_ENDPOINT, KAFKA_LISTENER, or ENTRYPOINT into the answer.\n"
             "Start with the trigger and entrypoint when available, including the HTTP method and route only when they are supplied.\n"
@@ -625,7 +626,7 @@ class HumanFlowAnswerService:
             raise HumanAnswerContractViolation(["Response must not expose internal graph refs, node ids, transition refs, evidence refs, or analysis ids."])
         text_validation = self.text_validator.validate(normalized, language)
         if not text_validation.valid:
-            if any("language" in error.lower() or "russian" in error.lower() for error in text_validation.errors):
+            if any("language" in error.lower() for error in text_validation.errors):
                 raise HumanAnswerLanguagePolicyViolation(text_validation.errors)
             raise HumanAnswerContractViolation(text_validation.errors)
         return normalized

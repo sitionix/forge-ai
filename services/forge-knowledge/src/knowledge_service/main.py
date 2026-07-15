@@ -56,6 +56,7 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryToolContextResponse,
 )
 from knowledge_service.knowledge_query_service import build_knowledge_query_service
+from knowledge_service.language_policy import is_forbidden_response_language
 from knowledge_service.observability import (
     CORRELATION_HEADER,
     ObservabilityMiddleware,
@@ -266,6 +267,8 @@ def create_app(
         response_model_exclude_none=True,
     )
     async def knowledge_query(request: Request, body: KnowledgeQueryRequest):
+        if is_forbidden_response_language(body.answerLanguage):
+            return _forbidden_response_language_response()
         config, _ = _state(request)
         deadline_at = time.monotonic() + _human_query_request_deadline_seconds(config)
         cancel_event = threading.Event()
@@ -284,6 +287,8 @@ def create_app(
         response_model_exclude_none=True,
     )
     async def knowledge_query_tool_context(request: Request, body: KnowledgeQueryRequest):
+        if is_forbidden_response_language(body.answerLanguage):
+            return _forbidden_response_language_response()
         return await _run_in_thread(
             _knowledge_query_tool_context_response,
             request,
@@ -651,6 +656,8 @@ def _knowledge_human_query_response(
     deadline_at: float | None = None,
 ):
     config, deps = _state(request)
+    if is_forbidden_response_language(body.answerLanguage):
+        return _forbidden_response_language_response()
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
     deadline_at = deadline_at if deadline_at is not None else time.monotonic() + request_deadline_seconds
     if time.monotonic() >= deadline_at:
@@ -727,6 +734,8 @@ def _knowledge_query_tool_context_response(
     body: KnowledgeQueryRequest,
 ):
     config, deps = _state(request)
+    if is_forbidden_response_language(body.answerLanguage):
+        return _forbidden_response_language_response()
     try:
         deadline_at = time.monotonic() + _human_query_request_deadline_seconds(config)
         interpretation_service, close_interpreter = _query_interpretation_service(request, config)
@@ -792,6 +801,14 @@ def _expired_tool_context_response(body: KnowledgeQueryRequest) -> JSONResponse:
 
 def _public_error_response(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"code": code, "message": message})
+
+
+def _forbidden_response_language_response() -> JSONResponse:
+    return _public_error_response(
+        422,
+        "RESPONSE_LANGUAGE_NOT_ALLOWED",
+        "The requested response language is not allowed.",
+    )
 
 
 def _record_human_answer_audits(

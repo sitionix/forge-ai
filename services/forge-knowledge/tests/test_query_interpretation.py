@@ -73,6 +73,25 @@ def test_query_interpreter_preserves_planner_detected_language_without_backend_o
     assert len(provider.calls) == 1
 
 
+def test_query_interpreter_accepts_french_response_language_from_planner():
+    provider = SequenceQueryInterpretationProvider([
+        interpretation_payload(
+            detectedLanguage="fr",
+            responseLanguage="fr",
+            normalizedQuery="comment fonctionne SiteController.createSite",
+            searchQueries=["comment fonctionne SiteController.createSite"],
+            concepts=["création de site"],
+        )
+    ])
+    service = QueryInterpretationService(provider)
+
+    plan = service.interpret(KnowledgeQueryRequest(queryText="comment fonctionne SiteController.createSite", intent="AUTO"))
+
+    assert plan.detected_language == "fr"
+    assert plan.response_language == "fr"
+    assert len(provider.calls) == 1
+
+
 def test_query_interpreter_merges_exact_query_identifiers_when_provider_omits_them():
     provider = SequenceQueryInterpretationProvider([
         interpretation_payload(codeIdentifiers=[])
@@ -85,20 +104,20 @@ def test_query_interpreter_merges_exact_query_identifiers_when_provider_omits_th
     assert len(provider.calls) == 1
 
 
-def test_query_interpreter_honors_explicit_response_language_override():
-    provider = SequenceQueryInterpretationProvider([interpretation_payload(responseLanguage="en")])
+def test_query_interpreter_honors_explicit_german_response_language_override():
+    provider = SequenceQueryInterpretationProvider([interpretation_payload(responseLanguage="de")])
     service = QueryInterpretationService(provider)
 
     plan = service.interpret(
-        KnowledgeQueryRequest(queryText="як працює SiteController.createSite", intent="AUTO", answerLanguage="en")
+        KnowledgeQueryRequest(queryText="як працює SiteController.createSite", intent="AUTO", answerLanguage="de")
     )
 
     assert plan.detected_language == "uk"
-    assert plan.response_language == "en"
-    assert provider.calls[0]["llmInput"]["explicitAnswerLanguage"] == "en"
+    assert plan.response_language == "de"
+    assert provider.calls[0]["llmInput"]["explicitAnswerLanguage"] == "de"
 
 
-def test_query_interpreter_accepts_russian_detected_language_only_with_ukrainian_response():
+def test_query_interpreter_accepts_russian_detected_language_with_ukrainian_response():
     provider = SequenceQueryInterpretationProvider([
         interpretation_payload(
             detectedLanguage="ru",
@@ -115,6 +134,54 @@ def test_query_interpreter_accepts_russian_detected_language_only_with_ukrainian
 
     assert plan.detected_language == "ru"
     assert plan.response_language == "uk"
+
+
+def test_query_interpreter_accepts_russian_detected_language_with_english_response():
+    provider = SequenceQueryInterpretationProvider([
+        interpretation_payload(
+            detectedLanguage="ru",
+            responseLanguage="en",
+            normalizedQuery="how controller works",
+            searchQueries=["how controller works"],
+            codeIdentifiers=[],
+            concepts=["controller"],
+        )
+    ])
+    service = QueryInterpretationService(provider)
+
+    plan = service.interpret(KnowledgeQueryRequest(queryText="Как работает контроллер", intent="AUTO"))
+
+    assert plan.detected_language == "ru"
+    assert plan.response_language == "en"
+
+
+def test_query_interpreter_repairs_forbidden_response_language_once():
+    provider = SequenceQueryInterpretationProvider([
+        interpretation_payload(detectedLanguage="ru", responseLanguage="ru"),
+        interpretation_payload(detectedLanguage="ru", responseLanguage="uk"),
+    ])
+    service = QueryInterpretationService(provider)
+
+    plan = service.interpret(KnowledgeQueryRequest(queryText="Как работает SiteController.createSite", intent="AUTO"))
+
+    assert plan.detected_language == "ru"
+    assert plan.response_language == "uk"
+    assert len(provider.calls) == 2
+    assert any("forbidden response language" in error for error in provider.calls[1]["validationErrors"])
+
+
+def test_query_interpreter_repeated_forbidden_response_language_fails_closed():
+    provider = SequenceQueryInterpretationProvider([
+        interpretation_payload(detectedLanguage="ru", responseLanguage="ru"),
+        interpretation_payload(detectedLanguage="ru", responseLanguage="ru"),
+    ])
+    service = QueryInterpretationService(provider)
+
+    with pytest.raises(QueryPlanningRepairExhausted):
+        service.interpret(KnowledgeQueryRequest(queryText="Как работает SiteController.createSite", intent="AUTO"))
+
+    assert len(provider.calls) == 2
+    assert any("forbidden response language" in error for error in provider.calls[1]["validationErrors"])
 
 
 def test_query_interpreter_repairs_invented_code_identifier_once():
@@ -166,3 +233,4 @@ def test_query_interpreter_prompt_is_generic():
     forbidden = ("SiteController", "CreateSiteImpl", "SiteRepository", "SiteCreatedPayload", "/api/v1/sites", "stsssox")
     assert not any(token in prompt for token in forbidden)
     assert "Return strict JSON only" in prompt
+    assert "uk|en" not in prompt

@@ -182,6 +182,29 @@ def test_missing_config_sources_response(tmp_path):
     assert payload["message"] == "No local knowledge-sources.yaml configured"
 
 
+def test_explicit_forbidden_answer_language_returns_controlled_422(tmp_path):
+    app, _, _, _ = build_test_app(write_runtime_config(tmp_path))
+    query_provider = app.state.query_interpretation_provider
+
+    async def exercise():
+        async with _async_client(app) as client:
+            human = await client.post("/api/v1/knowledge/query", json={"queryText": "A.start", "answerLanguage": "ru"})
+            tool = await client.post("/api/v1/knowledge/query/tool-context", json={"queryText": "A.start", "answerLanguage": "ru"})
+            return human.status_code, human.json(), tool.status_code, tool.json()
+
+    human_status, human_payload, tool_status, tool_payload = asyncio.run(exercise())
+
+    expected = {
+        "code": "RESPONSE_LANGUAGE_NOT_ALLOWED",
+        "message": "The requested response language is not allowed.",
+    }
+    assert human_status == 422
+    assert human_payload == expected
+    assert tool_status == 422
+    assert tool_payload == expected
+    assert query_provider.calls == []
+
+
 def test_query_flow_explanations_endpoint_returns_human_answer(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_semantic_graph(

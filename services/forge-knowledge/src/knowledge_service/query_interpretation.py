@@ -16,11 +16,15 @@ from knowledge_service.config import (
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
 )
 from knowledge_service.knowledge_query_schema import KnowledgeQueryIntent, KnowledgeQueryRequest
+from knowledge_service.language_policy import (
+    is_forbidden_response_language,
+    normalize_detected_language,
+    normalize_response_language,
+)
 
 
 QUERY_INTERPRETATION_FAILED = "QUERY_INTERPRETATION_FAILED"
 
-_LANGUAGE_CODE_RE = re.compile(r"^[a-z]{2,3}$")
 _CODE_LIKE_RE = re.compile(r"\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\b|\b(?:[A-Z][A-Za-z0-9_$]*[A-Z][A-Za-z0-9_$]*|[a-z]+[A-Z][A-Za-z0-9_$]*)\b")
 _DEFAULT_MIN_CALL_TIMEOUT_SECONDS = 0.01
 _DEADLINE_COMPLETION_GRACE_SECONDS = 0.005
@@ -120,15 +124,15 @@ class QueryInterpretationPromptRenderer:
             "Interpret one developer knowledge query for retrieval planning.\n"
             "Return strict JSON only. Do not include prose outside JSON.\n"
             "The JSON shape is exactly: "
-            "{\"detectedLanguage\":\"string\",\"responseLanguage\":\"uk|en\","
+            "{\"detectedLanguage\":\"string\",\"responseLanguage\":\"string\","
             "\"normalizedQuery\":\"string\",\"searchQueries\":[\"string\"],"
             "\"codeIdentifiers\":[\"string\"],\"concepts\":[\"string\"]}.\n"
             "Detect the dominant natural-language prose separately from code identifiers.\n"
-            "Use ISO 639 language codes for detectedLanguage. Ukrainian is uk, English is en, Russian is ru, and unresolved language is und.\n"
+            "Use ISO 639 language codes for detectedLanguage and responseLanguage. Unresolved detectedLanguage is und.\n"
             "Use detectedLanguage \"und\" only when the query contains no meaningful natural-language prose.\n"
-            "responseLanguage must be exactly uk or en. Russian output is forbidden, so Russian detectedLanguage must use responseLanguage uk.\n"
-            "If explicitAnswerLanguage is uk or en, responseLanguage must be that code. "
-            "If it is null or auto, Ukrainian input uses uk, English input uses en, Russian input uses uk, other languages choose the closest supported language, and und uses defaultResponseLanguage.\n"
+            "responseLanguage must be a valid supported language code and must not be ru.\n"
+            "If explicitAnswerLanguage is a language code, responseLanguage must be exactly that code. "
+            "If it is null or auto, choose the best non-forbidden responseLanguage for the user's query; use defaultResponseLanguage when no prose language is detected.\n"
             "normalizedQuery must be one non-empty retrieval phrase.\n"
             "searchQueries may contain at most 4 additive retrieval phrases.\n"
             "codeIdentifiers may contain at most 10 exact code symbols, and every value must be an exact substring of queryText.\n"
@@ -254,22 +258,23 @@ class QueryInterpretationService:
         if missing:
             errors.append(f"Response missing required fields: {', '.join(sorted(missing))}.")
 
+        raw_response_language = payload.get("responseLanguage")
         detected = self._normalize_detected_language(payload.get("detectedLanguage"))
-        response_language = self._normalize_response_language(payload.get("responseLanguage"))
+        response_language = self._normalize_response_language(raw_response_language)
         normalized_query = str(payload.get("normalizedQuery") or "").strip() if isinstance(payload.get("normalizedQuery"), str) else ""
 
         if not detected:
             errors.append("detectedLanguage must be a language code or und.")
+        if is_forbidden_response_language(raw_response_language):
+            errors.append("responseLanguage must not be a forbidden response language.")
         if not response_language:
-            errors.append("responseLanguage must be exactly uk or en.")
+            errors.append("responseLanguage must be a valid non-forbidden language code.")
         if not normalized_query:
             errors.append("normalizedQuery must be one non-empty string.")
 
         expected_response_language = explicit_language
-        if expected_response_language is None:
-            expected_response_language = self._automatic_response_language(detected)
         if response_language and expected_response_language and response_language != expected_response_language:
-            errors.append(f"responseLanguage must be {expected_response_language} for the detected language and explicit answer language policy.")
+            errors.append(f"responseLanguage must match explicitAnswerLanguage {expected_response_language}.")
 
         search_queries = self._string_list(payload.get("searchQueries"), "searchQueries", 4, errors)
         code_identifiers = self._string_list(payload.get("codeIdentifiers"), "codeIdentifiers", 10, errors)
@@ -288,7 +293,7 @@ class QueryInterpretationService:
 
         return QueryInterpretation(
             detected_language=detected or "und",
-            response_language=expected_response_language or response_language or self.default_response_language,
+            response_language=response_language or self.default_response_language,
             normalized_query=normalized_query,
             search_queries=tuple(search_queries),
             code_identifiers=tuple(code_identifiers),
@@ -352,7 +357,7 @@ class QueryInterpretationService:
         return result
 
     def _explicit_language(self, value: str | None) -> str | None:
-        normalized = self._normalize_response_language(value)
+        normalized = self._normalize_response_language(value, allow_auto=True)
         if not normalized:
             return None
         if normalized == "auto":
@@ -360,40 +365,10 @@ class QueryInterpretationService:
         return normalized
 
     def _normalize_detected_language(self, value: Any) -> str:
-        normalized = str(value or "").strip().lower()
-        if not normalized:
-            return ""
-        normalized = normalized.split("-", 1)[0]
-        if normalized == "auto":
-            return ""
-        if normalized == "unresolved":
-            return "und"
-        if normalized == "und" or _LANGUAGE_CODE_RE.match(normalized):
-            return normalized
-        return ""
+        return normalize_detected_language(value)
 
-    def _normalize_response_language(self, value: Any) -> str:
-        normalized = str(value or "").strip().lower()
-        if not normalized:
-            return ""
-        if normalized == "auto":
-            return "auto"
-        normalized = normalized.split("-", 1)[0]
-        if normalized in {"uk", "en"}:
-            return normalized
-        return ""
-
-    def _automatic_response_language(self, detected_language: str) -> str:
-        detected = str(detected_language or "").strip().lower().split("-", 1)[0]
-        if detected == "uk":
-            return "uk"
-        if detected == "en":
-            return "en"
-        if detected == "ru":
-            return "uk"
-        if detected == "und":
-            return self.default_response_language
-        return ""
+    def _normalize_response_language(self, value: Any, *, allow_auto: bool = False) -> str:
+        return normalize_response_language(value, allow_auto=allow_auto)
 
     def _record_audit(self, prompt: str, raw_response: str, *, attempt_count: int, llm_input: Mapping[str, Any]) -> None:
         self.audit_records.append(
