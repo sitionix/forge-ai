@@ -16,6 +16,11 @@ class EntrypointKind(str, Enum):
     TEST = "TEST"
 
 
+class EntrypointExecutionKind(str, Enum):
+    CONTRACT_DECLARATION = "CONTRACT_DECLARATION"
+    EXECUTABLE = "EXECUTABLE"
+
+
 _ANNOTATION_KIND = {
     "ExceptionHandler": EntrypointKind.EXCEPTION_HANDLER,
     "KafkaListener": EntrypointKind.KAFKA,
@@ -46,6 +51,15 @@ def entrypoint_kind_value(value: EntrypointKind | str | None) -> Optional[str]:
         return None
     try:
         return EntrypointKind(str(value).strip().upper()).value
+    except ValueError:
+        return None
+
+
+def entrypoint_execution_kind_value(value: EntrypointExecutionKind | str | None) -> Optional[str]:
+    if value is None:
+        return None
+    try:
+        return EntrypointExecutionKind(str(value).strip().upper()).value
     except ValueError:
         return None
 

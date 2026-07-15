@@ -29,8 +29,8 @@ import static org.hamcrest.Matchers.not;
         "forge.ai.infrastructure.jarvis.base-url=${forge-it.wiremock.base-url}",
         "forge.ai.infrastructure.knowledge.read-timeout=2500ms",
         "forge.ai.infrastructure.jarvis.read-timeout=2500ms",
-        "forge.ai.query.flow-explanation.request-timeout=1000ms",
-        "forge.ai.infrastructure.proxy.knowledge-explanation-transport-grace=750ms",
+        "forge.ai.query.human-query.request-timeout=1000ms",
+        "forge.ai.infrastructure.proxy.knowledge-human-query-transport-grace=750ms",
         "forge.ai.infrastructure.proxy.jarvis-query-transport-grace=750ms",
         "forge.ai.infrastructure.proxy.max-request-body-bytes=128",
         "forge.ai.infrastructure.proxy.max-response-body-bytes=6500"

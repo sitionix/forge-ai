@@ -35,6 +35,8 @@ from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.embedding_provider import FakeDeterministicEmbeddingProvider
 from knowledge_service.errors import KnowledgeError
+from knowledge_service.entrypoint_flow_engine import EntrypointFlowEngine
+from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.graph_analysis import GraphAnalysisEngine
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
@@ -42,7 +44,7 @@ from knowledge_service.inventory_builder import InventoryBuilder
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.java_parser_adapter import JavaParserAdapter
-from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
+from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode, KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import build_knowledge_query_service
 from knowledge_service.overview_projection import read_overview, refresh_overview_for_sources
 from knowledge_service.semantic_builder import SemanticBuildConfig, SemanticIndexBuilder
@@ -896,7 +898,7 @@ def test_retry_failed_selects_only_current_failed_files_and_preserves_history(tm
     assert current_failed == 0
 
 
-def test_analysis_store_migrates_old_integer_graph_diagnostics_schema(tmp_path):
+def test_analysis_store_rebuilds_incompatible_graph_diagnostics_schema(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE sources (source_id TEXT PRIMARY KEY, display_name TEXT)")
@@ -956,7 +958,8 @@ def test_analysis_store_migrates_old_integer_graph_diagnostics_schema(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_diagnostics WHERE code = 'OLD_DIAGNOSTIC'").fetchone()[0] == 0
-        assert conn.execute("SELECT 1 FROM analysis_schema_migrations WHERE version = 4").fetchone()
+        schema = [tuple(row) for row in conn.execute("SELECT version, name FROM analysis_schema_migrations").fetchall()]
+        assert schema == [(1, "current_analysis_schema")]
 
     AnalysisStore(db_path).init()
 
@@ -1037,6 +1040,21 @@ def test_analysis_store_init_is_safe_for_parallel_graph_requests(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_nodes'").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_edges'").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'analysis_graph_diagnostics'").fetchone()[0] == 1
+
+
+def test_analysis_store_current_schema_initializes_empty_db_idempotently(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    store = AnalysisStore(db_path)
+
+    store.init()
+    store.init()
+
+    with sqlite3.connect(db_path) as conn:
+        schema = conn.execute("SELECT version, name FROM analysis_schema_migrations ORDER BY version").fetchall()
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+
+    assert schema == [(1, "current_analysis_schema")]
+    assert {"analysis_jobs", "analysis_graph_state", "analysis_graph_nodes", "analysis_graph_edges"}.issubset(tables)
 
 
 def test_analysis_store_uses_wal_and_configurable_busy_timeout(tmp_path):
@@ -1214,7 +1232,7 @@ def test_current_graph_replace_marks_source_dirty_until_finalized(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM analysis_graph_nodes WHERE source_id = 'edge-gateway'").fetchone()[0] == len(first["nodes"])
 
 
-def test_graph_storage_migration_rebuilds_incompatible_primary_key_tables(tmp_path):
+def test_graph_storage_rebuilds_incompatible_primary_key_tables(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     with sqlite3.connect(db_path) as conn:
         conn.execute(
@@ -2094,7 +2112,8 @@ class TaskWorkflow {
         inherited_claims = conn.execute(
             """
             SELECT node.qualified_name, node.parameter_types_json, claim.entrypoint_kind,
-                   claim.entrypoint_http_method, claim.entrypoint_route, claim.entrypoint_interface_method
+                   claim.entrypoint_http_method, claim.entrypoint_route, claim.entrypoint_interface_method,
+                   claim.entrypoint_execution_kind
             FROM analysis_graph_claims claim
             JOIN analysis_graph_nodes node ON node.id = claim.node_id
             WHERE claim.source_id = 'task-service'
@@ -2119,6 +2138,16 @@ class TaskWorkflow {
               AND json_extract(e.metadata_json, '$.methodName') = 'handle'
             """
         ).fetchone()
+        interface_claim = conn.execute(
+            """
+            SELECT claim.entrypoint_execution_kind
+            FROM analysis_graph_claims claim
+            JOIN analysis_graph_nodes node ON node.id = claim.node_id
+            WHERE claim.source_id = 'app-afesox'
+              AND node.qualified_name = 'generated.api.TaskApi.handle'
+              AND claim.claim_kind = 'ENTRYPOINT_HINT'
+            """
+        ).fetchone()
 
     assert implements_edge is not None
     assert implements_edge["resolution_status"] == "RESOLVED"
@@ -2137,6 +2166,9 @@ class TaskWorkflow {
     assert inherited_claims[0]["entrypoint_http_method"] == "POST"
     assert inherited_claims[0]["entrypoint_route"] == "/tasks/handle"
     assert inherited_claims[0]["entrypoint_interface_method"] == "generated.api.TaskApi.handle"
+    assert inherited_claims[0]["entrypoint_execution_kind"] == "EXECUTABLE"
+    assert interface_claim is not None
+    assert interface_claim["entrypoint_execution_kind"] == "CONTRACT_DECLARATION"
     assert dispatch_edge is not None
     assert dispatch_edge["resolution_status"] == "RESOLVED"
     assert dispatch_edge["target_source"] == "task-service"
@@ -2144,6 +2176,139 @@ class TaskWorkflow {
     dispatch_metadata = json.loads(dispatch_edge["metadata_json"])
     assert dispatch_metadata["interfaceMethod"] == "generated.api.TaskApi.handle"
     assert dispatch_metadata["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH"
+
+
+def test_cross_source_incoming_traversal_reaches_service_entrypoint_from_app_anchor(tmp_path):
+    app_source = """package app.afesox;
+
+public class SiteUseCase {
+  public void createSite() {
+  }
+}
+"""
+    service_source = """package service.api;
+
+import app.afesox.SiteUseCase;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+@RequestMapping("/sites")
+public class SiteController {
+  private final SiteUseCase useCase;
+
+  @PostMapping
+  public void create() {
+    useCase.createSite();
+  }
+}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    InventoryStore(store.db_path).init()
+    store.init()
+    now = "now"
+    with sqlite3.connect(store.db_path) as conn:
+        for source_id, display_name in (("app-afesox", "App AFESOX"), ("site-service", "Site Service")):
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at)
+                VALUES (?, ?, 'test', '.', 1, '[]', '{}', ?)
+                """,
+                (source_id, display_name, now),
+            )
+        for file_id, source_id, relative_path, content in (
+            (1, "app-afesox", "src/main/java/app/afesox/SiteUseCase.java", app_source),
+            (2, "site-service", "src/main/java/service/api/SiteController.java", service_source),
+        ):
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO files(
+                    id, source_id, source_path, absolute_path, relative_path, extension, language, flow_domain,
+                    size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at
+                )
+                VALUES (?, ?, '.', '.', ?, '.java', 'java', 'CODE', ?, ?, ?, ?, 'utf-8:replace', ?)
+                """,
+                (
+                    file_id,
+                    source_id,
+                    relative_path,
+                    len(content.encode("utf-8")),
+                    hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    now,
+                    len(content.splitlines()),
+                    now,
+                ),
+            )
+    store.replace_file_graph_analysis(
+        1,
+        graph_state_for_test(app_source, "src/main/java/app/afesox/SiteUseCase.java", "app-afesox"),
+        _materialize_static_java_for_test(app_source, 1, "src/main/java/app/afesox/SiteUseCase.java", "app-afesox"),
+    )
+    store.finalize_source_graph("app-afesox")
+    store.replace_file_graph_analysis(
+        2,
+        graph_state_for_test(service_source, "src/main/java/service/api/SiteController.java", "site-service"),
+        _materialize_static_java_for_test(service_source, 2, "src/main/java/service/api/SiteController.java", "site-service"),
+    )
+    store.finalize_source_graph("site-service")
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        app_state = conn.execute("SELECT graph_id, content_identity FROM analysis_graph_state WHERE source_id = 'app-afesox'").fetchone()
+        app_callable = conn.execute(
+            """
+            SELECT id, stable_key, node_kind, display_name, qualified_name
+            FROM analysis_graph_nodes
+            WHERE source_id = 'app-afesox'
+              AND qualified_name = 'app.afesox.SiteUseCase.createSite'
+            """
+        ).fetchone()
+        call_edge = conn.execute(
+            """
+            SELECT caller.source_id AS caller_source,
+                   caller.qualified_name AS caller_method,
+                   target.source_id AS target_source,
+                   target.qualified_name AS target_method,
+                   edge.resolution_status
+            FROM analysis_graph_edges edge
+            JOIN analysis_graph_nodes caller ON caller.source_id = edge.source_id AND caller.id = edge.from_node_id
+            JOIN analysis_graph_nodes target ON target.id = edge.to_node_id
+            WHERE edge.edge_type = 'CALLS'
+              AND target.qualified_name = 'app.afesox.SiteUseCase.createSite'
+            """
+        ).fetchone()
+
+    assert app_state is not None
+    assert app_callable is not None
+    assert call_edge is not None
+    assert call_edge["caller_source"] == "site-service"
+    assert call_edge["target_source"] == "app-afesox"
+    assert call_edge["resolution_status"] == "RESOLVED"
+
+    anchor = KnowledgeQueryMatchedNode(
+        sourceId="app-afesox",
+        nodeId=app_callable["id"],
+        stableKey=app_callable["stable_key"],
+        nodeKind=app_callable["node_kind"],
+        label=app_callable["display_name"],
+        qualifiedName=app_callable["qualified_name"],
+        score=1.0,
+        matchReasons=["EXACT"],
+        graphId=app_state["graph_id"],
+        graphRevision=app_state["content_identity"],
+    )
+    result = EntrypointFlowEngine(EntrypointFlowGraphRepository(store)).build([anchor], max_flows=10, include_tests=False)
+
+    assert len(result.flows) == 1
+    flow = result.flows[0]
+    assert flow.entrypoint.source_id == "site-service"
+    assert flow.entrypoint.qualified_name == "service.api.SiteController.create"
+    assert any(node.source_id == "app-afesox" and node.qualified_name == "app.afesox.SiteUseCase.createSite" for node in flow.nodes)
+    assert any(
+        edge.source_id == "site-service"
+        and edge.from_node_id == flow.entrypoint.node_id
+        and edge.to_source_id == "app-afesox"
+        for edge in flow.transitions
+    )
 
 
 def test_resolver_does_not_fallback_when_first_class_arity_mismatches(tmp_path):
@@ -2975,7 +3140,7 @@ def test_background_job_returns_id_and_updates_progress(tmp_path):
     assert final["processedFiles"] == 1
 
 
-def test_analysis_jobs_outdated_schema_is_recreated_without_lifecycle_rows(tmp_path):
+def test_analysis_jobs_incompatible_schema_is_recreated_without_lifecycle_rows(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     with sqlite3.connect(db_path) as conn:
         conn.execute("""
@@ -3007,28 +3172,18 @@ def test_analysis_jobs_outdated_schema_is_recreated_without_lifecycle_rows(tmp_p
     store.init()
     with sqlite3.connect(db_path) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(analysis_jobs)").fetchall()}
-        migrations = conn.execute("SELECT version, name FROM analysis_schema_migrations ORDER BY version").fetchall()
+        schema = conn.execute("SELECT version, name FROM analysis_schema_migrations ORDER BY version").fetchall()
     job = store.job("job-old")
     store.init()
     with sqlite3.connect(db_path) as conn:
-        migration_count = conn.execute("SELECT COUNT(*) FROM analysis_schema_migrations").fetchone()[0]
+        schema_count = conn.execute("SELECT COUNT(*) FROM analysis_schema_migrations").fetchone()[0]
 
     assert "skipped_unchanged_file_count" not in columns
     assert "source_ids_json" in columns
     assert "mode" in columns
     assert job is None
-    assert migrations == [
-        (1, "remove_legacy_analysis_job_counter"),
-        (2, "add_analysis_job_source_scope"),
-        (3, "reset_analysis_cache_for_graph_v1_cutover"),
-        (4, "reconcile_graph_diagnostics_schema"),
-        (5, "add_analysis_job_mode"),
-        (6, "remove_legacy_graph_lifecycle"),
-        (7, "current_state_graph_storage"),
-        (8, "yaml_graph_contract_cleanup"),
-        (9, "clean_yaml_graph_contract_persistence"),
-    ]
-    assert migration_count == 9
+    assert schema == [(1, "current_analysis_schema")]
+    assert schema_count == 1
 
 
 def test_stop_analysis_releases_active_slot_and_prevents_old_file_write(tmp_path):

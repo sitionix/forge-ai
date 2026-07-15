@@ -489,6 +489,11 @@ def test_required_russian_prose_examples_are_rejected_after_one_repair_attempt()
         "Как работает контроллер",
         "Система создает пользователя",
         "После этого метод возвращает ответ",
+        "Для создания сайта нужно отправить запрос.",
+        "Запрос приходит в обработчик и сохраняет данные.",
+        "Проверка имени выполняется перед сохранением.",
+        "Пользователь получает результат после обработки.",
+        "Данные записываются в базу.",
     ]
     for example in examples:
         provider = SequenceHumanAnswerProvider([example, example])
@@ -506,6 +511,27 @@ def test_required_russian_prose_examples_are_rejected_after_one_repair_attempt()
             raise AssertionError(f"Expected Russian prose to fail: {example}")
         assert len(provider.calls) == 2
         assert all(any("Russian" in error for error in call["validationErrors"]) for call in provider.calls[1:])
+
+
+def test_ukrainian_prose_with_few_specific_letters_is_not_rejected_as_russian():
+    examples = [
+        "Запит проходить через контролер і сервіс.",
+        "Код передає дані в сервіс та повертає результат.",
+        "Система приймає запит, потім передає його далі.",
+        "Контролер бере запит та викликає сервіс.",
+    ]
+    for example in examples:
+        provider = SequenceHumanAnswerProvider([example])
+        service = HumanFlowAnswerService(provider)
+
+        response = service.answer(
+            KnowledgeQueryRequest(queryText="як працює потік", intent="FLOW_EXPLANATION"),
+            human_execution(technical_create_site_flow()),
+            plan=retrieval_plan("як працює потік", detected_language="uk", response_language="uk"),
+        )
+
+        assert response.answers[0].text == example
+        assert len(provider.calls) == 1
 
 
 def test_valid_single_paragraph_answer_is_accepted():

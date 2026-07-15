@@ -15,37 +15,37 @@ import org.springframework.core.env.PropertySource;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.FileSystemResource;
 
-class ForgeAiFlowExplanationConfigurationContractTest {
+class ForgeAiHumanQueryConfigurationContractTest {
 
     @Test
-    void rootForgeAiYamlBindsFlowExplanationTimeout() {
-        final ForgeAiFlowExplanationProperties properties = bindRootFlowExplanationProperties(Map.of());
+    void rootForgeAiYamlBindsHumanQueryTimeout() {
+        final ForgeAiHumanQueryProperties properties = bindRootHumanQueryProperties(Map.of());
         final InfrastructureProxyProperties infrastructureProperties = bindRootInfrastructureProperties(Map.of());
 
         assertThat(properties.getRequestTimeoutSeconds()).isEqualTo(180);
-        assertThat(infrastructureProperties.getProxy().knowledgeExplanationReadTimeout(properties.requestTimeout()))
+        assertThat(infrastructureProperties.getProxy().knowledgeHumanQueryReadTimeout(properties.requestTimeout()))
                 .isEqualTo(Duration.ofSeconds(185));
         assertThat(infrastructureProperties.getProxy().jarvisQueryReadTimeout(properties.requestTimeout()))
                 .isEqualTo(Duration.ofSeconds(190));
     }
 
     @Test
-    void sharedEnvironmentOverrideBindsFlowExplanationTimeoutAndNexusTransportGrace() {
-        final ForgeAiFlowExplanationProperties flowExplanationProperties = bindRootFlowExplanationProperties(Map.of(
-                "FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS",
+    void sharedEnvironmentOverrideBindsHumanQueryTimeoutAndNexusTransportGrace() {
+        final ForgeAiHumanQueryProperties humanQueryProperties = bindRootHumanQueryProperties(Map.of(
+                "FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS",
                 "73"
         ));
         final InfrastructureProxyProperties infrastructureProperties = bindRootInfrastructureProperties(Map.of(
-                "FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS",
+                "FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS",
                 "73"
         ));
 
         final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(
                 infrastructureProperties,
-                flowExplanationProperties
+                humanQueryProperties
         );
 
-        assertThat(flowExplanationProperties.getRequestTimeoutSeconds()).isEqualTo(73);
+        assertThat(humanQueryProperties.getRequestTimeoutSeconds()).isEqualTo(73);
         assertThat(registry.require("knowledge.query").readTimeout())
                 .isEqualTo(Duration.ofSeconds(78));
         assertThat(registry.require("knowledge.query.tool-context").readTimeout())
@@ -58,19 +58,19 @@ class ForgeAiFlowExplanationConfigurationContractTest {
     void durationDeadlineCanBindForDeterministicTimeoutHierarchyTests() {
         final StandardEnvironment environment = new StandardEnvironment();
         environment.getPropertySources().addFirst(new MapPropertySource("test-overrides", Map.of(
-                "forge.ai.query.flow-explanation.request-timeout",
+                "forge.ai.query.human-query.request-timeout",
                 "100ms"
         )));
-        final ForgeAiFlowExplanationProperties flowExplanationProperties = Binder.get(environment)
-                .bind("forge.ai.query.flow-explanation", ForgeAiFlowExplanationProperties.class)
-                .orElseThrow(() -> new IllegalStateException("Failed to bind test flow explanation settings"));
+        final ForgeAiHumanQueryProperties humanQueryProperties = Binder.get(environment)
+                .bind("forge.ai.query.human-query", ForgeAiHumanQueryProperties.class)
+                .orElseThrow(() -> new IllegalStateException("Failed to bind test human query settings"));
         final InfrastructureProxyProperties infrastructureProperties = new InfrastructureProxyProperties();
-        infrastructureProperties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofMillis(50));
+        infrastructureProperties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ofMillis(50));
         infrastructureProperties.getProxy().setJarvisQueryTransportGrace(Duration.ofMillis(50));
 
         final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(
                 infrastructureProperties,
-                flowExplanationProperties
+                humanQueryProperties
         );
 
         assertThat(registry.require("knowledge.query").readTimeout())
@@ -79,7 +79,7 @@ class ForgeAiFlowExplanationConfigurationContractTest {
                 .isEqualTo(Duration.ofMillis(200));
     }
 
-    private static ForgeAiFlowExplanationProperties bindRootFlowExplanationProperties(
+    private static ForgeAiHumanQueryProperties bindRootHumanQueryProperties(
             final Map<String, Object> overrides
     ) {
         final StandardEnvironment environment = new StandardEnvironment();
@@ -88,8 +88,8 @@ class ForgeAiFlowExplanationConfigurationContractTest {
             environment.getPropertySources().addLast(propertySource);
         }
         return Binder.get(environment)
-                .bind("forge.ai.query.flow-explanation", ForgeAiFlowExplanationProperties.class)
-                .orElseThrow(() -> new IllegalStateException("Failed to bind root flow explanation settings"));
+                .bind("forge.ai.query.human-query", ForgeAiHumanQueryProperties.class)
+                .orElseThrow(() -> new IllegalStateException("Failed to bind root human query settings"));
     }
 
     private static InfrastructureProxyProperties bindRootInfrastructureProperties(

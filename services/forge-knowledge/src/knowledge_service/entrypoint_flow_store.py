@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any, Dict, Iterable, List, Sequence
 
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow
+from knowledge_service.entrypoint_kinds import EntrypointExecutionKind
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 
@@ -131,16 +132,25 @@ class EntrypointFlowGraphRepository:
             return {}
         result: dict[FlowNodeKey, list[FlowGraphEdge]] = defaultdict(list)
         with self.graph_store._connect() as conn:
-            identity_by_source = self.graph_store._graph_identity_by_source(conn, sorted(grouped))
+            target_identity_by_source = self.graph_store._graph_identity_by_source(conn, sorted(grouped))
             for source_id, ids in sorted(grouped.items()):
-                identity = identity_by_source.get(source_id) or {}
+                target_identity = target_identity_by_source.get(source_id) or {}
                 for chunk in _chunks(sorted(ids)):
                     rows = self._query_call_edges(conn, source_id, list(chunk), include_tests, direction)
                     self._metrics["edgeRowsLoaded"] += len(rows)
                     self.graph_store._attach_current_graph_identity(conn, rows)
+                    edge_identity_by_source = self.graph_store._graph_identity_by_source(
+                        conn,
+                        sorted({str(row.get("sourceId") or "") for row in rows if row.get("sourceId")}),
+                    )
                     for row in rows:
                         edge = self.graph_store._flow_graph_edge_from_public_graph(row, {})
-                        if edge is None or not self._matches_current_identity(edge, identity):
+                        if edge is None:
+                            continue
+                        edge_identity = edge_identity_by_source.get(edge.source_id) or {}
+                        if not self._matches_current_identity(edge, edge_identity):
+                            continue
+                        if direction == "incoming" and not self._matches_target_identity(edge, target_identity):
                             continue
                         key = self._to_key(edge) if direction == "incoming" else self._from_key(edge)
                         if key is not None:
@@ -190,6 +200,7 @@ class EntrypointFlowGraphRepository:
              AND entry.node_id = n.id
              AND entry.claim_kind = ?
              AND entry.status IN ({current_status_sql})
+             AND COALESCE(entry.entrypoint_execution_kind, ?) = ?
             LEFT JOIN claim
               ON claim.source_id = n.source_id
              AND claim.node_id = n.id
@@ -207,6 +218,8 @@ class EntrypointFlowGraphRepository:
                 *responsibility_status_params,
                 contract.entrypoint_claim_kind,
                 *current_status_params,
+                EntrypointExecutionKind.EXECUTABLE.value,
+                EntrypointExecutionKind.EXECUTABLE.value,
                 source_id,
                 *ids,
                 *current_status_params,
@@ -229,20 +242,16 @@ class EntrypointFlowGraphRepository:
         placeholders = ",".join("?" for _ in ids)
         contract = graph_query_contract()
         current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
-        frontier_column = "e.to_node_id" if direction == "incoming" else "e.from_node_id"
-        source_node_join = "JOIN" if direction == "incoming" else "LEFT JOIN"
-        source_node_membership = f"AND {self.graph_store._inventory_membership_graph_node_clause('fn')}" if direction == "incoming" else ""
-        source_node_test = f"AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql('fn')}, '') != 'TEST')" if direction == "incoming" else ""
-        params: list[Any] = []
         if direction == "incoming":
-            params.append(include_tests)
-        params.extend([
+            return self._query_incoming_call_edges(conn, source_id, ids, include_tests, current_status_sql, current_status_params)
+        frontier_column = "e.from_node_id"
+        params: list[Any] = [
             source_id,
             contract.calls_edge_type,
             *current_status_params,
             *ids,
             include_tests,
-        ])
+        ]
         rows = conn.execute(
             f"""
             SELECT e.*,
@@ -257,11 +266,9 @@ class EntrypointFlowGraphRepository:
                    target_state.graph_id AS to_graph_id,
                    target_state.content_identity AS to_graph_revision
             FROM analysis_graph_edges e
-            {source_node_join} analysis_graph_nodes fn
+            LEFT JOIN analysis_graph_nodes fn
               ON fn.source_id = e.source_id
              AND fn.id = e.from_node_id
-             {source_node_membership}
-             {source_node_test}
             LEFT JOIN analysis_graph_nodes tn
               ON tn.id = e.to_node_id
             LEFT JOIN analysis_graph_state target_state
@@ -276,6 +283,76 @@ class EntrypointFlowGraphRepository:
             ORDER BY {frontier_column}, e.relative_path, e.id
             """,
             params,
+        ).fetchall()
+        projected: List[Dict[str, Any]] = []
+        for row in rows:
+            item = self.graph_store._graph_edge_projection(self.graph_store._row_dict(row))
+            item["sourceId"] = row["source_id"]
+            item["flowDomain"] = item.get("flowDomain") or row["effective_flow_domain"]
+            projected.append(item)
+        return projected
+
+    def _query_incoming_call_edges(
+        self,
+        conn: Any,
+        target_source_id: str,
+        ids: list[str],
+        include_tests: bool,
+        current_status_sql: str,
+        current_status_params: Sequence[Any],
+    ) -> List[Dict[str, Any]]:
+        placeholders = ",".join("?" for _ in ids)
+        contract = graph_query_contract()
+        rows = conn.execute(
+            f"""
+            SELECT e.*,
+                   {self.graph_store._inventory_flow_domain_sql("e")} AS effective_flow_domain,
+                   fn.display_name AS from_display_name,
+                   fn.qualified_name AS from_qualified_name,
+                   fn.name AS from_name,
+                   tn.display_name AS to_display_name,
+                   tn.qualified_name AS to_qualified_name,
+                   tn.name AS to_name,
+                   tn.source_id AS to_source_id,
+                   target_state.graph_id AS to_graph_id,
+                   target_state.content_identity AS to_graph_revision
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes tn
+              ON tn.source_id = ?
+             AND tn.id = e.to_node_id
+             AND tn.status IN ({current_status_sql})
+             AND {self.graph_store._inventory_membership_graph_node_clause("tn")}
+             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("tn")}, '') != 'TEST')
+            JOIN analysis_graph_state target_state
+              ON target_state.source_id = tn.source_id
+             AND target_state.status = 'READY'
+            JOIN analysis_graph_nodes fn
+              ON fn.source_id = e.source_id
+             AND fn.id = e.from_node_id
+             AND fn.status IN ({current_status_sql})
+             AND {self.graph_store._inventory_membership_graph_node_clause("fn")}
+             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("fn")}, '') != 'TEST')
+            JOIN analysis_graph_state caller_state
+              ON caller_state.source_id = e.source_id
+             AND caller_state.status = 'READY'
+            WHERE e.edge_type = ?
+              AND e.status IN ({current_status_sql})
+              AND {self.graph_store._inventory_membership_graph_edge_clause("e")}
+              AND e.to_node_id IN ({placeholders})
+              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("e")}, '') != 'TEST')
+            ORDER BY e.to_node_id, e.relative_path, e.id
+            """,
+            [
+                target_source_id,
+                *current_status_params,
+                include_tests,
+                *current_status_params,
+                include_tests,
+                contract.calls_edge_type,
+                *current_status_params,
+                *ids,
+                include_tests,
+            ],
         ).fetchall()
         projected: List[Dict[str, Any]] = []
         for row in rows:
@@ -385,6 +462,12 @@ class EntrypointFlowGraphRepository:
         graph_id = str(identity.get("graphId") or "")
         revision = str(identity.get("graphRevision") or graph_id)
         item_revision = item.graph_revision or item.graph_id
+        return bool(item_revision) and item_revision in {graph_id, revision}
+
+    def _matches_target_identity(self, edge: FlowGraphEdge, identity: dict[str, str | None]) -> bool:
+        graph_id = str(identity.get("graphId") or "")
+        revision = str(identity.get("graphRevision") or graph_id)
+        item_revision = edge.to_graph_revision or edge.to_graph_id
         return bool(item_revision) and item_revision in {graph_id, revision}
 
     def _from_key(self, edge: FlowGraphEdge) -> FlowNodeKey:

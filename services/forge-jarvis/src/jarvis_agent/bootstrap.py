@@ -39,7 +39,7 @@ def build_dependencies(config: AppConfig) -> JarvisDependencies:
         knowledge_client=KnowledgeClient(
             base_url=config.knowledge.base_url,
             timeout_seconds=config.knowledge.request_timeout_seconds,
-            flow_explanation_timeout_seconds=config.knowledge.flow_explanation_request_timeout_seconds,
+            human_query_timeout_seconds=config.knowledge.human_query_request_timeout_seconds,
         ),
         model_client=OllamaClient(
             base_url=config.model.ollama_base_url,

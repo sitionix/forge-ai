@@ -12,8 +12,8 @@ from pydantic import AnyHttpUrl, BaseModel, Field, root_validator, validator
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
 DEFAULT_GENERATIVE_MODEL = "qwen2.5-coder:14b"
 DEFAULT_GENERATIVE_CONTEXT_TOKENS = 32768
-DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS = 180
-DEFAULT_FLOW_EXPLANATION_TRANSPORT_GRACE_SECONDS = 5
+DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS = 180
+DEFAULT_HUMAN_QUERY_TRANSPORT_GRACE_SECONDS = 5
 
 
 class LoggingSettings(BaseModel):
@@ -56,17 +56,17 @@ class ModelRuntimeSettings(BaseModel):
     request_timeout_seconds: int = Field(default=120, ge=1)
 
 
-class FlowExplanationQuerySettings(BaseModel):
-    request_timeout_seconds: float = Field(default=DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS, gt=0)
+class HumanQuerySettings(BaseModel):
+    request_timeout_seconds: float = Field(default=DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS, gt=0)
 
 
 class QuerySettings(BaseModel):
-    flow_explanation: FlowExplanationQuerySettings = Field(default_factory=FlowExplanationQuerySettings)
+    human_query: HumanQuerySettings = Field(default_factory=HumanQuerySettings)
 
 
 class JarvisKnowledgeSettings(BaseModel):
     request_timeout_seconds: float = Field(default=120, gt=0)
-    flow_explanation_transport_grace_seconds: float = Field(default=DEFAULT_FLOW_EXPLANATION_TRANSPORT_GRACE_SECONDS, gt=0)
+    human_query_transport_grace_seconds: float = Field(default=DEFAULT_HUMAN_QUERY_TRANSPORT_GRACE_SECONDS, gt=0)
 
 
 class JarvisSettings(BaseModel):
@@ -122,7 +122,7 @@ class ModelConfig(BaseModel):
 class KnowledgeConfig(BaseModel):
     base_url: str
     request_timeout_seconds: float
-    flow_explanation_request_timeout_seconds: float
+    human_query_request_timeout_seconds: float
 
 
 class AppConfig(BaseModel):
@@ -144,10 +144,10 @@ class AppConfig(BaseModel):
     def from_forge_settings(cls, settings: ForgeSettings, environ: Optional[Mapping[str, str]] = None) -> "AppConfig":
         env = dict(os.environ if environ is None else environ)
         jarvis = settings.services.jarvis
-        flow_deadline_seconds = settings.query.flow_explanation.request_timeout_seconds
-        flow_transport_timeout_seconds = _flow_explanation_transport_timeout_seconds(
+        flow_deadline_seconds = settings.query.human_query.request_timeout_seconds
+        flow_transport_timeout_seconds = _human_query_transport_timeout_seconds(
             flow_deadline_seconds,
-            jarvis.knowledge.flow_explanation_transport_grace_seconds,
+            jarvis.knowledge.human_query_transport_grace_seconds,
         )
         _require_file(jarvis.actions_file, "Jarvis actions file")
         _require_file(jarvis.system_prompt_path, "Jarvis system prompt")
@@ -167,7 +167,7 @@ class AppConfig(BaseModel):
             knowledge=KnowledgeConfig(
                 base_url=str(jarvis.knowledge_base_url).rstrip("/"),
                 request_timeout_seconds=jarvis.knowledge.request_timeout_seconds,
-                flow_explanation_request_timeout_seconds=flow_transport_timeout_seconds,
+                human_query_request_timeout_seconds=flow_transport_timeout_seconds,
             ),
             system_prompt=jarvis.system_prompt_path.read_text(encoding="utf-8"),
             allowed_actions_path=jarvis.actions_file,
@@ -292,7 +292,7 @@ def _forge_ai_data(data: Mapping[str, Any]) -> Dict[str, Any]:
 
 def _jarvis_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]) -> Dict[str, Any]:
     query = _mapping_field(forge_ai, "query")
-    flow_explanation = _mapping_field(query, "flow-explanation", "flow_explanation")
+    human_query = _mapping_field(query, "human-query", "human_query")
     services = _mapping_field(forge_ai, "services")
     jarvis = _mapping_field(services, "jarvis")
     logging = _mapping_field(forge_ai, "logging")
@@ -323,15 +323,15 @@ def _jarvis_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]
             ),
         },
         "query": {
-            "flow_explanation": {
+            "human_query": {
                 "request_timeout_seconds": float(
                     _expand(
                         str(
                             _field_value(
-                                flow_explanation,
+                                human_query,
                                 "request-timeout-seconds",
                                 "request_timeout_seconds",
-                                default=DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
+                                default=DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS,
                             )
                         ),
                         env,
@@ -351,14 +351,14 @@ def _jarvis_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, str]
                     "request_timeout_seconds": float(
                         _expand(str(_field_value(knowledge, "request-timeout-seconds", "request_timeout_seconds", default=120)), env)
                     ),
-                    "flow_explanation_transport_grace_seconds": float(
+                    "human_query_transport_grace_seconds": float(
                         _expand(
                             str(
                                 _field_value(
                                     knowledge,
-                                    "flow-explanation-transport-grace-seconds",
-                                    "flow_explanation_transport_grace_seconds",
-                                    default=DEFAULT_FLOW_EXPLANATION_TRANSPORT_GRACE_SECONDS,
+                                    "human-query-transport-grace-seconds",
+                                    "human_query_transport_grace_seconds",
+                                    default=DEFAULT_HUMAN_QUERY_TRANSPORT_GRACE_SECONDS,
                                 )
                             ),
                             env,
@@ -399,18 +399,18 @@ def _apply_jarvis_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) -> 
         jarvis["model_runtime"]["request_timeout_seconds"] = int(env["JARVIS_REQUEST_TIMEOUT_SECONDS"])
     if env.get("JARVIS_KNOWLEDGE_REQUEST_TIMEOUT_SECONDS"):
         jarvis["knowledge"]["request_timeout_seconds"] = float(env["JARVIS_KNOWLEDGE_REQUEST_TIMEOUT_SECONDS"])
-    if env.get("FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS"):
-        raw["query"]["flow_explanation"]["request_timeout_seconds"] = float(env["FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS"])
-    if env.get("JARVIS_KNOWLEDGE_FLOW_EXPLANATION_TRANSPORT_GRACE_SECONDS"):
-        jarvis["knowledge"]["flow_explanation_transport_grace_seconds"] = float(
-            env["JARVIS_KNOWLEDGE_FLOW_EXPLANATION_TRANSPORT_GRACE_SECONDS"]
+    if env.get("FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS"):
+        raw["query"]["human_query"]["request_timeout_seconds"] = float(env["FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS"])
+    if env.get("JARVIS_KNOWLEDGE_HUMAN_QUERY_TRANSPORT_GRACE_SECONDS"):
+        jarvis["knowledge"]["human_query_transport_grace_seconds"] = float(
+            env["JARVIS_KNOWLEDGE_HUMAN_QUERY_TRANSPORT_GRACE_SECONDS"]
         )
 
 
-def _flow_explanation_transport_timeout_seconds(deadline_seconds: float, grace_seconds: float) -> float:
+def _human_query_transport_timeout_seconds(deadline_seconds: float, grace_seconds: float) -> float:
     timeout_seconds = deadline_seconds + grace_seconds
     if timeout_seconds <= deadline_seconds:
-        raise ValueError("Jarvis Knowledge flow explanation transport timeout must exceed the Knowledge deadline")
+        raise ValueError("Jarvis Knowledge human query transport timeout must exceed the Knowledge deadline")
     return timeout_seconds
 
 

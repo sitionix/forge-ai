@@ -253,7 +253,7 @@ forge:
       model: qwen2.5-coder:14b
       context-tokens: 32768
     query:
-      flow-explanation:
+      human-query:
         request-timeout-seconds: 180
     services:
       jarvis:
@@ -264,7 +264,7 @@ forge:
           request-timeout-seconds: 120
         knowledge:
           request-timeout-seconds: 120
-          flow-explanation-transport-grace-seconds: 5
+          human-query-transport-grace-seconds: 5
         actions-file: "{jarvis_dir / "allowed-actions.yaml"}"
         system-prompt-path: "{jarvis_dir / "system-prompt.md"}"
 """.lstrip(),

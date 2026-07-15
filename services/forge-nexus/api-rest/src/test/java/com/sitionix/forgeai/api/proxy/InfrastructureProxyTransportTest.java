@@ -29,20 +29,20 @@ import org.springframework.http.ResponseEntity;
 class InfrastructureProxyTransportTest {
 
     @Test
-    void explanationRouteRequestTimeoutUsesConfiguredKnowledgeDeadlinePlusTransportGrace() {
+    void humanQueryRouteRequestTimeoutUsesConfiguredKnowledgeDeadlinePlusTransportGrace() {
         final HttpClient httpClient = mock(HttpClient.class);
         final CompletableFuture<HttpResponse<InputStream>> upstream = new CompletableFuture<>();
         when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
                 .thenReturn(upstream);
 
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        properties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofSeconds(7));
-        final ForgeAiFlowExplanationProperties flowExplanationProperties = new ForgeAiFlowExplanationProperties();
-        flowExplanationProperties.setRequestTimeoutSeconds(42);
+        properties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ofSeconds(7));
+        final ForgeAiHumanQueryProperties humanQueryProperties = new ForgeAiHumanQueryProperties();
+        humanQueryProperties.setRequestTimeoutSeconds(42);
         final ObjectMapper objectMapper = new ObjectMapper();
         final InfrastructureProxyTransport transport = new InfrastructureProxyTransport(
                 httpClient,
-                new InfrastructureProxyRouteRegistry(properties, flowExplanationProperties),
+                new InfrastructureProxyRouteRegistry(properties, humanQueryProperties),
                 properties,
                 new InfrastructureProxyResponseMapper(objectMapper),
                 objectMapper
@@ -71,14 +71,14 @@ class InfrastructureProxyTransportTest {
                 .thenReturn(upstream);
 
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        properties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofSeconds(7));
+        properties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ofSeconds(7));
         properties.getProxy().setJarvisQueryTransportGrace(Duration.ofSeconds(11));
-        final ForgeAiFlowExplanationProperties flowExplanationProperties = new ForgeAiFlowExplanationProperties();
-        flowExplanationProperties.setRequestTimeoutSeconds(42);
+        final ForgeAiHumanQueryProperties humanQueryProperties = new ForgeAiHumanQueryProperties();
+        humanQueryProperties.setRequestTimeoutSeconds(42);
         final ObjectMapper objectMapper = new ObjectMapper();
         final InfrastructureProxyTransport transport = new InfrastructureProxyTransport(
                 httpClient,
-                new InfrastructureProxyRouteRegistry(properties, flowExplanationProperties),
+                new InfrastructureProxyRouteRegistry(properties, humanQueryProperties),
                 properties,
                 new InfrastructureProxyResponseMapper(objectMapper),
                 objectMapper
@@ -121,14 +121,14 @@ class InfrastructureProxyTransportTest {
 
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
         properties.getJarvis().setReadTimeout(Duration.ofMillis(120));
-        properties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofMillis(50));
+        properties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ofMillis(50));
         properties.getProxy().setJarvisQueryTransportGrace(Duration.ofMillis(50));
-        final ForgeAiFlowExplanationProperties flowExplanationProperties = new ForgeAiFlowExplanationProperties();
-        flowExplanationProperties.setRequestTimeout(Duration.ofMillis(100));
+        final ForgeAiHumanQueryProperties humanQueryProperties = new ForgeAiHumanQueryProperties();
+        humanQueryProperties.setRequestTimeout(Duration.ofMillis(100));
         final ObjectMapper objectMapper = new ObjectMapper();
         final InfrastructureProxyTransport transport = new InfrastructureProxyTransport(
                 httpClient,
-                new InfrastructureProxyRouteRegistry(properties, flowExplanationProperties),
+                new InfrastructureProxyRouteRegistry(properties, humanQueryProperties),
                 properties,
                 new InfrastructureProxyResponseMapper(objectMapper),
                 objectMapper
@@ -153,7 +153,7 @@ class InfrastructureProxyTransportTest {
     }
 
     @Test
-    void explanationRouteDoesNotTimeoutBeforeKnowledgeControlledDeadlineResponse() throws Exception {
+    void humanQueryRouteDoesNotTimeoutBeforeKnowledgeControlledDeadlineResponse() throws Exception {
         final HttpClient httpClient = mock(HttpClient.class);
         final Duration controlledResponseDelay = Duration.ofMillis(25);
         when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
@@ -173,13 +173,13 @@ class InfrastructureProxyTransportTest {
                 });
 
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        properties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofMillis(20));
-        final ForgeAiFlowExplanationProperties flowExplanationProperties = new ForgeAiFlowExplanationProperties();
-        flowExplanationProperties.setRequestTimeoutSeconds(1);
+        properties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ofMillis(20));
+        final ForgeAiHumanQueryProperties humanQueryProperties = new ForgeAiHumanQueryProperties();
+        humanQueryProperties.setRequestTimeoutSeconds(1);
         final ObjectMapper objectMapper = new ObjectMapper();
         final InfrastructureProxyTransport transport = new InfrastructureProxyTransport(
                 httpClient,
-                new InfrastructureProxyRouteRegistry(properties, flowExplanationProperties),
+                new InfrastructureProxyRouteRegistry(properties, humanQueryProperties),
                 properties,
                 new InfrastructureProxyResponseMapper(objectMapper),
                 objectMapper

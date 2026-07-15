@@ -6,8 +6,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 @Component
-@ConfigurationProperties(prefix = "forge.ai.query.flow-explanation")
-public class ForgeAiFlowExplanationProperties {
+@ConfigurationProperties(prefix = "forge.ai.query.human-query")
+public class ForgeAiHumanQueryProperties {
 
     private int requestTimeoutSeconds = 180;
     private Duration requestTimeout;
@@ -15,7 +15,7 @@ public class ForgeAiFlowExplanationProperties {
     @PostConstruct
     public void validate() {
         if (this.requestTimeoutSeconds <= 0 || this.requestTimeout().compareTo(Duration.ZERO) <= 0) {
-            throw new IllegalStateException("Flow explanation request timeout must be positive");
+            throw new IllegalStateException("Human query request timeout must be positive");
         }
     }
 
@@ -38,7 +38,7 @@ public class ForgeAiFlowExplanationProperties {
     public Duration requestTimeout() {
         final Duration timeout = this.requestTimeout == null ? Duration.ofSeconds(this.requestTimeoutSeconds) : this.requestTimeout;
         if (timeout.compareTo(Duration.ZERO) <= 0) {
-            throw new IllegalStateException("Flow explanation request timeout must be positive");
+            throw new IllegalStateException("Human query request timeout must be positive");
         }
         return timeout;
     }

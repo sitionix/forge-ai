@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from knowledge_service.entrypoint_kinds import EntrypointKind, entrypoint_kind_for_annotation
+from knowledge_service.entrypoint_kinds import EntrypointExecutionKind, EntrypointKind, entrypoint_kind_for_annotation
 from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
 from knowledge_service.graph_call_intelligence import classify_call_metadata
 from knowledge_service.java_parser_adapter import JavaParserAdapter
@@ -562,18 +562,20 @@ class StaticGraphMaterializer:
         claims: List[GraphClaim] = []
         owner_route = self._route_from_annotations(owner_annotations)
         interface_method = self._interface_method_name(result, target_local_id)
+        execution_kind = EntrypointExecutionKind.CONTRACT_DECLARATION.value if interface_method else EntrypointExecutionKind.EXECUTABLE.value
         for annotation in annotations:
             simple = annotation.name.rsplit(".", 1)[-1]
             if simple not in self.ENTRYPOINT_ANNOTATIONS:
                 continue
             route = self._join_routes(owner_route, self._annotation_route(annotation))
-            http_method = self.HTTP_METHODS.get(simple)
+            http_method = self._http_method_from_annotation(simple, annotation)
             metadata = self._metadata(
                 result,
                 "ENTRYPOINT_HINT",
                 self._stable_key(result, "ENTRYPOINT", target_local_id, simple, str(annotation.line_start)),
                 {
                     "entrypointKind": self._entrypoint_kind(simple),
+                    "entrypointExecutionKind": execution_kind,
                     "origin": "STATIC",
                     "annotation": simple,
                     "annotationName": simple,
@@ -622,6 +624,7 @@ class StaticGraphMaterializer:
             self._stable_key(result, "ENTRYPOINT", target_local_id, "MAIN", str(callable_item.line_start)),
             {
                 "entrypointKind": EntrypointKind.BOOTSTRAP.value,
+                "entrypointExecutionKind": EntrypointExecutionKind.EXECUTABLE.value,
                 "annotation": "SpringBootApplication" if "SpringBootApplication" in owner_annotation_names else None,
                 "sourceAnnotationLine": callable_item.line_start,
             },
@@ -637,59 +640,7 @@ class StaticGraphMaterializer:
         )
 
     def _call_boundary_claims(self, result: StructuralParseResult, callsite: StructuralCallsite) -> List[GraphClaim]:
-        receiver_type = str(callsite.receiver_type_hint or callsite.target_type_text or "")
-        method = str(callsite.method_name or "")
-        raw = str(callsite.raw_text or "")
-        receiver_lower = receiver_type.lower()
-        method_lower = method.lower()
-        claim_kind: Optional[str] = None
-        summary: Optional[str] = None
-        quality = "TRUSTED"
-        confidence = 0.78
-        if self._is_data_receiver(receiver_type) and any(token in method_lower for token in ("save", "delete", "update", "insert", "persist", "remove")):
-            claim_kind = "DATA_ACCESS_HINT"
-            summary = "Writes data through a typed persistence receiver."
-        elif self._is_data_receiver(receiver_type) and any(
-            token in method_lower for token in ("find", "get", "load", "query", "read", "select", "exists", "count")
-        ):
-            claim_kind = "DATA_ACCESS_HINT"
-            summary = "Reads data through a typed persistence receiver."
-        elif "kafkatemplate" in receiver_lower and method == "send":
-            claim_kind = "SIDE_EFFECT"
-            summary = "Publishes a message through a Kafka template."
-        elif any(token in receiver_type for token in ("WebClient", "RestClient", "Feign")) or any(token in raw for token in ("WebClient", "RestClient")):
-            claim_kind = "EXTERNAL_BOUNDARY_HINT"
-            summary = "Calls an external service/client boundary."
-            confidence = 0.72
-        elif method == "getProperty" or "@Value" in raw:
-            claim_kind = "CONFIG_REFERENCE"
-            summary = "References configuration at runtime."
-            confidence = 0.72
-        if not claim_kind or not summary:
-            return []
-        metadata = self._metadata(
-            result,
-            claim_kind,
-            self._stable_key(result, claim_kind, callsite.caller_callable_local_id, callsite.stable_key),
-            {
-                "callsiteStableKey": callsite.stable_key,
-                "receiverText": callsite.receiver_text,
-                "receiverTypeHint": callsite.receiver_type_hint,
-                "methodName": callsite.method_name,
-                "status": quality,
-            },
-        )
-        return [
-            GraphClaim(
-                localId=metadata["stableKey"],
-                nodeLocalId=callsite.caller_callable_local_id,
-                claimKind=claim_kind,
-                summary=summary,
-                evidence=[self._evidence(callsite.line_start, callsite.line_end, callsite.raw_text)],
-                confidence=confidence,
-                metadata=metadata,
-            )
-        ]
+        return []
 
     def _field_config_claims(self, result: StructuralParseResult, target_local_id: str, annotations: List[StructuralAnnotation]) -> List[GraphClaim]:
         claims: List[GraphClaim] = []
@@ -739,6 +690,14 @@ class StaticGraphMaterializer:
         match = re.search(r'"([^"]*)"', raw)
         return match.group(1) if match else None
 
+    def _http_method_from_annotation(self, annotation_name: str, annotation: StructuralAnnotation) -> Optional[str]:
+        method = self.HTTP_METHODS.get(annotation_name)
+        if method is not None or annotation_name != "RequestMapping":
+            return method
+        raw = annotation.arguments_raw or ""
+        match = re.search(r"\bRequestMethod\s*\.\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE)\b", raw)
+        return match.group(1) if match else None
+
     def _annotation_first_identifier(self, annotation: StructuralAnnotation) -> Optional[str]:
         raw = annotation.arguments_raw or ""
         match = re.search(r"([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.class", raw)
@@ -774,10 +733,6 @@ class StaticGraphMaterializer:
             is_http=annotation_name in self.HTTP_METHODS or annotation_name == "RequestMapping",
         )
         return kind or EntrypointKind.MESSAGE.value
-
-    def _is_data_receiver(self, type_name: str) -> bool:
-        value = str(type_name or "").lower()
-        return any(token in value for token in ("repository", "entitymanager", "jdbctemplate", "mongotemplate", "dao"))
 
     def _metadata(self, result: StructuralParseResult, source_kind: str, stable_key: str, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         metadata = {

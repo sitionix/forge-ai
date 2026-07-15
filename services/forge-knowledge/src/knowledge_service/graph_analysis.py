@@ -23,6 +23,7 @@ EDGE_METADATA_ALLOWLIST = {
     "unresolvedReason",
 }
 CLAIM_METADATA_ALLOWLIST = {
+    "entrypointExecutionKind",
     "entrypointKind",
     "exceptionType",
     "httpMethod",

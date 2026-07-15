@@ -53,8 +53,6 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeHumanQueryResponse,
     KnowledgeQueryDiagnostic,
     KnowledgeQueryRequest,
-    KnowledgeQueryResponse,
-    KnowledgeQueryStatus,
     KnowledgeQueryToolContextResponse,
 )
 from knowledge_service.knowledge_query_service import build_knowledge_query_service
@@ -201,7 +199,7 @@ def create_app(
                 "provider": config.analysis_provider,
                 "model": config.analysis_model,
                 "contextTokens": config.analysis_context_tokens,
-                "flowExplanationRequestTimeoutSeconds": config.flow_explanation_request_timeout_seconds,
+                "humanQueryRequestTimeoutSeconds": config.human_query_request_timeout_seconds,
             },
             "semantic": _semantic_status(request.app, config),
         }
@@ -269,7 +267,7 @@ def create_app(
     )
     async def knowledge_query(request: Request, body: KnowledgeQueryRequest):
         config, _ = _state(request)
-        deadline_at = time.monotonic() + _flow_explanation_request_deadline_seconds(config)
+        deadline_at = time.monotonic() + _human_query_request_deadline_seconds(config)
         cancel_event = threading.Event()
         return await _run_in_thread(
             _knowledge_human_query_response,
@@ -646,25 +644,6 @@ def _graph_view_response(
     )
 
 
-def _knowledge_query_response(request: Request, body: KnowledgeQueryRequest) -> KnowledgeQueryResponse:
-    config, deps = _state(request)
-    try:
-        return build_knowledge_query_service(deps.graph_store, config).query(body)
-    except Exception:
-        return KnowledgeQueryResponse(
-            queryId="query-failed",
-            status=KnowledgeQueryStatus.QUERY_FAILED,
-            intent=body.intent,
-            diagnostics=[
-                KnowledgeQueryDiagnostic(
-                    code="KNOWLEDGE_QUERY_FAILED",
-                    message="Knowledge query failed before a factual bundle could be built.",
-                    severity="ERROR",
-                )
-            ],
-        )
-
-
 def _knowledge_human_query_response(
     request: Request,
     body: KnowledgeQueryRequest,
@@ -672,10 +651,10 @@ def _knowledge_human_query_response(
     deadline_at: float | None = None,
 ):
     config, deps = _state(request)
-    request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
+    request_deadline_seconds = _human_query_request_deadline_seconds(config)
     deadline_at = deadline_at if deadline_at is not None else time.monotonic() + request_deadline_seconds
     if time.monotonic() >= deadline_at:
-        return _expired_flow_explanation_response(body)
+        return _expired_human_query_response(body)
     try:
         interpretation_service, close_interpreter = _query_interpretation_service(request, config)
         try:
@@ -720,8 +699,8 @@ def _knowledge_human_query_response(
     except HumanAnswerDeadlineExceeded:
         return _public_error_response(
             504,
-            "FLOW_EXPLANATION_TIMEOUT",
-            "Knowledge flow explanation timed out.",
+            "HUMAN_QUERY_TIMEOUT",
+            "Knowledge human query timed out.",
         )
     except HumanAnswerContextBudgetExceeded:
         return _public_error_response(
@@ -749,7 +728,7 @@ def _knowledge_query_tool_context_response(
 ):
     config, deps = _state(request)
     try:
-        deadline_at = time.monotonic() + _flow_explanation_request_deadline_seconds(config)
+        deadline_at = time.monotonic() + _human_query_request_deadline_seconds(config)
         interpretation_service, close_interpreter = _query_interpretation_service(request, config)
         try:
             retrieval_plan = interpretation_service.interpret(body, deadline_at=deadline_at)
@@ -789,17 +768,17 @@ def _knowledge_query_tool_context_response(
 def _deadline_exhausted_diagnostic() -> KnowledgeQueryDiagnostic:
     return KnowledgeQueryDiagnostic(
         code=FLOW_EXPLANATION_LIMIT_REACHED,
-        message="Flow explanation request deadline was exhausted before flow explanation work could start.",
+        message="Human query request deadline was exhausted before human answer work could start.",
         severity="WARN",
         metadata={"stage": "BEFORE_QUERY"},
     )
 
 
-def _expired_flow_explanation_response(body: KnowledgeQueryRequest) -> JSONResponse:
+def _expired_human_query_response(body: KnowledgeQueryRequest) -> JSONResponse:
     return _public_error_response(
         504,
-        "FLOW_EXPLANATION_TIMEOUT",
-        "Knowledge flow explanation timed out.",
+        "HUMAN_QUERY_TIMEOUT",
+        "Knowledge human query timed out.",
     )
 
 
@@ -946,7 +925,7 @@ def _human_answer_service(
         DEFAULT_GENERATIVE_CONTEXT_TOKENS,
         int(config.analysis_context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS) * 4,
     )
-    request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
+    request_deadline_seconds = _human_query_request_deadline_seconds(config)
     if injected_provider is not None:
         return HumanFlowAnswerService(
             injected_provider,
@@ -980,7 +959,7 @@ def _query_interpretation_service(
     config: AppConfig,
 ) -> tuple[QueryInterpretationService, Optional[Any]]:
     injected_provider = getattr(request.app.state, "query_interpretation_provider", None)
-    request_deadline_seconds = _flow_explanation_request_deadline_seconds(config)
+    request_deadline_seconds = _human_query_request_deadline_seconds(config)
     default_response_language = getattr(config, "query_default_response_language", "en")
     if injected_provider is not None:
         return QueryInterpretationService(
@@ -1008,8 +987,8 @@ def _query_interpretation_service(
     ), provider.close
 
 
-def _flow_explanation_request_deadline_seconds(config: AppConfig) -> float:
-    return max(0.001, float(config.flow_explanation_request_timeout_seconds))
+def _human_query_request_deadline_seconds(config: AppConfig) -> float:
+    return max(0.001, float(config.human_query_request_timeout_seconds))
 
 
 def _current_file_progress(dependencies: KnowledgeDependencies) -> Dict[str, Any]:

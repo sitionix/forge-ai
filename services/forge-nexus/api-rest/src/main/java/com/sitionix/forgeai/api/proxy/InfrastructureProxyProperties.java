@@ -117,12 +117,12 @@ public class InfrastructureProxyProperties {
     }
 
     public static class ProxyProperties {
-        private static final Duration DEFAULT_KNOWLEDGE_EXPLANATION_TRANSPORT_GRACE = Duration.ofSeconds(5);
+        private static final Duration DEFAULT_KNOWLEDGE_HUMAN_QUERY_TRANSPORT_GRACE = Duration.ofSeconds(5);
         private static final Duration DEFAULT_JARVIS_QUERY_TRANSPORT_GRACE = Duration.ofSeconds(5);
 
         private int maxRequestBodyBytes = 1024 * 1024;
         private int maxResponseBodyBytes = 5 * 1024 * 1024;
-        private Duration knowledgeExplanationTransportGrace = DEFAULT_KNOWLEDGE_EXPLANATION_TRANSPORT_GRACE;
+        private Duration knowledgeHumanQueryTransportGrace = DEFAULT_KNOWLEDGE_HUMAN_QUERY_TRANSPORT_GRACE;
         private Duration jarvisQueryTransportGrace = DEFAULT_JARVIS_QUERY_TRANSPORT_GRACE;
 
         public int getMaxRequestBodyBytes() {
@@ -141,12 +141,12 @@ public class InfrastructureProxyProperties {
             this.maxResponseBodyBytes = maxResponseBodyBytes;
         }
 
-        public Duration getKnowledgeExplanationTransportGrace() {
-            return this.knowledgeExplanationTransportGrace;
+        public Duration getKnowledgeHumanQueryTransportGrace() {
+            return this.knowledgeHumanQueryTransportGrace;
         }
 
-        public void setKnowledgeExplanationTransportGrace(final Duration knowledgeExplanationTransportGrace) {
-            this.knowledgeExplanationTransportGrace = knowledgeExplanationTransportGrace;
+        public void setKnowledgeHumanQueryTransportGrace(final Duration knowledgeHumanQueryTransportGrace) {
+            this.knowledgeHumanQueryTransportGrace = knowledgeHumanQueryTransportGrace;
         }
 
         public Duration getJarvisQueryTransportGrace() {
@@ -157,30 +157,30 @@ public class InfrastructureProxyProperties {
             this.jarvisQueryTransportGrace = jarvisQueryTransportGrace;
         }
 
-        Duration knowledgeExplanationReadTimeout(final Duration requestDeadline) {
+        Duration knowledgeHumanQueryReadTimeout(final Duration requestDeadline) {
             if (requestDeadline == null) {
-                throw new IllegalArgumentException("Flow explanation request deadline is required");
+                throw new IllegalArgumentException("Human query request deadline is required");
             }
-            final Duration grace = this.knowledgeExplanationTransportGrace == null
-                    ? DEFAULT_KNOWLEDGE_EXPLANATION_TRANSPORT_GRACE
-                    : this.knowledgeExplanationTransportGrace;
+            final Duration grace = this.knowledgeHumanQueryTransportGrace == null
+                    ? DEFAULT_KNOWLEDGE_HUMAN_QUERY_TRANSPORT_GRACE
+                    : this.knowledgeHumanQueryTransportGrace;
             return requestDeadline.plus(grace);
         }
 
         Duration jarvisQueryReadTimeout(final Duration requestDeadline) {
-            final Duration jarvisKnowledgeTimeout = this.knowledgeExplanationReadTimeout(requestDeadline);
+            final Duration jarvisKnowledgeTimeout = this.knowledgeHumanQueryReadTimeout(requestDeadline);
             final Duration grace = this.jarvisQueryTransportGrace == null
                     ? DEFAULT_JARVIS_QUERY_TRANSPORT_GRACE
                     : this.jarvisQueryTransportGrace;
             return jarvisKnowledgeTimeout.plus(grace);
         }
 
-        void validateFlowExplanationTimeoutHierarchy(final Duration requestDeadline) {
-            final Duration jarvisKnowledgeTimeout = this.knowledgeExplanationReadTimeout(requestDeadline);
+        void validateHumanQueryTimeoutHierarchy(final Duration requestDeadline) {
+            final Duration jarvisKnowledgeTimeout = this.knowledgeHumanQueryReadTimeout(requestDeadline);
             final Duration nexusJarvisTimeout = this.jarvisQueryReadTimeout(requestDeadline);
             if (jarvisKnowledgeTimeout.compareTo(requestDeadline) <= 0) {
                 throw new IllegalStateException(
-                        "Jarvis Knowledge flow explanation transport timeout must exceed the Knowledge deadline"
+                        "Jarvis Knowledge human query transport timeout must exceed the Knowledge deadline"
                 );
             }
             if (nexusJarvisTimeout.compareTo(jarvisKnowledgeTimeout) <= 0) {

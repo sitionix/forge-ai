@@ -9,11 +9,11 @@ import org.junit.jupiter.api.Test;
 class InfrastructureProxyRouteRegistryTest {
 
     @Test
-    void explanationRoutesUseSynchronousExplanationReadTimeoutContract() {
+    void humanQueryRoutesUseSynchronousHumanQueryReadTimeoutContract() {
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
         final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(
                 properties,
-                new ForgeAiFlowExplanationProperties()
+                new ForgeAiHumanQueryProperties()
         );
 
         assertThat(registry.require("knowledge.query").readTimeout())
@@ -27,16 +27,16 @@ class InfrastructureProxyRouteRegistryTest {
     }
 
     @Test
-    void explanationRouteTimeoutsTrackConfiguredKnowledgeDeadlineAndTransportGraces() {
+    void humanQueryRouteTimeoutsTrackConfiguredKnowledgeDeadlineAndTransportGraces() {
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        properties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ofSeconds(7));
+        properties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ofSeconds(7));
         properties.getProxy().setJarvisQueryTransportGrace(Duration.ofSeconds(11));
-        final ForgeAiFlowExplanationProperties flowExplanationProperties = new ForgeAiFlowExplanationProperties();
-        flowExplanationProperties.setRequestTimeoutSeconds(42);
+        final ForgeAiHumanQueryProperties humanQueryProperties = new ForgeAiHumanQueryProperties();
+        humanQueryProperties.setRequestTimeoutSeconds(42);
 
         final InfrastructureProxyRouteRegistry registry = new InfrastructureProxyRouteRegistry(
                 properties,
-                flowExplanationProperties
+                humanQueryProperties
         );
 
         assertThat(registry.require("knowledge.query").readTimeout())
@@ -50,11 +50,11 @@ class InfrastructureProxyRouteRegistryTest {
     @Test
     void invalidKnowledgeTransportTimeoutHierarchyFailsStartup() {
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        properties.getProxy().setKnowledgeExplanationTransportGrace(Duration.ZERO);
+        properties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ZERO);
 
-        assertThatThrownBy(() -> new InfrastructureProxyRouteRegistry(properties, new ForgeAiFlowExplanationProperties()))
+        assertThatThrownBy(() -> new InfrastructureProxyRouteRegistry(properties, new ForgeAiHumanQueryProperties()))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Jarvis Knowledge flow explanation transport timeout must exceed");
+                .hasMessageContaining("Jarvis Knowledge human query transport timeout must exceed");
     }
 
     @Test
@@ -62,7 +62,7 @@ class InfrastructureProxyRouteRegistryTest {
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
         properties.getProxy().setJarvisQueryTransportGrace(Duration.ZERO);
 
-        assertThatThrownBy(() -> new InfrastructureProxyRouteRegistry(properties, new ForgeAiFlowExplanationProperties()))
+        assertThatThrownBy(() -> new InfrastructureProxyRouteRegistry(properties, new ForgeAiHumanQueryProperties()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Nexus Jarvis query transport timeout must exceed");
     }

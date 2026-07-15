@@ -13,7 +13,7 @@ import httpx
 
 from knowledge_service.answer_language import HumanAnswerTextValidator
 from knowledge_service.config import (
-    DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
+    DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS,
     DEFAULT_GENERATIVE_CONTEXT_TOKENS,
 )
 from knowledge_service.entrypoint_kinds import tree_kind_for_entrypoint, trigger_kind_for_entrypoint
@@ -45,6 +45,46 @@ _DEADLINE_COMPLETION_GRACE_SECONDS = 0.005
 class FlowExplanationProviderResult:
     raw_text: str
     prompt_char_length: int
+
+
+@dataclass(frozen=True)
+class HumanAnswerContextPolicy:
+    max_evidence_per_item: int = 3
+    max_excerpt_chars: int = 260
+
+    def compact_evidence(self, evidence: Sequence[Mapping[str, Any]]) -> tuple[list[Dict[str, Any]], bool]:
+        compacted = False
+        deduped: list[Dict[str, Any]] = []
+        seen_keys: set[tuple[str, str, str, str]] = set()
+        seen_excerpts: set[str] = set()
+        for raw in evidence:
+            item = dict(raw)
+            key = (
+                str(item.get("path") or ""),
+                str(item.get("lineStart") or ""),
+                str(item.get("lineEnd") or ""),
+                str(item.get("excerpt") or ""),
+            )
+            if key in seen_keys:
+                compacted = True
+                continue
+            seen_keys.add(key)
+            excerpt = item.get("excerpt")
+            if excerpt is not None:
+                text = str(excerpt)
+                if text in seen_excerpts:
+                    item.pop("excerpt", None)
+                    compacted = True
+                else:
+                    seen_excerpts.add(text)
+                    if len(text) > self.max_excerpt_chars:
+                        item["excerpt"] = f"{text[: max(0, self.max_excerpt_chars - 3)]}..."
+                        compacted = True
+            deduped.append(item)
+        limited = deduped[: max(0, self.max_evidence_per_item)]
+        if len(limited) < len(deduped):
+            compacted = True
+        return limited, compacted
 
 
 class HumanAnswerGenerationFailed(Exception):
@@ -117,8 +157,11 @@ class HumanAnswerPromptRenderer:
 
 
 class CompactFlowProjector:
-    def __init__(self, boundary_classifier: FlowBoundaryClassifier | None = None) -> None:
+    def __init__(self, boundary_classifier: FlowBoundaryClassifier | None = None, context_policy: HumanAnswerContextPolicy | None = None) -> None:
         self.boundary_classifier = boundary_classifier or FLOW_BOUNDARY_CLASSIFIER
+        self.context_policy = context_policy or HumanAnswerContextPolicy()
+        self._context_compacted = False
+        self._last_context_diagnostics: List[KnowledgeQueryDiagnostic] = []
 
     def to_tool_response(self, request: KnowledgeQueryRequest, execution: Any) -> KnowledgeQueryToolContextResponse:
         return KnowledgeQueryToolContextResponse(
@@ -130,7 +173,21 @@ class CompactFlowProjector:
     def human_llm_input(self, request: KnowledgeQueryRequest, flow: EntrypointFlow, plan: QueryRetrievalPlan | None = None) -> Dict[str, Any]:
         if plan is None:
             plan = fallback_human_answer_plan(request)
+        self._context_compacted = False
         tree = self._tree(flow)
+        human_tree = self._human_tree_item(tree.entrypoint)
+        self._last_context_diagnostics = []
+        if self._context_compacted:
+            self._last_context_diagnostics.append(KnowledgeQueryDiagnostic(
+                code="HUMAN_ANSWER_CONTEXT_COMPACTED",
+                message="Human answer evidence context was compacted before prompt rendering.",
+                severity="INFO",
+                sourceId=flow.key.source_id,
+                metadata={
+                    "maxEvidencePerItem": self.context_policy.max_evidence_per_item,
+                    "maxExcerptChars": self.context_policy.max_excerpt_chars,
+                },
+            ))
         return {
             "originalQuestion": request.queryText,
             "detectedLanguage": plan.detected_language,
@@ -138,11 +195,14 @@ class CompactFlowProjector:
             "intent": plan.effective_intent,
             "source": tree.source,
             "entrypoint": tree.entrypoint.symbol,
-            "tree": self._human_tree_item(tree.entrypoint),
+            "tree": human_tree,
         }
 
     def flow_answer_identity(self, flow: EntrypointFlow) -> tuple[str, str]:
         return str(flow.key.source_id or ""), self._symbol(flow.entrypoint)
+
+    def context_diagnostics(self) -> list[KnowledgeQueryDiagnostic]:
+        return list(self._last_context_diagnostics)
 
     def _human_tree_item(self, item: FlowToolTreeItem) -> Dict[str, Any]:
         data = item.dict(exclude_none=True)
@@ -152,23 +212,12 @@ class CompactFlowProjector:
         ]
         data["children"] = children
         if data.get("evidence"):
-            data["evidence"] = [
-                {
-                    **evidence,
-                    "excerpt": self._truncate_evidence_excerpt(evidence.get("excerpt")),
-                }
-                for evidence in data["evidence"][:3]
-                if isinstance(evidence, dict)
-            ]
+            compacted, was_compacted = self.context_policy.compact_evidence(
+                [evidence for evidence in data["evidence"] if isinstance(evidence, dict)]
+            )
+            data["evidence"] = compacted
+            self._context_compacted = self._context_compacted or was_compacted
         return data
-
-    def _truncate_evidence_excerpt(self, value: Any) -> str | None:
-        if value is None:
-            return None
-        text = str(value)
-        if len(text) <= 260:
-            return text
-        return f"{text[:257]}..."
 
     def _tree(self, flow: EntrypointFlow) -> FlowToolTree:
         node_by_id = {node.node_id: node for node in flow.nodes}
@@ -433,7 +482,7 @@ class HumanFlowAnswerService:
         provider: Any,
         *,
         max_prompt_chars: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS * 4,
-        request_deadline_seconds: float = DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS,
+        request_deadline_seconds: float = DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS,
         min_call_timeout_seconds: float = _DEFAULT_MIN_CALL_TIMEOUT_SECONDS,
         projector: CompactFlowProjector | None = None,
         renderer: HumanAnswerPromptRenderer | None = None,
@@ -445,7 +494,7 @@ class HumanFlowAnswerService:
     ) -> None:
         self.provider = provider
         self.max_prompt_chars = max(4096, int(max_prompt_chars or DEFAULT_GENERATIVE_CONTEXT_TOKENS * 4))
-        self.request_deadline_seconds = max(0.001, float(request_deadline_seconds or DEFAULT_FLOW_EXPLANATION_REQUEST_DEADLINE_SECONDS))
+        self.request_deadline_seconds = max(0.001, float(request_deadline_seconds or DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS))
         self.min_call_timeout_seconds = max(0.001, float(min_call_timeout_seconds or _DEFAULT_MIN_CALL_TIMEOUT_SECONDS))
         self.projector = projector or CompactFlowProjector()
         self.renderer = renderer or HumanAnswerPromptRenderer()
@@ -479,6 +528,7 @@ class HumanFlowAnswerService:
                 if self._cancelled():
                     raise HumanAnswerDeadlineExceeded()
                 llm_input = self.projector.human_llm_input(request, flow, effective_plan)
+                diagnostics.extend(self.projector.context_diagnostics())
                 text = self._answer_one_flow(
                     llm_input,
                     deadline_at,

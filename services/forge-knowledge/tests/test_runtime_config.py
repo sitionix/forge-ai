@@ -43,10 +43,10 @@ def test_knowledge_generative_defaults_are_canonical_when_not_overridden(tmp_pat
     assert config.analysis_model == DEFAULT_GENERATIVE_MODEL
     assert config.analysis_context_tokens == DEFAULT_GENERATIVE_CONTEXT_TOKENS
     assert config.analysis_request_timeout_seconds == 180
-    assert config.flow_explanation_request_timeout_seconds == 180
+    assert config.human_query_request_timeout_seconds == 180
 
 
-def test_analyzer_and_flow_explanations_resolve_same_generative_model_and_context(tmp_path):
+def test_analyzer_and_human_answer_provider_resolve_same_generative_model_and_context(tmp_path):
     config_file = _minimal_forge_config(tmp_path)
     settings = load_forge_settings(config_file=config_file, environ=_env(tmp_path, config_file))
     config = AppConfig.from_forge_settings(settings)
@@ -71,7 +71,7 @@ def test_analyzer_and_flow_explanations_resolve_same_generative_model_and_contex
         flow.close()
 
 
-def test_root_generative_config_changes_knowledge_analyzer_and_flow_explanations(tmp_path):
+def test_root_generative_config_changes_knowledge_analyzer_and_human_answer_provider(tmp_path):
     config_file = _minimal_forge_config(
         tmp_path,
         generative_model="root-shared-model",
@@ -102,28 +102,28 @@ def test_root_generative_config_changes_knowledge_analyzer_and_flow_explanations
         flow.close()
 
 
-def test_root_flow_explanation_timeout_changes_knowledge_deadline(tmp_path):
-    config_file = _minimal_forge_config(tmp_path, flow_explanation_timeout_seconds=42)
+def test_root_human_query_timeout_changes_knowledge_deadline(tmp_path):
+    config_file = _minimal_forge_config(tmp_path, human_query_timeout_seconds=42)
 
     settings = load_forge_settings(config_file=config_file, environ=_env(tmp_path, config_file))
     config = AppConfig.from_forge_settings(settings)
 
-    assert config.flow_explanation_request_timeout_seconds == 42
+    assert config.human_query_request_timeout_seconds == 42
 
 
-def test_shared_flow_explanation_timeout_env_override_changes_knowledge_deadline(tmp_path):
+def test_shared_human_query_timeout_env_override_changes_knowledge_deadline(tmp_path):
     config_file = _minimal_forge_config(tmp_path)
     environ = _env(tmp_path, config_file)
-    environ["FORGE_FLOW_EXPLANATION_REQUEST_TIMEOUT_SECONDS"] = "73"
+    environ["FORGE_HUMAN_QUERY_REQUEST_TIMEOUT_SECONDS"] = "73"
 
     settings = load_forge_settings(config_file=config_file, environ=environ)
     config = AppConfig.from_forge_settings(settings)
 
-    assert config.flow_explanation_request_timeout_seconds == 73
+    assert config.human_query_request_timeout_seconds == 73
 
 
-def test_analyzer_timeout_env_override_does_not_change_flow_explanation_deadline(tmp_path):
-    config_file = _minimal_forge_config(tmp_path, flow_explanation_timeout_seconds=42)
+def test_analyzer_timeout_env_override_does_not_change_human_query_deadline(tmp_path):
+    config_file = _minimal_forge_config(tmp_path, human_query_timeout_seconds=42)
     environ = _env(tmp_path, config_file)
     environ["KNOWLEDGE_ANALYSIS_REQUEST_TIMEOUT_SECONDS"] = "300"
 
@@ -131,7 +131,7 @@ def test_analyzer_timeout_env_override_does_not_change_flow_explanation_deadline
     config = AppConfig.from_forge_settings(settings)
 
     assert config.analysis_request_timeout_seconds == 300
-    assert config.flow_explanation_request_timeout_seconds == 42
+    assert config.human_query_request_timeout_seconds == 42
 
 
 @pytest.mark.parametrize("provider", ["openai", "custom", ""])
@@ -156,7 +156,7 @@ def test_knowledge_ollama_clients_reject_context_below_minimum():
         LocalOllamaFlowExplanationClient("http://127.0.0.1:11434", "model", 120, 512)
 
 
-def test_flow_explanation_ollama_payload_uses_exact_loaded_context():
+def test_human_query_ollama_payload_uses_exact_loaded_context():
     recorder = RecordingFlowHttpClient()
     client = LocalOllamaFlowExplanationClient(
         "http://127.0.0.1:11434",
@@ -181,7 +181,7 @@ def _minimal_forge_config(
     generative_provider: str = "ollama",
     generative_model: str = DEFAULT_GENERATIVE_MODEL,
     generative_context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS,
-    flow_explanation_timeout_seconds: int = 180,
+    human_query_timeout_seconds: int = 180,
 ) -> Path:
     config_dir = tmp_path / "config"
     runtime_dir = tmp_path / "var"
@@ -209,8 +209,8 @@ forge:
       model: {generative_model}
       context-tokens: {generative_context_tokens}
     query:
-      flow-explanation:
-        request-timeout-seconds: {flow_explanation_timeout_seconds}
+      human-query:
+        request-timeout-seconds: {human_query_timeout_seconds}
     services:
       knowledge:
         host: 127.0.0.1

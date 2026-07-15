@@ -18,8 +18,8 @@ import static org.hamcrest.Matchers.not;
         "forge.ai.infrastructure.knowledge.base-url=${forge-it.wiremock.base-url}",
         "forge.ai.infrastructure.jarvis.base-url=${forge-it.wiremock.base-url}",
         "forge.ai.infrastructure.jarvis.read-timeout=120ms",
-        "forge.ai.query.flow-explanation.request-timeout=100ms",
-        "forge.ai.infrastructure.proxy.knowledge-explanation-transport-grace=50ms",
+        "forge.ai.query.human-query.request-timeout=100ms",
+        "forge.ai.infrastructure.proxy.knowledge-human-query-transport-grace=50ms",
         "forge.ai.infrastructure.proxy.jarvis-query-transport-grace=150ms",
         "forge.ai.infrastructure.proxy.max-response-body-bytes=6500"
 })

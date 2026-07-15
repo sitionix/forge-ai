@@ -25,6 +25,7 @@ class AnchorExpansionNode:
     relative_path: Optional[str] = None
     qualified_name: Optional[str] = None
     entrypoint: bool = False
+    entrypoint_contract: bool = False
     score: Optional[float] = None
 
 
@@ -37,6 +38,9 @@ class AnchorExpansionEdge:
     edge_type: str
     from_node_id: str
     to_node_id: str
+    to_source_id: Optional[str] = None
+    to_graph_id: Optional[str] = None
+    to_graph_revision: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.query_interpretation import (
-    QueryInterpretationFailed,
     QueryInterpretationPromptRenderer,
     QueryInterpretationProviderResult,
     QueryInterpretationService,
@@ -130,14 +127,33 @@ def test_query_interpreter_repairs_invented_code_identifier_once():
     assert any("exact substring" in error for error in provider.calls[1]["validationErrors"])
 
 
-def test_query_interpreter_failure_does_not_silently_continue_with_bad_json():
+def test_query_interpreter_malformed_response_falls_back_with_audit_marker():
     provider = SequenceQueryInterpretationProvider(["not json", "still not json"])
     service = QueryInterpretationService(provider)
 
-    with pytest.raises(QueryInterpretationFailed):
-        service.interpret(KnowledgeQueryRequest(queryText="how is a site created", intent="AUTO"))
+    plan = service.interpret(KnowledgeQueryRequest(queryText="how does SiteController.createSite work", intent="AUTO"))
 
+    assert plan.response_language == "en"
+    assert plan.code_identifiers == ("SiteController.createSite",)
     assert len(provider.calls) == 2
+    assert service.audit_records[-1]["fallback"] is True
+    assert service.audit_records[-1]["fallbackReason"] == "REPAIR_EXHAUSTED"
+
+
+def test_query_interpreter_provider_unavailable_falls_back_to_exact_identifiers():
+    provider = SequenceQueryInterpretationProvider([RuntimeError("provider unavailable")])
+    service = QueryInterpretationService(provider)
+
+    plan = service.interpret(
+        KnowledgeQueryRequest(queryText="Как работает SiteController.createSite", intent="AUTO")
+    )
+
+    assert plan.detected_language == "ru"
+    assert plan.response_language == "uk"
+    assert plan.code_identifiers == ("SiteController.createSite",)
+    assert len(provider.calls) == 1
+    assert service.audit_records[-1]["fallback"] is True
+    assert service.audit_records[-1]["fallbackReason"] == "PROVIDER_UNAVAILABLE"
 
 
 def test_query_interpreter_prompt_is_generic():

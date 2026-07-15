@@ -98,6 +98,7 @@ class AnchorExpansionReason(str, Enum):
     TYPE_DECLARED_FIELD = "TYPE_DECLARED_FIELD"
     FIELD_USED_BY_CALLABLE = "FIELD_USED_BY_CALLABLE"
     CALLABLE_PARENT_CONTEXT = "CALLABLE_PARENT_CONTEXT"
+    CALLABLE_OVERRIDE_IMPLEMENTATION = "CALLABLE_OVERRIDE_IMPLEMENTATION"
     CLAIM_ATTACHED_NODE = "CLAIM_ATTACHED_NODE"
     ENTRYPOINT_HINT = "ENTRYPOINT_HINT"
 
@@ -644,6 +645,12 @@ class _AnchorAccumulator:
         item.roles.add(role)
         item.reasons.add(reason)
 
+    def discard_role(self, key: AnchorNodeKey, role: AnchorRole) -> None:
+        item = self.items.get(key)
+        if item is None:
+            return
+        item.roles.discard(role)
+
     def has_key(self, key: AnchorNodeKey | None) -> bool:
         return key is not None and key in self.items
 
@@ -710,7 +717,7 @@ class AnchorExpansionService:
             )
 
         graph_nodes = self._bundle_nodes(bundle)
-        declares_out, declares_in, uses_field_in = self._structural_edge_indexes(bundle)
+        declares_out, declares_in, uses_field_in, overrides_by_contract = self._structural_edge_indexes(bundle)
         truncated = bool(bundle.truncated)
         diagnostics: List[KnowledgeQueryDiagnostic] = []
 
@@ -735,8 +742,19 @@ class AnchorExpansionService:
                 continue
             kind = self._node_kind(candidate.nodeKind)
             if kind == "CALLABLE":
+                candidate_graph_node = graph_nodes.get(origin_key)
+                if candidate_graph_node and candidate_graph_node.entrypoint_contract:
+                    accumulator.discard_role(origin_key, AnchorRole.FLOW_SEED)
+                    accumulator.add_role_reason(origin_key, AnchorRole.CONTEXT, AnchorExpansionReason.CALLABLE_PARENT_CONTEXT)
                 for parent_key in self._parent_keys(origin_key, graph_nodes, declares_in):
                     add_expanded(candidate, graph_nodes.get(parent_key), {AnchorRole.CONTEXT}, AnchorExpansionReason.CALLABLE_PARENT_CONTEXT)
+                for implementation_key in overrides_by_contract.get(origin_key, []):
+                    add_expanded(
+                        candidate,
+                        graph_nodes.get(implementation_key),
+                        {AnchorRole.FLOW_SEED, AnchorRole.ENTRYPOINT_CANDIDATE},
+                        AnchorExpansionReason.CALLABLE_OVERRIDE_IMPLEMENTATION,
+                    )
                 continue
             if kind == "TYPE":
                 for child_key in declares_out.get(origin_key, []):
@@ -870,10 +888,16 @@ class AnchorExpansionService:
     def _structural_edge_indexes(
         self,
         bundle: AnchorExpansionBundle,
-    ) -> tuple[Dict[AnchorNodeKey, List[AnchorNodeKey]], Dict[AnchorNodeKey, List[AnchorNodeKey]], Dict[AnchorNodeKey, List[AnchorNodeKey]]]:
+    ) -> tuple[
+        Dict[AnchorNodeKey, List[AnchorNodeKey]],
+        Dict[AnchorNodeKey, List[AnchorNodeKey]],
+        Dict[AnchorNodeKey, List[AnchorNodeKey]],
+        Dict[AnchorNodeKey, List[AnchorNodeKey]],
+    ]:
         declares_out: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
         declares_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
         uses_field_in: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
+        overrides_by_contract: Dict[AnchorNodeKey, List[AnchorNodeKey]] = defaultdict(list)
         for edge in sorted(bundle.edges, key=self._edge_sort_key):
             edge_type = str(edge.edge_type or "").upper()
             from_key = self._edge_from_key(edge)
@@ -885,7 +909,9 @@ class AnchorExpansionService:
                 declares_in[to_key].append(from_key)
             elif edge_type == "USES_FIELD":
                 uses_field_in[to_key].append(from_key)
-        return declares_out, declares_in, uses_field_in
+            elif edge_type == "OVERRIDES":
+                overrides_by_contract[to_key].append(from_key)
+        return declares_out, declares_in, uses_field_in, overrides_by_contract
 
     def _parent_keys(
         self,
@@ -954,11 +980,18 @@ class AnchorExpansionService:
         return self._edge_node_key(edge, edge.from_node_id)
 
     def _edge_to_key(self, edge: AnchorExpansionEdge) -> AnchorNodeKey | None:
-        return self._edge_node_key(edge, edge.to_node_id)
+        return self._edge_node_key(edge, edge.to_node_id, source_id=edge.to_source_id, graph_id=edge.to_graph_revision or edge.to_graph_id)
 
-    def _edge_node_key(self, edge: AnchorExpansionEdge, node_id_value: str) -> AnchorNodeKey | None:
-        source_id = str(edge.source_id or "")
-        graph_id = str(edge.graph_id or "")
+    def _edge_node_key(
+        self,
+        edge: AnchorExpansionEdge,
+        node_id_value: str,
+        *,
+        source_id: str | None = None,
+        graph_id: str | None = None,
+    ) -> AnchorNodeKey | None:
+        source_id = str(source_id or edge.source_id or "")
+        graph_id = str(graph_id or edge.graph_id or "")
         node_id = str(node_id_value or "")
         if not source_id or not graph_id or not node_id:
             return None

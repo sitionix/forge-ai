@@ -34,12 +34,12 @@ class KnowledgeClient:
         self,
         base_url: str,
         timeout_seconds: float,
-        flow_explanation_timeout_seconds: Optional[float] = None,
+        human_query_timeout_seconds: Optional[float] = None,
         http_client: Optional[httpx.AsyncClient] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
-        self.flow_explanation_timeout_seconds = flow_explanation_timeout_seconds or timeout_seconds
+        self.human_query_timeout_seconds = human_query_timeout_seconds or timeout_seconds
         self._client = http_client or httpx.AsyncClient(timeout=self._timeout(timeout_seconds))
         self._validate_base_url()
 
@@ -47,7 +47,7 @@ class KnowledgeClient:
         return await self._post(
             "/api/v1/knowledge/query",
             payload,
-            timeout_seconds=self.flow_explanation_timeout_seconds,
+            timeout_seconds=self.human_query_timeout_seconds,
         )
 
     async def _post(self, path: str, payload: Dict[str, Any], timeout_seconds: Optional[float] = None) -> Dict[str, Any]:

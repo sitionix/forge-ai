@@ -90,14 +90,17 @@ def _entrypoint_claim(
     http_method: str | None = None,
     route: str | None = None,
     interface_method: str | None = None,
+    execution_kind: str = "EXECUTABLE",
+    evidence_ids: list[str] | None = None,
 ) -> dict:
     claim = {
         "id": f"claim-{node_id}",
         "node_id": node_id,
         "claimKind": "ENTRYPOINT_HINT",
         "summary": "entrypoint",
-        "evidence_ids": ["ev-node-query"],
+        "evidence_ids": evidence_ids or ["ev-node-query"],
         "entrypointKind": kind,
+        "entrypointExecutionKind": execution_kind,
     }
     if http_method:
         claim["httpMethod"] = http_method
@@ -236,6 +239,110 @@ def test_query_flow_explanations_endpoint_returns_human_answer(tmp_path):
     }
 
 
+def test_query_tool_and_human_paths_deduplicate_contract_interface_entrypoint(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_semantic_graph(
+        app_config.store_path,
+        source_id="app-afesox",
+        graph_suffix="site-api",
+        nodes=[
+            {
+                "id": "site-api-create",
+                "nodeKind": "CALLABLE",
+                "name": "SiteApi.createSite",
+                "qualified": "generated.api.SiteApi.createSite",
+                "path": "target/generated-sources/openapi/generated/api/SiteApi.java",
+            },
+        ],
+        claims=[
+            _entrypoint_claim(
+                "site-api-create",
+                http_method="POST",
+                route="/api/v1/sites",
+                interface_method="generated.api.SiteApi.createSite",
+                execution_kind="CONTRACT_DECLARATION",
+                evidence_ids=["ev-interface-mapping"],
+            )
+        ],
+        evidence_ids=["ev-interface-mapping"],
+    )
+    seed_semantic_graph(
+        app_config.store_path,
+        source_id="site-service",
+        graph_suffix="site-controller",
+        nodes=[
+            {
+                "id": "site-controller-create",
+                "nodeKind": "CALLABLE",
+                "name": "SiteController.createSite",
+                "qualified": "service.api.SiteController.createSite",
+                "path": "src/main/java/service/api/SiteController.java",
+            },
+        ],
+        edges=[
+            {
+                "id": "edge-controller-overrides-api",
+                "fromNodeId": "site-controller-create",
+                "toNodeId": "site-api-create",
+                "edgeType": "OVERRIDES",
+                "evidence_id": "ev-interface-mapping",
+            }
+        ],
+        claims=[
+            _entrypoint_claim(
+                "site-controller-create",
+                http_method="POST",
+                route="/api/v1/sites",
+                interface_method="generated.api.SiteApi.createSite",
+                evidence_ids=["ev-interface-mapping"],
+            )
+        ],
+        evidence_ids=["ev-interface-mapping"],
+    )
+    provider = PerEntrypointAnswerProvider()
+    app.state.flow_explanation_provider = provider
+
+    async def exercise():
+        body = {"queryText": "SiteApi.createSite SiteController.createSite", "answerLanguage": "en"}
+        async with _async_client(app) as client:
+            tool = await _await_with_wakeup(client.post("/api/v1/knowledge/query/tool-context", json=body))
+            human = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json=body))
+            return tool.status_code, tool.json(), human.status_code, human.json()
+
+    tool_status, tool_payload, human_status, human_payload = asyncio.run(exercise())
+
+    assert tool_status == 200
+    assert human_status == 200
+    assert len(provider.calls) == 1
+    assert len(tool_payload["trees"]) == 1
+    tree = tool_payload["trees"][0]
+    assert tree["source"] == "site-service"
+    assert tree["entrypoint"]["symbol"] == "SiteController.createSite"
+    assert tree["entrypoint"]["trigger"] == {
+        "kind": "HTTP",
+        "method": "POST",
+        "route": "/api/v1/sites",
+        "interfaceMethod": "generated.api.SiteApi.createSite",
+    }
+    rendered_tool = json.dumps(tool_payload)
+    assert "excerpt-ev-interface-mapping" in rendered_tool
+    assert all(item["entrypoint"]["symbol"] != "SiteApi.createSite" for item in tool_payload["trees"])
+    assert human_payload["answers"] == [
+        {
+            "source": "site-service",
+            "entrypoint": "SiteController.createSite",
+            "text": "1. SiteController.createSite starts the selected flow.\n"
+            "2. The grounded flow answer for SiteController.createSite is returned.",
+        }
+    ]
+    assert provider.calls[0]["llmInput"]["tree"]["trigger"] == {
+        "kind": "HTTP",
+        "method": "POST",
+        "route": "/api/v1/sites",
+        "interfaceMethod": "generated.api.SiteApi.createSite",
+    }
+
+
 def test_query_endpoint_uses_configured_llm_provider_and_tool_context_does_not(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     query_provider = app.state.query_interpretation_provider
@@ -342,7 +449,7 @@ def test_query_audit_write_failure_warns_without_failing_query(tmp_path, caplog,
     assert any(record.message == "human_answer_audit_write_failed" for record in caplog.records) or "human_answer_audit_write_failed" in captured.err
 
 
-def test_query_interpretation_failure_returns_502_without_final_answer_call(tmp_path):
+def test_query_interpretation_failure_falls_back_without_final_answer_call(tmp_path):
     app, _, _app_config, _ = build_test_app(write_runtime_config(tmp_path))
     broken_interpreter = BrokenQueryInterpretationProvider()
     final_provider = SentinelAnswerProvider("should not be used")
@@ -355,8 +462,8 @@ def test_query_interpretation_failure_returns_502_without_final_answer_call(tmp_
 
     response = asyncio.run(exercise())
 
-    assert response.status_code == 502
-    assert response.json()["code"] == "QUERY_INTERPRETATION_FAILED"
+    assert response.status_code == 404
+    assert response.json()["code"] == "NO_GROUNDED_GRAPH_CANDIDATES"
     assert len(broken_interpreter.calls) == 2
     assert final_provider.calls == []
 
@@ -501,7 +608,7 @@ def test_removed_flow_explanations_route_is_not_in_openapi(tmp_path):
     assert "/api/v1/knowledge/query/flow-explanations" not in app.openapi()["paths"]
 
 
-def test_slow_flow_explanation_does_not_block_concurrent_health_request(tmp_path):
+def test_slow_human_query_does_not_block_concurrent_health_request(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_semantic_graph(
         app_config.store_path,
@@ -536,10 +643,10 @@ def test_slow_flow_explanation_does_not_block_concurrent_health_request(tmp_path
     assert "status" not in response.json()
 
 
-def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tmp_path, monkeypatch):
+def test_query_preparation_consumes_human_query_deadline_before_llm_call(tmp_path, monkeypatch):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
-    app_config.flow_explanation_request_timeout_seconds = 0.2
-    app.state.app_config.flow_explanation_request_timeout_seconds = 0.2
+    app_config.human_query_request_timeout_seconds = 0.2
+    app.state.app_config.human_query_request_timeout_seconds = 0.2
     flow_nodes = (
         FlowGraphNode("source-a", "graph-a", "graph-a", "a-start", "a-start", "CALLABLE", "A.start"),
         FlowGraphNode("source-a", "graph-a", "graph-a", "b-work", "b-work", "CALLABLE", "B.work"),
@@ -592,7 +699,7 @@ def test_query_preparation_consumes_flow_explanation_deadline_before_llm_call(tm
     assert 0 < provider.calls[0]["timeoutSeconds"] < 0.17
 
 
-def test_expired_flow_explanation_deadline_before_worker_returns_controlled_response(tmp_path, monkeypatch):
+def test_expired_human_query_deadline_before_worker_returns_controlled_response(tmp_path, monkeypatch):
     app, _, _, _ = build_test_app(write_runtime_config(tmp_path))
 
     def fail_if_called(*_args, **_kwargs):
@@ -611,8 +718,8 @@ def test_expired_flow_explanation_deadline_before_worker_returns_controlled_resp
     assert response.status_code == 504
     body = json.loads(response.body.decode("utf-8"))
     assert body == {
-        "code": "FLOW_EXPLANATION_TIMEOUT",
-        "message": "Knowledge flow explanation timed out.",
+        "code": "HUMAN_QUERY_TIMEOUT",
+        "message": "Knowledge human query timed out.",
     }
     assert provider.calls == []
 
@@ -683,7 +790,7 @@ def test_missing_http_trigger_details_are_not_invented(tmp_path):
     assert "route" not in tree["trigger"]
 
 
-def test_cancelled_flow_explanation_request_does_not_start_subsequent_flow_calls(tmp_path):
+def test_cancelled_human_query_request_does_not_start_subsequent_flow_calls(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_semantic_graph(
         app_config.store_path,

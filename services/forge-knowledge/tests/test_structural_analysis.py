@@ -221,6 +221,7 @@ class ResponseDto {}
     assert entrypoint.metadata["origin"] == "STATIC"
     assert entrypoint.metadata["route"] == "/items"
     assert entrypoint.metadata["httpMethod"] == "POST"
+    assert entrypoint.metadata["entrypointExecutionKind"] == "CONTRACT_DECLARATION"
     controller_create = next(
         node
         for node in graph.nodes
@@ -231,6 +232,45 @@ class ResponseDto {}
         for claim in graph.claims
         if claim.claimKind == "ENTRYPOINT_HINT" and claim.nodeLocalId == controller_create.localId
     ]
+
+
+def test_static_graph_materializer_extracts_request_mapping_request_method_on_interface():
+    text = """package example;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+interface SiteApi {
+  @RequestMapping(
+      method = RequestMethod.POST,
+      value = "/api/v1/sites",
+      produces = { "application/json" },
+      consumes = { "application/json" }
+  )
+  ResponseEntity<ResponseDto> createSite(RequestDto request);
+}
+
+class RequestDto {}
+class ResponseDto {}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+    interface_create = next(
+        node
+        for node in graph.nodes
+        if node.nodeKind == "CALLABLE" and node.qualifiedName == "example.SiteApi.createSite"
+    )
+    entrypoint = next(
+        claim
+        for claim in graph.claims
+        if claim.claimKind == "ENTRYPOINT_HINT" and claim.nodeLocalId == interface_create.localId
+    )
+
+    assert entrypoint.metadata["entrypointKind"] == "HTTP"
+    assert entrypoint.metadata["httpMethod"] == "POST"
+    assert entrypoint.metadata["route"] == "/api/v1/sites"
+    assert entrypoint.metadata["entrypointExecutionKind"] == "CONTRACT_DECLARATION"
+    assert entrypoint.metadata["interfaceMethod"] == "example.SiteApi.createSite"
 
 
 def test_static_graph_materializer_does_not_guess_external_api_contract_from_package_path():
@@ -299,6 +339,7 @@ def test_static_graph_materializer_creates_static_nodes_edges_evidence_and_entry
     assert entrypoint.nodeLocalId.endswith("|CALLABLE|example.TicketController|get|get(String)")
     assert entrypoint.metadata["httpMethod"] == "GET"
     assert entrypoint.metadata["route"] == "/tickets/{id}"
+    assert entrypoint.metadata["entrypointExecutionKind"] == "EXECUTABLE"
     assert all("flowScore" not in edge.metadata for edge in call_edges)
     assert next(edge for edge in call_edges if edge.metadata["methodName"] == "toApi").metadata["callKind"] == "FIELD_RECEIVER"
     uses_field_edges = [edge for edge in graph.edges if edge.edgeType == "USES_FIELD"]
@@ -308,6 +349,58 @@ def test_static_graph_materializer_creates_static_nodes_edges_evidence_and_entry
     assert mapper_usage.resolutionStatus == "RESOLVED"
     assert mapper_usage.metadata["factOrigin"] == "STATIC"
     assert [item.lineStart for item in mapper_usage.evidence] == [19]
+
+
+def test_static_graph_materializer_does_not_create_trusted_behavior_claims_from_names():
+    text = """package example;
+
+class ArbitraryRepository {
+  void save(Object value) {}
+  Object find(Object value) { return value; }
+  void delete(Object value) {}
+}
+
+class KafkaTemplate {
+  void send(String topic, Object value) {}
+}
+
+class WebClient {
+  void get() {}
+}
+
+class Config {
+  String getProperty(String name) { return name; }
+}
+
+class Handler {
+  private final ArbitraryRepository repository;
+  private final KafkaTemplate kafkaTemplate;
+  private final WebClient webClient;
+  private final Config config;
+
+  Handler(ArbitraryRepository repository, KafkaTemplate kafkaTemplate, WebClient webClient, Config config) {
+    this.repository = repository;
+    this.kafkaTemplate = kafkaTemplate;
+    this.webClient = webClient;
+    this.config = config;
+  }
+
+  void handle(Object value) {
+    repository.save(value);
+    repository.find(value);
+    repository.delete(value);
+    kafkaTemplate.send("topic", value);
+    webClient.get();
+    config.getProperty("feature");
+  }
+}
+"""
+    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
+
+    forbidden = {"DATA_ACCESS_HINT", "SIDE_EFFECT", "EXTERNAL_BOUNDARY_HINT", "CONFIG_REFERENCE"}
+    assert not [claim for claim in graph.claims if claim.claimKind in forbidden]
+    assert any(edge.edgeType == "CALLS" and edge.metadata.get("methodName") == "save" for edge in graph.edges)
+    assert any(edge.edgeType == "CALLS" and edge.metadata.get("methodName") == "send" for edge in graph.edges)
 
 
 def test_static_graph_materializer_materializes_uses_field_for_this_receiver_and_dedupes_lines():

@@ -15,14 +15,14 @@ public class InfrastructureProxyRouteRegistry {
 
     @Autowired
     public InfrastructureProxyRouteRegistry(final InfrastructureProxyProperties properties,
-                                            final ForgeAiFlowExplanationProperties flowExplanationProperties) {
+                                            final ForgeAiHumanQueryProperties humanQueryProperties) {
         final Map<String, InfrastructureProxyRoute> registered = new LinkedHashMap<>();
-        final Duration flowExplanationDeadline = flowExplanationProperties.requestTimeout();
-        properties.getProxy().validateFlowExplanationTimeoutHierarchy(flowExplanationDeadline);
+        final Duration humanQueryDeadline = humanQueryProperties.requestTimeout();
+        properties.getProxy().validateHumanQueryTimeoutHierarchy(humanQueryDeadline);
         final var explanationReadTimeout = properties.getProxy()
-                .knowledgeExplanationReadTimeout(flowExplanationDeadline);
+                .knowledgeHumanQueryReadTimeout(humanQueryDeadline);
         final var jarvisQueryReadTimeout = properties.getProxy()
-                .jarvisQueryReadTimeout(flowExplanationDeadline);
+                .jarvisQueryReadTimeout(humanQueryDeadline);
         this.knowledge(registered, "knowledge.status", HttpMethod.GET, "/api/v1/knowledge/status", false);
         this.knowledge(registered, "knowledge.sources", HttpMethod.GET, "/api/v1/knowledge/sources", false);
         this.knowledge(registered, "knowledge.overview", HttpMethod.GET, "/api/v1/knowledge/overview", false);
@@ -74,7 +74,7 @@ public class InfrastructureProxyRouteRegistry {
     }
 
     InfrastructureProxyRouteRegistry(final InfrastructureProxyProperties properties) {
-        this(properties, new ForgeAiFlowExplanationProperties());
+        this(properties, new ForgeAiHumanQueryProperties());
     }
 
     public InfrastructureProxyRoute require(final String key) {

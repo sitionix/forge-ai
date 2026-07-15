@@ -100,7 +100,7 @@ def test_status_actions_command_and_query_success_paths(tmp_path):
     assert query["diagnostics"] == []
 
 
-def test_flow_explanation_query_uses_dedicated_knowledge_contract(tmp_path):
+def test_human_query_query_uses_dedicated_knowledge_contract(tmp_path):
     knowledge = FakeKnowledgeClient(
         bundle=human_answer_bundle(
             text="Сайт створюється через контролер і use case.",
@@ -135,7 +135,7 @@ def test_flow_explanation_query_uses_dedicated_knowledge_contract(tmp_path):
     assert "flowExplanations" not in body
 
 
-def test_flow_explanation_generation_failure_uses_public_error(tmp_path):
+def test_human_query_generation_failure_uses_public_error(tmp_path):
     knowledge = FakeKnowledgeClient(
         error=KnowledgeUpstreamResponseError(
             502,
@@ -157,7 +157,7 @@ def test_flow_explanation_generation_failure_uses_public_error(tmp_path):
     }
 
 
-def test_flow_explanation_malformed_knowledge_object_uses_controlled_error(tmp_path):
+def test_human_query_malformed_knowledge_object_uses_controlled_error(tmp_path):
     knowledge = FakeKnowledgeClient(bundle={"answerLanguage": "uk", "answers": [{"source": "forge-ai"}], "diagnostics": []})
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 

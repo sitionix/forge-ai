@@ -227,7 +227,7 @@ def test_query_intents_call_knowledge_human_endpoint_once(tmp_path, payload, exp
     assert_compact_human_response(response.json())
 
 
-def test_flow_explanation_generation_failure_preserves_upstream_error(tmp_path) -> None:
+def test_human_query_generation_failure_preserves_upstream_error(tmp_path) -> None:
     knowledge = FakeKnowledgeClient(
         error=KnowledgeUpstreamResponseError(
             502,
@@ -253,7 +253,7 @@ def test_flow_explanation_generation_failure_preserves_upstream_error(tmp_path) 
     assert knowledge.paths == ["/api/v1/knowledge/query"]
 
 
-def test_flow_explanation_response_preserves_multiple_answers_and_diagnostics(tmp_path) -> None:
+def test_human_query_response_preserves_multiple_answers_and_diagnostics(tmp_path) -> None:
     knowledge = FakeKnowledgeClient(
         bundle=human_answer_bundle(
             answers=[
@@ -296,7 +296,7 @@ def test_flow_explanation_response_preserves_multiple_answers_and_diagnostics(tm
     assert knowledge.paths == ["/api/v1/knowledge/query"]
 
 
-def test_flow_explanation_malformed_knowledge_response_maps_to_controlled_error(tmp_path) -> None:
+def test_human_query_malformed_knowledge_response_maps_to_controlled_error(tmp_path) -> None:
     knowledge = FakeKnowledgeClient(bundle={"answerLanguage": "uk", "answers": [{"source": "forge-ai"}], "diagnostics": []})
     app, *_ = build_test_app(write_runtime_config(tmp_path), knowledge=knowledge)
 
@@ -413,7 +413,7 @@ def test_query_client_uses_human_timeout_beyond_normal_knowledge_boundary() -> N
         client = KnowledgeClient(
             "http://127.0.0.1:7081",
             timeout_seconds=0.1,
-            flow_explanation_timeout_seconds=0.15,
+            human_query_timeout_seconds=0.15,
             http_client=http_client,
         )
         try:
