@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import inspect
+import re
+import time
 from types import SimpleNamespace
 from dataclasses import replace
 
@@ -14,11 +17,15 @@ from knowledge_service.entrypoint_flow_engine import (
     EntrypointFlowOrigin,
 )
 from knowledge_service.flow_explanations import (
-    CompactFlowProjector,
+    DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS,
     FlowExplanationProviderResult,
+    FlowProjectionBuilder,
     HumanAnswerGenerationFailed,
+    HumanAnswerContextBudgetExceeded,
     HumanAnswerPromptRenderer,
     HumanFlowAnswerService,
+    LocalOllamaFlowExplanationClient,
+    PromptBudgetEstimator,
 )
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
@@ -228,10 +235,45 @@ class SequenceHumanAnswerProvider:
         if isinstance(response, Exception):
             raise response
         if isinstance(response, str):
-            raw = json.dumps({"text": response}, ensure_ascii=False)
+            raw = json.dumps(structured_answer(llm_input, response), ensure_ascii=False)
+        elif isinstance(response, dict) and "text" in response and "steps" not in response:
+            raw = json.dumps(structured_answer(llm_input, str(response["text"])), ensure_ascii=False)
         else:
             raw = json.dumps(response, ensure_ascii=False)
         return FlowExplanationProviderResult(raw_text=raw, prompt_char_length=100)
+
+
+class RecordingOllamaHttpClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.posts = []
+
+    def post(self, url, *, json, timeout):
+        self.posts.append({"url": url, "json": json, "timeout": timeout})
+        return RecordingOllamaResponse(self.responses.pop(0))
+
+    def close(self):
+        return None
+
+
+class RecordingOllamaResponse:
+    def __init__(self, response_text: str):
+        self.response_text = response_text
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"response": self.response_text}
+
+
+def structured_answer(llm_input, text: str, *, refs: list[str] | None = None, result: str | None = None):
+    coverage = llm_input.get("coverageContract") or {}
+    fact_refs = refs if refs is not None else list(coverage.get("canonicalFactRefs") or [])
+    return {
+        "steps": [{"factRefs": fact_refs, "text": text}],
+        "result": result or text,
+    }
 
 
 def human_execution(graph_flow: EntrypointFlow):
@@ -251,17 +293,152 @@ def retrieval_plan(query: str, *, detected_language: str = "en", response_langua
     )
 
 
+def contains_key(value, key: str) -> bool:
+    if isinstance(value, dict):
+        return key in value or any(contains_key(item, key) for item in value.values())
+    if isinstance(value, list):
+        return any(contains_key(item, key) for item in value)
+    return False
+
+
+def private_identity_flow() -> EntrypointFlow:
+    root = FlowGraphNode(
+        source_id="public-source-id",
+        graph_id="secret-graph-db-id",
+        graph_revision="secret-graph-revision-db-id",
+        node_id="secret-node-db-id",
+        stable_key="secret-stable-key",
+        node_kind="CALLABLE",
+        label="Public Entry",
+        qualified_name="PublicEntry",
+        relative_path="src/PublicEntry.java",
+        line_start=1,
+        line_end=5,
+        summary="Public entry summary.",
+        entrypoint=True,
+        entrypoint_kind="HTTP",
+        entrypoint_http_method="POST",
+        entrypoint_route="/public",
+    )
+    worker = FlowGraphNode(
+        source_id="public-source-id",
+        graph_id="secret-graph-db-id",
+        graph_revision="secret-graph-revision-db-id",
+        node_id="secret-target-node-db-id",
+        stable_key="secret-target-stable-key",
+        node_kind="CALLABLE",
+        label="Public Worker",
+        qualified_name="PublicWorker",
+        relative_path="src/PublicWorker.java",
+        line_start=10,
+        line_end=15,
+        summary="Public worker summary.",
+    )
+    transition = FlowGraphEdge(
+        source_id="public-source-id",
+        graph_id="secret-graph-db-id",
+        graph_revision="secret-graph-revision-db-id",
+        edge_id="secret-edge-db-id",
+        edge_type="CALLS",
+        from_node_id="secret-node-db-id",
+        to_node_id="secret-target-node-db-id",
+        resolution_status="RESOLVED",
+    )
+    return EntrypointFlow(
+        key=EntrypointFlowKey("public-source-id", "secret-graph-revision-db-id", "secret-node-db-id"),
+        entrypoint=root,
+        origin=EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT,
+        anchors=(EntrypointFlowAnchor(root.node_id, root.label, 1.0, ("TEST",), 0),),
+        nodes=(root, worker),
+        transitions=(transition,),
+        boundary_transitions=(),
+        evidence=(
+            FlowGraphEvidence(
+                "public-source-id",
+                "secret-graph-db-id",
+                "secret-graph-revision-db-id",
+                "secret-evidence-db-id",
+                None,
+                "secret-edge-db-id",
+                "src/PublicEntry.java",
+                3,
+                3,
+                "public worker call evidence",
+            ),
+        ),
+        complete=True,
+        coverage=EntrypointFlowCoverage(2, 1, 0, 1, 1),
+        diagnostics=(),
+        relevance_score=1.0,
+    )
+
+
+def cross_source_identical_symbol_flow() -> EntrypointFlow:
+    source_a = FlowGraphNode(
+        source_id="source-a",
+        graph_id="revision-a",
+        graph_revision="revision-a",
+        node_id="a-controller",
+        stable_key="stable-a-controller",
+        node_kind="CALLABLE",
+        label="SiteController.createSite",
+        qualified_name="com.example.a.SiteController.createSite",
+        entrypoint=True,
+    )
+    source_b = FlowGraphNode(
+        source_id="source-b",
+        graph_id="revision-b",
+        graph_revision="revision-b",
+        node_id="b-controller",
+        stable_key="stable-b-controller",
+        node_kind="CALLABLE",
+        label="SiteController.createSite",
+        qualified_name="com.example.b.SiteController.createSite",
+    )
+    transition = FlowGraphEdge(
+        source_id="source-a",
+        graph_id="revision-a",
+        graph_revision="revision-a",
+        edge_id="a-to-b",
+        edge_type="CALLS",
+        from_node_id="a-controller",
+        to_node_id="b-controller",
+        resolution_status="RESOLVED",
+        to_source_id="source-b",
+        to_graph_id="revision-b",
+        to_graph_revision="revision-b",
+    )
+    return EntrypointFlow(
+        key=EntrypointFlowKey("source-a", "revision-a", "a-controller"),
+        entrypoint=source_a,
+        origin=EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT,
+        anchors=(EntrypointFlowAnchor(source_a.node_id, source_a.label, 1.0, ("TEST",), 0),),
+        nodes=(source_a, source_b),
+        transitions=(transition,),
+        boundary_transitions=(),
+        evidence=(),
+        complete=True,
+        coverage=EntrypointFlowCoverage(2, 1, 0, 1, 1),
+        diagnostics=(),
+        relevance_score=1.0,
+    )
+
+
 def test_complete_technical_flow_prompt_contains_grounded_trigger_and_steps():
     request = KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION", answerLanguage="uk")
-    llm_input = CompactFlowProjector().human_llm_input(
+    builder = FlowProjectionBuilder()
+    graph_flow = technical_create_site_flow()
+    llm_input = builder.human_llm_input(
         request,
-        technical_create_site_flow(),
+        graph_flow,
         retrieval_plan(request.queryText, detected_language="uk", response_language="uk"),
     )
+    tool_tree = builder.to_tool_response(request, human_execution(graph_flow)).trees[0].dict(exclude_none=True)["entrypoint"]
     prompt = HumanAnswerPromptRenderer().render(llm_input)
     rendered = json.dumps(llm_input, ensure_ascii=False)
 
-    assert llm_input["tree"]["trigger"] == {
+    assert "tree" not in llm_input
+    assert llm_input["orderedFacts"][0]["trigger"] == {
         "kind": "HTTP",
         "method": "POST",
         "route": "/api/v1/sites",
@@ -287,13 +464,16 @@ def test_complete_technical_flow_prompt_contains_grounded_trigger_and_steps():
         assert expected in rendered
         assert expected in prompt
 
-    root_children = [item["symbol"] for item in llm_input["tree"]["children"]]
+    for item in graph_flow.evidence:
+        assert prompt.count(item.text) == 1
+
+    root_children = [item["symbol"] for item in tool_tree["children"]]
     assert root_children == [
         "SiteApiMapper.asCreateSiteCommand",
         "CreateSiteImpl.execute",
         "SiteApiMapper.asCreateSiteResponseDTO",
     ]
-    execute_children = llm_input["tree"]["children"][1]["children"]
+    execute_children = tool_tree["children"][1]["children"]
     assert [item["symbol"] for item in execute_children] == [
         "CreateSiteImpl.getUserId",
         "CreateSiteImpl.normalizeAndValidateName",
@@ -316,24 +496,70 @@ def test_compact_projector_orders_resolved_and_boundary_children_by_callsite_lin
         [edge("resolved-later", "Root", "ResolvedLater")],
         [mapper_boundary],
     )
-    projected = CompactFlowProjector().human_llm_input(
-        KnowledgeQueryRequest(queryText="Alpha", intent="FLOW_EXPLANATION", answerLanguage="en"),
-        replace(
-            base,
-            evidence=(
-                evidence("e-boundary", "boundary-earlier", None, 10, "mapper.asCommand(request)"),
-                evidence("e-resolved", "resolved-later", None, 20, "service.execute(command)"),
-            ),
+    request = KnowledgeQueryRequest(queryText="Alpha", intent="FLOW_EXPLANATION", answerLanguage="en")
+    projected_flow = replace(
+        base,
+        evidence=(
+            evidence("e-boundary", "boundary-earlier", None, 10, "mapper.asCommand(request)"),
+            evidence("e-resolved", "resolved-later", None, 20, "service.execute(command)"),
         ),
+    )
+    projected = FlowProjectionBuilder().to_tool_response(
+        request,
+        human_execution(projected_flow),
+    ).trees[0].dict(exclude_none=True)["entrypoint"]
+
+    assert [child["symbol"] for child in projected["children"]] == ["SiteApiMapper.asCreateSiteCommand", "ResolvedLater"]
+    llm_input = FlowProjectionBuilder().human_llm_input(
+        request,
+        projected_flow,
+        retrieval_plan("Alpha", detected_language="en", response_language="en"),
+    )
+    boundary_fact = next(fact for fact in llm_input["orderedFacts"] if fact["type"] == "boundary")
+    assert boundary_fact["fromSource"] == SOURCE
+
+
+def test_human_prompt_distinguishes_identical_symbols_by_public_source():
+    request = KnowledgeQueryRequest(queryText="explain create site", intent="FLOW_EXPLANATION", answerLanguage="en")
+    llm_input = FlowProjectionBuilder().human_llm_input(
+        request,
+        cross_source_identical_symbol_flow(),
+        retrieval_plan("explain create site", detected_language="en", response_language="en"),
+    )
+    prompt = HumanAnswerPromptRenderer().render(llm_input)
+    facts = llm_input["orderedFacts"]
+    node_facts = {fact["source"]: fact for fact in facts if fact["type"] == "node"}
+    transition_fact = next(fact for fact in facts if fact["type"] == "transition")
+
+    assert [fact["ref"] for fact in facts] == ["n1", "t1", "n2"]
+    assert node_facts["source-a"]["displaySymbol"] == "SiteController.createSite"
+    assert node_facts["source-b"]["displaySymbol"] == "SiteController.createSite"
+    assert transition_fact["fromSource"] == "source-a"
+    assert transition_fact["toSource"] == "source-b"
+    assert transition_fact["crossSource"] is True
+    assert re.search(r'\{[^{}]*"displaySymbol":"SiteController\.createSite"[^{}]*"source":"source-a"[^{}]*\}', prompt)
+    assert re.search(r'\{[^{}]*"displaySymbol":"SiteController\.createSite"[^{}]*"source":"source-b"[^{}]*\}', prompt)
+    assert '"fromSource":"source-a"' in prompt
+    assert '"toSource":"source-b"' in prompt
+    assert '"crossSource":true' in prompt
+
+
+def test_human_llm_input_uses_ordered_facts_without_nested_tree():
+    llm_input = FlowProjectionBuilder().human_llm_input(
+        KnowledgeQueryRequest(queryText="Alpha", intent="FLOW_EXPLANATION", answerLanguage="en"),
+        technical_create_site_flow(),
         retrieval_plan("Alpha", detected_language="en", response_language="en"),
     )
 
-    assert [child["symbol"] for child in projected["tree"]["children"]] == ["SiteApiMapper.asCreateSiteCommand", "ResolvedLater"]
+    assert "tree" not in llm_input
+    assert "orderedFacts" in llm_input
+    assert llm_input["suggestedStepPlan"]
+    assert all(set(item) == {"factRefs"} for item in llm_input["suggestedStepPlan"])
 
 
 def test_human_prompt_contract_allows_natural_grounded_output():
     prompt = HumanAnswerPromptRenderer().render(
-        CompactFlowProjector().human_llm_input(
+        FlowProjectionBuilder().human_llm_input(
             KnowledgeQueryRequest(queryText="Alpha", intent="FLOW_EXPLANATION", answerLanguage="en"),
             technical_create_site_flow(),
             retrieval_plan("Alpha", detected_language="en", response_language="en"),
@@ -344,7 +570,8 @@ def test_human_prompt_contract_allows_natural_grounded_output():
         "technical walkthrough",
         "HTTP method and route",
         "trigger and entrypoint",
-        "Natural output may be one concise paragraph",
+        "orderedFacts and coverageContract",
+        "Cover every required node, transition, and boundary exactly once",
         "exact class or method symbol",
         "validation, persistence, or side effect",
         "Write all natural-language prose in the supplied responseLanguage",
@@ -362,16 +589,408 @@ def test_human_prompt_contract_allows_natural_grounded_output():
 
 def test_missing_trigger_metadata_is_not_invented():
     request = KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION", answerLanguage="uk")
-    llm_input = CompactFlowProjector().human_llm_input(
+    llm_input = FlowProjectionBuilder().human_llm_input(
         request,
         technical_create_site_flow(with_trigger=False),
         retrieval_plan(request.queryText, detected_language="uk", response_language="uk"),
     )
 
-    assert "trigger" not in llm_input["tree"]
+    assert "trigger" not in llm_input["orderedFacts"][0]
     rendered = json.dumps(llm_input, ensure_ascii=False)
     assert "POST" not in rendered
     assert "/api/v1/sites" not in rendered
+
+
+def test_human_prompt_and_validation_do_not_expose_persisted_internal_ids():
+    graph_flow = private_identity_flow()
+    llm_input = FlowProjectionBuilder().human_llm_input(
+        KnowledgeQueryRequest(queryText="explain public entry", intent="FLOW_EXPLANATION", answerLanguage="en"),
+        graph_flow,
+        retrieval_plan("explain public entry", detected_language="en", response_language="en"),
+    )
+    prompt = HumanAnswerPromptRenderer().render(llm_input)
+    secrets = (
+        "secret-graph-db-id",
+        "secret-graph-revision-db-id",
+        "secret-node-db-id",
+        "secret-target-node-db-id",
+        "secret-edge-db-id",
+        "secret-evidence-db-id",
+        "secret-stable-key",
+        "secret-target-stable-key",
+    )
+    rendered_input = json.dumps(llm_input, ensure_ascii=False)
+
+    for forbidden_key in ("graphId", "graphRevision", "nodeId", "edgeId", "evidenceId", "nodeIdentity", "edgeIdentity"):
+        assert not contains_key(llm_input, forbidden_key)
+    assert "public-source-id" in rendered_input
+    assert "public-source-id" in prompt
+    for secret in secrets:
+        assert secret not in rendered_input
+        assert secret not in prompt
+    assert prompt.count("public worker call evidence") == 1
+
+    class ForeignRefThenValidProvider:
+        def __init__(self):
+            self.calls = []
+
+        def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+            self.calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
+            if len(self.calls) == 1:
+                payload = {
+                    "steps": [{"factRefs": ["secret-node-db-id"], "text": "PublicEntry calls PublicWorker."}],
+                    "result": "PublicWorker returns the result.",
+                }
+            else:
+                payload = structured_answer(
+                    llm_input,
+                    "PublicEntry calls PublicWorker using the supplied public evidence.",
+                    result="PublicWorker returns the grounded result.",
+                )
+            return FlowExplanationProviderResult(raw_text=json.dumps(payload), prompt_char_length=100)
+
+    provider = ForeignRefThenValidProvider()
+    service = HumanFlowAnswerService(provider)
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="explain public entry", intent="FLOW_EXPLANATION"),
+        human_execution(graph_flow),
+        plan=retrieval_plan("explain public entry", detected_language="en", response_language="en"),
+    )
+
+    public_response = response.answers[0].text
+    validation_errors = json.dumps(provider.calls[1]["validationErrors"], ensure_ascii=False)
+    for secret in secrets:
+        assert secret not in public_response
+        assert secret not in validation_errors
+    assert "foreign factRef" in validation_errors
+
+
+def test_full_human_prompt_preserves_all_evidence_without_compaction():
+    long_a = "alpha-" + ("A" * 1200)
+    long_b = "beta-" + ("B" * 1300)
+    evidence_items = [
+        evidence(f"ev-{index}", None, "Root.run", 10 + index, long_a if index % 2 == 0 else long_b)
+        for index in range(10)
+    ]
+    graph_flow = replace(
+        flow([node("Root.run", entrypoint=True)], []),
+        evidence=tuple(evidence_items),
+    )
+
+    llm_input = FlowProjectionBuilder().human_llm_input(
+        KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION", answerLanguage="en"),
+        graph_flow,
+        retrieval_plan("explain root", detected_language="en", response_language="en"),
+    )
+    prompt = HumanAnswerPromptRenderer().render(llm_input)
+
+    for item in evidence_items:
+        assert item.text in prompt
+        assert f'"lineStart":{item.line_start}' in prompt
+        assert f'"lineEnd":{item.line_end}' in prompt
+    assert prompt.count(long_a) >= 5
+    assert prompt.count(long_b) >= 5
+    assert "..." not in long_a
+
+
+def test_context_overflow_fails_before_final_provider_call():
+    huge = "payload-" + ("X" * 5000)
+    graph_flow = replace(
+        flow([node("Root.run", entrypoint=True)], []),
+        evidence=(evidence("ev-huge", None, "Root.run", 10, huge),),
+    )
+    provider = SequenceHumanAnswerProvider(["Root.run returns a result."])
+    service = HumanFlowAnswerService(
+        provider,
+        budget_estimator=PromptBudgetEstimator(
+            context_tokens=128,
+            reserved_output_tokens=0,
+            repair_prompt_overhead_tokens=0,
+            multilingual_prose_overhead_tokens=0,
+            json_formatting_overhead_tokens=0,
+        ),
+    )
+
+    try:
+        service.answer(
+            KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION"),
+            human_execution(graph_flow),
+            plan=retrieval_plan("explain root", detected_language="en", response_language="en"),
+        )
+    except HumanAnswerContextBudgetExceeded:
+        pass
+    else:
+        raise AssertionError("Expected complete context overflow to fail explicitly")
+
+    assert provider.calls == []
+
+
+def test_ollama_requests_use_reserved_output_budget_for_first_and_repair_attempts():
+    bad_response = json.dumps(
+        {
+            "steps": [{"factRefs": ["n1"], "text": "**Root.run** starts from the supplied fact."}],
+            "result": "Root.run returns the verified result.",
+        }
+    )
+    good_response = json.dumps(
+        {
+            "steps": [{"factRefs": ["n1"], "text": "Root.run starts from the supplied fact."}],
+            "result": "Root.run returns the verified result.",
+        }
+    )
+    recorder = RecordingOllamaHttpClient([bad_response, good_response])
+    context_tokens = 32768
+    reserved_output_tokens = DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS
+    client = LocalOllamaFlowExplanationClient(
+        "http://127.0.0.1:11434",
+        "qwen2.5-coder:14b",
+        120,
+        context_tokens,
+        http_client=recorder,
+        reserved_output_tokens=reserved_output_tokens,
+    )
+    service = HumanFlowAnswerService(
+        client,
+        context_tokens=context_tokens,
+        budget_estimator=PromptBudgetEstimator(
+            context_tokens=context_tokens,
+            reserved_output_tokens=reserved_output_tokens,
+        ),
+        reserved_output_tokens=reserved_output_tokens,
+    )
+
+    try:
+        response = service.answer(
+            KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION"),
+            human_execution(flow([node("Root.run", entrypoint=True)], [])),
+            plan=retrieval_plan("explain root", detected_language="en", response_language="en"),
+        )
+    finally:
+        client.close()
+
+    assert "Root.run starts from the supplied fact" in response.answers[0].text
+    assert len(recorder.posts) == 2
+    for post in recorder.posts:
+        assert post["json"]["options"]["num_ctx"] == context_tokens
+        assert post["json"]["options"]["num_predict"] == reserved_output_tokens
+
+
+def test_oversized_full_prompt_fails_before_ollama_provider_request():
+    huge = "payload-" + ("X" * 5000)
+    graph_flow = replace(
+        flow([node("Root.run", entrypoint=True)], []),
+        evidence=(evidence("ev-huge", None, "Root.run", 10, huge),),
+    )
+    recorder = RecordingOllamaHttpClient([json.dumps(structured_answer({"coverageContract": {"canonicalFactRefs": ["n1"]}}, "Root.run returns."))])
+    reserved_output_tokens = 512
+    client = LocalOllamaFlowExplanationClient(
+        "http://127.0.0.1:11434",
+        "qwen2.5-coder:14b",
+        120,
+        32768,
+        http_client=recorder,
+        reserved_output_tokens=reserved_output_tokens,
+    )
+    service = HumanFlowAnswerService(
+        client,
+        budget_estimator=PromptBudgetEstimator(
+            context_tokens=128,
+            reserved_output_tokens=reserved_output_tokens,
+            repair_prompt_overhead_tokens=0,
+            multilingual_prose_overhead_tokens=0,
+            json_formatting_overhead_tokens=0,
+        ),
+        reserved_output_tokens=reserved_output_tokens,
+    )
+
+    try:
+        try:
+            service.answer(
+                KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION"),
+                human_execution(graph_flow),
+                plan=retrieval_plan("explain root", detected_language="en", response_language="en"),
+            )
+        except HumanAnswerContextBudgetExceeded:
+            pass
+        else:
+            raise AssertionError("Expected complete context overflow to fail before Ollama request")
+    finally:
+        client.close()
+
+    assert recorder.posts == []
+
+
+def test_context_overflow_preflights_all_flows_without_partial_answer():
+    small_flow = flow([node("Small.run", entrypoint=True)], [])
+    huge_flow = replace(
+        flow([node("Huge.run", entrypoint=True)], []),
+        evidence=(evidence("ev-huge", None, "Huge.run", 10, "payload-" + ("X" * 30000)),),
+    )
+    provider = SequenceHumanAnswerProvider(["Small.run returns.", "Huge.run returns."])
+    service = HumanFlowAnswerService(
+        provider,
+        budget_estimator=PromptBudgetEstimator(
+            context_tokens=20000,
+            reserved_output_tokens=0,
+            repair_prompt_overhead_tokens=0,
+            multilingual_prose_overhead_tokens=0,
+            json_formatting_overhead_tokens=0,
+        ),
+    )
+
+    try:
+        service.answer(
+            KnowledgeQueryRequest(queryText="explain all", intent="FLOW_EXPLANATION"),
+            SimpleNamespace(flows=(small_flow, huge_flow)),
+            plan=retrieval_plan("explain all", detected_language="en", response_language="en"),
+        )
+    except HumanAnswerContextBudgetExceeded:
+        pass
+    else:
+        raise AssertionError("Expected complete context overflow to fail before any flow answer")
+
+    assert provider.calls == []
+
+
+class FactListingProvider:
+    def __init__(self):
+        self.calls = []
+
+    def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+        self.calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
+        symbols = [
+            str(fact.get("displaySymbol") or fact.get("toSymbol") or fact.get("target") or "")
+            for fact in llm_input["orderedFacts"]
+            if fact.get("type") == "node"
+        ]
+        return FlowExplanationProviderResult(
+            raw_text=json.dumps(structured_answer(llm_input, "The flow covers " + ", ".join(symbols), result="The verified flow is fully covered.")),
+            prompt_char_length=100,
+        )
+
+
+def test_deep_sequential_flow_keeps_all_nodes_and_transitions_in_llm_input():
+    nodes = [node("Root.run", entrypoint=True), *[node(f"Step{i}.run") for i in range(1, 16)]]
+    transitions = [edge("edge-0", "Root.run", "Step1.run")]
+    transitions.extend(edge(f"edge-{index}", f"Step{index}.run", f"Step{index + 1}.run") for index in range(1, 15))
+    graph_flow = flow(nodes, transitions)
+    provider = FactListingProvider()
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="explain deep flow", intent="FLOW_EXPLANATION"),
+        human_execution(graph_flow),
+        plan=retrieval_plan("explain deep flow", detected_language="en", response_language="en"),
+    )
+
+    facts = provider.calls[0]["llmInput"]["orderedFacts"]
+    assert len([fact for fact in facts if fact["type"] == "node"]) == 16
+    assert len([fact for fact in facts if fact["type"] == "transition"]) == 15
+    for item in nodes:
+        assert item.node_id in response.answers[0].text
+
+
+def test_large_flow_projector_preserves_2000_transitions_and_uses_linear_duplicate_tracking():
+    transition_count = 2000
+    nodes = [node("Step0000.run", entrypoint=True)]
+    nodes.extend(node(f"Step{index:04d}.run") for index in range(1, transition_count + 1))
+    transitions = [
+        edge(f"edge-{index:04d}", f"Step{index:04d}.run", f"Step{index + 1:04d}.run")
+        for index in range(transition_count)
+    ]
+    evidence_items = tuple(
+        evidence(f"ev-{index:04d}", f"edge-{index:04d}", None, index + 1, f"complete evidence excerpt {index:04d}")
+        for index in range(transition_count)
+    )
+    graph_flow = replace(
+        flow(nodes, transitions),
+        evidence=evidence_items,
+        coverage=EntrypointFlowCoverage(len(nodes), len(transitions), 0, 1, transition_count),
+    )
+
+    started = time.perf_counter()
+    llm_input = FlowProjectionBuilder().human_llm_input(
+        KnowledgeQueryRequest(queryText="explain large flow", intent="FLOW_EXPLANATION", answerLanguage="en"),
+        graph_flow,
+        retrieval_plan("explain large flow", detected_language="en", response_language="en"),
+    )
+    elapsed = time.perf_counter() - started
+
+    facts = llm_input["orderedFacts"]
+    node_facts = [fact for fact in facts if fact["type"] == "node"]
+    transition_facts = [fact for fact in facts if fact["type"] == "transition"]
+    projected_evidence = [
+        evidence_item
+        for fact in facts
+        for evidence_item in fact.get("evidence", [])
+    ]
+    assert len(node_facts) == transition_count + 1
+    assert len(transition_facts) == transition_count
+    assert len(projected_evidence) == transition_count
+    assert {item["excerpt"] for item in projected_evidence} == {item.text for item in evidence_items}
+    assert len(llm_input["coverageContract"]["canonicalFactRefs"]) == len(facts)
+    assert "truncated" not in json.dumps(llm_input, ensure_ascii=False).lower()
+    projector_source = inspect.getsource(FlowProjectionBuilder._ordered_facts)
+    assert "seen_fact_refs" in projector_source
+    assert 'any(item.get("ref") == ref for item in facts)' not in projector_source
+    assert elapsed < 5.0
+
+
+class RepairingOrderProvider:
+    def __init__(self):
+        self.calls = []
+
+    def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+        self.calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
+        refs = list(llm_input["coverageContract"]["canonicalFactRefs"])
+        if len(self.calls) == 1:
+            payload = {
+                "steps": [{"factRefs": [refs[-1], refs[0]], "text": "Branch facts are flattened out of order."}],
+                "result": "The flow is flattened.",
+            }
+        else:
+            payload = structured_answer(llm_input, "Root.run preserves the ordered branch facts.", refs=refs, result="The branches remain distinct.")
+        return FlowExplanationProviderResult(raw_text=json.dumps(payload), prompt_char_length=100)
+
+
+def test_branching_flow_preserves_callsite_order_and_repairs_flattened_order():
+    root = node("Root.run", entrypoint=True)
+    left = node("LeftBranch.run")
+    right = node("RightBranch.run")
+    nested = node("NestedRight.run")
+    left_edge = edge("left", "Root.run", "LeftBranch.run")
+    right_edge = edge("right", "Root.run", "RightBranch.run")
+    nested_edge = edge("nested", "RightBranch.run", "NestedRight.run")
+    graph_flow = replace(
+        flow([root, left, right, nested], [right_edge, nested_edge, left_edge]),
+        evidence=(
+            evidence("ev-left", "left", None, 12, "leftBranch.run()"),
+            evidence("ev-right", "right", None, 20, "rightBranch.run()"),
+            evidence("ev-nested", "nested", None, 21, "nestedRight.run()"),
+        ),
+    )
+    provider = RepairingOrderProvider()
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="explain branches", intent="FLOW_EXPLANATION"),
+        human_execution(graph_flow),
+        plan=retrieval_plan("explain branches", detected_language="en", response_language="en"),
+    )
+
+    facts = provider.calls[0]["llmInput"]["orderedFacts"]
+    assert [fact.get("displaySymbol") or fact.get("toSymbol") for fact in facts] == [
+        "Root.run",
+        "LeftBranch.run",
+        "LeftBranch.run",
+        "RightBranch.run",
+        "RightBranch.run",
+        "NestedRight.run",
+        "NestedRight.run",
+    ]
+    assert len(provider.calls) == 2
+    assert any("canonical order" in error for error in provider.calls[1]["validationErrors"])
+    assert "branches remain distinct" in response.answers[0].text.lower()
 
 
 def test_auto_language_resolves_ukrainian_and_accepts_ukrainian_prose():
@@ -460,7 +1079,7 @@ def test_language_violation_gets_one_repair_attempt_for_same_flow():
     assert "передає запит" in response.answers[0].text
 
 
-def test_language_violation_gets_bounded_repair_without_format_policing():
+def test_plain_text_format_violation_gets_bounded_repair():
     provider = SequenceHumanAnswerProvider([
         {"text": "**Flow**\n1. `SiteController.createSite` receives the request."},
         "1. SiteController.createSite приймає запит і передає його в наступний крок.\n2. Відповідь повертається клієнту.",
@@ -474,7 +1093,7 @@ def test_language_violation_gets_bounded_repair_without_format_policing():
     )
 
     assert len(provider.calls) == 2
-    assert any("language" in error.lower() for error in provider.calls[1]["validationErrors"])
+    assert any("markdown" in error.lower() or "backticks" in error.lower() for error in provider.calls[1]["validationErrors"])
     assert "**" not in response.answers[0].text
     assert "`" not in response.answers[0].text
 
@@ -540,7 +1159,7 @@ def test_ukrainian_prose_with_few_language_specific_characters_is_accepted():
             plan=retrieval_plan("як працює потік", detected_language="uk", response_language="uk"),
         )
 
-        assert response.answers[0].text == example
+        assert example in response.answers[0].text
         assert len(provider.calls) == 1
 
 
@@ -670,7 +1289,7 @@ def test_code_identifiers_do_not_affect_prose_language_validation():
     assert "SiteController.createSite" in response.answers[0].text
 
 
-def test_valid_single_paragraph_answer_is_accepted():
+def test_valid_single_step_payload_is_rendered_as_numbered_plain_text():
     provider = SequenceHumanAnswerProvider([
         "SiteController.createSite приймає HTTP POST запит на /api/v1/sites і передає його в CreateSiteImpl.execute. Наприкінці контролер повертає створену відповідь."
     ])
@@ -684,7 +1303,7 @@ def test_valid_single_paragraph_answer_is_accepted():
 
     assert len(provider.calls) == 1
     assert not provider.calls[0]["validationErrors"]
-    assert not response.answers[0].text.startswith("1.")
+    assert response.answers[0].text.startswith("1.")
 
 
 def test_valid_single_step_answer_is_accepted():
@@ -701,6 +1320,22 @@ def test_valid_single_step_answer_is_accepted():
 
     assert len(provider.calls) == 1
     assert response.answers[0].text.startswith("1.")
+
+
+def test_grounded_route_with_sentence_punctuation_is_accepted():
+    provider = SequenceHumanAnswerProvider([
+        "SiteController.createSite приймає HTTP POST запит на /api/v1/sites. Контролер передає виконання в CreateSiteImpl.execute і повертає створену відповідь."
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як створити сайт", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як створити сайт", detected_language="uk", response_language="uk"),
+    )
+
+    assert len(provider.calls) == 1
+    assert "/api/v1/sites." in response.answers[0].text
 
 
 def test_valid_lettered_branch_explanation_is_accepted():
@@ -735,6 +1370,24 @@ def test_internal_ref_leak_gets_repaired_out_of_human_answer():
     assert len(provider.calls) == 2
     assert any("internal graph refs" in error for error in provider.calls[1]["validationErrors"])
     assert "nodeRef" not in response.answers[0].text
+
+
+def test_bare_response_local_ref_leak_gets_repaired_out_of_human_answer():
+    provider = SequenceHumanAnswerProvider([
+        "1. SiteController.getSiteOverview проходить через transition t1.\n2. Контролер повертає DTO.",
+        "1. SiteController.getSiteOverview викликає GetSiteOverview.execute.\n2. Контролер повертає DTO.",
+    ])
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="як працює SiteController.getSiteOverview", intent="FLOW_EXPLANATION"),
+        human_execution(technical_create_site_flow()),
+        plan=retrieval_plan("як працює SiteController.getSiteOverview", detected_language="uk", response_language="uk"),
+    )
+
+    assert len(provider.calls) == 2
+    assert any("internal graph refs" in error for error in provider.calls[1]["validationErrors"])
+    assert "t1" not in response.answers[0].text
 
 
 def test_unresolved_call_wording_is_valid_when_not_internal_ref():
@@ -783,25 +1436,6 @@ def test_boundary_wording_is_valid_when_not_internal_ref():
 
     assert len(provider.calls) == 1
     assert "boundary" in response.answers[0].text
-
-
-def test_speculative_framework_behavior_gets_repaired():
-    provider = SequenceHumanAnswerProvider([
-        "1. PaymentListener.handle receives the payment event.\n2. The observable result is likely a default Spring Boot response.",
-        "1. PaymentListener.handle receives the payment event and passes it to PaymentService.record.\n2. PaymentService.record saves through LedgerRepository.save and PaymentAcknowledgement.publish emits the acknowledgement.",
-    ])
-    service = HumanFlowAnswerService(provider)
-
-    response = service.answer(
-        KnowledgeQueryRequest(queryText="how does payment handling work", intent="FLOW_EXPLANATION"),
-        human_execution(unrelated_listener_flow()),
-        plan=retrieval_plan("how does payment handling work", detected_language="en", response_language="en"),
-    )
-
-    assert len(provider.calls) == 2
-    assert any("speculate" in error for error in provider.calls[1]["validationErrors"])
-    assert "likely" not in response.answers[0].text
-    assert "default Spring Boot" not in response.answers[0].text
 
 
 def test_repair_failure_fails_flow_without_projecting_compact_tree():

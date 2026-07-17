@@ -27,6 +27,14 @@ from knowledge_service.query_interpretation import QueryInterpretationProviderRe
 from semantic_test_support import seed_semantic_graph
 
 
+def structured_answer(llm_input, text: str, *, result: str | None = None):
+    coverage = llm_input.get("coverageContract") or {}
+    return {
+        "steps": [{"factRefs": list(coverage.get("canonicalFactRefs") or []), "text": text}],
+        "result": result or text,
+    }
+
+
 class FakeFlowExplanationProvider:
     def __init__(self, delay_seconds=0.0):
         self.calls = []
@@ -37,9 +45,17 @@ class FakeFlowExplanationProvider:
         if self.delay_seconds:
             time.sleep(self.delay_seconds)
         if llm_input.get("responseLanguage") == "uk":
-            response = {"text": "1. A.start передає виконання до B.work за підтвердженим деревом викликів.\n2. B.work повертає підтверджений результат."}
+            response = structured_answer(
+                llm_input,
+                "A.start передає виконання до B.work за підтвердженим деревом викликів.",
+                result="B.work повертає підтверджений результат.",
+            )
         else:
-            response = {"text": "1. A.start delegates to B.work using the grounded call tree.\n2. B.work returns the grounded result."}
+            response = structured_answer(
+                llm_input,
+                "A.start delegates to B.work using the grounded call tree.",
+                result="B.work returns the grounded result.",
+            )
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
 
 
@@ -53,7 +69,11 @@ class PerEntrypointAnswerProvider:
         entrypoint = str(llm_input.get("entrypoint") or "")
         if entrypoint in self.fail_entrypoints:
             raise RuntimeError("expected")
-        response = {"text": f"1. {entrypoint} starts the selected flow.\n2. The grounded flow answer for {entrypoint} is returned."}
+        response = structured_answer(
+            llm_input,
+            f"{entrypoint} starts the selected flow.",
+            result=f"The grounded flow answer for {entrypoint} is returned.",
+        )
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
 
 
@@ -70,7 +90,11 @@ class SentinelAnswerProvider:
                 "timeoutSeconds": timeout_seconds,
             }
         )
-        response = {"text": f"1. {self.sentinel}\n2. The selected flow returns the configured provider result."}
+        response = structured_answer(
+            llm_input,
+            self.sentinel,
+            result="The selected flow returns the configured provider result.",
+        )
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
 
 
@@ -253,8 +277,9 @@ def test_query_flow_explanations_endpoint_returns_human_answer(tmp_path):
     assert "nodeRef" not in json.dumps(response_payload)
     assert len(provider.calls) == 1
     assert provider.calls[0]["llmInput"]["entrypoint"] == "A.start"
-    assert provider.calls[0]["llmInput"]["tree"]["symbol"] == "A.start"
-    assert provider.calls[0]["llmInput"]["tree"]["trigger"] == {
+    assert "tree" not in provider.calls[0]["llmInput"]
+    assert provider.calls[0]["llmInput"]["orderedFacts"][0]["displaySymbol"] == "A.start"
+    assert provider.calls[0]["llmInput"]["orderedFacts"][0]["trigger"] == {
         "kind": "HTTP",
         "method": "POST",
         "route": "/api/v1/sites",
@@ -358,7 +383,7 @@ def test_query_tool_and_human_paths_deduplicate_contract_interface_entrypoint(tm
             "2. The grounded flow answer for SiteController.createSite is returned.",
         }
     ]
-    assert provider.calls[0]["llmInput"]["tree"]["trigger"] == {
+    assert provider.calls[0]["llmInput"]["orderedFacts"][0]["trigger"] == {
         "kind": "HTTP",
         "method": "POST",
         "route": "/api/v1/sites",
@@ -807,10 +832,10 @@ def test_missing_http_trigger_details_are_not_invented(tmp_path):
     status = asyncio.run(exercise())
 
     assert status == 200
-    tree = provider.calls[0]["llmInput"]["tree"]
-    assert tree["trigger"] == {"kind": "HTTP"}
-    assert "method" not in tree["trigger"]
-    assert "route" not in tree["trigger"]
+    root_fact = provider.calls[0]["llmInput"]["orderedFacts"][0]
+    assert root_fact["trigger"] == {"kind": "HTTP"}
+    assert "method" not in root_fact["trigger"]
+    assert "route" not in root_fact["trigger"]
 
 
 def test_cancelled_human_query_request_does_not_start_subsequent_flow_calls(tmp_path):
@@ -845,7 +870,11 @@ def test_cancelled_human_query_request_does_not_start_subsequent_flow_calls(tmp_
                 self.first_returned.set()
             else:
                 self.second_started.set()
-            response = {"text": "1. The cancelled request had already started producing a human answer.\n2. The provider returns without starting a second flow."}
+            response = structured_answer(
+                llm_input,
+                "The cancelled request had already started producing a human answer.",
+                result="The provider returns without starting a second flow.",
+            )
             return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
 
     provider = BlockingProvider()

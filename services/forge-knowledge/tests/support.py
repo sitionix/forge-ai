@@ -293,7 +293,7 @@ forge:
       provider: ollama
       base-url: http://localhost:11434
       model: deterministic
-      context-tokens: 1024
+      context-tokens: 32768
     services:
       knowledge:
         host: 127.0.0.1

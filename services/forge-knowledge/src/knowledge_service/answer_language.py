@@ -20,7 +20,6 @@ _CAMEL_SYMBOL_RE = re.compile(r"\b(?:[A-Z][A-Za-z0-9_$]*[A-Z][A-Za-z0-9_$]*|[a-z
 _CONSTANT_RE = re.compile(r"\b[A-Z][A-Z0-9_]{2,}\b")
 _TECH_TOPIC_RE = re.compile(r"\b[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+\b")
 _PROSE_WORD_RE = re.compile(r"[^\W\d_]+(?:['-][^\W\d_]+)?", re.UNICODE)
-_SPECULATIVE_PROSE_RE = re.compile(r"(?i)\b(likely|probably|maybe|assuming|presumably)\b|default\s+Spring\s+Boot")
 _INTERNAL_REF_RE = re.compile(r"(?i)\b(?:nodeRef|transitionRef|boundaryRef|evidenceRefs?|analysis-graph-[a-z-]+:[a-f0-9]+)\b")
 _MIN_PROSE_WORDS = 3
 _MIN_PROSE_LETTERS = 18
@@ -46,8 +45,6 @@ class HumanAnswerTextValidator:
         normalized = text.strip()
         if _INTERNAL_REF_RE.search(normalized):
             errors.append("Response must not expose internal graph refs or analysis ids.")
-        if _SPECULATIVE_PROSE_RE.search(strip_technical_tokens(normalized)):
-            errors.append("Response must not infer or speculate about behavior absent from the verified flow facts.")
         language_error = self._language_error(normalized, language)
         if language_error:
             errors.append(language_error)

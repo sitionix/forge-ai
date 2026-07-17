@@ -7,7 +7,7 @@ import time
 import urllib.parse
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, List, Mapping, Sequence
+from typing import Any, Callable, Deque, Dict, List, Mapping, Sequence
 
 import httpx
 
@@ -35,6 +35,7 @@ from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 
 FLOW_EXPLANATION_LIMIT_REACHED = "FLOW_EXPLANATION_LIMIT_REACHED"
+DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS = 2048
 
 _DEFAULT_MIN_CALL_TIMEOUT_SECONDS = 0.01
 _DEADLINE_COMPLETION_GRACE_SECONDS = 0.005
@@ -44,46 +45,6 @@ _DEADLINE_COMPLETION_GRACE_SECONDS = 0.005
 class FlowExplanationProviderResult:
     raw_text: str
     prompt_char_length: int
-
-
-@dataclass(frozen=True)
-class HumanAnswerContextPolicy:
-    max_evidence_per_item: int = 3
-    max_excerpt_chars: int = 260
-
-    def compact_evidence(self, evidence: Sequence[Mapping[str, Any]]) -> tuple[list[Dict[str, Any]], bool]:
-        compacted = False
-        deduped: list[Dict[str, Any]] = []
-        seen_keys: set[tuple[str, str, str, str]] = set()
-        seen_excerpts: set[str] = set()
-        for raw in evidence:
-            item = dict(raw)
-            key = (
-                str(item.get("path") or ""),
-                str(item.get("lineStart") or ""),
-                str(item.get("lineEnd") or ""),
-                str(item.get("excerpt") or ""),
-            )
-            if key in seen_keys:
-                compacted = True
-                continue
-            seen_keys.add(key)
-            excerpt = item.get("excerpt")
-            if excerpt is not None:
-                text = str(excerpt)
-                if text in seen_excerpts:
-                    item.pop("excerpt", None)
-                    compacted = True
-                else:
-                    seen_excerpts.add(text)
-                    if len(text) > self.max_excerpt_chars:
-                        item["excerpt"] = f"{text[: max(0, self.max_excerpt_chars - 3)]}..."
-                        compacted = True
-            deduped.append(item)
-        limited = deduped[: max(0, self.max_evidence_per_item)]
-        if len(limited) < len(deduped):
-            compacted = True
-        return limited, compacted
 
 
 class HumanAnswerGenerationFailed(Exception):
@@ -104,6 +65,79 @@ class HumanAnswerRepairExhausted(HumanAnswerGenerationFailed):
 
 class HumanAnswerContextBudgetExceeded(HumanAnswerGenerationFailed):
     pass
+
+
+@dataclass(frozen=True)
+class PromptBudgetEstimate:
+    rendered_input_tokens: int
+    context_tokens: int
+    reserved_output_tokens: int
+    repair_prompt_overhead_tokens: int
+    multilingual_prose_overhead_tokens: int
+    json_formatting_overhead_tokens: int
+
+    @property
+    def total_required_tokens(self) -> int:
+        return (
+            self.rendered_input_tokens
+            + self.reserved_output_tokens
+            + self.repair_prompt_overhead_tokens
+            + self.multilingual_prose_overhead_tokens
+            + self.json_formatting_overhead_tokens
+        )
+
+    @property
+    def fits(self) -> bool:
+        return self.total_required_tokens <= self.context_tokens
+
+
+class PromptBudgetEstimator:
+    """Fail-closed prompt budget check for final human-answer prompts.
+
+    No model tokenizer is bundled for the local Ollama models in this service. When
+    a suitable tokenizer is not injected, the fallback counts one token per UTF-8
+    byte, then adds explicit repair, output, multilingual prose, and JSON margins.
+    That overestimates modern local tokenizer counts and cannot approve a prompt
+    larger than the configured model context under this estimator.
+    """
+
+    def __init__(
+        self,
+        *,
+        context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS,
+        reserved_output_tokens: int = DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS,
+        repair_prompt_overhead_tokens: int = 1024,
+        multilingual_prose_overhead_tokens: int = 512,
+        json_formatting_overhead_tokens: int = 256,
+        tokenizer: Callable[[str], int] | None = None,
+    ) -> None:
+        self.context_tokens = max(1, int(context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS))
+        self.reserved_output_tokens = max(0, int(reserved_output_tokens))
+        self.repair_prompt_overhead_tokens = max(0, int(repair_prompt_overhead_tokens))
+        self.multilingual_prose_overhead_tokens = max(0, int(multilingual_prose_overhead_tokens))
+        self.json_formatting_overhead_tokens = max(0, int(json_formatting_overhead_tokens))
+        self.tokenizer = tokenizer
+
+    def estimate(self, rendered_prompt: str) -> PromptBudgetEstimate:
+        return PromptBudgetEstimate(
+            rendered_input_tokens=self._rendered_input_tokens(rendered_prompt),
+            context_tokens=self.context_tokens,
+            reserved_output_tokens=self.reserved_output_tokens,
+            repair_prompt_overhead_tokens=self.repair_prompt_overhead_tokens,
+            multilingual_prose_overhead_tokens=self.multilingual_prose_overhead_tokens,
+            json_formatting_overhead_tokens=self.json_formatting_overhead_tokens,
+        )
+
+    def ensure_fits(self, rendered_prompt: str) -> PromptBudgetEstimate:
+        estimate = self.estimate(rendered_prompt)
+        if not estimate.fits:
+            raise HumanAnswerContextBudgetExceeded("The complete grounded flow exceeds the available model context.")
+        return estimate
+
+    def _rendered_input_tokens(self, rendered_prompt: str) -> int:
+        if self.tokenizer is not None:
+            return max(0, int(self.tokenizer(rendered_prompt)))
+        return len(str(rendered_prompt or "").encode("utf-8"))
 
 
 class HumanAnswerContractViolation(HumanAnswerGenerationFailed):
@@ -127,27 +161,34 @@ class HumanAnswerPromptRenderer:
             validation_block = "\nPrevious response failed validation. Correct these exact contract violations using only the supplied facts:\n"
             validation_block += "\n".join(f"- {error}" for error in validation_errors)
             validation_block += "\nReturn a replacement JSON object only. Keep the text natural and grounded in the supplied facts.\n"
-        context_json = json.dumps(dict(llm_input), ensure_ascii=False, indent=2, sort_keys=True)
+        context_json = json.dumps(dict(llm_input), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         return (
             "Answer the user's code-flow question as a concise technical walkthrough for exactly one supplied flow.\n"
-            "Return strict JSON only with exactly this shape: {\"text\":\"human-readable answer\"}.\n"
+            "Return strict JSON only with exactly this shape: "
+            "{\"steps\":[{\"factRefs\":[\"n1\"],\"text\":\"human-readable grounded step\"}],"
+            "\"result\":\"human-readable observable result\"}.\n"
             "Write all natural-language prose in the supplied responseLanguage. "
             "Preserve code identifiers, class names, method names, routes, constants, topic names, and quoted code literals exactly as supplied.\n"
             "Directly answer the question using only the supplied verified flow facts.\n"
-            "The tree kind fields are internal classifier labels for grounding only. Never copy labels such as UNRESOLVED_CALL, EXTERNAL_CALL, METHOD, HTTP_ENDPOINT, KAFKA_LISTENER, or ENTRYPOINT into the answer.\n"
+            "Use the supplied orderedFacts and coverageContract as the authoritative execution order and grounding contract.\n"
+            "Every factRefs value must exist in coverageContract.canonicalFactRefs. Cover every required node, transition, and boundary exactly once, in canonical order.\n"
+            "The suggestedStepPlan contains ref-only groups in canonical order. Prefer copying each suggestedStepPlan factRefs array exactly and writing only the step text for it.\n"
+            "Use as many concise steps as needed. Low-level boundary refs still need coverage; group adjacent boundary refs with their owning node when the text explains them, or use short boundary-only steps.\n"
+            "Each step text must explain only the facts named by that step's factRefs. Do not cite a producer and a downstream consumer in the same step unless the same factRefs explicitly connect them.\n"
+            "Fact kind fields are internal classifier labels for grounding only. Never copy labels such as UNRESOLVED_CALL, EXTERNAL_CALL, METHOD, HTTP_ENDPOINT, KAFKA_LISTENER, or ENTRYPOINT into the answer.\n"
             "Start with the trigger and entrypoint when available, including the HTTP method and route only when they are supplied.\n"
-            "Natural output may be one concise paragraph, multiple paragraphs, numbered steps, a branch-oriented explanation, or a single-step explanation when the grounded flow has one step.\n"
+            "The final public answer will be numbered by the server from your steps. Do not include Markdown, backticks, raw JSON, graph refs, evidence refs, node ids, or transition ids in step text.\n"
+            "Explain branches as branches; do not fabricate a sequence between sibling branches.\n"
             "Mention exact class or method symbols where they help identify the code.\n"
             "Explain what data arrives, what the code does, what it calls next, and grounded validation, persistence, or side effects when supplied.\n"
             "When validation facts include thresholds, null or empty checks, exception classes, or error messages, include the exact grounded detail.\n"
-            "Explain branches as branches; do not fabricate a sequence between sibling branches.\n"
-            "End with the observable result: returned response or status, persisted data, emitted event, or external side effect when supplied.\n"
+            "End with the observable result: returned response or status, persisted data, or external side effect when supplied.\n"
             "If the supplied facts do not include a return value, status, persistence, event, or side effect, state that the verified facts do not provide that detail.\n"
-            "Keep the answer as escaped plain text inside the JSON string.\n"
+            "Keep all step and result prose as escaped plain text inside JSON strings.\n"
             "Do not collapse the flow into a generic summary or mechanically repeat every graph field.\n"
             "Do not omit available method names, class names, trigger details, validation rules, persistence details, side effects, or final results.\n"
             "Do not invent validation, side effects, transports, routes, statuses, or ordering unsupported by the supplied facts.\n"
-            "Do not infer default framework behavior or use speculative language such as likely, probably, maybe, assuming, or presumably.\n"
+            "Do not infer default framework behavior or speculate beyond the supplied facts.\n"
             "Do not mention retrieval mechanics, refs, internal graph ids, or internal scores.\n"
             f"{validation_block}"
             "BEGIN_VERIFIED_FLOW_FACTS_JSON\n"
@@ -156,12 +197,9 @@ class HumanAnswerPromptRenderer:
         )
 
 
-class CompactFlowProjector:
-    def __init__(self, boundary_classifier: FlowBoundaryClassifier | None = None, context_policy: HumanAnswerContextPolicy | None = None) -> None:
+class FlowProjectionBuilder:
+    def __init__(self, boundary_classifier: FlowBoundaryClassifier | None = None) -> None:
         self.boundary_classifier = boundary_classifier or FLOW_BOUNDARY_CLASSIFIER
-        self.context_policy = context_policy or HumanAnswerContextPolicy()
-        self._context_compacted = False
-        self._last_context_diagnostics: List[KnowledgeQueryDiagnostic] = []
 
     def to_tool_response(self, request: KnowledgeQueryRequest, execution: Any) -> KnowledgeQueryToolContextResponse:
         return KnowledgeQueryToolContextResponse(
@@ -171,77 +209,57 @@ class CompactFlowProjector:
         )
 
     def human_llm_input(self, request: KnowledgeQueryRequest, flow: EntrypointFlow, plan: QueryRetrievalPlan) -> Dict[str, Any]:
-        self._context_compacted = False
-        tree = self._tree(flow)
-        human_tree = self._human_tree_item(tree.entrypoint)
-        self._last_context_diagnostics = []
-        if self._context_compacted:
-            self._last_context_diagnostics.append(KnowledgeQueryDiagnostic(
-                code="HUMAN_ANSWER_CONTEXT_COMPACTED",
-                message="Human answer evidence context was compacted before prompt rendering.",
-                severity="INFO",
-                sourceId=flow.key.source_id,
-                metadata={
-                    "maxEvidencePerItem": self.context_policy.max_evidence_per_item,
-                    "maxExcerptChars": self.context_policy.max_excerpt_chars,
-                },
-            ))
+        ordered_facts, coverage_contract = self._ordered_facts(flow)
         return {
             "originalQuestion": request.queryText,
             "detectedLanguage": plan.detected_language,
             "responseLanguage": plan.response_language,
             "intent": plan.effective_intent,
-            "source": tree.source,
-            "entrypoint": tree.entrypoint.symbol,
-            "tree": human_tree,
+            "entrypoint": self._symbol(flow.entrypoint),
+            "orderedFacts": ordered_facts,
+            "coverageContract": coverage_contract,
+            "suggestedStepPlan": self._suggested_step_plan(ordered_facts),
         }
 
     def flow_answer_identity(self, flow: EntrypointFlow) -> tuple[str, str]:
         return str(flow.key.source_id or ""), self._symbol(flow.entrypoint)
 
-    def context_diagnostics(self) -> list[KnowledgeQueryDiagnostic]:
-        return list(self._last_context_diagnostics)
-
-    def _human_tree_item(self, item: FlowToolTreeItem) -> Dict[str, Any]:
+    def _tree_item_dict(self, item: FlowToolTreeItem) -> Dict[str, Any]:
         data = item.dict(exclude_none=True)
         children = [
-            self._human_tree_item(child)
+            self._tree_item_dict(child)
             for child in item.children
         ]
         data["children"] = children
-        if data.get("evidence"):
-            compacted, was_compacted = self.context_policy.compact_evidence(
-                [evidence for evidence in data["evidence"] if isinstance(evidence, dict)]
-            )
-            data["evidence"] = compacted
-            self._context_compacted = self._context_compacted or was_compacted
         return data
 
     def _tree(self, flow: EntrypointFlow) -> FlowToolTree:
-        node_by_id = {node.node_id: node for node in flow.nodes}
-        evidence_by_node: Dict[str, List[FlowGraphEvidence]] = {}
-        evidence_by_edge: Dict[str, List[FlowGraphEvidence]] = {}
+        node_by_key = {self._node_key(node): node for node in flow.nodes}
+        evidence_by_node: Dict[tuple[str, str], List[FlowGraphEvidence]] = {}
+        evidence_by_edge: Dict[tuple[str, str], List[FlowGraphEvidence]] = {}
         for item in flow.evidence:
             if item.edge_id:
-                evidence_by_edge.setdefault(item.edge_id, []).append(item)
+                evidence_by_edge.setdefault((item.source_id, item.edge_id), []).append(item)
             elif item.node_id:
-                evidence_by_node.setdefault(item.node_id, []).append(item)
-        outgoing: Dict[str, List[FlowGraphEdge]] = {}
+                evidence_by_node.setdefault((item.source_id, item.node_id), []).append(item)
+        outgoing: Dict[tuple[str, str, str], List[FlowGraphEdge]] = {}
         for edge in sorted(flow.transitions, key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
-            outgoing.setdefault(edge.from_node_id, []).append(edge)
-        boundaries: Dict[str, List[FlowGraphEdge]] = {}
+            outgoing.setdefault(self._from_key(edge), []).append(edge)
+        boundaries: Dict[tuple[str, str, str], List[FlowGraphEdge]] = {}
         for edge in sorted(flow.boundary_transitions, key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
-            boundaries.setdefault(edge.from_node_id, []).append(edge)
+            boundaries.setdefault(self._from_key(edge), []).append(edge)
 
-        root = self._node_item(flow.entrypoint, evidence_by_node.get(flow.entrypoint.node_id, []))
-        rendered = {flow.entrypoint.node_id}
+        root_key = self._node_key(flow.entrypoint)
+        root = self._node_item(flow.entrypoint, evidence_by_node.get((flow.entrypoint.source_id, flow.entrypoint.node_id), []))
+        rendered = {root_key}
         stack: List[Dict[str, Any]] = [
             {
                 "node": flow.entrypoint,
+                "node_key": root_key,
                 "item": root,
-                "entries": self._sorted_child_edges(flow.entrypoint.node_id, outgoing, boundaries, evidence_by_edge),
+                "entries": self._sorted_child_edges(root_key, outgoing, boundaries, evidence_by_edge),
                 "index": 0,
-                "ancestry": {flow.entrypoint.node_id},
+                "ancestry": {root_key},
             }
         ]
         while stack:
@@ -251,45 +269,312 @@ class CompactFlowProjector:
                 continue
             entry = frame["entries"][frame["index"]]
             frame["index"] += 1
-            if entry in boundaries.get(frame["node"].node_id, []):
-                frame["item"].children.append(self._boundary_item(entry, evidence_by_edge.get(entry.edge_id, [])))
+            edge_key = self._edge_key(entry)
+            if entry in boundaries.get(frame["node_key"], []):
+                frame["item"].children.append(self._boundary_item(entry, evidence_by_edge.get(edge_key, [])))
                 continue
-            target = node_by_id.get(entry.to_node_id or "")
+            target_key = self._to_key(entry)
+            target = node_by_key.get(target_key) if target_key is not None else None
             if target is None:
-                frame["item"].children.append(self._boundary_item(replace_edge_boundary(entry), evidence_by_edge.get(entry.edge_id, [])))
+                frame["item"].children.append(self._boundary_item(replace_edge_boundary(entry), evidence_by_edge.get(edge_key, [])))
                 continue
-            child_evidence = [*evidence_by_node.get(target.node_id, []), *evidence_by_edge.get(entry.edge_id, [])]
-            if target.node_id in frame["ancestry"]:
+            child_evidence = [*evidence_by_node.get((target.source_id, target.node_id), []), *evidence_by_edge.get(edge_key, [])]
+            if target_key in frame["ancestry"]:
                 frame["item"].children.append(self._node_item(target, child_evidence, cycle=True))
                 continue
-            if target.node_id in rendered:
+            if target_key in rendered:
                 frame["item"].children.append(self._node_item(target, child_evidence, shared=True))
                 continue
             child = self._node_item(target, child_evidence)
             frame["item"].children.append(child)
-            rendered.add(target.node_id)
+            rendered.add(target_key)
             stack.append(
                 {
                     "node": target,
+                    "node_key": target_key,
                     "item": child,
-                    "entries": self._sorted_child_edges(target.node_id, outgoing, boundaries, evidence_by_edge),
+                    "entries": self._sorted_child_edges(target_key, outgoing, boundaries, evidence_by_edge),
                     "index": 0,
-                    "ancestry": {*frame["ancestry"], target.node_id},
+                    "ancestry": {*frame["ancestry"], target_key},
                 }
             )
         return FlowToolTree(source=str(flow.key.source_id or ""), entrypoint=root)
 
     def _sorted_child_edges(
         self,
-        node_id: str,
-        outgoing: Mapping[str, Sequence[FlowGraphEdge]],
-        boundaries: Mapping[str, Sequence[FlowGraphEdge]],
-        evidence_by_edge: Mapping[str, Sequence[FlowGraphEvidence]],
+        node_key: tuple[str, str, str],
+        outgoing: Mapping[tuple[str, str, str], Sequence[FlowGraphEdge]],
+        boundaries: Mapping[tuple[str, str, str], Sequence[FlowGraphEdge]],
+        evidence_by_edge: Mapping[tuple[str, str], Sequence[FlowGraphEvidence]],
     ) -> List[FlowGraphEdge]:
         return sorted(
-            [*outgoing.get(node_id, ()), *boundaries.get(node_id, ())],
+            [*outgoing.get(node_key, ()), *boundaries.get(node_key, ())],
             key=lambda item: self._edge_sort_key(item, evidence_by_edge),
         )
+
+    def _ordered_facts(self, flow: EntrypointFlow) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
+        node_by_key = {self._node_key(node): node for node in flow.nodes}
+        evidence_by_node: Dict[tuple[str, str], List[FlowGraphEvidence]] = {}
+        evidence_by_edge: Dict[tuple[str, str], List[FlowGraphEvidence]] = {}
+        for item in flow.evidence:
+            if item.edge_id:
+                evidence_by_edge.setdefault((item.source_id, item.edge_id), []).append(item)
+            elif item.node_id:
+                evidence_by_node.setdefault((item.source_id, item.node_id), []).append(item)
+        outgoing: Dict[tuple[str, str, str], List[FlowGraphEdge]] = {}
+        for edge in sorted(flow.transitions, key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
+            outgoing.setdefault(self._from_key(edge), []).append(edge)
+        boundaries: Dict[tuple[str, str, str], List[FlowGraphEdge]] = {}
+        for edge in sorted(flow.boundary_transitions, key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
+            boundaries.setdefault(self._from_key(edge), []).append(edge)
+
+        root_key = self._node_key(flow.entrypoint)
+        events: list[tuple[str, Any, Dict[str, Any]]] = [("node", root_key, {"incoming": None, "parent": None})]
+        rendered = {root_key}
+        stack: list[dict[str, Any]] = [
+            {
+                "node_key": root_key,
+                "entries": self._sorted_child_edges(root_key, outgoing, boundaries, evidence_by_edge),
+                "index": 0,
+                "ancestry": {root_key},
+            }
+        ]
+        while stack:
+            frame = stack[-1]
+            if frame["index"] >= len(frame["entries"]):
+                stack.pop()
+                continue
+            edge = frame["entries"][frame["index"]]
+            frame["index"] += 1
+            edge_key = self._edge_key(edge)
+            if edge in boundaries.get(frame["node_key"], ()):
+                events.append(("boundary", edge_key, {"edge": edge, "parent": frame["node_key"]}))
+                continue
+            target_key = self._to_key(edge)
+            target = node_by_key.get(target_key) if target_key is not None else None
+            if target is None or target_key is None:
+                events.append(("boundary", edge_key, {"edge": replace_edge_boundary(edge), "parent": frame["node_key"]}))
+                continue
+            events.append(("transition", edge_key, {"edge": edge, "parent": frame["node_key"], "target": target_key}))
+            if target_key in frame["ancestry"] or target_key in rendered:
+                continue
+            rendered.add(target_key)
+            events.append(("node", target_key, {"incoming": edge_key, "parent": frame["node_key"]}))
+            stack.append(
+                {
+                    "node_key": target_key,
+                    "entries": self._sorted_child_edges(target_key, outgoing, boundaries, evidence_by_edge),
+                    "index": 0,
+                    "ancestry": {*frame["ancestry"], target_key},
+                }
+            )
+
+        node_ref_by_key: Dict[tuple[str, str, str], str] = {}
+        transition_ref_by_key: Dict[tuple[str, str], str] = {}
+        boundary_ref_by_key: Dict[tuple[str, str], str] = {}
+        node_count = transition_count = boundary_count = 0
+        for event_type, key, _metadata in events:
+            if event_type == "node" and key not in node_ref_by_key:
+                node_count += 1
+                node_ref_by_key[key] = f"n{node_count}"
+            elif event_type == "transition" and key not in transition_ref_by_key:
+                transition_count += 1
+                transition_ref_by_key[key] = f"t{transition_count}"
+            elif event_type == "boundary" and key not in boundary_ref_by_key:
+                boundary_count += 1
+                boundary_ref_by_key[key] = f"b{boundary_count}"
+
+        outgoing_refs_by_node: Dict[tuple[str, str, str], List[str]] = {}
+        for edge in flow.transitions:
+            ref = transition_ref_by_key.get(self._edge_key(edge))
+            if ref:
+                outgoing_refs_by_node.setdefault(self._from_key(edge), []).append(ref)
+        for edge in flow.boundary_transitions:
+            ref = boundary_ref_by_key.get(self._edge_key(edge))
+            if ref:
+                outgoing_refs_by_node.setdefault(self._from_key(edge), []).append(ref)
+        canonical_refs: list[str] = []
+        facts: list[Dict[str, Any]] = []
+        seen_fact_refs: set[str] = set()
+        for event_type, key, metadata in events:
+            if event_type == "node":
+                node_item = node_by_key.get(key)
+                if node_item is None:
+                    continue
+                ref = node_ref_by_key[key]
+                if ref in seen_fact_refs:
+                    continue
+                incoming = metadata.get("incoming")
+                parent = metadata.get("parent")
+                fact = self._node_fact(
+                    ref,
+                    node_item,
+                    evidence_by_node.get((node_item.source_id, node_item.node_id), []),
+                    incomingTransition=transition_ref_by_key.get(incoming) if incoming else None,
+                    branchParent=node_ref_by_key.get(parent) if parent else None,
+                    outgoingTransitions=outgoing_refs_by_node.get(key, []),
+                )
+            elif event_type == "transition":
+                edge = metadata["edge"]
+                ref = transition_ref_by_key[key]
+                if ref in seen_fact_refs:
+                    continue
+                fact = self._transition_fact(
+                    ref,
+                    edge,
+                    node_by_key,
+                    node_ref_by_key,
+                    evidence_by_edge.get(self._edge_key(edge), []),
+                )
+            else:
+                edge = metadata["edge"]
+                ref = boundary_ref_by_key[key]
+                if ref in seen_fact_refs:
+                    continue
+                fact = self._boundary_fact(
+                    ref,
+                    edge,
+                    node_by_key,
+                    node_ref_by_key,
+                    evidence_by_edge.get(self._edge_key(edge), []),
+                )
+            facts.append(fact)
+            seen_fact_refs.add(str(fact["ref"]))
+            canonical_refs.append(str(fact["ref"]))
+        return facts, {
+            "canonicalFactRefs": canonical_refs,
+            "nodeRefs": [fact["ref"] for fact in facts if fact.get("type") == "node"],
+            "transitionRefs": [fact["ref"] for fact in facts if fact.get("type") == "transition"],
+            "boundaryRefs": [fact["ref"] for fact in facts if fact.get("type") == "boundary"],
+        }
+
+    def _suggested_step_plan(self, facts: Sequence[Mapping[str, Any]]) -> list[Dict[str, Any]]:
+        facts_by_ref = {str(fact.get("ref")): fact for fact in facts if str(fact.get("ref") or "").strip()}
+        groups: list[Dict[str, Any]] = []
+        current: Dict[str, Any] | None = None
+
+        def current_node_refs(group: Mapping[str, Any] | None) -> set[str]:
+            if not group:
+                return set()
+            return {
+                ref
+                for ref in group.get("factRefs", [])
+                if facts_by_ref.get(ref, {}).get("type") == "node"
+            }
+
+        for fact in facts:
+            ref = str(fact.get("ref") or "").strip()
+            fact_type = str(fact.get("type") or "").strip()
+            if not ref or not fact_type:
+                continue
+            if fact_type == "node":
+                if current is not None:
+                    groups.append(current)
+                current = {"factRefs": [ref]}
+                continue
+            if fact_type in {"transition", "boundary"}:
+                owner_refs = {str(fact.get("fromRef") or "")}
+                if fact_type == "transition":
+                    owner_refs.add(str(fact.get("toRef") or ""))
+                if current is not None and current_node_refs(current) and current_node_refs(current) & owner_refs:
+                    current["factRefs"].append(ref)
+                else:
+                    if current is not None:
+                        groups.append(current)
+                    current = {"factRefs": [ref]}
+        if current is not None:
+            groups.append(current)
+        return [
+            {"factRefs": list(group.get("factRefs") or [])}
+            for group in groups
+            if group.get("factRefs")
+        ]
+
+    def _node_fact(
+        self,
+        ref: str,
+        node: FlowGraphNode,
+        evidence: Sequence[FlowGraphEvidence],
+        *,
+        incomingTransition: str | None,
+        branchParent: str | None,
+        outgoingTransitions: Sequence[str],
+    ) -> Dict[str, Any]:
+        fact: Dict[str, Any] = {
+            "ref": ref,
+            "type": "node",
+            "source": node.source_id,
+            "displaySymbol": self._symbol(node),
+            "kind": self._node_kind(node),
+            "path": node.relative_path,
+            "lineStart": node.line_start,
+            "lineEnd": node.line_end,
+            "description": node.summary,
+            "evidence": [self._evidence(item).dict(exclude_none=True) for item in evidence],
+            "incomingTransition": incomingTransition,
+            "outgoingTransitions": list(outgoingTransitions),
+            "branchParent": branchParent,
+        }
+        trigger = self._trigger(node)
+        if trigger is not None:
+            fact["trigger"] = trigger.dict(exclude_none=True)
+        return self._without_none(fact)
+
+    def _transition_fact(
+        self,
+        ref: str,
+        edge: FlowGraphEdge,
+        node_by_key: Mapping[tuple[str, str, str], FlowGraphNode],
+        node_ref_by_key: Mapping[tuple[str, str, str], str],
+        evidence: Sequence[FlowGraphEvidence],
+    ) -> Dict[str, Any]:
+        from_key = self._from_key(edge)
+        to_key = self._to_key(edge)
+        from_node = node_by_key.get(from_key)
+        to_node = node_by_key.get(to_key) if to_key is not None else None
+        from_source = from_node.source_id if from_node is not None else edge.source_id
+        to_source = to_node.source_id if to_node is not None else (edge.to_source_id or edge.source_id)
+        return self._without_none({
+            "ref": ref,
+            "type": "transition",
+            "edgeType": edge.edge_type,
+            "resolutionStatus": edge.resolution_status,
+            "fromSource": from_source,
+            "toSource": to_source,
+            "fromRef": node_ref_by_key.get(from_key),
+            "toRef": node_ref_by_key.get(to_key) if to_key is not None else None,
+            "fromSymbol": self._symbol(from_node) if from_node else edge.from_node_id,
+            "toSymbol": self._symbol(to_node) if to_node else edge.to_node_id,
+            "crossSource": True if from_source != to_source else None,
+            "evidence": [self._evidence(item).dict(exclude_none=True) for item in evidence],
+        })
+
+    def _boundary_fact(
+        self,
+        ref: str,
+        edge: FlowGraphEdge,
+        node_by_key: Mapping[tuple[str, str, str], FlowGraphNode],
+        node_ref_by_key: Mapping[tuple[str, str, str], str],
+        evidence: Sequence[FlowGraphEvidence],
+    ) -> Dict[str, Any]:
+        from_key = self._from_key(edge)
+        from_node = node_by_key.get(from_key)
+        projection = self.boundary_classifier.project(edge)
+        symbol = self._boundary_symbol(edge, projection.target)
+        return self._without_none({
+            "ref": ref,
+            "type": "boundary",
+            "fromSource": from_node.source_id if from_node is not None else edge.source_id,
+            "fromRef": node_ref_by_key.get(from_key),
+            "fromSymbol": self._symbol(from_node) if from_node else edge.from_node_id,
+            "edgeType": edge.edge_type,
+            "resolutionStatus": projection.resolution_status,
+            "boundaryKind": projection.kind.value,
+            "boundaryReason": edge.boundary_reason,
+            "target": projection.target or symbol,
+            "displaySymbol": symbol,
+            "evidence": [self._evidence(item).dict(exclude_none=True) for item in evidence],
+        })
 
     def _node_item(
         self,
@@ -375,7 +660,9 @@ class CompactFlowProjector:
             parts = [part for part in qualified.split(".") if part]
             if node.node_kind == "CALLABLE" and len(parts) >= 2:
                 return ".".join(parts[-2:])
-            return parts[-1] if parts else qualified
+            if node.node_kind == "CALLABLE":
+                return parts[-1] if parts else qualified
+            return qualified
         return str(node.label or node.node_id)
 
     def _node_kind(self, node: FlowGraphNode) -> str:
@@ -414,19 +701,52 @@ class CompactFlowProjector:
     def _edge_sort_key(
         self,
         edge: FlowGraphEdge,
-        evidence_by_edge: Mapping[str, Sequence[FlowGraphEvidence]] | None = None,
+        evidence_by_edge: Mapping[tuple[str, str], Sequence[FlowGraphEvidence]] | None = None,
     ) -> tuple[str, int, int, str, str, str]:
         line_starts = [
             item.line_start
-            for item in (evidence_by_edge or {}).get(edge.edge_id, ())
+            for item in (evidence_by_edge or {}).get(self._edge_key(edge), ())
             if item.line_start is not None
         ]
         first_line = min(line_starts) if line_starts else 1_000_000_000
         return (edge.from_node_id, first_line, 0 if line_starts else 1, edge.to_node_id or "", edge.edge_id, edge.resolution_status)
 
+    def _node_key(self, node: FlowGraphNode) -> tuple[str, str, str]:
+        return (node.source_id, node.graph_revision or node.graph_id, node.node_id)
+
+    def _edge_key(self, edge: FlowGraphEdge) -> tuple[str, str]:
+        return (edge.source_id, edge.edge_id)
+
+    def _from_key(self, edge: FlowGraphEdge) -> tuple[str, str, str]:
+        return (edge.source_id, edge.graph_revision or edge.graph_id, edge.from_node_id)
+
+    def _to_key(self, edge: FlowGraphEdge) -> tuple[str, str, str] | None:
+        if not edge.to_node_id:
+            return None
+        return (
+            edge.to_source_id or edge.source_id,
+            edge.to_graph_revision or edge.to_graph_id or edge.graph_revision or edge.graph_id,
+            edge.to_node_id,
+        )
+
     def _clean(self, value: str | None) -> str | None:
         normalized = str(value or "").strip()
         return normalized or None
+
+    def _without_none(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        for key, item in value.items():
+            if item is None:
+                continue
+            if isinstance(item, dict):
+                nested = self._without_none(item)
+                if nested:
+                    result[key] = nested
+            elif isinstance(item, list) and not item:
+                continue
+            else:
+                result[key] = item
+        return result
 
     def _diagnostics(self, execution: Any) -> List[KnowledgeQueryDiagnostic]:
         response = getattr(execution, "response", None)
@@ -460,10 +780,12 @@ class HumanFlowAnswerService:
         self,
         provider: Any,
         *,
-        max_prompt_chars: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS * 4,
+        context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS,
+        budget_estimator: PromptBudgetEstimator | None = None,
+        reserved_output_tokens: int | None = None,
         request_deadline_seconds: float = DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS,
         min_call_timeout_seconds: float = _DEFAULT_MIN_CALL_TIMEOUT_SECONDS,
-        projector: CompactFlowProjector | None = None,
+        projector: FlowProjectionBuilder | None = None,
         renderer: HumanAnswerPromptRenderer | None = None,
         text_validator: HumanAnswerTextValidator | None = None,
         provider_name: str | None = None,
@@ -472,10 +794,26 @@ class HumanFlowAnswerService:
         audit_max_records: int = 200,
     ) -> None:
         self.provider = provider
-        self.max_prompt_chars = max(4096, int(max_prompt_chars or DEFAULT_GENERATIVE_CONTEXT_TOKENS * 4))
+        if budget_estimator is None:
+            self.budget_estimator = PromptBudgetEstimator(
+                context_tokens=context_tokens,
+                reserved_output_tokens=(
+                    DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS
+                    if reserved_output_tokens is None
+                    else reserved_output_tokens
+                ),
+            )
+        else:
+            self.budget_estimator = budget_estimator
+            if reserved_output_tokens is not None and int(reserved_output_tokens) != self.budget_estimator.reserved_output_tokens:
+                raise ValueError("reserved_output_tokens must match PromptBudgetEstimator")
+        self.reserved_output_tokens = self.budget_estimator.reserved_output_tokens
+        provider_reserved_output_tokens = getattr(provider, "reserved_output_tokens", None)
+        if provider_reserved_output_tokens is not None and int(provider_reserved_output_tokens) != self.reserved_output_tokens:
+            raise ValueError("provider reserved_output_tokens must match PromptBudgetEstimator")
         self.request_deadline_seconds = max(0.001, float(request_deadline_seconds or DEFAULT_HUMAN_QUERY_REQUEST_DEADLINE_SECONDS))
         self.min_call_timeout_seconds = max(0.001, float(min_call_timeout_seconds or _DEFAULT_MIN_CALL_TIMEOUT_SECONDS))
-        self.projector = projector or CompactFlowProjector()
+        self.projector = projector or FlowProjectionBuilder()
         self.renderer = renderer or HumanAnswerPromptRenderer()
         self.text_validator = text_validator or HumanAnswerTextValidator()
         self.provider_name = provider_name
@@ -503,13 +841,16 @@ class HumanFlowAnswerService:
             raise HumanAnswerGenerationFailed("query retrieval plan is required")
         effective_plan = plan
         resolved_language = effective_plan.response_language
+        flow_inputs: list[tuple[str, str, Mapping[str, Any]]] = []
         for flow in flows:
             source, entrypoint = self.projector.flow_answer_identity(flow)
+            llm_input = self.projector.human_llm_input(request, flow, effective_plan)
+            self.budget_estimator.ensure_fits(self.renderer.render(llm_input))
+            flow_inputs.append((source, entrypoint, llm_input))
+        for source, entrypoint, llm_input in flow_inputs:
             try:
                 if self._cancelled():
                     raise HumanAnswerDeadlineExceeded()
-                llm_input = self.projector.human_llm_input(request, flow, effective_plan)
-                diagnostics.extend(self.projector.context_diagnostics())
                 text = self._answer_one_flow(
                     llm_input,
                     deadline_at,
@@ -523,6 +864,8 @@ class HumanFlowAnswerService:
                 diagnostics.append(self._flow_failure_diagnostic(source, entrypoint))
                 if self._cancelled():
                     break
+            except HumanAnswerContextBudgetExceeded:
+                raise
             except HumanAnswerGenerationFailed:
                 diagnostics.append(self._flow_failure_diagnostic(source, entrypoint))
 
@@ -557,7 +900,7 @@ class HumanFlowAnswerService:
                 resolved_language=resolved_language,
             )
             try:
-                return self._validate_text(result.raw_text, resolved_language)
+                return self._validate_text(result.raw_text, resolved_language, llm_input)
             except HumanAnswerContractViolation as exc:
                 self._record_validation_errors(entrypoint=entrypoint, attempt_count=attempt_count, errors=exc.errors)
                 if attempt_count == 1:
@@ -589,8 +932,7 @@ class HumanFlowAnswerService:
         if self._cancelled() or self._remaining_seconds(deadline_at) <= self.min_call_timeout_seconds:
             raise HumanAnswerDeadlineExceeded()
         prompt = self.renderer.render(llm_input, validation_errors)
-        if len(prompt) > self.max_prompt_chars:
-            raise HumanAnswerContextBudgetExceeded("human answer prompt exceeded budget")
+        self.budget_estimator.ensure_fits(prompt)
         remaining = self._remaining_seconds(deadline_at)
         try:
             result = self.provider.complete(llm_input, validation_errors=validation_errors, timeout_seconds=remaining)
@@ -610,26 +952,181 @@ class HumanFlowAnswerService:
         )
         return result
 
-    def _validate_text(self, raw_text: str, language: str) -> str:
+    def _validate_text(self, raw_text: str, language: str, llm_input: Mapping[str, Any]) -> str:
         try:
             payload = json.loads(raw_text)
         except Exception as exc:
-            raise HumanAnswerMalformedResponse(["Response must be strict JSON with a non-empty text string."]) from exc
+            raise HumanAnswerMalformedResponse(["Response must be strict JSON with steps and result fields."]) from exc
         if not isinstance(payload, dict):
             raise HumanAnswerMalformedResponse(["Response must be a JSON object."])
-        text = payload.get("text")
-        if not isinstance(text, str) or not text.strip():
-            raise HumanAnswerMalformedResponse(["Response JSON must contain a non-empty text string."])
-        normalized = text.strip()
-        forbidden = ("nodeRef", "transitionRef", "boundaryRef", "evidenceRef", "flowIndex", "analysis-graph-")
+        errors = self._validate_structured_answer_payload(payload, llm_input)
+        if errors:
+            raise HumanAnswerContractViolation(errors)
+        normalized = self._render_structured_answer(payload)
+        forbidden = (
+            "graphId",
+            "graphRevision",
+            "nodeId",
+            "edgeId",
+            "evidenceId",
+            "nodeRef",
+            "transitionRef",
+            "boundaryRef",
+            "evidenceRef",
+            "flowIndex",
+            "analysis-graph-",
+        )
         if any(token in normalized for token in forbidden):
             raise HumanAnswerContractViolation(["Response must not expose internal graph refs, node ids, transition refs, evidence refs, or analysis ids."])
+        coverage = llm_input.get("coverageContract") if isinstance(llm_input.get("coverageContract"), dict) else {}
+        leaked_local_refs = [
+            str(ref)
+            for ref in coverage.get("canonicalFactRefs", [])
+            if str(ref).strip() and re.search(rf"(?<![\w$]){re.escape(str(ref))}(?![\w$])", normalized)
+        ]
+        if leaked_local_refs:
+            raise HumanAnswerContractViolation(["Response must not expose internal graph refs, node ids, transition refs, evidence refs, or analysis ids."])
+        if "**" in normalized or "`" in normalized:
+            raise HumanAnswerContractViolation(["Response must be escaped plain text without Markdown bold or backticks."])
+        unsupported = self._unsupported_claim_errors(normalized, llm_input)
+        if unsupported:
+            raise HumanAnswerContractViolation(unsupported)
         text_validation = self.text_validator.validate(normalized, language)
         if not text_validation.valid:
             if any("language" in error.lower() for error in text_validation.errors):
                 raise HumanAnswerLanguagePolicyViolation(text_validation.errors)
             raise HumanAnswerContractViolation(text_validation.errors)
         return normalized
+
+    def _validate_structured_answer_payload(self, payload: Mapping[str, Any], llm_input: Mapping[str, Any]) -> List[str]:
+        errors: List[str] = []
+        allowed_keys = {"steps", "result"}
+        extra_keys = sorted(str(key) for key in payload if key not in allowed_keys)
+        if extra_keys:
+            errors.append("Response must not include extra fields.")
+        steps = payload.get("steps")
+        if not isinstance(steps, list) or not steps:
+            errors.append("Response JSON must contain a non-empty steps array.")
+            return errors
+        result = payload.get("result")
+        if not isinstance(result, str) or not result.strip():
+            errors.append("Response JSON must contain a non-empty result string.")
+
+        coverage = llm_input.get("coverageContract") if isinstance(llm_input.get("coverageContract"), dict) else {}
+        canonical_refs = [str(item) for item in coverage.get("canonicalFactRefs", []) if str(item).strip()]
+        required_nodes = [str(item) for item in coverage.get("nodeRefs", []) if str(item).strip()]
+        required_transitions = [str(item) for item in coverage.get("transitionRefs", []) if str(item).strip()]
+        required_boundaries = [str(item) for item in coverage.get("boundaryRefs", []) if str(item).strip()]
+        ref_order = {ref: index for index, ref in enumerate(canonical_refs)}
+        facts = {
+            str(item.get("ref")): item
+            for item in llm_input.get("orderedFacts", [])
+            if isinstance(item, dict) and str(item.get("ref") or "").strip()
+        }
+        if not canonical_refs:
+            errors.append("No canonical fact refs were supplied for validation.")
+            return errors
+
+        seen_refs: list[str] = []
+        last_index = -1
+        for step_index, step in enumerate(steps, start=1):
+            if not isinstance(step, dict):
+                errors.append(f"steps[{step_index}] must be an object.")
+                continue
+            step_extra = sorted(str(key) for key in step if key not in {"factRefs", "text"})
+            if step_extra:
+                errors.append(f"steps[{step_index}] must not include extra fields.")
+            text = step.get("text")
+            if not isinstance(text, str) or not text.strip():
+                errors.append(f"steps[{step_index}].text must be a non-empty string.")
+            refs = step.get("factRefs")
+            if not isinstance(refs, list) or not refs:
+                errors.append(f"steps[{step_index}].factRefs must be a non-empty array.")
+                continue
+            step_ref_values: list[str] = []
+            for ref_value in refs:
+                ref = str(ref_value or "").strip()
+                if not ref:
+                    errors.append(f"steps[{step_index}].factRefs contains a blank ref.")
+                    continue
+                if ref not in ref_order:
+                    errors.append(f"steps[{step_index}] contains a foreign factRef.")
+                    continue
+                if ref in seen_refs or ref in step_ref_values:
+                    errors.append(f"factRef {ref} is duplicated.")
+                    continue
+                current_index = ref_order[ref]
+                if current_index < last_index:
+                    errors.append(f"factRef {ref} is out of canonical order.")
+                last_index = max(last_index, current_index)
+                step_ref_values.append(ref)
+            seen_refs.extend(step_ref_values)
+            errors.extend(self._validate_step_ownership(step_index, step_ref_values, facts))
+
+        missing_nodes = [ref for ref in required_nodes if ref not in seen_refs]
+        missing_transitions = [ref for ref in required_transitions if ref not in seen_refs]
+        missing_boundaries = [ref for ref in required_boundaries if ref not in seen_refs]
+        if missing_nodes:
+            errors.append(f"Missing executable flow node facts: {', '.join(missing_nodes)}.")
+        if missing_transitions:
+            errors.append(f"Missing resolved transition facts: {', '.join(missing_transitions)}.")
+        if missing_boundaries:
+            errors.append(f"Missing boundary facts: {', '.join(missing_boundaries)}.")
+        return errors
+
+    def _validate_step_ownership(self, step_index: int, refs: Sequence[str], facts: Mapping[str, Mapping[str, Any]]) -> List[str]:
+        if not refs:
+            return []
+        errors: List[str] = []
+        node_refs = {ref for ref in refs if facts.get(ref, {}).get("type") == "node"}
+        for ref in refs:
+            fact = facts.get(ref, {})
+            fact_type = fact.get("type")
+            if fact_type == "transition" and node_refs:
+                adjacent = {str(fact.get("fromRef") or ""), str(fact.get("toRef") or "")}
+                if not node_refs & adjacent:
+                    errors.append(f"steps[{step_index}] claims transition {ref} without its owning node.")
+            if fact_type == "boundary" and node_refs:
+                owner = str(fact.get("fromRef") or "")
+                if owner not in node_refs:
+                    errors.append(f"steps[{step_index}] claims boundary {ref} without its owning node.")
+        return errors
+
+    def _render_structured_answer(self, payload: Mapping[str, Any]) -> str:
+        lines: list[str] = []
+        for index, step in enumerate(payload.get("steps") or [], start=1):
+            if not isinstance(step, dict):
+                continue
+            text = self._strip_step_number(str(step.get("text") or "").strip())
+            if text:
+                lines.append(f"{index}. {text}")
+        result = self._strip_step_number(str(payload.get("result") or "").strip())
+        if result:
+            lines.append(f"{len(lines) + 1}. {result}")
+        return "\n".join(lines).strip()
+
+    def _strip_step_number(self, value: str) -> str:
+        return re.sub(r"^\s*\d+(?:\.\d+)*[\.)]\s+", "", value).strip()
+
+    def _unsupported_claim_errors(self, text: str, llm_input: Mapping[str, Any]) -> List[str]:
+        rendered_facts = json.dumps(
+            {
+                "orderedFacts": llm_input.get("orderedFacts"),
+            },
+            ensure_ascii=False,
+        )
+        errors: List[str] = []
+        routes = {
+            route.rstrip(".,;:!?)\"]")
+            for route in re.findall(r"/[A-Za-z0-9_./{}:-]+", text)
+        }
+        for route in sorted(item for item in routes if item):
+            if route not in rendered_facts:
+                errors.append(f"Response mentions unsupported route or path {route}.")
+        for status in sorted(set(re.findall(r"\bHTTP\s+([1-5][0-9][0-9])\b", text, flags=re.IGNORECASE))):
+            if status not in rendered_facts:
+                errors.append(f"Response mentions unsupported HTTP status {status}.")
+        return errors
 
     def _record_audit(
         self,
@@ -689,6 +1186,7 @@ class LocalOllamaFlowExplanationClient:
         context_tokens: int,
         http_client: httpx.Client | None = None,
         renderer: Any | None = None,
+        reserved_output_tokens: int = DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS,
     ) -> None:
         self.base_url = self._require_localhost(base_url.rstrip("/"))
         self.model = model
@@ -696,6 +1194,7 @@ class LocalOllamaFlowExplanationClient:
         self.context_tokens = int(context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS)
         if self.context_tokens < 1024:
             raise ValueError("Flow explanation context_tokens must be at least 1024")
+        self.reserved_output_tokens = max(0, int(reserved_output_tokens))
         self.renderer = renderer or HumanAnswerPromptRenderer()
         self._client = http_client or httpx.Client(timeout=httpx.Timeout(timeout_seconds, connect=min(5, timeout_seconds)))
 
@@ -714,7 +1213,7 @@ class LocalOllamaFlowExplanationClient:
                 "prompt": prompt,
                 "stream": False,
                 "format": "json",
-                "options": {"num_ctx": self.context_tokens},
+                "options": {"num_ctx": self.context_tokens, "num_predict": self.reserved_output_tokens},
             },
             timeout=httpx.Timeout(call_timeout, connect=min(5.0, call_timeout)),
         )

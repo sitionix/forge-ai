@@ -117,6 +117,54 @@ def test_query_interpreter_honors_explicit_german_response_language_override():
     assert provider.calls[0]["llmInput"]["explicitAnswerLanguage"] == "de"
 
 
+def test_query_interpreter_repairs_detected_ukrainian_with_english_auto_response_language():
+    provider = SequenceQueryInterpretationProvider([
+        interpretation_payload(
+            detectedLanguage="uk",
+            responseLanguage="en",
+            normalizedQuery="створити сайт",
+            searchQueries=["створити сайт"],
+            codeIdentifiers=[],
+            concepts=["створення сайту"],
+        ),
+        interpretation_payload(
+            detectedLanguage="uk",
+            responseLanguage="uk",
+            normalizedQuery="створити сайт",
+            searchQueries=["створити сайт"],
+            codeIdentifiers=[],
+            concepts=["створення сайту"],
+        ),
+    ])
+    service = QueryInterpretationService(provider)
+
+    plan = service.interpret(KnowledgeQueryRequest(queryText="створити сайт", intent="AUTO"))
+
+    assert plan.detected_language == "uk"
+    assert plan.response_language == "uk"
+    assert len(provider.calls) == 2
+    assert any("detectedLanguage uk" in error for error in provider.calls[1]["validationErrors"])
+
+
+def test_query_interpreter_allows_generic_concepts_without_code_identifier_routing():
+    provider = SequenceQueryInterpretationProvider([
+        interpretation_payload(
+            detectedLanguage="uk",
+            responseLanguage="uk",
+            normalizedQuery="створити сайт",
+            searchQueries=["створити сайт"],
+            codeIdentifiers=[],
+            concepts=["HTML", "CSS", "JavaScript"],
+        )
+    ])
+    service = QueryInterpretationService(provider)
+
+    plan = service.interpret(KnowledgeQueryRequest(queryText="створити сайт", intent="AUTO"))
+
+    assert plan.code_identifiers == ()
+    assert plan.concepts == ("HTML", "CSS", "JavaScript")
+
+
 def test_query_interpreter_accepts_russian_detected_language_with_ukrainian_response():
     provider = SequenceQueryInterpretationProvider([
         interpretation_payload(

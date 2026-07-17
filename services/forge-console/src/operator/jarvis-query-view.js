@@ -101,7 +101,8 @@ export class JarvisQueryView {
   }
 
   renderDiagnostics(diagnostics) {
-    const items = list(diagnostics).filter((item) => item?.message || item?.code);
+    const items = list(diagnostics)
+      .filter((item) => item?.message || item?.code);
     if (!items.length) {
       return '';
     }
