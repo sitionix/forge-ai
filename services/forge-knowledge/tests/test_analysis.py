@@ -534,6 +534,47 @@ indexing:
     return store, config, service
 
 
+def build_generated_source_inventory(tmp_path, source_id="bffssox"):
+    workspace = tmp_path / "workspace"
+    service = workspace / source_id
+    relative_path = "api-rest/target/generated-sources/openapi/src/main/java/com/example/GeneratedApi.java"
+    generated_file = service / relative_path
+    generated_file.parent.mkdir(parents=True, exist_ok=True)
+    generated_file.write_text(
+        "package com.example;\npublic interface GeneratedApi {\n  void createSite();\n}\n",
+        encoding="utf-8",
+    )
+    unrelated = service / "api-rest/target/classes/com/example/Compiled.java"
+    unrelated.parent.mkdir(parents=True, exist_ok=True)
+    unrelated.write_text("package com.example;\npublic class Compiled {}\n", encoding="utf-8")
+    catalog = tmp_path / "services.yaml"
+    catalog.write_text(
+        f"""services:
+  {source_id}:
+    label: Generated Service
+    path: {source_id}
+    group: backend
+""",
+        encoding="utf-8",
+    )
+    config = tmp_path / "knowledge-sources.yaml"
+    config.write_text(
+        f"""catalog:
+  path: "{catalog}"
+  workspace_root: "{workspace}"
+indexing:
+  include: ["**/*.java"]
+  exclude: ["**/target/**"]
+  exclude_exceptions:
+    - "**/target/generated-sources/**/*.java"
+""",
+        encoding="utf-8",
+    )
+    store = InventoryStore(tmp_path / "knowledge.sqlite")
+    InventoryBuilder(load_source_config(config), store).build([], [])
+    return store, config, relative_path
+
+
 def override_inventory_classification(store, relative_path, *, flow_domain, language=None, extension=None):
     assignments = ["flow_domain = ?"]
     params = [flow_domain]
@@ -3745,6 +3786,86 @@ def test_runtime_analysis_writes_job_file_flow_and_line_metadata(tmp_path):
     assert inventory_file["line_count"] > 0
     assert inventory_file["decode_policy"] == "utf-8:replace"
     assert static_nodes["count"] > 0
+
+
+def test_generated_inventory_files_receive_terminal_analysis_status(tmp_path):
+    store, _, generated_path = build_generated_source_inventory(tmp_path)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+
+    final = wait_job(store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        current_generated = conn.execute(
+            """
+            SELECT f.id, f.source_id, f.relative_path, af.status
+            FROM files f
+            LEFT JOIN analysis_files af
+              ON af.file_id = f.id
+             AND af.content_hash = f.content_hash
+             AND af.analyzer_name = ?
+             AND af.analyzer_version = ?
+            WHERE f.relative_path LIKE '%target/generated-sources/%.java'
+            ORDER BY f.relative_path
+            """,
+            (StubAnalyzer.name, StubAnalyzer.version),
+        ).fetchall()
+        unrelated_target = conn.execute(
+            "SELECT COUNT(*) FROM files WHERE relative_path LIKE '%target/classes/%.java'"
+        ).fetchone()[0]
+
+    statuses = [row["status"] for row in current_generated]
+    successful = sum(1 for status in statuses if status in {"ANALYZED", "ANALYZED_WITH_DIAGNOSTICS"})
+    failed = sum(1 for status in statuses if status == "FAILED")
+
+    assert final["status"] == "COMPLETED"
+    assert final["fileCount"] == 1
+    assert [(row["source_id"], row["relative_path"]) for row in current_generated] == [("bffssox", generated_path)]
+    assert unrelated_target == 0
+    assert len(current_generated) == successful + failed
+    assert all(status is not None for status in statuses)
+
+
+def test_successful_generated_analysis_flows_to_graph_and_semantic_documents(tmp_path):
+    store, _, generated_path = build_generated_source_inventory(tmp_path)
+    runner = SupervisorHarness(store, app_config(tmp_path))
+
+    wait_job(store, runner.start(AnalysisBuildRequest(force=True), StubAnalyzer(GraphAnalysisResult()))["jobId"])
+    semantic_result = build_semantic_cache(store.db_path, source_id="bffssox")
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        graph_nodes = conn.execute(
+            """
+            SELECT source_id, relative_path, node_kind, status
+            FROM analysis_graph_nodes
+            WHERE source_id = ?
+              AND relative_path = ?
+            ORDER BY node_kind
+            """,
+            ("bffssox", generated_path),
+        ).fetchall()
+        semantic_docs = conn.execute(
+            """
+            SELECT d.source_id, n.relative_path, d.status
+            FROM semantic_documents d
+            JOIN analysis_graph_nodes n
+              ON n.source_id = d.source_id
+             AND n.id = d.node_id
+            WHERE d.source_id = ?
+              AND n.relative_path = ?
+            ORDER BY d.document_id
+            """,
+            ("bffssox", generated_path),
+        ).fetchall()
+
+    assert semantic_result.results[0].indexed_node_count > 0
+    assert graph_nodes
+    assert {row["source_id"] for row in graph_nodes} == {"bffssox"}
+    assert {row["status"] for row in graph_nodes} == {"TRUSTED"}
+    assert semantic_docs
+    assert {row["source_id"] for row in semantic_docs} == {"bffssox"}
+    assert {row["status"] for row in semantic_docs} == {"READY"}
 
 
 

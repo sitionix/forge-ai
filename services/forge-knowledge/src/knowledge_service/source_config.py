@@ -8,6 +8,7 @@ import yaml
 
 from knowledge_service.errors import ConfigMissingError, KnowledgeError
 from knowledge_service.file_classification import FileClassifier
+from knowledge_service.file_filters import FilePathFilter
 from knowledge_service.knowledge_defaults import load_knowledge_defaults, resolve_config_path
 
 
@@ -33,6 +34,14 @@ class IndexingConfig:
     max_file_size_bytes: int = 500000
     chunk_size_chars: int = 3000
     chunk_overlap_chars: int = 300
+    path_filter: FilePathFilter = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "path_filter",
+            FilePathFilter.from_patterns(self.include, self.exclude, self.exclude_exceptions),
+        )
 
 
 @dataclass(frozen=True)

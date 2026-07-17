@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import fnmatch
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from knowledge_service.path_glob import PathGlobMatcher
 
 
 UNKNOWN_FLOW_DOMAIN = "UNKNOWN"
@@ -24,6 +25,7 @@ class FileClassificationRule:
     extensions: List[str] = field(default_factory=list)
     filenames: List[str] = field(default_factory=list)
     path_patterns: List[str] = field(default_factory=list)
+    path_matcher: PathGlobMatcher = field(default_factory=PathGlobMatcher, repr=False, compare=False)
     language: Optional[str] = None
     language_by_extension: Dict[str, str] = field(default_factory=dict)
 
@@ -41,7 +43,8 @@ class FileClassifier:
                 flow_domain=str(item.get("flow_domain") or UNKNOWN_FLOW_DOMAIN).upper(),
                 extensions=_normalized_extensions(item.get("extensions")),
                 filenames=_lower_list(item.get("filenames")),
-                path_patterns=_lower_list(item.get("path_patterns")),
+                path_patterns=_string_list(item.get("path_patterns")),
+                path_matcher=PathGlobMatcher(_string_list(item.get("path_patterns"))),
                 language=str(item.get("language")) if item.get("language") else None,
                 language_by_extension=_language_by_extension(item.get("language_by_extension")),
             )
@@ -53,7 +56,7 @@ class FileClassifier:
     def classify(self, relative_path: str, extension: Optional[str] = None) -> FileClassification:
         ext = self.extension(relative_path, extension)
         normalized_path = _normalized_path(relative_path)
-        filename = normalized_path.rsplit("/", 1)[-1]
+        filename = normalized_path.rsplit("/", 1)[-1].lower()
         for rule in self.rules:
             if not self._matches(rule, normalized_path, filename, ext):
                 continue
@@ -71,7 +74,7 @@ class FileClassifier:
         return value
 
     def _matches(self, rule: FileClassificationRule, normalized_path: str, filename: str, extension: str) -> bool:
-        if rule.path_patterns and not any(fnmatch.fnmatchcase(normalized_path, pattern) for pattern in rule.path_patterns):
+        if rule.path_patterns and not rule.path_matcher.matches(normalized_path):
             return False
         if rule.filenames and filename not in rule.filenames:
             return False
@@ -81,13 +84,19 @@ class FileClassifier:
 
 
 def _normalized_path(value: str) -> str:
-    return str(value or "").replace("\\", "/").lower()
+    return str(value or "").replace("\\", "/")
 
 
 def _lower_list(value: Any) -> List[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip().lower() for item in value if item is not None and str(item).strip()]
+
+
+def _string_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if item is not None and str(item).strip()]
 
 
 def _normalized_extensions(value: Any) -> List[str]:

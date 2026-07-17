@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Dict, Iterator, Optional, Tuple
 
 from knowledge_service.file_classification import FileClassifier, UNKNOWN_FLOW_DOMAIN
-from knowledge_service.file_filters import is_excluded_file, is_excluded_file_exception, is_included_file
 from knowledge_service.file_metadata import ContextChunk, FileMetadata
 from knowledge_service.path_security import is_under_root, safe_relative_path
 from knowledge_service.skipped_reasons import SkippedBreakdown, SkippedReason
@@ -30,6 +29,7 @@ def scan_source(
     if not source.rootExists:
         skipped.increment(SkippedReason.MISSING_SOURCE_ROOT)
         return files, skipped
+    path_filter = indexing.path_filter
     for path in _walk_files(source.absoluteRoot):
         if path.is_symlink() and not is_under_root(path, source.absoluteRoot):
             skipped.increment(SkippedReason.SYMLINK_OUTSIDE_ROOT)
@@ -43,11 +43,11 @@ def scan_source(
         except OSError:
             skipped.increment(SkippedReason.UNREADABLE)
             continue
-        excluded = is_excluded_file(relative_path, indexing.exclude)
-        if excluded and not is_excluded_file_exception(relative_path, indexing.exclude_exceptions):
+        excluded = path_filter.is_excluded_file(relative_path)
+        if excluded and not path_filter.is_excluded_file_exception(relative_path):
             skipped.increment(SkippedReason.EXCLUDED_BY_PATTERN)
             continue
-        if not is_included_file(relative_path, indexing.include):
+        if not path_filter.is_included_file(relative_path):
             skipped.increment(SkippedReason.NOT_INCLUDED)
             continue
         classification = classifier.classify(relative_path)

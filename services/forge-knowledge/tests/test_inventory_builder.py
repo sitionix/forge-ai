@@ -111,9 +111,9 @@ indexing:
     assert [file["relativePath"] for file in files] == ["src/App.java"]
 
 
-def test_inventory_exclude_exceptions_allow_only_app_afesox_generated_java_root(tmp_path):
+def test_inventory_exclude_exceptions_allow_generated_java_under_any_module(tmp_path):
     workspace = tmp_path / "workspace"
-    service = workspace / "app-afesox"
+    service = workspace / "service-a"
     api_root = service / "target/generated-sources/src/main/java/com/example/api"
     client_root = service / "target/generated-sources/src/main/java/com/example/client"
     sibling_root = service / "target/generated-sources/src/test/java/com/example"
@@ -136,7 +136,7 @@ def test_inventory_exclude_exceptions_allow_only_app_afesox_generated_java_root(
     (service / "src").mkdir()
     (service / "src" / "App.java").write_text("class App {}\n", encoding="utf-8")
     catalog = tmp_path / "services.yaml"
-    catalog.write_text("services:\n  app-afesox:\n    label: App AFESOX\n    path: app-afesox\n    group: tool\n", encoding="utf-8")
+    catalog.write_text("services:\n  service-a:\n    label: Service A\n    path: service-a\n    group: tool\n", encoding="utf-8")
     config_file = tmp_path / "knowledge-sources.yaml"
     config_file.write_text(
         f"""catalog:
@@ -146,7 +146,7 @@ indexing:
   include: ["**/*.java", "**/*.class", "**/*.jar", "**/*.md", "**/pom.xml"]
   exclude: ["**/target/**"]
   exclude_exceptions:
-    - "target/generated-sources/src/main/java/**/*.java"
+    - "**/target/generated-sources/**/*.java"
 """,
         encoding="utf-8",
     )
@@ -154,15 +154,115 @@ indexing:
 
     result = InventoryBuilder(load_source_config(config_file), store).build([], [])
 
-    files = store.files("app-afesox", None, None, 100, 0)["files"]
+    files = store.files("service-a", None, None, 100, 0)["files"]
     assert [file["relativePath"] for file in files] == [
         "src/App.java",
         "target/generated-sources/src/main/java/com/example/api/GeneratedApi.java",
         "target/generated-sources/src/main/java/com/example/client/GeneratedClient.java",
+        "target/generated-sources/src/test/java/com/example/Other.java",
     ]
     assert result["skippedBreakdown"]["byReason"] == {
-        "EXCLUDED_BY_PATTERN": 7,
+        "EXCLUDED_BY_PATTERN": 6,
     }
+
+
+def test_generated_source_ownership_comes_from_physical_source_root(tmp_path):
+    workspace = tmp_path / "workspace"
+    relative_path = "api-rest/target/generated-sources/openapi/src/main/java/com/example/GeneratedApi.java"
+    for service in ("backendforfrontendservice-sox", "siteservice-sox"):
+        path = workspace / service / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"class {service.replace('-', '_')}GeneratedApi {{}}\n", encoding="utf-8")
+    outside = workspace / "external-contracts" / relative_path
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    outside.write_text("class ExternalGeneratedApi {}\n", encoding="utf-8")
+    catalog = tmp_path / "services.yaml"
+    catalog.write_text(
+        """services:
+  bffssox:
+    label: BFF
+    path: backendforfrontendservice-sox
+    group: backend
+    contract_refs:
+      api:
+        source_repo: app-afesox
+  stsssox:
+    label: Site
+    path: siteservice-sox
+    group: backend
+    contract_refs:
+      api:
+        source_repo: app-afesox
+""",
+        encoding="utf-8",
+    )
+    config_file = tmp_path / "knowledge-sources.yaml"
+    config_file.write_text(
+        f"""catalog:
+  path: "{catalog}"
+  workspace_root: "{workspace}"
+indexing:
+  include: ["**/*.java"]
+  exclude: ["**/target/**"]
+  exclude_exceptions:
+    - "**/target/generated-sources/**/*.java"
+""",
+        encoding="utf-8",
+    )
+    store = InventoryStore(tmp_path / "knowledge.sqlite")
+
+    InventoryBuilder(load_source_config(config_file), store).build([], [])
+
+    with store._connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT source_id, source_path, relative_path, absolute_path
+            FROM files
+            ORDER BY source_id
+            """
+        ).fetchall()
+    assert [(row["source_id"], row["relative_path"]) for row in rows] == [
+        ("bffssox", relative_path),
+        ("stsssox", relative_path),
+    ]
+    assert rows[0]["source_path"] == "backendforfrontendservice-sox"
+    assert rows[1]["source_path"] == "siteservice-sox"
+    assert all("external-contracts" not in row["absolute_path"] for row in rows)
+    assert {row["source_id"] for row in rows} == {"bffssox", "stsssox"}
+
+
+def test_generated_source_symlink_escaping_root_is_not_inventoried(tmp_path):
+    workspace = tmp_path / "workspace"
+    service = workspace / "svc"
+    link = service / "api-rest/target/generated-sources/openapi/src/main/java/Escaped.java"
+    target = tmp_path / "outside" / "Escaped.java"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("class Escaped {}\n", encoding="utf-8")
+    try:
+        link.symlink_to(target)
+    except OSError:
+        return
+    catalog = tmp_path / "services.yaml"
+    catalog.write_text("services:\n  svc:\n    label: Service\n    path: svc\n    group: backend\n", encoding="utf-8")
+    config_file = tmp_path / "knowledge-sources.yaml"
+    config_file.write_text(
+        f"""catalog:
+  path: "{catalog}"
+  workspace_root: "{workspace}"
+indexing:
+  include: ["**/*.java"]
+  exclude: ["**/target/**"]
+  exclude_exceptions:
+    - "**/target/generated-sources/**/*.java"
+""",
+        encoding="utf-8",
+    )
+
+    result = InventoryBuilder(load_source_config(config_file), InventoryStore(tmp_path / "knowledge.sqlite")).build([], [])
+
+    assert result["fileCount"] == 0
+    assert result["skippedBreakdown"]["byReason"]["SYMLINK_OUTSIDE_ROOT"] == 1
 
 
 def test_inventory_build_counts_symlink_outside_root_when_supported(tmp_path):
