@@ -426,14 +426,14 @@ class EntrypointFlowEngine:
         if state.cycle_detected:
             diagnostics.append(KnowledgeQueryDiagnostic(
                 code="ENTRYPOINT_FLOW_CYCLE_DETECTED",
-                message="A downstream CALLS cycle was retained without repeated expansion.",
+                message="A downstream execution cycle was retained without repeated expansion.",
                 severity="INFO",
                 sourceId=key.source_id,
             ))
         if state.missing_resolved_target:
             diagnostics.append(KnowledgeQueryDiagnostic(
                 code="ENTRYPOINT_FLOW_CURRENT_TARGET_NODE_MISSING",
-                message="A resolved CALLS edge pointed to a target node outside the current graph and was exposed as a boundary.",
+                message="A resolved execution edge pointed to a target node outside the current graph and was exposed as a boundary.",
                 severity="WARN",
                 sourceId=key.source_id,
             ))

@@ -70,6 +70,16 @@ class GraphQueryContract:
         return self.required_edge_type("CALLS")
 
     @property
+    def execution_edge_types(self) -> tuple[str, ...]:
+        preferred = (
+            "CALLS",
+            "PUBLISHES_EVENT",
+            "CONSUMES_EVENT",
+        )
+        result = tuple(kind for kind in preferred if kind in self.edge_types)
+        return result or (self.calls_edge_type,)
+
+    @property
     def responsibility_claim_kind(self) -> str:
         return self.required_claim_kind("RESPONSIBILITY")
 

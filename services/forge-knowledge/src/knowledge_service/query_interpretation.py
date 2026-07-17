@@ -132,12 +132,13 @@ class QueryInterpretationPromptRenderer:
             "Use detectedLanguage \"und\" only when the query contains no meaningful natural-language prose.\n"
             "responseLanguage must be a valid supported language code and must not be ru.\n"
             "If explicitAnswerLanguage is a language code, responseLanguage must be exactly that code. "
-            "If it is null or auto, choose the best non-forbidden responseLanguage for the user's query; use defaultResponseLanguage when no prose language is detected.\n"
+            "If explicitAnswerLanguage is null or auto and detectedLanguage is valid and non-forbidden, responseLanguage must equal detectedLanguage. "
+            "If detectedLanguage is und or forbidden, choose an allowed responseLanguage using defaultResponseLanguage when no better language is grounded by the query.\n"
             "normalizedQuery must be one non-empty retrieval phrase.\n"
             "searchQueries may contain at most 4 additive retrieval phrases.\n"
             "codeIdentifiers may contain at most 10 exact code symbols, and every value must be an exact substring of queryText.\n"
             "For natural-language-only queries with no literal code syntax in queryText, codeIdentifiers must be an empty array.\n"
-            "concepts may contain at most 10 concise concepts.\n"
+            "concepts may contain at most 10 concise retrieval concepts; do not use them for source ids, graph ids, file paths, routes, or guessed class and method names.\n"
             "Do not return source ids, graph ids, file paths, entrypoints, database identifiers, guessed class names, or final answers.\n"
             "Do not invent code identifiers; preserve exact identifier spelling from queryText.\n"
             f"{validation_block}"
@@ -273,8 +274,13 @@ class QueryInterpretationService:
             errors.append("normalizedQuery must be one non-empty string.")
 
         expected_response_language = explicit_language
+        if not expected_response_language and detected and detected != "und" and not is_forbidden_response_language(detected):
+            expected_response_language = detected
         if response_language and expected_response_language and response_language != expected_response_language:
-            errors.append(f"responseLanguage must match explicitAnswerLanguage {expected_response_language}.")
+            if explicit_language:
+                errors.append(f"responseLanguage must match explicitAnswerLanguage {expected_response_language}.")
+            else:
+                errors.append(f"responseLanguage must match detectedLanguage {expected_response_language} when no explicitAnswerLanguage is supplied.")
 
         search_queries = self._string_list(payload.get("searchQueries"), "searchQueries", 4, errors)
         code_identifiers = self._string_list(payload.get("codeIdentifiers"), "codeIdentifiers", 10, errors)
@@ -286,7 +292,6 @@ class QueryInterpretationService:
                 errors.append(f"codeIdentifiers value {identifier!r} must be an exact substring of queryText.")
         self._validate_no_invented_code_like_values("normalizedQuery", [normalized_query], request.queryText, errors)
         self._validate_no_invented_code_like_values("searchQueries", search_queries, request.queryText, errors)
-        self._validate_no_invented_code_like_values("concepts", concepts, request.queryText, errors)
 
         if errors:
             raise QueryInterpretationContractViolation(errors)

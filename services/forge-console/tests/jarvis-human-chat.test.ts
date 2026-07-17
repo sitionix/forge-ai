@@ -162,6 +162,32 @@ describe('Jarvis human chat', () => {
     expect(dom.window.document.querySelector('.jarvis-flow-card')).toBeNull();
   });
 
+  it('does not render obsolete compaction diagnostics with human answers', async () => {
+    const dom = jarvisDom();
+    const response = {
+      answerLanguage: 'uk',
+      answers: [{ source: 'svc', entrypoint: 'Flow.start', text: '1. Перший крок.\\n2. Другий крок.' }],
+      diagnostics: [
+        {
+          code: 'HUMAN_ANSWER_CONTEXT_COMPACTED',
+          message: 'Human answer evidence context was compacted before prompt rendering.'
+        }
+      ]
+    };
+    const http = { post: vi.fn(() => Promise.resolve(response)) };
+    const page = new JarvisPage({ document: dom.window.document, http });
+    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'Поясни';
+
+    await page.submitQuery(submitEvent());
+
+    const text = dom.window.document.body.textContent || '';
+    expect(text).toContain('1. Перший крок.');
+    expect(text).toContain('\\n2. Другий крок.');
+    expect(text).not.toContain('HUMAN_ANSWER_CONTEXT_COMPACTED');
+    expect(text).not.toContain('Human answer evidence context was compacted before prompt rendering.');
+    expect(dom.window.document.querySelector('.jarvis-answer-warning')).toBeNull();
+  });
+
   it('keeps prior messages when a later request fails', async () => {
     const dom = jarvisDom();
     const http = {

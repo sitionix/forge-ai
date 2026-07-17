@@ -101,7 +101,9 @@ export class JarvisQueryView {
   }
 
   renderDiagnostics(diagnostics) {
-    const items = list(diagnostics).filter((item) => item?.message || item?.code);
+    const items = list(diagnostics)
+      .filter((item) => item?.message || item?.code)
+      .filter((item) => !isLegacyHumanContextCompactionDiagnostic(item));
     if (!items.length) {
       return '';
     }
@@ -122,4 +124,12 @@ export class JarvisQueryView {
     }
     return this.panel()?.querySelector(`[data-jarvis-message="${id}"]`);
   }
+}
+
+function isLegacyHumanContextCompactionDiagnostic(item) {
+  const code = text(item?.code).toUpperCase();
+  return code.includes('HUMAN')
+    && code.includes('ANSWER')
+    && code.includes('CONTEXT')
+    && code.includes('COMPACT');
 }

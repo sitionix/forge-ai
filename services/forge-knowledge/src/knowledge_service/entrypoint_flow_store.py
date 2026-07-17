@@ -242,12 +242,22 @@ class EntrypointFlowGraphRepository:
         placeholders = ",".join("?" for _ in ids)
         contract = graph_query_contract()
         current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        execution_edge_sql, execution_edge_params = sql_in_clause(contract.execution_edge_types)
         if direction == "incoming":
-            return self._query_incoming_call_edges(conn, source_id, ids, include_tests, current_status_sql, current_status_params)
+            return self._query_incoming_call_edges(
+                conn,
+                source_id,
+                ids,
+                include_tests,
+                current_status_sql,
+                current_status_params,
+                execution_edge_sql,
+                execution_edge_params,
+            )
         frontier_column = "e.from_node_id"
         params: list[Any] = [
             source_id,
-            contract.calls_edge_type,
+            *execution_edge_params,
             *current_status_params,
             *ids,
             include_tests,
@@ -275,7 +285,7 @@ class EntrypointFlowGraphRepository:
               ON target_state.source_id = tn.source_id
              AND target_state.status = 'READY'
             WHERE e.source_id = ?
-              AND e.edge_type = ?
+              AND e.edge_type IN ({execution_edge_sql})
               AND e.status IN ({current_status_sql})
               AND {self.graph_store._inventory_membership_graph_edge_clause("e")}
               AND {frontier_column} IN ({placeholders})
@@ -300,6 +310,8 @@ class EntrypointFlowGraphRepository:
         include_tests: bool,
         current_status_sql: str,
         current_status_params: Sequence[Any],
+        execution_edge_sql: str,
+        execution_edge_params: Sequence[str],
     ) -> List[Dict[str, Any]]:
         placeholders = ",".join("?" for _ in ids)
         contract = graph_query_contract()
@@ -335,7 +347,7 @@ class EntrypointFlowGraphRepository:
             JOIN analysis_graph_state caller_state
               ON caller_state.source_id = e.source_id
              AND caller_state.status = 'READY'
-            WHERE e.edge_type = ?
+            WHERE e.edge_type IN ({execution_edge_sql})
               AND e.status IN ({current_status_sql})
               AND {self.graph_store._inventory_membership_graph_edge_clause("e")}
               AND e.to_node_id IN ({placeholders})
@@ -348,7 +360,7 @@ class EntrypointFlowGraphRepository:
                 include_tests,
                 *current_status_params,
                 include_tests,
-                contract.calls_edge_type,
+                *execution_edge_params,
                 *current_status_params,
                 *ids,
                 include_tests,
@@ -368,6 +380,7 @@ class EntrypointFlowGraphRepository:
             return result
         contract = graph_query_contract()
         current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        execution_edge_sql, execution_edge_params = sql_in_clause(contract.execution_edge_types)
         for chunk in _chunks(list(edge_ids)):
             self._metrics["sqlStatements"] += 1
             placeholders = ",".join("?" for _ in chunk)
@@ -392,13 +405,13 @@ class EntrypointFlowGraphRepository:
                   ON ev.id = link.evidence_id
                 LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
                 WHERE edge.source_id = ?
-                  AND edge.edge_type = ?
+                  AND edge.edge_type IN ({execution_edge_sql})
                   AND edge.status IN ({current_status_sql})
                   AND {self.graph_store._inventory_membership_graph_edge_clause("edge")}
                   AND edge.id IN ({placeholders})
                 ORDER BY edge.id, relative_path, ev.line_start, ev.line_end, ev.id
                 """,
-                [source_id, contract.calls_edge_type, *current_status_params, *chunk],
+                [source_id, *execution_edge_params, *current_status_params, *chunk],
             ).fetchall()
             result.extend(self.graph_store._linked_evidence_projection(rows))
         return result

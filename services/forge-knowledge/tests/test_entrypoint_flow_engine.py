@@ -185,7 +185,11 @@ class FakeFlowRepository:
     def _to_key(self, item: FlowGraphEdge) -> FlowNodeKey | None:
         if not item.to_node_id:
             return None
-        return (item.source_id, item.graph_revision or item.graph_id, item.to_node_id)
+        return (
+            item.to_source_id or item.source_id,
+            item.to_graph_revision or item.to_graph_id or item.graph_revision or item.graph_id,
+            item.to_node_id,
+        )
 
 
 def build(nodes, edges, anchors, *, max_flows=10, include_tests=False, evidence_items=None):
@@ -299,6 +303,52 @@ def test_external_boundary_and_evidence_remain_owned_by_edge():
     public = EntrypointFlowEngine().public_flows([flow])[0]
     assert public.boundaries[0].evidenceRefs == ["e1"]
     assert public.evidence[0].ownerRef == "b1"
+
+
+def test_cross_source_event_continuation_remains_one_downstream_flow():
+    root = node("HttpStart", entrypoint=True)
+    producer = node("Producer")
+    channel = FlowGraphNode(
+        source_id=SOURCE,
+        graph_id=REVISION,
+        graph_revision=REVISION,
+        node_id="EventChannel",
+        stable_key="key:EventChannel",
+        node_kind="RESOURCE",
+        label="orders.created",
+        relative_path="src/events.yaml",
+        line_start=1,
+        line_end=1,
+    )
+    consumer = replace(node("Consumer", entrypoint=True), source_id="source-b")
+    persistence = replace(node("Persistence"), source_id="source-b")
+    call_producer = edge("call-producer", "HttpStart", "Producer")
+    publish = FlowGraphEdge(SOURCE, REVISION, REVISION, "publish", "PUBLISHES_EVENT", "Producer", "EventChannel", "RESOLVED")
+    consume = FlowGraphEdge(
+        SOURCE,
+        REVISION,
+        REVISION,
+        "consume",
+        "CONSUMES_EVENT",
+        "EventChannel",
+        "Consumer",
+        "RESOLVED",
+        to_source_id="source-b",
+        to_graph_id=REVISION,
+        to_graph_revision=REVISION,
+    )
+    persist = FlowGraphEdge("source-b", REVISION, REVISION, "persist", "CALLS", "Consumer", "Persistence", "RESOLVED")
+    result = build(
+        [root, producer, channel, consumer, persistence],
+        [call_producer, publish, consume, persist],
+        [anchor("HttpStart")],
+    )
+
+    assert len(result.flows) == 1
+    selected = result.flows[0]
+    assert {item.node_id for item in selected.nodes} == {"HttpStart", "Producer", "EventChannel", "Consumer", "Persistence"}
+    assert {item.edge_type for item in selected.transitions} == {"CALLS", "PUBLISHES_EVENT", "CONSUMES_EVENT"}
+    assert any(item.source_id == "source-b" and item.node_id == "Consumer" for item in selected.nodes)
 
 
 def test_max_flows_limits_entrypoints_not_branches():

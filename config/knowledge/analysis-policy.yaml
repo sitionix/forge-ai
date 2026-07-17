@@ -77,6 +77,16 @@ analysis:
         from: [CALLABLE]
         to: [CALLABLE]
         semanticEligible: true
+      PUBLISHES_EVENT:
+        description: Callable source publishes a grounded event, message, or signal to a resource such as a topic, channel, queue, bus, or stream.
+        from: [CALLABLE]
+        to: [RESOURCE]
+        semanticEligible: true
+      CONSUMES_EVENT:
+        description: Resource source such as a topic, channel, queue, bus, or stream triggers a callable consumer through a grounded event, message, or signal subscription.
+        from: [RESOURCE]
+        to: [CALLABLE]
+        semanticEligible: true
       OVERRIDES:
         description: Callable source implements or overrides another callable declared by a parent type or interface.
         from: [CALLABLE]
@@ -221,7 +231,7 @@ analysis:
   semantic:
     indexedNodeKinds: [FILE, TYPE, CALLABLE]
     indexedClaimKinds: [RESPONSIBILITY, ENTRYPOINT_HINT]
-    indexedEdgeKinds: [DECLARES, IMPORTS, REFERENCES, CALLS]
+    indexedEdgeKinds: [DECLARES, IMPORTS, REFERENCES, CALLS, PUBLISHES_EVENT, CONSUMES_EVENT]
     unsupportedSemanticKind: allow_only_when_semanticEligible_false
 
   formats:
@@ -341,7 +351,7 @@ analysis:
 
     java_code_graph:
       nodes: [FILE, TYPE, CALLABLE, FIELD]
-      edges: [DECLARES, IMPORTS, REFERENCES, CALLS, OVERRIDES, USES_FIELD, IMPLEMENTS, EXTENDS, DEPENDS_ON]
+      edges: [DECLARES, IMPORTS, REFERENCES, CALLS, PUBLISHES_EVENT, CONSUMES_EVENT, OVERRIDES, USES_FIELD, IMPLEMENTS, EXTENDS, DEPENDS_ON]
       claims: [RESPONSIBILITY, ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
 
     code_text_graph:
@@ -386,7 +396,7 @@ analysis:
       trust: structural
       produces:
         nodes: [FILE, TYPE, CALLABLE, FIELD]
-        edges: [DECLARES, IMPORTS, REFERENCES, CALLS, OVERRIDES, USES_FIELD, IMPLEMENTS, EXTENDS]
+        edges: [DECLARES, IMPORTS, REFERENCES, CALLS, PUBLISHES_EVENT, CONSUMES_EVENT, OVERRIDES, USES_FIELD, IMPLEMENTS, EXTENDS]
         claims: [ENTRYPOINT_HINT, SIDE_EFFECT, DATA_ACCESS_HINT, EXTERNAL_BOUNDARY_HINT, CONFIG_REFERENCE]
 
     structured_text_light:

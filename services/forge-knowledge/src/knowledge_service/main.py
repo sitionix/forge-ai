@@ -34,7 +34,7 @@ from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.flow_explanations import (
     FLOW_EXPLANATION_LIMIT_REACHED,
-    CompactFlowProjector,
+    FlowProjectionBuilder,
     HumanAnswerContextBudgetExceeded,
     HumanAnswerDeadlineExceeded,
     HumanAnswerGenerationFailed,
@@ -713,7 +713,7 @@ def _knowledge_human_query_response(
         return _public_error_response(
             503,
             "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED",
-            "The grounded flow context exceeded the configured answer budget.",
+            "The complete grounded flow exceeds the available model context.",
         )
     except (HumanAnswerProviderUnavailable, HumanAnswerMalformedResponse, HumanAnswerRepairExhausted, HumanAnswerGenerationFailed):
         return _public_error_response(
@@ -753,7 +753,7 @@ def _knowledge_query_tool_context_response(
                 "NO_GROUNDED_GRAPH_CANDIDATES",
                 "No grounded graph candidates were found.",
             )
-        return CompactFlowProjector().to_tool_response(body, query_result)
+        return FlowProjectionBuilder().to_tool_response(body, query_result)
     except QueryPlanningDeadlineExceeded:
         return _public_error_response(
             504,
@@ -939,7 +939,7 @@ def _human_answer_service(
 ) -> tuple[HumanFlowAnswerService, Optional[Any]]:
     injected_provider = getattr(request.app.state, "flow_explanation_provider", None)
     max_prompt_chars = max(
-        DEFAULT_GENERATIVE_CONTEXT_TOKENS,
+        1,
         int(config.analysis_context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS) * 4,
     )
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
