@@ -36,6 +36,7 @@ from knowledge_service.query_interpretation import QueryRetrievalPlan
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
 from knowledge_service.flow_family import FlowFamily, FlowFamilyAssembler, FlowFamilyAssemblyResult
+from knowledge_service.flow_narrative import FlowNarrativePlan, FlowNarrativePlanner, replace_plan_fragments
 
 @dataclass(frozen=True)
 class KnowledgeQueryPolicy:
@@ -131,12 +132,14 @@ class QuerySource:
     graph_revision: str
     node_count: int
     edge_count: int
+    graph_status: str | None = None
 
 
 @dataclass(frozen=True)
 class KnowledgeQueryExecutionResult:
     response: KnowledgeQueryResponse
     flows: tuple[FlowFamily, ...] = ()
+    narrative_plans: tuple[FlowNarrativePlan, ...] = ()
     raw_flows: tuple[EntrypointFlow, ...] = ()
     family_assembly: FlowFamilyAssemblyResult | None = None
 
@@ -156,6 +159,7 @@ class SourceScopeResolver:
             graph_revision = str(source.get("graphRevision") or source.get("graph_revision") or graph_id)
             node_count = int(source.get("nodeCount") or 0)
             edge_count = int(source.get("edgeCount") or 0)
+            graph_status = str(source.get("graphStatus") or "").strip() or None
             if not source_id:
                 continue
             if not graph_id:
@@ -186,8 +190,19 @@ class SourceScopeResolver:
                     graph_revision=graph_revision,
                     node_count=node_count,
                     edge_count=edge_count,
+                    graph_status=graph_status,
                 )
             )
+            if graph_status and graph_status != "READY":
+                diagnostics.append(
+                    KnowledgeQueryDiagnostic(
+                        code="PARTIAL_SOURCE_GRAPH_STATE",
+                        message="Source graph state is not READY, but current eligible facts remain queryable.",
+                        severity="INFO",
+                        sourceId=source_id,
+                        metadata={"graphStatus": graph_status},
+                    )
+                )
         if not raw_sources:
             diagnostics.append(
                 KnowledgeQueryDiagnostic(
@@ -1030,6 +1045,7 @@ class KnowledgeQueryService:
         self.policy = policy or KnowledgeQueryPolicy()
         self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_repository, "graph_store", None))
         self.family_assembler = FlowFamilyAssembler()
+        self.narrative_planner = FlowNarrativePlanner()
 
     def query(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryResponse:
         return self.query_with_flows(request, plan=plan).response
@@ -1088,22 +1104,30 @@ class KnowledgeQueryService:
         if plan is not None:
             flows = self._select_plan_flows(flows, plan)
         discovered_family_count = len(flows)
-        selected_flows = flows[:request_flow_limit]
-        omitted_family_count = max(0, discovered_family_count - len(selected_flows))
-        if omitted_family_count:
-            diagnostics.append(KnowledgeQueryDiagnostic(
-                code="FLOW_FAMILY_MAX_FLOWS_REACHED",
-                message="Independent flow families were omitted by maxFlows.",
-                severity="INFO",
-                metadata={
-                    "returnedFamilyCount": len(selected_flows),
-                    "discoveredFamilyCount": discovered_family_count,
-                    "omittedFamilyCount": omitted_family_count,
-                    "maxFlows": request_flow_limit,
-                },
-            ))
-        selected_flows = tuple(self.flow_repository.hydrate_evidence(selected_flows))
+        narrative_plans, narrative_diagnostics = self.narrative_planner.assemble(flows, max_plans=request_flow_limit)
+        diagnostics.extend(narrative_diagnostics)
+        selected_fragments = []
+        seen_fragment_keys: set[str] = set()
+        selected_fragment_keys: list[str] = []
+        for narrative_plan in narrative_plans:
+            for fragment in narrative_plan.fragments:
+                if fragment.key in seen_fragment_keys:
+                    continue
+                seen_fragment_keys.add(fragment.key)
+                selected_fragment_keys.append(fragment.key)
+                selected_fragments.append(fragment)
+        hydrated_families = tuple(self.flow_repository.hydrate_evidence([fragment.family for fragment in selected_fragments]))
+        hydrated_by_key = {
+            fragment.key: hydrated
+            for fragment, hydrated in zip(selected_fragments, hydrated_families)
+        }
+        narrative_plans = tuple(replace_plan_fragments(narrative_plan, hydrated_by_key) for narrative_plan in narrative_plans)
+        selected_flows = tuple(hydrated_by_key[key] for key in selected_fragment_keys if key in hydrated_by_key)
         public_flows = self.flow_engine.public_flows(selected_flows)
+        omitted_plan_count = max(
+            (int(item.metadata.get("omittedPlanCount") or 0) for item in narrative_diagnostics if item.code == "NARRATIVE_PLAN_MAX_FLOWS_REACHED"),
+            default=0,
+        )
         diagnostics.extend(build_result.diagnostics)
         diagnostics.extend(assembly_result.diagnostics)
         diagnostics.append(KnowledgeQueryDiagnostic(
@@ -1118,7 +1142,8 @@ class KnowledgeQueryService:
                 "rawCandidateFlowCount": assembly_result.raw_candidate_flow_count,
                 "discoveredFamilyCount": assembly_result.discovered_family_count,
                 "selectedFamilyCount": len(selected_flows),
-                "omittedFamilyCount": omitted_family_count,
+                "narrativePlanCount": len(narrative_plans),
+                "omittedPlanCount": omitted_plan_count,
             },
         ))
         matched_sources = self._matched_sources(matched_nodes, eligible_sources)
@@ -1144,16 +1169,17 @@ class KnowledgeQueryService:
                     searchedSourceCount=len(eligible_sources),
                     matchedSourceCount=len(matched_sources),
                     matchedNodeCount=len(matched_nodes),
-                    flowCount=len(public_flows),
+                    flowCount=len(narrative_plans),
                     nodeCount=sum(flow.coverage.node_count for flow in selected_flows),
                     edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in selected_flows),
                     evidenceCount=sum(len(flow.evidence) for flow in selected_flows),
-                    truncated=candidate_result.truncated or anchor_result.truncated or omitted_family_count > 0,
-                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or omitted_family_count > 0,
+                    truncated=candidate_result.truncated or anchor_result.truncated or omitted_plan_count > 0,
+                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or omitted_plan_count > 0,
                 ),
                 diagnostics=diagnostics,
             ),
             flows=selected_flows,
+            narrative_plans=narrative_plans,
             raw_flows=raw_flows,
             family_assembly=assembly_result,
         )

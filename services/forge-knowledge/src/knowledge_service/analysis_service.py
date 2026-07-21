@@ -257,20 +257,11 @@ class AnalysisSupervisor:
 
     def _finalize_dirty_sources(self, source_ids: Optional[List[str]]) -> None:
         dirty_source_ids = self.analysis_store.dirty_graph_source_ids(source_ids)
-        if not dirty_source_ids:
-            return
-        instance_single_finalizer = getattr(getattr(self.analysis_store, "__dict__", {}), "get", lambda _key: None)("finalize_source_graph")
-        if callable(instance_single_finalizer):
-            for source_id in dirty_source_ids:
-                try:
-                    instance_single_finalizer(source_id)
-                except Exception as exc:
-                    self.logger.warning("Knowledge source graph finalization failed for %s: %s", source_id, exc)
-            return
-        try:
-            self.analysis_store.finalize_source_graphs(dirty_source_ids)
-        except Exception as exc:
-            self.logger.warning("Knowledge source graph finalization failed for %s: %s", ",".join(dirty_source_ids), exc)
+        for source_id in dirty_source_ids:
+            try:
+                self.analysis_store.finalize_source_graph(source_id)
+            except Exception as exc:
+                self.logger.warning("Knowledge source graph finalization failed for %s: %s", source_id, exc)
 
     async def _worker(self, index: int) -> None:
         while not self._stopping:

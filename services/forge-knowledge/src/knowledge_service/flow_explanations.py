@@ -19,10 +19,14 @@ from knowledge_service.config import (
 from knowledge_service.entrypoint_kinds import tree_kind_for_entrypoint, trigger_kind_for_entrypoint
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow
 from knowledge_service.flow_family import FlowFamily
+from knowledge_service.flow_narrative import FlowGapVerificationStatus, FlowNarrativeGap, FlowNarrativePartKind, FlowNarrativePlan
 from knowledge_service.flow_boundary_classifier import FlowBoundaryClassifier, FLOW_BOUNDARY_CLASSIFIER
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
 from knowledge_service.knowledge_query_schema import (
     FlowToolEvidence,
+    FlowToolFlow,
+    FlowToolGap,
+    FlowToolPart,
     FlowToolSupportingRelation,
     FlowToolTransition,
     FlowToolTrigger,
@@ -226,33 +230,30 @@ class HumanAnswerPromptRenderer:
             validation_block += "\nReturn a replacement JSON object only. Keep the text natural and grounded in the supplied facts.\n"
         context_json = json.dumps(dict(llm_input), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         return (
-            "Answer the user's code-flow question as a concise technical walkthrough for exactly one supplied segment of one assembled execution family.\n"
+            "Answer as a concise technical walkthrough for exactly one supplied segment of one assembled execution family.\n"
             "Return strict JSON only with exactly this shape: "
-            "{\"steps\":[{\"factRefs\":[\"n1\"],\"text\":\"human-readable grounded step\"}],"
+            "{\"steps\":[{\"unitRefs\":[\"n1\"],\"certainty\":\"VERIFIED\",\"text\":\"human-readable grounded step\"}],"
             "\"result\":null} for non-terminal segments, or "
-            "{\"steps\":[{\"factRefs\":[\"n1\"],\"text\":\"human-readable grounded step\"}],"
-            "\"result\":\"human-readable observable result\"} for the terminal segment.\n"
+            "{\"steps\":[{\"unitRefs\":[\"n1\"],\"certainty\":\"VERIFIED\",\"text\":\"human-readable grounded step\"}],"
+            "\"result\":\"human-readable observable result\"} for the terminal segment when the supplied facts provide one. Terminal result may be null when no grounded final result is supplied.\n"
             "Write all natural-language prose in the supplied responseLanguage. "
-            "Preserve code identifiers, class names, method names, routes, constants, topic names, and quoted code literals exactly as supplied.\n"
+            "Preserve code identifiers, routes, constants, topics, and quoted code exactly as supplied.\n"
             "Directly answer the question using only the supplied verified flow facts.\n"
             "Use only this segment's orderedFacts; do not refer to previous or future segment prose.\n"
-            "If segment.terminal is false, result must be null and the prose must not claim that the entire execution family has completed.\n"
-            "incomingContext and outgoingContext are public-safe continuity descriptors only; do not cover them as facts and do not copy them as refs.\n"
-            "Use the supplied orderedFacts and coverageContract as the authoritative execution order and grounding contract.\n"
-            "Every factRefs value must exist in coverageContract.canonicalFactRefs. Cover every required node, transition, and boundary exactly once; supporting relations must also be covered exactly once, in canonical order.\n"
-            "The suggestedStepPlan contains ref-only groups in canonical order. Prefer copying each suggestedStepPlan factRefs array exactly and writing only the step text for it.\n"
-            "Use as many concise steps as needed. Low-level boundary refs still need coverage; group adjacent boundary refs with their owning node when the text explains them, or use short boundary-only steps.\n"
-            "Each step text must explain only the facts named by that step's factRefs. Do not cite a producer and a downstream consumer in the same step unless the same factRefs explicitly connect them.\n"
-            "Fact kind fields are internal classifier labels for grounding only. Never copy labels such as UNRESOLVED_CALL, EXTERNAL_CALL, METHOD, HTTP_ENDPOINT, KAFKA_LISTENER, or ENTRYPOINT into the answer.\n"
-            "Start with the trigger and entrypoint when available, including the HTTP method and route only when they are supplied.\n"
-            "The final public answer will be numbered by the server from your steps. Do not include Markdown, backticks, raw JSON, graph refs, evidence refs, node ids, or transition ids in step text.\n"
-            "Explain branches as branches; do not fabricate a sequence between sibling branches.\n"
-            "Mention exact class or method symbols where they help identify the code.\n"
+            "If segment.terminal is false, result must be null and must not claim family completion.\n"
+            "incomingContext and outgoingContext are continuity descriptors only; do not cover or copy them as refs.\n"
+            "orderedFacts and coverageContract are the authoritative order and grounding contract.\n"
+            "Every unitRefs value must exist in coverageContract.canonicalUnitRefs. Cover every required node, transition, and gap exactly once in canonical order.\n"
+            "Supporting relation and low-level boundary refs are optional context; include those refs only when the step text uses that supplied fact.\n"
+            "Prefer copying suggestedStepPlan unitRefs and certainty, writing only the step text.\n"
+            "Use as many concise steps as needed. Each step text must explain only the facts named by that step's unitRefs.\n"
+            "Use certainty VERIFIED only for verified units. For an unverified or ambiguous gap unit, use certainty UNVERIFIED or AMBIGUOUS and explicitly describe that the current graph does not verify a direct causal transition.\n"
+            "Never combine a gap unit with verified execution units in the same step.\n"
+            "Never copy internal kind labels, refs, ids, Markdown, backticks, or raw JSON into step text.\n"
+            "Start with the supplied trigger and entrypoint. Explain branches as branches; do not sequence sibling branches.\n"
             "Explain what data arrives, what the code does, what it calls next, and grounded validation, persistence, or side effects when supplied.\n"
             "When validation facts include thresholds, null or empty checks, exception classes, or error messages, include the exact grounded detail.\n"
-            "Only the terminal segment may end with the observable result: returned response or status, persisted data, or external side effect when supplied.\n"
-            "If the supplied facts do not include a return value, status, persistence, event, or side effect, state that the verified facts do not provide that detail.\n"
-            "Keep all step and result prose as escaped plain text inside JSON strings.\n"
+            "Only the terminal segment may include an observable result when supplied.\n"
             "Do not collapse the flow into a generic summary or mechanically repeat every graph field.\n"
             "Do not omit available method names, class names, trigger details, validation rules, persistence details, side effects, or final results.\n"
             "Do not invent validation, side effects, transports, routes, statuses, or ordering unsupported by the supplied facts.\n"
@@ -270,13 +271,31 @@ class FlowProjectionBuilder:
         self.boundary_classifier = boundary_classifier or FLOW_BOUNDARY_CLASSIFIER
 
     def to_tool_response(self, request: KnowledgeQueryRequest, execution: Any) -> KnowledgeQueryToolContextResponse:
+        narrative_plans = tuple(getattr(execution, "narrative_plans", ()) or ())
+        if not narrative_plans:
+            return KnowledgeQueryToolContextResponse(
+                queryText=request.queryText,
+                flows=[
+                    FlowToolFlow(
+                        source=str(flow.key.source_id or ""),
+                        entrypoint=self._symbol(flow.entrypoint),
+                        parts=[FlowToolPart(kind=FlowNarrativePartKind.VERIFIED_FRAGMENT.value, tree=self._tree(flow))],
+                        complete=bool(flow.complete),
+                        diagnostics=list(flow.diagnostics),
+                    )
+                    for flow in tuple(getattr(execution, "flows", ()) or ())
+                ],
+                diagnostics=self._diagnostics(execution),
+            )
         return KnowledgeQueryToolContextResponse(
             queryText=request.queryText,
-            trees=[self._tree(flow) for flow in tuple(execution.flows or ())],
+            flows=[self._tool_flow(plan) for plan in narrative_plans],
             diagnostics=self._diagnostics(execution),
         )
 
-    def human_llm_input(self, request: KnowledgeQueryRequest, flow: EntrypointFlow, plan: QueryRetrievalPlan) -> Dict[str, Any]:
+    def human_llm_input(self, request: KnowledgeQueryRequest, flow: EntrypointFlow | FlowFamily | FlowNarrativePlan, plan: QueryRetrievalPlan) -> Dict[str, Any]:
+        if isinstance(flow, FlowNarrativePlan):
+            return self._human_llm_input_for_plan(request, flow, plan)
         ordered_facts, coverage_contract = self._ordered_facts(flow)
         return {
             "originalQuestion": request.queryText,
@@ -290,8 +309,65 @@ class FlowProjectionBuilder:
             "suggestedStepPlan": self._suggested_step_plan(ordered_facts),
         }
 
-    def flow_answer_identity(self, flow: EntrypointFlow) -> tuple[str, str]:
+    def flow_answer_identity(self, flow: EntrypointFlow | FlowFamily | FlowNarrativePlan) -> tuple[str, str]:
+        if isinstance(flow, FlowNarrativePlan):
+            fragments = flow.fragments
+            if not fragments:
+                return "", ""
+            return str(fragments[0].source_id or ""), self._symbol(fragments[0].root)
         return str(flow.key.source_id or ""), self._symbol(flow.entrypoint)
+
+    def _tool_flow(self, plan: FlowNarrativePlan) -> FlowToolFlow:
+        fragments = plan.fragments
+        first = fragments[0] if fragments else None
+        parts: list[FlowToolPart] = []
+        for part in plan.parts:
+            if part.kind is FlowNarrativePartKind.VERIFIED_FRAGMENT and part.fragment is not None:
+                parts.append(FlowToolPart(kind=part.kind.value, tree=self._tree(part.fragment.family)))
+            elif part.gap is not None:
+                parts.append(FlowToolPart(kind=part.kind.value, gap=self._tool_gap(part.gap)))
+        return FlowToolFlow(
+            source=first.source_id if first is not None else None,
+            entrypoint=self._symbol(first.root) if first is not None else None,
+            parts=parts,
+            complete=bool(plan.complete),
+            diagnostics=list(plan.diagnostics),
+        )
+
+    def _tool_gap(self, gap: FlowNarrativeGap) -> FlowToolGap:
+        return FlowToolGap(
+            kind=gap.kind,
+            verificationStatus=gap.verification_status.value,
+            fromSource=gap.from_source,
+            fromSymbol=gap.from_symbol,
+            toSource=gap.to_source,
+            toSymbol=gap.to_symbol,
+            transportKind=gap.transport_kind,
+            method=gap.method,
+            route=gap.route,
+            operationIdentity=gap.operation_identity,
+            reason=gap.reason,
+        )
+
+    def _human_llm_input_for_plan(
+        self,
+        request: KnowledgeQueryRequest,
+        narrative_plan: FlowNarrativePlan,
+        plan: QueryRetrievalPlan,
+    ) -> Dict[str, Any]:
+        ordered_facts, coverage_contract = self._ordered_plan_facts(narrative_plan)
+        source, entrypoint = self.flow_answer_identity(narrative_plan)
+        return {
+            "originalQuestion": request.queryText,
+            "detectedLanguage": plan.detected_language,
+            "responseLanguage": plan.response_language,
+            "intent": plan.effective_intent,
+            "rootSource": source,
+            "entrypoint": entrypoint,
+            "orderedFacts": ordered_facts,
+            "coverageContract": coverage_contract,
+            "suggestedStepPlan": self._suggested_step_plan(ordered_facts),
+        }
 
     def _tree_item_dict(self, item: FlowToolTreeItem) -> Dict[str, Any]:
         data = item.dict(exclude_none=True)
@@ -301,6 +377,82 @@ class FlowProjectionBuilder:
         ]
         data["children"] = children
         return data
+
+    def _ordered_plan_facts(self, plan: FlowNarrativePlan) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
+        facts: list[Dict[str, Any]] = []
+        part_index = 0
+        gap_index = 0
+        for part in plan.parts:
+            if part.kind is FlowNarrativePartKind.VERIFIED_FRAGMENT and part.fragment is not None:
+                part_index += 1
+                fragment_facts, _coverage = self._ordered_facts(part.fragment.family)
+                facts.extend(self._remap_fact_refs(fragment_facts, f"p{part_index}_"))
+                continue
+            if part.gap is not None:
+                gap_index += 1
+                facts.append(self._gap_fact(f"g{gap_index}", part.gap))
+        return facts, self._coverage_contract(facts)
+
+    def _coverage_contract(self, facts: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+        canonical_refs = [str(fact["ref"]) for fact in facts if str(fact.get("ref") or "").strip()]
+        required_refs = [
+            str(fact["ref"])
+            for fact in facts
+            if fact.get("type") not in {"supporting", "boundary"} and str(fact.get("ref") or "").strip()
+        ]
+        return {
+            "canonicalUnitRefs": canonical_refs,
+            "canonicalFactRefs": canonical_refs,
+            "requiredUnitRefs": required_refs,
+            "nodeRefs": [fact["ref"] for fact in facts if fact.get("type") == "node"],
+            "transitionRefs": [fact["ref"] for fact in facts if fact.get("type") == "transition"],
+            "supportingRefs": [fact["ref"] for fact in facts if fact.get("type") == "supporting"],
+            "boundaryRefs": [fact["ref"] for fact in facts if fact.get("type") == "boundary"],
+            "gapRefs": [fact["ref"] for fact in facts if fact.get("type") == "gap"],
+        }
+
+    def _remap_fact_refs(self, facts: Sequence[Mapping[str, Any]], prefix: str) -> list[Dict[str, Any]]:
+        ref_map = {
+            str(fact.get("ref")): f"{prefix}{fact.get('ref')}"
+            for fact in facts
+            if str(fact.get("ref") or "").strip()
+        }
+
+        def remap_value(value: Any) -> Any:
+            if isinstance(value, str):
+                return ref_map.get(value, value)
+            if isinstance(value, list):
+                return [remap_value(item) for item in value]
+            if isinstance(value, dict):
+                return {key: remap_value(item) for key, item in value.items()}
+            return value
+
+        remapped: list[Dict[str, Any]] = []
+        for fact in facts:
+            item = {key: remap_value(value) for key, value in dict(fact).items()}
+            if item.get("ref") in ref_map:
+                item["ref"] = ref_map[str(item["ref"])]
+            remapped.append(item)
+        return remapped
+
+    def _gap_fact(self, ref: str, gap: FlowNarrativeGap) -> Dict[str, Any]:
+        return self._without_none(
+            {
+                "ref": ref,
+                "type": "gap",
+                "certainty": "AMBIGUOUS" if gap.verification_status is FlowGapVerificationStatus.AMBIGUOUS else "UNVERIFIED",
+                "verificationStatus": gap.verification_status.value,
+                "fromSource": gap.from_source,
+                "fromSymbol": gap.from_symbol,
+                "toSource": gap.to_source,
+                "toSymbol": gap.to_symbol,
+                "transportKind": gap.transport_kind,
+                "method": gap.method,
+                "route": gap.route,
+                "operationIdentity": gap.operation_identity,
+                "reason": gap.reason,
+            }
+        )
 
     def _tree(self, flow: EntrypointFlow | FlowFamily) -> FlowToolTree:
         node_by_key = {self._node_key(node): node for node in flow.nodes}
@@ -566,13 +718,7 @@ class FlowProjectionBuilder:
             facts.append(fact)
             seen_fact_refs.add(str(fact["ref"]))
             canonical_refs.append(str(fact["ref"]))
-        return facts, {
-            "canonicalFactRefs": canonical_refs,
-            "nodeRefs": [fact["ref"] for fact in facts if fact.get("type") == "node"],
-            "transitionRefs": [fact["ref"] for fact in facts if fact.get("type") == "transition"],
-            "supportingRefs": [fact["ref"] for fact in facts if fact.get("type") == "supporting"],
-            "boundaryRefs": [fact["ref"] for fact in facts if fact.get("type") == "boundary"],
-        }
+        return facts, self._coverage_contract(facts)
 
     def _suggested_step_plan(self, facts: Sequence[Mapping[str, Any]]) -> list[Dict[str, Any]]:
         facts_by_ref = {str(fact.get("ref")): fact for fact in facts if str(fact.get("ref") or "").strip()}
@@ -584,7 +730,7 @@ class FlowProjectionBuilder:
                 return set()
             return {
                 ref
-                for ref in group.get("factRefs", [])
+                for ref in group.get("unitRefs", [])
                 if facts_by_ref.get(ref, {}).get("type") == "node"
             }
 
@@ -596,24 +742,30 @@ class FlowProjectionBuilder:
             if fact_type == "node":
                 if current is not None:
                     groups.append(current)
-                current = {"factRefs": [ref]}
+                current = {"unitRefs": [ref], "certainty": "VERIFIED"}
+                continue
+            if fact_type == "gap":
+                if current is not None:
+                    groups.append(current)
+                groups.append({"unitRefs": [ref], "certainty": fact.get("certainty") or "UNVERIFIED"})
+                current = None
                 continue
             if fact_type in {"transition", "boundary", "supporting"}:
                 owner_refs = {str(fact.get("fromRef") or "")}
                 if fact_type in {"transition", "supporting"}:
                     owner_refs.add(str(fact.get("toRef") or ""))
                 if current is not None and current_node_refs(current) and current_node_refs(current) & owner_refs:
-                    current["factRefs"].append(ref)
+                    current["unitRefs"].append(ref)
                 else:
                     if current is not None:
                         groups.append(current)
-                    current = {"factRefs": [ref]}
+                    current = {"unitRefs": [ref], "certainty": "VERIFIED"}
         if current is not None:
             groups.append(current)
         return [
-            {"factRefs": list(group.get("factRefs") or [])}
+            {"unitRefs": list(group.get("unitRefs") or []), "certainty": group.get("certainty") or "VERIFIED"}
             for group in groups
-            if group.get("factRefs")
+            if group.get("unitRefs")
         ]
 
     def _node_fact(
@@ -941,6 +1093,8 @@ class FlowProjectionBuilder:
         diagnostics = list(getattr(response, "diagnostics", []) or [])
         for flow in tuple(getattr(execution, "flows", ()) or ()):
             diagnostics.extend(flow.diagnostics)
+        for narrative_plan in tuple(getattr(execution, "narrative_plans", ()) or ()):
+            diagnostics.extend(narrative_plan.diagnostics)
         return [
             self._compact_diagnostic(item)
             for item in diagnostics
@@ -1020,8 +1174,10 @@ class HumanFlowAnswerService:
         plan: QueryRetrievalPlan | None = None,
         deadline_at: float | None = None,
     ) -> KnowledgeHumanQueryResponse:
-        flows = tuple(execution.flows or ())
-        if not flows:
+        narrative_plans = tuple(getattr(execution, "narrative_plans", ()) or ())
+        fallback_flows = tuple(getattr(execution, "flows", ()) or ()) if not narrative_plans else ()
+        selected_items: tuple[Any, ...] = narrative_plans or fallback_flows
+        if not selected_items:
             raise HumanAnswerGenerationFailed("no grounded flows")
         if deadline_at is None:
             deadline_at = time.monotonic() + self.request_deadline_seconds
@@ -1032,14 +1188,14 @@ class HumanFlowAnswerService:
             raise HumanAnswerGenerationFailed("query retrieval plan is required")
         effective_plan = plan
         resolved_language = effective_plan.response_language
-        for flow_index, flow in enumerate(flows, start=1):
-            source, entrypoint = self.projector.flow_answer_identity(flow)
+        for flow_index, narrative_plan in enumerate(selected_items, start=1):
+            source, entrypoint = self.projector.flow_answer_identity(narrative_plan)
             try:
                 if self._cancelled():
                     raise HumanAnswerDeadlineExceeded()
                 segments = self._segments_for_flow(
                     request,
-                    flow,
+                    narrative_plan,
                     effective_plan,
                     flow_index=flow_index,
                     source=source,
@@ -1080,7 +1236,7 @@ class HumanFlowAnswerService:
     def _segments_for_flow(
         self,
         request: KnowledgeQueryRequest,
-        flow: EntrypointFlow | FlowFamily,
+        flow: EntrypointFlow | FlowFamily | FlowNarrativePlan,
         plan: QueryRetrievalPlan,
         *,
         flow_index: int,
@@ -1219,12 +1375,21 @@ class HumanFlowAnswerService:
         return result
 
     def _coverage_for_segment(self, facts: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+        canonical_refs = [str(fact["ref"]) for fact in facts if str(fact.get("ref") or "").strip()]
+        required_refs = [
+            str(fact["ref"])
+            for fact in facts
+            if fact.get("type") not in {"supporting", "boundary"} and str(fact.get("ref") or "").strip()
+        ]
         return {
-            "canonicalFactRefs": [str(fact["ref"]) for fact in facts if str(fact.get("ref") or "").strip()],
+            "canonicalUnitRefs": canonical_refs,
+            "canonicalFactRefs": canonical_refs,
+            "requiredUnitRefs": required_refs,
             "nodeRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "node"],
             "transitionRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "transition"],
             "supportingRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "supporting"],
             "boundaryRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "boundary"],
+            "gapRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "gap"],
         }
 
     def _incoming_context(self, full_input: Mapping[str, Any], segment_facts: Sequence[Mapping[str, Any]]) -> list[Dict[str, Any]]:
@@ -1533,17 +1698,18 @@ class HumanFlowAnswerService:
         segment = llm_input.get("segment") if isinstance(llm_input.get("segment"), dict) else {}
         terminal = bool(segment.get("terminal"))
         if terminal:
-            if not isinstance(result, str) or not result.strip():
-                errors.append("Terminal segment response JSON must contain a non-empty result string.")
+            if result is not None and not isinstance(result, str):
+                errors.append("Terminal segment result must be a string, null, or absent.")
         elif result is not None and (not isinstance(result, str) or result.strip()):
             errors.append("Non-terminal segment result must be null or an empty string.")
 
         coverage = llm_input.get("coverageContract") if isinstance(llm_input.get("coverageContract"), dict) else {}
-        canonical_refs = [str(item) for item in coverage.get("canonicalFactRefs", []) if str(item).strip()]
-        required_nodes = [str(item) for item in coverage.get("nodeRefs", []) if str(item).strip()]
-        required_transitions = [str(item) for item in coverage.get("transitionRefs", []) if str(item).strip()]
-        required_supporting = [str(item) for item in coverage.get("supportingRefs", []) if str(item).strip()]
-        required_boundaries = [str(item) for item in coverage.get("boundaryRefs", []) if str(item).strip()]
+        canonical_refs = [str(item) for item in (coverage.get("canonicalUnitRefs") or coverage.get("canonicalFactRefs") or []) if str(item).strip()]
+        required_refs = [str(item) for item in coverage.get("requiredUnitRefs", []) if str(item).strip()]
+        required_nodes = [str(item) for item in coverage.get("nodeRefs", []) if str(item).strip() and (not required_refs or str(item) in required_refs)]
+        required_transitions = [str(item) for item in coverage.get("transitionRefs", []) if str(item).strip() and (not required_refs or str(item) in required_refs)]
+        required_boundaries = [str(item) for item in coverage.get("boundaryRefs", []) if str(item).strip() and (not required_refs or str(item) in required_refs)]
+        required_gaps = [str(item) for item in coverage.get("gapRefs", []) if str(item).strip() and (not required_refs or str(item) in required_refs)]
         ref_order = {ref: index for index, ref in enumerate(canonical_refs)}
         facts = {
             str(item.get("ref")): item
@@ -1560,48 +1726,57 @@ class HumanFlowAnswerService:
             if not isinstance(step, dict):
                 errors.append(f"steps[{step_index}] must be an object.")
                 continue
-            step_extra = sorted(str(key) for key in step if key not in {"factRefs", "text"})
+            step_extra = sorted(str(key) for key in step if key not in {"unitRefs", "factRefs", "certainty", "text"})
             if step_extra:
                 errors.append(f"steps[{step_index}] must not include extra fields.")
             text = step.get("text")
             if not isinstance(text, str) or not text.strip():
                 errors.append(f"steps[{step_index}].text must be a non-empty string.")
-            refs = step.get("factRefs")
+            certainty = str(step.get("certainty") or "VERIFIED").strip().upper().replace("-", "_").replace(" ", "_")
+            invalid_certainty = certainty not in {"VERIFIED", "UNVERIFIED", "AMBIGUOUS"}
+            refs = step.get("unitRefs")
+            if refs is None:
+                refs = step.get("factRefs")
             if not isinstance(refs, list) or not refs:
-                errors.append(f"steps[{step_index}].factRefs must be a non-empty array.")
+                errors.append(f"steps[{step_index}].unitRefs must be a non-empty array.")
                 continue
             step_ref_values: list[str] = []
             for ref_value in refs:
                 ref = str(ref_value or "").strip()
                 if not ref:
-                    errors.append(f"steps[{step_index}].factRefs contains a blank ref.")
+                    errors.append(f"steps[{step_index}].unitRefs contains a blank ref.")
                     continue
                 if ref not in ref_order:
-                    errors.append(f"steps[{step_index}] contains a foreign factRef.")
+                    errors.append(f"steps[{step_index}] contains a foreign unitRef.")
                     continue
                 if ref in seen_refs or ref in step_ref_values:
-                    errors.append(f"factRef {ref} is duplicated.")
+                    errors.append(f"unitRef {ref} is duplicated.")
                     continue
                 current_index = ref_order[ref]
                 if current_index < last_index:
-                    errors.append(f"factRef {ref} is out of canonical order.")
+                    errors.append(f"unitRef {ref} is out of canonical order.")
                 last_index = max(last_index, current_index)
                 step_ref_values.append(ref)
             seen_refs.extend(step_ref_values)
+            if invalid_certainty and not any(facts.get(ref, {}).get("type") == "gap" for ref in step_ref_values):
+                certainty = "VERIFIED"
+            elif invalid_certainty:
+                errors.append(f"steps[{step_index}].certainty must be VERIFIED, UNVERIFIED, or AMBIGUOUS.")
+            errors.extend(self._validate_step_certainty(step_index, certainty, step_ref_values, facts))
             errors.extend(self._validate_step_ownership(step_index, step_ref_values, facts))
 
         missing_nodes = [ref for ref in required_nodes if ref not in seen_refs]
         missing_transitions = [ref for ref in required_transitions if ref not in seen_refs]
         missing_boundaries = [ref for ref in required_boundaries if ref not in seen_refs]
+        missing_gaps = [ref for ref in required_gaps if ref not in seen_refs]
         if missing_nodes:
             errors.append(f"Missing executable flow node facts: {', '.join(missing_nodes)}.")
         if missing_transitions:
             errors.append(f"Missing resolved transition facts: {', '.join(missing_transitions)}.")
-        missing_supporting = [ref for ref in required_supporting if ref not in seen_refs]
-        if missing_supporting:
-            errors.append(f"Missing supporting relation facts: {', '.join(missing_supporting)}.")
         if missing_boundaries:
             errors.append(f"Missing boundary facts: {', '.join(missing_boundaries)}.")
+        if missing_gaps:
+            errors.append(f"Missing gap facts: {', '.join(missing_gaps)}.")
         return errors
 
     def _validate_family_segment_coverage(
@@ -1614,20 +1789,49 @@ class HumanFlowAnswerService:
         result_segments = 0
         for payload, segment in zip(payloads, segments):
             coverage = segment.llm_input.get("coverageContract") if isinstance(segment.llm_input.get("coverageContract"), dict) else {}
-            expected.extend(str(ref) for ref in coverage.get("canonicalFactRefs", []) if str(ref).strip())
+            expected.extend(
+                str(ref)
+                for ref in (coverage.get("requiredUnitRefs") or coverage.get("canonicalFactRefs", []))
+                if str(ref).strip()
+            )
             for step in payload.get("steps") or []:
                 if not isinstance(step, dict):
                     continue
-                covered.extend(str(ref) for ref in step.get("factRefs", []) if str(ref).strip())
+                refs = step.get("unitRefs")
+                if refs is None:
+                    refs = step.get("factRefs")
+                covered.extend(str(ref) for ref in refs or [] if str(ref).strip())
             result = payload.get("result")
             if isinstance(result, str) and result.strip():
                 result_segments += 1
                 if not segment.terminal:
                     raise HumanAnswerContractViolation(["Only the terminal segment may include a result."])
-        if sorted(covered) != sorted(expected) or len(covered) != len(set(covered)):
+        covered_required = [ref for ref in covered if ref in set(expected)]
+        if sorted(covered_required) != sorted(expected) or len(covered_required) != len(set(covered_required)):
             raise HumanAnswerContractViolation(["Segment fact coverage must be exact and non-overlapping across the family."])
-        if segments and result_segments != 1:
-            raise HumanAnswerContractViolation(["Exactly one terminal segment result is required."])
+        if segments and result_segments > 1:
+            raise HumanAnswerContractViolation(["At most one terminal segment result is allowed."])
+
+    def _validate_step_certainty(
+        self,
+        step_index: int,
+        certainty: str,
+        refs: Sequence[str],
+        facts: Mapping[str, Mapping[str, Any]],
+    ) -> List[str]:
+        if not refs:
+            return []
+        errors: List[str] = []
+        gap_refs = [ref for ref in refs if facts.get(ref, {}).get("type") == "gap"]
+        if gap_refs and len(gap_refs) != len(refs):
+            errors.append(f"steps[{step_index}] must not combine gap units with verified execution units.")
+        if gap_refs:
+            allowed = {str(facts.get(ref, {}).get("certainty") or "UNVERIFIED").upper() for ref in gap_refs}
+            if certainty == "VERIFIED":
+                errors.append(f"steps[{step_index}] narrates an unverified gap as verified.")
+            elif certainty not in allowed:
+                errors.append(f"steps[{step_index}].certainty does not match the supplied gap certainty.")
+        return errors
 
     def _validate_step_ownership(self, step_index: int, refs: Sequence[str], facts: Mapping[str, Mapping[str, Any]]) -> List[str]:
         if not refs:

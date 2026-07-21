@@ -281,6 +281,9 @@ class FlowFamilyAssembler:
     ) -> bool:
         if self.semantics.may_root_family(flow.entrypoint):
             return True
+        if self.semantics.execution_role(flow.entrypoint) == self.semantics.client_operation_role:
+            explicit_roots = [item for item in component_flows if self.semantics.may_root_family(item.entrypoint)]
+            return not explicit_roots
         if flow.origin is EntrypointFlowOrigin.INFERRED_ROOT:
             explicit_roots = [item for item in component_flows if self.semantics.may_root_family(item.entrypoint)]
             return not explicit_roots

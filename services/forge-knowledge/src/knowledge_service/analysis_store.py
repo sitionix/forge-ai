@@ -121,7 +121,6 @@ class AnalysisStore:
             self._create_graph_claim_schema(conn)
             self._create_graph_edge_schema(conn)
             self._create_graph_evidence_link_schema(conn)
-            self._create_transport_operation_schema(conn)
             self._create_graph_diagnostics_schema(conn)
             self._create_runtime_event_schema(conn)
             self._create_analysis_indexes(conn)
@@ -503,31 +502,6 @@ class AnalysisStore:
             )
         """)
 
-    def _create_transport_operation_schema(self, conn: sqlite3.Connection) -> None:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS analysis_graph_transport_operations (
-                id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                node_id TEXT NOT NULL,
-                transport_kind TEXT NOT NULL,
-                operation_role TEXT NOT NULL,
-                http_method TEXT,
-                normalized_route_template TEXT,
-                operation_identity TEXT,
-                request_contract_identity TEXT,
-                response_contract_identity TEXT,
-                target_service_identity TEXT,
-                evidence_source_id TEXT,
-                evidence_id TEXT,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                fact_origin TEXT,
-                flow_domain TEXT,
-                FOREIGN KEY(node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE
-            )
-        """)
-
     def _create_graph_diagnostics_schema(self, conn: sqlite3.Connection) -> None:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS analysis_graph_diagnostics (
@@ -619,10 +593,6 @@ class AnalysisStore:
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_owner_evidence_owner_edge ON analysis_graph_owner_evidence(owner_kind, owner_source_id, owner_edge_id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_owner_evidence_owner_node ON analysis_graph_owner_evidence(owner_kind, owner_source_id, owner_node_id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_owner_evidence_evidence ON analysis_graph_owner_evidence(evidence_source_id, evidence_id)",
-            ),
-            "analysis_graph_transport_operations": (
-                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_transport_ops_source_node ON analysis_graph_transport_operations(source_id, node_id, status)",
-                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_transport_ops_http ON analysis_graph_transport_operations(transport_kind, operation_role, http_method, normalized_route_template, status)",
             ),
             "analysis_graph_diagnostics": (
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_diagnostics_source_code ON analysis_graph_diagnostics(source_id, severity, code)",
@@ -1446,9 +1416,6 @@ class AnalysisStore:
     def finalize_source_graph(self, source_id: str) -> None:
         SourceGraphFinalizer(self).finalize_source_graph(source_id)
 
-    def finalize_source_graphs(self, source_ids: Sequence[str]) -> None:
-        SourceGraphFinalizer(self).finalize_source_graphs(source_ids)
-
     def dirty_graph_source_ids(self, source_ids: Optional[Sequence[str]] = None) -> List[str]:
         self.init()
         return GraphStateRepository(self).dirty_source_ids(source_ids)
@@ -1924,33 +1891,53 @@ class AnalysisStore:
 
     def query_current_graph_sources(self) -> List[Dict[str, Any]]:
         self.init()
+        current_status_sql, current_status_params = sql_in_clause(graph_query_contract().statuses_for_current_graph())
         with self._connect(busy_timeout_ms=SQLITE_STATUS_BUSY_TIMEOUT_MS) as conn:
             rows = conn.execute(
-                """
+                f"""
                 WITH known_sources AS (
                     SELECT source_id
                     FROM sources
                     UNION
                     SELECT source_id
                     FROM analysis_graph_state
-                    WHERE status = 'READY'
                     UNION
                     SELECT source_id
                     FROM analysis_graph_nodes
+                    WHERE {self._inventory_membership_graph_node_clause("analysis_graph_nodes")}
+                ),
+                current_node_count AS (
+                    SELECT n.source_id, COUNT(*) AS node_count
+                    FROM analysis_graph_nodes n
+                    WHERE n.status IN ({current_status_sql})
+                      AND {self._inventory_membership_graph_node_clause("n")}
+                    GROUP BY n.source_id
+                ),
+                current_edge_count AS (
+                    SELECT e.source_id, COUNT(*) AS edge_count
+                    FROM analysis_graph_edges e
+                    WHERE e.status IN ({current_status_sql})
+                      AND {self._inventory_membership_graph_edge_clause("e")}
+                    GROUP BY e.source_id
                 )
                 SELECT known_sources.source_id,
                        COALESCE(sources.display_name, known_sources.source_id) AS display_name,
-                       state.graph_id,
-                       state.content_identity,
-                       COALESCE(state.node_count, 0) AS node_count,
-                       COALESCE(state.edge_count, 0) AS edge_count
+                       COALESCE(NULLIF(state.graph_id, ''), known_sources.source_id || ':query-current-facts') AS graph_id,
+                       COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), known_sources.source_id || ':query-current-facts') AS content_identity,
+                       COALESCE(current_node_count.node_count, 0) AS node_count,
+                       COALESCE(current_edge_count.edge_count, 0) AS edge_count,
+                       state.status AS graph_status
                 FROM known_sources
                 LEFT JOIN sources ON sources.source_id = known_sources.source_id
                 LEFT JOIN analysis_graph_state state
                   ON state.source_id = known_sources.source_id
-                 AND state.status = 'READY'
+                LEFT JOIN current_node_count
+                  ON current_node_count.source_id = known_sources.source_id
+                LEFT JOIN current_edge_count
+                  ON current_edge_count.source_id = known_sources.source_id
                 ORDER BY known_sources.source_id
-                """
+                """,
+                [*current_status_params, *current_status_params],
             ).fetchall()
         return [
             {
@@ -1960,6 +1947,7 @@ class AnalysisStore:
                 "graphRevision": row["content_identity"],
                 "nodeCount": int(row["node_count"] or 0),
                 "edgeCount": int(row["edge_count"] or 0),
+                "graphStatus": row["graph_status"],
             }
             for row in rows
         ]
@@ -2051,6 +2039,7 @@ class AnalysisStore:
                   ON external_target.source_id = n.source_id
                  AND external_target.node_id = n.id
                 WHERE n.source_id IN ({source_placeholders})
+                  AND n.status IN ({entry_status_sql})
                   AND {self._inventory_membership_graph_node_clause("n")}
                 ORDER BY n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
                 LIMIT ?
@@ -2065,6 +2054,7 @@ class AnalysisStore:
                     ENTRYPOINT_EXECUTION_EXECUTABLE,
                     contract.external_target_status,
                     *source_ids,
+                    *entry_status_params,
                     safe_limit,
                 ],
             ).fetchall()
@@ -2194,6 +2184,7 @@ class AnalysisStore:
                   ON external_target.source_id = n.source_id
                  AND external_target.node_id = n.id
                 WHERE ({' OR '.join(pair_clauses)})
+                  AND n.status IN ({entry_status_sql})
                   AND {self._inventory_membership_graph_node_clause("n")}
                 ORDER BY n.source_id, lower(COALESCE(n.display_name, n.qualified_name, n.name, n.id)), n.id
                 LIMIT ?
@@ -2207,6 +2198,7 @@ class AnalysisStore:
                     *entry_status_params,
                     contract.external_target_status,
                     *pair_params,
+                    *entry_status_params,
                     safe_limit,
                 ],
             ).fetchall()
@@ -3373,6 +3365,7 @@ class AnalysisStore:
             WHERE af_current.source_id = {alias}.source_id
               AND af_current.relative_path = {alias}.relative_path
               AND af_current.content_hash = {alias}.content_hash
+              AND af_current.status IN ('ANALYZED', 'ANALYZED_WITH_DIAGNOSTICS', 'PARTIAL')
         )
         AND EXISTS (
             SELECT 1
@@ -3406,6 +3399,7 @@ class AnalysisStore:
             WHERE af_current.source_id = {alias}.source_id
               AND af_current.relative_path = {alias}.relative_path
               AND af_current.content_hash = {alias}.content_hash
+              AND af_current.status IN ('ANALYZED', 'ANALYZED_WITH_DIAGNOSTICS', 'PARTIAL')
         )
         AND EXISTS (
             SELECT 1
@@ -4361,7 +4355,14 @@ class AnalysisStore:
         return normalized.upper() if uppercase else normalized
 
     def _graph_identity_by_source(self, conn: sqlite3.Connection, source_ids: List[str]) -> Dict[str, Dict[str, Optional[str]]]:
-        return GraphStateRepository(self).identity_by_source(conn, source_ids)
+        identity = GraphStateRepository(self).identity_by_source(conn, source_ids)
+        for source_id in source_ids:
+            source_key = str(source_id or "")
+            if not source_key or source_key in identity:
+                continue
+            fallback = f"{source_key}:query-current-facts"
+            identity[source_key] = {"graphId": fallback, "graphRevision": fallback}
+        return identity
 
     def _reconcile_graph_runtime_inventory_membership(self, conn: sqlite3.Connection) -> None:
         if not self._table_exists(conn, "analysis_graph_nodes"):

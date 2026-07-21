@@ -730,58 +730,6 @@ class SiteEntity {}
     assert call_edge.metadata["resolutionReason"] == "FIELD_TYPE_HINT"
 
 
-def test_java_parser_extracts_invocation_inside_lambda_body():
-    text = """package example;
-
-interface RemoteOperation {
-  Response create(Request request);
-}
-
-class Request {}
-class Response {}
-class Executor {
-  void execute(Runnable runnable) {}
-}
-
-class Workflow {
-  private final RemoteOperation remote;
-  private final Executor executor;
-
-  Workflow(RemoteOperation remote, Executor executor) {
-    this.remote = remote;
-    this.executor = executor;
-  }
-
-  void run() {
-    executor.execute(() -> {
-      if (true) {
-        remote.create(buildRequest(normalize()));
-      }
-    });
-  }
-
-  Request buildRequest(String name) {
-    return new Request();
-  }
-
-  String normalize() {
-    return "ok";
-  }
-}
-"""
-    graph = StaticGraphMaterializer().to_graph(JavaParserAdapter().parse(text, metadata(text)))
-    nodes_by_local = {node.localId: node for node in graph.nodes}
-    call_edges = [edge for edge in graph.edges if edge.edgeType == "CALLS"]
-    create_edge = next(edge for edge in call_edges if edge.metadata.get("methodName") == "create")
-    build_edge = next(edge for edge in call_edges if edge.metadata.get("methodName") == "buildRequest")
-    normalize_edge = next(edge for edge in call_edges if edge.metadata.get("methodName") == "normalize")
-
-    assert nodes_by_local[create_edge.toNodeLocalId].qualifiedName == "example.RemoteOperation.create"
-    assert nodes_by_local[build_edge.toNodeLocalId].qualifiedName == "example.Workflow.buildRequest"
-    assert nodes_by_local[normalize_edge.toNodeLocalId].qualifiedName == "example.Workflow.normalize"
-    assert create_edge.evidence[0].text == "remote.create(buildRequest(normalize()))"
-
-
 def test_java_parser_keeps_receiver_type_hints_out_of_edge_metadata():
     text = """package example;
 

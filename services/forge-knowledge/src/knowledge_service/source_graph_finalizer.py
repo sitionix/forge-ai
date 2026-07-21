@@ -14,7 +14,6 @@ from knowledge_service.graph_query_contract import graph_query_contract, sql_in_
 from knowledge_service.graph_state_repository import GRAPH_STATE_FINALIZING, GraphStateRepository
 from knowledge_service.overview_projection import refresh_overview_for_sources
 from knowledge_service.semantic_index import SemanticIndexStore
-from knowledge_service.transport_connectors import HttpTransportConnectorResolver
 
 ENTRYPOINT_EXECUTION_EXECUTABLE = EntrypointExecutionKind.EXECUTABLE.value
 
@@ -33,10 +32,10 @@ class CrossSourceGraphResolver:
         self._refresh_source_overrides_and_inherited_entrypoints(conn, source_id, created_at)
         self._resolve_source_call_edges(conn, source_id)
         self._expand_source_interface_dispatch_edges(conn, source_id)
-
-    def refresh_global_transport_connectors(self, conn: sqlite3.Connection, created_at: str) -> set[str]:
-        result = HttpTransportConnectorResolver(self.store).resolve(conn, created_at)
-        return set(result.affected_source_ids)
+        graph_id = self.store._refresh_graph_state(conn, source_id, created_at)
+        if graph_id:
+            SemanticIndexStore.mark_current_graph_pending_conn(conn, source_id)
+        refresh_overview_for_sources(conn, [source_id])
 
     def _refresh_source_overrides_and_inherited_entrypoints(
         self,
@@ -1481,34 +1480,15 @@ class SourceGraphFinalizer:
         self.resolver = resolver or CrossSourceGraphResolver(store)
 
     def finalize_source_graph(self, source_id: str) -> None:
-        self.finalize_source_graphs([source_id])
-
-    def finalize_source_graphs(self, source_ids: Sequence[str]) -> None:
         self.store.init()
         created_at = datetime.now(timezone.utc).isoformat()
-        requested_source_ids = tuple(sorted({str(source_id) for source_id in source_ids if str(source_id or "").strip()}))
-        if not requested_source_ids:
-            return
 
         def write(conn: sqlite3.Connection) -> None:
-            affected_source_ids = set(requested_source_ids)
-            for source_id in requested_source_ids:
-                self.state_repository.set_status_conn(conn, source_id, GRAPH_STATE_FINALIZING, created_at)
-                self.resolver.finalize_source(conn, source_id, created_at)
-            refresh_global = getattr(self.resolver, "refresh_global_transport_connectors", None)
-            if callable(refresh_global):
-                affected_source_ids.update(refresh_global(conn, created_at))
-            refresh_graph_state = getattr(self.store, "_refresh_graph_state", None)
-            if callable(refresh_graph_state):
-                for source_id in sorted(affected_source_ids):
-                    graph_id = refresh_graph_state(conn, source_id, created_at)
-                    if graph_id:
-                        SemanticIndexStore.mark_current_graph_pending_conn(conn, source_id)
-                refresh_overview_for_sources(conn, sorted(affected_source_ids))
+            self.state_repository.set_status_conn(conn, source_id, GRAPH_STATE_FINALIZING, created_at)
+            self.resolver.finalize_source(conn, source_id, created_at)
 
         try:
             self.store._write_with_busy_retry(write)
         except Exception as exc:
-            for source_id in requested_source_ids:
-                self.store.mark_source_graph_failed(source_id, exc)
+            self.store.mark_source_graph_failed(source_id, exc)
             raise

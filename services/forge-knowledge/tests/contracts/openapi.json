@@ -109,6 +109,112 @@
         "title": "FlowToolEvidence",
         "type": "object"
       },
+      "FlowToolFlow": {
+        "properties": {
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeQueryDiagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "entrypoint": {
+            "title": "Entrypoint",
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolPart"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "title": "FlowToolFlow",
+        "type": "object"
+      },
+      "FlowToolGap": {
+        "properties": {
+          "fromSource": {
+            "title": "Fromsource",
+            "type": "string"
+          },
+          "fromSymbol": {
+            "title": "Fromsymbol",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "operationIdentity": {
+            "title": "Operationidentity",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "toSource": {
+            "title": "Tosource",
+            "type": "string"
+          },
+          "toSymbol": {
+            "title": "Tosymbol",
+            "type": "string"
+          },
+          "transportKind": {
+            "title": "Transportkind",
+            "type": "string"
+          },
+          "verificationStatus": {
+            "title": "Verificationstatus",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "verificationStatus"
+        ],
+        "title": "FlowToolGap",
+        "type": "object"
+      },
+      "FlowToolPart": {
+        "properties": {
+          "gap": {
+            "$ref": "#/components/schemas/FlowToolGap"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "tree": {
+            "$ref": "#/components/schemas/FlowToolTree"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "FlowToolPart",
+        "type": "object"
+      },
       "FlowToolSupportingRelation": {
         "properties": {
           "description": {
@@ -491,16 +597,16 @@
             "title": "Diagnostics",
             "type": "array"
           },
+          "flows": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolFlow"
+            },
+            "title": "Flows",
+            "type": "array"
+          },
           "queryText": {
             "title": "Querytext",
             "type": "string"
-          },
-          "trees": {
-            "items": {
-              "$ref": "#/components/schemas/FlowToolTree"
-            },
-            "title": "Trees",
-            "type": "array"
           }
         },
         "required": [

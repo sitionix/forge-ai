@@ -292,9 +292,37 @@ class FlowToolTree(BaseModel):
     supportingRelations: List[FlowToolSupportingRelation] = Field(default_factory=list)
 
 
+class FlowToolGap(BaseModel):
+    kind: str
+    verificationStatus: str
+    fromSource: Optional[str] = None
+    fromSymbol: Optional[str] = None
+    toSource: Optional[str] = None
+    toSymbol: Optional[str] = None
+    transportKind: Optional[str] = None
+    method: Optional[str] = None
+    route: Optional[str] = None
+    operationIdentity: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class FlowToolPart(BaseModel):
+    kind: str
+    tree: Optional[FlowToolTree] = None
+    gap: Optional[FlowToolGap] = None
+
+
+class FlowToolFlow(BaseModel):
+    source: Optional[str] = None
+    entrypoint: Optional[str] = None
+    parts: List[FlowToolPart] = Field(default_factory=list)
+    complete: bool = True
+    diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
+
+
 class KnowledgeQueryToolContextResponse(BaseModel):
     queryText: str
-    trees: List[FlowToolTree] = Field(default_factory=list)
+    flows: List[FlowToolFlow] = Field(default_factory=list)
     diagnostics: List[KnowledgeQueryDiagnostic] = Field(default_factory=list)
 
 

@@ -463,7 +463,7 @@ def test_complete_technical_flow_prompt_contains_grounded_trigger_and_steps():
         graph_flow,
         retrieval_plan(request.queryText, detected_language="uk", response_language="uk"),
     )
-    tool_tree = builder.to_tool_response(request, human_execution(graph_flow)).trees[0].dict(exclude_none=True)["entrypoint"]
+    tool_tree = builder.to_tool_response(request, human_execution(graph_flow)).flows[0].parts[0].tree.dict(exclude_none=True)["entrypoint"]
     prompt = HumanAnswerPromptRenderer().render(llm_input)
     rendered = json.dumps(llm_input, ensure_ascii=False)
 
@@ -537,7 +537,7 @@ def test_compact_projector_orders_resolved_and_boundary_children_by_callsite_lin
     projected = FlowProjectionBuilder().to_tool_response(
         request,
         human_execution(projected_flow),
-    ).trees[0].dict(exclude_none=True)["entrypoint"]
+    ).flows[0].parts[0].tree.dict(exclude_none=True)["entrypoint"]
 
     assert [child["symbol"] for child in projected["children"]] == ["SiteApiMapper.asCreateSiteCommand", "ResolvedLater"]
     llm_input = FlowProjectionBuilder().human_llm_input(
@@ -584,7 +584,7 @@ def test_human_llm_input_uses_ordered_facts_without_nested_tree():
     assert "tree" not in llm_input
     assert "orderedFacts" in llm_input
     assert llm_input["suggestedStepPlan"]
-    assert all(set(item) == {"factRefs"} for item in llm_input["suggestedStepPlan"])
+    assert all(set(item) == {"unitRefs", "certainty"} for item in llm_input["suggestedStepPlan"])
 
 
 def test_human_prompt_contract_allows_natural_grounded_output():
@@ -598,17 +598,15 @@ def test_human_prompt_contract_allows_natural_grounded_output():
 
     for required in (
         "technical walkthrough",
-        "HTTP method and route",
-        "trigger and entrypoint",
+        "supplied trigger and entrypoint",
         "orderedFacts and coverageContract",
-        "Cover every required node, transition, and boundary exactly once",
-        "exact class or method symbol",
+        "Cover every required node, transition, and gap exactly once",
         "validation, persistence, or side effect",
         "Write all natural-language prose in the supplied responseLanguage",
         "Preserve code identifiers",
         "exception classes, or error messages",
         "observable result",
-        "escaped plain text",
+        "Terminal result may be null",
         "Return strict JSON only",
         "Do not collapse the flow into a generic summary",
         "Do not invent validation",
@@ -692,7 +690,7 @@ def test_human_prompt_and_validation_do_not_expose_persisted_internal_ids():
     for secret in secrets:
         assert secret not in public_response
         assert secret not in validation_errors
-    assert "foreign factRef" in validation_errors
+    assert "foreign unitRef" in validation_errors
 
 
 def test_full_human_prompt_preserves_all_evidence_without_compaction():

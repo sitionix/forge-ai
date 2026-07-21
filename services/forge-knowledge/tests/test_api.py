@@ -364,8 +364,8 @@ def test_query_tool_and_human_paths_deduplicate_contract_interface_entrypoint(tm
     assert tool_status == 200
     assert human_status == 200
     assert len(provider.calls) == 1
-    assert len(tool_payload["trees"]) == 1
-    tree = tool_payload["trees"][0]
+    assert len(tool_payload["flows"]) == 1
+    tree = tool_payload["flows"][0]["parts"][0]["tree"]
     assert tree["source"] == "site-service"
     assert tree["entrypoint"]["symbol"] == "SiteController.createSite"
     assert tree["entrypoint"]["trigger"] == {
@@ -376,7 +376,12 @@ def test_query_tool_and_human_paths_deduplicate_contract_interface_entrypoint(tm
     }
     rendered_tool = json.dumps(tool_payload)
     assert "excerpt-ev-interface-mapping" in rendered_tool
-    assert all(item["entrypoint"]["symbol"] != "SiteApi.createSite" for item in tool_payload["trees"])
+    assert all(
+        part["tree"]["entrypoint"]["symbol"] != "SiteApi.createSite"
+        for flow in tool_payload["flows"]
+        for part in flow["parts"]
+        if part.get("tree")
+    )
     assert human_payload["answers"] == [
         {
             "source": "site-service",
@@ -703,8 +708,8 @@ def test_query_and_tool_context_collapse_nested_entrypoint_raw_flows_to_one_fami
 
     assert tool_status == 200
     assert human_status == 200
-    assert len(tool_payload["trees"]) == 1
-    tree = tool_payload["trees"][0]["entrypoint"]
+    assert len(tool_payload["flows"]) == 1
+    tree = tool_payload["flows"][0]["parts"][0]["tree"]["entrypoint"]
     assert tree["symbol"] == "A.start"
     assert tree["children"][0]["symbol"] == "B.start"
     assert tree["children"][0]["children"][0]["symbol"] == "Worker.run"
@@ -944,14 +949,16 @@ def test_tool_context_endpoint_returns_compact_nested_tree(tmp_path):
 
     assert status == 200
     assert payload["queryText"] == "A.start"
-    assert payload["trees"][0]["source"] == "source-a"
-    assert payload["trees"][0]["entrypoint"]["symbol"] == "A.start"
-    assert payload["trees"][0]["entrypoint"]["kind"] == "HTTP_ENDPOINT"
-    assert payload["trees"][0]["entrypoint"]["trigger"] == {"kind": "HTTP", "method": "POST", "route": "/api/v1/sites"}
-    assert payload["trees"][0]["entrypoint"]["children"][0]["symbol"] == "B.work"
+    assert payload["flows"][0]["source"] == "source-a"
+    tree = payload["flows"][0]["parts"][0]["tree"]
+    assert tree["source"] == "source-a"
+    assert tree["entrypoint"]["symbol"] == "A.start"
+    assert tree["entrypoint"]["kind"] == "HTTP_ENDPOINT"
+    assert tree["entrypoint"]["trigger"] == {"kind": "HTTP", "method": "POST", "route": "/api/v1/sites"}
+    assert tree["entrypoint"]["children"][0]["symbol"] == "B.work"
     rendered = json.dumps(payload)
     assert "status" not in payload
-    assert "flows" not in payload
+    assert "trees" not in payload
     assert "nodeRef" not in rendered
     assert "transitionRef" not in rendered
     assert provider.calls == []

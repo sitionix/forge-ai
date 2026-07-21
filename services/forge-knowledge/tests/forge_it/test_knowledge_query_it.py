@@ -200,7 +200,12 @@ def assert_no_slice_truncation(payload: dict) -> None:
 
 def compact_tree_items(tool_payload: dict) -> list[dict]:
     items: list[dict] = []
-    stack = [tree["entrypoint"] for tree in tool_payload.get("trees", [])]
+    stack = [
+        part["tree"]["entrypoint"]
+        for flow in tool_payload.get("flows", [])
+        for part in flow.get("parts", [])
+        if part.get("tree")
+    ]
     while stack:
         item = stack.pop()
         items.append(item)
@@ -222,7 +227,7 @@ def assert_compact_human_contract(payload: dict) -> None:
 
 
 def assert_compact_tool_contract(payload: dict) -> None:
-    assert set(payload) == {"queryText", "trees", "diagnostics"}
+    assert set(payload) == {"queryText", "flows", "diagnostics"}
     rendered = json.dumps(payload, ensure_ascii=False)
     for forbidden in ("status", "nodeRef", "transitionRef", "boundaryRef", "evidenceRef", "flowIndex"):
         assert forbidden not in rendered
@@ -381,7 +386,7 @@ def test_real_stack_one_entrypoint_many_branches_and_failed_explanation_preserve
     assert explained["message"] == "The local model could not produce any grounded flow answers."
     assert explained["correlationId"]
     assert_compact_tool_contract(tool)
-    assert len(tool["trees"]) == 1
+    assert len(tool["flows"]) == 1
     assert compact_tree_symbols(tool) >= {"Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Omega"}
     assert_flow_refs_close(base)
     assert_no_slice_truncation(base)
@@ -406,8 +411,8 @@ def test_real_stack_three_roots_shared_suffix_and_max_flows(tmp_path):
     assert {flow["entrypoint"]["label"] for flow in all_flows["flows"]} == set(roots)
     assert all({"Gamma", "Delta", "Epsilon"} <= {node["label"] for node in flow["nodes"]} for flow in all_flows["flows"])
     assert len(limited["flows"]) == 2
-    diagnostic = next(item for item in limited["diagnostics"] if item["code"] == "FLOW_FAMILY_MAX_FLOWS_REACHED")
-    assert diagnostic["metadata"]["omittedFamilyCount"] == 1
+    diagnostic = next(item for item in limited["diagnostics"] if item["code"] == "NARRATIVE_PLAN_MAX_FLOWS_REACHED")
+    assert diagnostic["metadata"]["omittedPlanCount"] == 1
 
 
 def test_real_stack_include_tests_uses_persisted_classification(tmp_path):
@@ -565,10 +570,10 @@ def test_real_stack_many_entrypoints_discovers_all_before_max_flows(tmp_path):
 
     body = graph_query(app, request("Anchor", max_flows=10))
 
-    diagnostic = next(item for item in body["diagnostics"] if item["code"] == "FLOW_FAMILY_MAX_FLOWS_REACHED")
-    assert diagnostic["metadata"]["discoveredFamilyCount"] == 40
-    assert diagnostic["metadata"]["returnedFamilyCount"] == 10
-    assert diagnostic["metadata"]["omittedFamilyCount"] == 30
+    diagnostic = next(item for item in body["diagnostics"] if item["code"] == "NARRATIVE_PLAN_MAX_FLOWS_REACHED")
+    assert diagnostic["metadata"]["discoveredPlanCount"] == 40
+    assert diagnostic["metadata"]["returnedPlanCount"] == 10
+    assert diagnostic["metadata"]["omittedPlanCount"] == 30
     assert len(body["flows"]) == 10
     assert all({"Shared", "Anchor"} <= {node["label"] for node in flow["nodes"]} for flow in body["flows"])
     assert_flow_refs_close(body)
@@ -1159,8 +1164,8 @@ def test_real_stack_branching_tool_context_preserves_graph_contract(tmp_path):
 
     assert len(base["flows"]) == 1
     assert_compact_tool_contract(tool)
-    assert len(tool["trees"]) == 1
-    root = tool["trees"][0]["entrypoint"]
+    assert len(tool["flows"]) == 1
+    root = tool["flows"][0]["parts"][0]["tree"]["entrypoint"]
     assert root["symbol"] == "Alpha"
     child_symbols = {child["symbol"] for child in root["children"]}
     assert {"Beta", "Gamma", "Delta"} <= child_symbols
@@ -1194,10 +1199,10 @@ def test_real_stack_anchor_expansion_processes_all_declared_callables(tmp_path):
 
     body = graph_query(app, request("Public Type", max_flows=10))
 
-    diagnostic = next(item for item in body["diagnostics"] if item["code"] == "FLOW_FAMILY_MAX_FLOWS_REACHED")
-    assert diagnostic["metadata"]["discoveredFamilyCount"] == count
-    assert diagnostic["metadata"]["returnedFamilyCount"] == 10
-    assert diagnostic["metadata"]["omittedFamilyCount"] == count - 10
+    diagnostic = next(item for item in body["diagnostics"] if item["code"] == "NARRATIVE_PLAN_MAX_FLOWS_REACHED")
+    assert diagnostic["metadata"]["discoveredPlanCount"] == count
+    assert diagnostic["metadata"]["returnedPlanCount"] == 10
+    assert diagnostic["metadata"]["omittedPlanCount"] == count - 10
     assert len(body["flows"]) == 10
     assert "ANCHOR_EXPANSION_LIMIT_REACHED" not in json.dumps(body)
     assert_flow_refs_close(body)

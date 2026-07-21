@@ -334,8 +334,8 @@ class EntrypointFlowGraphRepository:
                    tn.qualified_name AS to_qualified_name,
                    tn.name AS to_name,
                    tn.source_id AS to_source_id,
-                   target_state.graph_id AS to_graph_id,
-                   target_state.content_identity AS to_graph_revision
+                   COALESCE(NULLIF(target_state.graph_id, ''), tn.source_id || ':query-current-facts') AS to_graph_id,
+                   COALESCE(NULLIF(target_state.content_identity, ''), NULLIF(target_state.graph_id, ''), tn.source_id || ':query-current-facts') AS to_graph_revision
             FROM analysis_graph_edges e
             LEFT JOIN analysis_graph_nodes fn
               ON fn.source_id = e.source_id
@@ -345,7 +345,6 @@ class EntrypointFlowGraphRepository:
              AND tn.id = e.to_node_id
             LEFT JOIN analysis_graph_state target_state
               ON target_state.source_id = tn.source_id
-             AND target_state.status = 'READY'
             WHERE e.source_id = ?
               AND e.edge_type = ?
               AND e.status IN ({current_status_sql})
@@ -386,8 +385,8 @@ class EntrypointFlowGraphRepository:
                    tn.qualified_name AS to_qualified_name,
                    tn.name AS to_name,
                    tn.source_id AS to_source_id,
-                   target_state.graph_id AS to_graph_id,
-                   target_state.content_identity AS to_graph_revision
+                   COALESCE(NULLIF(target_state.graph_id, ''), tn.source_id || ':query-current-facts') AS to_graph_id,
+                   COALESCE(NULLIF(target_state.content_identity, ''), NULLIF(target_state.graph_id, ''), tn.source_id || ':query-current-facts') AS to_graph_revision
             FROM analysis_graph_edges e
             JOIN analysis_graph_nodes tn
               ON tn.source_id = ?
@@ -396,18 +395,14 @@ class EntrypointFlowGraphRepository:
              AND tn.status IN ({current_status_sql})
              AND {self.graph_store._inventory_membership_graph_node_clause("tn")}
              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("tn")}, '') != 'TEST')
-            JOIN analysis_graph_state target_state
+            LEFT JOIN analysis_graph_state target_state
               ON target_state.source_id = tn.source_id
-             AND target_state.status = 'READY'
             JOIN analysis_graph_nodes fn
               ON fn.source_id = e.source_id
              AND fn.id = e.from_node_id
              AND fn.status IN ({current_status_sql})
              AND {self.graph_store._inventory_membership_graph_node_clause("fn")}
              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("fn")}, '') != 'TEST')
-            JOIN analysis_graph_state caller_state
-              ON caller_state.source_id = e.source_id
-             AND caller_state.status = 'READY'
             WHERE e.edge_type = ?
               AND e.status IN ({current_status_sql})
               AND {self.graph_store._inventory_membership_graph_edge_clause("e")}
@@ -460,8 +455,8 @@ class EntrypointFlowGraphRepository:
                    tn.qualified_name AS to_qualified_name,
                    tn.name AS to_name,
                    tn.source_id AS to_source_id,
-                   target_state.graph_id AS to_graph_id,
-                   target_state.content_identity AS to_graph_revision
+                   COALESCE(NULLIF(target_state.graph_id, ''), tn.source_id || ':query-current-facts') AS to_graph_id,
+                   COALESCE(NULLIF(target_state.content_identity, ''), NULLIF(target_state.graph_id, ''), tn.source_id || ':query-current-facts') AS to_graph_revision
             FROM analysis_graph_edges e
             LEFT JOIN analysis_graph_nodes fn
               ON fn.source_id = e.source_id
@@ -471,7 +466,6 @@ class EntrypointFlowGraphRepository:
              AND tn.id = e.to_node_id
             LEFT JOIN analysis_graph_state target_state
               ON target_state.source_id = tn.source_id
-             AND target_state.status = 'READY'
             WHERE e.edge_type IN ({edge_type_sql})
               AND e.status IN ({current_status_sql})
               AND {self.graph_store._inventory_membership_graph_edge_clause("e")}
