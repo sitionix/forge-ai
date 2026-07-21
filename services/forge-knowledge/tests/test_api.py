@@ -524,8 +524,12 @@ def test_human_query_writes_one_terminal_audit_record(tmp_path):
     assert record["correlationId"] == "corr-terminal-success"
     assert record["queryText"] == "A.start"
     assert record["terminalHttpStatus"] == 200
-    assert record["terminalStage"] == "SUCCESS"
+    assert record["terminalStage"] == "FAMILY_STITCHING"
     assert record["selectedFlowCount"] == 1
+    assert record["rawCandidateFlowCount"] == 1
+    assert record["discoveredFamilyCount"] == 1
+    assert record["selectedFamilyCount"] == 1
+    assert record["familyRoots"] == [{"source": "source-a", "entrypoint": "A.start"}]
     assert record["selectedEntrypoints"] == ["A.start"]
     assert record["providerCallCount"] == 1
     assert record["repairCallCount"] == 0
@@ -554,7 +558,7 @@ def test_context_budget_rejection_records_zero_provider_calls(tmp_path):
     assert response.json()["code"] == "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED"
     assert provider.calls == []
     record = app.state.human_query_terminal_audit_artifacts[-1]
-    assert record["terminalStage"] == "PROMPT_BUDGET"
+    assert record["terminalStage"] == "FAMILY_SEGMENTATION"
     assert record["terminalHttpStatus"] == 503
     assert record["providerCallCount"] == 0
     assert record["repairCallCount"] == 0
@@ -667,6 +671,46 @@ def test_query_endpoint_returns_one_answer_per_distinct_flow(tmp_path):
         rendered_prompt_facts = json.dumps(call["llmInput"], ensure_ascii=False)
         other_roots = set(roots) - {call["llmInput"]["entrypoint"]}
         assert not any(root in rendered_prompt_facts for root in other_roots)
+
+
+def test_query_and_tool_context_collapse_nested_entrypoint_raw_flows_to_one_family(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    seed_semantic_graph(
+        app_config.store_path,
+        source_id="source-a",
+        nodes=[
+            {"id": "a", "nodeKind": "CALLABLE", "name": "A.start", "qualified": "A.start", "path": "src/A.java"},
+            {"id": "b", "nodeKind": "CALLABLE", "name": "B.start", "qualified": "B.start", "path": "src/B.java"},
+            {"id": "worker", "nodeKind": "CALLABLE", "name": "Worker.run", "qualified": "Worker.run", "path": "src/Worker.java"},
+        ],
+        edges=[
+            {"id": "edge-a-b", "fromNodeId": "a", "toNodeId": "b", "edgeType": "CALLS"},
+            {"id": "edge-b-worker", "fromNodeId": "b", "toNodeId": "worker", "edgeType": "CALLS"},
+        ],
+        claims=[_entrypoint_claim("a"), _entrypoint_claim("b")],
+    )
+    provider = PerEntrypointAnswerProvider()
+    app.state.flow_explanation_provider = provider
+
+    async def exercise():
+        body = {"queryText": "A.start B.start", "answerLanguage": "en"}
+        async with _async_client(app) as client:
+            tool = await _await_with_wakeup(client.post("/api/v1/knowledge/query/tool-context", json=body))
+            human = await _await_with_wakeup(client.post("/api/v1/knowledge/query", json=body))
+            return tool.status_code, tool.json(), human.status_code, human.json()
+
+    tool_status, tool_payload, human_status, human_payload = asyncio.run(exercise())
+
+    assert tool_status == 200
+    assert human_status == 200
+    assert len(tool_payload["trees"]) == 1
+    tree = tool_payload["trees"][0]["entrypoint"]
+    assert tree["symbol"] == "A.start"
+    assert tree["children"][0]["symbol"] == "B.start"
+    assert tree["children"][0]["children"][0]["symbol"] == "Worker.run"
+    assert len(provider.calls) == 1
+    assert provider.calls[0]["llmInput"]["entrypoint"] == "A.start"
+    assert [answer["entrypoint"] for answer in human_payload["answers"]] == ["A.start"]
 
 
 def test_query_endpoint_partial_flow_failure_keeps_successful_answers(tmp_path):

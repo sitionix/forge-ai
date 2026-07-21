@@ -18,10 +18,12 @@ from knowledge_service.config import (
 )
 from knowledge_service.entrypoint_kinds import tree_kind_for_entrypoint, trigger_kind_for_entrypoint
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow
+from knowledge_service.flow_family import FlowFamily
 from knowledge_service.flow_boundary_classifier import FlowBoundaryClassifier, FLOW_BOUNDARY_CLASSIFIER
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
 from knowledge_service.knowledge_query_schema import (
     FlowToolEvidence,
+    FlowToolTransition,
     FlowToolTrigger,
     FlowToolTree,
     FlowToolTreeItem,
@@ -35,6 +37,7 @@ from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 
 FLOW_EXPLANATION_LIMIT_REACHED = "FLOW_EXPLANATION_LIMIT_REACHED"
+FLOW_FAMILY_SEGMENT_CONTEXT_BUDGET_EXCEEDED = "FLOW_FAMILY_SEGMENT_CONTEXT_BUDGET_EXCEEDED"
 DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS = 2048
 
 _DEFAULT_MIN_CALL_TIMEOUT_SECONDS = 0.01
@@ -85,6 +88,14 @@ class PromptBudgetEstimate:
     @property
     def fits(self) -> bool:
         return self.total_required_tokens <= self.context_tokens
+
+
+@dataclass(frozen=True)
+class FlowNarrationSegment:
+    llm_input: Mapping[str, Any]
+    index: int
+    total: int
+    terminal: bool
 
 
 class PromptBudgetEstimator:
@@ -153,15 +164,17 @@ class HumanAnswerPromptRenderer:
             validation_block += "\nReturn a replacement JSON object only. Keep the text natural and grounded in the supplied facts.\n"
         context_json = json.dumps(dict(llm_input), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         return (
-            "Answer the user's code-flow question as a concise technical walkthrough for exactly one supplied flow.\n"
+            "Answer the user's code-flow question as a concise technical walkthrough for exactly one supplied segment of one assembled execution family.\n"
             "Return strict JSON only with exactly this shape: "
             "{\"steps\":[{\"factRefs\":[\"n1\"],\"text\":\"human-readable grounded step\"}],"
             "\"result\":\"human-readable observable result\"}.\n"
             "Write all natural-language prose in the supplied responseLanguage. "
             "Preserve code identifiers, class names, method names, routes, constants, topic names, and quoted code literals exactly as supplied.\n"
             "Directly answer the question using only the supplied verified flow facts.\n"
+            "Use only this segment's orderedFacts; do not refer to previous or future segment prose.\n"
+            "If segment.terminal is false, do not claim that the entire execution family has completed.\n"
             "Use the supplied orderedFacts and coverageContract as the authoritative execution order and grounding contract.\n"
-            "Every factRefs value must exist in coverageContract.canonicalFactRefs. Cover every required node, transition, and boundary exactly once, in canonical order.\n"
+            "Every factRefs value must exist in coverageContract.canonicalFactRefs. Cover every required node, transition, and boundary exactly once; supporting relations must also be covered exactly once, in canonical order.\n"
             "The suggestedStepPlan contains ref-only groups in canonical order. Prefer copying each suggestedStepPlan factRefs array exactly and writing only the step text for it.\n"
             "Use as many concise steps as needed. Low-level boundary refs still need coverage; group adjacent boundary refs with their owning node when the text explains them, or use short boundary-only steps.\n"
             "Each step text must explain only the facts named by that step's factRefs. Do not cite a producer and a downstream consumer in the same step unless the same factRefs explicitly connect them.\n"
@@ -205,6 +218,7 @@ class FlowProjectionBuilder:
             "detectedLanguage": plan.detected_language,
             "responseLanguage": plan.response_language,
             "intent": plan.effective_intent,
+            "rootSource": flow.key.source_id,
             "entrypoint": self._symbol(flow.entrypoint),
             "orderedFacts": ordered_facts,
             "coverageContract": coverage_contract,
@@ -223,7 +237,7 @@ class FlowProjectionBuilder:
         data["children"] = children
         return data
 
-    def _tree(self, flow: EntrypointFlow) -> FlowToolTree:
+    def _tree(self, flow: EntrypointFlow | FlowFamily) -> FlowToolTree:
         node_by_key = {self._node_key(node): node for node in flow.nodes}
         evidence_by_node: Dict[tuple[str, str], List[FlowGraphEvidence]] = {}
         evidence_by_edge: Dict[tuple[str, str], List[FlowGraphEvidence]] = {}
@@ -233,14 +247,16 @@ class FlowProjectionBuilder:
             elif item.node_id:
                 evidence_by_node.setdefault((item.source_id, item.node_id), []).append(item)
         outgoing: Dict[tuple[str, str, str], List[FlowGraphEdge]] = {}
-        for edge in sorted(flow.transitions, key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
+        supporting_edges = tuple(getattr(flow, "supporting_transitions", ()) or ())
+        for edge in sorted((*flow.transitions, *supporting_edges), key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
             outgoing.setdefault(self._from_key(edge), []).append(edge)
         boundaries: Dict[tuple[str, str, str], List[FlowGraphEdge]] = {}
         for edge in sorted(flow.boundary_transitions, key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
             boundaries.setdefault(self._from_key(edge), []).append(edge)
 
         root_key = self._node_key(flow.entrypoint)
-        root = self._node_item(flow.entrypoint, evidence_by_node.get((flow.entrypoint.source_id, flow.entrypoint.node_id), []))
+        root_source = flow.entrypoint.source_id
+        root = self._node_item(flow.entrypoint, evidence_by_node.get((flow.entrypoint.source_id, flow.entrypoint.node_id), []), root_source=root_source)
         rendered = {root_key}
         stack: List[Dict[str, Any]] = [
             {
@@ -270,12 +286,12 @@ class FlowProjectionBuilder:
                 continue
             child_evidence = [*evidence_by_node.get((target.source_id, target.node_id), []), *evidence_by_edge.get(edge_key, [])]
             if target_key in frame["ancestry"]:
-                frame["item"].children.append(self._node_item(target, child_evidence, cycle=True))
+                frame["item"].children.append(self._node_item(target, child_evidence, root_source=root_source, transition=entry, cycle=True))
                 continue
             if target_key in rendered:
-                frame["item"].children.append(self._node_item(target, child_evidence, shared=True))
+                frame["item"].children.append(self._node_item(target, child_evidence, root_source=root_source, transition=entry, shared=True))
                 continue
-            child = self._node_item(target, child_evidence)
+            child = self._node_item(target, child_evidence, root_source=root_source, transition=entry)
             frame["item"].children.append(child)
             rendered.add(target_key)
             stack.append(
@@ -312,7 +328,9 @@ class FlowProjectionBuilder:
             elif item.node_id:
                 evidence_by_node.setdefault((item.source_id, item.node_id), []).append(item)
         outgoing: Dict[tuple[str, str, str], List[FlowGraphEdge]] = {}
-        for edge in sorted(flow.transitions, key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
+        supporting_edges = tuple(getattr(flow, "supporting_transitions", ()) or ())
+        supporting_edge_keys = {self._edge_key(edge) for edge in supporting_edges}
+        for edge in sorted((*flow.transitions, *supporting_edges), key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
             outgoing.setdefault(self._from_key(edge), []).append(edge)
         boundaries: Dict[tuple[str, str, str], List[FlowGraphEdge]] = {}
         for edge in sorted(flow.boundary_transitions, key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
@@ -345,11 +363,14 @@ class FlowProjectionBuilder:
             if target is None or target_key is None:
                 events.append(("boundary", edge_key, {"edge": replace_edge_boundary(edge), "parent": frame["node_key"]}))
                 continue
-            events.append(("transition", edge_key, {"edge": edge, "parent": frame["node_key"], "target": target_key}))
+            event_type = "supporting" if edge_key in supporting_edge_keys else "transition"
+            events.append((event_type, edge_key, {"edge": edge, "parent": frame["node_key"], "target": target_key}))
             if target_key in frame["ancestry"] or target_key in rendered:
                 continue
             rendered.add(target_key)
             events.append(("node", target_key, {"incoming": edge_key, "parent": frame["node_key"]}))
+            if event_type == "supporting":
+                continue
             stack.append(
                 {
                     "node_key": target_key,
@@ -361,8 +382,9 @@ class FlowProjectionBuilder:
 
         node_ref_by_key: Dict[tuple[str, str, str], str] = {}
         transition_ref_by_key: Dict[tuple[str, str], str] = {}
+        supporting_ref_by_key: Dict[tuple[str, str], str] = {}
         boundary_ref_by_key: Dict[tuple[str, str], str] = {}
-        node_count = transition_count = boundary_count = 0
+        node_count = transition_count = supporting_count = boundary_count = 0
         for event_type, key, _metadata in events:
             if event_type == "node" and key not in node_ref_by_key:
                 node_count += 1
@@ -370,6 +392,9 @@ class FlowProjectionBuilder:
             elif event_type == "transition" and key not in transition_ref_by_key:
                 transition_count += 1
                 transition_ref_by_key[key] = f"t{transition_count}"
+            elif event_type == "supporting" and key not in supporting_ref_by_key:
+                supporting_count += 1
+                supporting_ref_by_key[key] = f"s{supporting_count}"
             elif event_type == "boundary" and key not in boundary_ref_by_key:
                 boundary_count += 1
                 boundary_ref_by_key[key] = f"b{boundary_count}"
@@ -377,6 +402,10 @@ class FlowProjectionBuilder:
         outgoing_refs_by_node: Dict[tuple[str, str, str], List[str]] = {}
         for edge in flow.transitions:
             ref = transition_ref_by_key.get(self._edge_key(edge))
+            if ref:
+                outgoing_refs_by_node.setdefault(self._from_key(edge), []).append(ref)
+        for edge in supporting_edges:
+            ref = supporting_ref_by_key.get(self._edge_key(edge))
             if ref:
                 outgoing_refs_by_node.setdefault(self._from_key(edge), []).append(ref)
         for edge in flow.boundary_transitions:
@@ -416,6 +445,18 @@ class FlowProjectionBuilder:
                     node_ref_by_key,
                     evidence_by_edge.get(self._edge_key(edge), []),
                 )
+            elif event_type == "supporting":
+                edge = metadata["edge"]
+                ref = supporting_ref_by_key[key]
+                if ref in seen_fact_refs:
+                    continue
+                fact = self._supporting_fact(
+                    ref,
+                    edge,
+                    node_by_key,
+                    node_ref_by_key,
+                    evidence_by_edge.get(self._edge_key(edge), []),
+                )
             else:
                 edge = metadata["edge"]
                 ref = boundary_ref_by_key[key]
@@ -435,6 +476,7 @@ class FlowProjectionBuilder:
             "canonicalFactRefs": canonical_refs,
             "nodeRefs": [fact["ref"] for fact in facts if fact.get("type") == "node"],
             "transitionRefs": [fact["ref"] for fact in facts if fact.get("type") == "transition"],
+            "supportingRefs": [fact["ref"] for fact in facts if fact.get("type") == "supporting"],
             "boundaryRefs": [fact["ref"] for fact in facts if fact.get("type") == "boundary"],
         }
 
@@ -462,9 +504,9 @@ class FlowProjectionBuilder:
                     groups.append(current)
                 current = {"factRefs": [ref]}
                 continue
-            if fact_type in {"transition", "boundary"}:
+            if fact_type in {"transition", "boundary", "supporting"}:
                 owner_refs = {str(fact.get("fromRef") or "")}
-                if fact_type == "transition":
+                if fact_type in {"transition", "supporting"}:
                     owner_refs.add(str(fact.get("toRef") or ""))
                 if current is not None and current_node_refs(current) and current_node_refs(current) & owner_refs:
                     current["factRefs"].append(ref)
@@ -524,6 +566,8 @@ class FlowProjectionBuilder:
         to_node = node_by_key.get(to_key) if to_key is not None else None
         from_source = from_node.source_id if from_node is not None else edge.source_id
         to_source = to_node.source_id if to_node is not None else (edge.to_source_id or edge.source_id)
+        metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
+        connector = self._connector_metadata(metadata)
         return self._without_none({
             "ref": ref,
             "type": "transition",
@@ -536,8 +580,48 @@ class FlowProjectionBuilder:
             "fromSymbol": self._symbol(from_node) if from_node else edge.from_node_id,
             "toSymbol": self._symbol(to_node) if to_node else edge.to_node_id,
             "crossSource": True if from_source != to_source else None,
+            "connector": connector,
             "evidence": [self._evidence(item).dict(exclude_none=True) for item in evidence],
         })
+
+    def _supporting_fact(
+        self,
+        ref: str,
+        edge: FlowGraphEdge,
+        node_by_key: Mapping[tuple[str, str, str], FlowGraphNode],
+        node_ref_by_key: Mapping[tuple[str, str, str], str],
+        evidence: Sequence[FlowGraphEvidence],
+    ) -> Dict[str, Any]:
+        from_key = self._from_key(edge)
+        to_key = self._to_key(edge)
+        from_node = node_by_key.get(from_key)
+        to_node = node_by_key.get(to_key) if to_key is not None else None
+        return self._without_none({
+            "ref": ref,
+            "type": "supporting",
+            "edgeType": edge.edge_type,
+            "resolutionStatus": edge.resolution_status,
+            "fromSource": from_node.source_id if from_node is not None else edge.source_id,
+            "toSource": to_node.source_id if to_node is not None else (edge.to_source_id or edge.source_id),
+            "fromRef": node_ref_by_key.get(from_key),
+            "toRef": node_ref_by_key.get(to_key) if to_key is not None else None,
+            "fromSymbol": self._symbol(from_node) if from_node else edge.from_node_id,
+            "toSymbol": self._symbol(to_node) if to_node else edge.to_node_id,
+            "evidence": [self._evidence(item).dict(exclude_none=True) for item in evidence],
+        })
+
+    def _connector_metadata(self, metadata: Mapping[str, Any]) -> Dict[str, Any] | None:
+        connector_kind = self._clean(metadata.get("connectorKind") if isinstance(metadata.get("connectorKind"), str) else None)
+        http_method = self._clean(metadata.get("httpMethod") if isinstance(metadata.get("httpMethod"), str) else None)
+        route = self._clean(metadata.get("routeTemplate") if isinstance(metadata.get("routeTemplate"), str) else None)
+        target_interface = self._clean(metadata.get("targetInterfaceMethod") if isinstance(metadata.get("targetInterfaceMethod"), str) else None)
+        connector = self._without_none({
+            "kind": connector_kind,
+            "method": http_method,
+            "route": route,
+            "interfaceMethod": target_interface,
+        })
+        return connector or None
 
     def _boundary_fact(
         self,
@@ -571,13 +655,17 @@ class FlowProjectionBuilder:
         node: FlowGraphNode,
         evidence: Sequence[FlowGraphEvidence],
         *,
+        root_source: str | None = None,
+        transition: FlowGraphEdge | None = None,
         cycle: bool = False,
         shared: bool = False,
     ) -> FlowToolTreeItem:
         return FlowToolTreeItem(
+            source=node.source_id if root_source and node.source_id != root_source else None,
             symbol=self._symbol(node),
             kind=self._node_kind(node),
             trigger=self._trigger(node),
+            transition=self._tool_transition(transition, node) if transition is not None else None,
             path=node.relative_path,
             lineStart=node.line_start,
             lineEnd=node.line_end,
@@ -586,6 +674,22 @@ class FlowProjectionBuilder:
             children=[],
             cycle=True if cycle else None,
             shared=True if shared else None,
+        )
+
+    def _tool_transition(self, edge: FlowGraphEdge, target: FlowGraphNode | None = None) -> FlowToolTransition:
+        metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
+        from_source = edge.source_id
+        to_source = target.source_id if target is not None else (edge.to_source_id or edge.source_id)
+        connector_kind = self._clean(metadata.get("connectorKind") if isinstance(metadata.get("connectorKind"), str) else None)
+        http_method = self._clean(metadata.get("httpMethod") if isinstance(metadata.get("httpMethod"), str) else None)
+        route = self._clean(metadata.get("routeTemplate") if isinstance(metadata.get("routeTemplate"), str) else None)
+        return FlowToolTransition(
+            edgeType=edge.edge_type,
+            resolutionStatus=edge.resolution_status,
+            crossSource=True if from_source != to_source else None,
+            connectorKind=connector_kind,
+            method=http_method,
+            route=route,
         )
 
     def _boundary_item(self, edge: FlowGraphEdge, evidence: Sequence[FlowGraphEvidence]) -> FlowToolTreeItem:
@@ -832,26 +936,21 @@ class HumanFlowAnswerService:
             raise HumanAnswerGenerationFailed("query retrieval plan is required")
         effective_plan = plan
         resolved_language = effective_plan.response_language
-        flow_inputs: list[tuple[int, str, str, Mapping[str, Any]]] = []
         for flow_index, flow in enumerate(flows, start=1):
             source, entrypoint = self.projector.flow_answer_identity(flow)
-            llm_input = self.projector.human_llm_input(request, flow, effective_plan)
-            prompt = self.renderer.render(llm_input)
-            self._record_prompt_budget_check(
-                prompt,
-                llm_input,
-                flow_index=flow_index,
-                source=source,
-                entrypoint=entrypoint,
-                attempt="INITIAL",
-            )
-            flow_inputs.append((flow_index, source, entrypoint, llm_input))
-        for flow_index, source, entrypoint, llm_input in flow_inputs:
             try:
                 if self._cancelled():
                     raise HumanAnswerDeadlineExceeded()
-                text = self._answer_one_flow(
-                    llm_input,
+                segments = self._segments_for_flow(
+                    request,
+                    flow,
+                    effective_plan,
+                    flow_index=flow_index,
+                    source=source,
+                    entrypoint=entrypoint,
+                )
+                text = self._answer_one_family(
+                    segments,
                     deadline_at,
                     flow_index=flow_index,
                     source=source,
@@ -866,7 +965,7 @@ class HumanFlowAnswerService:
                 if self._cancelled():
                     break
             except HumanAnswerContextBudgetExceeded:
-                raise
+                diagnostics.append(self._segment_budget_diagnostic(source, entrypoint))
             except HumanAnswerGenerationFailed:
                 diagnostics.append(self._flow_failure_diagnostic(source, entrypoint))
 
@@ -878,11 +977,166 @@ class HumanFlowAnswerService:
             )
         if deadline_failures:
             raise HumanAnswerDeadlineExceeded()
+        if diagnostics and any(item.code == FLOW_FAMILY_SEGMENT_CONTEXT_BUDGET_EXCEEDED for item in diagnostics):
+            raise HumanAnswerContextBudgetExceeded("One assembled flow family exceeded the segment context budget.")
         raise HumanAnswerGenerationFailed("no grounded flow answers")
 
-    def _answer_one_flow(
+    def _segments_for_flow(
         self,
-        llm_input: Mapping[str, Any],
+        request: KnowledgeQueryRequest,
+        flow: EntrypointFlow | FlowFamily,
+        plan: QueryRetrievalPlan,
+        *,
+        flow_index: int,
+        source: str,
+        entrypoint: str,
+    ) -> tuple[FlowNarrationSegment, ...]:
+        full_input = self.projector.human_llm_input(request, flow, plan)
+        single_input = self._segment_llm_input(
+            full_input,
+            full_input.get("orderedFacts", []),
+            segment_index=1,
+            total_segments=1,
+            terminal=True,
+        )
+        single_prompt = self.renderer.render(single_input)
+        if self.budget_estimator.estimate(single_prompt).fits:
+            return (
+                FlowNarrationSegment(
+                    llm_input=single_input,
+                    index=1,
+                    total=1,
+                    terminal=True,
+                ),
+            )
+        facts = [fact for fact in full_input.get("orderedFacts", []) if isinstance(fact, dict)]
+        if not facts:
+            raise HumanAnswerContextBudgetExceeded("The assembled flow family has no segmentable facts.")
+        fact_offset = 0
+        fact_groups: list[list[Dict[str, Any]]] = []
+        budget_total_hint = max(1, len(facts))
+        while fact_offset < len(facts):
+            remaining = facts[fact_offset:]
+            best = self._largest_fitting_prefix(
+                full_input,
+                remaining,
+                segment_index=len(fact_groups) + 1,
+                total_segments=budget_total_hint,
+                terminal=False,
+            )
+            if best <= 0:
+                raise HumanAnswerContextBudgetExceeded("An indivisible flow-family atomic unit exceeds the model context.")
+            fact_groups.append(remaining[:best])
+            fact_offset += best
+        segments: list[FlowNarrationSegment] = []
+        total = len(fact_groups)
+        for index, group in enumerate(fact_groups, start=1):
+            terminal = index == total
+            llm_input = self._segment_llm_input(
+                full_input,
+                group,
+                segment_index=index,
+                total_segments=total,
+                terminal=terminal,
+            )
+            segments.append(FlowNarrationSegment(llm_input=llm_input, index=index, total=total, terminal=terminal))
+        return tuple(segments)
+
+    def _largest_fitting_prefix(
+        self,
+        full_input: Mapping[str, Any],
+        facts: Sequence[Dict[str, Any]],
+        *,
+        segment_index: int,
+        total_segments: int,
+        terminal: bool,
+    ) -> int:
+        low = 1
+        high = len(facts)
+        best = 0
+        while low <= high:
+            midpoint = (low + high) // 2
+            candidate_input = self._segment_llm_input(
+                full_input,
+                facts[:midpoint],
+                segment_index=segment_index,
+                total_segments=total_segments,
+                terminal=terminal and midpoint == len(facts),
+            )
+            prompt = self.renderer.render(candidate_input)
+            if self.budget_estimator.estimate(prompt).fits:
+                best = midpoint
+                low = midpoint + 1
+            else:
+                high = midpoint - 1
+        return best
+
+    def _segment_llm_input(
+        self,
+        full_input: Mapping[str, Any],
+        facts: Sequence[Mapping[str, Any]],
+        *,
+        segment_index: int,
+        total_segments: int,
+        terminal: bool,
+    ) -> Dict[str, Any]:
+        ordered_facts = [dict(fact) for fact in facts]
+        coverage = self._coverage_for_segment(ordered_facts)
+        result = {
+            key: value
+            for key, value in dict(full_input).items()
+            if key not in {"orderedFacts", "coverageContract", "suggestedStepPlan"}
+        }
+        result["segment"] = {
+            "index": int(segment_index),
+            "total": int(total_segments),
+            "terminal": bool(terminal),
+            "incomingConnectorRefs": self._incoming_connector_refs(full_input, ordered_facts),
+            "outgoingConnectorRefs": self._outgoing_connector_refs(full_input, ordered_facts),
+        }
+        result["familyRoot"] = {
+            "source": result.get("rootSource") or result.get("source"),
+            "entrypoint": result.get("entrypoint"),
+        }
+        result["orderedFacts"] = ordered_facts
+        result["coverageContract"] = coverage
+        result["suggestedStepPlan"] = self.projector._suggested_step_plan(ordered_facts)
+        return result
+
+    def _coverage_for_segment(self, facts: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+        return {
+            "canonicalFactRefs": [str(fact["ref"]) for fact in facts if str(fact.get("ref") or "").strip()],
+            "nodeRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "node"],
+            "transitionRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "transition"],
+            "supportingRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "supporting"],
+            "boundaryRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "boundary"],
+        }
+
+    def _incoming_connector_refs(self, full_input: Mapping[str, Any], segment_facts: Sequence[Mapping[str, Any]]) -> list[str]:
+        segment_refs = {str(fact.get("ref") or "") for fact in segment_facts}
+        segment_nodes = {str(fact.get("ref") or "") for fact in segment_facts if fact.get("type") == "node"}
+        result: list[str] = []
+        for fact in full_input.get("orderedFacts", []) or []:
+            if not isinstance(fact, dict) or str(fact.get("ref") or "") in segment_refs:
+                continue
+            if fact.get("type") in {"transition", "supporting"} and str(fact.get("toRef") or "") in segment_nodes:
+                result.append(str(fact.get("ref")))
+        return sorted(set(result))
+
+    def _outgoing_connector_refs(self, full_input: Mapping[str, Any], segment_facts: Sequence[Mapping[str, Any]]) -> list[str]:
+        segment_refs = {str(fact.get("ref") or "") for fact in segment_facts}
+        segment_nodes = {str(fact.get("ref") or "") for fact in segment_facts if fact.get("type") == "node"}
+        result: list[str] = []
+        for fact in full_input.get("orderedFacts", []) or []:
+            if not isinstance(fact, dict) or str(fact.get("ref") or "") in segment_refs:
+                continue
+            if fact.get("type") in {"transition", "supporting", "boundary"} and str(fact.get("fromRef") or "") in segment_nodes:
+                result.append(str(fact.get("ref")))
+        return sorted(set(result))
+
+    def _answer_one_family(
+        self,
+        segments: Sequence[FlowNarrationSegment],
         deadline_at: float,
         *,
         flow_index: int,
@@ -891,6 +1145,36 @@ class HumanFlowAnswerService:
         requested_language: str | None,
         resolved_language: str,
     ) -> str:
+        payloads: list[Mapping[str, Any]] = []
+        for segment in segments:
+            payloads.append(
+                self._answer_one_segment(
+                    segment.llm_input,
+                    deadline_at,
+                    flow_index=flow_index,
+                    source=source,
+                    entrypoint=entrypoint,
+                    segment_index=segment.index,
+                    segment_count=segment.total,
+                    requested_language=requested_language,
+                    resolved_language=resolved_language,
+                )
+            )
+        return self._stitch_segment_payloads(payloads)
+
+    def _answer_one_segment(
+        self,
+        llm_input: Mapping[str, Any],
+        deadline_at: float,
+        *,
+        flow_index: int,
+        source: str,
+        entrypoint: str,
+        segment_index: int,
+        segment_count: int,
+        requested_language: str | None,
+        resolved_language: str,
+    ) -> Mapping[str, Any]:
         validation_errors: Sequence[str] | None = None
         for attempt_count in (1, 2):
             result = self._complete_with_deadline(
@@ -903,11 +1187,13 @@ class HumanFlowAnswerService:
                 attempt_count=attempt_count,
                 requested_language=requested_language,
                 resolved_language=resolved_language,
+                segment_index=segment_index,
+                segment_count=segment_count,
             )
             try:
-                return self._validate_text(result.raw_text, resolved_language, llm_input)
+                return self._validate_payload(result.raw_text, resolved_language, llm_input)
             except HumanAnswerContractViolation as exc:
-                self._record_validation_errors(entrypoint=entrypoint, attempt_count=attempt_count, errors=exc.errors)
+                self._record_validation_errors(entrypoint=entrypoint, attempt_count=attempt_count, errors=exc.errors, segment_index=segment_index)
                 if attempt_count == 1:
                     validation_errors = exc.errors
                     continue
@@ -918,6 +1204,15 @@ class HumanFlowAnswerService:
         return KnowledgeQueryDiagnostic(
             code="HUMAN_FLOW_ANSWER_GENERATION_FAILED",
             message="The local model could not explain one selected flow.",
+            severity="WARN",
+            sourceId=source or None,
+            metadata={"entrypoint": entrypoint},
+        )
+
+    def _segment_budget_diagnostic(self, source: str, entrypoint: str) -> KnowledgeQueryDiagnostic:
+        return KnowledgeQueryDiagnostic(
+            code=FLOW_FAMILY_SEGMENT_CONTEXT_BUDGET_EXCEEDED,
+            message="One assembled flow family contains an indivisible fact group that exceeds the model context.",
             severity="WARN",
             sourceId=source or None,
             metadata={"entrypoint": entrypoint},
@@ -935,21 +1230,22 @@ class HumanFlowAnswerService:
         attempt_count: int,
         requested_language: str | None,
         resolved_language: str,
+        segment_index: int | None = None,
+        segment_count: int | None = None,
     ) -> FlowExplanationProviderResult:
         if self._cancelled() or self._remaining_seconds(deadline_at) <= self.min_call_timeout_seconds:
             raise HumanAnswerDeadlineExceeded()
         prompt = self.renderer.render(llm_input, validation_errors)
-        if validation_errors:
-            self._record_prompt_budget_check(
-                prompt,
-                llm_input,
-                flow_index=flow_index,
-                source=source,
-                entrypoint=entrypoint,
-                attempt="REPAIR",
-            )
-        else:
-            self.budget_estimator.ensure_fits(prompt)
+        self._record_prompt_budget_check(
+            prompt,
+            llm_input,
+            flow_index=flow_index,
+            source=source,
+            entrypoint=entrypoint,
+            attempt="REPAIR" if validation_errors else "INITIAL",
+            segment_index=segment_index,
+            segment_count=segment_count,
+        )
         remaining = self._remaining_seconds(deadline_at)
         try:
             result = self.provider.complete(llm_input, validation_errors=validation_errors, timeout_seconds=remaining)
@@ -966,6 +1262,8 @@ class HumanFlowAnswerService:
             attempt_count=attempt_count,
             requested_language=requested_language,
             resolved_language=resolved_language,
+            segment_index=segment_index,
+            segment_count=segment_count,
         )
         return result
 
@@ -978,12 +1276,16 @@ class HumanFlowAnswerService:
         source: str,
         entrypoint: str,
         attempt: str,
+        segment_index: int | None = None,
+        segment_count: int | None = None,
     ) -> PromptBudgetEstimate:
         estimate = self.budget_estimator.estimate(prompt)
         budget_payload = self._prompt_budget_payload(estimate, attempt)
         self.prompt_budget_records.append(
             {
                 "flowIndex": int(flow_index),
+                "segmentIndex": segment_index,
+                "segmentCount": segment_count,
                 "source": source,
                 "entrypoint": entrypoint,
                 "attempt": attempt,
@@ -1011,6 +1313,9 @@ class HumanFlowAnswerService:
         }
 
     def _validate_text(self, raw_text: str, language: str, llm_input: Mapping[str, Any]) -> str:
+        return self._render_structured_answer(self._validate_payload(raw_text, language, llm_input))
+
+    def _validate_payload(self, raw_text: str, language: str, llm_input: Mapping[str, Any]) -> Mapping[str, Any]:
         try:
             payload = json.loads(raw_text)
         except Exception as exc:
@@ -1054,7 +1359,22 @@ class HumanFlowAnswerService:
             if any("language" in error.lower() for error in text_validation.errors):
                 raise HumanAnswerLanguagePolicyViolation(text_validation.errors)
             raise HumanAnswerContractViolation(text_validation.errors)
-        return normalized
+        return payload
+
+    def _stitch_segment_payloads(self, payloads: Sequence[Mapping[str, Any]]) -> str:
+        lines: list[str] = []
+        for payload in payloads:
+            for step in payload.get("steps") or []:
+                if not isinstance(step, dict):
+                    continue
+                text = self._strip_step_number(str(step.get("text") or "").strip())
+                if text:
+                    lines.append(f"{len(lines) + 1}. {text}")
+        terminal = payloads[-1] if payloads else {}
+        result = self._strip_step_number(str(terminal.get("result") or "").strip())
+        if result:
+            lines.append(f"{len(lines) + 1}. {result}")
+        return "\n".join(lines).strip()
 
     def _validate_structured_answer_payload(self, payload: Mapping[str, Any], llm_input: Mapping[str, Any]) -> List[str]:
         errors: List[str] = []
@@ -1074,6 +1394,7 @@ class HumanFlowAnswerService:
         canonical_refs = [str(item) for item in coverage.get("canonicalFactRefs", []) if str(item).strip()]
         required_nodes = [str(item) for item in coverage.get("nodeRefs", []) if str(item).strip()]
         required_transitions = [str(item) for item in coverage.get("transitionRefs", []) if str(item).strip()]
+        required_supporting = [str(item) for item in coverage.get("supportingRefs", []) if str(item).strip()]
         required_boundaries = [str(item) for item in coverage.get("boundaryRefs", []) if str(item).strip()]
         ref_order = {ref: index for index, ref in enumerate(canonical_refs)}
         facts = {
@@ -1128,6 +1449,9 @@ class HumanFlowAnswerService:
             errors.append(f"Missing executable flow node facts: {', '.join(missing_nodes)}.")
         if missing_transitions:
             errors.append(f"Missing resolved transition facts: {', '.join(missing_transitions)}.")
+        missing_supporting = [ref for ref in required_supporting if ref not in seen_refs]
+        if missing_supporting:
+            errors.append(f"Missing supporting relation facts: {', '.join(missing_supporting)}.")
         if missing_boundaries:
             errors.append(f"Missing boundary facts: {', '.join(missing_boundaries)}.")
         return errors
@@ -1144,6 +1468,10 @@ class HumanFlowAnswerService:
                 adjacent = {str(fact.get("fromRef") or ""), str(fact.get("toRef") or "")}
                 if not node_refs & adjacent:
                     errors.append(f"steps[{step_index}] claims transition {ref} without its owning node.")
+            if fact_type == "supporting" and node_refs:
+                adjacent = {str(fact.get("fromRef") or ""), str(fact.get("toRef") or "")}
+                if not node_refs & adjacent:
+                    errors.append(f"steps[{step_index}] claims supporting relation {ref} without its owning node.")
             if fact_type == "boundary" and node_refs:
                 owner = str(fact.get("fromRef") or "")
                 if owner not in node_refs:
@@ -1195,6 +1523,8 @@ class HumanFlowAnswerService:
         attempt_count: int,
         requested_language: str | None,
         resolved_language: str,
+        segment_index: int | None = None,
+        segment_count: int | None = None,
     ) -> None:
         self.audit_records.append(
             {
@@ -1205,15 +1535,28 @@ class HumanFlowAnswerService:
                 "rawResponseLength": len(raw_response),
                 "rawResponseHash": self._sha256(raw_response),
                 "flowEntrypoint": entrypoint,
+                "segmentIndex": segment_index,
+                "segmentCount": segment_count,
                 "attemptCount": attempt_count,
                 "requestedLanguage": str(requested_language or "AUTO"),
                 "resolvedLanguage": resolved_language,
             }
         )
 
-    def _record_validation_errors(self, *, entrypoint: str, attempt_count: int, errors: Sequence[str]) -> None:
+    def _record_validation_errors(
+        self,
+        *,
+        entrypoint: str,
+        attempt_count: int,
+        errors: Sequence[str],
+        segment_index: int | None = None,
+    ) -> None:
         for record in reversed(self.audit_records):
-            if record.get("flowEntrypoint") == entrypoint and record.get("attemptCount") == attempt_count:
+            if (
+                record.get("flowEntrypoint") == entrypoint
+                and record.get("attemptCount") == attempt_count
+                and record.get("segmentIndex") == segment_index
+            ):
                 record["validationErrors"] = [str(error) for error in errors]
                 return
 

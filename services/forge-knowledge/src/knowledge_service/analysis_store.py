@@ -2414,6 +2414,7 @@ class AnalysisStore:
             entrypoint_topic=str(item.get("entrypointTopic")) if item.get("entrypointTopic") else None,
             entrypoint_schedule=str(item.get("entrypointSchedule")) if item.get("entrypointSchedule") else None,
             entrypoint_interface_method=str(item.get("entrypointInterfaceMethod")) if item.get("entrypointInterfaceMethod") else None,
+            execution_role=str(item.get("executionRole")) if item.get("executionRole") else None,
             flow_domain=str(item.get("flowDomain")) if item.get("flowDomain") else None,
         )
 
@@ -2438,6 +2439,7 @@ class AnalysisStore:
             to_graph_revision=str(item.get("toGraphRevision")) if item.get("toGraphRevision") else None,
             external=bool(item.get("external")) or str(item.get("resolutionStatus") or "").upper() == graph_query_contract().external_target_status,
             unresolved_target=item.get("unresolvedTarget") if isinstance(item.get("unresolvedTarget"), dict) else None,
+            metadata=dict(item.get("metadata")) if isinstance(item.get("metadata"), dict) else None,
             evidence_ids=tuple(evidence_ids_by_edge.get(edge_id) or ()),
             flow_domain=str(item.get("flowDomain")) if item.get("flowDomain") else None,
         )
@@ -3801,6 +3803,7 @@ class AnalysisStore:
             "entrypointTopic": row.get("entrypoint_topic"),
             "entrypointSchedule": row.get("entrypoint_schedule"),
             "entrypointInterfaceMethod": row.get("entrypoint_interface_method"),
+            "executionRole": row.get("entrypoint_execution_kind") or row.get("contract_entrypoint_execution_kind"),
         }
 
     def _anchor_expansion_node_projection(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -3907,6 +3910,13 @@ class AnalysisStore:
                     "callKind",
                     "callTargetCategory",
                     "methodName",
+                    "connectorKind",
+                    "httpMethod",
+                    "routeTemplate",
+                    "targetInterfaceMethod",
+                    "targetEntrypoint",
+                    "targetSource",
+                    "transportConnector",
                     "receiverText",
                     "receiverTypeHint",
                     "resolutionReason",
@@ -4635,6 +4645,13 @@ class AnalysisStore:
                 "interfaceDispatchCloneOf",
                 "interfaceMethod",
                 "methodName",
+                "connectorKind",
+                "httpMethod",
+                "routeTemplate",
+                "targetEntrypoint",
+                "targetInterfaceMethod",
+                "targetSource",
+                "transportConnector",
                 "overrideReason",
                 "relationKind",
                 "receiverText",

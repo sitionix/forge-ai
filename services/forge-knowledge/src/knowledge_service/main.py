@@ -14,7 +14,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 import anyio
 from fastapi import FastAPI, Query, Request
@@ -711,7 +711,7 @@ def _knowledge_human_query_response(
                 correlation_id=correlation_id,
             )
         if time.monotonic() >= deadline_at:
-            terminal_stage = "FINAL_LLM"
+            terminal_stage = "SEGMENT_NARRATION"
             terminal_status = 504
             terminal_error_code = "HUMAN_QUERY_TIMEOUT"
             terminal_error_message = "Knowledge human query timed out."
@@ -731,7 +731,7 @@ def _knowledge_human_query_response(
         terminal_stage = "RETRIEVAL"
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
         selected_flows = tuple(query_result.flows or ())
-        terminal_stage = "FLOW_DISCOVERY"
+        terminal_stage = "FAMILY_ASSEMBLY"
         if not selected_flows:
             _record_query_interpretation_audits(request, body, interpretation_service.audit_records)
             terminal_status = 404
@@ -743,15 +743,15 @@ def _knowledge_human_query_response(
                 terminal_error_message,
                 correlation_id=correlation_id,
             )
-        terminal_stage = "PROMPT_BUDGET"
+        terminal_stage = "FAMILY_SEGMENTATION"
         answer_service, close_provider = _human_answer_service(request, config, cancel_event)
         try:
-            terminal_stage = "FINAL_LLM"
+            terminal_stage = "SEGMENT_NARRATION"
             response = answer_service.answer(body, query_result, plan=retrieval_plan, deadline_at=deadline_at)
             terminal_status = 200
             terminal_error_code = None
             terminal_error_message = None
-            terminal_stage = "SUCCESS"
+            terminal_stage = "FAMILY_STITCHING"
             return response
         finally:
             answer_records = [dict(record) for record in answer_service.audit_records]
@@ -793,7 +793,7 @@ def _knowledge_human_query_response(
             correlation_id=correlation_id,
         )
     except HumanAnswerDeadlineExceeded:
-        terminal_stage = "FINAL_LLM"
+        terminal_stage = "SEGMENT_NARRATION"
         terminal_status = 504
         terminal_error_code = "HUMAN_QUERY_TIMEOUT"
         terminal_error_message = "Knowledge human query timed out."
@@ -804,7 +804,7 @@ def _knowledge_human_query_response(
             correlation_id=correlation_id,
         )
     except HumanAnswerContextBudgetExceeded:
-        terminal_stage = "PROMPT_BUDGET"
+        terminal_stage = "FAMILY_SEGMENTATION"
         terminal_status = 503
         terminal_error_code = "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED"
         terminal_error_message = "The complete grounded flow exceeds the available model context."
@@ -815,7 +815,7 @@ def _knowledge_human_query_response(
             correlation_id=correlation_id,
         )
     except HumanAnswerProviderUnavailable:
-        terminal_stage = "FINAL_LLM"
+        terminal_stage = "SEGMENT_NARRATION"
         terminal_status = 502
         terminal_error_code = "HUMAN_ANSWER_GENERATION_FAILED"
         terminal_error_message = "The local model could not produce any grounded flow answers."
@@ -1047,6 +1047,7 @@ def _human_query_terminal_audit_record(
     repair_call_count = sum(1 for record in answer_records if int(record.get("attemptCount") or 0) > 1)
     selected_flow_summaries = _selected_flow_audit_summaries(selected_flows)
     prompt_budget_summary = _prompt_budget_summary(prompt_budget_records)
+    family_assembly_summary = _family_assembly_terminal_payload(query_result, selected_flow_summaries)
     return {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "correlationId": correlation_id,
@@ -1057,6 +1058,11 @@ def _human_query_terminal_audit_record(
         "maxFlows": int(body.maxFlows),
         "queryInterpreter": _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, terminal_stage, terminal_error_code),
         "retrieval": _retrieval_terminal_payload(query_result),
+        "familyAssembly": family_assembly_summary,
+        "rawCandidateFlowCount": family_assembly_summary.get("rawCandidateFlowCount"),
+        "discoveredFamilyCount": family_assembly_summary.get("discoveredFamilyCount"),
+        "selectedFamilyCount": family_assembly_summary.get("selectedFamilyCount"),
+        "familyRoots": family_assembly_summary.get("familyRoots"),
         "selectedFlowCount": len(selected_flow_summaries),
         "selectedSources": sorted({item["source"] for item in selected_flow_summaries if item.get("source")}),
         "selectedEntrypoints": [item["entrypoint"] for item in selected_flow_summaries if item.get("entrypoint")],
@@ -1071,6 +1077,22 @@ def _human_query_terminal_audit_record(
         "terminalStage": terminal_stage,
         "unexpectedExceptionClass": unexpected_exception_class,
         "unexpectedExceptionStage": unexpected_exception_stage,
+    }
+
+
+def _family_assembly_terminal_payload(query_result, selected_flow_summaries: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    assembly = getattr(query_result, "family_assembly", None)
+    raw_flows = tuple(getattr(query_result, "raw_flows", ()) or ())
+    selected_roots = [
+        {"source": item.get("source"), "entrypoint": item.get("entrypoint")}
+        for item in selected_flow_summaries
+    ]
+    return {
+        "rawCandidateFlowCount": int(getattr(assembly, "raw_candidate_flow_count", len(raw_flows))),
+        "discoveredFamilyCount": int(getattr(assembly, "discovered_family_count", len(selected_flow_summaries))),
+        "selectedFamilyCount": len(selected_flow_summaries),
+        "familyRoots": selected_roots,
+        "rootReachability": dict(getattr(assembly, "root_reachability", {}) or {}),
     }
 
 
@@ -1134,6 +1156,8 @@ def _selected_flow_audit_summaries(selected_flows) -> list[Dict[str, Any]]:
                 "boundaryCount": int(getattr(coverage, "boundary_count", len(getattr(flow, "boundary_transitions", ()) or ()))),
                 "evidenceRecordCount": len(evidence_items),
                 "evidenceExcerptUtf8Bytes": sum(len(str(getattr(item, "text", "") or "").encode("utf-8")) for item in evidence_items),
+                "supportingRelationCount": len(tuple(getattr(flow, "supporting_transitions", ()) or ())),
+                "subordinateEntrypointCount": int(getattr(flow, "subordinate_entrypoint_count", 0) or 0),
             }
         )
     return summaries
@@ -1227,6 +1251,8 @@ def _compact_provider_audit_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "rawResponseHash",
         "flowEntrypoint",
         "attemptCount",
+        "segmentIndex",
+        "segmentCount",
         "requestedLanguage",
         "resolvedLanguage",
         "detectedLanguage",

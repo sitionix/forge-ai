@@ -7,6 +7,7 @@ import time
 from types import SimpleNamespace
 from dataclasses import replace
 
+import knowledge_service.flow_explanations as flow_explanations_module
 from knowledge_service import answer_language
 from knowledge_service.answer_language import HumanAnswerTextValidator
 from knowledge_service.entrypoint_flow_engine import (
@@ -81,6 +82,33 @@ def flow(nodes: list[FlowGraphNode], transitions: list[FlowGraphEdge], boundarie
         diagnostics=(),
         relevance_score=1.0,
     )
+
+
+def long_sequential_flow(*, node_count: int = 8, evidence_size: int = 900) -> EntrypointFlow:
+    nodes = [node("Root.run", entrypoint=True), *[node(f"Step{i}.run") for i in range(1, node_count)]]
+    transitions = [edge(f"edge-{index}", nodes[index].node_id, nodes[index + 1].node_id) for index in range(node_count - 1)]
+    evidence_items: list[FlowGraphEvidence] = []
+    for index, node_item in enumerate(nodes):
+        evidence_items.append(
+            evidence(
+                f"node-ev-{index}",
+                None,
+                node_item.node_id,
+                10 + index,
+                f"node-evidence-{index}-" + ("N" * evidence_size),
+            )
+        )
+    for index, transition in enumerate(transitions):
+        evidence_items.append(
+            evidence(
+                f"edge-ev-{index}",
+                transition.edge_id,
+                None,
+                100 + index,
+                f"edge-evidence-{index}-" + ("E" * evidence_size),
+            )
+        )
+    return replace(flow(nodes, transitions), evidence=tuple(evidence_items))
 
 
 def evidence(evidence_id: str, edge_id: str | None, node_id: str | None, line_start: int, text: str) -> FlowGraphEvidence:
@@ -851,8 +879,12 @@ def test_initial_fits_and_repair_overflow_uses_one_provider_call():
     graph_flow = flow([node("Root.run", entrypoint=True)], [])
     request = KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION")
     plan = retrieval_plan("explain root", detected_language="en", response_language="en")
-    llm_input = FlowProjectionBuilder().human_llm_input(request, graph_flow, plan)
-    initial_prompt = HumanAnswerPromptRenderer().render(llm_input)
+    probe = HumanFlowAnswerService(
+        SequenceHumanAnswerProvider([]),
+        budget_estimator=PromptBudgetEstimator(context_tokens=100000, reserved_output_tokens=0),
+    )
+    segment = probe._segments_for_flow(request, graph_flow, plan, flow_index=1, source=SOURCE, entrypoint="Root.run")[0]
+    initial_prompt = probe.renderer.render(segment.llm_input)
     bad_response = {
         "steps": [{"factRefs": ["missing"], "text": "Root.run starts from the supplied fact."}],
         "result": "Root.run returns the verified result.",
@@ -925,13 +957,13 @@ def test_oversized_full_prompt_fails_before_ollama_provider_request():
     assert recorder.posts == []
 
 
-def test_context_overflow_preflights_all_flows_without_partial_answer():
+def test_atomic_overflow_fails_one_family_without_discarding_successful_family():
     small_flow = flow([node("Small.run", entrypoint=True)], [])
     huge_flow = replace(
         flow([node("Huge.run", entrypoint=True)], []),
         evidence=(evidence("ev-huge", None, "Huge.run", 10, "payload-" + ("X" * 30000)),),
     )
-    provider = SequenceHumanAnswerProvider(["Small.run returns.", "Huge.run returns."])
+    provider = FactListingProvider()
     service = HumanFlowAnswerService(
         provider,
         budget_estimator=PromptBudgetEstimator(
@@ -940,18 +972,15 @@ def test_context_overflow_preflights_all_flows_without_partial_answer():
         ),
     )
 
-    try:
-        service.answer(
-            KnowledgeQueryRequest(queryText="explain all", intent="FLOW_EXPLANATION"),
-            SimpleNamespace(flows=(small_flow, huge_flow)),
-            plan=retrieval_plan("explain all", detected_language="en", response_language="en"),
-        )
-    except HumanAnswerContextBudgetExceeded:
-        pass
-    else:
-        raise AssertionError("Expected complete context overflow to fail before any flow answer")
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="explain all", intent="FLOW_EXPLANATION"),
+        SimpleNamespace(flows=(small_flow, huge_flow)),
+        plan=retrieval_plan("explain all", detected_language="en", response_language="en"),
+    )
 
-    assert provider.calls == []
+    assert len(provider.calls) == 1
+    assert [answer.entrypoint for answer in response.answers] == ["Small.run"]
+    assert [diagnostic.code for diagnostic in response.diagnostics] == ["FLOW_FAMILY_SEGMENT_CONTEXT_BUDGET_EXCEEDED"]
 
 
 class FactListingProvider:
@@ -969,6 +998,168 @@ class FactListingProvider:
             raw_text=json.dumps(structured_answer(llm_input, "The flow covers " + ", ".join(symbols), result="The verified flow is fully covered.")),
             prompt_char_length=100,
         )
+
+
+def _segmenting_context_for(graph_flow: EntrypointFlow, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan) -> int:
+    probe = HumanFlowAnswerService(
+        SequenceHumanAnswerProvider([]),
+        budget_estimator=PromptBudgetEstimator(context_tokens=1_000_000, reserved_output_tokens=0),
+    )
+    full_input = probe.projector.human_llm_input(request, graph_flow, plan)
+    facts = [fact for fact in full_input["orderedFacts"] if isinstance(fact, dict)]
+    single_fact_sizes = [
+        len(
+            probe.renderer.render(
+                probe._segment_llm_input(
+                    full_input,
+                    [fact],
+                    segment_index=1,
+                    total_segments=len(facts),
+                    terminal=False,
+                )
+            ).encode("utf-8")
+        )
+        for fact in facts
+    ]
+    full_size = len(
+        probe.renderer.render(
+            probe._segment_llm_input(full_input, facts, segment_index=1, total_segments=1, terminal=True)
+        ).encode("utf-8")
+    )
+    context = max(single_fact_sizes) + 256
+    assert context < full_size
+    return context
+
+
+def test_whole_family_fits_uses_one_segment_and_one_provider_call():
+    graph_flow = flow([node("Root.run", entrypoint=True), node("Worker.run")], [edge("edge-root-worker", "Root.run", "Worker.run")])
+    request = KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION")
+    plan = retrieval_plan("explain root", detected_language="en", response_language="en")
+    provider = FactListingProvider()
+    service = HumanFlowAnswerService(provider, budget_estimator=PromptBudgetEstimator(context_tokens=100000, reserved_output_tokens=0))
+
+    segments = service._segments_for_flow(request, graph_flow, plan, flow_index=1, source=SOURCE, entrypoint="Root.run")
+    response = service.answer(request, human_execution(graph_flow), plan=plan)
+
+    assert len(segments) == 1
+    assert len(provider.calls) == 1
+    assert len(response.answers) == 1
+
+
+def test_large_family_splits_into_budget_safe_segments_and_one_public_answer():
+    graph_flow = long_sequential_flow(node_count=7, evidence_size=700)
+    request = KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION")
+    plan = retrieval_plan("explain root", detected_language="en", response_language="en")
+    context_tokens = _segmenting_context_for(graph_flow, request, plan)
+    provider = FactListingProvider()
+    service = HumanFlowAnswerService(
+        provider,
+        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=0),
+    )
+
+    response = service.answer(request, human_execution(graph_flow), plan=plan)
+
+    assert len(provider.calls) > 1
+    assert len(response.answers) == 1
+    assert response.answers[0].text.startswith("1. ")
+    for call in provider.calls:
+        prompt = service.renderer.render(call["llmInput"])
+        assert service.budget_estimator.estimate(prompt).fits is True
+    rendered_segments = [json.dumps(call["llmInput"], ensure_ascii=False) for call in provider.calls]
+    all_segment_text = "\n".join(rendered_segments)
+    for item in graph_flow.evidence:
+        assert all_segment_text.count(item.text) == 1
+    segment_refs = [set(call["llmInput"]["coverageContract"]["canonicalFactRefs"]) for call in provider.calls]
+    assert len(set.union(*segment_refs)) == sum(len(refs) for refs in segment_refs)
+
+
+def test_repeated_looking_evidence_is_not_content_deduplicated_across_segments():
+    repeated = "same-looking-long-evidence-" + ("R" * 600)
+    graph_flow = replace(
+        flow(
+            [node("Root.run", entrypoint=True), node("Step1.run"), node("Step2.run")],
+            [edge("edge-root-step1", "Root.run", "Step1.run"), edge("edge-step1-step2", "Step1.run", "Step2.run")],
+        ),
+        evidence=(
+            evidence("node-ev-a", None, "Root.run", 10, repeated),
+            evidence("node-ev-b", None, "Step1.run", 20, repeated),
+            evidence("edge-ev-a", "edge-step1-step2", None, 30, repeated),
+        ),
+    )
+    request = KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION")
+    plan = retrieval_plan("explain root", detected_language="en", response_language="en")
+    context_tokens = _segmenting_context_for(graph_flow, request, plan)
+    provider = FactListingProvider()
+    service = HumanFlowAnswerService(
+        provider,
+        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=0),
+    )
+
+    service.answer(request, human_execution(graph_flow), plan=plan)
+
+    rendered = "\n".join(json.dumps(call["llmInput"], ensure_ascii=False) for call in provider.calls)
+    assert rendered.count(repeated) == 3
+
+
+def test_cancel_after_segment_one_prevents_subsequent_segment_calls():
+    graph_flow = long_sequential_flow(node_count=6, evidence_size=700)
+    request = KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION")
+    plan = retrieval_plan("explain root", detected_language="en", response_language="en")
+    context_tokens = _segmenting_context_for(graph_flow, request, plan)
+    cancel_event = SimpleNamespace(cancelled=False, is_set=lambda: cancel_event.cancelled)
+
+    class CancelAfterFirstProvider(FactListingProvider):
+        def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+            result = super().complete(llm_input, validation_errors=validation_errors, timeout_seconds=timeout_seconds)
+            cancel_event.cancelled = True
+            return result
+
+    provider = CancelAfterFirstProvider()
+    service = HumanFlowAnswerService(
+        provider,
+        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=0),
+        cancel_event=cancel_event,
+    )
+
+    try:
+        service.answer(request, human_execution(graph_flow), plan=plan, deadline_at=time.monotonic() + 10)
+    except flow_explanations_module.HumanAnswerDeadlineExceeded:
+        pass
+    else:
+        raise AssertionError("Expected cancellation to fail the current family without partial answer")
+
+    assert len(provider.calls) == 1
+
+
+def test_deadline_expiry_before_later_segment_prevents_next_provider_call(monkeypatch):
+    graph_flow = long_sequential_flow(node_count=6, evidence_size=700)
+    request = KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION")
+    plan = retrieval_plan("explain root", detected_language="en", response_language="en")
+    context_tokens = _segmenting_context_for(graph_flow, request, plan)
+    now = {"value": 0.5}
+
+    class DeadlineAdvancingProvider(FactListingProvider):
+        def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+            result = super().complete(llm_input, validation_errors=validation_errors, timeout_seconds=timeout_seconds)
+            now["value"] = 1.0
+            return result
+
+    monkeypatch.setattr(flow_explanations_module.time, "monotonic", lambda: now["value"])
+    provider = DeadlineAdvancingProvider()
+    service = HumanFlowAnswerService(
+        provider,
+        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=0),
+        min_call_timeout_seconds=0.1,
+    )
+
+    try:
+        service.answer(request, human_execution(graph_flow), plan=plan, deadline_at=1.0)
+    except flow_explanations_module.HumanAnswerDeadlineExceeded:
+        pass
+    else:
+        raise AssertionError("Expected deadline expiry to stop before the second segment call")
+
+    assert len(provider.calls) == 1
 
 
 def test_deep_sequential_flow_keeps_all_nodes_and_transitions_in_llm_input():

@@ -113,6 +113,14 @@ class EntrypointFlowGraphRepository(Protocol):
     def hydrate_evidence(self, flows: Sequence[EntrypointFlow]) -> tuple[EntrypointFlow, ...]:
         ...
 
+    def load_supporting_relations(
+        self,
+        node_keys: set[FlowNodeKey],
+        *,
+        include_tests: bool,
+    ) -> tuple[dict[FlowNodeKey, FlowGraphNode], tuple[FlowGraphEdge, ...]]:
+        ...
+
     def metrics(self) -> dict[str, int]:
         ...
 
@@ -187,21 +195,9 @@ class EntrypointFlowEngine:
         ]
         selectable = explicit_ranked or ranked
         discovered_count = len(selectable)
-        selected = selectable[:max(1, int(max_flows or 1))]
+        selected = selectable
         diagnostics = list(discovery_diagnostics)
-        omitted_count = max(0, discovered_count - len(selected))
-        if omitted_count:
-            diagnostics.append(KnowledgeQueryDiagnostic(
-                code="ENTRYPOINT_FLOW_MAX_FLOWS_REACHED",
-                message="Distinct entrypoint flows were omitted by maxFlows.",
-                severity="INFO",
-                metadata={
-                    "returnedFlowCount": len(selected),
-                    "discoveredEntrypointCount": discovered_count,
-                    "omittedFlowCount": omitted_count,
-                    "maxFlows": int(max_flows or 1),
-                },
-            ))
+        omitted_count = 0
 
         collection_started = time.monotonic()
         flows, downstream_rounds = self._collect_flows(selected, include_tests)
@@ -464,11 +460,14 @@ class EntrypointFlowEngine:
         )
 
     def _public_flow(self, index: int, flow: EntrypointFlow) -> KnowledgeQueryFlow:
-        node_ref_by_id = {node.node_id: f"n{position}" for position, node in enumerate(flow.nodes, start=1)}
-        transition_ref_by_id = {edge.edge_id: f"t{position}" for position, edge in enumerate(flow.transitions, start=1)}
-        boundary_ref_by_id = {edge.edge_id: f"b{position}" for position, edge in enumerate(flow.boundary_transitions, start=1)}
+        node_ref_by_key = {self._node_key(node): f"n{position}" for position, node in enumerate(flow.nodes, start=1)}
+        node_ref_by_id = {node.node_id: node_ref_by_key[self._node_key(node)] for node in flow.nodes}
+        transition_ref_by_key = {self._edge_key(edge): f"t{position}" for position, edge in enumerate(flow.transitions, start=1)}
+        boundary_ref_by_key = {self._edge_key(edge): f"b{position}" for position, edge in enumerate(flow.boundary_transitions, start=1)}
+        transition_ref_by_id = {edge.edge_id: transition_ref_by_key[self._edge_key(edge)] for edge in flow.transitions}
+        boundary_ref_by_id = {edge.edge_id: boundary_ref_by_key[self._edge_key(edge)] for edge in flow.boundary_transitions}
         evidence_ref_by_key = {evidence_key(item): f"e{position}" for position, item in enumerate(flow.evidence, start=1)}
-        public_nodes = [self._public_node(node, node_ref_by_id[node.node_id]) for node in flow.nodes]
+        public_nodes = [self._public_node(node, node_ref_by_key[self._node_key(node)]) for node in flow.nodes]
         public_evidence: list[KnowledgeQueryFlowEvidence] = []
         for item in flow.evidence:
             owner_ref = (
@@ -489,7 +488,7 @@ class EntrypointFlowEngine:
         return KnowledgeQueryFlow(
             flowIndex=index,
             source=flow.key.source_id,
-            entrypoint=self._public_node(flow.entrypoint, node_ref_by_id[flow.entrypoint.node_id]),
+            entrypoint=self._public_node(flow.entrypoint, node_ref_by_key[self._node_key(flow.entrypoint)]),
             entrypointOrigin=KnowledgeQueryEntrypointOrigin(flow.origin.value),
             matchedAnchors=[
                 KnowledgeQueryFlowOrigin(
@@ -505,18 +504,18 @@ class EntrypointFlowEngine:
             nodes=public_nodes,
             transitions=[
                 KnowledgeQueryFlowTransition(
-                    transitionRef=transition_ref_by_id[edge.edge_id],
-                    fromNodeRef=node_ref_by_id[edge.from_node_id],
-                    toNodeRef=node_ref_by_id[edge.to_node_id or ""],
+                    transitionRef=transition_ref_by_key[self._edge_key(edge)],
+                    fromNodeRef=node_ref_by_key[self._from_key(edge)],
+                    toNodeRef=node_ref_by_key[self._to_key(edge)],
                     evidenceRefs=self._public_edge_evidence_refs(edge, flow.evidence, evidence_ref_by_key),
                 )
                 for edge in flow.transitions
-                if edge.from_node_id in node_ref_by_id and (edge.to_node_id or "") in node_ref_by_id
+                if self._from_key(edge) in node_ref_by_key and self._to_key(edge) in node_ref_by_key
             ],
             boundaries=[
-                self._public_boundary(edge, boundary_ref_by_id[edge.edge_id], node_ref_by_id, flow.evidence, evidence_ref_by_key)
+                self._public_boundary(edge, boundary_ref_by_key[self._edge_key(edge)], node_ref_by_key, flow.evidence, evidence_ref_by_key)
                 for edge in flow.boundary_transitions
-                if edge.from_node_id in node_ref_by_id
+                if self._from_key(edge) in node_ref_by_key
             ],
             evidence=public_evidence,
             complete=flow.complete,
@@ -568,14 +567,14 @@ class EntrypointFlowEngine:
         self,
         edge: FlowGraphEdge,
         boundary_ref: str,
-        node_ref_by_id: dict[str, str],
+        node_ref_by_key: dict[FlowNodeKey, str],
         evidence: Sequence[FlowGraphEvidence],
         evidence_ref_by_key: dict[FlowGraphEvidenceKey, str],
     ) -> KnowledgeQueryFlowBoundary:
         projection = self.boundary_classifier.project(edge)
         return KnowledgeQueryFlowBoundary(
             boundaryRef=boundary_ref,
-            fromNodeRef=node_ref_by_id[edge.from_node_id],
+            fromNodeRef=node_ref_by_key[self._from_key(edge)],
             kind=projection.kind.value,
             resolutionStatus=projection.resolution_status,
             target=projection.target,

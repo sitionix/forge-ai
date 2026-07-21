@@ -29,6 +29,7 @@ class FlowGraphNode:
     entrypoint_topic: str | None = None
     entrypoint_schedule: str | None = None
     entrypoint_interface_method: str | None = None
+    execution_role: str | None = None
     flow_domain: str | None = None
 
 
@@ -47,6 +48,7 @@ class FlowGraphEdge:
     to_graph_revision: str | None = None
     external: bool = False
     unresolved_target: dict[str, object] | None = None
+    metadata: dict[str, object] | None = None
     evidence_ids: tuple[str, ...] = ()
     flow_domain: str | None = None
     boundary_reason: str | None = None

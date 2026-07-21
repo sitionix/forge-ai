@@ -249,10 +249,21 @@ class FlowToolTrigger(BaseModel):
     interfaceMethod: Optional[str] = None
 
 
+class FlowToolTransition(BaseModel):
+    edgeType: str
+    resolutionStatus: str
+    crossSource: Optional[bool] = None
+    connectorKind: Optional[str] = None
+    method: Optional[str] = None
+    route: Optional[str] = None
+
+
 class FlowToolTreeItem(BaseModel):
+    source: Optional[str] = None
     symbol: str
     kind: str
     trigger: Optional[FlowToolTrigger] = None
+    transition: Optional[FlowToolTransition] = None
     path: Optional[str] = None
     lineStart: Optional[int] = None
     lineEnd: Optional[int] = None

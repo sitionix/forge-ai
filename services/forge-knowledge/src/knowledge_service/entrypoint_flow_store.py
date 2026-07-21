@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, List, Sequence
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow
 from knowledge_service.entrypoint_kinds import EntrypointExecutionKind
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
+from knowledge_service.graph_relation_semantics import SUPPORTING_RELATION, graph_relation_semantics
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
 
 
@@ -67,7 +68,7 @@ class EntrypointFlowGraphRepository:
         edge_ids_by_source: dict[str, set[str]] = defaultdict(set)
         node_ids_by_source: dict[str, set[str]] = defaultdict(set)
         for flow in flows:
-            for edge in (*flow.transitions, *flow.boundary_transitions):
+            for edge in (*flow.transitions, *flow.boundary_transitions, *tuple(getattr(flow, "supporting_transitions", ()) or ())):
                 edge_ids_by_source[edge.source_id].add(edge.edge_id)
             for node in flow.nodes:
                 node_ids_by_source[node.source_id].add(node.node_id)
@@ -91,7 +92,10 @@ class EntrypointFlowGraphRepository:
 
         hydrated: list[EntrypointFlow] = []
         for flow in flows:
-            flow_edge_ids = {edge.edge_id for edge in (*flow.transitions, *flow.boundary_transitions)}
+            flow_edge_ids = {
+                edge.edge_id
+                for edge in (*flow.transitions, *flow.boundary_transitions, *tuple(getattr(flow, "supporting_transitions", ()) or ()))
+            }
             flow_node_keys = {(node.source_id, node.node_id) for node in flow.nodes}
             edge_evidence = [item for values in edge_evidence_by_source.values() for item in values if item.edge_id in flow_edge_ids]
             node_evidence = [
@@ -108,13 +112,61 @@ class EntrypointFlowGraphRepository:
                 *edge_evidence,
                 *node_evidence,
             ])
-            hydrated.append(replace(
-                flow,
-                transitions=tuple(self._edge_with_evidence(edge, edge_ids_by_edge) for edge in flow.transitions),
-                boundary_transitions=tuple(self._edge_with_evidence(edge, edge_ids_by_edge) for edge in flow.boundary_transitions),
-                evidence=evidence,
-            ))
+            replacements: Dict[str, Any] = {
+                "transitions": tuple(self._edge_with_evidence(edge, edge_ids_by_edge) for edge in flow.transitions),
+                "boundary_transitions": tuple(self._edge_with_evidence(edge, edge_ids_by_edge) for edge in flow.boundary_transitions),
+                "evidence": evidence,
+            }
+            if hasattr(flow, "supporting_transitions"):
+                replacements["supporting_transitions"] = tuple(
+                    self._edge_with_evidence(edge, edge_ids_by_edge)
+                    for edge in tuple(getattr(flow, "supporting_transitions", ()) or ())
+                )
+            hydrated.append(replace(flow, **replacements))
         return tuple(hydrated)
+
+    def load_supporting_relations(
+        self,
+        node_keys: set[FlowNodeKey],
+        *,
+        include_tests: bool,
+    ) -> tuple[dict[FlowNodeKey, FlowGraphNode], tuple[FlowGraphEdge, ...]]:
+        self.graph_store.init()
+        node_ids = sorted({node_id for _source_id, _revision, node_id in node_keys if node_id})
+        if not node_ids:
+            return {}, ()
+        supporting_edge_types = graph_relation_semantics().edge_types_with(SUPPORTING_RELATION)
+        if not supporting_edge_types:
+            return {}, ()
+        edges: dict[tuple[str, str], FlowGraphEdge] = {}
+        endpoint_keys: set[FlowNodeKey] = set(node_keys)
+        source_ids = sorted({source_id for source_id, _revision, _node_id in node_keys if source_id})
+        with self.graph_store._connect() as conn:
+            source_identity = self.graph_store._graph_identity_by_source(conn, source_ids)
+            for chunk in _chunks(node_ids):
+                rows = self._query_supporting_edges(conn, chunk, supporting_edge_types, include_tests)
+                self._metrics["supportingEdgeRowsLoaded"] += len(rows)
+                self.graph_store._attach_current_graph_identity(conn, rows)
+                edge_identity_by_source = self.graph_store._graph_identity_by_source(
+                    conn,
+                    sorted({str(row.get("sourceId") or "") for row in rows if row.get("sourceId")}),
+                )
+                for row in rows:
+                    edge = self.graph_store._flow_graph_edge_from_public_graph(row, {})
+                    if edge is None:
+                        continue
+                    edge_identity = edge_identity_by_source.get(edge.source_id) or {}
+                    if not self._matches_current_identity(edge, edge_identity):
+                        continue
+                    if edge.source_id in source_identity and not self._matches_current_identity(edge, source_identity.get(edge.source_id) or {}):
+                        continue
+                    edges[(edge.source_id, edge.edge_id)] = edge
+                    endpoint_keys.add(self._from_key(edge))
+                    to_key = self._to_key(edge)
+                    if to_key is not None:
+                        endpoint_keys.add(to_key)
+        nodes = self.load_nodes(endpoint_keys, include_tests=include_tests)
+        return nodes, tuple(sorted(edges.values(), key=self._edge_sort_key))
 
     def metrics(self) -> dict[str, int]:
         return dict(self._metrics)
@@ -192,6 +244,8 @@ class EntrypointFlowGraphRepository:
                    entry.entrypoint_topic AS entrypoint_topic,
                    entry.entrypoint_schedule AS entrypoint_schedule,
                    entry.entrypoint_interface_method AS entrypoint_interface_method,
+                   entry.entrypoint_execution_kind AS entrypoint_execution_kind,
+                   contract_entry.entrypoint_execution_kind AS contract_entrypoint_execution_kind,
                    claim.summary AS summary
             FROM analysis_graph_nodes n
             LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
@@ -201,6 +255,12 @@ class EntrypointFlowGraphRepository:
              AND entry.claim_kind = ?
              AND entry.status IN ({current_status_sql})
              AND COALESCE(entry.entrypoint_execution_kind, ?) = ?
+            LEFT JOIN analysis_graph_claims contract_entry
+              ON contract_entry.source_id = n.source_id
+             AND contract_entry.node_id = n.id
+             AND contract_entry.claim_kind = ?
+             AND contract_entry.status IN ({current_status_sql})
+             AND COALESCE(contract_entry.entrypoint_execution_kind, '') = 'CONTRACT_DECLARATION'
             LEFT JOIN claim
               ON claim.source_id = n.source_id
              AND claim.node_id = n.id
@@ -220,6 +280,8 @@ class EntrypointFlowGraphRepository:
                 *current_status_params,
                 EntrypointExecutionKind.EXECUTABLE.value,
                 EntrypointExecutionKind.EXECUTABLE.value,
+                contract.entrypoint_claim_kind,
+                *current_status_params,
                 source_id,
                 *ids,
                 *current_status_params,
@@ -351,6 +413,65 @@ class EntrypointFlowGraphRepository:
                 contract.calls_edge_type,
                 *current_status_params,
                 *ids,
+                include_tests,
+            ],
+        ).fetchall()
+        projected: List[Dict[str, Any]] = []
+        for row in rows:
+            item = self.graph_store._graph_edge_projection(self.graph_store._row_dict(row))
+            item["sourceId"] = row["source_id"]
+            item["flowDomain"] = item.get("flowDomain") or row["effective_flow_domain"]
+            projected.append(item)
+        return projected
+
+    def _query_supporting_edges(
+        self,
+        conn: Any,
+        ids: Sequence[str],
+        edge_types: Sequence[str],
+        include_tests: bool,
+    ) -> List[Dict[str, Any]]:
+        if not ids or not edge_types:
+            return []
+        self._metrics["sqlStatements"] += 1
+        id_sql, id_params = sql_in_clause([str(item) for item in ids])
+        edge_type_sql, edge_type_params = sql_in_clause([str(item) for item in edge_types])
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT e.*,
+                   {self.graph_store._inventory_flow_domain_sql("e")} AS effective_flow_domain,
+                   fn.display_name AS from_display_name,
+                   fn.qualified_name AS from_qualified_name,
+                   fn.name AS from_name,
+                   tn.display_name AS to_display_name,
+                   tn.qualified_name AS to_qualified_name,
+                   tn.name AS to_name,
+                   tn.source_id AS to_source_id,
+                   target_state.graph_id AS to_graph_id,
+                   target_state.content_identity AS to_graph_revision
+            FROM analysis_graph_edges e
+            LEFT JOIN analysis_graph_nodes fn
+              ON fn.source_id = e.source_id
+             AND fn.id = e.from_node_id
+            LEFT JOIN analysis_graph_nodes tn
+              ON tn.id = e.to_node_id
+            LEFT JOIN analysis_graph_state target_state
+              ON target_state.source_id = tn.source_id
+             AND target_state.status = 'READY'
+            WHERE e.edge_type IN ({edge_type_sql})
+              AND e.status IN ({current_status_sql})
+              AND {self.graph_store._inventory_membership_graph_edge_clause("e")}
+              AND (e.from_node_id IN ({id_sql}) OR e.to_node_id IN ({id_sql}))
+              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("e")}, '') != 'TEST')
+            ORDER BY e.source_id, e.edge_type, e.from_node_id, e.to_node_id, e.id
+            """,
+            [
+                *edge_type_params,
+                *current_status_params,
+                *id_params,
+                *id_params,
                 include_tests,
             ],
         ).fetchall()

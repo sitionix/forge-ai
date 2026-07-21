@@ -62,6 +62,7 @@ from knowledge_service.target_enrichment import (
     TARGET_INPUT_SCHEMA_VERSION,
     TARGET_REQUEST_KIND,
 )
+from semantic_test_support import seed_semantic_graph
 
 
 def knowledge_query_request(query_text: str) -> KnowledgeQueryRequest:
@@ -2282,6 +2283,119 @@ class TaskWorkflow {
     assert dispatch_metadata["resolutionReason"] == "INTERFACE_IMPLEMENTATION_DISPATCH"
 
 
+def test_cross_source_http_connector_is_persisted_from_real_parser_and_finalizer(tmp_path):
+    interface_source = """package generated.api;
+
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+
+@RequestMapping("/tasks")
+public interface TaskApi {
+  @PostMapping("/handle")
+  ResponseDTO handle(RequestDTO request);
+}
+
+class RequestDTO {}
+class ResponseDTO {}
+"""
+    implementation_source = """package service.impl;
+
+import generated.api.TaskApi;
+import generated.api.RequestDTO;
+import generated.api.ResponseDTO;
+
+public class TaskController implements TaskApi {
+  @Override
+  public ResponseDTO handle(RequestDTO request) {
+    return null;
+  }
+}
+"""
+    client_source = """package client.app;
+
+import generated.api.TaskApi;
+import generated.api.RequestDTO;
+import generated.api.ResponseDTO;
+
+class TaskWorkflow {
+  private final TaskApi api;
+
+  TaskWorkflow(TaskApi api) {
+    this.api = api;
+  }
+
+  ResponseDTO run(RequestDTO request) {
+    return api.handle(request);
+  }
+}
+"""
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    for file_id, source_id, relative_path, content in (
+        (1, "app-afesox", "target/generated-sources/src/main/java/generated/api/TaskApi.java", interface_source),
+        (2, "task-service", "src/main/java/service/impl/TaskController.java", implementation_source),
+        (3, "client-app", "src/main/java/client/app/TaskWorkflow.java", client_source),
+    ):
+        store.replace_file_graph_analysis(
+            file_id,
+            graph_state_for_test(content, relative_path, source_id),
+            _materialize_static_java_for_test(content, file_id, relative_path, source_id),
+        )
+        store.finalize_source_graph(source_id)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        client_contract_edge = conn.execute(
+            """
+            SELECT caller.qualified_name AS caller_method,
+                   target.source_id AS target_source,
+                   target.qualified_name AS target_method,
+                   edge.resolution_status,
+                   edge.metadata_json
+            FROM analysis_graph_edges edge
+            JOIN analysis_graph_nodes caller ON caller.id = edge.from_node_id
+            JOIN analysis_graph_nodes target ON target.id = edge.to_node_id
+            WHERE edge.source_id = 'client-app'
+              AND edge.edge_type = 'CALLS'
+              AND caller.qualified_name = 'client.app.TaskWorkflow.run'
+              AND json_extract(edge.metadata_json, '$.methodName') = 'handle'
+            """
+        ).fetchone()
+        connector_edge = conn.execute(
+            """
+            SELECT contract.source_id AS contract_source,
+                   contract.qualified_name AS contract_method,
+                   target.source_id AS target_source,
+                   target.qualified_name AS target_method,
+                   edge.resolution_status,
+                   edge.status,
+                   edge.metadata_json
+            FROM analysis_graph_edges edge
+            JOIN analysis_graph_nodes contract ON contract.id = edge.from_node_id
+            JOIN analysis_graph_nodes target ON target.id = edge.to_node_id
+            WHERE edge.edge_type = 'CALLS'
+              AND json_extract(edge.metadata_json, '$.resolutionReason') = 'CROSS_SOURCE_HTTP_EXECUTION_CONNECTOR'
+            """
+        ).fetchone()
+
+    assert client_contract_edge is not None
+    assert client_contract_edge["target_source"] == "app-afesox"
+    assert client_contract_edge["target_method"] == "generated.api.TaskApi.handle"
+    client_metadata = json.loads(client_contract_edge["metadata_json"])
+    assert client_metadata["resolutionReason"] == "HTTP_CLIENT_OPERATION_CONTRACT"
+    assert client_metadata["interfaceMethod"] == "generated.api.TaskApi.handle"
+    assert connector_edge is not None
+    assert connector_edge["contract_source"] == "app-afesox"
+    assert connector_edge["contract_method"] == "generated.api.TaskApi.handle"
+    assert connector_edge["target_source"] == "task-service"
+    assert connector_edge["target_method"] == "service.impl.TaskController.handle"
+    connector_metadata = json.loads(connector_edge["metadata_json"])
+    assert connector_metadata["transportConnector"] is True
+    assert connector_metadata["httpMethod"] == "POST"
+    assert connector_metadata["routeTemplate"] == "/tasks/handle"
+    assert connector_metadata["targetInterfaceMethod"] == "generated.api.TaskApi.handle"
+
+
 def test_cross_source_graph_resolver_can_be_unit_tested_directly(tmp_path):
     interface_source = """package generated.api;
 
@@ -2369,6 +2483,106 @@ public class SiteController implements SiteApi {
     assert inherited_claim["entrypoint_route"] == "/sites/{id}"
     assert inherited_claim["entrypoint_interface_method"] == "generated.api.SiteApi.getSite"
     assert inherited_claim["entrypoint_execution_kind"] == "EXECUTABLE"
+
+
+def test_cross_source_http_connector_ambiguity_fails_closed(tmp_path):
+    store = AnalysisStore(tmp_path / "knowledge.sqlite")
+    store.init()
+    seed_semantic_graph(
+        store.db_path,
+        source_id="client-source",
+        graph_suffix="client",
+        nodes=[
+            {
+                "id": "caller",
+                "nodeKind": "CALLABLE",
+                "name": "Caller.run",
+                "qualified": "client.Caller.run",
+                "path": "src/client/Caller.java",
+            },
+            {
+                "id": "contract",
+                "nodeKind": "CALLABLE",
+                "name": "RemoteApi.create",
+                "qualified": "generated.api.RemoteApi.create",
+                "path": "target/generated-sources/api/RemoteApi.java",
+            },
+        ],
+        edges=[{"id": "caller-to-contract", "fromNodeId": "caller", "toNodeId": "contract", "edgeType": "CALLS"}],
+        claims=[
+            {
+                "id": "claim-contract",
+                "node_id": "contract",
+                "claimKind": "ENTRYPOINT_HINT",
+                "summary": "contract endpoint",
+                "entrypointKind": "HTTP",
+                "httpMethod": "POST",
+                "route": "/tasks",
+                "interfaceMethod": "generated.api.RemoteApi.create",
+                "entrypointExecutionKind": "CONTRACT_DECLARATION",
+                "evidence_ids": ["ev-contract"],
+            }
+        ],
+        evidence_ids=["ev-contract"],
+    )
+    for source_id, node_id in (("target-a", "target-a-create"), ("target-b", "target-b-create")):
+        seed_semantic_graph(
+            store.db_path,
+            source_id=source_id,
+            graph_suffix=source_id,
+            nodes=[
+                {
+                    "id": node_id,
+                    "nodeKind": "CALLABLE",
+                    "name": "RemoteController.create",
+                    "qualified": f"{source_id}.RemoteController.create",
+                    "path": f"src/{source_id}/RemoteController.java",
+                }
+            ],
+            claims=[
+                {
+                    "id": f"claim-{node_id}",
+                    "node_id": node_id,
+                    "claimKind": "ENTRYPOINT_HINT",
+                    "summary": "target endpoint",
+                    "entrypointKind": "HTTP",
+                    "httpMethod": "POST",
+                    "route": "/tasks",
+                    "interfaceMethod": "generated.api.RemoteApi.create",
+                    "entrypointExecutionKind": "EXECUTABLE",
+                    "evidence_ids": [f"ev-{node_id}"],
+                }
+            ],
+            evidence_ids=[f"ev-{node_id}"],
+        )
+
+    resolver = CrossSourceGraphResolver(store)
+
+    def refresh(conn):
+        resolver._refresh_cross_source_http_execution_connectors(conn, "2026-07-15T00:00:00+00:00")
+
+    store._write_with_busy_retry(refresh)
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        connector_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM analysis_graph_edges
+            WHERE json_extract(metadata_json, '$.resolutionReason') = 'CROSS_SOURCE_HTTP_EXECUTION_CONNECTOR'
+            """
+        ).fetchone()[0]
+        diagnostic = conn.execute(
+            """
+            SELECT code, metadata_json
+            FROM analysis_graph_diagnostics
+            WHERE code = 'CROSS_SOURCE_HTTP_CONNECTOR_AMBIGUOUS'
+            """
+        ).fetchone()
+
+    assert connector_count == 0
+    assert diagnostic is not None
+    assert json.loads(diagnostic["metadata_json"])["candidateCount"] == 2
 
 
 def test_cross_source_incoming_traversal_reaches_service_entrypoint_from_app_anchor(tmp_path):

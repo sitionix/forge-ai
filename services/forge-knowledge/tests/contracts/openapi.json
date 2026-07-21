@@ -109,6 +109,40 @@
         "title": "FlowToolEvidence",
         "type": "object"
       },
+      "FlowToolTransition": {
+        "properties": {
+          "connectorKind": {
+            "title": "Connectorkind",
+            "type": "string"
+          },
+          "crossSource": {
+            "title": "Crosssource",
+            "type": "boolean"
+          },
+          "edgeType": {
+            "title": "Edgetype",
+            "type": "string"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "resolutionStatus": {
+            "title": "Resolutionstatus",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edgeType",
+          "resolutionStatus"
+        ],
+        "title": "FlowToolTransition",
+        "type": "object"
+      },
       "FlowToolTree": {
         "properties": {
           "entrypoint": {
@@ -170,9 +204,16 @@
             "title": "Shared",
             "type": "boolean"
           },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
           "symbol": {
             "title": "Symbol",
             "type": "string"
+          },
+          "transition": {
+            "$ref": "#/components/schemas/FlowToolTransition"
           },
           "trigger": {
             "$ref": "#/components/schemas/FlowToolTrigger"

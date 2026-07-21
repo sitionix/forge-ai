@@ -406,8 +406,8 @@ def test_real_stack_three_roots_shared_suffix_and_max_flows(tmp_path):
     assert {flow["entrypoint"]["label"] for flow in all_flows["flows"]} == set(roots)
     assert all({"Gamma", "Delta", "Epsilon"} <= {node["label"] for node in flow["nodes"]} for flow in all_flows["flows"])
     assert len(limited["flows"]) == 2
-    diagnostic = next(item for item in limited["diagnostics"] if item["code"] == "ENTRYPOINT_FLOW_MAX_FLOWS_REACHED")
-    assert diagnostic["metadata"]["omittedFlowCount"] == 1
+    diagnostic = next(item for item in limited["diagnostics"] if item["code"] == "FLOW_FAMILY_MAX_FLOWS_REACHED")
+    assert diagnostic["metadata"]["omittedFamilyCount"] == 1
 
 
 def test_real_stack_include_tests_uses_persisted_classification(tmp_path):
@@ -565,10 +565,10 @@ def test_real_stack_many_entrypoints_discovers_all_before_max_flows(tmp_path):
 
     body = graph_query(app, request("Anchor", max_flows=10))
 
-    diagnostic = next(item for item in body["diagnostics"] if item["code"] == "ENTRYPOINT_FLOW_MAX_FLOWS_REACHED")
-    assert diagnostic["metadata"]["discoveredEntrypointCount"] == 40
-    assert diagnostic["metadata"]["returnedFlowCount"] == 10
-    assert diagnostic["metadata"]["omittedFlowCount"] == 30
+    diagnostic = next(item for item in body["diagnostics"] if item["code"] == "FLOW_FAMILY_MAX_FLOWS_REACHED")
+    assert diagnostic["metadata"]["discoveredFamilyCount"] == 40
+    assert diagnostic["metadata"]["returnedFamilyCount"] == 10
+    assert diagnostic["metadata"]["omittedFamilyCount"] == 30
     assert len(body["flows"]) == 10
     assert all({"Shared", "Anchor"} <= {node["label"] for node in flow["nodes"]} for flow in body["flows"])
     assert_flow_refs_close(body)
@@ -1194,10 +1194,10 @@ def test_real_stack_anchor_expansion_processes_all_declared_callables(tmp_path):
 
     body = graph_query(app, request("Public Type", max_flows=10))
 
-    diagnostic = next(item for item in body["diagnostics"] if item["code"] == "ENTRYPOINT_FLOW_MAX_FLOWS_REACHED")
-    assert diagnostic["metadata"]["discoveredEntrypointCount"] == count
-    assert diagnostic["metadata"]["returnedFlowCount"] == 10
-    assert diagnostic["metadata"]["omittedFlowCount"] == count - 10
+    diagnostic = next(item for item in body["diagnostics"] if item["code"] == "FLOW_FAMILY_MAX_FLOWS_REACHED")
+    assert diagnostic["metadata"]["discoveredFamilyCount"] == count
+    assert diagnostic["metadata"]["returnedFamilyCount"] == 10
+    assert diagnostic["metadata"]["omittedFamilyCount"] == count - 10
     assert len(body["flows"]) == 10
     assert "ANCHOR_EXPANSION_LIMIT_REACHED" not in json.dumps(body)
     assert_flow_refs_close(body)

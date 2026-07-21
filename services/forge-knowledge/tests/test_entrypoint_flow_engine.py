@@ -301,15 +301,14 @@ def test_external_boundary_and_evidence_remain_owned_by_edge():
     assert public.evidence[0].ownerRef == "b1"
 
 
-def test_max_flows_limits_entrypoints_not_branches():
+def test_engine_discovers_all_entrypoints_before_family_level_max_flows():
     nodes = [node("Alpha", entrypoint=True), node("Beta", entrypoint=True), node("Gamma"), node("Delta"), node("Epsilon")]
     edges = [edge("ag", "Alpha", "Gamma"), edge("bg", "Beta", "Gamma"), edge("gd", "Gamma", "Delta"), edge("ge", "Gamma", "Epsilon")]
     result = build(nodes, edges, [anchor("Gamma")], max_flows=1)
-    assert len(result.flows) == 1
-    assert {"Gamma", "Delta", "Epsilon"} <= ids(result.flows[0])
-    diagnostic = next(item for item in result.diagnostics if item.code == "ENTRYPOINT_FLOW_MAX_FLOWS_REACHED")
-    assert diagnostic.metadata["discoveredEntrypointCount"] == 2
-    assert diagnostic.metadata["omittedFlowCount"] == 1
+    assert len(result.flows) == 2
+    assert {flow.entrypoint.node_id for flow in result.flows} == {"Alpha", "Beta"}
+    assert all({"Gamma", "Delta", "Epsilon"} <= ids(flow) for flow in result.flows)
+    assert result.diagnostics == []
 
 
 def test_include_tests_uses_persisted_flow_domain():
@@ -384,18 +383,16 @@ def test_more_than_two_thousand_edges_reaches_fixed_point():
     assert flow.coverage.truncated is False
 
 
-def test_more_than_previous_entrypoint_limit_discovers_all_then_applies_max_flows():
+def test_more_than_previous_entrypoint_limit_discovers_all_raw_flows():
     roots = [f"Root{i:02d}" for i in range(40)]
     nodes = [*[node(root, entrypoint=True) for root in roots], node("Shared"), node("Anchor")]
     edges = [edge(f"{root}-s", root, "Shared") for root in roots]
     edges.append(edge("shared-anchor", "Shared", "Anchor"))
     result = build(nodes, edges, [anchor("Anchor")], max_flows=10)
     assert result.discovered_entrypoint_count == 40
-    assert len(result.flows) == 10
-    diagnostic = next(item for item in result.diagnostics if item.code == "ENTRYPOINT_FLOW_MAX_FLOWS_REACHED")
-    assert diagnostic.metadata["discoveredEntrypointCount"] == 40
-    assert diagnostic.metadata["returnedFlowCount"] == 10
-    assert diagnostic.metadata["omittedFlowCount"] == 30
+    assert len(result.flows) == 40
+    assert result.truncated is False
+    assert result.diagnostics == []
 
 
 def test_evidence_above_previous_budget_is_complete_and_public_refs_close():

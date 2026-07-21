@@ -35,6 +35,7 @@ from knowledge_service.knowledge_query_schema import (
 from knowledge_service.query_interpretation import QueryRetrievalPlan
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
+from knowledge_service.flow_family import FlowFamily, FlowFamilyAssembler, FlowFamilyAssemblyResult
 
 @dataclass(frozen=True)
 class KnowledgeQueryPolicy:
@@ -135,7 +136,9 @@ class QuerySource:
 @dataclass(frozen=True)
 class KnowledgeQueryExecutionResult:
     response: KnowledgeQueryResponse
-    flows: tuple[EntrypointFlow, ...] = ()
+    flows: tuple[FlowFamily, ...] = ()
+    raw_flows: tuple[EntrypointFlow, ...] = ()
+    family_assembly: FlowFamilyAssemblyResult | None = None
 
 
 class SourceScopeResolver:
@@ -1026,6 +1029,7 @@ class KnowledgeQueryService:
         self.flow_engine = flow_engine or EntrypointFlowEngine(flow_repository)
         self.policy = policy or KnowledgeQueryPolicy()
         self.anchor_expander = anchor_expander or AnchorExpansionService(getattr(flow_repository, "graph_store", None))
+        self.family_assembler = FlowFamilyAssembler()
 
     def query(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryResponse:
         return self.query_with_flows(request, plan=plan).response
@@ -1070,15 +1074,38 @@ class KnowledgeQueryService:
         request_flow_limit = max(1, min(int(request.maxFlows or 10), 10))
         build_result = self.flow_engine.build(
             flow_seed_nodes,
-            max_flows=request_flow_limit,
+            max_flows=0,
             include_tests=bool(request.includeTests),
         )
-        flows = build_result.flows
-        public_flows = build_result.public_flows
+        raw_flows = build_result.flows
+        supporting_nodes, supporting_relations = self._supporting_relations(raw_flows, bool(request.includeTests))
+        assembly_result = self.family_assembler.assemble(
+            raw_flows,
+            supporting_nodes=supporting_nodes,
+            supporting_relations=supporting_relations,
+        )
+        flows = self.family_assembler.rank(assembly_result.families)
         if plan is not None:
             flows = self._select_plan_flows(flows, plan)
-            public_flows = self.flow_engine.public_flows(flows)
+        discovered_family_count = len(flows)
+        selected_flows = flows[:request_flow_limit]
+        omitted_family_count = max(0, discovered_family_count - len(selected_flows))
+        if omitted_family_count:
+            diagnostics.append(KnowledgeQueryDiagnostic(
+                code="FLOW_FAMILY_MAX_FLOWS_REACHED",
+                message="Independent flow families were omitted by maxFlows.",
+                severity="INFO",
+                metadata={
+                    "returnedFamilyCount": len(selected_flows),
+                    "discoveredFamilyCount": discovered_family_count,
+                    "omittedFamilyCount": omitted_family_count,
+                    "maxFlows": request_flow_limit,
+                },
+            ))
+        selected_flows = tuple(self.flow_repository.hydrate_evidence(selected_flows))
+        public_flows = self.flow_engine.public_flows(selected_flows)
         diagnostics.extend(build_result.diagnostics)
+        diagnostics.extend(assembly_result.diagnostics)
         diagnostics.append(KnowledgeQueryDiagnostic(
             code="ENTRYPOINT_FLOW_TIMINGS",
             message="Entrypoint flow query stage timings.",
@@ -1088,6 +1115,10 @@ class KnowledgeQueryService:
                 **(build_result.stage_timings_ms or {}),
                 "totalMs": round((time.monotonic() - query_started) * 1000, 3),
                 **(build_result.traversal_stats or {}),
+                "rawCandidateFlowCount": assembly_result.raw_candidate_flow_count,
+                "discoveredFamilyCount": assembly_result.discovered_family_count,
+                "selectedFamilyCount": len(selected_flows),
+                "omittedFamilyCount": omitted_family_count,
             },
         ))
         matched_sources = self._matched_sources(matched_nodes, eligible_sources)
@@ -1114,16 +1145,32 @@ class KnowledgeQueryService:
                     matchedSourceCount=len(matched_sources),
                     matchedNodeCount=len(matched_nodes),
                     flowCount=len(public_flows),
-                    nodeCount=sum(flow.coverage.node_count for flow in flows),
-                    edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in flows),
-                    evidenceCount=sum(len(flow.evidence) for flow in flows),
-                    truncated=candidate_result.truncated or anchor_result.truncated or build_result.truncated,
-                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or build_result.truncated,
+                    nodeCount=sum(flow.coverage.node_count for flow in selected_flows),
+                    edgeCount=sum(flow.coverage.transition_count + flow.coverage.boundary_count for flow in selected_flows),
+                    evidenceCount=sum(len(flow.evidence) for flow in selected_flows),
+                    truncated=candidate_result.truncated or anchor_result.truncated or omitted_family_count > 0,
+                    continuationAvailable=candidate_result.truncated or anchor_result.truncated or omitted_family_count > 0,
                 ),
                 diagnostics=diagnostics,
             ),
-            flows=flows,
+            flows=selected_flows,
+            raw_flows=raw_flows,
+            family_assembly=assembly_result,
         )
+
+    def _supporting_relations(
+        self,
+        raw_flows: Sequence[EntrypointFlow],
+        include_tests: bool,
+    ):
+        if not raw_flows or not hasattr(self.flow_repository, "load_supporting_relations"):
+            return {}, ()
+        node_keys = {
+            (node.source_id, node.graph_revision or node.graph_id, node.node_id)
+            for flow in raw_flows
+            for node in flow.nodes
+        }
+        return self.flow_repository.load_supporting_relations(node_keys, include_tests=include_tests)
 
     def _select_plan_flows(
         self,
