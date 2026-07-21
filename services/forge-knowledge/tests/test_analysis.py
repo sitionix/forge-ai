@@ -2311,9 +2311,36 @@ public class TaskController implements TaskApi {
   }
 }
 """
+    generated_client_source = """package client.generated;
+
+import generated.api.RequestDTO;
+import generated.api.ResponseDTO;
+
+class ApiClient {
+  <T> T invokeAPI(String path, HttpMethod method, Object query, Object body, Class<T> returnType) {
+    return null;
+  }
+}
+
+enum HttpMethod {
+  POST
+}
+
+public class TaskApi {
+  private final ApiClient apiClient = new ApiClient();
+
+  public ResponseDTO handle(RequestDTO request) {
+    return handleWithHttpInfo(request);
+  }
+
+  public ResponseDTO handleWithHttpInfo(RequestDTO request) {
+    return apiClient.invokeAPI("/tasks/handle", HttpMethod.POST, null, request, ResponseDTO.class);
+  }
+}
+"""
     client_source = """package client.app;
 
-import generated.api.TaskApi;
+import client.generated.TaskApi;
 import generated.api.RequestDTO;
 import generated.api.ResponseDTO;
 
@@ -2334,7 +2361,8 @@ class TaskWorkflow {
     for file_id, source_id, relative_path, content in (
         (1, "app-afesox", "target/generated-sources/src/main/java/generated/api/TaskApi.java", interface_source),
         (2, "task-service", "src/main/java/service/impl/TaskController.java", implementation_source),
-        (3, "client-app", "src/main/java/client/app/TaskWorkflow.java", client_source),
+        (3, "client-generated", "target/generated-sources/src/main/java/client/generated/TaskApi.java", generated_client_source),
+        (4, "client-app", "src/main/java/client/app/TaskWorkflow.java", client_source),
     ):
         store.replace_file_graph_analysis(
             file_id,
@@ -2345,7 +2373,7 @@ class TaskWorkflow {
 
     with sqlite3.connect(store.db_path) as conn:
         conn.row_factory = sqlite3.Row
-        client_contract_edge = conn.execute(
+        workflow_client_edge = conn.execute(
             """
             SELECT caller.qualified_name AS caller_method,
                    target.source_id AS target_source,
@@ -2363,37 +2391,46 @@ class TaskWorkflow {
         ).fetchone()
         connector_edge = conn.execute(
             """
-            SELECT contract.source_id AS contract_source,
-                   contract.qualified_name AS contract_method,
+            SELECT client_op.source_id AS client_operation_source,
+                   client_op.qualified_name AS client_operation_method,
                    target.source_id AS target_source,
                    target.qualified_name AS target_method,
                    edge.resolution_status,
                    edge.status,
                    edge.metadata_json
             FROM analysis_graph_edges edge
-            JOIN analysis_graph_nodes contract ON contract.id = edge.from_node_id
-            JOIN analysis_graph_nodes target ON target.id = edge.to_node_id
+            JOIN analysis_graph_nodes client_op ON client_op.source_id = edge.source_id AND client_op.id = edge.from_node_id
+            JOIN analysis_graph_nodes target ON target.source_id = edge.to_source_id AND target.id = edge.to_node_id
             WHERE edge.edge_type = 'CALLS'
               AND json_extract(edge.metadata_json, '$.resolutionReason') = 'CROSS_SOURCE_HTTP_EXECUTION_CONNECTOR'
             """
         ).fetchone()
+        transport_operation = conn.execute(
+            """
+            SELECT op.http_method, op.normalized_route_template, node.qualified_name
+            FROM analysis_graph_transport_operations op
+            JOIN analysis_graph_nodes node ON node.source_id = op.source_id AND node.id = op.node_id
+            WHERE op.transport_kind = 'HTTP'
+              AND op.operation_role = 'CLIENT_OPERATION'
+            """
+        ).fetchone()
 
-    assert client_contract_edge is not None
-    assert client_contract_edge["target_source"] == "app-afesox"
-    assert client_contract_edge["target_method"] == "generated.api.TaskApi.handle"
-    client_metadata = json.loads(client_contract_edge["metadata_json"])
-    assert client_metadata["resolutionReason"] == "HTTP_CLIENT_OPERATION_CONTRACT"
-    assert client_metadata["interfaceMethod"] == "generated.api.TaskApi.handle"
+    assert workflow_client_edge is not None
+    assert workflow_client_edge["target_source"] == "client-generated"
+    assert workflow_client_edge["target_method"] == "client.generated.TaskApi.handle"
+    assert transport_operation is not None
+    assert transport_operation["qualified_name"] == "client.generated.TaskApi.handleWithHttpInfo"
+    assert transport_operation["http_method"] == "POST"
+    assert transport_operation["normalized_route_template"] == "/tasks/handle"
     assert connector_edge is not None
-    assert connector_edge["contract_source"] == "app-afesox"
-    assert connector_edge["contract_method"] == "generated.api.TaskApi.handle"
+    assert connector_edge["client_operation_source"] == "client-generated"
+    assert connector_edge["client_operation_method"] == "client.generated.TaskApi.handleWithHttpInfo"
     assert connector_edge["target_source"] == "task-service"
     assert connector_edge["target_method"] == "service.impl.TaskController.handle"
     connector_metadata = json.loads(connector_edge["metadata_json"])
     assert connector_metadata["transportConnector"] is True
     assert connector_metadata["httpMethod"] == "POST"
     assert connector_metadata["routeTemplate"] == "/tasks/handle"
-    assert connector_metadata["targetInterfaceMethod"] == "generated.api.TaskApi.handle"
 
 
 def test_cross_source_graph_resolver_can_be_unit_tested_directly(tmp_path):
@@ -2555,11 +2592,22 @@ def test_cross_source_http_connector_ambiguity_fails_closed(tmp_path):
             ],
             evidence_ids=[f"ev-{node_id}"],
         )
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("UPDATE analysis_graph_evidence SET excerpt = ? WHERE source_id = ? AND id = ?", ('apiClient.invokeAPI("/tasks", HttpMethod.POST, null, body, Object.class)', "client-source", "ev-contract"))
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_owner_evidence(
+                owner_kind, owner_source_id, owner_node_id, owner_edge_id, evidence_source_id, evidence_id
+            )
+            VALUES ('EDGE', 'client-source', '', 'caller-to-contract', 'client-source', 'ev-contract')
+            """
+        )
+        conn.commit()
 
     resolver = CrossSourceGraphResolver(store)
 
     def refresh(conn):
-        resolver._refresh_cross_source_http_execution_connectors(conn, "2026-07-15T00:00:00+00:00")
+        resolver.refresh_global_transport_connectors(conn, "2026-07-15T00:00:00+00:00")
 
     store._write_with_busy_retry(refresh)
 

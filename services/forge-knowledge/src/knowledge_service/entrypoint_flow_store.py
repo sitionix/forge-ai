@@ -245,7 +245,7 @@ class EntrypointFlowGraphRepository:
                    entry.entrypoint_schedule AS entrypoint_schedule,
                    entry.entrypoint_interface_method AS entrypoint_interface_method,
                    entry.entrypoint_execution_kind AS entrypoint_execution_kind,
-                   contract_entry.entrypoint_execution_kind AS contract_entrypoint_execution_kind,
+                   COALESCE(role_entry.entrypoint_execution_kind, contract_entry.entrypoint_execution_kind) AS contract_entrypoint_execution_kind,
                    claim.summary AS summary
             FROM analysis_graph_nodes n
             LEFT JOIN analysis_files af ON af.file_id = n.analysis_file_id
@@ -261,6 +261,12 @@ class EntrypointFlowGraphRepository:
              AND contract_entry.claim_kind = ?
              AND contract_entry.status IN ({current_status_sql})
              AND COALESCE(contract_entry.entrypoint_execution_kind, '') = 'CONTRACT_DECLARATION'
+            LEFT JOIN analysis_graph_claims role_entry
+              ON role_entry.source_id = n.source_id
+             AND role_entry.node_id = n.id
+             AND role_entry.claim_kind = ?
+             AND role_entry.status IN ({current_status_sql})
+             AND COALESCE(role_entry.entrypoint_execution_kind, '') NOT IN (?, '')
             LEFT JOIN claim
               ON claim.source_id = n.source_id
              AND claim.node_id = n.id
@@ -282,6 +288,9 @@ class EntrypointFlowGraphRepository:
                 EntrypointExecutionKind.EXECUTABLE.value,
                 contract.entrypoint_claim_kind,
                 *current_status_params,
+                contract.entrypoint_claim_kind,
+                *current_status_params,
+                EntrypointExecutionKind.EXECUTABLE.value,
                 source_id,
                 *ids,
                 *current_status_params,
@@ -332,7 +341,8 @@ class EntrypointFlowGraphRepository:
               ON fn.source_id = e.source_id
              AND fn.id = e.from_node_id
             LEFT JOIN analysis_graph_nodes tn
-              ON tn.id = e.to_node_id
+              ON tn.source_id = COALESCE(e.to_source_id, e.source_id)
+             AND tn.id = e.to_node_id
             LEFT JOIN analysis_graph_state target_state
               ON target_state.source_id = tn.source_id
              AND target_state.status = 'READY'
@@ -381,6 +391,7 @@ class EntrypointFlowGraphRepository:
             FROM analysis_graph_edges e
             JOIN analysis_graph_nodes tn
               ON tn.source_id = ?
+             AND COALESCE(e.to_source_id, e.source_id) = tn.source_id
              AND tn.id = e.to_node_id
              AND tn.status IN ({current_status_sql})
              AND {self.graph_store._inventory_membership_graph_node_clause("tn")}
@@ -456,7 +467,8 @@ class EntrypointFlowGraphRepository:
               ON fn.source_id = e.source_id
              AND fn.id = e.from_node_id
             LEFT JOIN analysis_graph_nodes tn
-              ON tn.id = e.to_node_id
+              ON tn.source_id = COALESCE(e.to_source_id, e.source_id)
+             AND tn.id = e.to_node_id
             LEFT JOIN analysis_graph_state target_state
               ON target_state.source_id = tn.source_id
              AND target_state.status = 'READY'
@@ -506,20 +518,27 @@ class EntrypointFlowGraphRepository:
                        ev.fact_origin,
                        ev.flow_domain,
                        edge.id AS edge_id,
-                       NULL AS node_id
+                       NULL AS node_id,
+                       owner.owner_kind,
+                       owner.owner_source_id,
+                       owner.owner_node_id,
+                       owner.owner_edge_id
                 FROM analysis_graph_edges edge
-                JOIN analysis_graph_edge_evidence link ON link.edge_id = edge.id
+                JOIN analysis_graph_owner_evidence owner
+                  ON owner.owner_kind = 'EDGE'
+                 AND owner.owner_source_id = edge.source_id
+                 AND owner.owner_edge_id = edge.id
                 JOIN analysis_graph_evidence ev
-                  ON ev.id = link.evidence_id
+                  ON ev.source_id = owner.evidence_source_id
+                 AND ev.id = owner.evidence_id
                 LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
                 WHERE edge.source_id = ?
-                  AND edge.edge_type = ?
                   AND edge.status IN ({current_status_sql})
                   AND {self.graph_store._inventory_membership_graph_edge_clause("edge")}
                   AND edge.id IN ({placeholders})
                 ORDER BY edge.id, relative_path, ev.line_start, ev.line_end, ev.id
                 """,
-                [source_id, contract.calls_edge_type, *current_status_params, *chunk],
+                [source_id, *current_status_params, *chunk],
             ).fetchall()
             result.extend(self.graph_store._linked_evidence_projection(rows))
         return result
@@ -552,19 +571,30 @@ class EntrypointFlowGraphRepository:
                        ev.fact_origin,
                        ev.flow_domain,
                        NULL AS edge_id,
-                       claim.node_id AS node_id
-                FROM analysis_graph_claims claim
-                JOIN analysis_graph_claim_evidence link ON link.claim_id = claim.id
+                       owner.owner_node_id AS node_id,
+                       owner.owner_kind,
+                       owner.owner_source_id,
+                       owner.owner_node_id,
+                       owner.owner_edge_id
+                FROM analysis_graph_owner_evidence owner
                 JOIN analysis_graph_evidence ev
-                  ON ev.id = link.evidence_id
+                  ON ev.source_id = owner.evidence_source_id
+                 AND ev.id = owner.evidence_id
                 LEFT JOIN analysis_files af ON af.file_id = ev.analysis_file_id
-                WHERE claim.source_id = ?
-                  AND claim.status IN ({current_status_sql})
-                  AND claim.node_id IN ({placeholders})
-                  AND claim.rejection_reason IS NULL
-                ORDER BY claim.node_id, relative_path, ev.line_start, ev.line_end, ev.id
+                WHERE owner.owner_kind = 'NODE'
+                  AND owner.owner_source_id = ?
+                  AND owner.owner_node_id IN ({placeholders})
+                  AND EXISTS (
+                      SELECT 1
+                      FROM analysis_graph_claims claim
+                      WHERE claim.source_id = owner.owner_source_id
+                        AND claim.node_id = owner.owner_node_id
+                        AND claim.status IN ({current_status_sql})
+                        AND claim.rejection_reason IS NULL
+                  )
+                ORDER BY owner.owner_node_id, relative_path, ev.line_start, ev.line_end, ev.id
                 """,
-                [source_id, *current_status_params, *chunk],
+                [source_id, *chunk, *current_status_params],
             ).fetchall()
             result.extend(self.graph_store._linked_evidence_projection(rows))
         return result

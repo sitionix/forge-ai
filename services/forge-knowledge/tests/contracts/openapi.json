@@ -109,6 +109,55 @@
         "title": "FlowToolEvidence",
         "type": "object"
       },
+      "FlowToolSupportingRelation": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "lineEnd": {
+            "title": "Lineend",
+            "type": "integer"
+          },
+          "lineStart": {
+            "title": "Linestart",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "relation": {
+            "title": "Relation",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          },
+          "targetSource": {
+            "title": "Targetsource",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relation",
+          "symbol"
+        ],
+        "title": "FlowToolSupportingRelation",
+        "type": "object"
+      },
       "FlowToolTransition": {
         "properties": {
           "connectorKind": {
@@ -151,6 +200,13 @@
           "source": {
             "title": "Source",
             "type": "string"
+          },
+          "supportingRelations": {
+            "items": {
+              "$ref": "#/components/schemas/FlowToolSupportingRelation"
+            },
+            "title": "Supportingrelations",
+            "type": "array"
           }
         },
         "required": [

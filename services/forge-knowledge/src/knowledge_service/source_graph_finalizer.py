@@ -14,6 +14,7 @@ from knowledge_service.graph_query_contract import graph_query_contract, sql_in_
 from knowledge_service.graph_state_repository import GRAPH_STATE_FINALIZING, GraphStateRepository
 from knowledge_service.overview_projection import refresh_overview_for_sources
 from knowledge_service.semantic_index import SemanticIndexStore
+from knowledge_service.transport_connectors import HttpTransportConnectorResolver
 
 ENTRYPOINT_EXECUTION_EXECUTABLE = EntrypointExecutionKind.EXECUTABLE.value
 
@@ -32,11 +33,10 @@ class CrossSourceGraphResolver:
         self._refresh_source_overrides_and_inherited_entrypoints(conn, source_id, created_at)
         self._resolve_source_call_edges(conn, source_id)
         self._expand_source_interface_dispatch_edges(conn, source_id)
-        self._refresh_cross_source_http_execution_connectors(conn, created_at)
-        graph_id = self.store._refresh_graph_state(conn, source_id, created_at)
-        if graph_id:
-            SemanticIndexStore.mark_current_graph_pending_conn(conn, source_id)
-        refresh_overview_for_sources(conn, [source_id])
+
+    def refresh_global_transport_connectors(self, conn: sqlite3.Connection, created_at: str) -> set[str]:
+        result = HttpTransportConnectorResolver(self.store).resolve(conn, created_at)
+        return set(result.affected_source_ids)
 
     def _refresh_source_overrides_and_inherited_entrypoints(
         self,
@@ -139,7 +139,9 @@ class CrossSourceGraphResolver:
             """
             SELECT DISTINCT target.id, target.source_id, target.name, target.qualified_name, target.type_kind
             FROM analysis_graph_edges edge
-            JOIN analysis_graph_nodes target ON target.id = edge.to_node_id
+            JOIN analysis_graph_nodes target
+              ON target.source_id = COALESCE(edge.to_source_id, edge.source_id)
+             AND target.id = edge.to_node_id
             WHERE edge.source_id = ?
               AND edge.edge_type IN (?, ?)
               AND edge.resolution_status = ?
@@ -356,10 +358,10 @@ class CrossSourceGraphResolver:
             """
             INSERT OR IGNORE INTO analysis_graph_edges(
                 id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                from_node_id, to_node_id, edge_type, resolution_status, confidence,
+                from_node_id, to_node_id, to_source_id, edge_type, resolution_status, confidence,
                 argument_count, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
             """,
             (
                 edge_id,
@@ -372,6 +374,7 @@ class CrossSourceGraphResolver:
                 implementation_method["content_hash"],
                 implementation_method["id"],
                 interface_method["id"],
+                interface_method["source_id"],
                 edge_type,
                 contract.resolved_status,
                 1.0,
@@ -457,6 +460,21 @@ class CrossSourceGraphResolver:
             """,
             [(edge_id, evidence_id) for evidence_id in evidence_ids],
         )
+        row = conn.execute(
+            "SELECT source_id FROM analysis_graph_edges WHERE id = ?",
+            (edge_id,),
+        ).fetchone()
+        if row is None:
+            return
+        for evidence_id in evidence_ids:
+            self.store._insert_owner_evidence_link(
+                conn,
+                owner_kind="EDGE",
+                owner_source_id=str(row["source_id"]),
+                owner_node_id="",
+                owner_edge_id=edge_id,
+                evidence_id=str(evidence_id),
+            )
 
     def _insert_claim_evidence_link_rows(self, conn: sqlite3.Connection, claim_id: str, evidence_ids: Sequence[str]) -> None:
         conn.executemany(
@@ -466,6 +484,21 @@ class CrossSourceGraphResolver:
             """,
             [(claim_id, evidence_id) for evidence_id in evidence_ids],
         )
+        row = conn.execute(
+            "SELECT source_id, node_id FROM analysis_graph_claims WHERE id = ?",
+            (claim_id,),
+        ).fetchone()
+        if row is None:
+            return
+        for evidence_id in evidence_ids:
+            self.store._insert_owner_evidence_link(
+                conn,
+                owner_kind="NODE",
+                owner_source_id=str(row["source_id"]),
+                owner_node_id=str(row["node_id"]),
+                owner_edge_id="",
+                evidence_id=str(evidence_id),
+            )
 
     def _derived_graph_id(self, prefix: str, *parts: str) -> str:
         digest = hashlib.sha256("|".join(str(part) for part in parts).encode("utf-8")).hexdigest()[:24]
@@ -527,12 +560,13 @@ class CrossSourceGraphResolver:
                     """
                     UPDATE analysis_graph_edges
                     SET to_node_id = ?,
+                        to_source_id = ?,
                         resolution_status = ?,
                         unresolved_target_json = NULL,
                         metadata_json = ?
                     WHERE id = ?
                     """,
-                    (type_candidates[0]["id"], contract.resolved_status, json.dumps(metadata), edge["id"]),
+                    (type_candidates[0]["id"], type_candidates[0]["source_id"], contract.resolved_status, json.dumps(metadata), edge["id"]),
                 )
             elif len(type_candidates) > 1:
                 self._mark_edge_multiple(conn, edge["id"], metadata, len(type_candidates))
@@ -545,7 +579,7 @@ class CrossSourceGraphResolver:
         contract = graph_query_contract()
         local_type_rows = conn.execute(
             """
-            SELECT id, name, qualified_name, type_kind
+            SELECT id, source_id, name, qualified_name, type_kind
             FROM analysis_graph_nodes
             WHERE source_id = ?
               AND node_kind = ?
@@ -632,12 +666,13 @@ class CrossSourceGraphResolver:
                     """
                     UPDATE analysis_graph_edges
                     SET to_node_id = ?,
+                        to_source_id = ?,
                         resolution_status = ?,
                         unresolved_target_json = NULL,
                         metadata_json = ?
                     WHERE id = ?
                 """,
-                    (callable_candidates[0]["id"], contract.resolved_status, json.dumps(metadata), edge["id"]),
+                    (callable_candidates[0]["id"], callable_candidates[0]["source_id"], contract.resolved_status, json.dumps(metadata), edge["id"]),
                 )
             elif len(callable_candidates) > 1:
                 self._mark_call_edge_multiple(conn, edge["id"], metadata, len(callable_candidates))
@@ -746,9 +781,6 @@ class CrossSourceGraphResolver:
                 continue
             candidates = self._implementation_method_candidates_for_interface_target(conn, source_id, edge, interface_target)
             if not candidates:
-                if self._interface_target_is_http_contract(conn, interface_target):
-                    self._mark_interface_call_as_contract_client_operation(conn, edge, interface_target)
-                    continue
                 self._mark_interface_call_unresolved(conn, edge, interface_target)
                 continue
             candidate_ids = [row["id"] for row in candidates]
@@ -765,15 +797,17 @@ class CrossSourceGraphResolver:
                     """
                     UPDATE analysis_graph_edges
                     SET to_node_id = ?,
+                        to_source_id = ?,
                         resolution_status = ?,
                         unresolved_target_json = NULL,
                         metadata_json = ?
                     WHERE id = ?
                     """,
-                    (first_target_id, contract.resolved_status, json.dumps(metadata), edge["id"]),
+                    (first_target_id, candidates[0]["source_id"], contract.resolved_status, json.dumps(metadata), edge["id"]),
                 )
             for target_id in candidate_ids[1:]:
-                self._insert_interface_dispatch_clone(conn, edge, target_id, metadata)
+                candidate_row = next(row for row in candidates if row["id"] == target_id)
+                self._insert_interface_dispatch_clone(conn, edge, target_id, str(candidate_row["source_id"]), metadata)
 
     def _interface_call_targets_for_resolved_edges(
         self,
@@ -843,7 +877,8 @@ class CrossSourceGraphResolver:
                        target.parameter_types_json AS target_parameter_types_json
                 FROM analysis_graph_edges override
                 JOIN analysis_graph_nodes target
-                  ON target.id = override.to_node_id
+                  ON target.source_id = COALESCE(override.to_source_id, override.source_id)
+                 AND target.id = override.to_node_id
                 JOIN analysis_graph_nodes parent
                   ON parent.source_id = target.source_id
                  AND parent.id = target.parent_node_id
@@ -985,7 +1020,8 @@ class CrossSourceGraphResolver:
                    target.parameter_types_json AS target_parameter_types_json
             FROM analysis_graph_edges override
             JOIN analysis_graph_nodes target
-              ON target.id = override.to_node_id
+              ON target.source_id = COALESCE(override.to_source_id, override.source_id)
+             AND target.id = override.to_node_id
             JOIN analysis_graph_nodes parent
               ON parent.source_id = target.source_id
              AND parent.id = target.parent_node_id
@@ -1122,60 +1158,6 @@ class CrossSourceGraphResolver:
             ),
         ).fetchone()
 
-    def _interface_target_is_http_contract(self, conn: sqlite3.Connection, target: sqlite3.Row) -> bool:
-        row = conn.execute(
-            """
-            SELECT 1
-            FROM analysis_graph_claims
-            WHERE source_id = ?
-              AND node_id = ?
-              AND claim_kind = ?
-              AND status IN (?, ?)
-              AND entrypoint_kind = ?
-              AND entrypoint_execution_kind = ?
-            LIMIT 1
-            """,
-            (
-                target["target_source_id"],
-                target["target_id"],
-                graph_query_contract().entrypoint_claim_kind,
-                graph_query_contract().trusted_status,
-                graph_query_contract().derived_status,
-                EntrypointKind.HTTP.value,
-                EntrypointExecutionKind.CONTRACT_DECLARATION.value,
-            ),
-        ).fetchone()
-        return row is not None
-
-    def _mark_interface_call_as_contract_client_operation(
-        self,
-        conn: sqlite3.Connection,
-        edge: sqlite3.Row,
-        target: sqlite3.Row,
-    ) -> None:
-        contract = graph_query_contract()
-        metadata = self.store._json_dict(edge["metadata_json"])
-        metadata["resolutionReason"] = "HTTP_CLIENT_OPERATION_CONTRACT"
-        metadata["interfaceMethod"] = target["target_qualified_name"] or target["target_name"]
-        metadata["clientOperation"] = True
-        metadata = self.store._edge_metadata_for_storage(metadata)
-        conn.execute(
-            """
-            UPDATE analysis_graph_edges
-            SET to_node_id = ?,
-                resolution_status = ?,
-                unresolved_target_json = NULL,
-                metadata_json = ?
-            WHERE id = ?
-            """,
-            (
-                target["target_id"],
-                contract.resolved_status,
-                json.dumps(metadata),
-                edge["id"],
-            ),
-        )
-
     def _mark_interface_call_unresolved(
         self,
         conn: sqlite3.Connection,
@@ -1204,6 +1186,7 @@ class CrossSourceGraphResolver:
             """
             UPDATE analysis_graph_edges
             SET to_node_id = NULL,
+                to_source_id = NULL,
                 resolution_status = ?,
                 unresolved_target_json = ?,
                 metadata_json = ?
@@ -1327,6 +1310,7 @@ class CrossSourceGraphResolver:
         conn: sqlite3.Connection,
         edge: sqlite3.Row,
         target_id: str,
+        target_source_id: str,
         metadata: Dict[str, Any],
     ) -> None:
         clone_id = "analysis-graph-edge:" + hashlib.sha256(
@@ -1337,10 +1321,10 @@ class CrossSourceGraphResolver:
             """
             INSERT OR IGNORE INTO analysis_graph_edges(
                 id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                from_node_id, to_node_id, edge_type, resolution_status, confidence,
+                from_node_id, to_node_id, to_source_id, edge_type, resolution_status, confidence,
                 argument_count, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
             """,
             (
                 clone_id,
@@ -1353,6 +1337,7 @@ class CrossSourceGraphResolver:
                 edge["content_hash"],
                 edge["from_node_id"],
                 target_id,
+                target_source_id,
                 edge["edge_type"],
                 graph_query_contract().resolved_status,
                 edge["confidence"],
@@ -1414,7 +1399,7 @@ class CrossSourceGraphResolver:
         contract = graph_query_contract()
         rows = conn.execute(
             """
-            SELECT id, qualified_name, name, parameter_count, signature, parameter_types_json
+            SELECT id, source_id, qualified_name, name, parameter_count, signature, parameter_types_json
             FROM analysis_graph_nodes
             WHERE parent_node_id = ?
               AND node_kind = ?
@@ -1483,300 +1468,6 @@ class CrossSourceGraphResolver:
             (contract.multiple_candidates_status, json.dumps(metadata), edge_id),
         )
 
-    def _refresh_cross_source_http_execution_connectors(self, conn: sqlite3.Connection, created_at: str) -> None:
-        contract = graph_query_contract()
-        calls_edge_type = contract.calls_edge_type
-        conn.execute(
-            """
-            DELETE FROM analysis_graph_edge_evidence
-            WHERE edge_id IN (
-                SELECT id
-                FROM analysis_graph_edges
-                WHERE edge_type = ?
-                  AND status = ?
-                  AND json_extract(metadata_json, '$.resolutionReason') = 'CROSS_SOURCE_HTTP_EXECUTION_CONNECTOR'
-            )
-            """,
-            (calls_edge_type, contract.derived_status),
-        )
-        conn.execute(
-            """
-            DELETE FROM analysis_graph_edges
-            WHERE edge_type = ?
-              AND status = ?
-              AND json_extract(metadata_json, '$.resolutionReason') = 'CROSS_SOURCE_HTTP_EXECUTION_CONNECTOR'
-            """,
-            (calls_edge_type, contract.derived_status),
-        )
-        conn.execute(
-            """
-            DELETE FROM analysis_graph_diagnostics
-            WHERE code IN ('CROSS_SOURCE_HTTP_CONNECTOR_AMBIGUOUS', 'CROSS_SOURCE_HTTP_CONNECTOR_INCOMPLETE')
-            """
-        )
-        rows = self._http_entrypoint_rows(conn)
-        contracts = [row for row in rows if row["entrypoint_execution_kind"] == EntrypointExecutionKind.CONTRACT_DECLARATION.value]
-        executables = [row for row in rows if row["entrypoint_execution_kind"] == EntrypointExecutionKind.EXECUTABLE.value]
-        targets_by_key: Dict[tuple[str, str, str], List[sqlite3.Row]] = defaultdict(list)
-        for row in executables:
-            method = str(row["entrypoint_http_method"] or "").upper()
-            route = self._normalize_route_template(row["entrypoint_route"])
-            interface_method = str(row["entrypoint_interface_method"] or "").strip()
-            if not method or not route or not interface_method:
-                continue
-            targets_by_key[(method, route, interface_method)].append(row)
-        for contract_row in contracts:
-            method = str(contract_row["entrypoint_http_method"] or "").upper()
-            route = self._normalize_route_template(contract_row["entrypoint_route"])
-            interface_method = str(contract_row["entrypoint_interface_method"] or "").strip()
-            if not method or not route or not interface_method:
-                self._insert_connector_diagnostic(
-                    conn,
-                    contract_row,
-                    "CROSS_SOURCE_HTTP_CONNECTOR_INCOMPLETE",
-                    "A cross-source HTTP contract did not include method, route, and interface identity.",
-                    created_at,
-                )
-                continue
-            if not self._has_current_incoming_execution_call(conn, contract_row):
-                continue
-            candidates = [
-                row
-                for row in targets_by_key.get((method, route, interface_method), [])
-                if row["source_id"] != contract_row["source_id"] and row["node_id"] != contract_row["node_id"]
-            ]
-            if len(candidates) == 1:
-                self._insert_cross_source_http_connector(conn, contract_row, candidates[0], method, route, interface_method, created_at)
-            elif len(candidates) > 1:
-                self._insert_connector_diagnostic(
-                    conn,
-                    contract_row,
-                    "CROSS_SOURCE_HTTP_CONNECTOR_AMBIGUOUS",
-                    "A cross-source HTTP contract matched more than one executable target; no connector was persisted.",
-                    created_at,
-                    candidate_count=len(candidates),
-                )
-
-    def _has_current_incoming_execution_call(self, conn: sqlite3.Connection, contract_row: sqlite3.Row) -> bool:
-        contract = graph_query_contract()
-        status_sql, status_params = sql_in_clause(contract.statuses_for_current_graph())
-        row = conn.execute(
-            f"""
-            SELECT 1
-            FROM analysis_graph_edges edge
-            JOIN analysis_graph_nodes target
-              ON target.source_id = ?
-             AND target.id = edge.to_node_id
-             AND target.status IN ({status_sql})
-             AND {self._inventory_membership_graph_node_clause("target")}
-            JOIN analysis_graph_nodes caller
-              ON caller.source_id = edge.source_id
-             AND caller.id = edge.from_node_id
-             AND caller.status IN ({status_sql})
-             AND {self._inventory_membership_graph_node_clause("caller")}
-            WHERE edge.edge_type = ?
-              AND edge.status IN ({status_sql})
-              AND edge.resolution_status = ?
-              AND edge.to_node_id = ?
-              AND COALESCE(json_extract(edge.metadata_json, '$.resolutionReason'), '') != 'CROSS_SOURCE_HTTP_EXECUTION_CONNECTOR'
-            LIMIT 1
-            """,
-            [
-                contract_row["source_id"],
-                *status_params,
-                *status_params,
-                contract.calls_edge_type,
-                *status_params,
-                contract.resolved_status,
-                contract_row["node_id"],
-            ],
-        ).fetchone()
-        return row is not None
-
-    def _http_entrypoint_rows(self, conn: sqlite3.Connection) -> List[sqlite3.Row]:
-        contract = graph_query_contract()
-        status_sql, status_params = sql_in_clause(contract.statuses_for_current_graph())
-        return conn.execute(
-            f"""
-            SELECT claim.id AS claim_id,
-                   claim.source_id,
-                   claim.node_id,
-                   claim.entrypoint_http_method,
-                   claim.entrypoint_route,
-                   claim.entrypoint_interface_method,
-                   claim.entrypoint_execution_kind,
-                   node.job_id,
-                   node.inventory_file_id,
-                   node.analysis_file_id,
-                   node.file_id,
-                   node.relative_path,
-                   node.content_hash,
-                   node.qualified_name,
-                   node.name,
-                   node.flow_domain
-            FROM analysis_graph_claims claim
-            JOIN analysis_graph_nodes node
-              ON node.source_id = claim.source_id
-             AND node.id = claim.node_id
-             AND node.status IN ({status_sql})
-             AND {self._inventory_membership_graph_node_clause("node")}
-            WHERE claim.claim_kind = ?
-              AND claim.status IN ({status_sql})
-              AND claim.entrypoint_kind = ?
-              AND claim.entrypoint_http_method IS NOT NULL
-              AND claim.entrypoint_route IS NOT NULL
-            ORDER BY claim.source_id, claim.node_id, claim.id
-            """,
-            [
-                *status_params,
-                contract.entrypoint_claim_kind,
-                *status_params,
-                EntrypointKind.HTTP.value,
-            ],
-        ).fetchall()
-
-    def _inventory_membership_graph_node_clause(self, alias: str) -> str:
-        if not bool(getattr(self.store, "_current_resolution_has_coverage_tables", False)):
-            return "1=1"
-        return self.store._inventory_membership_graph_node_clause(alias)
-
-    def _insert_cross_source_http_connector(
-        self,
-        conn: sqlite3.Connection,
-        contract_row: sqlite3.Row,
-        target_row: sqlite3.Row,
-        method: str,
-        route: str,
-        interface_method: str,
-        created_at: str,
-    ) -> None:
-        contract = graph_query_contract()
-        edge_id = self._derived_graph_id(
-            "analysis-graph-edge",
-            str(contract_row["source_id"]),
-            str(contract_row["node_id"]),
-            "CROSS_SOURCE_HTTP_EXECUTION_CONNECTOR",
-            str(target_row["source_id"]),
-            str(target_row["node_id"]),
-        )
-        metadata = self.store._edge_metadata_for_storage(
-            {
-                "callKind": "TRANSPORT_CONNECTOR",
-                "connectorKind": "HTTP",
-                "httpMethod": method,
-                "routeTemplate": route,
-                "targetEntrypoint": target_row["qualified_name"] or target_row["name"],
-                "targetInterfaceMethod": interface_method,
-                "targetSource": target_row["source_id"],
-                "transportConnector": True,
-                "resolutionReason": "CROSS_SOURCE_HTTP_EXECUTION_CONNECTOR",
-            }
-        )
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO analysis_graph_edges(
-                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                from_node_id, to_node_id, edge_type, resolution_status, confidence,
-                argument_count, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, NULL, NULL, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                edge_id,
-                contract_row["job_id"],
-                contract_row["source_id"],
-                contract_row["inventory_file_id"],
-                contract_row["analysis_file_id"],
-                contract_row["file_id"],
-                contract_row["relative_path"],
-                contract_row["content_hash"],
-                contract_row["node_id"],
-                target_row["node_id"],
-                contract.calls_edge_type,
-                contract.resolved_status,
-                json.dumps(metadata),
-                contract.derived_status,
-                created_at,
-                created_at,
-                "RESOLVER",
-                contract_row["flow_domain"],
-            ),
-        )
-        evidence_ids = self._dedupe_strings(
-            [
-                *self._claim_evidence_ids(conn, str(contract_row["claim_id"])),
-                *self._claim_evidence_ids(conn, str(target_row["claim_id"])),
-            ]
-        )
-        for evidence_id in evidence_ids:
-            conn.execute(
-                "INSERT OR IGNORE INTO analysis_graph_edge_evidence(edge_id, evidence_id) VALUES (?, ?)",
-                (edge_id, evidence_id),
-            )
-
-    def _insert_connector_diagnostic(
-        self,
-        conn: sqlite3.Connection,
-        row: sqlite3.Row,
-        code: str,
-        message: str,
-        created_at: str,
-        *,
-        candidate_count: int | None = None,
-    ) -> None:
-        diagnostic_id = self._derived_graph_id(
-            "analysis-graph-diagnostic",
-            str(row["source_id"]),
-            str(row["node_id"]),
-            code,
-            str(candidate_count or 0),
-        )
-        metadata = {
-            "node": row["qualified_name"] or row["name"],
-            "httpMethod": row["entrypoint_http_method"],
-            "routeTemplate": self._normalize_route_template(row["entrypoint_route"]),
-            "interfaceMethod": row["entrypoint_interface_method"],
-            "candidateCount": candidate_count,
-        }
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO analysis_graph_diagnostics(
-                id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                severity, stage, code, message, candidate_id, line_start, line_end, metadata_json, created_at, fact_origin, flow_domain
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'WARN', 'GRAPH_RESOLVE', ?, ?, ?, NULL, NULL, ?, ?, 'RESOLVER', ?)
-            """,
-            (
-                diagnostic_id,
-                row["job_id"],
-                row["source_id"],
-                row["inventory_file_id"],
-                row["analysis_file_id"],
-                row["file_id"],
-                row["relative_path"],
-                row["content_hash"],
-                code,
-                message,
-                row["node_id"],
-                json.dumps({key: value for key, value in metadata.items() if value is not None}),
-                created_at,
-                row["flow_domain"],
-            ),
-        )
-
-    def _normalize_route_template(self, value: Optional[str]) -> str:
-        text = str(value or "").strip()
-        if not text:
-            return ""
-        if not text.startswith("/"):
-            text = "/" + text
-        text = re.sub(r"/+", "/", text)
-        text = re.sub(r"\{[^}/]+\}", "{}", text)
-        text = re.sub(r":[A-Za-z_][A-Za-z0-9_]*", ":{}", text)
-        return text.rstrip("/") or "/"
-
-
-
 class SourceGraphFinalizer:
     def __init__(
         self,
@@ -1790,15 +1481,34 @@ class SourceGraphFinalizer:
         self.resolver = resolver or CrossSourceGraphResolver(store)
 
     def finalize_source_graph(self, source_id: str) -> None:
+        self.finalize_source_graphs([source_id])
+
+    def finalize_source_graphs(self, source_ids: Sequence[str]) -> None:
         self.store.init()
         created_at = datetime.now(timezone.utc).isoformat()
+        requested_source_ids = tuple(sorted({str(source_id) for source_id in source_ids if str(source_id or "").strip()}))
+        if not requested_source_ids:
+            return
 
         def write(conn: sqlite3.Connection) -> None:
-            self.state_repository.set_status_conn(conn, source_id, GRAPH_STATE_FINALIZING, created_at)
-            self.resolver.finalize_source(conn, source_id, created_at)
+            affected_source_ids = set(requested_source_ids)
+            for source_id in requested_source_ids:
+                self.state_repository.set_status_conn(conn, source_id, GRAPH_STATE_FINALIZING, created_at)
+                self.resolver.finalize_source(conn, source_id, created_at)
+            refresh_global = getattr(self.resolver, "refresh_global_transport_connectors", None)
+            if callable(refresh_global):
+                affected_source_ids.update(refresh_global(conn, created_at))
+            refresh_graph_state = getattr(self.store, "_refresh_graph_state", None)
+            if callable(refresh_graph_state):
+                for source_id in sorted(affected_source_ids):
+                    graph_id = refresh_graph_state(conn, source_id, created_at)
+                    if graph_id:
+                        SemanticIndexStore.mark_current_graph_pending_conn(conn, source_id)
+                refresh_overview_for_sources(conn, sorted(affected_source_ids))
 
         try:
             self.store._write_with_busy_retry(write)
         except Exception as exc:
-            self.store.mark_source_graph_failed(source_id, exc)
+            for source_id in requested_source_ids:
+                self.store.mark_source_graph_failed(source_id, exc)
             raise

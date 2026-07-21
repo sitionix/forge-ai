@@ -121,6 +121,7 @@ class AnalysisStore:
             self._create_graph_claim_schema(conn)
             self._create_graph_edge_schema(conn)
             self._create_graph_evidence_link_schema(conn)
+            self._create_transport_operation_schema(conn)
             self._create_graph_diagnostics_schema(conn)
             self._create_runtime_event_schema(conn)
             self._create_analysis_indexes(conn)
@@ -444,6 +445,7 @@ class AnalysisStore:
                 content_hash TEXT NOT NULL,
                 from_node_id TEXT NOT NULL,
                 to_node_id TEXT,
+                to_source_id TEXT,
                 edge_type TEXT NOT NULL,
                 resolution_status TEXT NOT NULL,
                 argument_count INTEGER,
@@ -460,6 +462,7 @@ class AnalysisStore:
                 FOREIGN KEY(to_node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE
             )
         """)
+        self._ensure_column(conn, "analysis_graph_edges", "to_source_id", "TEXT")
 
     def _create_graph_evidence_link_schema(self, conn: sqlite3.Connection) -> None:
         conn.execute("""
@@ -478,6 +481,50 @@ class AnalysisStore:
                 PRIMARY KEY (edge_id, evidence_id),
                 FOREIGN KEY(edge_id) REFERENCES analysis_graph_edges(id) ON DELETE CASCADE,
                 FOREIGN KEY(evidence_id) REFERENCES analysis_graph_evidence(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_owner_evidence (
+                owner_kind TEXT NOT NULL,
+                owner_source_id TEXT NOT NULL,
+                owner_node_id TEXT NOT NULL DEFAULT '',
+                owner_edge_id TEXT NOT NULL DEFAULT '',
+                evidence_source_id TEXT NOT NULL,
+                evidence_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (
+                    owner_kind,
+                    owner_source_id,
+                    owner_node_id,
+                    owner_edge_id,
+                    evidence_source_id,
+                    evidence_id
+                )
+            )
+        """)
+
+    def _create_transport_operation_schema(self, conn: sqlite3.Connection) -> None:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_graph_transport_operations (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                transport_kind TEXT NOT NULL,
+                operation_role TEXT NOT NULL,
+                http_method TEXT,
+                normalized_route_template TEXT,
+                operation_identity TEXT,
+                request_contract_identity TEXT,
+                response_contract_identity TEXT,
+                target_service_identity TEXT,
+                evidence_source_id TEXT,
+                evidence_id TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                fact_origin TEXT,
+                flow_domain TEXT,
+                FOREIGN KEY(node_id) REFERENCES analysis_graph_nodes(id) ON DELETE CASCADE
             )
         """)
 
@@ -557,6 +604,8 @@ class AnalysisStore:
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_nodes ON analysis_graph_edges(from_node_id, to_node_id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_calls_outgoing ON analysis_graph_edges(source_id, edge_type, status, from_node_id, id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_calls_incoming ON analysis_graph_edges(source_id, edge_type, status, to_node_id, id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_target_source_node ON analysis_graph_edges(to_source_id, to_node_id, status, edge_type, id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_from ON analysis_graph_edges(source_id, from_node_id, status, edge_type, id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_incoming_lookup ON analysis_graph_edges(edge_type, status, to_node_id, id)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edges_source_flow_created ON analysis_graph_edges(source_id, flow_domain, created_at)",
             ),
@@ -565,6 +614,15 @@ class AnalysisStore:
             ),
             "analysis_graph_edge_evidence": (
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_edge_evidence_evidence ON analysis_graph_edge_evidence(evidence_id)",
+            ),
+            "analysis_graph_owner_evidence": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_owner_evidence_owner_edge ON analysis_graph_owner_evidence(owner_kind, owner_source_id, owner_edge_id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_owner_evidence_owner_node ON analysis_graph_owner_evidence(owner_kind, owner_source_id, owner_node_id)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_owner_evidence_evidence ON analysis_graph_owner_evidence(evidence_source_id, evidence_id)",
+            ),
+            "analysis_graph_transport_operations": (
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_transport_ops_source_node ON analysis_graph_transport_operations(source_id, node_id, status)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_graph_transport_ops_http ON analysis_graph_transport_operations(transport_kind, operation_role, http_method, normalized_route_template, status)",
             ),
             "analysis_graph_diagnostics": (
                 "CREATE INDEX IF NOT EXISTS idx_analysis_graph_diagnostics_source_code ON analysis_graph_diagnostics(source_id, severity, code)",
@@ -593,6 +651,8 @@ class AnalysisStore:
         self._reconcile_graph_diagnostics_schema(conn)
         self._reconcile_orphan_job_files(conn)
         self._reconcile_graph_runtime_inventory_membership(conn)
+        self._reconcile_explicit_edge_target_sources(conn)
+        self._reconcile_owner_aware_evidence_links(conn)
         ensure_semantic_index_schema(conn)
         SemanticIndexStore.reconcile_missing_states_conn(conn)
         ensure_overview_schema(conn)
@@ -634,6 +694,50 @@ class AnalysisStore:
               )
         """,
             (diagnostic,),
+        )
+
+    def _reconcile_explicit_edge_target_sources(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            UPDATE analysis_graph_edges
+            SET to_source_id = source_id
+            WHERE to_node_id IS NOT NULL
+              AND (to_source_id IS NULL OR to_source_id = '')
+            """
+        )
+
+    def _reconcile_owner_aware_evidence_links(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_owner_evidence(
+                owner_kind, owner_source_id, owner_node_id, owner_edge_id, evidence_source_id, evidence_id
+            )
+            SELECT 'EDGE',
+                   edge.source_id,
+                   '',
+                   edge.id,
+                   ev.source_id,
+                   ev.id
+            FROM analysis_graph_edge_evidence link
+            JOIN analysis_graph_edges edge ON edge.id = link.edge_id
+            JOIN analysis_graph_evidence ev ON ev.id = link.evidence_id
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_owner_evidence(
+                owner_kind, owner_source_id, owner_node_id, owner_edge_id, evidence_source_id, evidence_id
+            )
+            SELECT 'NODE',
+                   claim.source_id,
+                   claim.node_id,
+                   '',
+                   ev.source_id,
+                   ev.id
+            FROM analysis_graph_claim_evidence link
+            JOIN analysis_graph_claims claim ON claim.id = link.claim_id
+            JOIN analysis_graph_evidence ev ON ev.id = link.evidence_id
+            """
         )
 
     def create_job(self, job: Dict[str, Any]) -> None:
@@ -1342,6 +1446,9 @@ class AnalysisStore:
     def finalize_source_graph(self, source_id: str) -> None:
         SourceGraphFinalizer(self).finalize_source_graph(source_id)
 
+    def finalize_source_graphs(self, source_ids: Sequence[str]) -> None:
+        SourceGraphFinalizer(self).finalize_source_graphs(source_ids)
+
     def dirty_graph_source_ids(self, source_ids: Optional[Sequence[str]] = None) -> List[str]:
         self.init()
         return GraphStateRepository(self).dirty_source_ids(source_ids)
@@ -1529,10 +1636,10 @@ class AnalysisStore:
                     """
                     INSERT INTO analysis_graph_edges(
                         id, job_id, source_id, inventory_file_id, analysis_file_id, file_id, relative_path, content_hash,
-                        from_node_id, to_node_id, edge_type, resolution_status, confidence,
+                        from_node_id, to_node_id, to_source_id, edge_type, resolution_status, confidence,
                         argument_count, unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         edge["id"],
@@ -1545,6 +1652,7 @@ class AnalysisStore:
                         state["content_hash"],
                         edge["from_node_id"],
                         edge.get("to_node_id"),
+                        edge.get("to_source_id") or (edge["source_id"] if edge.get("to_node_id") else None),
                         edge["edge_type"],
                         edge["resolution_status"],
                         edge["confidence"],
@@ -1617,6 +1725,14 @@ class AnalysisStore:
                         """,
                         (claim["id"], evidence_id),
                     )
+                    self._insert_owner_evidence_link(
+                        conn,
+                        owner_kind="NODE",
+                        owner_source_id=str(claim["source_id"]),
+                        owner_node_id=str(claim["node_id"]),
+                        owner_edge_id="",
+                        evidence_id=str(evidence_id),
+                    )
 
         self._run_graph_store_step("analysis_graph_claim_evidence", "insert_claim_evidence_links", insert)
 
@@ -1631,8 +1747,66 @@ class AnalysisStore:
                         """,
                         (edge["id"], evidence_id),
                     )
+                    self._insert_owner_evidence_link(
+                        conn,
+                        owner_kind="EDGE",
+                        owner_source_id=str(edge["source_id"]),
+                        owner_node_id="",
+                        owner_edge_id=str(edge["id"]),
+                        evidence_id=str(evidence_id),
+                    )
 
         self._run_graph_store_step("analysis_graph_edge_evidence", "insert_edge_evidence_links", insert)
+
+    def _insert_owner_evidence_link(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        owner_kind: str,
+        owner_source_id: str,
+        owner_node_id: str,
+        owner_edge_id: str,
+        evidence_id: str,
+        evidence_source_id: str | None = None,
+    ) -> bool:
+        if evidence_source_id:
+            row = conn.execute(
+                """
+                SELECT source_id
+                FROM analysis_graph_evidence
+                WHERE source_id = ?
+                  AND id = ?
+                """,
+                (evidence_source_id, evidence_id),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT source_id
+                FROM analysis_graph_evidence
+                WHERE id = ?
+                """,
+                (evidence_id,),
+            ).fetchone()
+        if row is None:
+            return False
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_owner_evidence(
+                owner_kind, owner_source_id, owner_node_id, owner_edge_id, evidence_source_id, evidence_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                owner_kind,
+                owner_source_id,
+                owner_node_id or "",
+                owner_edge_id or "",
+                str(row["source_id"]),
+                evidence_id,
+            ),
+        )
+        return cursor.rowcount > 0
 
     def mark_file(self, file_id: int, state: Dict[str, Any]) -> None:
         self.init()
@@ -2245,7 +2419,7 @@ class AnalysisStore:
                                tn.name AS to_name
                         FROM analysis_graph_edges e
                         LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
                         WHERE e.source_id = ?
                           AND e.edge_type IN (?, ?)
                           AND e.status IN ({current_status_sql})
@@ -2289,6 +2463,7 @@ class AnalysisStore:
                         FROM analysis_graph_edges e
                         JOIN analysis_graph_nodes tn
                           ON tn.source_id = ?
+                         AND COALESCE(e.to_source_id, e.source_id) = tn.source_id
                          AND tn.id = e.to_node_id
                          AND tn.status IN ({current_status_sql})
                          AND {self._inventory_membership_graph_node_clause("tn")}
@@ -2347,7 +2522,7 @@ class AnalysisStore:
                                tn.name AS to_name
                         FROM analysis_graph_edges e
                         LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                        LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
                         WHERE e.source_id = ?
                           AND e.edge_type = ?
                           AND e.status IN ({current_status_sql})
@@ -2461,6 +2636,10 @@ class AnalysisStore:
             line_start=int(item.get("lineStart")) if item.get("lineStart") is not None else None,
             line_end=int(item.get("lineEnd")) if item.get("lineEnd") is not None else None,
             text=str(item.get("excerpt")) if item.get("excerpt") else None,
+            owner_kind=str(item.get("ownerKind")) if item.get("ownerKind") else None,
+            owner_source_id=str(item.get("ownerSourceId")) if item.get("ownerSourceId") else None,
+            owner_node_id=str(item.get("ownerNodeId")) if item.get("ownerNodeId") else None,
+            owner_edge_id=str(item.get("ownerEdgeId")) if item.get("ownerEdgeId") else None,
         )
 
     def _attach_current_graph_identity(self, conn: sqlite3.Connection, items: List[Dict[str, Any]]) -> None:
@@ -2590,6 +2769,7 @@ class AnalysisStore:
     def _linked_evidence_projection(self, rows: List[sqlite3.Row]) -> List[Dict[str, Any]]:
         result = []
         for row in rows:
+            keys = set(row.keys())
             item = {
                 "id": row["id"],
                 "sourceId": row["source_id"],
@@ -2606,6 +2786,14 @@ class AnalysisStore:
                 item["edgeId"] = row["edge_id"]
             if row["node_id"]:
                 item["nodeId"] = row["node_id"]
+            if "owner_kind" in keys and row["owner_kind"]:
+                item["ownerKind"] = row["owner_kind"]
+            if "owner_source_id" in keys and row["owner_source_id"]:
+                item["ownerSourceId"] = row["owner_source_id"]
+            if "owner_node_id" in keys and row["owner_node_id"]:
+                item["ownerNodeId"] = row["owner_node_id"]
+            if "owner_edge_id" in keys and row["owner_edge_id"]:
+                item["ownerEdgeId"] = row["owner_edge_id"]
             result.append(item)
         return result
 
@@ -2970,7 +3158,7 @@ class AnalysisStore:
                        tn.name AS to_name
                 FROM analysis_graph_edges e
                 LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
                 WHERE {where}
                 ORDER BY e.id
                 LIMIT ?
@@ -3099,7 +3287,7 @@ class AnalysisStore:
                        tn.name AS to_name
                 FROM analysis_graph_edges e
                 LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
                 WHERE e.source_id = ?
                   AND e.id = ?
                 """,
@@ -3496,7 +3684,7 @@ class AnalysisStore:
                    tn.name AS to_name
             FROM analysis_graph_edges e
             LEFT JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-            LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+            LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
             WHERE {edge_where}
               AND e.from_node_id IN ({placeholders})
               AND e.to_node_id IN ({placeholders})
@@ -3678,7 +3866,7 @@ class AnalysisStore:
                        COUNT(*) OVER() AS total_count
                 FROM analysis_graph_edges e
                 JOIN analysis_graph_nodes fn ON fn.source_id = e.source_id AND fn.id = e.from_node_id
-                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = e.source_id AND tn.id = e.to_node_id
+                LEFT JOIN analysis_graph_nodes tn ON tn.source_id = COALESCE(e.to_source_id, e.source_id) AND tn.id = e.to_node_id
                 LEFT JOIN analysis_graph_edge_evidence link ON link.edge_id = e.id
                 LEFT JOIN analysis_graph_evidence ev ON ev.source_id = e.source_id AND ev.id = link.evidence_id
                 LEFT JOIN analysis_files ev_af ON ev_af.file_id = ev.analysis_file_id
@@ -4438,7 +4626,8 @@ class AnalysisStore:
                        target.qualified_name AS target_qualified_name
                 FROM analysis_graph_edges e
                 JOIN analysis_graph_nodes target
-                  ON target.id = e.to_node_id
+                  ON target.source_id = COALESCE(e.to_source_id, e.source_id)
+                 AND target.id = e.to_node_id
                 WHERE e.to_node_id IN ({placeholders})
                   AND COALESCE(e.analysis_file_id, e.inventory_file_id, e.file_id) != ?
                 """,
@@ -4462,6 +4651,7 @@ class AnalysisStore:
                     """
                     UPDATE analysis_graph_edges
                     SET to_node_id = NULL,
+                        to_source_id = NULL,
                         resolution_status = ?,
                         unresolved_target_json = ?,
                         metadata_json = ?

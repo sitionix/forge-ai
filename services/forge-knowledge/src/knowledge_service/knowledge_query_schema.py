@@ -274,9 +274,22 @@ class FlowToolTreeItem(BaseModel):
     shared: Optional[bool] = None
 
 
+class FlowToolSupportingRelation(BaseModel):
+    relation: str
+    source: Optional[str] = None
+    targetSource: Optional[str] = None
+    symbol: str
+    path: Optional[str] = None
+    lineStart: Optional[int] = None
+    lineEnd: Optional[int] = None
+    description: Optional[str] = None
+    evidence: List[FlowToolEvidence] = Field(default_factory=list)
+
+
 class FlowToolTree(BaseModel):
     source: str
     entrypoint: FlowToolTreeItem
+    supportingRelations: List[FlowToolSupportingRelation] = Field(default_factory=list)
 
 
 class KnowledgeQueryToolContextResponse(BaseModel):

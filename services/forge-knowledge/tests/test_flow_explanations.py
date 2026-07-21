@@ -298,9 +298,11 @@ class RecordingOllamaResponse:
 def structured_answer(llm_input, text: str, *, refs: list[str] | None = None, result: str | None = None):
     coverage = llm_input.get("coverageContract") or {}
     fact_refs = refs if refs is not None else list(coverage.get("canonicalFactRefs") or [])
+    segment = llm_input.get("segment") if isinstance(llm_input.get("segment"), dict) else {}
+    terminal = bool(segment.get("terminal", True))
     return {
         "steps": [{"factRefs": fact_refs, "text": text}],
-        "result": result or text,
+        "result": (result or text) if terminal else None,
     }
 
 
@@ -994,8 +996,9 @@ class FactListingProvider:
             for fact in llm_input["orderedFacts"]
             if fact.get("type") == "node"
         ]
+        text = "This verified flow segment covers these supplied code symbols in canonical order: " + ", ".join(symbols)
         return FlowExplanationProviderResult(
-            raw_text=json.dumps(structured_answer(llm_input, "The flow covers " + ", ".join(symbols), result="The verified flow is fully covered.")),
+            raw_text=json.dumps(structured_answer(llm_input, text, result="The verified flow is fully covered.")),
             prompt_char_length=100,
         )
 

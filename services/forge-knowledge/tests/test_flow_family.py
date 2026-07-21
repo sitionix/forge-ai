@@ -139,6 +139,67 @@ def test_nested_executable_entrypoint_subsumes_nested_root_and_keeps_one_family(
     assert {edge.edge_id for edge in family.transitions} == {"a-to-b", "b-to-worker"}
 
 
+def test_same_root_raw_flows_are_merged_without_losing_branches_or_evidence():
+    root = n("root", symbol="Root.handle", entrypoint=True)
+    branch_a = n("branch-a", symbol="BranchA.run")
+    branch_b = n("branch-b", symbol="BranchB.run")
+    edge_a = e("root-to-a", root, branch_a)
+    edge_b = e("root-to-b", root, branch_b)
+    flow_a = replace(
+        f(root, (root, branch_a), (edge_a,), score=0.7),
+        anchors=(EntrypointFlowAnchor(root.node_id, root.label, 0.7, ("ANCHOR_A",), 0),),
+        evidence=(ev("ev-a", edge_a, "branch a evidence"),),
+    )
+    flow_b = replace(
+        f(root, (root, branch_b), (edge_b,), score=0.9),
+        anchors=(EntrypointFlowAnchor(root.node_id, root.label, 0.9, ("ANCHOR_B",), 1),),
+        evidence=(ev("ev-b", edge_b, "branch b evidence"),),
+    )
+
+    result = assembler().assemble((flow_a, flow_b))
+
+    assert result.raw_candidate_flow_count == 2
+    assert len(result.families) == 1
+    family = result.families[0]
+    assert {node.qualified_name for node in family.nodes} == {"Root.handle", "BranchA.run", "BranchB.run"}
+    assert {edge.edge_id for edge in family.transitions} == {"root-to-a", "root-to-b"}
+    assert {item.evidence_id for item in family.evidence} == {"ev-a", "ev-b"}
+    assert family.relevance_score == 0.9
+    assert set(family.anchors[0].match_reasons) == {"ANCHOR_A", "ANCHOR_B"}
+
+
+def test_inferred_roots_are_scoped_to_their_own_reachability_component():
+    explicit = n("explicit", symbol="Explicit.handle", entrypoint=True)
+    worker = n("worker", symbol="Worker.run")
+    inferred = n("inferred", symbol="ScheduledJob.run", entrypoint=True, execution_role="INFERRED_TOPOLOGY_ROOT")
+    explicit_edge = e("explicit-to-worker", explicit, worker)
+    explicit_flow = f(explicit, (explicit, worker), (explicit_edge,))
+    inferred_flow = replace(
+        f(inferred, (inferred,), (), score=0.8),
+        origin=EntrypointFlowOrigin.INFERRED_ROOT,
+    )
+
+    result = assembler().assemble((explicit_flow, inferred_flow))
+
+    assert [family.entrypoint.qualified_name for family in result.families] == ["Explicit.handle", "ScheduledJob.run"]
+
+
+def test_inferred_root_subordinate_to_explicit_root_is_not_independent():
+    explicit = n("explicit", symbol="Explicit.handle", entrypoint=True)
+    inferred = n("inferred", symbol="InferredContinuation.run", entrypoint=True, execution_role="INFERRED_TOPOLOGY_ROOT")
+    edge = e("explicit-to-inferred", explicit, inferred)
+    explicit_flow = f(explicit, (explicit, inferred), (edge,))
+    inferred_flow = replace(
+        f(inferred, (inferred,), (), score=0.8),
+        origin=EntrypointFlowOrigin.INFERRED_ROOT,
+    )
+
+    result = assembler().assemble((explicit_flow, inferred_flow))
+
+    assert len(result.families) == 1
+    assert result.families[0].entrypoint.qualified_name == "Explicit.handle"
+
+
 def test_separate_top_level_entrypoints_with_shared_downstream_remain_two_families():
     root_a = n("root-a", symbol="RootA.handle", entrypoint=True)
     root_b = n("root-b", symbol="RootB.handle", entrypoint=True)

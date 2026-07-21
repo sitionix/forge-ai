@@ -64,7 +64,8 @@ class FlowFamilyAssembler:
         supporting_nodes: Mapping[FlowNodeKey, FlowGraphNode] | None = None,
         supporting_relations: Sequence[FlowGraphEdge] = (),
     ) -> FlowFamilyAssemblyResult:
-        flows = tuple(raw_flows or ())
+        raw_flow_count = len(raw_flows or ())
+        flows = self._aggregate_same_root_flows(tuple(raw_flows or ()))
         if not flows:
             return FlowFamilyAssemblyResult((), (), 0, 0, {})
 
@@ -95,12 +96,18 @@ class FlowFamilyAssembler:
         candidate_roots = tuple(flow_by_root.keys())
         adjacency = self._execution_adjacency(execution_edges.values())
         reachability = self._root_reachability(candidate_roots, adjacency)
+        components = self._root_components(candidate_roots, reachability)
         diagnostics = list(self._cycle_diagnostics(candidate_roots, reachability, flow_by_root))
         subordinate_by_root = self._subordinate_roots(candidate_roots, reachability)
         independent_roots = [
             root
             for root in candidate_roots
-            if root not in subordinate_by_root and self._root_may_stand(flow_by_root[root], flows, support_edges.values())
+            if root not in subordinate_by_root
+            and self._root_may_stand(
+                flow_by_root[root],
+                [flow_by_root[item] for item in components.get(root, {root}) if item in flow_by_root],
+                support_edges.values(),
+            )
         ]
         if not independent_roots:
             independent_roots = [
@@ -126,13 +133,54 @@ class FlowFamilyAssembler:
         return FlowFamilyAssemblyResult(
             families=families,
             diagnostics=tuple(diagnostics),
-            raw_candidate_flow_count=len(flows),
+            raw_candidate_flow_count=raw_flow_count,
             discovered_family_count=len(families),
             root_reachability={
                 self._public_root_key(root, flow_by_root): tuple(self._public_root_key(item, flow_by_root) for item in reachable)
                 for root, reachable in reachability.items()
             },
         )
+
+    def _aggregate_same_root_flows(self, flows: Sequence[EntrypointFlow]) -> tuple[EntrypointFlow, ...]:
+        grouped: dict[FlowNodeKey, list[EntrypointFlow]] = defaultdict(list)
+        for flow in flows:
+            grouped[self._node_key(flow.entrypoint)].append(flow)
+        aggregated: list[EntrypointFlow] = []
+        for root_key in sorted(grouped):
+            group = grouped[root_key]
+            if len(group) == 1:
+                aggregated.append(group[0])
+                continue
+            base = max(group, key=lambda flow: (float(flow.relevance_score or 0.0), -len(flow.nodes), flow.key.source_id))
+            node_map = self._node_map(node for flow in group for node in flow.nodes)
+            transition_map = self._edge_map(edge for flow in group for edge in flow.transitions)
+            boundary_map = self._edge_map(edge for flow in group for edge in flow.boundary_transitions)
+            diagnostics = self._dedupe_diagnostics([item for flow in group for item in flow.diagnostics])
+            anchors = self._merge_anchors([anchor for flow in group for anchor in flow.anchors])
+            coverage = EntrypointFlowCoverage(
+                node_count=len(node_map),
+                transition_count=len(transition_map),
+                boundary_count=len(boundary_map),
+                anchor_count=len(anchors),
+                max_depth_reached=max((flow.coverage.max_depth_reached for flow in group), default=0),
+                cycle_detected=any(flow.coverage.cycle_detected for flow in group),
+                truncated=any(flow.coverage.truncated for flow in group),
+            )
+            aggregated.append(
+                replace(
+                    base,
+                    anchors=anchors,
+                    nodes=tuple(sorted(node_map.values(), key=lambda node: self._node_sort_key(node, root_key))),
+                    transitions=tuple(sorted(transition_map.values(), key=self._edge_sort_key)),
+                    boundary_transitions=tuple(sorted(boundary_map.values(), key=self._edge_sort_key)),
+                    evidence=dedupe_evidence([item for flow in group for item in flow.evidence]),
+                    complete=all(flow.complete for flow in group),
+                    coverage=coverage,
+                    diagnostics=diagnostics,
+                    relevance_score=max((flow.relevance_score for flow in group), default=base.relevance_score),
+                )
+            )
+        return tuple(sorted(aggregated, key=self._family_sort_key))
 
     def rank(self, families: Sequence[FlowFamily]) -> tuple[FlowFamily, ...]:
         return tuple(sorted(families, key=self._family_sort_key))
@@ -228,15 +276,15 @@ class FlowFamilyAssembler:
     def _root_may_stand(
         self,
         flow: EntrypointFlow,
-        flows: Sequence[EntrypointFlow],
+        component_flows: Sequence[EntrypointFlow],
         support_edges: Iterable[FlowGraphEdge],
     ) -> bool:
         if self.semantics.may_root_family(flow.entrypoint):
             return True
         if flow.origin is EntrypointFlowOrigin.INFERRED_ROOT:
-            explicit_roots = [item for item in flows if self.semantics.may_root_family(item.entrypoint)]
+            explicit_roots = [item for item in component_flows if self.semantics.may_root_family(item.entrypoint)]
             return not explicit_roots
-        implementation_keys = {self._node_key(item.entrypoint) for item in flows if self.semantics.may_root_family(item.entrypoint)}
+        implementation_keys = {self._node_key(item.entrypoint) for item in component_flows if self.semantics.may_root_family(item.entrypoint)}
         root_key = self._node_key(flow.entrypoint)
         for edge in support_edges:
             if self._to_key(edge) == root_key and self._from_key(edge) in implementation_keys:
@@ -244,6 +292,36 @@ class FlowFamilyAssembler:
             if self._from_key(edge) == root_key and self._to_key(edge) in implementation_keys:
                 return False
         return False
+
+    def _root_components(
+        self,
+        roots: Sequence[FlowNodeKey],
+        reachability: Mapping[FlowNodeKey, set[FlowNodeKey]],
+    ) -> dict[FlowNodeKey, set[FlowNodeKey]]:
+        adjacency: dict[FlowNodeKey, set[FlowNodeKey]] = {root: set() for root in roots}
+        for root in roots:
+            for other in reachability.get(root, set()):
+                if other in adjacency:
+                    adjacency[root].add(other)
+                    adjacency[other].add(root)
+        result: dict[FlowNodeKey, set[FlowNodeKey]] = {}
+        seen: set[FlowNodeKey] = set()
+        for root in roots:
+            if root in seen:
+                continue
+            component: set[FlowNodeKey] = set()
+            stack = [root]
+            while stack:
+                item = stack.pop()
+                if item in component:
+                    continue
+                component.add(item)
+                stack.extend(sorted(adjacency.get(item, set()) - component))
+            seen.update(component)
+            for item in component:
+                result[item] = component
+        return result
+
 
     def _strict_subordinate_reachable_roots(
         self,
