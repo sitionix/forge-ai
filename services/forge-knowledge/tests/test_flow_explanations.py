@@ -705,9 +705,6 @@ def test_context_overflow_fails_before_final_provider_call():
         budget_estimator=PromptBudgetEstimator(
             context_tokens=128,
             reserved_output_tokens=0,
-            repair_prompt_overhead_tokens=0,
-            multilingual_prose_overhead_tokens=0,
-            json_formatting_overhead_tokens=0,
         ),
     )
 
@@ -723,6 +720,49 @@ def test_context_overflow_fails_before_final_provider_call():
         raise AssertionError("Expected complete context overflow to fail explicitly")
 
     assert provider.calls == []
+
+
+def test_prompt_budget_recorded_boundary_fits_without_duplicate_overheads():
+    estimator = PromptBudgetEstimator(context_tokens=32768, reserved_output_tokens=2048)
+
+    recorded_boundary = estimator.estimate("x" * (31613 - 2048))
+    assert recorded_boundary.rendered_input_tokens == 29565
+    assert recorded_boundary.reserved_output_tokens == 2048
+    assert recorded_boundary.fixed_framing_reserve_tokens == 0
+    assert recorded_boundary.total_required_tokens == 31613
+    assert recorded_boundary.fits is True
+
+    exact_boundary = estimator.estimate("x" * (32768 - 2048))
+    assert exact_boundary.total_required_tokens == 32768
+    assert exact_boundary.fits is True
+
+    overflow = estimator.estimate("x" * (32769 - 2048))
+    assert overflow.total_required_tokens == 32769
+    assert overflow.fits is False
+    try:
+        estimator.ensure_fits("x" * (32769 - 2048))
+    except HumanAnswerContextBudgetExceeded:
+        pass
+    else:
+        raise AssertionError("Expected 32769 required tokens to fail closed")
+
+
+def test_prompt_budget_counts_rendered_multilingual_and_json_bytes_once():
+    estimator = PromptBudgetEstimator(context_tokens=32768, reserved_output_tokens=2048)
+    prompts = [
+        "Поясни створення сайту за перевіреними фактами.",
+        "Explain site creation using the verified facts.",
+        '{"orderedFacts":[{"ref":"n1","text":"SiteController.createSite"}]}',
+    ]
+
+    for prompt in prompts:
+        estimate = estimator.estimate(prompt)
+        assert estimate.rendered_input_tokens == len(prompt.encode("utf-8"))
+        assert estimate.total_required_tokens == len(prompt.encode("utf-8")) + 2048
+        assert estimate.fixed_framing_reserve_tokens == 0
+        assert not hasattr(estimate, "repair_prompt_overhead_tokens")
+        assert not hasattr(estimate, "multilingual_prose_overhead_tokens")
+        assert not hasattr(estimate, "json_formatting_overhead_tokens")
 
 
 def test_ollama_requests_use_reserved_output_budget_for_first_and_repair_attempts():
@@ -775,6 +815,74 @@ def test_ollama_requests_use_reserved_output_budget_for_first_and_repair_attempt
         assert post["json"]["options"]["num_predict"] == reserved_output_tokens
 
 
+def test_initial_fits_and_repair_fits_uses_two_provider_calls():
+    graph_flow = flow([node("Root.run", entrypoint=True)], [])
+    request = KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION")
+    plan = retrieval_plan("explain root", detected_language="en", response_language="en")
+    llm_input = FlowProjectionBuilder().human_llm_input(request, graph_flow, plan)
+    initial_prompt = HumanAnswerPromptRenderer().render(llm_input)
+    bad_response = {
+        "steps": [{"factRefs": ["missing"], "text": "Root.run starts from the supplied fact."}],
+        "result": "Root.run returns the verified result.",
+    }
+    provider = SequenceHumanAnswerProvider([bad_response, "Root.run starts from the supplied fact."])
+    service = HumanFlowAnswerService(
+        provider,
+        budget_estimator=PromptBudgetEstimator(
+            context_tokens=len(initial_prompt.encode("utf-8")) + 2000,
+            reserved_output_tokens=0,
+        ),
+    )
+
+    response = service.answer(request, human_execution(graph_flow), plan=plan)
+
+    assert "Root.run starts from the supplied fact" in response.answers[0].text
+    assert len(provider.calls) == 2
+    initial_records = [record for record in service.prompt_budget_records if record["attempt"] == "INITIAL"]
+    repair_records = [record for record in service.prompt_budget_records if record["attempt"] == "REPAIR"]
+    assert len(initial_records) == 1
+    assert len(repair_records) == 1
+    assert initial_records[0]["fits"] is True
+    assert repair_records[0]["fits"] is True
+    assert repair_records[0]["renderedInputTokens"] > initial_records[0]["renderedInputTokens"]
+
+
+def test_initial_fits_and_repair_overflow_uses_one_provider_call():
+    graph_flow = flow([node("Root.run", entrypoint=True)], [])
+    request = KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION")
+    plan = retrieval_plan("explain root", detected_language="en", response_language="en")
+    llm_input = FlowProjectionBuilder().human_llm_input(request, graph_flow, plan)
+    initial_prompt = HumanAnswerPromptRenderer().render(llm_input)
+    bad_response = {
+        "steps": [{"factRefs": ["missing"], "text": "Root.run starts from the supplied fact."}],
+        "result": "Root.run returns the verified result.",
+    }
+    provider = SequenceHumanAnswerProvider([bad_response, "this repair must not be called"])
+    service = HumanFlowAnswerService(
+        provider,
+        budget_estimator=PromptBudgetEstimator(
+            context_tokens=len(initial_prompt.encode("utf-8")),
+            reserved_output_tokens=0,
+        ),
+    )
+
+    try:
+        service.answer(request, human_execution(graph_flow), plan=plan)
+    except HumanAnswerContextBudgetExceeded:
+        pass
+    else:
+        raise AssertionError("Expected exact repair prompt overflow to fail before the second provider call")
+
+    assert len(provider.calls) == 1
+    initial_records = [record for record in service.prompt_budget_records if record["attempt"] == "INITIAL"]
+    repair_records = [record for record in service.prompt_budget_records if record["attempt"] == "REPAIR"]
+    assert len(initial_records) == 1
+    assert len(repair_records) == 1
+    assert initial_records[0]["fits"] is True
+    assert repair_records[0]["fits"] is False
+    assert repair_records[0]["totalRequiredTokens"] > repair_records[0]["contextTokens"]
+
+
 def test_oversized_full_prompt_fails_before_ollama_provider_request():
     huge = "payload-" + ("X" * 5000)
     graph_flow = replace(
@@ -796,9 +904,6 @@ def test_oversized_full_prompt_fails_before_ollama_provider_request():
         budget_estimator=PromptBudgetEstimator(
             context_tokens=128,
             reserved_output_tokens=reserved_output_tokens,
-            repair_prompt_overhead_tokens=0,
-            multilingual_prose_overhead_tokens=0,
-            json_formatting_overhead_tokens=0,
         ),
         reserved_output_tokens=reserved_output_tokens,
     )
@@ -832,9 +937,6 @@ def test_context_overflow_preflights_all_flows_without_partial_answer():
         budget_estimator=PromptBudgetEstimator(
             context_tokens=20000,
             reserved_output_tokens=0,
-            repair_prompt_overhead_tokens=0,
-            multilingual_prose_overhead_tokens=0,
-            json_formatting_overhead_tokens=0,
         ),
     )
 

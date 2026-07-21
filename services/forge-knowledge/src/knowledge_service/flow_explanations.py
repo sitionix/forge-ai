@@ -72,18 +72,14 @@ class PromptBudgetEstimate:
     rendered_input_tokens: int
     context_tokens: int
     reserved_output_tokens: int
-    repair_prompt_overhead_tokens: int
-    multilingual_prose_overhead_tokens: int
-    json_formatting_overhead_tokens: int
+    fixed_framing_reserve_tokens: int
 
     @property
     def total_required_tokens(self) -> int:
         return (
             self.rendered_input_tokens
             + self.reserved_output_tokens
-            + self.repair_prompt_overhead_tokens
-            + self.multilingual_prose_overhead_tokens
-            + self.json_formatting_overhead_tokens
+            + self.fixed_framing_reserve_tokens
         )
 
     @property
@@ -92,13 +88,13 @@ class PromptBudgetEstimate:
 
 
 class PromptBudgetEstimator:
-    """Fail-closed prompt budget check for final human-answer prompts.
+    """Fail-closed prompt budget check for rendered human-answer prompts.
 
     No model tokenizer is bundled for the local Ollama models in this service. When
     a suitable tokenizer is not injected, the fallback counts one token per UTF-8
-    byte, then adds explicit repair, output, multilingual prose, and JSON margins.
-    That overestimates modern local tokenizer counts and cannot approve a prompt
-    larger than the configured model context under this estimator.
+    byte. The authoritative total adds only the reserved output budget and an
+    optional fixed model-framing reserve because prose, JSON, and repair errors
+    are counted in the exact rendered prompt being checked.
     """
 
     def __init__(
@@ -106,16 +102,12 @@ class PromptBudgetEstimator:
         *,
         context_tokens: int = DEFAULT_GENERATIVE_CONTEXT_TOKENS,
         reserved_output_tokens: int = DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS,
-        repair_prompt_overhead_tokens: int = 1024,
-        multilingual_prose_overhead_tokens: int = 512,
-        json_formatting_overhead_tokens: int = 256,
+        fixed_framing_reserve_tokens: int = 0,
         tokenizer: Callable[[str], int] | None = None,
     ) -> None:
         self.context_tokens = max(1, int(context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS))
         self.reserved_output_tokens = max(0, int(reserved_output_tokens))
-        self.repair_prompt_overhead_tokens = max(0, int(repair_prompt_overhead_tokens))
-        self.multilingual_prose_overhead_tokens = max(0, int(multilingual_prose_overhead_tokens))
-        self.json_formatting_overhead_tokens = max(0, int(json_formatting_overhead_tokens))
+        self.fixed_framing_reserve_tokens = max(0, int(fixed_framing_reserve_tokens))
         self.tokenizer = tokenizer
 
     def estimate(self, rendered_prompt: str) -> PromptBudgetEstimate:
@@ -123,9 +115,7 @@ class PromptBudgetEstimator:
             rendered_input_tokens=self._rendered_input_tokens(rendered_prompt),
             context_tokens=self.context_tokens,
             reserved_output_tokens=self.reserved_output_tokens,
-            repair_prompt_overhead_tokens=self.repair_prompt_overhead_tokens,
-            multilingual_prose_overhead_tokens=self.multilingual_prose_overhead_tokens,
-            json_formatting_overhead_tokens=self.json_formatting_overhead_tokens,
+            fixed_framing_reserve_tokens=self.fixed_framing_reserve_tokens,
         )
 
     def ensure_fits(self, rendered_prompt: str) -> PromptBudgetEstimate:
@@ -820,6 +810,7 @@ class HumanFlowAnswerService:
         self.provider_model = provider_model
         self.cancel_event = cancel_event
         self.audit_records: Deque[Dict[str, Any]] = deque(maxlen=max(0, int(audit_max_records)))
+        self.prompt_budget_records: Deque[Dict[str, Any]] = deque(maxlen=max(0, int(audit_max_records)))
 
     def answer(
         self,
@@ -841,19 +832,29 @@ class HumanFlowAnswerService:
             raise HumanAnswerGenerationFailed("query retrieval plan is required")
         effective_plan = plan
         resolved_language = effective_plan.response_language
-        flow_inputs: list[tuple[str, str, Mapping[str, Any]]] = []
-        for flow in flows:
+        flow_inputs: list[tuple[int, str, str, Mapping[str, Any]]] = []
+        for flow_index, flow in enumerate(flows, start=1):
             source, entrypoint = self.projector.flow_answer_identity(flow)
             llm_input = self.projector.human_llm_input(request, flow, effective_plan)
-            self.budget_estimator.ensure_fits(self.renderer.render(llm_input))
-            flow_inputs.append((source, entrypoint, llm_input))
-        for source, entrypoint, llm_input in flow_inputs:
+            prompt = self.renderer.render(llm_input)
+            self._record_prompt_budget_check(
+                prompt,
+                llm_input,
+                flow_index=flow_index,
+                source=source,
+                entrypoint=entrypoint,
+                attempt="INITIAL",
+            )
+            flow_inputs.append((flow_index, source, entrypoint, llm_input))
+        for flow_index, source, entrypoint, llm_input in flow_inputs:
             try:
                 if self._cancelled():
                     raise HumanAnswerDeadlineExceeded()
                 text = self._answer_one_flow(
                     llm_input,
                     deadline_at,
+                    flow_index=flow_index,
+                    source=source,
                     entrypoint=entrypoint,
                     requested_language=request.answerLanguage,
                     resolved_language=resolved_language,
@@ -884,6 +885,8 @@ class HumanFlowAnswerService:
         llm_input: Mapping[str, Any],
         deadline_at: float,
         *,
+        flow_index: int,
+        source: str,
         entrypoint: str,
         requested_language: str | None,
         resolved_language: str,
@@ -894,6 +897,8 @@ class HumanFlowAnswerService:
                 llm_input,
                 deadline_at,
                 validation_errors=validation_errors,
+                flow_index=flow_index,
+                source=source,
                 entrypoint=entrypoint,
                 attempt_count=attempt_count,
                 requested_language=requested_language,
@@ -924,6 +929,8 @@ class HumanFlowAnswerService:
         deadline_at: float,
         *,
         validation_errors: Sequence[str] | None = None,
+        flow_index: int,
+        source: str,
         entrypoint: str,
         attempt_count: int,
         requested_language: str | None,
@@ -932,7 +939,17 @@ class HumanFlowAnswerService:
         if self._cancelled() or self._remaining_seconds(deadline_at) <= self.min_call_timeout_seconds:
             raise HumanAnswerDeadlineExceeded()
         prompt = self.renderer.render(llm_input, validation_errors)
-        self.budget_estimator.ensure_fits(prompt)
+        if validation_errors:
+            self._record_prompt_budget_check(
+                prompt,
+                llm_input,
+                flow_index=flow_index,
+                source=source,
+                entrypoint=entrypoint,
+                attempt="REPAIR",
+            )
+        else:
+            self.budget_estimator.ensure_fits(prompt)
         remaining = self._remaining_seconds(deadline_at)
         try:
             result = self.provider.complete(llm_input, validation_errors=validation_errors, timeout_seconds=remaining)
@@ -951,6 +968,47 @@ class HumanFlowAnswerService:
             resolved_language=resolved_language,
         )
         return result
+
+    def _record_prompt_budget_check(
+        self,
+        prompt: str,
+        llm_input: Mapping[str, Any],
+        *,
+        flow_index: int,
+        source: str,
+        entrypoint: str,
+        attempt: str,
+    ) -> PromptBudgetEstimate:
+        estimate = self.budget_estimator.estimate(prompt)
+        budget_payload = self._prompt_budget_payload(estimate, attempt)
+        self.prompt_budget_records.append(
+            {
+                "flowIndex": int(flow_index),
+                "source": source,
+                "entrypoint": entrypoint,
+                "attempt": attempt,
+                "promptCharCount": len(prompt),
+                "promptUtf8Bytes": len(prompt.encode("utf-8")),
+                "promptHash": self._sha256(prompt),
+                "llmInputHash": self._sha256(json.dumps(dict(llm_input), ensure_ascii=False, sort_keys=True, separators=(",", ":"))),
+                **budget_payload,
+                "promptBudgetEstimate": budget_payload,
+            }
+        )
+        if not estimate.fits:
+            raise HumanAnswerContextBudgetExceeded("The complete grounded flow exceeds the available model context.")
+        return estimate
+
+    def _prompt_budget_payload(self, estimate: PromptBudgetEstimate, attempt: str) -> Dict[str, Any]:
+        return {
+            "attempt": attempt,
+            "renderedInputTokens": int(estimate.rendered_input_tokens),
+            "reservedOutputTokens": int(estimate.reserved_output_tokens),
+            "fixedFramingReserveTokens": int(estimate.fixed_framing_reserve_tokens),
+            "totalRequiredTokens": int(estimate.total_required_tokens),
+            "contextTokens": int(estimate.context_tokens),
+            "fits": bool(estimate.fits),
+        }
 
     def _validate_text(self, raw_text: str, language: str, llm_input: Mapping[str, Any]) -> str:
         try:

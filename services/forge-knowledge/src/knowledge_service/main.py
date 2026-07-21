@@ -744,7 +744,6 @@ def _knowledge_human_query_response(
                 correlation_id=correlation_id,
             )
         terminal_stage = "PROMPT_BUDGET"
-        prompt_budget_records = _safe_human_query_prompt_budget_records(config, body, selected_flows, retrieval_plan)
         answer_service, close_provider = _human_answer_service(request, config, cancel_event)
         try:
             terminal_stage = "FINAL_LLM"
@@ -756,6 +755,7 @@ def _knowledge_human_query_response(
             return response
         finally:
             answer_records = [dict(record) for record in answer_service.audit_records]
+            prompt_budget_records = [dict(record) for record in answer_service.prompt_budget_records]
             _record_human_answer_audits(request, body, answer_service.audit_records, interpretation_service.audit_records)
             if close_provider:
                 close_provider()
@@ -1163,30 +1163,32 @@ def _human_query_prompt_budget_records(config: AppConfig, body: KnowledgeQueryRe
         llm_input = projector.human_llm_input(body, flow, retrieval_plan)
         prompt = renderer.render(llm_input)
         estimate = estimator.estimate(prompt)
+        budget_payload = _prompt_budget_estimate_payload(estimate, "INITIAL")
         records.append(
             {
                 "flowIndex": index,
                 "source": source,
                 "entrypoint": entrypoint,
+                "attempt": "INITIAL",
                 "promptCharCount": len(prompt),
                 "promptUtf8Bytes": len(prompt.encode("utf-8")),
                 "promptHash": _sha256(prompt),
                 "llmInputHash": _sha256(json.dumps(llm_input, ensure_ascii=False, sort_keys=True, separators=(",", ":"))),
-                "promptBudgetEstimate": _prompt_budget_estimate_payload(estimate),
+                **budget_payload,
+                "promptBudgetEstimate": budget_payload,
             }
         )
     return records
 
 
-def _prompt_budget_estimate_payload(estimate) -> Dict[str, Any]:
+def _prompt_budget_estimate_payload(estimate, attempt: str) -> Dict[str, Any]:
     return {
+        "attempt": attempt,
         "renderedInputTokens": int(estimate.rendered_input_tokens),
-        "contextTokens": int(estimate.context_tokens),
         "reservedOutputTokens": int(estimate.reserved_output_tokens),
-        "repairPromptOverheadTokens": int(estimate.repair_prompt_overhead_tokens),
-        "multilingualProseOverheadTokens": int(estimate.multilingual_prose_overhead_tokens),
-        "jsonFormattingOverheadTokens": int(estimate.json_formatting_overhead_tokens),
+        "fixedFramingReserveTokens": int(estimate.fixed_framing_reserve_tokens),
         "totalRequiredTokens": int(estimate.total_required_tokens),
+        "contextTokens": int(estimate.context_tokens),
         "fits": bool(estimate.fits),
     }
 
@@ -1197,6 +1199,7 @@ def _prompt_budget_summary(records) -> Dict[str, Any]:
         return {
             "flowCount": 0,
             "maxPromptUtf8Bytes": None,
+            "maxRenderedInputTokens": None,
             "maxTotalRequiredTokens": None,
             "contextTokens": None,
             "allFit": None,
@@ -1204,6 +1207,10 @@ def _prompt_budget_summary(records) -> Dict[str, Any]:
     return {
         "flowCount": len(usable),
         "maxPromptUtf8Bytes": max(int(record.get("promptUtf8Bytes") or 0) for record in usable),
+        "maxRenderedInputTokens": max(
+            int(record["promptBudgetEstimate"].get("renderedInputTokens") or 0)
+            for record in usable
+        ),
         "maxTotalRequiredTokens": max(int(record["promptBudgetEstimate"].get("totalRequiredTokens") or 0) for record in usable),
         "contextTokens": usable[0]["promptBudgetEstimate"].get("contextTokens"),
         "allFit": all(bool(record["promptBudgetEstimate"].get("fits")) for record in usable),
