@@ -90,9 +90,13 @@ describe('Jarvis runtime rendering', () => {
 
   it('renders controlled query errors and does not call Knowledge directly', async () => {
     const dom = jarvisDom();
+    const error = Object.assign(new Error('The complete grounded flow exceeds the available model context.'), {
+      code: 'HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED',
+      status: 503
+    });
     const http = {
       get: vi.fn(() => Promise.resolve({ status: 'UP', model: {}, ollama: {}, actions: { count: 0 } })),
-      post: vi.fn(() => Promise.reject(new Error('No grounded graph candidates were found.')))
+      post: vi.fn(() => Promise.reject(error))
     };
     const page = new JarvisPage({ document: dom.window.document, http });
     page.mount();
@@ -102,7 +106,9 @@ describe('Jarvis runtime rendering', () => {
     await page.submitQuery({ preventDefault: () => undefined });
 
     const text = dom.window.document.body.textContent || '';
-    expect(text).toContain('No grounded graph candidates were found.');
+    expect(text).toContain('HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED');
+    expect(text).toContain('The complete grounded flow exceeds the available model context.');
+    expect(text).toContain('503');
     expect(http.post).toHaveBeenCalledWith('/jarvis/query', expect.any(Object), expect.any(Object));
     const calls = http.post.mock.calls as unknown as Array<[string, unknown?, unknown?]>;
     expect(calls.some(([path]) => path.includes('/knowledge/query'))).toBe(false);

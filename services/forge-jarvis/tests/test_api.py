@@ -390,6 +390,14 @@ def test_query_response_preserves_human_contract(tmp_path) -> None:
     ("status_code", "body"),
     [
         (404, {"code": "NO_GROUNDED_GRAPH_CANDIDATES", "message": "No grounded graph candidates were found."}),
+        (
+            503,
+            {
+                "code": "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED",
+                "message": "The complete grounded flow exceeds the available model context.",
+                "correlationId": "corr-knowledge-budget",
+            },
+        ),
         (502, {"code": "HUMAN_ANSWER_GENERATION_FAILED", "message": "The local model could not produce any grounded flow answers."}),
         (504, {"code": "HUMAN_ANSWER_GENERATION_TIMEOUT", "message": "The local model timed out while generating grounded flow answers."}),
     ],

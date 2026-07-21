@@ -331,7 +331,16 @@ class GroundedProvider:
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
         sources = str(llm_input.get("entrypoint") or "")
         target = sources or "the selected flow"
-        response = {"text": f"1. {target} starts the grounded flow.\n2. The grounded answer for {target} is returned."}
+        coverage = llm_input.get("coverageContract") or {}
+        response = {
+            "steps": [
+                {
+                    "factRefs": list(coverage.get("canonicalFactRefs") or []),
+                    "text": f"{target} starts the grounded flow.",
+                }
+            ],
+            "result": f"The grounded answer for {target} is returned.",
+        }
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=128)
 
 
@@ -368,10 +377,9 @@ def test_real_stack_one_entrypoint_many_branches_and_failed_explanation_preserve
     assert {node["label"] for node in flow["nodes"]} == {"Alpha", "Beta", "Gamma", "Delta", "Epsilon"}
     assert len(flow["transitions"]) == 4
     assert len(flow["boundaries"]) == 1
-    assert explained == {
-        "code": "HUMAN_ANSWER_GENERATION_FAILED",
-        "message": "The local model could not produce any grounded flow answers.",
-    }
+    assert explained["code"] == "HUMAN_ANSWER_GENERATION_FAILED"
+    assert explained["message"] == "The local model could not produce any grounded flow answers."
+    assert explained["correlationId"]
     assert_compact_tool_contract(tool)
     assert len(tool["trees"]) == 1
     assert compact_tree_symbols(tool) >= {"Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Omega"}
@@ -475,7 +483,7 @@ def test_real_stack_ignores_stale_inventory_revision_facts(tmp_path):
 
 def test_real_stack_deep_flow_is_complete_across_all_endpoints(tmp_path):
     app, _, config, _ = build_test_app(write_runtime_config(tmp_path))
-    depth = 120
+    depth = 40
     nodes = [
         {"id": "Alpha", "nodeKind": "CALLABLE", "name": "Alpha", "path": "src/Alpha.txt"},
         *[

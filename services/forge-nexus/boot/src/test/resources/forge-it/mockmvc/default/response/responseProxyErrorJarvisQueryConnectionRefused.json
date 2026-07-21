@@ -1,1 +1,1 @@
-{"code":"UPSTREAM_UNAVAILABLE","message":"Jarvis service is unavailable.","correlationId":"corr-refused-jarvis","upstreamStatus":null,"route":"jarvis.query"}
+{"code":"UPSTREAM_ERROR","message":"Jarvis proxy request failed.","correlationId":"corr-refused-jarvis","upstreamStatus":null,"route":"jarvis.query"}

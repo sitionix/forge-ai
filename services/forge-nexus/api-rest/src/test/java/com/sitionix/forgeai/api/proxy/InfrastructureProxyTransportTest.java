@@ -200,4 +200,79 @@ class InfrastructureProxyTransportTest {
         assertThat(body).contains("\"answers\"");
         assertThat(body).doesNotContain("\"status\"");
     }
+
+    @Test
+    void jarvisQueryPreservesControlledHumanQueryServerErrorStatusesAndBodies() throws Exception {
+        final ObjectMapper objectMapper = new ObjectMapper();
+        final Map<Integer, String> cases = Map.of(
+                503, "{\"code\":\"HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED\",\"message\":\"The complete grounded flow exceeds the available model context.\",\"correlationId\":\"corr-budget\"}",
+                504, "{\"code\":\"HUMAN_QUERY_TIMEOUT\",\"message\":\"Knowledge human query timed out.\",\"correlationId\":\"corr-timeout\"}",
+                502, "{\"code\":\"HUMAN_ANSWER_GENERATION_FAILED\",\"message\":\"The local model could not produce any grounded flow answers.\",\"correlationId\":\"corr-generation\"}"
+        );
+
+        for (final Map.Entry<Integer, String> entry : cases.entrySet()) {
+            final HttpClient httpClient = mock(HttpClient.class);
+            final HttpResponse<InputStream> upstreamResponse = mock(HttpResponse.class);
+            when(upstreamResponse.statusCode()).thenReturn(entry.getKey());
+            when(upstreamResponse.body()).thenReturn(new ByteArrayInputStream(entry.getValue().getBytes(UTF_8)));
+            when(upstreamResponse.headers()).thenReturn(java.net.http.HttpHeaders.of(Map.of("Content-Type", List.of("application/json")), (left, right) -> true));
+            when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                    .thenReturn(CompletableFuture.completedFuture(upstreamResponse));
+
+            final ResponseEntity<byte[]> response = this.transport(httpClient).forward(
+                    "jarvis.query",
+                    Map.of(),
+                    "{\"queryText\":\"JarvisGateway\"}".getBytes(UTF_8),
+                    new org.springframework.http.HttpHeaders(),
+                    requestWithoutQuery()
+            ).get(1, TimeUnit.SECONDS);
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.valueOf(entry.getKey()));
+            assertThat(objectMapper.readTree(response.getBody())).isEqualTo(objectMapper.readTree(entry.getValue()));
+        }
+    }
+
+    @Test
+    void jarvisQueryTransportFailureRemainsGenericBadGateway() throws Exception {
+        final HttpClient httpClient = mock(HttpClient.class);
+        when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
+                .thenReturn(CompletableFuture.failedFuture(new java.net.ConnectException("refused")));
+
+        final org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.set("X-Correlation-Id", "corr-no-response");
+        final ResponseEntity<byte[]> response = this.transport(httpClient).forward(
+                "jarvis.query",
+                Map.of(),
+                "{\"queryText\":\"JarvisGateway\"}".getBytes(UTF_8),
+                headers,
+                requestWithoutQuery()
+        ).get(1, TimeUnit.SECONDS);
+
+        final Map<?, ?> body = new ObjectMapper().readValue(response.getBody(), Map.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
+        assertThat(body.get("code")).isEqualTo("UPSTREAM_ERROR");
+        assertThat(body.get("message")).isEqualTo("Jarvis proxy request failed.");
+        assertThat(body.get("correlationId")).isEqualTo("corr-no-response");
+        assertThat(body.get("route")).isEqualTo("jarvis.query");
+    }
+
+    private InfrastructureProxyTransport transport(final HttpClient httpClient) {
+        final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
+        final ForgeAiHumanQueryProperties humanQueryProperties = new ForgeAiHumanQueryProperties();
+        humanQueryProperties.setRequestTimeoutSeconds(42);
+        final ObjectMapper objectMapper = new ObjectMapper();
+        return new InfrastructureProxyTransport(
+                httpClient,
+                new InfrastructureProxyRouteRegistry(properties, humanQueryProperties),
+                properties,
+                new InfrastructureProxyResponseMapper(objectMapper),
+                objectMapper
+        );
+    }
+
+    private static HttpServletRequest requestWithoutQuery() {
+        final HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getQueryString()).thenReturn(null);
+        return request;
+    }
 }

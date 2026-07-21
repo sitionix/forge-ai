@@ -71,7 +71,9 @@ export class JarvisQueryView {
     if (!element) {
       return;
     }
-    const reason = error?.code || error?.message || 'REQUEST_FAILED';
+    const reason = [error?.code, error?.message && error.message !== error.code ? error.message : null]
+      .filter(Boolean)
+      .join(': ') || 'REQUEST_FAILED';
     const status = error?.status ? ` (${error.status})` : '';
     element.innerHTML = `
       <div class="jarvis-chat-role">Jarvis</div>
@@ -101,7 +103,8 @@ export class JarvisQueryView {
   }
 
   renderDiagnostics(diagnostics) {
-    const items = list(diagnostics).filter((item) => item?.message || item?.code);
+    const items = list(diagnostics)
+      .filter((item) => item?.message || item?.code);
     if (!items.length) {
       return '';
     }

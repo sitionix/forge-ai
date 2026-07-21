@@ -69,7 +69,7 @@ public class InfrastructureProxyRouteRegistry {
         this.jarvis(registered, "jarvis.status", HttpMethod.GET, "/api/v1/jarvis/status", false);
         this.jarvis(registered, "jarvis.actions", HttpMethod.GET, "/api/v1/jarvis/actions", false);
         this.jarvis(registered, "jarvis.command", HttpMethod.POST, "/api/v1/jarvis/command", true);
-        this.jarvis(registered, "jarvis.query", HttpMethod.POST, "/api/v1/jarvis/query", true, jarvisQueryReadTimeout);
+        this.jarvis(registered, "jarvis.query", HttpMethod.POST, "/api/v1/jarvis/query", true, jarvisQueryReadTimeout, true);
         this.routes = Map.copyOf(registered);
     }
 
@@ -123,7 +123,8 @@ public class InfrastructureProxyRouteRegistry {
                 upstreamPath,
                 requestBodyAllowed,
                 true,
-                readTimeout
+                readTimeout,
+                false
         ));
     }
 
@@ -141,6 +142,16 @@ public class InfrastructureProxyRouteRegistry {
                         final String upstreamPath,
                         final boolean requestBodyAllowed,
                         final Duration readTimeout) {
+        this.jarvis(registered, key, method, upstreamPath, requestBodyAllowed, readTimeout, false);
+    }
+
+    private void jarvis(final Map<String, InfrastructureProxyRoute> registered,
+                        final String key,
+                        final HttpMethod method,
+                        final String upstreamPath,
+                        final boolean requestBodyAllowed,
+                        final Duration readTimeout,
+                        final boolean preserveControlledUpstreamErrors) {
         registered.put(key, new InfrastructureProxyRoute(
                 key,
                 InfrastructureProxyService.JARVIS,
@@ -148,7 +159,8 @@ public class InfrastructureProxyRouteRegistry {
                 ignored -> upstreamPath,
                 requestBodyAllowed,
                 true,
-                readTimeout
+                readTimeout,
+                preserveControlledUpstreamErrors
         ));
     }
 
