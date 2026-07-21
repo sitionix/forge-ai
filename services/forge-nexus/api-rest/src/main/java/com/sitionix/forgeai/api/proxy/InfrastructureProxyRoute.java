@@ -12,6 +12,7 @@ record InfrastructureProxyRoute(
         Function<Map<String, String>, String> upstreamPath,
         boolean requestBodyAllowed,
         boolean jsonExpected,
-        Duration readTimeout
+        Duration readTimeout,
+        boolean preserveControlledUpstreamErrors
 ) {
 }

@@ -472,7 +472,7 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
             },
             "audit": {
                 "memory_max_records": int(audit.get("memory-max-records") or audit.get("memory_max_records") or 200),
-                "directory": _path(str(audit.get("directory")), env) if audit.get("directory") else None,
+                "directory": _path(str(audit.get("directory") or "${FORGE_RUNTIME_DIR}/knowledge/query-audit"), env),
                 "max_retained_files": int(audit.get("max-retained-files") or audit.get("max_retained_files") or 200),
                 "max_file_age_seconds": (
                     int(audit.get("max-file-age-seconds") or audit.get("max_file_age_seconds"))

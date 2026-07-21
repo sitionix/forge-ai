@@ -377,10 +377,9 @@ def test_real_stack_one_entrypoint_many_branches_and_failed_explanation_preserve
     assert {node["label"] for node in flow["nodes"]} == {"Alpha", "Beta", "Gamma", "Delta", "Epsilon"}
     assert len(flow["transitions"]) == 4
     assert len(flow["boundaries"]) == 1
-    assert explained == {
-        "code": "HUMAN_ANSWER_GENERATION_FAILED",
-        "message": "The local model could not produce any grounded flow answers.",
-    }
+    assert explained["code"] == "HUMAN_ANSWER_GENERATION_FAILED"
+    assert explained["message"] == "The local model could not produce any grounded flow answers."
+    assert explained["correlationId"]
     assert_compact_tool_contract(tool)
     assert len(tool["trees"]) == 1
     assert compact_tree_symbols(tool) >= {"Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Omega"}

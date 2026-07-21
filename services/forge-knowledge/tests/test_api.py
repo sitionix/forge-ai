@@ -223,7 +223,9 @@ def test_explicit_forbidden_answer_language_returns_controlled_422(tmp_path):
         "message": "The requested response language is not allowed.",
     }
     assert human_status == 422
-    assert human_payload == expected
+    assert human_payload["code"] == expected["code"]
+    assert human_payload["message"] == expected["message"]
+    assert "correlationId" in human_payload
     assert tool_status == 422
     assert tool_payload == expected
     assert query_provider.calls == []
@@ -497,6 +499,111 @@ def test_query_audit_write_failure_warns_without_failing_query(tmp_path, caplog,
     assert any(record.message == "human_answer_audit_write_failed" for record in caplog.records) or "human_answer_audit_write_failed" in captured.err
 
 
+def test_human_query_writes_one_terminal_audit_record(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    app.state.app_config.query_audit_directory = tmp_path / "audit"
+    _seed_a_start_flow(app_config)
+    app.state.flow_explanation_provider = SentinelAnswerProvider("terminal audit success")
+
+    async def exercise():
+        async with _async_client(app) as client:
+            return await _await_with_wakeup(
+                client.post(
+                    "/api/v1/knowledge/query",
+                    json={"queryText": "A.start"},
+                    headers={"X-Correlation-Id": "corr-terminal-success"},
+                )
+            )
+
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 200
+    records = list(app.state.human_query_terminal_audit_artifacts)
+    assert len(records) == 1
+    record = records[0]
+    assert record["correlationId"] == "corr-terminal-success"
+    assert record["queryText"] == "A.start"
+    assert record["terminalHttpStatus"] == 200
+    assert record["terminalStage"] == "SUCCESS"
+    assert record["selectedFlowCount"] == 1
+    assert record["selectedEntrypoints"] == ["A.start"]
+    assert record["providerCallCount"] == 1
+    assert record["repairCallCount"] == 0
+    assert record["promptBudgets"][0]["promptUtf8Bytes"] > 0
+    assert record["promptBudgets"][0]["promptBudgetEstimate"]["totalRequiredTokens"] > 0
+    files = sorted(app.state.app_config.query_audit_directory.glob("human-query-terminal-*.json"))
+    assert len(files) == 1
+    assert json.loads(files[0].read_text(encoding="utf-8"))["correlationId"] == "corr-terminal-success"
+
+
+def test_context_budget_rejection_records_zero_provider_calls(tmp_path):
+    app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
+    app.state.app_config.query_audit_directory = tmp_path / "audit"
+    app.state.app_config.analysis_context_tokens = 128
+    _seed_a_start_flow(app_config)
+    provider = SentinelAnswerProvider("should not be called")
+    app.state.flow_explanation_provider = provider
+
+    async def exercise():
+        async with _async_client(app) as client:
+            return await _await_with_wakeup(client.post("/api/v1/knowledge/query", json={"queryText": "A.start"}))
+
+    response = asyncio.run(exercise())
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED"
+    assert provider.calls == []
+    record = app.state.human_query_terminal_audit_artifacts[-1]
+    assert record["terminalStage"] == "PROMPT_BUDGET"
+    assert record["terminalHttpStatus"] == 503
+    assert record["providerCallCount"] == 0
+    assert record["repairCallCount"] == 0
+    assert record["promptBudgetSummary"]["allFit"] is False
+    assert record["promptBudgets"][0]["promptBudgetEstimate"]["contextTokens"] == 128
+
+
+def test_unexpected_human_query_exception_logs_stage_and_correlation(tmp_path, monkeypatch, caplog, capsys):
+    app, _, _app_config, _ = build_test_app(write_runtime_config(tmp_path))
+
+    def fail_build_query_service(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(knowledge_main, "build_knowledge_query_service", fail_build_query_service)
+
+    async def exercise():
+        async with _async_client(app) as client:
+            return await _await_with_wakeup(
+                client.post(
+                    "/api/v1/knowledge/query",
+                    json={"queryText": "A.start"},
+                    headers={"X-Correlation-Id": "corr-unexpected"},
+                )
+            )
+
+    with caplog.at_level(logging.ERROR, logger="knowledge_service.main"):
+        response = asyncio.run(exercise())
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "KNOWLEDGE_QUERY_FAILED"
+    record = app.state.human_query_terminal_audit_artifacts[-1]
+    assert record["correlationId"] == "corr-unexpected"
+    assert record["terminalStage"] == "UNEXPECTED_EXCEPTION"
+    assert record["unexpectedExceptionClass"] == "RuntimeError"
+    assert record["unexpectedExceptionStage"] == "RETRIEVAL"
+    matching_logs = [item for item in caplog.records if item.message == "knowledge_human_query_unexpected_exception"]
+    if matching_logs:
+        log_record = matching_logs[0]
+        assert log_record.correlationId == "corr-unexpected"
+        assert log_record.terminalStage == "UNEXPECTED_EXCEPTION"
+        assert log_record.failureStage == "RETRIEVAL"
+        assert log_record.exceptionClass == "RuntimeError"
+        assert log_record.exc_info is not None
+    else:
+        captured = capsys.readouterr()
+        assert "knowledge_human_query_unexpected_exception" in captured.err
+        assert "RuntimeError: boom" in captured.err
+
+
 def test_query_interpretation_failure_returns_502_without_final_answer_call(tmp_path):
     app, _, _app_config, _ = build_test_app(write_runtime_config(tmp_path))
     broken_interpreter = BrokenQueryInterpretationProvider()
@@ -626,10 +733,9 @@ def test_query_endpoint_total_flow_failure_returns_502(tmp_path):
     status, payload = asyncio.run(exercise())
 
     assert status == 502
-    assert payload == {
-        "code": "HUMAN_ANSWER_GENERATION_FAILED",
-        "message": "The local model could not produce any grounded flow answers.",
-    }
+    assert payload["code"] == "HUMAN_ANSWER_GENERATION_FAILED"
+    assert payload["message"] == "The local model could not produce any grounded flow answers."
+    assert "correlationId" in payload
 
 
 def test_query_endpoint_no_candidates_returns_404(tmp_path):
@@ -644,10 +750,9 @@ def test_query_endpoint_no_candidates_returns_404(tmp_path):
     status, payload = asyncio.run(exercise())
 
     assert status == 404
-    assert payload == {
-        "code": "NO_GROUNDED_GRAPH_CANDIDATES",
-        "message": "No grounded graph candidates were found.",
-    }
+    assert payload["code"] == "NO_GROUNDED_GRAPH_CANDIDATES"
+    assert payload["message"] == "No grounded graph candidates were found."
+    assert "correlationId" in payload
 
 
 def test_removed_flow_explanations_route_is_not_in_openapi(tmp_path):
@@ -765,10 +870,9 @@ def test_expired_human_query_deadline_before_worker_returns_controlled_response(
 
     assert response.status_code == 504
     body = json.loads(response.body.decode("utf-8"))
-    assert body == {
-        "code": "HUMAN_QUERY_TIMEOUT",
-        "message": "Knowledge human query timed out.",
-    }
+    assert body["code"] == "HUMAN_QUERY_TIMEOUT"
+    assert body["message"] == "Knowledge human query timed out."
+    assert "correlationId" in body
     assert provider.calls == []
 
 

@@ -56,7 +56,9 @@ export function renderRequestError(id, error, options = {}, documentRef = docume
     return;
   }
   const endpoint = error.endpoint || options.endpoint || '-';
-  const reason = error.code || error.message || 'REQUEST_FAILED';
+  const reason = [error.code, error.message && error.message !== error.code ? error.message : null]
+    .filter(Boolean)
+    .join(': ') || 'REQUEST_FAILED';
   const severity = options.transient ? 'Warning' : 'Error';
   element.classList.remove('hidden');
   element.innerHTML = `
@@ -122,4 +124,3 @@ export function optionalNonNegativeNumber(value) {
   }
   return nonNegativeNumber(value);
 }
-

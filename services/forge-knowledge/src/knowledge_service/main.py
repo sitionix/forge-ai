@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ import time
 import uuid
 from collections import deque
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -89,6 +91,7 @@ app_config: Optional[AppConfig] = None
 store: Optional[InventoryStore] = None
 analysis_supervisor: Optional[AnalysisSupervisor] = None
 LOGGER = logging.getLogger(__name__)
+HUMAN_QUERY_TERMINAL_AUDIT_PREFIX = "human-query-terminal-"
 
 
 def create_app(
@@ -270,7 +273,30 @@ def create_app(
     )
     async def knowledge_query(request: Request, body: KnowledgeQueryRequest):
         if is_forbidden_response_language(body.answerLanguage):
-            return _forbidden_response_language_response()
+            correlation_id = _request_correlation_id(request)
+            _record_human_query_terminal_audit(
+                request,
+                body,
+                correlation_id=correlation_id,
+                retrieval_plan=None,
+                query_result=None,
+                selected_flows=(),
+                interpretation_records=[],
+                answer_records=[],
+                prompt_budget_records=[],
+                terminal_status=422,
+                terminal_error_code="RESPONSE_LANGUAGE_NOT_ALLOWED",
+                terminal_error_message="The requested response language is not allowed.",
+                terminal_stage="QUERY_INTERPRETATION",
+                unexpected_exception_class=None,
+                unexpected_exception_stage=None,
+            )
+            return _public_error_response(
+                422,
+                "RESPONSE_LANGUAGE_NOT_ALLOWED",
+                "The requested response language is not allowed.",
+                correlation_id=correlation_id,
+            )
         config, _ = _state(request)
         deadline_at = time.monotonic() + _human_query_request_deadline_seconds(config)
         cancel_event = threading.Event()
@@ -658,76 +684,209 @@ def _knowledge_human_query_response(
     deadline_at: float | None = None,
 ):
     config, deps = _state(request)
-    if is_forbidden_response_language(body.answerLanguage):
-        return _forbidden_response_language_response()
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
     deadline_at = deadline_at if deadline_at is not None else time.monotonic() + request_deadline_seconds
-    if time.monotonic() >= deadline_at:
-        return _expired_human_query_response(body)
+    correlation_id = _request_correlation_id(request)
+    terminal_stage = "QUERY_INTERPRETATION"
+    terminal_status = 503
+    terminal_error_code = "KNOWLEDGE_QUERY_FAILED"
+    terminal_error_message = "Knowledge query failed before a factual answer could be built."
+    unexpected_exception_class: str | None = None
+    unexpected_exception_stage: str | None = None
+    retrieval_plan = None
+    query_result = None
+    selected_flows = ()
+    interpretation_records = []
+    answer_records = []
+    prompt_budget_records = []
     try:
+        if is_forbidden_response_language(body.answerLanguage):
+            terminal_status = 422
+            terminal_error_code = "RESPONSE_LANGUAGE_NOT_ALLOWED"
+            terminal_error_message = "The requested response language is not allowed."
+            return _public_error_response(
+                terminal_status,
+                terminal_error_code,
+                terminal_error_message,
+                correlation_id=correlation_id,
+            )
+        if time.monotonic() >= deadline_at:
+            terminal_stage = "FINAL_LLM"
+            terminal_status = 504
+            terminal_error_code = "HUMAN_QUERY_TIMEOUT"
+            terminal_error_message = "Knowledge human query timed out."
+            return _public_error_response(
+                terminal_status,
+                terminal_error_code,
+                terminal_error_message,
+                correlation_id=correlation_id,
+            )
         interpretation_service, close_interpreter = _query_interpretation_service(request, config)
         try:
             retrieval_plan = interpretation_service.interpret(body, deadline_at=deadline_at)
         finally:
+            interpretation_records = [dict(record) for record in interpretation_service.audit_records]
             if close_interpreter:
                 close_interpreter()
+        terminal_stage = "RETRIEVAL"
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
-        if not tuple(query_result.flows or ()):
+        selected_flows = tuple(query_result.flows or ())
+        terminal_stage = "FLOW_DISCOVERY"
+        if not selected_flows:
             _record_query_interpretation_audits(request, body, interpretation_service.audit_records)
+            terminal_status = 404
+            terminal_error_code = "NO_GROUNDED_GRAPH_CANDIDATES"
+            terminal_error_message = "No grounded graph candidates were found."
             return _public_error_response(
-                404,
-                "NO_GROUNDED_GRAPH_CANDIDATES",
-                "No grounded graph candidates were found.",
+                terminal_status,
+                terminal_error_code,
+                terminal_error_message,
+                correlation_id=correlation_id,
             )
+        terminal_stage = "PROMPT_BUDGET"
+        prompt_budget_records = _safe_human_query_prompt_budget_records(config, body, selected_flows, retrieval_plan)
         answer_service, close_provider = _human_answer_service(request, config, cancel_event)
         try:
+            terminal_stage = "FINAL_LLM"
             response = answer_service.answer(body, query_result, plan=retrieval_plan, deadline_at=deadline_at)
+            terminal_status = 200
+            terminal_error_code = None
+            terminal_error_message = None
+            terminal_stage = "SUCCESS"
             return response
         finally:
+            answer_records = [dict(record) for record in answer_service.audit_records]
             _record_human_answer_audits(request, body, answer_service.audit_records, interpretation_service.audit_records)
             if close_provider:
                 close_provider()
     except QueryPlanningDeadlineExceeded:
+        terminal_stage = "QUERY_INTERPRETATION"
+        terminal_status = 504
+        terminal_error_code = "QUERY_PLANNING_TIMEOUT"
+        terminal_error_message = "Knowledge query planning timed out."
         return _public_error_response(
-            504,
-            "QUERY_PLANNING_TIMEOUT",
-            "Knowledge query planning timed out.",
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
         )
     except (QueryPlanningProviderUnavailable, QueryPlanningMalformedResponse, QueryPlanningRepairExhausted):
+        terminal_stage = "QUERY_INTERPRETATION"
+        terminal_status = 502
+        terminal_error_code = QUERY_INTERPRETATION_FAILED
+        terminal_error_message = "The local model could not interpret the query."
         return _public_error_response(
-            502,
-            QUERY_INTERPRETATION_FAILED,
-            "The local model could not interpret the query.",
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
         )
     except QueryInterpretationFailed:
+        terminal_stage = "QUERY_INTERPRETATION"
+        terminal_status = 502
+        terminal_error_code = QUERY_INTERPRETATION_FAILED
+        terminal_error_message = "The local model could not interpret the query."
         return _public_error_response(
-            502,
-            QUERY_INTERPRETATION_FAILED,
-            "The local model could not interpret the query.",
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
         )
     except HumanAnswerDeadlineExceeded:
+        terminal_stage = "FINAL_LLM"
+        terminal_status = 504
+        terminal_error_code = "HUMAN_QUERY_TIMEOUT"
+        terminal_error_message = "Knowledge human query timed out."
         return _public_error_response(
-            504,
-            "HUMAN_QUERY_TIMEOUT",
-            "Knowledge human query timed out.",
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
         )
     except HumanAnswerContextBudgetExceeded:
+        terminal_stage = "PROMPT_BUDGET"
+        terminal_status = 503
+        terminal_error_code = "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED"
+        terminal_error_message = "The complete grounded flow exceeds the available model context."
         return _public_error_response(
-            503,
-            "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED",
-            "The complete grounded flow exceeds the available model context.",
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
         )
-    except (HumanAnswerProviderUnavailable, HumanAnswerMalformedResponse, HumanAnswerRepairExhausted, HumanAnswerGenerationFailed):
+    except HumanAnswerProviderUnavailable:
+        terminal_stage = "FINAL_LLM"
+        terminal_status = 502
+        terminal_error_code = "HUMAN_ANSWER_GENERATION_FAILED"
+        terminal_error_message = "The local model could not produce any grounded flow answers."
         return _public_error_response(
-            502,
-            "HUMAN_ANSWER_GENERATION_FAILED",
-            "The local model could not produce any grounded flow answers.",
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
         )
-    except Exception:
+    except (HumanAnswerMalformedResponse, HumanAnswerRepairExhausted):
+        terminal_stage = "FINAL_VALIDATION"
+        terminal_status = 502
+        terminal_error_code = "HUMAN_ANSWER_GENERATION_FAILED"
+        terminal_error_message = "The local model could not produce any grounded flow answers."
         return _public_error_response(
-            503,
-            "KNOWLEDGE_QUERY_FAILED",
-            "Knowledge query failed before a factual answer could be built.",
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
+        )
+    except HumanAnswerGenerationFailed:
+        terminal_status = 502
+        terminal_error_code = "HUMAN_ANSWER_GENERATION_FAILED"
+        terminal_error_message = "The local model could not produce any grounded flow answers."
+        return _public_error_response(
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
+        )
+    except Exception as exc:
+        unexpected_exception_class = type(exc).__name__
+        unexpected_exception_stage = terminal_stage
+        terminal_stage = "UNEXPECTED_EXCEPTION"
+        terminal_status = 503
+        terminal_error_code = "KNOWLEDGE_QUERY_FAILED"
+        terminal_error_message = "Knowledge query failed before a factual answer could be built."
+        LOGGER.exception(
+            "knowledge_human_query_unexpected_exception",
+            extra={
+                "correlationId": correlation_id,
+                "terminalStage": terminal_stage,
+                "failureStage": unexpected_exception_stage,
+                "exceptionClass": unexpected_exception_class,
+            },
+        )
+        return _public_error_response(
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
+        )
+    finally:
+        if selected_flows and retrieval_plan is not None and not prompt_budget_records:
+            prompt_budget_records = _safe_human_query_prompt_budget_records(config, body, selected_flows, retrieval_plan)
+        _record_human_query_terminal_audit(
+            request,
+            body,
+            correlation_id=correlation_id,
+            retrieval_plan=retrieval_plan,
+            query_result=query_result,
+            selected_flows=selected_flows,
+            interpretation_records=interpretation_records,
+            answer_records=answer_records,
+            prompt_budget_records=prompt_budget_records,
+            terminal_status=terminal_status,
+            terminal_error_code=terminal_error_code,
+            terminal_error_message=terminal_error_message,
+            terminal_stage=terminal_stage,
+            unexpected_exception_class=unexpected_exception_class,
+            unexpected_exception_stage=unexpected_exception_stage,
         )
 
 
@@ -801,8 +960,11 @@ def _expired_tool_context_response(body: KnowledgeQueryRequest) -> JSONResponse:
     )
 
 
-def _public_error_response(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"code": code, "message": message})
+def _public_error_response(status_code: int, code: str, message: str, *, correlation_id: str | None = None) -> JSONResponse:
+    content = {"code": code, "message": message}
+    if correlation_id:
+        content["correlationId"] = correlation_id
+    return JSONResponse(status_code=status_code, content=content)
 
 
 def _forbidden_response_language_response() -> JSONResponse:
@@ -811,6 +973,263 @@ def _forbidden_response_language_response() -> JSONResponse:
         "RESPONSE_LANGUAGE_NOT_ALLOWED",
         "The requested response language is not allowed.",
     )
+
+
+def _request_correlation_id(request: Request) -> str:
+    metrics = current_route_metrics()
+    if metrics is not None and metrics.correlation_id:
+        return metrics.correlation_id
+    headers = getattr(request, "headers", None)
+    return sanitize_correlation_id(headers.get(CORRELATION_HEADER) if headers is not None else None)
+
+
+def _record_human_query_terminal_audit(
+    request: Request,
+    body: KnowledgeQueryRequest,
+    *,
+    correlation_id: str,
+    retrieval_plan,
+    query_result,
+    selected_flows,
+    interpretation_records,
+    answer_records,
+    prompt_budget_records,
+    terminal_status: int,
+    terminal_error_code: str | None,
+    terminal_error_message: str | None,
+    terminal_stage: str,
+    unexpected_exception_class: str | None,
+    unexpected_exception_stage: str | None,
+) -> None:
+    config, _ = _state(request)
+    record = _human_query_terminal_audit_record(
+        body,
+        correlation_id=correlation_id,
+        retrieval_plan=retrieval_plan,
+        query_result=query_result,
+        selected_flows=tuple(selected_flows or ()),
+        interpretation_records=list(interpretation_records or []),
+        answer_records=list(answer_records or []),
+        prompt_budget_records=list(prompt_budget_records or []),
+        terminal_status=terminal_status,
+        terminal_error_code=terminal_error_code,
+        terminal_error_message=terminal_error_message,
+        terminal_stage=terminal_stage,
+        unexpected_exception_class=unexpected_exception_class,
+        unexpected_exception_stage=unexpected_exception_stage,
+    )
+    existing = getattr(request.app.state, "human_query_terminal_audit_artifacts", None)
+    if existing is None:
+        existing = deque(maxlen=max(0, int(config.query_audit_memory_max_records)))
+        request.app.state.human_query_terminal_audit_artifacts = existing
+    existing.append(record)
+    _write_human_query_terminal_audit_artifact(config, record)
+
+
+def _human_query_terminal_audit_record(
+    body: KnowledgeQueryRequest,
+    *,
+    correlation_id: str,
+    retrieval_plan,
+    query_result,
+    selected_flows,
+    interpretation_records,
+    answer_records,
+    prompt_budget_records,
+    terminal_status: int,
+    terminal_error_code: str | None,
+    terminal_error_message: str | None,
+    terminal_stage: str,
+    unexpected_exception_class: str | None,
+    unexpected_exception_stage: str | None,
+) -> Dict[str, Any]:
+    provider_call_count = len(answer_records)
+    repair_call_count = sum(1 for record in answer_records if int(record.get("attemptCount") or 0) > 1)
+    selected_flow_summaries = _selected_flow_audit_summaries(selected_flows)
+    prompt_budget_summary = _prompt_budget_summary(prompt_budget_records)
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "correlationId": correlation_id,
+        "queryText": body.queryText,
+        "answerLanguage": body.answerLanguage,
+        "intent": body.intent.value if hasattr(body.intent, "value") else str(body.intent),
+        "includeTests": bool(body.includeTests),
+        "maxFlows": int(body.maxFlows),
+        "queryInterpreter": _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, terminal_stage, terminal_error_code),
+        "retrieval": _retrieval_terminal_payload(query_result),
+        "selectedFlowCount": len(selected_flow_summaries),
+        "selectedSources": sorted({item["source"] for item in selected_flow_summaries if item.get("source")}),
+        "selectedEntrypoints": [item["entrypoint"] for item in selected_flow_summaries if item.get("entrypoint")],
+        "selectedFlows": selected_flow_summaries,
+        "promptBudgetSummary": prompt_budget_summary,
+        "promptBudgets": prompt_budget_records,
+        "providerCallCount": provider_call_count,
+        "repairCallCount": repair_call_count,
+        "terminalHttpStatus": int(terminal_status),
+        "terminalErrorCode": terminal_error_code,
+        "terminalErrorMessage": terminal_error_message,
+        "terminalStage": terminal_stage,
+        "unexpectedExceptionClass": unexpected_exception_class,
+        "unexpectedExceptionStage": unexpected_exception_stage,
+    }
+
+
+def _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, terminal_stage: str, terminal_error_code: str | None) -> Dict[str, Any]:
+    validation_errors = [
+        str(error)
+        for record in interpretation_records
+        for error in record.get("validationErrors", [])
+        if str(error).strip()
+    ]
+    payload = {
+        "providerCallCount": len(interpretation_records),
+        "detectedLanguage": getattr(retrieval_plan, "detected_language", None),
+        "responseLanguage": getattr(retrieval_plan, "response_language", None),
+        "effectiveIntent": getattr(retrieval_plan, "effective_intent", None),
+        "normalizedQuery": getattr(retrieval_plan, "normalized_query", None),
+        "searchQueries": list(getattr(retrieval_plan, "search_queries", ()) or ()),
+        "codeIdentifiers": list(getattr(retrieval_plan, "code_identifiers", ()) or ()),
+        "concepts": list(getattr(retrieval_plan, "concepts", ()) or ()),
+        "validationAttempts": len(interpretation_records),
+        "validationErrors": validation_errors,
+        "status": "SUCCESS" if retrieval_plan is not None else "FAILED",
+        "records": [_compact_provider_audit_record(record) for record in interpretation_records],
+    }
+    if retrieval_plan is None and terminal_stage == "QUERY_INTERPRETATION":
+        payload["errorCode"] = terminal_error_code
+    return payload
+
+
+def _retrieval_terminal_payload(query_result) -> Dict[str, Any]:
+    response = getattr(query_result, "response", None)
+    coverage = getattr(response, "coverage", None)
+    matched_sources = getattr(response, "matchedSources", []) or []
+    matched_nodes = getattr(response, "matchedNodes", []) or []
+    return {
+        "queryId": getattr(response, "queryId", None),
+        "status": getattr(getattr(response, "status", None), "value", getattr(response, "status", None)),
+        "matchedSourceCount": len(matched_sources),
+        "matchedNodeCount": len(matched_nodes),
+        "flowCount": getattr(coverage, "flowCount", None),
+        "nodeCount": getattr(coverage, "nodeCount", None),
+        "edgeCount": getattr(coverage, "edgeCount", None),
+        "evidenceCount": getattr(coverage, "evidenceCount", None),
+    }
+
+
+def _selected_flow_audit_summaries(selected_flows) -> list[Dict[str, Any]]:
+    projector = FlowProjectionBuilder()
+    summaries: list[Dict[str, Any]] = []
+    for index, flow in enumerate(tuple(selected_flows or ()), start=1):
+        source, entrypoint = projector.flow_answer_identity(flow)
+        coverage = getattr(flow, "coverage", None)
+        evidence_items = tuple(getattr(flow, "evidence", ()) or ())
+        summaries.append(
+            {
+                "flowIndex": index,
+                "source": source,
+                "entrypoint": entrypoint,
+                "nodeCount": int(getattr(coverage, "node_count", len(getattr(flow, "nodes", ()) or ()))),
+                "transitionCount": int(getattr(coverage, "transition_count", len(getattr(flow, "transitions", ()) or ()))),
+                "boundaryCount": int(getattr(coverage, "boundary_count", len(getattr(flow, "boundary_transitions", ()) or ()))),
+                "evidenceRecordCount": len(evidence_items),
+                "evidenceExcerptUtf8Bytes": sum(len(str(getattr(item, "text", "") or "").encode("utf-8")) for item in evidence_items),
+            }
+        )
+    return summaries
+
+
+def _safe_human_query_prompt_budget_records(config: AppConfig, body: KnowledgeQueryRequest, selected_flows, retrieval_plan) -> list[Dict[str, Any]]:
+    try:
+        return _human_query_prompt_budget_records(config, body, selected_flows, retrieval_plan)
+    except Exception as exc:
+        LOGGER.warning("human_query_prompt_budget_audit_failed", extra={"error": type(exc).__name__})
+        return [{"error": "PROMPT_BUDGET_AUDIT_FAILED", "exceptionClass": type(exc).__name__}]
+
+
+def _human_query_prompt_budget_records(config: AppConfig, body: KnowledgeQueryRequest, selected_flows, retrieval_plan) -> list[Dict[str, Any]]:
+    if retrieval_plan is None:
+        return []
+    projector = FlowProjectionBuilder()
+    renderer = HumanAnswerPromptRenderer()
+    reserved_output_tokens = DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS
+    estimator = PromptBudgetEstimator(
+        context_tokens=int(config.analysis_context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS),
+        reserved_output_tokens=reserved_output_tokens,
+    )
+    records: list[Dict[str, Any]] = []
+    for index, flow in enumerate(tuple(selected_flows or ()), start=1):
+        source, entrypoint = projector.flow_answer_identity(flow)
+        llm_input = projector.human_llm_input(body, flow, retrieval_plan)
+        prompt = renderer.render(llm_input)
+        estimate = estimator.estimate(prompt)
+        records.append(
+            {
+                "flowIndex": index,
+                "source": source,
+                "entrypoint": entrypoint,
+                "promptCharCount": len(prompt),
+                "promptUtf8Bytes": len(prompt.encode("utf-8")),
+                "promptHash": _sha256(prompt),
+                "llmInputHash": _sha256(json.dumps(llm_input, ensure_ascii=False, sort_keys=True, separators=(",", ":"))),
+                "promptBudgetEstimate": _prompt_budget_estimate_payload(estimate),
+            }
+        )
+    return records
+
+
+def _prompt_budget_estimate_payload(estimate) -> Dict[str, Any]:
+    return {
+        "renderedInputTokens": int(estimate.rendered_input_tokens),
+        "contextTokens": int(estimate.context_tokens),
+        "reservedOutputTokens": int(estimate.reserved_output_tokens),
+        "repairPromptOverheadTokens": int(estimate.repair_prompt_overhead_tokens),
+        "multilingualProseOverheadTokens": int(estimate.multilingual_prose_overhead_tokens),
+        "jsonFormattingOverheadTokens": int(estimate.json_formatting_overhead_tokens),
+        "totalRequiredTokens": int(estimate.total_required_tokens),
+        "fits": bool(estimate.fits),
+    }
+
+
+def _prompt_budget_summary(records) -> Dict[str, Any]:
+    usable = [record for record in records if isinstance(record.get("promptBudgetEstimate"), dict)]
+    if not usable:
+        return {
+            "flowCount": 0,
+            "maxPromptUtf8Bytes": None,
+            "maxTotalRequiredTokens": None,
+            "contextTokens": None,
+            "allFit": None,
+        }
+    return {
+        "flowCount": len(usable),
+        "maxPromptUtf8Bytes": max(int(record.get("promptUtf8Bytes") or 0) for record in usable),
+        "maxTotalRequiredTokens": max(int(record["promptBudgetEstimate"].get("totalRequiredTokens") or 0) for record in usable),
+        "contextTokens": usable[0]["promptBudgetEstimate"].get("contextTokens"),
+        "allFit": all(bool(record["promptBudgetEstimate"].get("fits")) for record in usable),
+    }
+
+
+def _compact_provider_audit_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    allowed = {
+        "provider",
+        "model",
+        "promptLength",
+        "promptHash",
+        "rawResponseLength",
+        "rawResponseHash",
+        "flowEntrypoint",
+        "attemptCount",
+        "requestedLanguage",
+        "resolvedLanguage",
+        "detectedLanguage",
+        "validationErrors",
+    }
+    return {key: record.get(key) for key in allowed if key in record}
+
+
+def _sha256(value: str) -> str:
+    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
 
 
 def _record_human_answer_audits(
@@ -879,15 +1298,41 @@ def _write_human_answer_audit_artifact(
         LOGGER.warning("human_answer_audit_write_failed", extra={"error": type(exc).__name__, "directory": directory})
 
 
+def _write_human_query_terminal_audit_artifact(config: AppConfig, record: Dict[str, Any]) -> None:
+    configured_directory = config.query_audit_directory
+    directory = str(configured_directory or os.environ.get("FORGE_KNOWLEDGE_HUMAN_ANSWER_AUDIT_DIR") or "").strip()
+    if not directory or int(config.query_audit_max_retained_files) <= 0:
+        return
+    try:
+        root = Path(directory)
+        root.mkdir(parents=True, exist_ok=True)
+        filename = f"{HUMAN_QUERY_TERMINAL_AUDIT_PREFIX}{int(time.time() * 1000)}-{uuid.uuid4().hex}.json"
+        target = root / filename
+        tmp = root / f".{filename}.tmp"
+        with tmp.open("w", encoding="utf-8") as handle:
+            json.dump(record, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, target)
+        _cleanup_human_answer_audit_files(
+            root,
+            max_retained_files=config.query_audit_max_retained_files,
+            max_file_age_seconds=config.query_audit_max_file_age_seconds,
+            pattern=f"{HUMAN_QUERY_TERMINAL_AUDIT_PREFIX}*.json",
+        )
+    except Exception as exc:
+        LOGGER.warning("human_query_terminal_audit_write_failed", extra={"error": type(exc).__name__, "directory": directory})
+
+
 def _cleanup_human_answer_audit_files(
     root: Path,
     *,
     max_retained_files: int,
     max_file_age_seconds: Optional[int],
+    pattern: str = "human-answer-*.json",
 ) -> None:
     now = time.time()
     files = sorted(
-        (path for path in root.glob("human-answer-*.json") if path.is_file()),
+        (path for path in root.glob(pattern) if path.is_file()),
         key=lambda path: (path.stat().st_mtime, path.name),
         reverse=True,
     )
@@ -895,7 +1340,7 @@ def _cleanup_human_answer_audit_files(
         if max_file_age_seconds is not None and now - path.stat().st_mtime > max_file_age_seconds:
             path.unlink(missing_ok=True)
     files = sorted(
-        (path for path in root.glob("human-answer-*.json") if path.is_file()),
+        (path for path in root.glob(pattern) if path.is_file()),
         key=lambda path: (path.stat().st_mtime, path.name),
         reverse=True,
     )

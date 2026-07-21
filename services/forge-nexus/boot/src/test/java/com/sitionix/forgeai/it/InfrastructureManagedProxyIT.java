@@ -888,6 +888,18 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryGerman()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryFrench()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryForbiddenLanguage()).createDefault();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryContextBudget())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamHumanContextBudgetCase())
+                .createDefault();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryHumanTimeout())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamHumanTimeoutCase())
+                .createDefault();
+        this.testManager.wiremock()
+                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryGenerationFailed())
+                .urlWithQueryParam(InfrastructureProxyQuery.upstreamHumanGenerationFailedCase())
+                .createDefault();
 
         //when then
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQuery())
@@ -938,6 +950,30 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("No grounded graph candidates were found."))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.status").doesNotExist())
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows").doesNotExist())
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryContextBudget())
+                .withQueryParameters(InfrastructureProxyQuery.humanContextBudgetCase())
+                .header("X-Correlation-Id", "corr-jarvis-budget")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("The complete grounded flow exceeds the available model context."))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.correlationId").value("corr-jarvis-budget"))
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryHumanTimeout())
+                .withQueryParameters(InfrastructureProxyQuery.humanTimeoutCase())
+                .header("X-Correlation-Id", "corr-jarvis-human-timeout")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("HUMAN_QUERY_TIMEOUT"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("Knowledge human query timed out."))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.correlationId").value("corr-jarvis-human-timeout"))
+                .assertDefault();
+
+        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryGenerationFailed())
+                .withQueryParameters(InfrastructureProxyQuery.humanGenerationFailedCase())
+                .header("X-Correlation-Id", "corr-jarvis-generation")
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("HUMAN_ANSWER_GENERATION_FAILED"))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("The local model could not produce any grounded flow answers."))
+                .andExpectPath(MockMvcResultMatchers.jsonPath("$.correlationId").value("corr-jarvis-generation"))
                 .assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryBlank())
