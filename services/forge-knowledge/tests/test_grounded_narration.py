@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -22,6 +23,7 @@ from knowledge_service.grounded_narration import (
     GroundedNarrationError,
     GroundingBatch,
     GroundingBatchPlanner,
+    GroundingPromptFactory,
     HumanNarrationStage,
     LosslessEvidenceSplitter,
     NarrativeFactDescriptor,
@@ -98,24 +100,13 @@ def _slice(
 def _grounding_len(text: str, *, descriptor: NarrativeFactDescriptor | None = None, item: EvidenceWorkItem | None = None) -> int:
     descriptor = descriptor or _descriptor()
     item = item or _work_item(text)
-    llm_input = {
-        "promptKind": "GROUNDING",
-        "originalQuestion": "Explain the neutral flow",
-        "responseLanguage": "en",
-        "units": [descriptor.to_prompt_dict()],
-        "evidenceSlices": [
-            {
-                "evidenceRef": "e1",
-                "unitRef": item.unit_ref,
-                "source": item.source,
-                "path": item.path,
-                "lineStart": item.line_start,
-                "lineEnd": item.line_end,
-                "text": text,
-            }
-        ],
-        "coverageContract": {"evidenceRefs": ["e1"], "unitRefs": [item.unit_ref]},
-    }
+    factory = GroundingPromptFactory()
+    llm_input, _ = factory.build(
+        original_question="Explain the neutral flow",
+        response_language="en",
+        descriptors_by_ref={descriptor.ref: descriptor},
+        slices=(factory.probe_slice(item, text),),
+    )
     return len(HumanAnswerPromptRenderer().render(llm_input).encode("utf-8"))
 
 
@@ -261,10 +252,19 @@ def test_grounding_validator_accounts_for_every_slice_once_and_no_new_behavior()
     assert payload["processedEvidence"][1]["disposition"] == "NO_NEW_BEHAVIOR"
 
 
+def test_grounding_validator_normalizes_missing_accounting_to_no_new_behavior():
+    payload = _valid_grounding_payload()
+    payload["processedEvidence"].pop()
+
+    result = GroundedClaimValidator().validate(json.dumps(payload), _grounding_batch(), response_language="en")
+
+    assert [item["evidenceRef"] for item in result["processedEvidence"]] == ["e1", "e2"]
+    assert result["processedEvidence"][1] == {"evidenceRef": "e2", "disposition": "NO_NEW_BEHAVIOR", "claimRefs": []}
+
+
 @pytest.mark.parametrize(
     ("mutate", "expected"),
     [
-        (lambda payload: payload["processedEvidence"].pop(), "Missing processed evidence refs"),
         (lambda payload: payload["processedEvidence"].append({"evidenceRef": "e3", "disposition": "NO_NEW_BEHAVIOR", "claimRefs": []}), "foreign evidence"),
         (lambda payload: payload["claims"][0].update({"unitRef": "u2"}), "foreign unit owner"),
         (lambda payload: payload["claims"][0].update({"evidenceRefs": []}), "at least one evidence ref"),
@@ -317,24 +317,132 @@ def test_grounding_validator_rejects_substantial_raw_evidence_copy():
     assert "raw evidence slice" in str(exc.value)
 
 
-def test_grounded_claim_service_repairs_missing_processed_evidence_once():
+def test_grounding_validator_rejects_short_exact_raw_evidence_copy():
+    batch = GroundingBatch(
+        index=1,
+        total=1,
+        llm_input={
+            "promptKind": "GROUNDING",
+            "responseLanguage": "en",
+            "units": [_descriptor("u1").to_prompt_dict()],
+            "evidenceSlices": [{"evidenceRef": "e1", "unitRef": "u1", "text": "calls worker"}],
+            "coverageContract": {"evidenceRefs": ["e1"], "unitRefs": ["u1"]},
+        },
+        evidence_ref_to_slice_ref={"e1": "s1"},
+        slice_ref_to_evidence_ref={"s1": "e1"},
+    )
+    payload = {
+        "claims": [{"claimRef": "c1", "unitRef": "u1", "evidenceRefs": ["e1"], "text": "calls worker"}],
+        "processedEvidence": [{"evidenceRef": "e1", "disposition": "CLAIMED", "claimRefs": ["c1"]}],
+    }
+
+    with pytest.raises(GroundedNarrationError) as exc:
+        GroundedClaimValidator().validate(json.dumps(payload), batch, response_language="en")
+
+    assert "raw evidence slice" in str(exc.value)
+
+
+class _AlwaysValidText:
+    def validate(self, text, language):
+        return SimpleNamespace(valid=True, errors=[])
+
+
+def test_descriptor_owned_literals_do_not_trigger_raw_copy_false_positive():
+    descriptor = _descriptor("u1", method="POST", route="/neutral/path", symbol="Unit.run")
+    batch = GroundingBatch(
+        index=1,
+        total=1,
+        llm_input={
+            "promptKind": "GROUNDING",
+            "responseLanguage": "en",
+            "units": [descriptor.to_prompt_dict()],
+            "evidenceSlices": [{"evidenceRef": "e1", "unitRef": "u1", "text": "POST /neutral/path Unit.run"}],
+            "coverageContract": {"evidenceRefs": ["e1"], "unitRefs": ["u1"]},
+        },
+        evidence_ref_to_slice_ref={"e1": "s1"},
+        slice_ref_to_evidence_ref={"s1": "e1"},
+    )
+    payload = {
+        "claims": [{"claimRef": "c1", "unitRef": "u1", "evidenceRefs": ["e1"], "text": "POST /neutral/path Unit.run"}],
+        "processedEvidence": [{"evidenceRef": "e1", "disposition": "CLAIMED", "claimRefs": ["c1"]}],
+    }
+
+    result = GroundedClaimValidator(text_validator=_AlwaysValidText()).validate(json.dumps(payload), batch, response_language="en")
+
+    assert result["claims"][0]["text"] == "POST /neutral/path Unit.run"
+
+
+def test_structural_literal_only_evidence_may_be_no_new_behavior():
+    descriptor = _descriptor("u1", method="POST", route="/neutral/path", symbol="Unit.run")
+    batch = GroundingBatch(
+        index=1,
+        total=1,
+        llm_input={
+            "promptKind": "GROUNDING",
+            "responseLanguage": "en",
+            "units": [descriptor.to_prompt_dict()],
+            "evidenceSlices": [{"evidenceRef": "e1", "unitRef": "u1", "text": "POST /neutral/path Unit.run"}],
+            "coverageContract": {"evidenceRefs": ["e1"], "unitRefs": ["u1"]},
+        },
+        evidence_ref_to_slice_ref={"e1": "s1"},
+        slice_ref_to_evidence_ref={"s1": "e1"},
+    )
+    payload = {
+        "claims": [],
+        "processedEvidence": [{"evidenceRef": "e1", "disposition": "NO_NEW_BEHAVIOR", "claimRefs": []}],
+    }
+
+    result = GroundedClaimValidator(text_validator=_AlwaysValidText()).validate(json.dumps(payload), batch, response_language="en")
+
+    assert result["processedEvidence"][0]["disposition"] == "NO_NEW_BEHAVIOR"
+
+
+def test_grounding_repair_that_still_copies_raw_evidence_fails_family():
+    batch = GroundingBatch(
+        index=1,
+        total=1,
+        llm_input={
+            "promptKind": "GROUNDING",
+            "responseLanguage": "en",
+            "units": [_descriptor("u1").to_prompt_dict()],
+            "evidenceSlices": [{"evidenceRef": "e1", "unitRef": "u1", "text": "raw behavior prose"}],
+            "coverageContract": {"evidenceRefs": ["e1"], "unitRefs": ["u1"]},
+        },
+        evidence_ref_to_slice_ref={"e1": "s1"},
+        slice_ref_to_evidence_ref={"s1": "e1"},
+    )
+    payload = {
+        "claims": [{"claimRef": "c1", "unitRef": "u1", "evidenceRefs": ["e1"], "text": "raw behavior prose"}],
+        "processedEvidence": [{"evidenceRef": "e1", "disposition": "CLAIMED", "claimRefs": ["c1"]}],
+    }
+    attempts = []
+
+    def complete(llm_input, validation_errors, stage, batch_index, batch_total):
+        attempts.append(validation_errors)
+        return json.dumps(payload)
+
+    with pytest.raises(GroundedNarrationError):
+        GroundedClaimService(GroundedClaimValidator(text_validator=_AlwaysValidText())).ground((batch,), response_language="en", complete=complete)
+
+    assert len(attempts) == 2
+    assert attempts[1]
+
+
+def test_grounded_claim_service_normalizes_missing_processed_evidence_without_repair():
     attempts = []
     invalid = _valid_grounding_payload()
     invalid["processedEvidence"] = invalid["processedEvidence"][:1]
-    valid = _valid_grounding_payload()
 
     def complete(llm_input, validation_errors, stage, batch_index, batch_total):
         attempts.append((validation_errors, stage, batch_index, batch_total))
-        payload = invalid if len(attempts) == 1 else valid
-        return json.dumps(payload)
+        return json.dumps(invalid)
 
     payloads = GroundedClaimService().ground((_grounding_batch(),), response_language="en", complete=complete)
 
     assert len(payloads) == 1
-    assert len(attempts) == 2
+    assert len(attempts) == 1
     assert attempts[0][0] is None
-    assert attempts[1][0]
-    assert attempts[1][1] is HumanNarrationStage.GROUNDING_LLM
+    assert payloads[0]["processedEvidence"][1] == {"evidenceRef": "e2", "disposition": "NO_NEW_BEHAVIOR", "claimRefs": []}
 
 
 def test_grounding_batch_planner_uses_dynamic_batch_count_and_fitting_prompts():
@@ -365,6 +473,78 @@ def test_grounding_batch_planner_uses_dynamic_batch_count_and_fitting_prompts():
     assert all(PromptBudgetEstimator(context_tokens=context, reserved_output_tokens=output_reserve).estimate(renderer.render(batch.llm_input)).fits for batch in plan.batches)
 
 
+def test_grounding_prompt_factory_removes_batch_count_and_preserves_planned_provider_hash():
+    descriptor = _descriptor()
+    renderer = HumanAnswerPromptRenderer()
+    planner = GroundingBatchPlanner(
+        renderer=renderer,
+        budget_estimator=PromptBudgetEstimator(context_tokens=50_000, reserved_output_tokens=2_000),
+    )
+    plan = planner.plan(
+        original_question="Explain the neutral flow",
+        response_language="en",
+        descriptors_by_ref={"u1": descriptor},
+        evidence_slices=(_slice("s1", "unit calls worker"),),
+    )
+
+    batch = plan.batches[0]
+    prompt = renderer.render(batch.llm_input)
+    assert "batch" not in batch.llm_input
+    assert batch.planned_initial_prompt_hash == _hash(prompt)
+    assert batch.budget_metrics["minimumValidOutputTokens"] <= batch.budget_metrics["reservedOutputTokens"]
+
+
+def test_complete_canonical_splitter_prompt_overflow_triggers_lossless_split():
+    descriptor = _descriptor(
+        outgoing_transitions=tuple(f"t{index}" for index in range(40)),
+        operation_identity="operation.identity.with.extra.metadata",
+        interface_identity="interface.identity.with.extra.metadata",
+    )
+    text = "".join(f"line {index} keeps behavior\n" for index in range(1, 40))
+    item = _work_item(text)
+    renderer = HumanAnswerPromptRenderer()
+    reduced_evidence = {
+        "evidenceRef": "e1",
+        "unitRef": "u1",
+        "source": item.source,
+        "path": item.path,
+        "lineStart": item.line_start,
+        "lineEnd": item.line_end,
+        "text": text,
+    }
+    old_reduced_input = {
+        "promptKind": "GROUNDING",
+        "originalQuestion": "Explain the neutral flow",
+        "responseLanguage": "en",
+        "units": [descriptor.to_prompt_dict()],
+        "evidenceSlices": [reduced_evidence],
+        "coverageContract": {"evidenceRefs": ["e1"], "unitRefs": ["u1"]},
+    }
+    factory = GroundingPromptFactory()
+    canonical_input, _ = factory.build(
+        original_question="Explain the neutral flow",
+        response_language="en",
+        descriptors_by_ref={"u1": descriptor},
+        slices=(factory.probe_slice(item, text),),
+    )
+    context = len(renderer.render(old_reduced_input).encode("utf-8")) + 8
+    assert len(renderer.render(old_reduced_input).encode("utf-8")) <= context
+    assert len(renderer.render(canonical_input).encode("utf-8")) > context
+
+    slices = _splitter(context, {"u1": descriptor}).split([item])
+
+    assert len(slices) > 1
+    assert "".join(slice_item.text for slice_item in slices) == text
+    for slice_item in slices:
+        llm_input, _ = factory.build(
+            original_question="Explain the neutral flow",
+            response_language="en",
+            descriptors_by_ref={"u1": descriptor},
+            slices=(slice_item,),
+        )
+        assert PromptBudgetEstimator(context_tokens=context, reserved_output_tokens=0).estimate(renderer.render(llm_input)).fits
+
+
 def test_grounding_batch_planner_accounts_for_minimum_output_reserve():
     descriptor = _descriptor()
     slices = tuple(_slice(f"s{index}", "tiny evidence", evidence_order=index) for index in range(1, 6))
@@ -388,6 +568,68 @@ def test_grounding_batch_planner_accounts_for_minimum_output_reserve():
 
     assert [len(batch.evidence_ref_to_slice_ref) for batch in plan.batches] == [2, 2, 1]
     assert [ref for batch in plan.batches for ref in batch.evidence_ref_to_slice_ref.values()] == [item.slice_ref for item in slices]
+
+
+def test_grounding_batch_planner_has_no_single_slice_output_budget_bypass():
+    descriptor = _descriptor()
+    renderer = HumanAnswerPromptRenderer()
+    planner = GroundingBatchPlanner(
+        renderer=renderer,
+        budget_estimator=PromptBudgetEstimator(context_tokens=50_000, reserved_output_tokens=1, fixed_framing_reserve_tokens=0),
+    )
+
+    with pytest.raises(GroundedNarrationError) as exc:
+        planner.plan(
+            original_question="Explain the neutral flow",
+            response_language="en",
+            descriptors_by_ref={"u1": descriptor},
+            evidence_slices=(_slice("s1", "tiny evidence"),),
+        )
+
+    assert exc.value.stage is HumanNarrationStage.GROUNDING_BATCHING
+
+
+def test_adaptive_grounding_output_split_preserves_each_slice_once():
+    descriptor = _descriptor()
+    renderer = HumanAnswerPromptRenderer()
+    slices = tuple(_slice(f"s{index}", f"evidence {index}", evidence_order=index) for index in range(1, 5))
+    plan = GroundingBatchPlanner(
+        renderer=renderer,
+        budget_estimator=PromptBudgetEstimator(context_tokens=50_000, reserved_output_tokens=2_000),
+    ).plan(
+        original_question="Explain the neutral flow",
+        response_language="en",
+        descriptors_by_ref={"u1": descriptor},
+        evidence_slices=slices,
+    )
+    calls = []
+
+    def complete(llm_input, validation_errors, stage, batch_index, batch_total):
+        calls.append((tuple(item["evidenceRef"] for item in llm_input["evidenceSlices"]), validation_errors))
+        if len(calls) == 1:
+            return SimpleNamespace(raw_text='{"claims":[', done_reason="length")
+        return SimpleNamespace(
+            raw_text=json.dumps(
+                {
+                    "claims": [],
+                    "processedEvidence": [
+                        {"evidenceRef": item["evidenceRef"], "disposition": "NO_NEW_BEHAVIOR", "claimRefs": []}
+                        for item in llm_input["evidenceSlices"]
+                    ],
+                }
+            ),
+            done_reason="stop",
+        )
+
+    service = GroundedClaimService()
+    payloads = service.ground(plan.batches, response_language="en", complete=complete)
+
+    accepted_refs = [ref for batch in service.last_accepted_batches for ref in batch.evidence_ref_to_slice_ref.values()]
+    assert len(payloads) == 2
+    assert sorted(accepted_refs) == [item.slice_ref for item in slices]
+    assert len(accepted_refs) == len(set(accepted_refs))
+    assert calls[0][1] is None
+    assert all(call[1] is None for call in calls)
 
 
 def test_claim_assembly_preserves_no_new_behavior_accounting_and_owner_order():
@@ -506,6 +748,65 @@ def test_final_narration_segmenter_splits_only_between_atoms_and_excludes_raw_ev
     assert "RAW_EVIDENCE_SENTINEL" not in "\n".join(prompts)
     assert "generated prose from a previous segment" not in "\n".join(prompts)
     assert all(PromptBudgetEstimator(context_tokens=context, reserved_output_tokens=0).estimate(prompt).fits for prompt in prompts)
+
+
+def test_narration_segmenter_has_no_single_atom_output_budget_bypass():
+    with pytest.raises(GroundedNarrationError) as exc:
+        NarrationSegmentPlanner(
+            renderer=HumanAnswerPromptRenderer(),
+            budget_estimator=PromptBudgetEstimator(context_tokens=50_000, reserved_output_tokens=1),
+        ).plan(
+            original_question="Explain the neutral flow",
+            response_language="en",
+            source="source-a",
+            entrypoint="Start.run",
+            atoms=(_atoms()[0],),
+        )
+
+    assert exc.value.stage is HumanNarrationStage.NARRATION_SEGMENTATION
+
+
+def test_one_claim_heavy_atom_partitions_claims_once_and_preserves_terminal_role():
+    claims = tuple(
+        GroundedNarrativeClaim(f"c{index}", "u1", "VERIFIED", "claim text " + ("x" * 160), (f"s{index}",), 1, index)
+        for index in range(1, 8)
+    )
+    atom = NarrationAtom(
+        ref="a1",
+        atom_kind="TERMINAL_RESULT_CLAIM",
+        unit_ref="u1",
+        certainty="VERIFIED",
+        descriptor=_descriptor("u1", terminal_role="TERMINAL"),
+        claims=claims,
+        canonical_order=1,
+    )
+    renderer = HumanAnswerPromptRenderer()
+    calibration = NarrationSegmentPlanner(
+        renderer=renderer,
+        budget_estimator=PromptBudgetEstimator(context_tokens=50_000, reserved_output_tokens=10_000),
+    )
+    one_claim_atom = replace(atom, claims=claims[:1])
+    context = len(renderer.render(calibration._segment_input("Explain", "en", "source-a", "Start.run", (one_claim_atom,), (one_claim_atom,), index=1, total=1, terminal=True)).encode("utf-8")) + 10_000 + 128
+    planner = NarrationSegmentPlanner(
+        renderer=renderer,
+        budget_estimator=PromptBudgetEstimator(context_tokens=context, reserved_output_tokens=10_000),
+    )
+
+    plan = planner.plan(
+        original_question="Explain",
+        response_language="en",
+        source="source-a",
+        entrypoint="Start.run",
+        atoms=(atom,),
+    )
+
+    partitioned_atoms = [atom for segment in plan.segments for atom in segment.atoms]
+    claim_refs = [claim.claim_ref for atom in partitioned_atoms for claim in atom.claims]
+    terminal_atoms = [atom for atom in partitioned_atoms if atom.descriptor.terminal_role == "TERMINAL"]
+    assert len(partitioned_atoms) > 1
+    assert sorted(claim_refs) == [claim.claim_ref for claim in claims]
+    assert len(claim_refs) == len(set(claim_refs))
+    assert terminal_atoms == [partitioned_atoms[-1]]
 
 
 def test_final_narration_validation_allows_adjacent_verified_claims_but_rejects_verified_gap():

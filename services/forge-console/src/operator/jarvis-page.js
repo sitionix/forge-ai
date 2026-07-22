@@ -139,14 +139,15 @@ export class JarvisPage {
       return result.value;
     } catch (error) {
       if (!this.disposed) {
-        this.queryView.replaceWithError(pendingMessageId, error);
+        const safePresentation = this.safeQueryErrorPresentation();
+        this.queryView.replaceWithSafeError(pendingMessageId, safePresentation);
         renderRequestError(
           'jarvisQueryError',
           error,
           {
             safe: true,
-            title: 'Request failed',
-            message: 'The request could not be completed. Please try again.'
+            title: safePresentation.title,
+            message: safePresentation.message
           },
           this.document
         );
@@ -164,6 +165,13 @@ export class JarvisPage {
       queryText,
       intent: 'AUTO',
       includeTests: Boolean(this.runtimeConfig.jarvisQueryIncludeTests)
+    };
+  }
+
+  safeQueryErrorPresentation() {
+    return {
+      title: 'Request failed',
+      message: 'The request could not be completed. Please try again.'
     };
   }
 

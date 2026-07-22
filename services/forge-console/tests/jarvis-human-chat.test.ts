@@ -110,7 +110,7 @@ describe('Jarvis human chat', () => {
     expect(text).not.toContain('Raw JSON');
   });
 
-  it('renders one plain answer card per response item and keeps diagnostics compact', async () => {
+  it('renders one plain answer card per response item and hides normal-chat diagnostics', async () => {
     const dom = jarvisDom();
     const response = {
       answerLanguage: 'uk',
@@ -140,8 +140,9 @@ describe('Jarvis human chat', () => {
     expect(cardTexts[0]).toContain('ControllerA.create');
     expect(cardTexts[1]).toContain('ListenerB.handle');
     expect(cardTexts[2]).toContain('JobC.run');
-    expect(dom.window.document.body.textContent).toContain('One flow failed.');
-    expect(dom.window.document.querySelector('.jarvis-answer-warning')).not.toBeNull();
+    expect(dom.window.document.body.textContent).not.toContain('One flow failed.');
+    expect(dom.window.document.body.textContent).not.toContain('HUMAN_FLOW_ANSWER_GENERATION_FAILED');
+    expect(dom.window.document.querySelector('.jarvis-answer-warning')).toBeNull();
   });
 
   it('preserves multiline numbered answers and keeps escaped text plain', async () => {
@@ -192,6 +193,47 @@ describe('Jarvis human chat', () => {
     expect(text).not.toContain('/api/v1');
     expect(text).not.toContain('correlationId');
     expect(dom.window.document.querySelectorAll('.jarvis-chat-bubble')).toHaveLength(4);
+  });
+
+  it('renders only safe generic text for raw backend error title objects', async () => {
+    const dom = jarvisDom();
+    const error = Object.assign(new Error('HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED'), {
+      title: 'Human answer',
+      message: 'HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED',
+      safeMessage: 'HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED',
+      code: 'HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED',
+      endpoint: '/api/v1/jarvis/query',
+      correlationId: 'secret-correlation-id'
+    });
+    const http = { post: vi.fn(() => Promise.reject(error)) };
+    const page = new JarvisPage({ document: dom.window.document, http });
+    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'Explain';
+
+    await page.submitQuery(submitEvent());
+
+    const text = dom.window.document.body.textContent || '';
+    expect(text).toContain('Request failed');
+    expect(text).toContain('The request could not be completed. Please try again.');
+    expect(text).not.toContain('Human answer');
+    expect(text).not.toContain('HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED');
+    expect(text).not.toContain('/api/v1/jarvis/query');
+    expect(text).not.toContain('secret-correlation-id');
+  });
+
+  it('keeps safe presentation strings escaped', async () => {
+    const dom = jarvisDom();
+    const page = new JarvisPage({ document: dom.window.document, http: { post: vi.fn() } });
+    const id = page.queryView.appendPendingAssistant();
+
+    page.queryView.replaceWithSafeError(id, {
+      title: '<b>Request failed</b>',
+      message: '<img src=x onerror="window.__jarvisXss=1">'
+    });
+
+    expect(dom.window.document.querySelector('b')).toBeNull();
+    expect(dom.window.document.querySelector('img')).toBeNull();
+    expect(dom.window.__jarvisXss).toBeUndefined();
+    expect(dom.window.document.body.textContent).toContain('<b>Request failed</b>');
   });
 
   it('escapes user and model text', async () => {

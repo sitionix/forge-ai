@@ -1005,7 +1005,7 @@ def test_oversized_full_prompt_fails_before_ollama_provider_request():
     assert recorder.posts == []
 
 
-def test_atomic_overflow_fails_one_family_without_discarding_successful_family():
+def test_large_family_does_not_discard_successful_family():
     small_flow = flow([node("Small.run", entrypoint=True)], [])
     huge_flow = replace(
         flow([node("Huge.run", entrypoint=True)], []),
@@ -1026,9 +1026,9 @@ def test_atomic_overflow_fails_one_family_without_discarding_successful_family()
         plan=retrieval_plan("explain all", detected_language="en", response_language="en"),
     )
 
-    assert len(provider.calls) == 1
-    assert [answer.entrypoint for answer in response.answers] == ["Small.run"]
-    assert [diagnostic.code for diagnostic in response.diagnostics] == ["HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED"]
+    assert provider.calls
+    assert "Small.run" in [answer.entrypoint for answer in response.answers]
+    assert all(diagnostic.code != "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED" for diagnostic in response.diagnostics)
 
 
 class FactListingProvider:
@@ -1162,6 +1162,45 @@ def test_large_family_splits_into_budget_safe_segments_and_one_public_answer():
     final_calls = [call for call in provider.calls if call["llmInput"].get("promptKind") == "FINAL_NARRATION"]
     segment_refs = [set(call["llmInput"]["coverageContract"]["canonicalAtomRefs"]) for call in final_calls]
     assert len(set.union(*segment_refs)) == sum(len(refs) for refs in segment_refs)
+
+
+def test_truncated_final_segment_output_splits_segment_adaptively():
+    graph_flow = flow(
+        [node("Root.run", entrypoint=True), node("Worker.run"), node("Done.run")],
+        [edge("edge-root-worker", "Root.run", "Worker.run"), edge("edge-worker-done", "Worker.run", "Done.run")],
+    )
+
+    class TruncatedThenStructuredProvider:
+        def __init__(self):
+            self.calls = []
+
+        def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+            self.calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
+            if llm_input.get("promptKind") == "GROUNDING":
+                return FlowExplanationProviderResult(raw_text=json.dumps(auto_grounding(llm_input), ensure_ascii=False), prompt_char_length=100)
+            final_call_count = sum(1 for call in self.calls if call["llmInput"].get("promptKind") == "FINAL_NARRATION")
+            if final_call_count == 1:
+                return FlowExplanationProviderResult(raw_text='{"steps":[', prompt_char_length=100, done_reason="length", eval_count=2048, reserved_output_tokens=2048)
+            return FlowExplanationProviderResult(
+                raw_text=json.dumps(structured_answer(llm_input, "The supplied segment is covered.", result="The flow remains one answer.")),
+                prompt_char_length=100,
+                done_reason="stop",
+            )
+
+    provider = TruncatedThenStructuredProvider()
+    service = HumanFlowAnswerService(provider)
+
+    response = service.answer(
+        KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION"),
+        human_execution(graph_flow),
+        plan=retrieval_plan("explain root", detected_language="en", response_language="en"),
+    )
+
+    final_calls = [call for call in provider.calls if call["llmInput"].get("promptKind") == "FINAL_NARRATION"]
+    assert len(final_calls) > 2
+    assert len(response.answers) == 1
+    assert "The supplied segment is covered." in response.answers[0].text
+    assert any(record.get("attemptType") == "OUTPUT_CAPACITY_SPLIT" for record in service.audit_records)
 
 
 def test_repeated_looking_evidence_is_not_content_deduplicated_across_segments():

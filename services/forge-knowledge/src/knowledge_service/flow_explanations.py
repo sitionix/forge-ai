@@ -6,7 +6,7 @@ import re
 import time
 import urllib.parse
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Deque, Dict, List, Mapping, Sequence
 
 import httpx
@@ -28,6 +28,8 @@ from knowledge_service.grounded_narration import (
     NarrativeFactProjector,
     NarrationAtomPlanner,
     NarrationSegment,
+    NarrationSegmentPlanner,
+    assert_final_narration_prompt_safe,
     technical_diagnostic,
 )
 from knowledge_service.flow_boundary_classifier import FlowBoundaryClassifier, FLOW_BOUNDARY_CLASSIFIER
@@ -64,6 +66,11 @@ _DEADLINE_COMPLETION_GRACE_SECONDS = 0.005
 class FlowExplanationProviderResult:
     raw_text: str
     prompt_char_length: int
+    done_reason: str | None = None
+    prompt_eval_count: int | None = None
+    eval_count: int | None = None
+    reserved_output_tokens: int | None = None
+    duration_ms: float | None = None
 
 
 class HumanAnswerGenerationFailed(Exception):
@@ -84,6 +91,12 @@ class HumanAnswerRepairExhausted(HumanAnswerGenerationFailed):
 
 class HumanAnswerContextBudgetExceeded(HumanAnswerGenerationFailed):
     pass
+
+
+class HumanAnswerOutputCapacitySplit(HumanAnswerGenerationFailed):
+    def __init__(self, violation: HumanAnswerContractViolation) -> None:
+        self.violation = violation
+        super().__init__("provider output ended at the reserved output budget")
 
 
 @dataclass(frozen=True)
@@ -202,7 +215,14 @@ class HumanAnswerPromptRenderer:
             "coverageContract.evidenceOwners maps each evidenceRef to its only valid unitRef owner and is authoritative. "
             "Each unit also lists ownedEvidenceRefs; claim.evidenceRefs must be a subset of ownedEvidenceRefs for claim.unitRef. "
             "Do not cite foreign evidence or units.\n"
-            "NO_NEW_BEHAVIOR means the evidence was processed but adds no distinct behavior beyond already represented claims.\n"
+            "The unit descriptor is already the public typed behavior that final narration can use. "
+            "Create a claim only when evidence adds a distinct behavior not already represented by that unit descriptor. "
+            "If the supplied evidence only restates, illustrates, or line-level supports descriptor fields, do not create a claim for that evidence. "
+            "It is valid, and often preferred, to return claims [] when the descriptors already cover the behavior for this batch. "
+            "Do not create claims for local setup, helper calls, guard code, boilerplate, or literal code lines unless they add a distinct behavior absent from the descriptor. "
+            "Create the smallest number of distinct claims needed. Group evidence in one claim only when it has the same unit owner and supports the same behavior. "
+            "Still account for every evidenceRef exactly once in processedEvidence. "
+            "NO_NEW_BEHAVIOR means the evidence was processed but adds no distinct behavior beyond the unit descriptor or already represented claims.\n"
             "responseLanguage is an ISO 639 language code; write natural-language claim text in that language, not English unless responseLanguage is en. "
             "For example, responseLanguage uk means Ukrainian and responseLanguage de means German. "
             "Preserve code identifiers, routes, constants, topics, methods, and quoted code identifiers exactly. "
@@ -224,6 +244,7 @@ class HumanAnswerPromptRenderer:
             validation_block += "\n".join(f"- {error}" for error in validation_errors)
             validation_block += (
                 "\nFor any language violation, rewrite every step text and terminal result in the ISO language named by responseLanguage while preserving code identifiers exactly. "
+                "Use natural localized prose, not English fallback labels; do not put certainty labels such as VERIFIED, UNVERIFIED, or AMBIGUOUS inside text. "
                 "For any missing, duplicate, foreign, or out-of-order atomRef violation, rebuild steps from coverageContract.requiredAtomRefs in exactly that order. "
                 "The result field never covers atomRefs; if a terminal atom is missing, add it to a step and then provide result only if this segment is terminal. "
                 "If unsure, use one terse step per suggestedStepPlan entry and copy that entry's atomRefs exactly; do this especially for any atomRef named as missing. "
@@ -237,16 +258,18 @@ class HumanAnswerPromptRenderer:
             "for non-terminal segments, or the same shape with result as a grounded string only for the terminal segment.\n"
             "responseLanguage is an ISO 639 language code; write all natural-language prose in that language, not English unless responseLanguage is en. "
             "For example, responseLanguage uk means Ukrainian and responseLanguage de means German. "
+            "Use the natural vocabulary and script of responseLanguage; for Ukrainian, step text must be Ukrainian Cyrillic prose. "
             "Preserve code identifiers, routes, constants, topics, and method names exactly as supplied.\n"
             "Use only narrationAtoms. The prompt intentionally contains no raw evidence; do not ask for or mention evidence, refs, batches, slices, graph ids, or retrieval mechanics.\n"
             "coverageContract is authoritative. Cover every required atomRef exactly once in canonical order. "
-            "suggestedStepPlan lists minimal coverage units. Start from it and copy each listed atomRef exactly; do not omit trailing refs. "
-            "You may combine adjacent VERIFIED suggested entries only when all atomRefs remain present exactly once and in order. "
+            "suggestedStepPlan lists the required step units. Return exactly one step for each suggestedStepPlan entry, in the same order. "
+            "Copy each listed atomRef exactly; do not merge, skip, summarize, replace, or omit trailing suggested entries. "
             "The result field is not coverage and does not cover any atomRef, including terminal result atoms. "
             "The final narration LLM must not decide flow ordering.\n"
-            "You may combine adjacent related VERIFIED atoms into one readable step, but never combine a VERIFIED atom with an UNVERIFIED or AMBIGUOUS gap atom. "
+            "Never combine a VERIFIED atom with an UNVERIFIED or AMBIGUOUS gap atom. "
             "Do not linearize independent branches as a false sequence. Do not connect unrelated sources without a supplied transition or gap.\n"
             "For UNVERIFIED or AMBIGUOUS atoms, preserve the supplied certainty and explicitly state that the current graph does not verify the direct causal transition.\n"
+            "The certainty field carries VERIFIED, UNVERIFIED, or AMBIGUOUS; do not repeat those uppercase certainty labels in human-visible text.\n"
             "Only the terminal segment may include result. Non-terminal result must be null.\n"
             "incomingContext and outgoingContext are public-safe continuity descriptors only; do not cover or copy them as refs.\n"
             "Do not invent routes, transports, statuses, exceptions, validations, side effects, results, or ordering unsupported by narrationAtoms.\n"
@@ -1011,8 +1034,8 @@ class HumanFlowAnswerService:
             stage: HumanNarrationStage,
             batch_index: int | None,
             batch_count: int | None,
-        ) -> str:
-            result = self._complete_with_deadline(
+        ) -> FlowExplanationProviderResult:
+            return self._complete_with_deadline(
                 llm_input,
                 deadline_at,
                 validation_errors=validation_errors,
@@ -1026,7 +1049,6 @@ class HumanFlowAnswerService:
                 segment_count=batch_count,
                 provider_stage=stage.value,
             )
-            return result.raw_text
 
         prepared = self.family_narration_service.prepare(
             request=request,
@@ -1059,22 +1081,73 @@ class HumanFlowAnswerService:
         resolved_language: str,
     ) -> str:
         payloads: list[Mapping[str, Any]] = []
+        accepted_segments: list[NarrationSegment] = []
         for segment in segments:
-            payloads.append(
-                self._answer_one_segment(
-                    segment.llm_input,
-                    deadline_at,
-                    flow_index=flow_index,
-                    source=source,
-                    entrypoint=entrypoint,
-                    segment_index=segment.index,
-                    segment_count=segment.total,
-                    requested_language=requested_language,
-                    resolved_language=resolved_language,
-                )
+            for accepted_segment, payload in self._answer_one_segment_adaptive(
+                segment,
+                deadline_at,
+                flow_index=flow_index,
+                source=source,
+                entrypoint=entrypoint,
+                requested_language=requested_language,
+                resolved_language=resolved_language,
+            ):
+                accepted_segments.append(accepted_segment)
+                payloads.append(payload)
+        final_segments = tuple(
+            replace(segment, index=index, total=len(accepted_segments), terminal=(index == len(accepted_segments)))
+            for index, segment in enumerate(accepted_segments, start=1)
+        )
+        final_payloads = list(payloads)
+        for index, segment in enumerate(final_segments):
+            if segment.terminal == accepted_segments[index].terminal:
+                continue
+            final_payloads[index] = dict(final_payloads[index])
+        self._validate_family_segment_coverage(final_payloads, final_segments)
+        return self._stitch_segment_payloads(final_payloads)
+
+    def _answer_one_segment_adaptive(
+        self,
+        segment: NarrationSegment,
+        deadline_at: float,
+        *,
+        flow_index: int,
+        source: str,
+        entrypoint: str,
+        requested_language: str | None,
+        resolved_language: str,
+    ) -> tuple[tuple[NarrationSegment, Mapping[str, Any]], ...]:
+        try:
+            payload = self._answer_one_segment(
+                segment.llm_input,
+                deadline_at,
+                flow_index=flow_index,
+                source=source,
+                entrypoint=entrypoint,
+                segment_index=segment.index,
+                segment_count=segment.total,
+                requested_language=requested_language,
+                resolved_language=resolved_language,
             )
-        self._validate_family_segment_coverage(payloads, segments)
-        return self._stitch_segment_payloads(payloads)
+            return ((segment, payload),)
+        except HumanAnswerOutputCapacitySplit:
+            child_segments = self._split_narration_segment(segment)
+            if not child_segments:
+                raise
+            results: list[tuple[NarrationSegment, Mapping[str, Any]]] = []
+            for child in child_segments:
+                results.extend(
+                    self._answer_one_segment_adaptive(
+                        child,
+                        deadline_at,
+                        flow_index=flow_index,
+                        source=source,
+                        entrypoint=entrypoint,
+                        requested_language=requested_language,
+                        resolved_language=resolved_language,
+                    )
+                )
+            return tuple(results)
 
     def _answer_one_segment(
         self,
@@ -1109,11 +1182,101 @@ class HumanFlowAnswerService:
                 return self._validate_payload(result.raw_text, resolved_language, llm_input)
             except HumanAnswerContractViolation as exc:
                 self._record_validation_errors(entrypoint=entrypoint, attempt_count=attempt_count, errors=exc.errors, segment_index=segment_index)
+                if attempt_count == 1 and self._is_output_capacity_failure(exc, result):
+                    self._mark_latest_audit_attempt_type(entrypoint, segment_index, "OUTPUT_CAPACITY_SPLIT")
+                    raise HumanAnswerOutputCapacitySplit(exc) from exc
                 if attempt_count == 1:
                     validation_errors = exc.errors
                     continue
                 raise HumanAnswerRepairExhausted("human answer repair failed validation") from exc
         raise HumanAnswerRepairExhausted("human answer repair failed validation")
+
+    def _split_narration_segment(self, segment: NarrationSegment) -> tuple[NarrationSegment, ...]:
+        atoms = tuple(segment.atoms or ())
+        if len(atoms) > 1:
+            midpoint = max(1, len(atoms) // 2)
+            if midpoint >= len(atoms):
+                midpoint = len(atoms) - 1
+            groups = (atoms[:midpoint], atoms[midpoint:])
+        elif len(atoms) == 1 and len(atoms[0].claims) > 1:
+            atom = atoms[0]
+            claims = tuple(sorted(atom.claims, key=lambda item: item.canonical_claim_order))
+            midpoint = max(1, len(claims) // 2)
+            left = replace(
+                atom,
+                ref=f"{atom.ref}p1",
+                atom_kind="VERIFIED_CLAIM",
+                descriptor=replace(atom.descriptor, terminal_role=None),
+                claims=claims[:midpoint],
+            )
+            right = replace(
+                atom,
+                ref=f"{atom.ref}p2",
+                claims=claims[midpoint:],
+            )
+            groups = ((left,), (right,))
+        else:
+            return ()
+        root = segment.llm_input.get("familyRoot") if isinstance(segment.llm_input.get("familyRoot"), dict) else {}
+        planner = NarrationSegmentPlanner(renderer=self.renderer, budget_estimator=self.budget_estimator)
+        result: list[NarrationSegment] = []
+        for index, group in enumerate(groups, start=1):
+            if not group:
+                continue
+            child_terminal = bool(segment.terminal and index == len(groups))
+            llm_input = planner._segment_input(
+                str(segment.llm_input.get("originalQuestion") or ""),
+                str(segment.llm_input.get("responseLanguage") or "en"),
+                str(root.get("source") or ""),
+                str(root.get("entrypoint") or ""),
+                tuple(group),
+                tuple(atoms),
+                index=index,
+                total=len(groups),
+                terminal=child_terminal,
+            )
+            estimate = self.budget_estimator.estimate(self.renderer.render(llm_input))
+            minimum_output = self._minimum_valid_output_tokens(llm_input)
+            result.append(
+                NarrationSegment(
+                    llm_input=llm_input,
+                    index=index,
+                    total=len(groups),
+                    terminal=child_terminal,
+                    atoms=tuple(group),
+                    budget_metrics={
+                        "renderedInputTokens": int(estimate.rendered_input_tokens),
+                        "availableInputTokens": max(0, int(estimate.context_tokens) - int(estimate.reserved_output_tokens) - int(estimate.fixed_framing_reserve_tokens)),
+                        "minimumValidOutputTokens": int(minimum_output),
+                        "reservedOutputTokens": int(estimate.reserved_output_tokens),
+                        "atomCount": len(group),
+                        "claimCount": sum(len(atom.claims) for atom in group),
+                    },
+                )
+            )
+        return tuple(result)
+
+    def _is_output_capacity_failure(self, exc: HumanAnswerContractViolation, result: FlowExplanationProviderResult) -> bool:
+        if not isinstance(exc, HumanAnswerMalformedResponse):
+            return False
+        done_reason = str(getattr(result, "done_reason", "") or "").lower()
+        if done_reason in {"length", "num_predict", "max_tokens", "max_tokens_reached"}:
+            return True
+        try:
+            return (
+                result.eval_count is not None
+                and result.reserved_output_tokens is not None
+                and int(result.reserved_output_tokens) > 0
+                and int(result.eval_count) >= int(result.reserved_output_tokens)
+            )
+        except Exception:
+            return False
+
+    def _mark_latest_audit_attempt_type(self, entrypoint: str, segment_index: int | None, attempt_type: str) -> None:
+        for record in reversed(self.audit_records):
+            if record.get("flowEntrypoint") == entrypoint and record.get("segmentIndex") == segment_index:
+                record["attemptType"] = attempt_type
+                return
 
     def _flow_failure_diagnostic(self, source: str, entrypoint: str) -> KnowledgeQueryDiagnostic:
         return KnowledgeQueryDiagnostic(
@@ -1151,6 +1314,7 @@ class HumanFlowAnswerService:
     ) -> FlowExplanationProviderResult:
         if self._cancelled() or self._remaining_seconds(deadline_at) <= self.min_call_timeout_seconds:
             raise HumanAnswerDeadlineExceeded()
+        assert_final_narration_prompt_safe(llm_input)
         prompt = self.renderer.render(llm_input, validation_errors)
         self._record_prompt_budget_check(
             prompt,
@@ -1159,17 +1323,21 @@ class HumanFlowAnswerService:
             source=source,
             entrypoint=entrypoint,
             attempt="REPAIR" if validation_errors else "INITIAL",
+            validation_errors=validation_errors,
             segment_index=segment_index,
             segment_count=segment_count,
             provider_stage=provider_stage,
         )
         remaining = self._remaining_seconds(deadline_at)
+        started = time.perf_counter()
         try:
             result = self.provider.complete(llm_input, validation_errors=validation_errors, timeout_seconds=remaining)
         except (TimeoutError, httpx.TimeoutException) as exc:
             raise HumanAnswerDeadlineExceeded() from exc
         except Exception as exc:
             raise HumanAnswerProviderUnavailable(str(type(exc).__name__)) from exc
+        duration_ms = (time.perf_counter() - started) * 1000
+        result = self._with_provider_call_metadata(result, duration_ms=duration_ms)
         if self._cancelled() or time.monotonic() > deadline_at + _DEADLINE_COMPLETION_GRACE_SECONDS:
             raise HumanAnswerDeadlineExceeded()
         self._record_audit(
@@ -1182,8 +1350,25 @@ class HumanFlowAnswerService:
             segment_index=segment_index,
             segment_count=segment_count,
             provider_stage=provider_stage,
+            duration_ms=duration_ms,
+            remaining_deadline_before_call=remaining,
+            remaining_deadline_after_call=self._remaining_seconds(deadline_at),
+            result=result,
         )
         return result
+
+    def _with_provider_call_metadata(self, result: Any, *, duration_ms: float) -> FlowExplanationProviderResult:
+        raw_text = str(getattr(result, "raw_text", result if isinstance(result, str) else "") or "")
+        prompt_char_length = int(getattr(result, "prompt_char_length", 0) or 0)
+        return FlowExplanationProviderResult(
+            raw_text=raw_text,
+            prompt_char_length=prompt_char_length,
+            done_reason=getattr(result, "done_reason", None),
+            prompt_eval_count=getattr(result, "prompt_eval_count", None),
+            eval_count=getattr(result, "eval_count", None),
+            reserved_output_tokens=self.reserved_output_tokens,
+            duration_ms=duration_ms,
+        )
 
     def _record_prompt_budget_check(
         self,
@@ -1194,12 +1379,14 @@ class HumanFlowAnswerService:
         source: str,
         entrypoint: str,
         attempt: str,
+        validation_errors: Sequence[str] | None = None,
         segment_index: int | None = None,
         segment_count: int | None = None,
         provider_stage: str | None = None,
     ) -> PromptBudgetEstimate:
         estimate = self.budget_estimator.estimate(prompt)
-        budget_payload = self._prompt_budget_payload(estimate, attempt)
+        minimum_output_tokens = self._minimum_valid_output_tokens(llm_input)
+        budget_payload = self._prompt_budget_payload(estimate, attempt, minimum_output_tokens=minimum_output_tokens)
         prompt_kind = str(llm_input.get("promptKind") or "LEGACY_NARRATION")
         self.prompt_budget_records.append(
             {
@@ -1211,6 +1398,8 @@ class HumanFlowAnswerService:
                 "providerStage": provider_stage,
                 "promptKind": prompt_kind,
                 "attempt": attempt,
+                "attemptType": "VALIDATION_REPAIR" if attempt == "REPAIR" else "INITIAL",
+                "validationErrors": [str(error) for error in validation_errors or ()],
                 "promptCharCount": len(prompt),
                 "promptUtf8Bytes": len(prompt.encode("utf-8")),
                 "promptHash": self._sha256(prompt),
@@ -1221,18 +1410,70 @@ class HumanFlowAnswerService:
         )
         if not estimate.fits:
             raise HumanAnswerContextBudgetExceeded("The complete grounded flow exceeds the available model context.")
+        if int(estimate.reserved_output_tokens) > 0 and minimum_output_tokens > int(estimate.reserved_output_tokens):
+            raise HumanAnswerContextBudgetExceeded("The minimum valid model response exceeds the reserved output budget.")
         return estimate
 
-    def _prompt_budget_payload(self, estimate: PromptBudgetEstimate, attempt: str) -> Dict[str, Any]:
+    def _prompt_budget_payload(self, estimate: PromptBudgetEstimate, attempt: str, *, minimum_output_tokens: int) -> Dict[str, Any]:
+        available_input_tokens = max(
+            0,
+            int(estimate.context_tokens)
+            - int(estimate.reserved_output_tokens)
+            - int(estimate.fixed_framing_reserve_tokens),
+        )
         return {
             "attempt": attempt,
             "renderedInputTokens": int(estimate.rendered_input_tokens),
+            "availableInputTokens": available_input_tokens,
             "reservedOutputTokens": int(estimate.reserved_output_tokens),
+            "minimumValidOutputTokens": int(minimum_output_tokens),
             "fixedFramingReserveTokens": int(estimate.fixed_framing_reserve_tokens),
             "totalRequiredTokens": int(estimate.total_required_tokens),
             "contextTokens": int(estimate.context_tokens),
             "fits": bool(estimate.fits),
+            "inputFits": bool(estimate.fits),
+            "outputFits": bool(int(estimate.reserved_output_tokens) <= 0 or int(minimum_output_tokens) <= int(estimate.reserved_output_tokens)),
         }
+
+    def _minimum_valid_output_tokens(self, llm_input: Mapping[str, Any]) -> int:
+        prompt_kind = str(llm_input.get("promptKind") or "").upper()
+        if prompt_kind == "GROUNDING":
+            coverage = llm_input.get("coverageContract") if isinstance(llm_input.get("coverageContract"), dict) else {}
+            evidence_refs = [
+                str(ref)
+                for ref in (coverage.get("evidenceRefs") or [])
+                if str(ref).strip()
+            ]
+            payload = {
+                "claims": [],
+                "processedEvidence": [
+                    {"evidenceRef": ref, "disposition": "NO_NEW_BEHAVIOR", "claimRefs": []}
+                    for ref in evidence_refs
+                ],
+            }
+            return self.budget_estimator.estimate_text_tokens(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+        if prompt_kind == "FINAL_NARRATION":
+            coverage = llm_input.get("coverageContract") if isinstance(llm_input.get("coverageContract"), dict) else {}
+            refs = [
+                str(ref)
+                for ref in (coverage.get("requiredAtomRefs") or coverage.get("canonicalAtomRefs") or [])
+                if str(ref).strip()
+            ]
+            atom_certainty = coverage.get("atomCertainty") if isinstance(coverage.get("atomCertainty"), dict) else {}
+            segment = llm_input.get("segment") if isinstance(llm_input.get("segment"), dict) else {}
+            payload = {
+                "steps": [
+                    {
+                        "atomRefs": [ref],
+                        "certainty": str(atom_certainty.get(ref) or "VERIFIED"),
+                        "text": "x",
+                    }
+                    for ref in refs
+                ],
+                "result": "x" if bool(segment.get("terminal")) else None,
+            }
+            return self.budget_estimator.estimate_text_tokens(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+        return 0
 
     def _validate_text(self, raw_text: str, language: str, llm_input: Mapping[str, Any]) -> str:
         return self._render_structured_answer(self._validate_payload(raw_text, language, llm_input))
@@ -1516,6 +1757,10 @@ class HumanFlowAnswerService:
         segment_index: int | None = None,
         segment_count: int | None = None,
         provider_stage: str | None = None,
+        duration_ms: float | None = None,
+        remaining_deadline_before_call: float | None = None,
+        remaining_deadline_after_call: float | None = None,
+        result: FlowExplanationProviderResult | None = None,
     ) -> None:
         self.audit_records.append(
             {
@@ -1531,8 +1776,15 @@ class HumanFlowAnswerService:
                 "segmentIndex": segment_index,
                 "segmentCount": segment_count,
                 "attemptCount": attempt_count,
+                "attemptType": "VALIDATION_REPAIR" if attempt_count > 1 else "INITIAL",
                 "requestedLanguage": str(requested_language or "AUTO"),
                 "resolvedLanguage": resolved_language,
+                "durationMs": round(float(duration_ms or 0.0), 3),
+                "remainingDeadlineBeforeCall": round(float(remaining_deadline_before_call or 0.0), 3),
+                "remainingDeadlineAfterCall": round(float(remaining_deadline_after_call or 0.0), 3),
+                "doneReason": getattr(result, "done_reason", None),
+                "promptEvalCount": getattr(result, "prompt_eval_count", None),
+                "evalCount": getattr(result, "eval_count", None),
             }
         )
 
@@ -1616,7 +1868,14 @@ class LocalOllamaFlowExplanationClient:
         response_text = raw.get("response")
         if not isinstance(response_text, str):
             raise ValueError("Ollama returned no response text")
-        return FlowExplanationProviderResult(raw_text=response_text, prompt_char_length=len(prompt))
+        return FlowExplanationProviderResult(
+            raw_text=response_text,
+            prompt_char_length=len(prompt),
+            done_reason=raw.get("done_reason") or raw.get("doneReason"),
+            prompt_eval_count=raw.get("prompt_eval_count") or raw.get("promptEvalCount"),
+            eval_count=raw.get("eval_count") or raw.get("evalCount"),
+            reserved_output_tokens=self.reserved_output_tokens,
+        )
 
     def close(self) -> None:
         self._client.close()

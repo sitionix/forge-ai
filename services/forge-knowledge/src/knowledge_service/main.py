@@ -1306,12 +1306,17 @@ def _human_narration_terminal_metrics(pipeline_records, answer_records) -> Dict[
     return {
         "narrativePlanCount": total("narrativePlanCount"),
         "evidenceRecordCount": total("evidenceRecordCount"),
+        "emptyEvidenceRecordCount": total("emptyEvidenceRecordCount"),
+        "singleSliceEvidenceRecordCount": total("singleSliceEvidenceRecordCount"),
         "evidenceUtf8Bytes": total("evidenceUtf8Bytes"),
         "evidenceSliceCount": total("evidenceSliceCount"),
         "splitEvidenceRecordCount": total("splitEvidenceRecordCount"),
+        "sliceMetricInvariants": all(bool(record.get("sliceMetricInvariants")) for record in records) if records else None,
         "groundingBatchCount": total("groundingBatchCount"),
         "groundingInitialCallCount": sum(1 for record in grounding_records if int(record.get("attemptCount") or 0) == 1),
         "groundingRepairCallCount": sum(1 for record in grounding_records if int(record.get("attemptCount") or 0) > 1),
+        "groundingOutputSplitCallCount": total("groundingOutputSplitCallCount"),
+        "groundingValidationRepairCallCount": total("groundingValidationRepairCallCount"),
         "groundedClaimCount": total("groundedClaimCount"),
         "noNewBehaviorEvidenceCount": total("noNewBehaviorEvidenceCount"),
         "narrationAtomCount": total("narrationAtomCount"),
@@ -1345,6 +1350,13 @@ def _compact_provider_audit_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "resolvedLanguage",
         "detectedLanguage",
         "validationErrors",
+        "attemptType",
+        "durationMs",
+        "remainingDeadlineBeforeCall",
+        "remainingDeadlineAfterCall",
+        "doneReason",
+        "promptEvalCount",
+        "evalCount",
     }
     return {key: record.get(key) for key in allowed if key in record}
 

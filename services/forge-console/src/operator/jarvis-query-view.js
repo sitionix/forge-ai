@@ -61,22 +61,30 @@ export class JarvisQueryView {
       <div class="jarvis-chat-role">Jarvis</div>
       <div class="jarvis-chat-bubble">
         ${this.renderAnswers(response?.answers)}
-        ${this.renderDiagnostics(response?.diagnostics)}
       </div>
     `;
   }
 
   replaceWithError(messageIdValue, error) {
+    this.replaceWithSafeError(messageIdValue, {
+      title: 'Request failed',
+      message: 'The request could not be completed. Please try again.'
+    });
+  }
+
+  replaceWithSafeError(messageIdValue, safePresentation) {
     const element = this.message(messageIdValue);
     if (!element) {
       return;
     }
+    const title = text(safePresentation?.title, 'Request failed');
+    const message = text(safePresentation?.message, 'The request could not be completed. Please try again.');
     element.innerHTML = `
       <div class="jarvis-chat-role">Jarvis</div>
       <div class="jarvis-chat-bubble">
         <article class="jarvis-error-card">
-          <strong>${escapeHtml(error?.title || 'Request failed')}</strong>
-          <p>${escapeHtml(error?.safeMessage || 'The request could not be completed. Please try again.')}</p>
+          <strong>${escapeHtml(title)}</strong>
+          <p>${escapeHtml(message)}</p>
         </article>
       </div>
     `;
@@ -96,19 +104,6 @@ export class JarvisQueryView {
         </footer>
       </article>
     `).join('');
-  }
-
-  renderDiagnostics(diagnostics) {
-    const items = list(diagnostics)
-      .filter((item) => item?.message || item?.code);
-    if (!items.length) {
-      return '';
-    }
-    return `
-      <aside class="jarvis-answer-warning">
-        ${items.map((item) => `<p>${escapeHtml(text(item.message || item.code))}</p>`).join('')}
-      </aside>
-    `;
   }
 
   panel() {

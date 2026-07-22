@@ -4,9 +4,9 @@ import hashlib
 import json
 import re
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Any, Callable, Dict, Mapping, Sequence
+from typing import Any, Callable, Dict, Iterable, Mapping, Sequence
 
 from knowledge_service.answer_language import HumanAnswerTextValidator
 from knowledge_service.entrypoint_kinds import tree_kind_for_entrypoint, trigger_kind_for_entrypoint
@@ -199,6 +199,10 @@ class GroundingBatch:
     llm_input: Mapping[str, Any]
     evidence_ref_to_slice_ref: Mapping[str, str]
     slice_ref_to_evidence_ref: Mapping[str, str]
+    evidence_slices: tuple[EvidenceSlice, ...] = ()
+    descriptors_by_ref: Mapping[str, NarrativeFactDescriptor] = field(default_factory=dict)
+    planned_initial_prompt_hash: str | None = None
+    budget_metrics: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -257,6 +261,7 @@ class NarrationSegment:
     total: int
     terminal: bool
     atoms: tuple[NarrationAtom, ...]
+    budget_metrics: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1057,6 +1062,75 @@ class EvidenceWorkPlanner:
         return tuple(replace(item, order=index, work_ref=f"w{index}") for index, item in enumerate(work_items, start=1))
 
 
+class GroundingPromptFactory:
+    """Builds the only grounding prompt input shape used by splitting, batching and calls."""
+
+    def build(
+        self,
+        *,
+        original_question: str,
+        response_language: str,
+        descriptors_by_ref: Mapping[str, NarrativeFactDescriptor],
+        slices: Sequence[EvidenceSlice],
+    ) -> tuple[Dict[str, Any], Dict[str, str]]:
+        evidence_ref_to_slice_ref: Dict[str, str] = {}
+        evidence_payloads: list[Dict[str, Any]] = []
+        evidence_owners: Dict[str, str] = {}
+        evidence_refs_by_unit: Dict[str, list[str]] = {}
+        unit_refs: list[str] = []
+        for batch_index, item in enumerate(slices, start=1):
+            evidence_ref = f"e{batch_index}"
+            evidence_ref_to_slice_ref[evidence_ref] = item.slice_ref
+            evidence_owners[evidence_ref] = item.unit_ref
+            evidence_refs_by_unit.setdefault(item.unit_ref, []).append(evidence_ref)
+            evidence_payloads.append(item.to_prompt_dict(evidence_ref))
+            if item.unit_ref not in unit_refs:
+                unit_refs.append(item.unit_ref)
+        units: list[Dict[str, Any]] = []
+        for unit_ref in unit_refs:
+            descriptor = descriptors_by_ref.get(unit_ref)
+            if descriptor is None:
+                continue
+            unit = descriptor.to_prompt_dict()
+            unit["ownedEvidenceRefs"] = list(evidence_refs_by_unit.get(unit_ref, ()))
+            units.append(unit)
+        return (
+            {
+                "promptKind": "GROUNDING",
+                "originalQuestion": str(original_question or ""),
+                "responseLanguage": str(response_language or "en"),
+                "units": units,
+                "evidenceSlices": evidence_payloads,
+                "coverageContract": {
+                    "evidenceRefs": list(evidence_ref_to_slice_ref),
+                    "unitRefs": unit_refs,
+                    "evidenceOwners": evidence_owners,
+                    "evidenceRefsByUnit": evidence_refs_by_unit,
+                    "processedEvidence": "EACH_EVIDENCE_REF_EXACTLY_ONCE",
+                },
+            },
+            evidence_ref_to_slice_ref,
+        )
+
+    def probe_slice(self, item: EvidenceWorkItem, text: str) -> EvidenceSlice:
+        return EvidenceSlice(
+            slice_ref="es-probe",
+            work_ref=item.work_ref,
+            unit_ref=item.unit_ref,
+            source=item.source,
+            path=item.path,
+            line_start=item.line_start,
+            line_end=item.line_end,
+            text=text,
+            evidence_order=item.order,
+            slice_order=1,
+            offset_start=0,
+            offset_end=len(text),
+            utf8_hash=_sha256(text),
+            original_utf8_hash=item.utf8_hash,
+        )
+
+
 class LosslessEvidenceSplitter:
     def __init__(
         self,
@@ -1066,12 +1140,14 @@ class LosslessEvidenceSplitter:
         descriptors_by_ref: Mapping[str, NarrativeFactDescriptor],
         original_question: str,
         response_language: str,
+        prompt_factory: GroundingPromptFactory | None = None,
     ) -> None:
         self.renderer = renderer
         self.budget_estimator = budget_estimator
         self.descriptors_by_ref = descriptors_by_ref
         self.original_question = original_question
         self.response_language = response_language
+        self.prompt_factory = prompt_factory or GroundingPromptFactory()
 
     def split(self, work_items: Sequence[EvidenceWorkItem]) -> tuple[EvidenceSlice, ...]:
         slices: list[EvidenceSlice] = []
@@ -1178,33 +1254,20 @@ class LosslessEvidenceSplitter:
                 diagnostic_code="GROUNDING_EVIDENCE_OWNER_MISSING",
                 metadata={"workRef": item.work_ref, "unitRef": item.unit_ref},
             )
-        llm_input = {
-            "promptKind": "GROUNDING",
-            "originalQuestion": self.original_question,
-            "responseLanguage": self.response_language,
-            "units": [descriptor.to_prompt_dict()],
-            "evidenceSlices": [
-                _without_none(
-                    {
-                        "evidenceRef": "e1",
-                        "unitRef": item.unit_ref,
-                        "source": item.source,
-                        "path": item.path,
-                        "lineStart": item.line_start,
-                        "lineEnd": item.line_end,
-                        "text": text,
-                    }
-                )
-            ],
-            "coverageContract": {"evidenceRefs": ["e1"], "unitRefs": [item.unit_ref]},
-        }
+        llm_input, _ = self.prompt_factory.build(
+            original_question=self.original_question,
+            response_language=self.response_language,
+            descriptors_by_ref={descriptor.ref: descriptor},
+            slices=(self.prompt_factory.probe_slice(item, text),),
+        )
         return bool(self.budget_estimator.estimate(self.renderer.render(llm_input)).fits)
 
 
 class GroundingBatchPlanner:
-    def __init__(self, *, renderer: Any, budget_estimator: Any) -> None:
+    def __init__(self, *, renderer: Any, budget_estimator: Any, prompt_factory: GroundingPromptFactory | None = None) -> None:
         self.renderer = renderer
         self.budget_estimator = budget_estimator
+        self.prompt_factory = prompt_factory or GroundingPromptFactory()
 
     def plan(
         self,
@@ -1252,28 +1315,35 @@ class GroundingBatchPlanner:
                 candidate = atoms[offset + len(selected)]
                 serialized_tokens += self.budget_estimator.estimate_text_tokens(str(candidate["serialized"]))
                 candidate_slices = [item["slice"] for item in [*selected, candidate]]
-                estimated_output_tokens = self._estimated_grounding_output_tokens(candidate_slices, descriptors_by_ref)
-                if selected and (serialized_tokens > available or estimated_output_tokens > output_reserve):
+                minimum_output_tokens = self._minimum_grounding_output_tokens_for_refs(
+                    [f"e{index}" for index in range(1, len(candidate_slices) + 1)]
+                )
+                if selected and (
+                    serialized_tokens > available
+                    or not self._output_fits(minimum_output_tokens, output_reserve)
+                ):
                     break
                 selected.append(candidate)
             if not selected:
                 selected = [atoms[offset]]
             while selected:
+                slices = tuple(item["slice"] for item in selected)
                 llm_input, ref_map = self._batch_input(
                     original_question,
                     response_language,
                     descriptors_by_ref,
-                    [item["slice"] for item in selected],
-                    index=len(batches) + 1,
-                    total=0,
+                    slices,
                 )
-                if (
-                    self.budget_estimator.estimate(self.renderer.render(llm_input)).fits
-                    and (
-                        self._estimated_grounding_output_tokens([item["slice"] for item in selected], descriptors_by_ref) <= output_reserve
-                        or len(selected) == 1
+                prompt = self.renderer.render(llm_input)
+                estimate = self.budget_estimator.estimate(prompt)
+                minimum_output_tokens = self._minimum_grounding_output_tokens_for_refs(ref_map.keys())
+                if estimate.fits and self._output_fits(minimum_output_tokens, output_reserve):
+                    metrics = self._batch_budget_metrics(
+                        estimate,
+                        minimum_output_tokens=minimum_output_tokens,
+                        evidence_slice_count=len(slices),
+                        unit_count=len(llm_input.get("units", []) or []),
                     )
-                ):
                     batches.append(
                         GroundingBatch(
                             index=len(batches) + 1,
@@ -1281,6 +1351,10 @@ class GroundingBatchPlanner:
                             llm_input=llm_input,
                             evidence_ref_to_slice_ref=ref_map,
                             slice_ref_to_evidence_ref={value: key for key, value in ref_map.items()},
+                            evidence_slices=slices,
+                            descriptors_by_ref=dict(descriptors_by_ref),
+                            planned_initial_prompt_hash=_sha256(prompt),
+                            budget_metrics=metrics,
                         )
                     )
                     break
@@ -1293,36 +1367,10 @@ class GroundingBatchPlanner:
                 )
             offset += len(selected)
         total = len(batches)
-        final_batches: list[GroundingBatch] = []
-        slice_by_ref = {item.slice_ref: item for item in ordered_slices}
-        for batch in batches:
-            slices = [
-                slice_by_ref[slice_ref]
-                for slice_ref in batch.evidence_ref_to_slice_ref.values()
-            ]
-            llm_input, ref_map = self._batch_input(
-                original_question,
-                response_language,
-                descriptors_by_ref,
-                slices,
-                index=batch.index,
-                total=total,
-            )
-            if not self.budget_estimator.estimate(self.renderer.render(llm_input)).fits:
-                raise GroundedNarrationError(
-                    HumanNarrationStage.GROUNDING_BATCHING,
-                    "Final grounding batch prompt no longer fits after batch-count finalization.",
-                    diagnostic_code="HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED",
-                )
-            final_batches.append(
-                GroundingBatch(
-                    index=batch.index,
-                    total=total,
-                    llm_input=llm_input,
-                    evidence_ref_to_slice_ref=ref_map,
-                    slice_ref_to_evidence_ref={value: key for key, value in ref_map.items()},
-                )
-            )
+        final_batches = [
+            replace(batch, index=index, total=total)
+            for index, batch in enumerate(batches, start=1)
+        ]
         return GroundingBatchPlan(
             batches=tuple(final_batches),
             serialization_count=serialization_count,
@@ -1336,7 +1384,13 @@ class GroundingBatchPlanner:
             "responseLanguage": response_language,
             "units": [],
             "evidenceSlices": [],
-            "coverageContract": {"evidenceRefs": [], "unitRefs": [], "evidenceOwners": {}, "evidenceRefsByUnit": {}},
+            "coverageContract": {
+                "evidenceRefs": [],
+                "unitRefs": [],
+                "evidenceOwners": {},
+                "evidenceRefsByUnit": {},
+                "processedEvidence": "EACH_EVIDENCE_REF_EXACTLY_ONCE",
+            },
         }
         estimate = self.budget_estimator.estimate(self.renderer.render(empty))
         return {
@@ -1351,11 +1405,16 @@ class GroundingBatchPlanner:
         }
 
     def _minimum_grounding_output_tokens(self, evidence_count: int) -> int:
+        return self._minimum_grounding_output_tokens_for_refs(
+            [f"e{index}" for index in range(1, max(0, evidence_count) + 1)]
+        )
+
+    def _minimum_grounding_output_tokens_for_refs(self, evidence_refs: Iterable[str]) -> int:
         payload = {
             "claims": [],
             "processedEvidence": [
-                {"evidenceRef": f"e{index}", "disposition": "NO_NEW_BEHAVIOR", "claimRefs": []}
-                for index in range(1, max(0, evidence_count) + 1)
+                {"evidenceRef": str(ref), "disposition": "NO_NEW_BEHAVIOR", "claimRefs": []}
+                for ref in evidence_refs
             ],
         }
         return self.budget_estimator.estimate_text_tokens(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
@@ -1365,28 +1424,36 @@ class GroundingBatchPlanner:
         slices: Sequence[EvidenceSlice],
         descriptors_by_ref: Mapping[str, NarrativeFactDescriptor],
     ) -> int:
-        claims = []
-        processed = []
-        for index, item in enumerate(slices, start=1):
-            claim_ref = f"c{index}"
-            evidence_ref = f"e{index}"
-            unit_ref = descriptors_by_ref[item.unit_ref].ref if item.unit_ref in descriptors_by_ref else item.unit_ref
-            claims.append(
-                {
-                    "claimRef": claim_ref,
-                    "unitRef": unit_ref,
-                    "evidenceRefs": [evidence_ref],
-                    "text": (
-                        "Стислий підтверджений технічний факт мовою відповіді без копіювання доказу; "
-                        "compact grounded technical claim in the requested language without copying evidence."
-                    ),
-                }
-            )
-            processed.append({"evidenceRef": evidence_ref, "disposition": "CLAIMED", "claimRefs": [claim_ref]})
-        payload = {"claims": claims, "processedEvidence": processed}
-        return self.budget_estimator.estimate_text_tokens(
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        return self._minimum_grounding_output_tokens(len(slices))
+
+    def _output_fits(self, minimum_output_tokens: int, output_reserve: int) -> bool:
+        return output_reserve <= 0 or int(minimum_output_tokens) <= int(output_reserve)
+
+    def _batch_budget_metrics(
+        self,
+        estimate: Any,
+        *,
+        minimum_output_tokens: int,
+        evidence_slice_count: int,
+        unit_count: int,
+    ) -> Dict[str, Any]:
+        available_input_tokens = max(
+            0,
+            int(estimate.context_tokens)
+            - int(estimate.reserved_output_tokens)
+            - int(estimate.fixed_framing_reserve_tokens),
         )
+        reserved_output_tokens = max(0, int(estimate.reserved_output_tokens))
+        return {
+            "renderedInputTokens": int(estimate.rendered_input_tokens),
+            "availableInputTokens": available_input_tokens,
+            "minimumValidOutputTokens": int(minimum_output_tokens),
+            "reservedOutputTokens": reserved_output_tokens,
+            "inputUtilization": round(int(estimate.rendered_input_tokens) / max(available_input_tokens, 1), 6),
+            "outputSkeletonUtilization": round(int(minimum_output_tokens) / max(reserved_output_tokens, 1), 6) if reserved_output_tokens > 0 else None,
+            "evidenceSliceCount": int(evidence_slice_count),
+            "unitCount": int(unit_count),
+        }
 
     def _batch_input(
         self,
@@ -1395,51 +1462,18 @@ class GroundingBatchPlanner:
         descriptors_by_ref: Mapping[str, NarrativeFactDescriptor],
         slices: Sequence[EvidenceSlice],
         *,
-        index: int,
-        total: int,
+        index: int | None = None,
+        total: int | None = None,
     ) -> tuple[Dict[str, Any], Dict[str, str]]:
-        evidence_ref_to_slice_ref: Dict[str, str] = {}
-        evidence_payloads: list[Dict[str, Any]] = []
-        evidence_owners: Dict[str, str] = {}
-        evidence_refs_by_unit: Dict[str, list[str]] = {}
-        unit_refs: list[str] = []
-        for batch_index, item in enumerate(slices, start=1):
-            evidence_ref = f"e{batch_index}"
-            evidence_ref_to_slice_ref[evidence_ref] = item.slice_ref
-            evidence_owners[evidence_ref] = item.unit_ref
-            evidence_refs_by_unit.setdefault(item.unit_ref, []).append(evidence_ref)
-            evidence_payloads.append(item.to_prompt_dict(evidence_ref))
-            if item.unit_ref not in unit_refs:
-                unit_refs.append(item.unit_ref)
-        units = []
-        for unit_ref in unit_refs:
-            if unit_ref not in descriptors_by_ref:
-                continue
-            unit = descriptors_by_ref[unit_ref].to_prompt_dict()
-            unit["ownedEvidenceRefs"] = evidence_refs_by_unit.get(unit_ref, [])
-            units.append(unit)
-        return (
-            {
-                "promptKind": "GROUNDING",
-                "originalQuestion": original_question,
-                "responseLanguage": response_language,
-                "batch": {"index": index, "total": total},
-                "units": units,
-                "evidenceSlices": evidence_payloads,
-                "coverageContract": {
-                    "evidenceRefs": list(evidence_ref_to_slice_ref),
-                    "unitRefs": unit_refs,
-                    "evidenceOwners": evidence_owners,
-                    "evidenceRefsByUnit": evidence_refs_by_unit,
-                },
-            },
-            evidence_ref_to_slice_ref,
+        return self.prompt_factory.build(
+            original_question=original_question,
+            response_language=response_language,
+            descriptors_by_ref=descriptors_by_ref,
+            slices=slices,
         )
 
 
 class GroundedClaimValidator:
-    _RAW_EVIDENCE_LEAK_MIN_UTF8_BYTES = 64
-
     def __init__(self, text_validator: HumanAnswerTextValidator | None = None) -> None:
         self.text_validator = text_validator or HumanAnswerTextValidator()
 
@@ -1458,6 +1492,7 @@ class GroundedClaimValidator:
                 "Grounding response must be strict JSON.",
                 diagnostic_code="GROUNDING_RESPONSE_MALFORMED",
             ) from exc
+        payload = self._normalize_evidence_accounting(payload, batch)
         errors = self._payload_errors(payload, batch, response_language=response_language)
         if errors:
             raise GroundedNarrationError(
@@ -1467,6 +1502,51 @@ class GroundedClaimValidator:
                 metadata={"validationErrors": errors, "batchIndex": batch.index},
             )
         return payload
+
+    def _normalize_evidence_accounting(self, payload: Any, batch: GroundingBatch) -> Any:
+        if not isinstance(payload, dict):
+            return payload
+        claims = payload.get("claims")
+        processed = payload.get("processedEvidence")
+        if not isinstance(claims, list) or not isinstance(processed, list):
+            return payload
+        evidence_refs = [str(ref) for ref in batch.evidence_ref_to_slice_ref]
+        evidence_ref_set = set(evidence_refs)
+        claim_refs = {
+            str(claim.get("claimRef") or "").strip()
+            for claim in claims
+            if isinstance(claim, dict) and str(claim.get("claimRef") or "").strip()
+        }
+        normalized_processed: list[Any] = []
+        seen_evidence_refs: set[str] = set()
+        for item in processed:
+            if not isinstance(item, dict):
+                normalized_processed.append(item)
+                continue
+            evidence_ref = str(item.get("evidenceRef") or "").strip()
+            if evidence_ref not in evidence_ref_set:
+                normalized_processed.append(item)
+                continue
+            copy = dict(item)
+            refs = copy.get("claimRefs")
+            valid_refs = [
+                str(ref).strip()
+                for ref in refs
+                if str(ref).strip() in claim_refs
+            ] if isinstance(refs, list) else []
+            disposition = str(copy.get("disposition") or "").strip().upper()
+            if disposition != "CLAIMED" or not valid_refs:
+                copy["disposition"] = "NO_NEW_BEHAVIOR"
+                copy["claimRefs"] = []
+            else:
+                copy["disposition"] = "CLAIMED"
+                copy["claimRefs"] = valid_refs
+            normalized_processed.append(copy)
+            seen_evidence_refs.add(evidence_ref)
+        for evidence_ref in evidence_refs:
+            if evidence_ref not in seen_evidence_refs:
+                normalized_processed.append({"evidenceRef": evidence_ref, "disposition": "NO_NEW_BEHAVIOR", "claimRefs": []})
+        return {**payload, "processedEvidence": normalized_processed}
 
     def _payload_errors(self, payload: Any, batch: GroundingBatch, *, response_language: str) -> list[str]:
         if not isinstance(payload, dict):
@@ -1574,20 +1654,86 @@ class GroundedClaimValidator:
         return errors
 
     def _leaks_raw_evidence(self, text: str, batch: GroundingBatch, refs: Sequence[Any]) -> bool:
+        unit_descriptors = {
+            str(item.get("unitRef")): item
+            for item in batch.llm_input.get("units", [])
+            if isinstance(item, dict) and str(item.get("unitRef") or "").strip()
+        }
         for evidence_ref in refs or []:
             ref = str(evidence_ref or "")
             for item in batch.llm_input.get("evidenceSlices", []):
                 if not isinstance(item, dict) or item.get("evidenceRef") != ref:
                     continue
                 raw = str(item.get("text") or "").strip()
-                if raw and len(raw.encode("utf-8")) >= self._RAW_EVIDENCE_LEAK_MIN_UTF8_BYTES and raw in str(text or ""):
+                if not raw:
+                    continue
+                descriptor = unit_descriptors.get(str(item.get("unitRef") or ""))
+                masked_raw = self._comparison_text(raw, descriptor)
+                if not masked_raw:
+                    continue
+                masked_claim = self._comparison_text(str(text or ""), descriptor)
+                if (
+                    masked_claim == masked_raw
+                    or masked_raw in masked_claim
+                ):
                     return True
         return False
 
+    def _comparison_text(self, value: str, descriptor: Mapping[str, Any] | None) -> str:
+        masked = str(value or "")
+        for literal in self._structural_literals(descriptor or {}):
+            masked = masked.replace(literal, " ")
+        return re.sub(r"\s+", " ", masked).strip()
+
+    def _structural_literals(self, descriptor: Mapping[str, Any]) -> tuple[str, ...]:
+        literals: list[str] = []
+
+        def collect(value: Any) -> None:
+            if isinstance(value, str):
+                normalized = value.strip()
+                if normalized:
+                    literals.append(normalized)
+                return
+            if isinstance(value, Mapping):
+                for nested in value.values():
+                    collect(nested)
+                return
+            if isinstance(value, (list, tuple)):
+                for nested in value:
+                    collect(nested)
+
+        for key in (
+            "source",
+            "symbol",
+            "fromSource",
+            "fromSymbol",
+            "toSource",
+            "toSymbol",
+            "method",
+            "route",
+            "topic",
+            "schedule",
+            "operationIdentity",
+            "interfaceIdentity",
+            "targetServiceIdentity",
+            "target",
+            "transportKind",
+            "transitionKind",
+            "boundaryKind",
+            "executionRole",
+        ):
+            collect(descriptor.get(key))
+        collect(descriptor.get("trigger"))
+        return tuple(sorted(set(literals), key=len, reverse=True))
+
 
 class GroundedClaimService:
-    def __init__(self, validator: GroundedClaimValidator | None = None) -> None:
+    def __init__(self, validator: GroundedClaimValidator | None = None, prompt_factory: GroundingPromptFactory | None = None) -> None:
         self.validator = validator or GroundedClaimValidator()
+        self.prompt_factory = prompt_factory or GroundingPromptFactory()
+        self.last_accepted_batches: tuple[GroundingBatch, ...] = ()
+        self.last_output_split_call_count = 0
+        self.last_validation_repair_call_count = 0
 
     def ground(
         self,
@@ -1597,25 +1743,110 @@ class GroundedClaimService:
         complete: Callable[[Mapping[str, Any], Sequence[str] | None, HumanNarrationStage, int | None, int | None], str],
     ) -> tuple[Mapping[str, Any], ...]:
         payloads: list[Mapping[str, Any]] = []
+        accepted_batches: list[GroundingBatch] = []
+        self.last_output_split_call_count = 0
+        self.last_validation_repair_call_count = 0
         for batch in batches:
-            validation_errors: Sequence[str] | None = None
-            for attempt in (1, 2):
-                raw = complete(
-                    batch.llm_input,
-                    validation_errors,
-                    HumanNarrationStage.GROUNDING_LLM,
-                    batch.index,
-                    batch.total,
-                )
-                try:
-                    payloads.append(self.validator.validate(raw, batch, response_language=response_language))
-                    break
-                except GroundedNarrationError as exc:
-                    if attempt == 1:
-                        validation_errors = list(exc.metadata.get("validationErrors") or [str(exc)])
-                        continue
-                    raise
+            results = self._ground_one_batch(batch, response_language=response_language, complete=complete)
+            for accepted_batch, payload in results:
+                accepted_batches.append(accepted_batch)
+                payloads.append(payload)
+        self.last_accepted_batches = tuple(
+            replace(batch, index=index, total=len(accepted_batches))
+            for index, batch in enumerate(accepted_batches, start=1)
+        )
         return tuple(payloads)
+
+    def _ground_one_batch(
+        self,
+        batch: GroundingBatch,
+        *,
+        response_language: str,
+        complete: Callable[[Mapping[str, Any], Sequence[str] | None, HumanNarrationStage, int | None, int | None], Any],
+    ) -> tuple[tuple[GroundingBatch, Mapping[str, Any]], ...]:
+        validation_errors: Sequence[str] | None = None
+        for attempt in (1, 2):
+            result = complete(
+                batch.llm_input,
+                validation_errors,
+                HumanNarrationStage.GROUNDING_LLM,
+                batch.index,
+                batch.total,
+            )
+            raw = self._raw_text(result)
+            try:
+                payload = self.validator.validate(raw, batch, response_language=response_language)
+                return ((batch, payload),)
+            except GroundedNarrationError as exc:
+                if attempt == 1 and validation_errors is None and self._is_output_capacity_failure(exc, result):
+                    children = self._split_batch(batch)
+                    if children:
+                        self.last_output_split_call_count += 2
+                        merged: list[tuple[GroundingBatch, Mapping[str, Any]]] = []
+                        for child in children:
+                            merged.extend(self._ground_one_batch(child, response_language=response_language, complete=complete))
+                        return tuple(merged)
+                if attempt == 1:
+                    validation_errors = list(exc.metadata.get("validationErrors") or [str(exc)])
+                    self.last_validation_repair_call_count += 1
+                    continue
+                raise
+        raise GroundedNarrationError(
+            HumanNarrationStage.GROUNDING_VALIDATION,
+            "Grounding response repair failed validation.",
+            diagnostic_code="GROUNDING_RESPONSE_CONTRACT_VIOLATION",
+        )
+
+    def _split_batch(self, batch: GroundingBatch) -> tuple[GroundingBatch, ...]:
+        slices = tuple(batch.evidence_slices or ())
+        if len(slices) <= 1 or not batch.descriptors_by_ref:
+            return ()
+        midpoint = max(1, len(slices) // 2)
+        if midpoint >= len(slices):
+            midpoint = len(slices) - 1
+        groups = (slices[:midpoint], slices[midpoint:])
+        if not groups[0] or not groups[1]:
+            return ()
+        children: list[GroundingBatch] = []
+        for child_index, group in enumerate(groups, start=1):
+            llm_input, ref_map = self.prompt_factory.build(
+                original_question=str(batch.llm_input.get("originalQuestion") or ""),
+                response_language=str(batch.llm_input.get("responseLanguage") or "en"),
+                descriptors_by_ref=batch.descriptors_by_ref,
+                slices=group,
+            )
+            children.append(
+                GroundingBatch(
+                    index=batch.index + child_index - 1,
+                    total=batch.total,
+                    llm_input=llm_input,
+                    evidence_ref_to_slice_ref=ref_map,
+                    slice_ref_to_evidence_ref={value: key for key, value in ref_map.items()},
+                    evidence_slices=tuple(group),
+                    descriptors_by_ref=batch.descriptors_by_ref,
+                    planned_initial_prompt_hash=None,
+                    budget_metrics=dict(batch.budget_metrics),
+                )
+            )
+        return (children[0], children[1])
+
+    def _raw_text(self, result: Any) -> str:
+        if isinstance(result, str):
+            return result
+        return str(getattr(result, "raw_text", "") or "")
+
+    def _is_output_capacity_failure(self, exc: GroundedNarrationError, result: Any) -> bool:
+        if exc.diagnostic_code != "GROUNDING_RESPONSE_MALFORMED":
+            return False
+        done_reason = str(getattr(result, "done_reason", "") or getattr(result, "doneReason", "") or "").lower()
+        if done_reason in {"length", "num_predict", "max_tokens", "max_tokens_reached"}:
+            return True
+        eval_count = getattr(result, "eval_count", None)
+        reserved = getattr(result, "reserved_output_tokens", None)
+        try:
+            return eval_count is not None and reserved is not None and int(reserved) > 0 and int(eval_count) >= int(reserved)
+        except Exception:
+            return False
 
 
 class GroundedClaimAssembler:
@@ -1733,10 +1964,62 @@ class NarrationAtomPlanner:
         return "VERIFIED_OPERATION"
 
 
+class NarrationAtomPartitioner:
+    def partition(
+        self,
+        atom: NarrationAtom,
+        *,
+        can_fit: Callable[[NarrationAtom, bool], bool],
+        terminal: bool,
+    ) -> tuple[NarrationAtom, ...]:
+        if len(atom.claims) <= 1:
+            return (atom,) if can_fit(atom, terminal) else ()
+        parts: list[NarrationAtom] = []
+        offset = 0
+        claims = tuple(sorted(atom.claims, key=lambda item: item.canonical_claim_order))
+        while offset < len(claims):
+            low = offset + 1
+            high = len(claims)
+            best = offset
+            while low <= high:
+                mid = (low + high) // 2
+                candidate_terminal = terminal and mid == len(claims)
+                candidate = self._partition_atom(atom, claims[offset:mid], len(parts) + 1, candidate_terminal)
+                if can_fit(candidate, candidate_terminal):
+                    best = mid
+                    low = mid + 1
+                else:
+                    high = mid - 1
+            if best <= offset:
+                return ()
+            is_final = best == len(claims)
+            parts.append(self._partition_atom(atom, claims[offset:best], len(parts) + 1, terminal and is_final))
+            offset = best
+        return tuple(parts)
+
+    def _partition_atom(
+        self,
+        atom: NarrationAtom,
+        claims: Sequence[GroundedNarrativeClaim],
+        partition_index: int,
+        terminal: bool,
+    ) -> NarrationAtom:
+        descriptor = atom.descriptor if terminal else replace(atom.descriptor, terminal_role=None)
+        atom_kind = atom.atom_kind if terminal else ("VERIFIED_CLAIM" if atom.claims else atom.atom_kind)
+        return replace(
+            atom,
+            ref=f"{atom.ref}p{partition_index}",
+            atom_kind=atom_kind,
+            descriptor=descriptor,
+            claims=tuple(claims),
+        )
+
+
 class NarrationSegmentPlanner:
-    def __init__(self, *, renderer: Any, budget_estimator: Any) -> None:
+    def __init__(self, *, renderer: Any, budget_estimator: Any, atom_partitioner: NarrationAtomPartitioner | None = None) -> None:
         self.renderer = renderer
         self.budget_estimator = budget_estimator
+        self.atom_partitioner = atom_partitioner or NarrationAtomPartitioner()
 
     def plan(
         self,
@@ -1748,7 +2031,13 @@ class NarrationSegmentPlanner:
         atoms: Sequence[NarrationAtom],
     ) -> NarrationSegmentPlan:
         started = time.perf_counter()
-        ordered_atoms = tuple(sorted(atoms, key=lambda atom: atom.canonical_order))
+        ordered_atoms = self._partition_oversized_atoms(
+            original_question=original_question,
+            response_language=response_language,
+            source=source,
+            entrypoint=entrypoint,
+            atoms=tuple(sorted(atoms, key=lambda atom: atom.canonical_order)),
+        )
         serialized_atoms = [
             json.dumps(atom.to_prompt_dict(), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
             for atom in ordered_atoms
@@ -1768,10 +2057,10 @@ class NarrationSegmentPlanner:
                 if selected and self._would_mix_gap_and_verified(selected[-1], atom):
                     break
                 serialized_tokens += self.budget_estimator.estimate_text_tokens(serialized_atoms[next_index])
-                estimated_output_tokens = self._estimated_narration_output_tokens([*selected, atom], terminal=True)
+                estimated_output_tokens = self._minimum_narration_output_tokens([*selected, atom], terminal=True)
                 if selected and (
                     serialized_tokens > available
-                    or (output_reserve > 0 and estimated_output_tokens > output_reserve)
+                    or not self._output_fits(estimated_output_tokens, output_reserve)
                 ):
                     break
                 selected.append(atom)
@@ -1791,11 +2080,7 @@ class NarrationSegmentPlanner:
                 )
                 if (
                     self.budget_estimator.estimate(self.renderer.render(candidate_input)).fits
-                    and (
-                        output_reserve <= 0
-                        or self._estimated_narration_output_tokens(selected, terminal=True) <= output_reserve
-                        or len(selected) == 1
-                    )
+                    and self._output_fits(self._minimum_narration_output_tokens(selected, terminal=True), output_reserve)
                 ):
                     groups.append(tuple(selected))
                     break
@@ -1829,20 +2114,77 @@ class NarrationSegmentPlanner:
                     diagnostic_code="HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED",
                 )
             if (
-                output_reserve > 0
-                and self._estimated_narration_output_tokens(group, terminal=terminal) > output_reserve
-                and len(group) > 1
+                not self._output_fits(self._minimum_narration_output_tokens(group, terminal=terminal), output_reserve)
             ):
                 raise GroundedNarrationError(
                     HumanNarrationStage.NARRATION_SEGMENTATION,
                     "Final narration segment output estimate no longer fits after segment-count finalization.",
                     diagnostic_code="HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED",
                 )
-            segments.append(NarrationSegment(llm_input=llm_input, index=index, total=total, terminal=terminal, atoms=group))
+            estimate = self.budget_estimator.estimate(self.renderer.render(llm_input))
+            minimum_output = self._minimum_narration_output_tokens(group, terminal=terminal)
+            segments.append(
+                NarrationSegment(
+                    llm_input=llm_input,
+                    index=index,
+                    total=total,
+                    terminal=terminal,
+                    atoms=group,
+                    budget_metrics=self._segment_budget_metrics(estimate, minimum_output_tokens=minimum_output, atoms=group),
+                )
+            )
         return NarrationSegmentPlan(
             segments=tuple(segments),
             serialization_count=serialization_count,
             planning_ms=(time.perf_counter() - started) * 1000,
+        )
+
+    def _partition_oversized_atoms(
+        self,
+        *,
+        original_question: str,
+        response_language: str,
+        source: str,
+        entrypoint: str,
+        atoms: Sequence[NarrationAtom],
+    ) -> tuple[NarrationAtom, ...]:
+        expanded: list[NarrationAtom] = []
+        for index, atom in enumerate(atoms):
+            terminal = index == len(atoms) - 1
+
+            def can_fit(candidate: NarrationAtom, candidate_terminal: bool) -> bool:
+                llm_input = self._segment_input(
+                    original_question,
+                    response_language,
+                    source,
+                    entrypoint,
+                    (candidate,),
+                    (candidate,),
+                    index=1,
+                    total=1,
+                    terminal=candidate_terminal,
+                )
+                estimate = self.budget_estimator.estimate(self.renderer.render(llm_input))
+                return estimate.fits and self._output_fits(
+                    self._minimum_narration_output_tokens((candidate,), terminal=candidate_terminal),
+                    int(estimate.reserved_output_tokens),
+                )
+
+            if can_fit(atom, terminal):
+                expanded.append(atom)
+                continue
+            partitions = self.atom_partitioner.partition(atom, can_fit=can_fit, terminal=terminal)
+            if not partitions:
+                raise GroundedNarrationError(
+                    HumanNarrationStage.NARRATION_SEGMENTATION,
+                    "A single narration atom cannot fit the final narration input/output budget.",
+                    diagnostic_code="HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED",
+                    metadata={"atomRef": atom.ref},
+                )
+            expanded.extend(partitions)
+        return tuple(
+            replace(atom, canonical_order=index)
+            for index, atom in enumerate(expanded, start=1)
         )
 
     def _would_mix_gap_and_verified(self, left: NarrationAtom, right: NarrationAtom) -> bool:
@@ -1875,18 +2217,21 @@ class NarrationSegmentPlanner:
         }
 
     def _estimated_narration_output_tokens(self, atoms: Sequence[NarrationAtom], *, terminal: bool) -> int:
+        return self._minimum_narration_output_tokens(atoms, terminal=terminal)
+
+    def _minimum_narration_output_tokens(self, atoms: Sequence[NarrationAtom], *, terminal: bool) -> int:
         steps = [
             {
                 "atomRefs": [atom.ref],
                 "certainty": atom.certainty,
-                "text": "Крок.",
+                "text": "x",
             }
             for atom in atoms
         ]
         payload = {
             "steps": steps,
             "result": (
-                "Підсумок."
+                "x"
                 if terminal
                 else None
             ),
@@ -1894,6 +2239,32 @@ class NarrationSegmentPlanner:
         return self.budget_estimator.estimate_text_tokens(
             json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         )
+
+    def _output_fits(self, minimum_output_tokens: int, output_reserve: int) -> bool:
+        return int(output_reserve) <= 0 or int(minimum_output_tokens) <= int(output_reserve)
+
+    def _segment_budget_metrics(
+        self,
+        estimate: Any,
+        *,
+        minimum_output_tokens: int,
+        atoms: Sequence[NarrationAtom],
+    ) -> Dict[str, Any]:
+        available_input_tokens = max(
+            0,
+            int(estimate.context_tokens)
+            - int(estimate.reserved_output_tokens)
+            - int(estimate.fixed_framing_reserve_tokens),
+        )
+        claim_count = sum(len(atom.claims) for atom in atoms)
+        return {
+            "renderedInputTokens": int(estimate.rendered_input_tokens),
+            "availableInputTokens": available_input_tokens,
+            "minimumValidOutputTokens": int(minimum_output_tokens),
+            "reservedOutputTokens": int(estimate.reserved_output_tokens),
+            "atomCount": len(atoms),
+            "claimCount": claim_count,
+        }
 
     def _segment_input(
         self,
@@ -2035,9 +2406,11 @@ class FamilyNarrationService:
             response_language=response_language,
             complete=complete_grounding,
         ) if batch_plan.batches else ()
+        accepted_grounding_batches = tuple(getattr(self.claim_service, "last_accepted_batches", ()) or batch_plan.batches)
+        self._assert_evidence_slice_closure(slices, accepted_grounding_batches)
         claims = self.claim_assembler.assemble(
             projection=projection,
-            batches=batch_plan.batches,
+            batches=accepted_grounding_batches,
             payloads=grounding_payloads,
         )
         atoms = self.atom_planner.plan(projection, claims)
@@ -2056,19 +2429,33 @@ class FamilyNarrationService:
             if isinstance(item, dict) and str(item.get("disposition") or "").upper() == "NO_NEW_BEHAVIOR"
         )
         slice_counts_by_work_ref: Dict[str, int] = {}
+        for item in evidence_work_items:
+            slice_counts_by_work_ref[item.work_ref] = 0
         for slice_item in slices:
             slice_counts_by_work_ref[slice_item.work_ref] = slice_counts_by_work_ref.get(slice_item.work_ref, 0) + 1
+        empty_evidence_count = sum(1 for count in slice_counts_by_work_ref.values() if count == 0)
+        single_slice_count = sum(1 for count in slice_counts_by_work_ref.values() if count == 1)
+        split_slice_count = sum(1 for count in slice_counts_by_work_ref.values() if count > 1)
+        slice_metric_invariants = (
+            empty_evidence_count + single_slice_count + split_slice_count == len(evidence_work_items)
+            and sum(slice_counts_by_work_ref.values()) == len(slices)
+        )
         metrics = {
             "narrativePlanCount": 1,
             "evidenceRecordCount": len(evidence_work_items),
+            "emptyEvidenceRecordCount": empty_evidence_count,
+            "singleSliceEvidenceRecordCount": single_slice_count,
+            "splitEvidenceRecordCount": split_slice_count,
             "evidenceUtf8Bytes": sum(len(item.exact_text.encode("utf-8")) for item in evidence_work_items),
             "evidenceSliceCount": len(slices),
-            "splitEvidenceRecordCount": sum(1 for count in slice_counts_by_work_ref.values() if count > 1),
-            "groundingBatchCount": len(batch_plan.batches),
+            "sliceMetricInvariants": slice_metric_invariants,
+            "groundingBatchCount": len(accepted_grounding_batches),
             "groundedClaimCount": len(claims),
             "noNewBehaviorEvidenceCount": no_new_behavior_count,
             "narrationAtomCount": len(atoms),
             "narrationSegmentCount": len(segment_plan.segments),
+            "groundingOutputSplitCallCount": int(getattr(self.claim_service, "last_output_split_call_count", 0) or 0),
+            "groundingValidationRepairCallCount": int(getattr(self.claim_service, "last_validation_repair_call_count", 0) or 0),
             "EVIDENCE_SPLIT_MS": round(split_ms, 3),
             "GROUNDING_BATCH_PLAN_MS": round(batch_plan.planning_ms, 3),
             "CLAIM_ASSEMBLY_MS": round(getattr(self.claim_assembler, "last_planning_ms", 0.0), 3),
@@ -2076,6 +2463,23 @@ class FamilyNarrationService:
             "EVIDENCE_SERIALIZATION_COUNT": batch_plan.serialization_count,
             "NARRATION_SERIALIZATION_COUNT": segment_plan.serialization_count,
             "NARRATIVE_FACT_PROJECTION_MS": round(projection_ms, 3),
+            "groundingBatchPlans": [
+                {
+                    "batchIndex": batch.index,
+                    "batchTotal": batch.total,
+                    "promptHash": batch.planned_initial_prompt_hash,
+                    **dict(batch.budget_metrics),
+                }
+                for batch in accepted_grounding_batches
+            ],
+            "narrationSegmentPlans": [
+                {
+                    "segmentIndex": segment.index,
+                    "segmentTotal": segment.total,
+                    **dict(segment.budget_metrics),
+                }
+                for segment in segment_plan.segments
+            ],
             "evidenceRecordManifest": [
                 {
                     "workRef": item.work_ref,
@@ -2097,6 +2501,100 @@ class FamilyNarrationService:
             narration_segments=segment_plan.segments,
             metrics=metrics,
         )
+
+    def _assert_evidence_slice_closure(
+        self,
+        planned_slices: Sequence[EvidenceSlice],
+        accepted_batches: Sequence[GroundingBatch],
+    ) -> None:
+        expected = [item.slice_ref for item in planned_slices]
+        actual = [
+            slice_ref
+            for batch in accepted_batches
+            for slice_ref in batch.evidence_ref_to_slice_ref.values()
+        ]
+        if sorted(actual) != sorted(expected) or len(actual) != len(set(actual)):
+            raise GroundedNarrationError(
+                HumanNarrationStage.GROUNDING_VALIDATION,
+                "Adaptive grounding split did not preserve exact evidence slice closure.",
+                diagnostic_code="GROUNDING_EVIDENCE_SLICE_CLOSURE_FAILED",
+                metadata={
+                    "expectedSliceCount": len(expected),
+                    "actualSliceCount": len(actual),
+                    "duplicateSliceCount": len(actual) - len(set(actual)),
+                },
+        )
+
+
+def assert_final_narration_prompt_safe(llm_input: Mapping[str, Any]) -> None:
+    if str(llm_input.get("promptKind") or "") != "FINAL_NARRATION":
+        return
+    forbidden_paths = _find_forbidden_final_prompt_fields(llm_input)
+    if forbidden_paths:
+        raise GroundedNarrationError(
+            HumanNarrationStage.NARRATION_VALIDATION,
+            "Final narration input contains raw evidence-bearing fields.",
+            diagnostic_code="FINAL_NARRATION_RAW_EVIDENCE_INPUT",
+            metadata={"paths": forbidden_paths[:10]},
+        )
+    allowed_unit_keys = {
+        "type",
+        "certainty",
+        "source",
+        "symbol",
+        "fromSource",
+        "fromSymbol",
+        "toSource",
+        "toSymbol",
+        "transitionKind",
+        "resolutionStatus",
+        "transportKind",
+        "method",
+        "route",
+        "topic",
+        "schedule",
+        "interfaceIdentity",
+        "operationIdentity",
+        "targetServiceIdentity",
+        "branchParent",
+        "incomingTransition",
+        "outgoingTransitions",
+        "boundaryKind",
+        "boundaryReason",
+        "target",
+        "trigger",
+        "gapVerificationStatus",
+        "terminalRole",
+        "crossSource",
+    }
+    for atom in llm_input.get("narrationAtoms", []) or []:
+        if not isinstance(atom, Mapping):
+            continue
+        unit = atom.get("unit") if isinstance(atom.get("unit"), Mapping) else {}
+        extra = sorted(str(key) for key in unit.keys() if str(key) not in allowed_unit_keys)
+        if extra:
+            raise GroundedNarrationError(
+                HumanNarrationStage.NARRATION_VALIDATION,
+                "Final narration descriptor contains unsupported fields.",
+                diagnostic_code="FINAL_NARRATION_UNSAFE_DESCRIPTOR",
+                metadata={"fields": extra},
+            )
+
+
+def _find_forbidden_final_prompt_fields(value: Any, path: str = "$") -> list[str]:
+    forbidden = {"evidenceSlices", "evidenceSlice", "evidenceCatalog", "rawEvidence", "rawEvidenceCatalog", "evidenceText", "textCatalog"}
+    paths: list[str] = []
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            next_path = f"{path}.{key}"
+            if str(key) in forbidden:
+                paths.append(next_path)
+                continue
+            paths.extend(_find_forbidden_final_prompt_fields(item, next_path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            paths.extend(_find_forbidden_final_prompt_fields(item, f"{path}[{index}]"))
+    return paths
 
 
 def _clean(value: Any) -> str | None:
