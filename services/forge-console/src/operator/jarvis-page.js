@@ -140,7 +140,16 @@ export class JarvisPage {
     } catch (error) {
       if (!this.disposed) {
         this.queryView.replaceWithError(pendingMessageId, error);
-        renderRequestError('jarvisQueryError', error, { endpoint: '/jarvis/query', title: 'Jarvis query failed' }, this.document);
+        renderRequestError(
+          'jarvisQueryError',
+          error,
+          {
+            safe: true,
+            title: 'Request failed',
+            message: 'The request could not be completed. Please try again.'
+          },
+          this.document
+        );
       }
       return null;
     } finally {

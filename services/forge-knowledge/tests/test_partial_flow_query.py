@@ -619,9 +619,10 @@ def test_tool_and_human_projection_share_gap_and_operation_order():
         "VERIFIED_FRAGMENT",
     ]
     assert tool.flows[0].parts[0].tree.entrypoint.trigger.method == "POST"
-    assert [fact["type"] for fact in llm_input["orderedFacts"]][:2] == ["node", "gap"]
-    assert llm_input["orderedFacts"][0]["trigger"]["method"] == "POST"
-    assert llm_input["orderedFacts"][1]["verificationStatus"] == "UNVERIFIED"
+    units = [atom["unit"] for atom in llm_input["narrationAtoms"]]
+    assert [unit["type"] for unit in units][:2] == ["node", "gap"]
+    assert units[0]["trigger"]["method"] == "POST"
+    assert units[1]["gapVerificationStatus"] == "UNVERIFIED"
 
 
 def test_catalog_client_operation_attaches_to_non_target_fragment_and_is_projected():
@@ -669,7 +670,7 @@ def test_catalog_client_operation_attaches_to_non_target_fragment_and_is_project
     assert plans[0].parts[0].fragment.operation_facts[-1].owner_source_id == "contract-source"
     assert len(tool.flows) == 1
     assert any(item.kind == "OPERATION" for item in tool.flows[0].parts[0].tree.entrypoint.children)
-    assert [fact["type"] for fact in llm_input["orderedFacts"]] == ["node", "operation", "gap", "node"]
+    assert [atom["unit"]["type"] for atom in llm_input["narrationAtoms"]] == ["node", "operation", "gap", "node"]
 
 
 def test_large_partial_fragment_with_exact_http_gap_is_linear_enough():

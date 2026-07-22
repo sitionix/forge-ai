@@ -334,17 +334,46 @@ class FailingProvider:
 
 class GroundedProvider:
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
-        sources = str(llm_input.get("entrypoint") or "")
-        target = sources or "the selected flow"
+        if llm_input.get("promptKind") == "GROUNDING":
+            claims = []
+            processed = []
+            for index, evidence_item in enumerate(llm_input.get("evidenceSlices") or [], start=1):
+                evidence_ref = str(evidence_item.get("evidenceRef") or "")
+                unit_ref = str(evidence_item.get("unitRef") or "")
+                claim_ref = f"c{index}"
+                claims.append(
+                    {
+                        "claimRef": claim_ref,
+                        "unitRef": unit_ref,
+                        "evidenceRefs": [evidence_ref],
+                        "text": "The supplied evidence supports the selected execution unit behavior.",
+                    }
+                )
+                processed.append({"evidenceRef": evidence_ref, "disposition": "CLAIMED", "claimRefs": [claim_ref]})
+            return FlowExplanationProviderResult(
+                raw_text=json.dumps({"claims": claims, "processedEvidence": processed}),
+                prompt_char_length=128,
+            )
+        root = llm_input.get("familyRoot") if isinstance(llm_input.get("familyRoot"), dict) else {}
+        target = str(root.get("entrypoint") or "the selected flow")
         coverage = llm_input.get("coverageContract") or {}
+        step_plan = llm_input.get("suggestedStepPlan") or [
+            {"atomRefs": list(coverage.get("canonicalAtomRefs") or []), "certainty": "VERIFIED"}
+        ]
+        steps = []
+        for item in step_plan:
+            refs = list(item.get("atomRefs") or [])
+            if not refs:
+                continue
+            certainty = str(item.get("certainty") or "VERIFIED")
+            if certainty in {"UNVERIFIED", "AMBIGUOUS"}:
+                text = f"The available graph does not verify a direct transition in {target}."
+            else:
+                text = f"{target} continues through the grounded flow."
+            steps.append({"atomRefs": refs, "certainty": certainty, "text": text})
         response = {
-            "steps": [
-                {
-                    "factRefs": list(coverage.get("canonicalFactRefs") or []),
-                    "text": f"{target} starts the grounded flow.",
-                }
-            ],
-            "result": f"The grounded answer for {target} is returned.",
+            "steps": steps,
+            "result": f"The grounded answer for {target} is returned." if (llm_input.get("segment") or {}).get("terminal") else None,
         }
         return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=128)
 

@@ -167,7 +167,10 @@ describe('Jarvis human chat', () => {
     const http = {
       post: vi.fn()
         .mockResolvedValueOnce(humanResponse('Перша відповідь.'))
-        .mockRejectedValueOnce(new Error('Nexus unavailable'))
+        .mockRejectedValueOnce(Object.assign(new Error('Jarvis query failed: Nexus unavailable at /api/v1/knowledge/query'), {
+          code: 'HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED',
+          correlationId: 'abc-123'
+        }))
     };
     const page = new JarvisPage({ document: dom.window.document, http });
     const textarea = dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement;
@@ -181,7 +184,13 @@ describe('Jarvis human chat', () => {
     expect(text).toContain('Перше питання');
     expect(text).toContain('Перша відповідь.');
     expect(text).toContain('Друге питання');
-    expect(text).toContain('Nexus unavailable');
+    expect(text).toContain('The request could not be completed. Please try again.');
+    expect(text).not.toContain('Nexus unavailable');
+    expect(text).not.toContain('HUMAN_ANSWER');
+    expect(text).not.toContain('CONTEXT_BUDGET');
+    expect(text).not.toContain('Jarvis query failed');
+    expect(text).not.toContain('/api/v1');
+    expect(text).not.toContain('correlationId');
     expect(dom.window.document.querySelectorAll('.jarvis-chat-bubble')).toHaveLength(4);
   });
 

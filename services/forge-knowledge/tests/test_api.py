@@ -29,21 +29,45 @@ from semantic_test_support import seed_semantic_graph
 
 def structured_answer(llm_input, text: str, *, result: str | None = None):
     coverage = llm_input.get("coverageContract") or {}
+    refs = list(coverage.get("canonicalAtomRefs") or coverage.get("canonicalFactRefs") or [])
+    ref_key = "atomRefs" if llm_input.get("promptKind") == "FINAL_NARRATION" else "factRefs"
     return {
-        "steps": [{"factRefs": list(coverage.get("canonicalFactRefs") or []), "text": text}],
+        "steps": [{ref_key: refs, "certainty": "VERIFIED", "text": text}],
         "result": result or text,
     }
+
+
+def grounding_response(llm_input):
+    language = llm_input.get("responseLanguage")
+    claims = []
+    processed = []
+    for index, item in enumerate(llm_input.get("evidenceSlices", []) or [], start=1):
+        evidence_ref = str(item.get("evidenceRef") or "")
+        unit_ref = str(item.get("unitRef") or "")
+        claim_ref = f"c{index}"
+        if language == "uk":
+            text = f"Надані докази підтверджують поведінку для {unit_ref}."
+        else:
+            text = f"The supplied evidence grounds behavior for {unit_ref}."
+        claims.append({"claimRef": claim_ref, "unitRef": unit_ref, "evidenceRefs": [evidence_ref], "text": text})
+        processed.append({"evidenceRef": evidence_ref, "disposition": "CLAIMED", "claimRefs": [claim_ref]})
+    return {"claims": claims, "processedEvidence": processed}
 
 
 class FakeFlowExplanationProvider:
     def __init__(self, delay_seconds=0.0):
         self.calls = []
+        self.grounding_calls = []
         self.delay_seconds = delay_seconds
 
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
-        self.calls.append({"llmInput": dict(llm_input), "timeoutSeconds": timeout_seconds})
         if self.delay_seconds:
             time.sleep(self.delay_seconds)
+        if llm_input.get("promptKind") == "GROUNDING":
+            self.grounding_calls.append({"llmInput": dict(llm_input), "timeoutSeconds": timeout_seconds})
+            response = grounding_response(llm_input)
+            return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
+        self.calls.append({"llmInput": dict(llm_input), "timeoutSeconds": timeout_seconds})
         if llm_input.get("responseLanguage") == "uk":
             response = structured_answer(
                 llm_input,
@@ -62,11 +86,18 @@ class FakeFlowExplanationProvider:
 class PerEntrypointAnswerProvider:
     def __init__(self, fail_entrypoints=None):
         self.calls = []
+        self.grounding_calls = []
         self.fail_entrypoints = set(fail_entrypoints or [])
 
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+        if llm_input.get("promptKind") == "GROUNDING":
+            self.grounding_calls.append({"llmInput": dict(llm_input), "timeoutSeconds": timeout_seconds})
+            response = grounding_response(llm_input)
+            return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
         self.calls.append({"llmInput": dict(llm_input), "timeoutSeconds": timeout_seconds})
         entrypoint = str(llm_input.get("entrypoint") or "")
+        if not entrypoint and isinstance(llm_input.get("familyRoot"), dict):
+            entrypoint = str(llm_input["familyRoot"].get("entrypoint") or "")
         if entrypoint in self.fail_entrypoints:
             raise RuntimeError("expected")
         response = structured_answer(
@@ -81,8 +112,19 @@ class SentinelAnswerProvider:
     def __init__(self, sentinel: str):
         self.sentinel = sentinel
         self.calls = []
+        self.grounding_calls = []
 
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+        if llm_input.get("promptKind") == "GROUNDING":
+            self.grounding_calls.append(
+                {
+                    "llmInput": dict(llm_input),
+                    "validationErrors": list(validation_errors or []),
+                    "timeoutSeconds": timeout_seconds,
+                }
+            )
+            response = grounding_response(llm_input)
+            return FlowExplanationProviderResult(raw_text=json.dumps(response), prompt_char_length=100)
         self.calls.append(
             {
                 "llmInput": dict(llm_input),
@@ -278,10 +320,11 @@ def test_query_flow_explanations_endpoint_returns_human_answer(tmp_path):
     assert "flowExplanations" not in response_payload
     assert "nodeRef" not in json.dumps(response_payload)
     assert len(provider.calls) == 1
-    assert provider.calls[0]["llmInput"]["entrypoint"] == "A.start"
+    assert provider.calls[0]["llmInput"]["familyRoot"]["entrypoint"] == "A.start"
     assert "tree" not in provider.calls[0]["llmInput"]
-    assert provider.calls[0]["llmInput"]["orderedFacts"][0]["displaySymbol"] == "A.start"
-    assert provider.calls[0]["llmInput"]["orderedFacts"][0]["trigger"] == {
+    root_unit = provider.calls[0]["llmInput"]["narrationAtoms"][0]["unit"]
+    assert root_unit["symbol"] == "A.start"
+    assert root_unit["trigger"] == {
         "kind": "HTTP",
         "method": "POST",
         "route": "/api/v1/sites",
@@ -390,7 +433,7 @@ def test_query_tool_and_human_paths_deduplicate_contract_interface_entrypoint(tm
             "2. The grounded flow answer for SiteController.createSite is returned.",
         }
     ]
-    assert provider.calls[0]["llmInput"]["orderedFacts"][0]["trigger"] == {
+    assert provider.calls[0]["llmInput"]["narrationAtoms"][0]["unit"]["trigger"] == {
         "kind": "HTTP",
         "method": "POST",
         "route": "/api/v1/sites",
@@ -431,20 +474,23 @@ def test_query_endpoint_uses_configured_llm_provider_and_tool_context_does_not(t
     assert len(query_provider.calls) == 2
     assert query_provider.calls[0]["llmInput"]["queryText"] == "how does A.start work"
     assert query_provider.calls[1]["llmInput"]["queryText"] == "A.start"
-    assert provider.calls[0]["llmInput"]["entrypoint"] == "A.start"
+    assert provider.calls[0]["llmInput"]["familyRoot"]["entrypoint"] == "A.start"
     assert provider.calls[0]["llmInput"]["responseLanguage"] == "en"
     audit = app.state.human_answer_audit_artifacts
-    assert len(audit) == 1
-    assert audit[0]["provider"] == app_config.analysis_provider
-    assert audit[0]["model"] == app_config.analysis_model
-    assert audit[0]["flowEntrypoint"] == "A.start"
-    assert audit[0]["attemptCount"] == 1
-    assert audit[0]["requestedLanguage"] == "AUTO"
-    assert audit[0]["resolvedLanguage"] == "en"
-    assert audit[0]["promptLength"] > 0
-    assert len(audit[0]["promptHash"]) == 64
-    assert audit[0]["rawResponseLength"] > 0
-    assert len(audit[0]["rawResponseHash"]) == 64
+    assert len(audit) == 2
+    assert [record["promptKind"] for record in audit] == ["GROUNDING", "FINAL_NARRATION"]
+    assert [record["providerStage"] for record in audit] == ["GROUNDING_LLM", "NARRATION_LLM"]
+    for record in audit:
+        assert record["provider"] == app_config.analysis_provider
+        assert record["model"] == app_config.analysis_model
+        assert record["flowEntrypoint"] == "A.start"
+        assert record["attemptCount"] == 1
+        assert record["requestedLanguage"] == "AUTO"
+        assert record["resolvedLanguage"] == "en"
+        assert record["promptLength"] > 0
+        assert len(record["promptHash"]) == 64
+        assert record["rawResponseLength"] > 0
+        assert len(record["rawResponseHash"]) == 64
 
 
 def test_query_audit_memory_records_are_bounded(tmp_path):
@@ -536,7 +582,9 @@ def test_human_query_writes_one_terminal_audit_record(tmp_path):
     assert record["selectedFamilyCount"] == 1
     assert record["familyRoots"] == [{"source": "source-a", "entrypoint": "A.start"}]
     assert record["selectedEntrypoints"] == ["A.start"]
-    assert record["providerCallCount"] == 1
+    assert record["providerCallCount"] == 2
+    assert record["groundingInitialCallCount"] == 1
+    assert record["narrationInitialCallCount"] == 1
     assert record["repairCallCount"] == 0
     assert record["promptBudgets"][0]["promptUtf8Bytes"] > 0
     assert record["promptBudgets"][0]["promptBudgetEstimate"]["totalRequiredTokens"] > 0
@@ -663,7 +711,7 @@ def test_query_endpoint_returns_one_answer_per_distinct_flow(tmp_path):
 
     assert status == 200
     assert len(provider.calls) == 3
-    assert [call["llmInput"]["entrypoint"] for call in provider.calls] == roots
+    assert [call["llmInput"]["familyRoot"]["entrypoint"] for call in provider.calls] == roots
     assert [answer["entrypoint"] for answer in payload["answers"]] == roots
     assert [answer["text"] for answer in payload["answers"]] == [
         f"1. {root} starts the selected flow.\n2. The grounded flow answer for {root} is returned."
@@ -674,7 +722,7 @@ def test_query_endpoint_returns_one_answer_per_distinct_flow(tmp_path):
     assert "flows" not in payload
     for call in provider.calls:
         rendered_prompt_facts = json.dumps(call["llmInput"], ensure_ascii=False)
-        other_roots = set(roots) - {call["llmInput"]["entrypoint"]}
+        other_roots = set(roots) - {call["llmInput"]["familyRoot"]["entrypoint"]}
         assert not any(root in rendered_prompt_facts for root in other_roots)
 
 
@@ -714,7 +762,7 @@ def test_query_and_tool_context_collapse_nested_entrypoint_raw_flows_to_one_fami
     assert tree["children"][0]["symbol"] == "B.start"
     assert tree["children"][0]["children"][0]["symbol"] == "Worker.run"
     assert len(provider.calls) == 1
-    assert provider.calls[0]["llmInput"]["entrypoint"] == "A.start"
+    assert provider.calls[0]["llmInput"]["familyRoot"]["entrypoint"] == "A.start"
     assert [answer["entrypoint"] for answer in human_payload["answers"]] == ["A.start"]
 
 
@@ -987,7 +1035,7 @@ def test_missing_http_trigger_details_are_not_invented(tmp_path):
     status = asyncio.run(exercise())
 
     assert status == 200
-    root_fact = provider.calls[0]["llmInput"]["orderedFacts"][0]
+    root_fact = provider.calls[0]["llmInput"]["narrationAtoms"][0]["unit"]
     assert root_fact["trigger"] == {"kind": "HTTP"}
     assert "method" not in root_fact["trigger"]
     assert "route" not in root_fact["trigger"]

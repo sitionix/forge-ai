@@ -29,6 +29,7 @@ from knowledge_service.flow_explanations import (
     PromptBudgetEstimator,
 )
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
+from knowledge_service.grounded_narration import GroundingBatchPlanner, NarrativeFactProjector, NarrationSegmentPlanner
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.query_interpretation import QueryRetrievalPlan
 
@@ -250,8 +251,18 @@ class SequenceHumanAnswerProvider:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
+        self.grounding_calls = []
 
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+        if llm_input.get("promptKind") == "GROUNDING":
+            self.grounding_calls.append(
+                {
+                    "llmInput": dict(llm_input),
+                    "validationErrors": list(validation_errors or []),
+                    "timeoutSeconds": timeout_seconds,
+                }
+            )
+            return FlowExplanationProviderResult(raw_text=json.dumps(auto_grounding(llm_input), ensure_ascii=False), prompt_char_length=100)
         self.calls.append(
             {
                 "llmInput": dict(llm_input),
@@ -297,13 +308,41 @@ class RecordingOllamaResponse:
 
 def structured_answer(llm_input, text: str, *, refs: list[str] | None = None, result: str | None = None):
     coverage = llm_input.get("coverageContract") or {}
-    fact_refs = refs if refs is not None else list(coverage.get("canonicalFactRefs") or [])
+    fact_refs = refs if refs is not None else list(coverage.get("canonicalAtomRefs") or coverage.get("canonicalFactRefs") or [])
     segment = llm_input.get("segment") if isinstance(llm_input.get("segment"), dict) else {}
     terminal = bool(segment.get("terminal", True))
+    ref_key = "atomRefs" if llm_input.get("promptKind") == "FINAL_NARRATION" else "factRefs"
     return {
-        "steps": [{"factRefs": fact_refs, "text": text}],
+        "steps": [{ref_key: fact_refs, "certainty": "VERIFIED", "text": text}],
         "result": (result or text) if terminal else None,
     }
+
+
+def auto_grounding(llm_input):
+    evidence_refs = [str(item.get("evidenceRef")) for item in llm_input.get("evidenceSlices", []) if isinstance(item, dict)]
+    language = llm_input.get("responseLanguage")
+    claims = []
+    processed = []
+    for index, evidence_ref in enumerate(evidence_refs, start=1):
+        evidence_item = next(item for item in llm_input["evidenceSlices"] if item["evidenceRef"] == evidence_ref)
+        unit_ref = str(evidence_item.get("unitRef") or "")
+        claim_ref = f"c{index}"
+        if language == "uk":
+            text = f"Надані докази підтверджують поведінку для {unit_ref}."
+        elif language == "de":
+            text = f"Die gelieferten Belege bestätigen das Verhalten für {unit_ref}."
+        else:
+            text = f"The supplied evidence grounds behavior for {unit_ref}."
+        claims.append(
+            {
+                "claimRef": claim_ref,
+                "unitRef": unit_ref,
+                "evidenceRefs": [evidence_ref],
+                "text": text,
+            }
+        )
+        processed.append({"evidenceRef": evidence_ref, "disposition": "CLAIMED", "claimRefs": [claim_ref]})
+    return {"claims": claims, "processedEvidence": processed}
 
 
 def human_execution(graph_flow: EntrypointFlow):
@@ -468,7 +507,8 @@ def test_complete_technical_flow_prompt_contains_grounded_trigger_and_steps():
     rendered = json.dumps(llm_input, ensure_ascii=False)
 
     assert "tree" not in llm_input
-    assert llm_input["orderedFacts"][0]["trigger"] == {
+    assert "orderedFacts" not in llm_input
+    assert llm_input["narrationAtoms"][0]["unit"]["trigger"] == {
         "kind": "HTTP",
         "method": "POST",
         "route": "/api/v1/sites",
@@ -486,16 +526,15 @@ def test_complete_technical_flow_prompt_contains_grounded_trigger_and_steps():
         "SiteApiMapper.asCreateSiteResponseDTO",
         "POST",
         "/api/v1/sites",
-        "reject length > 60",
-        "SiteStatus.DRAFT",
-        "siteJpaRepository.save",
-        "SiteCreatedPayload",
     ):
         assert expected in rendered
         assert expected in prompt
 
+    tool_json = json.dumps(tool_tree, ensure_ascii=False)
     for item in graph_flow.evidence:
-        assert prompt.count(item.text) == 1
+        assert item.text not in prompt
+        assert item.text not in rendered
+        assert item.text in tool_json
 
     root_children = [item["symbol"] for item in tool_tree["children"]]
     assert root_children == [
@@ -545,7 +584,7 @@ def test_compact_projector_orders_resolved_and_boundary_children_by_callsite_lin
         projected_flow,
         retrieval_plan("Alpha", detected_language="en", response_language="en"),
     )
-    boundary_fact = next(fact for fact in llm_input["orderedFacts"] if fact["type"] == "boundary")
+    boundary_fact = next(atom["unit"] for atom in llm_input["narrationAtoms"] if atom["unit"]["type"] == "boundary")
     assert boundary_fact["fromSource"] == SOURCE
 
 
@@ -557,24 +596,25 @@ def test_human_prompt_distinguishes_identical_symbols_by_public_source():
         retrieval_plan("explain create site", detected_language="en", response_language="en"),
     )
     prompt = HumanAnswerPromptRenderer().render(llm_input)
-    facts = llm_input["orderedFacts"]
+    atoms = llm_input["narrationAtoms"]
+    facts = [atom["unit"] for atom in atoms]
     node_facts = {fact["source"]: fact for fact in facts if fact["type"] == "node"}
     transition_fact = next(fact for fact in facts if fact["type"] == "transition")
 
-    assert [fact["ref"] for fact in facts] == ["n1", "t1", "n2"]
-    assert node_facts["source-a"]["displaySymbol"] == "SiteController.createSite"
-    assert node_facts["source-b"]["displaySymbol"] == "SiteController.createSite"
+    assert [atom["atomRef"] for atom in atoms] == ["a1", "a2", "a3"]
+    assert node_facts["source-a"]["symbol"] == "SiteController.createSite"
+    assert node_facts["source-b"]["symbol"] == "SiteController.createSite"
     assert transition_fact["fromSource"] == "source-a"
     assert transition_fact["toSource"] == "source-b"
     assert transition_fact["crossSource"] is True
-    assert re.search(r'\{[^{}]*"displaySymbol":"SiteController\.createSite"[^{}]*"source":"source-a"[^{}]*\}', prompt)
-    assert re.search(r'\{[^{}]*"displaySymbol":"SiteController\.createSite"[^{}]*"source":"source-b"[^{}]*\}', prompt)
+    assert re.search(r'\{[^{}]*"source":"source-a"[^{}]*"symbol":"SiteController\.createSite"[^{}]*\}', prompt)
+    assert re.search(r'\{[^{}]*"source":"source-b"[^{}]*"symbol":"SiteController\.createSite"[^{}]*\}', prompt)
     assert '"fromSource":"source-a"' in prompt
     assert '"toSource":"source-b"' in prompt
     assert '"crossSource":true' in prompt
 
 
-def test_human_llm_input_uses_ordered_facts_without_nested_tree():
+def test_human_llm_input_uses_compact_atoms_without_nested_tree_or_evidence():
     llm_input = FlowProjectionBuilder().human_llm_input(
         KnowledgeQueryRequest(queryText="Alpha", intent="FLOW_EXPLANATION", answerLanguage="en"),
         technical_create_site_flow(),
@@ -582,9 +622,11 @@ def test_human_llm_input_uses_ordered_facts_without_nested_tree():
     )
 
     assert "tree" not in llm_input
-    assert "orderedFacts" in llm_input
+    assert "orderedFacts" not in llm_input
+    assert "narrationAtoms" in llm_input
+    assert "evidence" not in json.dumps(llm_input, ensure_ascii=False)
     assert llm_input["suggestedStepPlan"]
-    assert all(set(item) == {"unitRefs", "certainty"} for item in llm_input["suggestedStepPlan"])
+    assert all(set(item) == {"atomRefs", "certainty"} for item in llm_input["suggestedStepPlan"])
 
 
 def test_human_prompt_contract_allows_natural_grounded_output():
@@ -597,20 +639,16 @@ def test_human_prompt_contract_allows_natural_grounded_output():
     )
 
     for required in (
-        "technical walkthrough",
-        "supplied trigger and entrypoint",
-        "orderedFacts and coverageContract",
-        "Cover every required node, transition, and gap exactly once",
-        "validation, persistence, or side effect",
-        "Write all natural-language prose in the supplied responseLanguage",
-        "Preserve code identifiers",
-        "exception classes, or error messages",
-        "observable result",
-        "Terminal result may be null",
-        "Return strict JSON only",
-        "Do not collapse the flow into a generic summary",
-        "Do not invent validation",
-        "Do not mention retrieval mechanics",
+            "human-readable narration segment",
+            "Use only narrationAtoms",
+            "Cover every required atomRef exactly once",
+            "The final narration LLM must not decide flow ordering",
+            "responseLanguage is an ISO 639 language code",
+            "Preserve code identifiers",
+            "Only the terminal segment may include result",
+            "Return strict JSON only",
+        "Do not invent routes",
+        "retrieval mechanics",
     ):
         assert required in prompt
 
@@ -623,7 +661,7 @@ def test_missing_trigger_metadata_is_not_invented():
         retrieval_plan(request.queryText, detected_language="uk", response_language="uk"),
     )
 
-    assert "trigger" not in llm_input["orderedFacts"][0]
+    assert "trigger" not in llm_input["narrationAtoms"][0]["unit"]
     rendered = json.dumps(llm_input, ensure_ascii=False)
     assert "POST" not in rendered
     assert "/api/v1/sites" not in rendered
@@ -656,17 +694,22 @@ def test_human_prompt_and_validation_do_not_expose_persisted_internal_ids():
     for secret in secrets:
         assert secret not in rendered_input
         assert secret not in prompt
-    assert prompt.count("public worker call evidence") == 1
+    assert prompt.count("public worker call evidence") == 0
 
     class ForeignRefThenValidProvider:
         def __init__(self):
             self.calls = []
+            self.grounding_calls = []
 
         def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
+            if llm_input.get("promptKind") == "GROUNDING":
+                self.grounding_calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
+                return FlowExplanationProviderResult(raw_text=json.dumps(auto_grounding(llm_input), ensure_ascii=False), prompt_char_length=100)
             self.calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
-            if len(self.calls) == 1:
+            final_call_count = sum(1 for call in self.calls if call["llmInput"].get("promptKind") != "GROUNDING")
+            if final_call_count == 1:
                 payload = {
-                    "steps": [{"factRefs": ["secret-node-db-id"], "text": "PublicEntry calls PublicWorker."}],
+                    "steps": [{"atomRefs": ["secret-node-db-id"], "text": "PublicEntry calls PublicWorker."}],
                     "result": "PublicWorker returns the result.",
                 }
             else:
@@ -690,10 +733,10 @@ def test_human_prompt_and_validation_do_not_expose_persisted_internal_ids():
     for secret in secrets:
         assert secret not in public_response
         assert secret not in validation_errors
-    assert "foreign unitRef" in validation_errors
+    assert "foreign atomRef" in validation_errors
 
 
-def test_full_human_prompt_preserves_all_evidence_without_compaction():
+def test_final_human_prompt_excludes_raw_evidence_catalog():
     long_a = "alpha-" + ("A" * 1200)
     long_b = "beta-" + ("B" * 1300)
     evidence_items = [
@@ -713,11 +756,12 @@ def test_full_human_prompt_preserves_all_evidence_without_compaction():
     prompt = HumanAnswerPromptRenderer().render(llm_input)
 
     for item in evidence_items:
-        assert item.text in prompt
-        assert f'"lineStart":{item.line_start}' in prompt
-        assert f'"lineEnd":{item.line_end}' in prompt
-    assert prompt.count(long_a) >= 5
-    assert prompt.count(long_b) >= 5
+        assert item.text not in prompt
+        assert item.text not in json.dumps(llm_input, ensure_ascii=False)
+        assert f'"lineStart":{item.line_start}' not in prompt
+        assert f'"lineEnd":{item.line_end}' not in prompt
+    assert prompt.count(long_a) == 0
+    assert prompt.count(long_b) == 0
     assert "..." not in long_a
 
 
@@ -796,13 +840,13 @@ def test_prompt_budget_counts_rendered_multilingual_and_json_bytes_once():
 def test_ollama_requests_use_reserved_output_budget_for_first_and_repair_attempts():
     bad_response = json.dumps(
         {
-            "steps": [{"factRefs": ["n1"], "text": "**Root.run** starts from the supplied fact."}],
+            "steps": [{"atomRefs": ["a1"], "certainty": "VERIFIED", "text": "**Root.run** starts from the supplied fact."}],
             "result": "Root.run returns the verified result.",
         }
     )
     good_response = json.dumps(
         {
-            "steps": [{"factRefs": ["n1"], "text": "Root.run starts from the supplied fact."}],
+            "steps": [{"atomRefs": ["a1"], "certainty": "VERIFIED", "text": "Root.run starts from the supplied fact."}],
             "result": "Root.run returns the verified result.",
         }
     )
@@ -847,10 +891,14 @@ def test_initial_fits_and_repair_fits_uses_two_provider_calls():
     graph_flow = flow([node("Root.run", entrypoint=True)], [])
     request = KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION")
     plan = retrieval_plan("explain root", detected_language="en", response_language="en")
-    llm_input = FlowProjectionBuilder().human_llm_input(request, graph_flow, plan)
-    initial_prompt = HumanAnswerPromptRenderer().render(llm_input)
+    probe = HumanFlowAnswerService(
+        SequenceHumanAnswerProvider([]),
+        budget_estimator=PromptBudgetEstimator(context_tokens=100000, reserved_output_tokens=0),
+    )
+    segment = probe._segments_for_flow(request, graph_flow, plan, flow_index=1, source=SOURCE, entrypoint="Root.run")[0]
+    initial_prompt = probe.renderer.render(segment.llm_input)
     bad_response = {
-        "steps": [{"factRefs": ["missing"], "text": "Root.run starts from the supplied fact."}],
+        "steps": [{"atomRefs": ["missing"], "certainty": "VERIFIED", "text": "Root.run starts from the supplied fact."}],
         "result": "Root.run returns the verified result.",
     }
     provider = SequenceHumanAnswerProvider([bad_response, "Root.run starts from the supplied fact."])
@@ -886,14 +934,14 @@ def test_initial_fits_and_repair_overflow_uses_one_provider_call():
     segment = probe._segments_for_flow(request, graph_flow, plan, flow_index=1, source=SOURCE, entrypoint="Root.run")[0]
     initial_prompt = probe.renderer.render(segment.llm_input)
     bad_response = {
-        "steps": [{"factRefs": ["missing"], "text": "Root.run starts from the supplied fact."}],
+        "steps": [{"atomRefs": ["missing"], "certainty": "VERIFIED", "text": "Root.run starts from the supplied fact."}],
         "result": "Root.run returns the verified result.",
     }
     provider = SequenceHumanAnswerProvider([bad_response, "this repair must not be called"])
     service = HumanFlowAnswerService(
         provider,
         budget_estimator=PromptBudgetEstimator(
-            context_tokens=len(initial_prompt.encode("utf-8")),
+            context_tokens=len(initial_prompt.encode("utf-8")) + 128,
             reserved_output_tokens=0,
         ),
     )
@@ -980,7 +1028,7 @@ def test_atomic_overflow_fails_one_family_without_discarding_successful_family()
 
     assert len(provider.calls) == 1
     assert [answer.entrypoint for answer in response.answers] == ["Small.run"]
-    assert [diagnostic.code for diagnostic in response.diagnostics] == ["FLOW_FAMILY_SEGMENT_CONTEXT_BUDGET_EXCEEDED"]
+    assert [diagnostic.code for diagnostic in response.diagnostics] == ["HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED"]
 
 
 class FactListingProvider:
@@ -989,10 +1037,12 @@ class FactListingProvider:
 
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
         self.calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
+        if llm_input.get("promptKind") == "GROUNDING":
+            return FlowExplanationProviderResult(raw_text=json.dumps(auto_grounding(llm_input), ensure_ascii=False), prompt_char_length=100)
         symbols = [
-            str(fact.get("displaySymbol") or fact.get("toSymbol") or fact.get("target") or "")
-            for fact in llm_input["orderedFacts"]
-            if fact.get("type") == "node"
+            str((atom.get("unit") or {}).get("symbol") or (atom.get("unit") or {}).get("toSymbol") or (atom.get("unit") or {}).get("target") or "")
+            for atom in llm_input.get("narrationAtoms", [])
+            if (atom.get("unit") or {}).get("type") == "node"
         ]
         text = "This verified flow segment covers these supplied code symbols in canonical order: " + ", ".join(symbols)
         return FlowExplanationProviderResult(
@@ -1001,34 +1051,73 @@ class FactListingProvider:
         )
 
 
+_SEGMENTING_OUTPUT_RESERVE = 10_000
+
+
 def _segmenting_context_for(graph_flow: EntrypointFlow, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan) -> int:
     probe = HumanFlowAnswerService(
         SequenceHumanAnswerProvider([]),
-        budget_estimator=PromptBudgetEstimator(context_tokens=1_000_000, reserved_output_tokens=0),
+        budget_estimator=PromptBudgetEstimator(context_tokens=1_000_000, reserved_output_tokens=_SEGMENTING_OUTPUT_RESERVE),
     )
-    full_input = probe.projector.human_llm_input(request, graph_flow, plan)
-    facts = [fact for fact in full_input["orderedFacts"] if isinstance(fact, dict)]
-    single_fact_sizes = [
+    prepared = probe._prepare_family_narration(
+        request,
+        graph_flow,
+        plan,
+        time.monotonic() + 60,
+        flow_index=1,
+        source=SOURCE,
+        entrypoint="Root.run",
+        requested_language=request.answerLanguage,
+        resolved_language=plan.response_language,
+    )
+    atoms = prepared.narration_atoms
+    calibration = NarrationSegmentPlanner(
+        renderer=probe.renderer,
+        budget_estimator=PromptBudgetEstimator(context_tokens=1_000_000, reserved_output_tokens=_SEGMENTING_OUTPUT_RESERVE),
+    )
+    single_atom_sizes = [
         len(
             probe.renderer.render(
-                probe._segment_llm_input(
-                    full_input,
-                    [fact],
-                    segment_index=1,
-                    total_segments=len(facts),
-                    terminal=False,
-                )
+                calibration._segment_input(
+                    request.queryText,
+                    plan.response_language,
+                    SOURCE,
+                    "Root.run",
+                    (atom,),
+                    atoms,
+                    index=index,
+                    total=len(atoms),
+                    terminal=index == len(atoms),
+                ),
             ).encode("utf-8")
         )
-        for fact in facts
+        for index, atom in enumerate(atoms, start=1)
+    ]
+    grounding_calibration = GroundingBatchPlanner(
+        renderer=probe.renderer,
+        budget_estimator=PromptBudgetEstimator(context_tokens=1_000_000, reserved_output_tokens=_SEGMENTING_OUTPUT_RESERVE),
+    )
+    descriptors_by_ref = prepared.projection.descriptors_by_ref
+    single_slice_sizes = [
+        len(
+            probe.renderer.render(
+                grounding_calibration._batch_input(
+                    request.queryText,
+                    plan.response_language,
+                    descriptors_by_ref,
+                    (item,),
+                    index=index,
+                    total=len(prepared.evidence_slices),
+                )[0],
+            ).encode("utf-8")
+        )
+        for index, item in enumerate(prepared.evidence_slices, start=1)
     ]
     full_size = len(
-        probe.renderer.render(
-            probe._segment_llm_input(full_input, facts, segment_index=1, total_segments=1, terminal=True)
-        ).encode("utf-8")
+        probe.renderer.render(prepared.narration_segments[0].llm_input).encode("utf-8")
     )
-    context = max(single_fact_sizes) + 256
-    assert context < full_size
+    context = max([*single_atom_sizes, *single_slice_sizes]) + _SEGMENTING_OUTPUT_RESERVE + 512
+    assert context < full_size + _SEGMENTING_OUTPUT_RESERVE
     return context
 
 
@@ -1055,7 +1144,7 @@ def test_large_family_splits_into_budget_safe_segments_and_one_public_answer():
     provider = FactListingProvider()
     service = HumanFlowAnswerService(
         provider,
-        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=0),
+        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=_SEGMENTING_OUTPUT_RESERVE),
     )
 
     response = service.answer(request, human_execution(graph_flow), plan=plan)
@@ -1070,7 +1159,8 @@ def test_large_family_splits_into_budget_safe_segments_and_one_public_answer():
     all_segment_text = "\n".join(rendered_segments)
     for item in graph_flow.evidence:
         assert all_segment_text.count(item.text) == 1
-    segment_refs = [set(call["llmInput"]["coverageContract"]["canonicalFactRefs"]) for call in provider.calls]
+    final_calls = [call for call in provider.calls if call["llmInput"].get("promptKind") == "FINAL_NARRATION"]
+    segment_refs = [set(call["llmInput"]["coverageContract"]["canonicalAtomRefs"]) for call in final_calls]
     assert len(set.union(*segment_refs)) == sum(len(refs) for refs in segment_refs)
 
 
@@ -1089,11 +1179,11 @@ def test_repeated_looking_evidence_is_not_content_deduplicated_across_segments()
     )
     request = KnowledgeQueryRequest(queryText="explain root", intent="FLOW_EXPLANATION")
     plan = retrieval_plan("explain root", detected_language="en", response_language="en")
-    context_tokens = _segmenting_context_for(graph_flow, request, plan)
+    context_tokens = 50_000
     provider = FactListingProvider()
     service = HumanFlowAnswerService(
         provider,
-        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=0),
+        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=_SEGMENTING_OUTPUT_RESERVE),
     )
 
     service.answer(request, human_execution(graph_flow), plan=plan)
@@ -1118,7 +1208,7 @@ def test_cancel_after_segment_one_prevents_subsequent_segment_calls():
     provider = CancelAfterFirstProvider()
     service = HumanFlowAnswerService(
         provider,
-        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=0),
+        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=_SEGMENTING_OUTPUT_RESERVE),
         cancel_event=cancel_event,
     )
 
@@ -1149,7 +1239,7 @@ def test_deadline_expiry_before_later_segment_prevents_next_provider_call(monkey
     provider = DeadlineAdvancingProvider()
     service = HumanFlowAnswerService(
         provider,
-        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=0),
+        budget_estimator=PromptBudgetEstimator(context_tokens=context_tokens, reserved_output_tokens=_SEGMENTING_OUTPUT_RESERVE),
         min_call_timeout_seconds=0.1,
     )
 
@@ -1177,9 +1267,9 @@ def test_deep_sequential_flow_keeps_all_nodes_and_transitions_in_llm_input():
         plan=retrieval_plan("explain deep flow", detected_language="en", response_language="en"),
     )
 
-    facts = provider.calls[0]["llmInput"]["orderedFacts"]
-    assert len([fact for fact in facts if fact["type"] == "node"]) == 16
-    assert len([fact for fact in facts if fact["type"] == "transition"]) == 15
+    facts = provider.calls[0]["llmInput"]["narrationAtoms"]
+    assert len([fact for fact in facts if fact["unit"]["type"] == "node"]) == 16
+    assert len([fact for fact in facts if fact["unit"]["type"] == "transition"]) == 15
     for item in nodes:
         assert item.node_id in response.answers[0].text
 
@@ -1210,23 +1300,24 @@ def test_large_flow_projector_preserves_2000_transitions_and_uses_linear_duplica
     )
     elapsed = time.perf_counter() - started
 
-    facts = llm_input["orderedFacts"]
+    facts = [atom["unit"] for atom in llm_input["narrationAtoms"]]
     node_facts = [fact for fact in facts if fact["type"] == "node"]
     transition_facts = [fact for fact in facts if fact["type"] == "transition"]
-    projected_evidence = [
-        evidence_item
-        for fact in facts
-        for evidence_item in fact.get("evidence", [])
-    ]
+    rendered = json.dumps(llm_input, ensure_ascii=False)
     assert len(node_facts) == transition_count + 1
     assert len(transition_facts) == transition_count
-    assert len(projected_evidence) == transition_count
-    assert {item["excerpt"] for item in projected_evidence} == {item.text for item in evidence_items}
-    assert len(llm_input["coverageContract"]["canonicalFactRefs"]) == len(facts)
-    assert "truncated" not in json.dumps(llm_input, ensure_ascii=False).lower()
-    projector_source = inspect.getsource(FlowProjectionBuilder._ordered_facts)
-    assert "seen_fact_refs" in projector_source
-    assert 'any(item.get("ref") == ref for item in facts)' not in projector_source
+    assert not any(item.text in rendered for item in evidence_items)
+    assert len(llm_input["coverageContract"]["canonicalAtomRefs"]) == len(facts)
+    assert "truncated" not in rendered.lower()
+    projection = NarrativeFactProjector().project(
+        KnowledgeQueryRequest(queryText="explain large flow", intent="FLOW_EXPLANATION", answerLanguage="en"),
+        graph_flow,
+        retrieval_plan("explain large flow", detected_language="en", response_language="en"),
+    )
+    assert len(projection.evidence_work_items) == transition_count
+    assert {item.exact_text for item in projection.evidence_work_items} == {item.text for item in evidence_items}
+    projector_source = inspect.getsource(NarrativeFactProjector._project_single_flow)
+    assert "seen_refs" in projector_source
     assert elapsed < 5.0
 
 
@@ -1236,10 +1327,13 @@ class RepairingOrderProvider:
 
     def complete(self, llm_input, validation_errors=None, timeout_seconds=None):
         self.calls.append({"llmInput": dict(llm_input), "validationErrors": list(validation_errors or [])})
-        refs = list(llm_input["coverageContract"]["canonicalFactRefs"])
-        if len(self.calls) == 1:
+        if llm_input.get("promptKind") == "GROUNDING":
+            return FlowExplanationProviderResult(raw_text=json.dumps(auto_grounding(llm_input), ensure_ascii=False), prompt_char_length=100)
+        refs = list(llm_input["coverageContract"].get("canonicalAtomRefs") or llm_input["coverageContract"]["canonicalFactRefs"])
+        final_call_count = sum(1 for call in self.calls if call["llmInput"].get("promptKind") != "GROUNDING")
+        if final_call_count == 1:
             payload = {
-                "steps": [{"factRefs": [refs[-1], refs[0]], "text": "Branch facts are flattened out of order."}],
+                "steps": [{"atomRefs": [refs[-1], refs[0]], "certainty": "VERIFIED", "text": "Branch facts are flattened out of order."}],
                 "result": "The flow is flattened.",
             }
         else:
@@ -1272,8 +1366,9 @@ def test_branching_flow_preserves_callsite_order_and_repairs_flattened_order():
         plan=retrieval_plan("explain branches", detected_language="en", response_language="en"),
     )
 
-    facts = provider.calls[0]["llmInput"]["orderedFacts"]
-    assert [fact.get("displaySymbol") or fact.get("toSymbol") for fact in facts] == [
+    final_call = next(call for call in provider.calls if call["llmInput"].get("promptKind") == "FINAL_NARRATION")
+    facts = final_call["llmInput"]["narrationAtoms"]
+    assert [(fact.get("unit") or {}).get("symbol") or (fact.get("unit") or {}).get("toSymbol") for fact in facts] == [
         "Root.run",
         "LeftBranch.run",
         "LeftBranch.run",
@@ -1282,8 +1377,9 @@ def test_branching_flow_preserves_callsite_order_and_repairs_flattened_order():
         "NestedRight.run",
         "NestedRight.run",
     ]
-    assert len(provider.calls) == 2
-    assert any("canonical order" in error for error in provider.calls[1]["validationErrors"])
+    final_calls = [call for call in provider.calls if call["llmInput"].get("promptKind") == "FINAL_NARRATION"]
+    assert len(final_calls) == 2
+    assert any("canonical order" in error for error in final_calls[1]["validationErrors"])
     assert "branches remain distinct" in response.answers[0].text.lower()
 
 

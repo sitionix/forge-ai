@@ -284,6 +284,7 @@ def create_app(
                 interpretation_records=[],
                 answer_records=[],
                 prompt_budget_records=[],
+                pipeline_records=[],
                 terminal_status=422,
                 terminal_error_code="RESPONSE_LANGUAGE_NOT_ALLOWED",
                 terminal_error_message="The requested response language is not allowed.",
@@ -699,6 +700,7 @@ def _knowledge_human_query_response(
     interpretation_records = []
     answer_records = []
     prompt_budget_records = []
+    pipeline_records = []
     try:
         if is_forbidden_response_language(body.answerLanguage):
             terminal_status = 422
@@ -756,6 +758,7 @@ def _knowledge_human_query_response(
         finally:
             answer_records = [dict(record) for record in answer_service.audit_records]
             prompt_budget_records = [dict(record) for record in answer_service.prompt_budget_records]
+            pipeline_records = [dict(record) for record in getattr(answer_service, "pipeline_records", [])]
             _record_human_answer_audits(request, body, answer_service.audit_records, interpretation_service.audit_records)
             if close_provider:
                 close_provider()
@@ -881,6 +884,7 @@ def _knowledge_human_query_response(
             interpretation_records=interpretation_records,
             answer_records=answer_records,
             prompt_budget_records=prompt_budget_records,
+            pipeline_records=pipeline_records,
             terminal_status=terminal_status,
             terminal_error_code=terminal_error_code,
             terminal_error_message=terminal_error_message,
@@ -994,6 +998,7 @@ def _record_human_query_terminal_audit(
     interpretation_records,
     answer_records,
     prompt_budget_records,
+    pipeline_records,
     terminal_status: int,
     terminal_error_code: str | None,
     terminal_error_message: str | None,
@@ -1011,6 +1016,7 @@ def _record_human_query_terminal_audit(
         interpretation_records=list(interpretation_records or []),
         answer_records=list(answer_records or []),
         prompt_budget_records=list(prompt_budget_records or []),
+        pipeline_records=list(pipeline_records or []),
         terminal_status=terminal_status,
         terminal_error_code=terminal_error_code,
         terminal_error_message=terminal_error_message,
@@ -1036,6 +1042,7 @@ def _human_query_terminal_audit_record(
     interpretation_records,
     answer_records,
     prompt_budget_records,
+    pipeline_records,
     terminal_status: int,
     terminal_error_code: str | None,
     terminal_error_message: str | None,
@@ -1045,9 +1052,30 @@ def _human_query_terminal_audit_record(
 ) -> Dict[str, Any]:
     provider_call_count = len(answer_records)
     repair_call_count = sum(1 for record in answer_records if int(record.get("attemptCount") or 0) > 1)
+    grounding_initial_call_count = sum(
+        1
+        for record in answer_records
+        if record.get("promptKind") == "GROUNDING" and int(record.get("attemptCount") or 0) == 1
+    )
+    grounding_repair_call_count = sum(
+        1
+        for record in answer_records
+        if record.get("promptKind") == "GROUNDING" and int(record.get("attemptCount") or 0) > 1
+    )
+    narration_initial_call_count = sum(
+        1
+        for record in answer_records
+        if record.get("promptKind") == "FINAL_NARRATION" and int(record.get("attemptCount") or 0) == 1
+    )
+    narration_repair_call_count = sum(
+        1
+        for record in answer_records
+        if record.get("promptKind") == "FINAL_NARRATION" and int(record.get("attemptCount") or 0) > 1
+    )
     selected_flow_summaries = _selected_flow_audit_summaries(selected_flows)
     prompt_budget_summary = _prompt_budget_summary(prompt_budget_records)
     family_assembly_summary = _family_assembly_terminal_payload(query_result, selected_flow_summaries)
+    narration_metrics = _human_narration_terminal_metrics(pipeline_records, answer_records)
     return {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "correlationId": correlation_id,
@@ -1069,8 +1097,14 @@ def _human_query_terminal_audit_record(
         "selectedFlows": selected_flow_summaries,
         "promptBudgetSummary": prompt_budget_summary,
         "promptBudgets": prompt_budget_records,
+        "humanNarration": narration_metrics,
+        "humanNarrationFamilies": pipeline_records,
         "providerCallCount": provider_call_count,
         "repairCallCount": repair_call_count,
+        "groundingInitialCallCount": grounding_initial_call_count,
+        "groundingRepairCallCount": grounding_repair_call_count,
+        "narrationInitialCallCount": narration_initial_call_count,
+        "narrationRepairCallCount": narration_repair_call_count,
         "terminalHttpStatus": int(terminal_status),
         "terminalErrorCode": terminal_error_code,
         "terminalErrorMessage": terminal_error_message,
@@ -1184,7 +1218,23 @@ def _human_query_prompt_budget_records(config: AppConfig, body: KnowledgeQueryRe
     records: list[Dict[str, Any]] = []
     for index, flow in enumerate(tuple(selected_flows or ()), start=1):
         source, entrypoint = projector.flow_answer_identity(flow)
-        llm_input = projector.human_llm_input(body, flow, retrieval_plan)
+        llm_input = {
+            "promptKind": "FINAL_NARRATION",
+            "originalQuestion": body.queryText,
+            "detectedLanguage": retrieval_plan.detected_language,
+            "responseLanguage": retrieval_plan.response_language,
+            "intent": retrieval_plan.effective_intent,
+            "familyRoot": {"source": source, "entrypoint": entrypoint},
+            "segment": {"index": 1, "total": 1, "terminal": True, "incomingContext": [], "outgoingContext": []},
+            "narrationAtoms": [],
+            "coverageContract": {
+                "canonicalAtomRefs": [],
+                "requiredAtomRefs": [],
+                "atomCertainty": {},
+                "gapRefs": [],
+            },
+            "auditPurpose": "PUBLIC_SAFE_GROUNDED_NARRATION_PREFLIGHT",
+        }
         prompt = renderer.render(llm_input)
         estimate = estimator.estimate(prompt)
         budget_payload = _prompt_budget_estimate_payload(estimate, "INITIAL")
@@ -1241,6 +1291,42 @@ def _prompt_budget_summary(records) -> Dict[str, Any]:
     }
 
 
+def _human_narration_terminal_metrics(pipeline_records, answer_records) -> Dict[str, Any]:
+    records = [record for record in pipeline_records if isinstance(record, dict)]
+    answer_records = [record for record in answer_records if isinstance(record, dict)]
+    grounding_records = [record for record in answer_records if record.get("promptKind") == "GROUNDING"]
+    narration_records = [record for record in answer_records if record.get("promptKind") == "FINAL_NARRATION"]
+
+    def total(key: str) -> int:
+        return sum(int(record.get(key) or 0) for record in records)
+
+    def max_float(key: str) -> float:
+        return round(max((float(record.get(key) or 0.0) for record in records), default=0.0), 3)
+
+    return {
+        "narrativePlanCount": total("narrativePlanCount"),
+        "evidenceRecordCount": total("evidenceRecordCount"),
+        "evidenceUtf8Bytes": total("evidenceUtf8Bytes"),
+        "evidenceSliceCount": total("evidenceSliceCount"),
+        "splitEvidenceRecordCount": total("splitEvidenceRecordCount"),
+        "groundingBatchCount": total("groundingBatchCount"),
+        "groundingInitialCallCount": sum(1 for record in grounding_records if int(record.get("attemptCount") or 0) == 1),
+        "groundingRepairCallCount": sum(1 for record in grounding_records if int(record.get("attemptCount") or 0) > 1),
+        "groundedClaimCount": total("groundedClaimCount"),
+        "noNewBehaviorEvidenceCount": total("noNewBehaviorEvidenceCount"),
+        "narrationAtomCount": total("narrationAtomCount"),
+        "narrationSegmentCount": total("narrationSegmentCount"),
+        "narrationInitialCallCount": sum(1 for record in narration_records if int(record.get("attemptCount") or 0) == 1),
+        "narrationRepairCallCount": sum(1 for record in narration_records if int(record.get("attemptCount") or 0) > 1),
+        "EVIDENCE_SPLIT_MS": max_float("EVIDENCE_SPLIT_MS"),
+        "GROUNDING_BATCH_PLAN_MS": max_float("GROUNDING_BATCH_PLAN_MS"),
+        "CLAIM_ASSEMBLY_MS": max_float("CLAIM_ASSEMBLY_MS"),
+        "NARRATION_SEGMENT_PLAN_MS": max_float("NARRATION_SEGMENT_PLAN_MS"),
+        "EVIDENCE_SERIALIZATION_COUNT": total("EVIDENCE_SERIALIZATION_COUNT"),
+        "NARRATION_SERIALIZATION_COUNT": total("NARRATION_SERIALIZATION_COUNT"),
+    }
+
+
 def _compact_provider_audit_record(record: Dict[str, Any]) -> Dict[str, Any]:
     allowed = {
         "provider",
@@ -1250,6 +1336,8 @@ def _compact_provider_audit_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "rawResponseLength",
         "rawResponseHash",
         "flowEntrypoint",
+        "providerStage",
+        "promptKind",
         "attemptCount",
         "segmentIndex",
         "segmentCount",

@@ -71,16 +71,12 @@ export class JarvisQueryView {
     if (!element) {
       return;
     }
-    const reason = [error?.code, error?.message && error.message !== error.code ? error.message : null]
-      .filter(Boolean)
-      .join(': ') || 'REQUEST_FAILED';
-    const status = error?.status ? ` (${error.status})` : '';
     element.innerHTML = `
       <div class="jarvis-chat-role">Jarvis</div>
       <div class="jarvis-chat-bubble">
         <article class="jarvis-error-card">
-          <strong>${escapeHtml(error?.title || 'Jarvis query failed')}</strong>
-          <p>${escapeHtml(reason)}${escapeHtml(status)}</p>
+          <strong>${escapeHtml(error?.title || 'Request failed')}</strong>
+          <p>${escapeHtml(error?.safeMessage || 'The request could not be completed. Please try again.')}</p>
         </article>
       </div>
     `;

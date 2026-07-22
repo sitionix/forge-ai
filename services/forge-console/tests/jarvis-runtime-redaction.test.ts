@@ -90,9 +90,11 @@ describe('Jarvis runtime rendering', () => {
 
   it('renders controlled query errors and does not call Knowledge directly', async () => {
     const dom = jarvisDom();
-    const error = Object.assign(new Error('The complete grounded flow exceeds the available model context.'), {
+    const error = Object.assign(new Error('Jarvis query failed: /api/v1/knowledge/query exceeded context with correlationId abc-123'), {
       code: 'HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED',
-      status: 503
+      status: 503,
+      endpoint: '/api/v1/knowledge/query',
+      correlationId: 'abc-123'
     });
     const http = {
       get: vi.fn(() => Promise.resolve({ status: 'UP', model: {}, ollama: {}, actions: { count: 0 } })),
@@ -106,9 +108,14 @@ describe('Jarvis runtime rendering', () => {
     await page.submitQuery({ preventDefault: () => undefined });
 
     const text = dom.window.document.body.textContent || '';
-    expect(text).toContain('HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED');
-    expect(text).toContain('The complete grounded flow exceeds the available model context.');
-    expect(text).toContain('503');
+    expect(text).toContain('Request failed');
+    expect(text).toContain('The request could not be completed. Please try again.');
+    expect(text).not.toContain('HUMAN_ANSWER');
+    expect(text).not.toContain('CONTEXT_BUDGET');
+    expect(text).not.toContain('Jarvis query failed');
+    expect(text).not.toContain('/api/v1');
+    expect(text).not.toContain('correlationId');
+    expect(text).not.toContain('503');
     expect(http.post).toHaveBeenCalledWith('/jarvis/query', expect.any(Object), expect.any(Object));
     const calls = http.post.mock.calls as unknown as Array<[string, unknown?, unknown?]>;
     expect(calls.some(([path]) => path.includes('/knowledge/query'))).toBe(false);
@@ -140,6 +147,7 @@ describe('Jarvis runtime rendering', () => {
 
     expect(dom.window.document.getElementById('sendJarvisQuery')?.getAttribute('disabled')).toBeNull();
     expect(dom.window.document.getElementById('jarvisQueryLoading')?.className).toContain('hidden');
-    expect(dom.window.document.getElementById('jarvisQueryError')?.textContent).toContain('controlled failure');
+    expect(dom.window.document.getElementById('jarvisQueryError')?.textContent).toContain('The request could not be completed. Please try again.');
+    expect(dom.window.document.getElementById('jarvisQueryError')?.textContent).not.toContain('controlled failure');
   });
 });

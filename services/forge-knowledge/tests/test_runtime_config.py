@@ -166,7 +166,17 @@ def test_human_query_ollama_payload_uses_exact_loaded_context():
         http_client=recorder,
     )
     try:
-        result = client.complete({"flowIndex": 1, "steps": [], "transitions": [], "boundaries": []})
+        result = client.complete(
+            {
+                "promptKind": "FINAL_NARRATION",
+                "originalQuestion": "Explain the neutral flow",
+                "responseLanguage": "en",
+                "familyRoot": {"source": "source-a", "entrypoint": "Unit.run"},
+                "segment": {"index": 1, "total": 1, "terminal": True, "incomingContext": [], "outgoingContext": []},
+                "narrationAtoms": [],
+                "coverageContract": {"canonicalAtomRefs": [], "requiredAtomRefs": [], "atomCertainty": {}, "gapRefs": []},
+            }
+        )
     finally:
         client.close()
 
