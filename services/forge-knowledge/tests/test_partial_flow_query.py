@@ -17,7 +17,7 @@ from knowledge_service.flow_family import FlowFamilyAssembler
 from knowledge_service.flow_explanations import FlowProjectionBuilder
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
 from knowledge_service.flow_narrative import FlowNarrativePartKind, FlowNarrativePlanner
-from knowledge_service.flow_walkthrough import FlowWalkthroughPlanner, FlowWalkthroughStepKind
+from knowledge_service.flow_formatter import FlowFormatterGroupKind, FlowFormatterPlanBuilder
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import KnowledgeQueryService, SourceScopeResolver, UnifiedAnchorSearcher
 from knowledge_service.operation_facts import AvailableOperationFact
@@ -607,7 +607,7 @@ def test_tool_and_human_projection_share_gap_and_operation_order():
     projector = FlowProjectionBuilder()
 
     tool = projector.to_tool_response(request, type("Execution", (), {"narrative_plans": plans, "flows": (), "response": None})())
-    walkthrough = FlowWalkthroughPlanner().plan(plans[0])
+    formatter_plan = FlowFormatterPlanBuilder().plan(plans[0])
 
     assert len(tool.flows) == 1
     assert [part.kind for part in tool.flows[0].parts] == [
@@ -616,12 +616,12 @@ def test_tool_and_human_projection_share_gap_and_operation_order():
         "VERIFIED_FRAGMENT",
     ]
     assert tool.flows[0].parts[0].tree.entrypoint.trigger.method == "POST"
-    assert [step.kind for step in walkthrough.steps[:2]] == [
-        FlowWalkthroughStepKind.ENTRYPOINT,
-        FlowWalkthroughStepKind.UNVERIFIED_GAP,
+    assert [group.kind for group in formatter_plan.groups[:2]] == [
+        FlowFormatterGroupKind.ENTRYPOINT,
+        FlowFormatterGroupKind.UNVERIFIED_GAP,
     ]
-    assert walkthrough.steps[0].method == "POST"
-    assert walkthrough.steps[1].certainty == "unverified"
+    assert formatter_plan.groups[0].method == "POST"
+    assert formatter_plan.groups[1].certainty == "UNVERIFIED"
 
 
 def test_catalog_client_operation_attaches_to_non_target_fragment_and_is_projected():
@@ -653,7 +653,7 @@ def test_catalog_client_operation_attaches_to_non_target_fragment_and_is_project
     request = KnowledgeQueryRequest(queryText="create item", intent="FLOW_EXPLANATION")
     projector = FlowProjectionBuilder()
     tool = projector.to_tool_response(request, type("Execution", (), {"narrative_plans": plans, "flows": (), "response": None})())
-    walkthrough = FlowWalkthroughPlanner().plan(plans[0])
+    formatter_plan = FlowFormatterPlanBuilder().plan(plans[0])
 
     assert diagnostics == ()
     assert len(plans) == 1
@@ -665,11 +665,11 @@ def test_catalog_client_operation_attaches_to_non_target_fragment_and_is_project
     assert plans[0].parts[0].fragment.operation_facts[-1].owner_source_id == "contract-source"
     assert len(tool.flows) == 1
     assert any(item.kind == "OPERATION" for item in tool.flows[0].parts[0].tree.entrypoint.children)
-    assert [step.kind for step in walkthrough.steps[:4]] == [
-        FlowWalkthroughStepKind.ENTRYPOINT,
-        FlowWalkthroughStepKind.OPERATION,
-        FlowWalkthroughStepKind.UNVERIFIED_GAP,
-        FlowWalkthroughStepKind.ENTRYPOINT,
+    assert [group.kind for group in formatter_plan.groups[:4]] == [
+        FlowFormatterGroupKind.ENTRYPOINT,
+        FlowFormatterGroupKind.OPERATION,
+        FlowFormatterGroupKind.UNVERIFIED_GAP,
+        FlowFormatterGroupKind.ENTRYPOINT,
     ]
 
 

@@ -172,7 +172,7 @@ def test_explicit_forbidden_answer_language_returns_controlled_422(tmp_path):
     assert query_provider.calls == []
 
 
-def test_query_endpoint_returns_deterministic_human_answer_without_final_provider(tmp_path):
+def test_query_endpoint_returns_formatter_backed_human_answer(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     _seed_a_start_flow(app_config)
 
@@ -229,7 +229,7 @@ def test_query_tool_context_remains_technical_and_human_response_has_no_evidence
     assert "tree" not in json.dumps(human_payload)
 
 
-def test_human_query_writes_deterministic_terminal_audit_record(tmp_path):
+def test_human_query_writes_formatter_terminal_audit_record(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     app.state.app_config.query_audit_directory = tmp_path / "audit"
     _seed_a_start_flow(app_config)
@@ -258,11 +258,15 @@ def test_human_query_writes_deterministic_terminal_audit_record(tmp_path):
     assert record["verifiedFragmentCount"] == 1
     assert record["walkthroughStepCount"] >= 3
     assert record["answerCount"] == 1
-    assert record["finalAnswerProviderCallCount"] == 0
+    assert record["formatterProviderCallCount"] == 1
+    assert record["finalAnswerProviderCallCount"] == 1
     assert record["groundingProviderCallCount"] == 0
-    assert record["providerCallCount"] == 0
+    assert record["toolContextFormatterCallCount"] == 0
+    assert record["providerCallCount"] == 1
     assert record["fetchDurationMs"] >= 0
     assert record["walkthroughPlanningDurationMs"] >= 0
+    assert record["formatterPlanningDurationMs"] >= 0
+    assert record["formatterDurationMs"] >= 0
     assert record["textRenderingDurationMs"] >= 0
     files = sorted(app.state.app_config.query_audit_directory.glob("human-query-terminal-*.json"))
     assert len(files) == 1

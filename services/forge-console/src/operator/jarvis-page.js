@@ -2,7 +2,8 @@ import { JarvisQueryView } from './jarvis-query-view.js';
 import { RequestCoordinator } from './request-coordinator.js';
 
 const DEFAULT_QUERY_CONFIG = {
-  jarvisQueryIncludeTests: false
+  jarvisQueryIncludeTests: false,
+  jarvisQueryMaxFlows: null
 };
 
 export class JarvisPage {
@@ -68,11 +69,16 @@ export class JarvisPage {
   }
 
   queryPayload(queryText) {
-    return {
+    const payload = {
       queryText,
       intent: 'AUTO',
       includeTests: Boolean(this.runtimeConfig.jarvisQueryIncludeTests)
     };
+    const maxFlows = Number(this.runtimeConfig.jarvisQueryMaxFlows);
+    if (Number.isInteger(maxFlows) && maxFlows > 0) {
+      payload.maxFlows = maxFlows;
+    }
+    return payload;
   }
 
   safeQueryErrorPresentation() {
@@ -92,7 +98,7 @@ export class JarvisPage {
     button.disabled = busy;
     button.textContent = busy ? 'Sending...' : 'Send';
     if (loading) {
-      loading.textContent = 'Analyzing the current graph and preparing an answer...';
+      loading.textContent = 'Preparing an answer...';
     }
     loading?.classList.toggle('hidden', !busy);
   }

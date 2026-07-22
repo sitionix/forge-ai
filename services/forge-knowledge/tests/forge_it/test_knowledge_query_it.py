@@ -68,7 +68,7 @@ def explicit(node_id: str, evidence_id: str, *, method: str | None = None, route
     return claim
 
 
-def test_deterministic_human_and_tool_context_project_same_persisted_flow(tmp_path):
+def test_formatter_human_and_tool_context_project_same_persisted_flow(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_semantic_graph(
         app_config.store_path,
@@ -86,17 +86,16 @@ def test_deterministic_human_and_tool_context_project_same_persisted_flow(tmp_pa
 
     assert len(base_payload["flows"]) == 1
     assert human_payload["answerLanguage"] == "en"
-    assert human_payload["answers"] == [
-        {
-            "source": "source-a",
-            "entrypoint": "Entry.run",
-            "text": (
-                "1. The entrypoint Entry.run (source-a) receives POST /flows.\n"
-                "2. Execution reaches Worker.apply (source-a).\n"
-                "3. The available facts end at Worker.apply (source-a); no verified result is available."
-            ),
-        }
-    ]
+    assert len(human_payload["answers"]) == 1
+    answer = human_payload["answers"][0]
+    assert answer["source"] == "source-a"
+    assert answer["entrypoint"] == "Entry.run"
+    assert answer["text"].startswith("1. ")
+    assert "\n2. " in answer["text"]
+    assert "Entry.run" in answer["text"]
+    assert "Worker.apply" in answer["text"]
+    assert "POST" in answer["text"]
+    assert "/flows" in answer["text"]
     assert human_payload["diagnostics"] == []
     assert "flows" not in human_payload
     assert "excerpt" not in json.dumps(human_payload)
@@ -132,7 +131,7 @@ def test_multiple_independent_entrypoints_preserve_backend_order(tmp_path):
     assert "tree" not in json.dumps(payload)
 
 
-def test_partial_unresolved_boundary_is_readable_and_successful(tmp_path):
+def test_partial_unresolved_boundary_is_formatted_and_successful(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_semantic_graph(
         app_config.store_path,
@@ -160,11 +159,13 @@ def test_partial_unresolved_boundary_is_readable_and_successful(tmp_path):
     assert response.status_code == 200
     assert len(payload["answers"]) == 1
     text = payload["answers"][0]["text"]
-    assert "not present in the current facts" in text
-    assert "no verified result is available" in text
+    assert "Entry.run" in text
+    assert "Missing.run" in text
+    assert "evidence" not in text.lower()
+    assert "formatter" not in text.lower()
 
 
-def test_human_terminal_audit_records_zero_grounding_and_final_provider_calls(tmp_path):
+def test_human_terminal_audit_records_zero_grounding_and_final_formatter_calls(tmp_path):
     app, _, app_config, _ = build_test_app(write_runtime_config(tmp_path))
     seed_semantic_graph(
         app_config.store_path,
@@ -183,7 +184,9 @@ def test_human_terminal_audit_records_zero_grounding_and_final_provider_calls(tm
     assert record["terminalStage"] == "SUCCESS"
     assert record["queryInterpreterCallCount"] == 1
     assert record["answerCount"] == 1
-    assert record["finalAnswerProviderCallCount"] == 0
+    assert record["formatterProviderCallCount"] == 1
+    assert record["finalAnswerProviderCallCount"] == 1
     assert record["groundingProviderCallCount"] == 0
+    assert record["toolContextFormatterCallCount"] == 0
     assert record["walkthroughPlanningDurationMs"] >= 0
     assert record["textRenderingDurationMs"] >= 0

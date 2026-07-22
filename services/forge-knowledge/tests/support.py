@@ -16,6 +16,7 @@ from knowledge_service.errors import KnowledgeError
 from knowledge_service.graph_schema import GraphAnalysisResult
 from knowledge_service.main import create_app
 from knowledge_service.query_interpretation import QueryInterpretationProviderResult
+from knowledge_service.flow_formatter import FlowFormatterProviderResult
 
 
 @dataclass(frozen=True)
@@ -187,6 +188,38 @@ class DeterministicQueryInterpretationProvider:
         return QueryInterpretationProviderResult(raw_text=json.dumps(payload), prompt_char_length=100)
 
 
+class DeterministicFinalFlowFormatterProvider:
+    name = "deterministic-final-flow-formatter"
+    model = "deterministic"
+
+    def __init__(self) -> None:
+        self.calls: List[Dict[str, Any]] = []
+
+    def complete(self, formatter_input, validation_errors=None, timeout_seconds=None):
+        self.calls.append(
+            {
+                "formatterInput": dict(formatter_input),
+                "validationErrors": list(validation_errors or []),
+                "timeoutSeconds": timeout_seconds,
+            }
+        )
+        response_language = str(formatter_input.get("responseLanguage") or "en").lower()
+        certainty_by_ref = formatter_input.get("coverageContract", {}).get("certaintyByGroupRef", {})
+        groups = list(_flatten_formatter_groups(formatter_input.get("groups", [])))
+        steps = []
+        for group in groups:
+            group_ref = group.get("groupRef")
+            certainty = str(certainty_by_ref.get(group_ref) or group.get("certainty") or "VERIFIED")
+            steps.append(
+                {
+                    "groupRef": group_ref,
+                    "certainty": certainty,
+                    "text": _formatter_sentence(group, certainty, response_language),
+                }
+            )
+        return FlowFormatterProviderResult(raw_text=json.dumps({"steps": steps}, ensure_ascii=False), prompt_char_length=100)
+
+
 def _strip_code_symbols(value: str) -> str:
     result = value
     for identifier in _query_identifiers(value):
@@ -201,6 +234,53 @@ def _query_identifiers(value: str) -> List[str]:
     for match in re.finditer(r"\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\b", value):
         identifiers.append(match.group(0))
     return identifiers
+
+
+def _flatten_formatter_groups(groups):
+    for group in (groups if isinstance(groups, list) else []):
+        if not isinstance(group, dict):
+            continue
+        yield group
+        yield from _flatten_formatter_groups(group.get("childGroups", []))
+
+
+def _formatter_sentence(group: Dict[str, Any], certainty: str, language: str) -> str:
+    identifiers = _formatter_identifiers(group)
+    joined = ", ".join(identifiers) if identifiers else str(group.get("kind") or "step")
+    source = group.get("source") or group.get("fromSource") or group.get("toSource")
+    if group.get("sourceDisplayHint") == "REQUIRED" and source and source not in joined:
+        joined = f"{joined}, {source}"
+    if language == "uk":
+        uncertainty = " з непідтвердженим зв'язком" if certainty == "UNVERIFIED" else " з неоднозначним зв'язком" if certainty == "AMBIGUOUS" else ""
+        return f"Цей крок описує доступний потік{uncertainty}: {joined}."
+    if language == "de":
+        uncertainty = " mit ungesicherter Verbindung" if certainty == "UNVERIFIED" else " mit mehrdeutiger Verbindung" if certainty == "AMBIGUOUS" else ""
+        return f"Dieser Schritt beschreibt den verfügbaren Ablauf{uncertainty}: {joined}."
+    if language == "fr":
+        uncertainty = " avec un lien non confirmé" if certainty == "UNVERIFIED" else " avec un lien ambigu" if certainty == "AMBIGUOUS" else ""
+        return f"Cette étape décrit le flux disponible{uncertainty}: {joined}."
+    uncertainty = " with an unconfirmed connection" if certainty == "UNVERIFIED" else " with an ambiguous connection" if certainty == "AMBIGUOUS" else ""
+    return f"This step describes the available flow{uncertainty}: {joined}."
+
+
+def _formatter_identifiers(group: Dict[str, Any]) -> List[str]:
+    values: List[str] = []
+    for key in (
+        "symbol",
+        "fromSymbol",
+        "toSymbol",
+        "method",
+        "route",
+        "topic",
+        "schedule",
+        "operationIdentity",
+        "interfaceIdentity",
+        "targetDescriptor",
+    ):
+        value = group.get(key)
+        if isinstance(value, str) and value.strip() and value.strip() not in values:
+            values.append(value.strip())
+    return values
 
 
 def write_runtime_config(
@@ -348,6 +428,7 @@ def build_test_app(
     )
     app = create_app(settings=settings, dependencies=deps)
     app.state.query_interpretation_provider = DeterministicQueryInterpretationProvider()
+    app.state.final_flow_formatter_provider = DeterministicFinalFlowFormatterProvider()
     return app, settings, app_config, deps
 
 

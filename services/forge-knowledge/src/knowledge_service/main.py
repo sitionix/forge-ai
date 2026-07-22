@@ -32,9 +32,16 @@ from knowledge_service.config import (
 from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.errors import KnowledgeError
+from knowledge_service.flow_formatter import (
+    FlowFormatterAllPlansFailed,
+    FlowFormatterAnswerService,
+    FlowFormatterDeadlineExceeded,
+    FlowFormatterPromptRenderer,
+    FlowFormatterSegmentPlanner,
+    LocalOllamaFlowFormatterClient,
+)
 from knowledge_service.freshness_service import KnowledgeFreshnessService
 from knowledge_service.flow_explanations import FlowProjectionBuilder
-from knowledge_service.flow_walkthrough import DeterministicFlowWalkthroughAnswerService
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_schema import InventoryBuildRequest
@@ -737,22 +744,31 @@ def _knowledge_human_query_response(
                 correlation_id=correlation_id,
             )
         family_assembly_duration_ms = fetch_duration_ms
-        answer_service = DeterministicFlowWalkthroughAnswerService(
-            default_language=getattr(config, "query_default_response_language", "en")
-        )
-        terminal_stage = "WALKTHROUGH_PLANNING"
-        result = answer_service.answer(body, query_result, plan=retrieval_plan)
-        pipeline_records = [dict(record) for record in answer_service.pipeline_records]
+        answer_service, close_formatter = _flow_formatter_service(request, config)
+        try:
+            terminal_stage = "FORMATTER_PLAN_BUILDING"
+            result = answer_service.answer(
+                body,
+                query_result,
+                plan=retrieval_plan,
+                deadline_at=deadline_at,
+                cancel_event=cancel_event,
+            )
+        finally:
+            answer_records = [dict(record) for record in answer_service.audit_records]
+            pipeline_records = [dict(record) for record in answer_service.pipeline_records]
+            if close_formatter:
+                close_formatter()
         if pipeline_records:
             pipeline_records[0]["fetchDurationMs"] = fetch_duration_ms
             pipeline_records[0]["familyAssemblyDurationMs"] = family_assembly_duration_ms
-        terminal_stage = "TEXT_RENDERING"
+        terminal_stage = "FINAL_FORMATTER"
         response = answer_service.to_response(result)
         terminal_status = 200
         terminal_error_code = None
         terminal_error_message = None
         terminal_stage = "SUCCESS"
-        _record_human_answer_audits(request, body, [], interpretation_service.audit_records)
+        _record_human_answer_audits(request, body, answer_records, interpretation_service.audit_records)
         return response
     except QueryPlanningDeadlineExceeded:
         terminal_stage = "QUERY_INTERPRETATION"
@@ -781,6 +797,30 @@ def _knowledge_human_query_response(
         terminal_status = 502
         terminal_error_code = QUERY_INTERPRETATION_FAILED
         terminal_error_message = "The local model could not interpret the query."
+        return _public_error_response(
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
+        )
+    except FlowFormatterDeadlineExceeded:
+        terminal_stage = getattr(answer_service, "current_stage", None) or "FINAL_FORMATTER"
+        terminal_status = 504
+        terminal_error_code = "ANSWER_GENERATION_TIMEOUT"
+        terminal_error_message = "Knowledge answer generation timed out."
+        _record_human_answer_audits(request, body, answer_records, interpretation_service.audit_records)
+        return _public_error_response(
+            terminal_status,
+            terminal_error_code,
+            terminal_error_message,
+            correlation_id=correlation_id,
+        )
+    except FlowFormatterAllPlansFailed:
+        terminal_stage = getattr(answer_service, "current_stage", None) or "FINAL_FORMATTER"
+        terminal_status = 502
+        terminal_error_code = "FINAL_FORMATTER_FAILED"
+        terminal_error_message = "The local model could not format a factual answer."
+        _record_human_answer_audits(request, body, answer_records, interpretation_service.audit_records)
         return _public_error_response(
             terminal_status,
             terminal_error_code,
@@ -823,10 +863,21 @@ def _knowledge_human_query_response(
                 "fetchDurationMs": fetch_duration_ms,
                 "familyAssemblyDurationMs": family_assembly_duration_ms,
                 "walkthroughPlanningDurationMs": 0.0,
+                "formatterPlanningDurationMs": 0.0,
+                "formatterDurationMs": 0.0,
+                "stitchingDurationMs": 0.0,
                 "textRenderingDurationMs": 0.0,
                 "totalDurationMs": total_duration_ms,
+                "formatterProviderCallCount": 0,
+                "formatterRepairCallCount": 0,
+                "formatterOutputSplitCallCount": 0,
+                "formatterSegmentCount": 0,
+                "formatterGroupCount": 0,
+                "formatterSerializationCount": 0,
                 "finalAnswerProviderCallCount": 0,
                 "groundingProviderCallCount": 0,
+                "analysisProviderCallCount": 0,
+                "toolContextFormatterCallCount": 0,
             }]
         _record_human_query_terminal_audit(
             request,
@@ -1007,6 +1058,13 @@ def _human_query_terminal_audit_record(
         "familyAssemblyDurationMs": float(walkthrough_metrics.get("familyAssemblyDurationMs") or 0.0),
         "walkthroughPlanningDurationMs": float(walkthrough_metrics.get("walkthroughPlanningDurationMs") or 0.0),
         "textRenderingDurationMs": float(walkthrough_metrics.get("textRenderingDurationMs") or 0.0),
+        "formatterGroupCount": int(walkthrough_metrics.get("formatterGroupCount") or 0),
+        "formatterSegmentCount": int(walkthrough_metrics.get("formatterSegmentCount") or 0),
+        "formatterSerializationCount": int(walkthrough_metrics.get("formatterSerializationCount") or 0),
+        "formatterPlanningDurationMs": float(walkthrough_metrics.get("formatterPlanningDurationMs") or 0.0),
+        "formatterDurationMs": float(walkthrough_metrics.get("formatterDurationMs") or 0.0),
+        "totalFormatterDurationMs": float(walkthrough_metrics.get("totalFormatterDurationMs") or 0.0),
+        "stitchingDurationMs": float(walkthrough_metrics.get("stitchingDurationMs") or 0.0),
         "totalDurationMs": float(walkthrough_metrics.get("totalDurationMs") or 0.0),
         "familyRoots": family_assembly_summary.get("familyRoots"),
         "selectedFlowCount": len(selected_flow_summaries),
@@ -1015,10 +1073,16 @@ def _human_query_terminal_audit_record(
         "selectedFlows": selected_flow_summaries,
         "walkthrough": walkthrough_metrics,
         "walkthroughPlans": pipeline_records,
-        "providerCallCount": 0,
-        "repairCallCount": 0,
-        "finalAnswerProviderCallCount": 0,
-        "groundingProviderCallCount": 0,
+        "formatterRecords": [_compact_provider_audit_record(dict(record)) for record in (answer_records or [])],
+        "providerCallCount": int(walkthrough_metrics.get("formatterProviderCallCount") or 0),
+        "repairCallCount": int(walkthrough_metrics.get("formatterRepairCallCount") or 0),
+        "finalAnswerProviderCallCount": int(walkthrough_metrics.get("finalAnswerProviderCallCount") or 0),
+        "formatterProviderCallCount": int(walkthrough_metrics.get("formatterProviderCallCount") or 0),
+        "formatterRepairCallCount": int(walkthrough_metrics.get("formatterRepairCallCount") or 0),
+        "formatterOutputSplitCallCount": int(walkthrough_metrics.get("formatterOutputSplitCallCount") or 0),
+        "groundingProviderCallCount": int(walkthrough_metrics.get("groundingProviderCallCount") or 0),
+        "analysisProviderCallCount": int(walkthrough_metrics.get("analysisProviderCallCount") or 0),
+        "toolContextFormatterCallCount": int(walkthrough_metrics.get("toolContextFormatterCallCount") or 0),
         "terminalHttpStatus": int(terminal_status),
         "terminalErrorCode": terminal_error_code,
         "terminalErrorMessage": terminal_error_message,
@@ -1063,9 +1127,21 @@ def _walkthrough_terminal_metrics(pipeline_records) -> Dict[str, Any]:
         "familyAssemblyDurationMs": total_float("familyAssemblyDurationMs"),
         "walkthroughPlanningDurationMs": total_float("walkthroughPlanningDurationMs"),
         "textRenderingDurationMs": total_float("textRenderingDurationMs"),
+        "formatterGroupCount": total_int("formatterGroupCount"),
+        "formatterSegmentCount": total_int("formatterSegmentCount"),
+        "formatterSerializationCount": total_int("formatterSerializationCount"),
+        "formatterPlanningDurationMs": total_float("formatterPlanningDurationMs"),
+        "formatterDurationMs": total_float("formatterDurationMs"),
+        "totalFormatterDurationMs": total_float("totalFormatterDurationMs"),
+        "stitchingDurationMs": total_float("stitchingDurationMs"),
         "totalDurationMs": max((float(record.get("totalDurationMs") or 0.0) for record in records), default=0.0),
-        "finalAnswerProviderCallCount": 0,
-        "groundingProviderCallCount": 0,
+        "formatterProviderCallCount": total_int("formatterProviderCallCount"),
+        "formatterRepairCallCount": total_int("formatterRepairCallCount"),
+        "formatterOutputSplitCallCount": total_int("formatterOutputSplitCallCount"),
+        "finalAnswerProviderCallCount": total_int("finalAnswerProviderCallCount"),
+        "groundingProviderCallCount": total_int("groundingProviderCallCount"),
+        "analysisProviderCallCount": total_int("analysisProviderCallCount"),
+        "toolContextFormatterCallCount": total_int("toolContextFormatterCallCount"),
     }
 
 
@@ -1153,9 +1229,20 @@ def _compact_provider_audit_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "resolvedLanguage",
         "detectedLanguage",
         "validationErrors",
+        "postValidationErrors",
         "durationMs",
         "remainingDeadlineBeforeCall",
         "remainingDeadlineAfterCall",
+        "responseLanguage",
+        "segmentIndex",
+        "segmentCount",
+        "groupCount",
+        "renderedInputTokens",
+        "reservedOutputTokens",
+        "minimumValidOutputTokens",
+        "contextTokens",
+        "truncated",
+        "errorClass",
     }
     return {key: record.get(key) for key in allowed if key in record}
 
@@ -1340,6 +1427,40 @@ def _query_interpretation_service(
         request_deadline_seconds=request_deadline_seconds,
         provider_name=config.analysis_provider,
         provider_model=config.analysis_model,
+        audit_max_records=config.query_audit_memory_max_records,
+    ), provider.close
+
+
+def _flow_formatter_service(
+    request: Request,
+    config: AppConfig,
+) -> tuple[FlowFormatterAnswerService, Optional[Any]]:
+    injected_provider = getattr(request.app.state, "final_flow_formatter_provider", None)
+    request_deadline_seconds = _human_query_request_deadline_seconds(config)
+    segment_planner = FlowFormatterSegmentPlanner(context_tokens=config.analysis_context_tokens)
+    formatter_model = str(os.environ.get("FORGE_FLOW_FORMATTER_MODEL") or config.analysis_model)
+    if injected_provider is not None:
+        return FlowFormatterAnswerService(
+            injected_provider,
+            segment_planner=segment_planner,
+            request_deadline_seconds=request_deadline_seconds,
+            provider_name=config.analysis_provider,
+            provider_model=formatter_model,
+            audit_max_records=config.query_audit_memory_max_records,
+        ), None
+    provider = LocalOllamaFlowFormatterClient(
+        config.analysis_base_url,
+        formatter_model,
+        config.analysis_ai_call_timeout_seconds,
+        config.analysis_context_tokens,
+        renderer=FlowFormatterPromptRenderer(),
+    )
+    return FlowFormatterAnswerService(
+        provider,
+        segment_planner=segment_planner,
+        request_deadline_seconds=request_deadline_seconds,
+        provider_name=config.analysis_provider,
+        provider_model=formatter_model,
         audit_max_records=config.query_audit_memory_max_records,
     ), provider.close
 

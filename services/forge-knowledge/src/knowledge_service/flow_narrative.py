@@ -584,8 +584,10 @@ class FlowNarrativePlanner:
             key.entrypoint_node_id,
         )
 
-    def _plan_sort_key(self, plan: FlowNarrativePlan) -> tuple[float, str]:
-        return (-float(plan.relevance_score or 0.0), plan.key)
+    def _plan_sort_key(self, plan: FlowNarrativePlan) -> tuple[float, int, int, str]:
+        fragment_count = sum(1 for part in plan.parts if part.fragment is not None)
+        gap_count = sum(1 for part in plan.parts if part.gap is not None)
+        return (-float(plan.relevance_score or 0.0), -fragment_count, -gap_count, plan.key)
 
     def _append_continuations(
         self,

@@ -46,7 +46,7 @@ export class JarvisQueryView {
     panel.insertAdjacentHTML('beforeend', `
       <article class="jarvis-chat-message jarvis-chat-assistant" data-jarvis-message="${escapeHtml(id)}">
         <div class="jarvis-chat-role">Jarvis</div>
-        <div class="jarvis-chat-bubble jarvis-chat-pending">Analyzing the current graph and preparing an answer...</div>
+        <div class="jarvis-chat-bubble jarvis-chat-pending">Preparing an answer...</div>
       </article>
     `);
     return id;
