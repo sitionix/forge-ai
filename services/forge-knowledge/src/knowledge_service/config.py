@@ -152,6 +152,7 @@ class ForgeSettings(BaseModel):
     logging: LoggingSettings
     generative: GenerativeSettings = Field(default_factory=GenerativeSettings)
     query: QuerySettings = Field(default_factory=QuerySettings)
+    startup_maintenance_enabled: bool = True
     services: ServicesSettings
 
     @root_validator
@@ -174,6 +175,7 @@ class AppConfig(BaseModel):
     store_path: Path
     inventory_auto_refresh_enabled: bool = True
     inventory_auto_refresh_interval_seconds: int = 60
+    startup_maintenance_enabled: bool = True
     analysis_enabled: bool = True
     analysis_provider: str = "ollama"
     analysis_base_url: str = "http://localhost:11434"
@@ -262,6 +264,7 @@ class AppConfig(BaseModel):
             store_path=knowledge.storage.sqlite_path,
             inventory_auto_refresh_enabled=knowledge.inventory.auto_refresh_enabled,
             inventory_auto_refresh_interval_seconds=knowledge.inventory.auto_refresh_interval_seconds,
+            startup_maintenance_enabled=settings.startup_maintenance_enabled,
             analysis_enabled=analysis.enabled,
             analysis_provider=generative.provider,
             analysis_base_url=str(generative.base_url).rstrip("/"),
@@ -481,6 +484,9 @@ def _knowledge_settings_payload(forge_ai: Mapping[str, Any], env: Mapping[str, s
                 ),
             },
         },
+        "startup_maintenance_enabled": _bool(
+            forge_ai.get("startup-maintenance-enabled", forge_ai.get("startup_maintenance_enabled", True))
+        ),
         "services": {
             "knowledge": {
                 "host": str(knowledge.get("host") or "127.0.0.1"),
@@ -592,6 +598,8 @@ def _apply_knowledge_env_overrides(raw: Dict[str, Any], env: Mapping[str, str]) 
         raw["query"]["audit"]["max_retained_files"] = int(env["FORGE_QUERY_AUDIT_MAX_RETAINED_FILES"])
     if env.get("FORGE_QUERY_AUDIT_MAX_FILE_AGE_SECONDS"):
         raw["query"]["audit"]["max_file_age_seconds"] = int(env["FORGE_QUERY_AUDIT_MAX_FILE_AGE_SECONDS"])
+    if env.get("KNOWLEDGE_STARTUP_MAINTENANCE_ENABLED"):
+        raw["startup_maintenance_enabled"] = env["KNOWLEDGE_STARTUP_MAINTENANCE_ENABLED"].lower() != "false"
 
     knowledge = raw["services"]["knowledge"]
     if env.get("KNOWLEDGE_HOST"):

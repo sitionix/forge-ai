@@ -25,7 +25,6 @@ from knowledge_service.analysis_service import AnalysisSupervisor
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.bootstrap import KnowledgeDependencies, build_dependencies, configure_logging
 from knowledge_service.config import (
-    DEFAULT_GENERATIVE_CONTEXT_TOKENS,
     AppConfig,
     ForgeSettings,
     load_forge_settings,
@@ -34,21 +33,8 @@ from knowledge_service.context_schema import ContextRequest
 from knowledge_service.context_service import ContextService
 from knowledge_service.errors import KnowledgeError
 from knowledge_service.freshness_service import KnowledgeFreshnessService
-from knowledge_service.flow_explanations import (
-    DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS,
-    FLOW_EXPLANATION_LIMIT_REACHED,
-    FlowProjectionBuilder,
-    HumanAnswerContextBudgetExceeded,
-    HumanAnswerDeadlineExceeded,
-    HumanAnswerGenerationFailed,
-    HumanAnswerMalformedResponse,
-    HumanAnswerProviderUnavailable,
-    HumanAnswerPromptRenderer,
-    HumanAnswerRepairExhausted,
-    HumanFlowAnswerService,
-    LocalOllamaFlowExplanationClient,
-    PromptBudgetEstimator,
-)
+from knowledge_service.flow_explanations import FlowProjectionBuilder
+from knowledge_service.flow_walkthrough import DeterministicFlowWalkthroughAnswerService
 from knowledge_service.inventory_file_resolver import InventoryFileResolver
 from knowledge_service.inventory_refresh import AsyncInventoryScheduler, InventoryRefreshService
 from knowledge_service.inventory_schema import InventoryBuildRequest
@@ -109,7 +95,8 @@ def create_app(
         app.state.knowledge_dependencies = deps
         app.state.semantic_build_coordinator = _semantic_build_coordinator(app, app_config, deps.inventory_store.db_path)
         app.state.semantic_worker = _semantic_background_worker(app, app_config, deps.inventory_store.db_path)
-        await deps.analysis_supervisor.start_lifespan()
+        if app_config.analysis_enabled:
+            await deps.analysis_supervisor.start_lifespan()
         await deps.inventory_scheduler.start()
         app.state.semantic_worker.start()
         try:
@@ -117,7 +104,8 @@ def create_app(
         finally:
             app.state.semantic_worker.stop(app_config.analysis_shutdown_grace_seconds)
             await deps.inventory_scheduler.stop()
-            await deps.analysis_supervisor.shutdown()
+            if app_config.analysis_enabled:
+                await deps.analysis_supervisor.shutdown()
 
     app = FastAPI(title="Knowledge Service", version="0.1.0", lifespan=lifespan)
     app.state.semantic_build_jobs = {}
@@ -283,7 +271,6 @@ def create_app(
                 selected_flows=(),
                 interpretation_records=[],
                 answer_records=[],
-                prompt_budget_records=[],
                 pipeline_records=[],
                 terminal_status=422,
                 terminal_error_code="RESPONSE_LANGUAGE_NOT_ALLOWED",
@@ -685,6 +672,7 @@ def _knowledge_human_query_response(
     deadline_at: float | None = None,
 ):
     config, deps = _state(request)
+    total_started = time.perf_counter()
     request_deadline_seconds = _human_query_request_deadline_seconds(config)
     deadline_at = deadline_at if deadline_at is not None else time.monotonic() + request_deadline_seconds
     correlation_id = _request_correlation_id(request)
@@ -699,8 +687,10 @@ def _knowledge_human_query_response(
     selected_flows = ()
     interpretation_records = []
     answer_records = []
-    prompt_budget_records = []
     pipeline_records = []
+    fetch_duration_ms = 0.0
+    family_assembly_duration_ms = 0.0
+    answer_service = None
     try:
         if is_forbidden_response_language(body.answerLanguage):
             terminal_status = 422
@@ -713,7 +703,6 @@ def _knowledge_human_query_response(
                 correlation_id=correlation_id,
             )
         if time.monotonic() >= deadline_at:
-            terminal_stage = "SEGMENT_NARRATION"
             terminal_status = 504
             terminal_error_code = "HUMAN_QUERY_TIMEOUT"
             terminal_error_message = "Knowledge human query timed out."
@@ -731,9 +720,11 @@ def _knowledge_human_query_response(
             if close_interpreter:
                 close_interpreter()
         terminal_stage = "RETRIEVAL"
+        retrieval_started = time.perf_counter()
         query_result = build_knowledge_query_service(deps.graph_store, config).query_with_flows(body, plan=retrieval_plan)
-        selected_flows = tuple(query_result.flows or ())
-        terminal_stage = "FAMILY_ASSEMBLY"
+        fetch_duration_ms = round((time.perf_counter() - retrieval_started) * 1000, 3)
+        selected_flows = tuple(query_result.narrative_plans or ())
+        terminal_stage = "FLOW_ASSEMBLY"
         if not selected_flows:
             _record_query_interpretation_audits(request, body, interpretation_service.audit_records)
             terminal_status = 404
@@ -745,23 +736,24 @@ def _knowledge_human_query_response(
                 terminal_error_message,
                 correlation_id=correlation_id,
             )
-        terminal_stage = "FAMILY_SEGMENTATION"
-        answer_service, close_provider = _human_answer_service(request, config, cancel_event)
-        try:
-            terminal_stage = "SEGMENT_NARRATION"
-            response = answer_service.answer(body, query_result, plan=retrieval_plan, deadline_at=deadline_at)
-            terminal_status = 200
-            terminal_error_code = None
-            terminal_error_message = None
-            terminal_stage = "FAMILY_STITCHING"
-            return response
-        finally:
-            answer_records = [dict(record) for record in answer_service.audit_records]
-            prompt_budget_records = [dict(record) for record in answer_service.prompt_budget_records]
-            pipeline_records = [dict(record) for record in getattr(answer_service, "pipeline_records", [])]
-            _record_human_answer_audits(request, body, answer_service.audit_records, interpretation_service.audit_records)
-            if close_provider:
-                close_provider()
+        family_assembly_duration_ms = fetch_duration_ms
+        answer_service = DeterministicFlowWalkthroughAnswerService(
+            default_language=getattr(config, "query_default_response_language", "en")
+        )
+        terminal_stage = "WALKTHROUGH_PLANNING"
+        result = answer_service.answer(body, query_result, plan=retrieval_plan)
+        pipeline_records = [dict(record) for record in answer_service.pipeline_records]
+        if pipeline_records:
+            pipeline_records[0]["fetchDurationMs"] = fetch_duration_ms
+            pipeline_records[0]["familyAssemblyDurationMs"] = family_assembly_duration_ms
+        terminal_stage = "TEXT_RENDERING"
+        response = answer_service.to_response(result)
+        terminal_status = 200
+        terminal_error_code = None
+        terminal_error_message = None
+        terminal_stage = "SUCCESS"
+        _record_human_answer_audits(request, body, [], interpretation_service.audit_records)
+        return response
     except QueryPlanningDeadlineExceeded:
         terminal_stage = "QUERY_INTERPRETATION"
         terminal_status = 504
@@ -795,63 +787,9 @@ def _knowledge_human_query_response(
             terminal_error_message,
             correlation_id=correlation_id,
         )
-    except HumanAnswerDeadlineExceeded:
-        terminal_stage = "SEGMENT_NARRATION"
-        terminal_status = 504
-        terminal_error_code = "HUMAN_QUERY_TIMEOUT"
-        terminal_error_message = "Knowledge human query timed out."
-        return _public_error_response(
-            terminal_status,
-            terminal_error_code,
-            terminal_error_message,
-            correlation_id=correlation_id,
-        )
-    except HumanAnswerContextBudgetExceeded:
-        terminal_stage = "FAMILY_SEGMENTATION"
-        terminal_status = 503
-        terminal_error_code = "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED"
-        terminal_error_message = "The complete grounded flow exceeds the available model context."
-        return _public_error_response(
-            terminal_status,
-            terminal_error_code,
-            terminal_error_message,
-            correlation_id=correlation_id,
-        )
-    except HumanAnswerProviderUnavailable:
-        terminal_stage = "SEGMENT_NARRATION"
-        terminal_status = 502
-        terminal_error_code = "HUMAN_ANSWER_GENERATION_FAILED"
-        terminal_error_message = "The local model could not produce any grounded flow answers."
-        return _public_error_response(
-            terminal_status,
-            terminal_error_code,
-            terminal_error_message,
-            correlation_id=correlation_id,
-        )
-    except (HumanAnswerMalformedResponse, HumanAnswerRepairExhausted):
-        terminal_stage = "FINAL_VALIDATION"
-        terminal_status = 502
-        terminal_error_code = "HUMAN_ANSWER_GENERATION_FAILED"
-        terminal_error_message = "The local model could not produce any grounded flow answers."
-        return _public_error_response(
-            terminal_status,
-            terminal_error_code,
-            terminal_error_message,
-            correlation_id=correlation_id,
-        )
-    except HumanAnswerGenerationFailed:
-        terminal_status = 502
-        terminal_error_code = "HUMAN_ANSWER_GENERATION_FAILED"
-        terminal_error_message = "The local model could not produce any grounded flow answers."
-        return _public_error_response(
-            terminal_status,
-            terminal_error_code,
-            terminal_error_message,
-            correlation_id=correlation_id,
-        )
     except Exception as exc:
         unexpected_exception_class = type(exc).__name__
-        unexpected_exception_stage = terminal_stage
+        unexpected_exception_stage = getattr(answer_service, "current_stage", None) or terminal_stage
         terminal_stage = "UNEXPECTED_EXCEPTION"
         terminal_status = 503
         terminal_error_code = "KNOWLEDGE_QUERY_FAILED"
@@ -872,8 +810,24 @@ def _knowledge_human_query_response(
             correlation_id=correlation_id,
         )
     finally:
-        if selected_flows and retrieval_plan is not None and not prompt_budget_records:
-            prompt_budget_records = _safe_human_query_prompt_budget_records(config, body, selected_flows, retrieval_plan)
+        total_duration_ms = round((time.perf_counter() - total_started) * 1000, 3)
+        if pipeline_records:
+            pipeline_records[0]["totalDurationMs"] = total_duration_ms
+        elif selected_flows:
+            pipeline_records = [{
+                "narrativePlanCount": len(selected_flows),
+                "walkthroughStepCount": 0,
+                "branchCount": 0,
+                "gapCount": 0,
+                "answerCount": 0,
+                "fetchDurationMs": fetch_duration_ms,
+                "familyAssemblyDurationMs": family_assembly_duration_ms,
+                "walkthroughPlanningDurationMs": 0.0,
+                "textRenderingDurationMs": 0.0,
+                "totalDurationMs": total_duration_ms,
+                "finalAnswerProviderCallCount": 0,
+                "groundingProviderCallCount": 0,
+            }]
         _record_human_query_terminal_audit(
             request,
             body,
@@ -883,7 +837,6 @@ def _knowledge_human_query_response(
             selected_flows=selected_flows,
             interpretation_records=interpretation_records,
             answer_records=answer_records,
-            prompt_budget_records=prompt_budget_records,
             pipeline_records=pipeline_records,
             terminal_status=terminal_status,
             terminal_error_code=terminal_error_code,
@@ -939,31 +892,6 @@ def _knowledge_query_tool_context_response(
         )
 
 
-def _deadline_exhausted_diagnostic() -> KnowledgeQueryDiagnostic:
-    return KnowledgeQueryDiagnostic(
-        code=FLOW_EXPLANATION_LIMIT_REACHED,
-        message="Human query request deadline was exhausted before human answer work could start.",
-        severity="WARN",
-        metadata={"stage": "BEFORE_QUERY"},
-    )
-
-
-def _expired_human_query_response(body: KnowledgeQueryRequest) -> JSONResponse:
-    return _public_error_response(
-        504,
-        "HUMAN_QUERY_TIMEOUT",
-        "Knowledge human query timed out.",
-    )
-
-
-def _expired_tool_context_response(body: KnowledgeQueryRequest) -> JSONResponse:
-    return _public_error_response(
-        504,
-        "TOOL_CONTEXT_TIMEOUT",
-        "Knowledge tool context timed out.",
-    )
-
-
 def _public_error_response(status_code: int, code: str, message: str, *, correlation_id: str | None = None) -> JSONResponse:
     content = {"code": code, "message": message}
     if correlation_id:
@@ -997,7 +925,6 @@ def _record_human_query_terminal_audit(
     selected_flows,
     interpretation_records,
     answer_records,
-    prompt_budget_records,
     pipeline_records,
     terminal_status: int,
     terminal_error_code: str | None,
@@ -1015,7 +942,6 @@ def _record_human_query_terminal_audit(
         selected_flows=tuple(selected_flows or ()),
         interpretation_records=list(interpretation_records or []),
         answer_records=list(answer_records or []),
-        prompt_budget_records=list(prompt_budget_records or []),
         pipeline_records=list(pipeline_records or []),
         terminal_status=terminal_status,
         terminal_error_code=terminal_error_code,
@@ -1041,7 +967,6 @@ def _human_query_terminal_audit_record(
     selected_flows,
     interpretation_records,
     answer_records,
-    prompt_budget_records,
     pipeline_records,
     terminal_status: int,
     terminal_error_code: str | None,
@@ -1050,32 +975,12 @@ def _human_query_terminal_audit_record(
     unexpected_exception_class: str | None,
     unexpected_exception_stage: str | None,
 ) -> Dict[str, Any]:
-    provider_call_count = len(answer_records)
-    repair_call_count = sum(1 for record in answer_records if int(record.get("attemptCount") or 0) > 1)
-    grounding_initial_call_count = sum(
-        1
-        for record in answer_records
-        if record.get("promptKind") == "GROUNDING" and int(record.get("attemptCount") or 0) == 1
-    )
-    grounding_repair_call_count = sum(
-        1
-        for record in answer_records
-        if record.get("promptKind") == "GROUNDING" and int(record.get("attemptCount") or 0) > 1
-    )
-    narration_initial_call_count = sum(
-        1
-        for record in answer_records
-        if record.get("promptKind") == "FINAL_NARRATION" and int(record.get("attemptCount") or 0) == 1
-    )
-    narration_repair_call_count = sum(
-        1
-        for record in answer_records
-        if record.get("promptKind") == "FINAL_NARRATION" and int(record.get("attemptCount") or 0) > 1
-    )
     selected_flow_summaries = _selected_flow_audit_summaries(selected_flows)
-    prompt_budget_summary = _prompt_budget_summary(prompt_budget_records)
     family_assembly_summary = _family_assembly_terminal_payload(query_result, selected_flow_summaries)
-    narration_metrics = _human_narration_terminal_metrics(pipeline_records, answer_records)
+    walkthrough_metrics = _walkthrough_terminal_metrics(pipeline_records)
+    retrieval_summary = _retrieval_terminal_payload(query_result)
+    query_interpreter = _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, terminal_stage, terminal_error_code)
+    query_interpreter_call_count = int(query_interpreter.get("providerCallCount") or 0)
     return {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "correlationId": correlation_id,
@@ -1084,27 +989,36 @@ def _human_query_terminal_audit_record(
         "intent": body.intent.value if hasattr(body.intent, "value") else str(body.intent),
         "includeTests": bool(body.includeTests),
         "maxFlows": int(body.maxFlows),
-        "queryInterpreter": _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, terminal_stage, terminal_error_code),
-        "retrieval": _retrieval_terminal_payload(query_result),
+        "queryInterpreter": query_interpreter,
+        "queryInterpreterCallCount": query_interpreter_call_count,
+        "retrieval": retrieval_summary,
+        "candidateCount": int(retrieval_summary.get("matchedNodeCount") or 0),
         "familyAssembly": family_assembly_summary,
         "rawCandidateFlowCount": family_assembly_summary.get("rawCandidateFlowCount"),
         "discoveredFamilyCount": family_assembly_summary.get("discoveredFamilyCount"),
         "selectedFamilyCount": family_assembly_summary.get("selectedFamilyCount"),
+        "verifiedFragmentCount": _verified_fragment_count(selected_flows),
+        "narrativePlanCount": int(walkthrough_metrics.get("narrativePlanCount") or len(selected_flow_summaries)),
+        "walkthroughStepCount": int(walkthrough_metrics.get("walkthroughStepCount") or 0),
+        "branchCount": int(walkthrough_metrics.get("branchCount") or 0),
+        "gapCount": int(walkthrough_metrics.get("gapCount") or 0),
+        "answerCount": int(walkthrough_metrics.get("answerCount") or 0),
+        "fetchDurationMs": float(walkthrough_metrics.get("fetchDurationMs") or 0.0),
+        "familyAssemblyDurationMs": float(walkthrough_metrics.get("familyAssemblyDurationMs") or 0.0),
+        "walkthroughPlanningDurationMs": float(walkthrough_metrics.get("walkthroughPlanningDurationMs") or 0.0),
+        "textRenderingDurationMs": float(walkthrough_metrics.get("textRenderingDurationMs") or 0.0),
+        "totalDurationMs": float(walkthrough_metrics.get("totalDurationMs") or 0.0),
         "familyRoots": family_assembly_summary.get("familyRoots"),
         "selectedFlowCount": len(selected_flow_summaries),
         "selectedSources": sorted({item["source"] for item in selected_flow_summaries if item.get("source")}),
         "selectedEntrypoints": [item["entrypoint"] for item in selected_flow_summaries if item.get("entrypoint")],
         "selectedFlows": selected_flow_summaries,
-        "promptBudgetSummary": prompt_budget_summary,
-        "promptBudgets": prompt_budget_records,
-        "humanNarration": narration_metrics,
-        "humanNarrationFamilies": pipeline_records,
-        "providerCallCount": provider_call_count,
-        "repairCallCount": repair_call_count,
-        "groundingInitialCallCount": grounding_initial_call_count,
-        "groundingRepairCallCount": grounding_repair_call_count,
-        "narrationInitialCallCount": narration_initial_call_count,
-        "narrationRepairCallCount": narration_repair_call_count,
+        "walkthrough": walkthrough_metrics,
+        "walkthroughPlans": pipeline_records,
+        "providerCallCount": 0,
+        "repairCallCount": 0,
+        "finalAnswerProviderCallCount": 0,
+        "groundingProviderCallCount": 0,
         "terminalHttpStatus": int(terminal_status),
         "terminalErrorCode": terminal_error_code,
         "terminalErrorMessage": terminal_error_message,
@@ -1128,6 +1042,35 @@ def _family_assembly_terminal_payload(query_result, selected_flow_summaries: Seq
         "familyRoots": selected_roots,
         "rootReachability": dict(getattr(assembly, "root_reachability", {}) or {}),
     }
+
+
+def _walkthrough_terminal_metrics(pipeline_records) -> Dict[str, Any]:
+    records = [record for record in pipeline_records if isinstance(record, dict)]
+
+    def total_int(key: str) -> int:
+        return sum(int(record.get(key) or 0) for record in records)
+
+    def total_float(key: str) -> float:
+        return round(sum(float(record.get(key) or 0.0) for record in records), 3)
+
+    return {
+        "narrativePlanCount": total_int("narrativePlanCount"),
+        "walkthroughStepCount": total_int("walkthroughStepCount"),
+        "branchCount": total_int("branchCount"),
+        "gapCount": total_int("gapCount"),
+        "answerCount": total_int("answerCount"),
+        "fetchDurationMs": total_float("fetchDurationMs"),
+        "familyAssemblyDurationMs": total_float("familyAssemblyDurationMs"),
+        "walkthroughPlanningDurationMs": total_float("walkthroughPlanningDurationMs"),
+        "textRenderingDurationMs": total_float("textRenderingDurationMs"),
+        "totalDurationMs": max((float(record.get("totalDurationMs") or 0.0) for record in records), default=0.0),
+        "finalAnswerProviderCallCount": 0,
+        "groundingProviderCallCount": 0,
+    }
+
+
+def _verified_fragment_count(selected_flows) -> int:
+    return sum(len(tuple(getattr(plan, "fragments", ()) or ())) for plan in tuple(selected_flows or ()))
 
 
 def _query_interpreter_terminal_payload(retrieval_plan, interpretation_records, terminal_stage: str, terminal_error_code: str | None) -> Dict[str, Any]:
@@ -1197,141 +1140,6 @@ def _selected_flow_audit_summaries(selected_flows) -> list[Dict[str, Any]]:
     return summaries
 
 
-def _safe_human_query_prompt_budget_records(config: AppConfig, body: KnowledgeQueryRequest, selected_flows, retrieval_plan) -> list[Dict[str, Any]]:
-    try:
-        return _human_query_prompt_budget_records(config, body, selected_flows, retrieval_plan)
-    except Exception as exc:
-        LOGGER.warning("human_query_prompt_budget_audit_failed", extra={"error": type(exc).__name__})
-        return [{"error": "PROMPT_BUDGET_AUDIT_FAILED", "exceptionClass": type(exc).__name__}]
-
-
-def _human_query_prompt_budget_records(config: AppConfig, body: KnowledgeQueryRequest, selected_flows, retrieval_plan) -> list[Dict[str, Any]]:
-    if retrieval_plan is None:
-        return []
-    projector = FlowProjectionBuilder()
-    renderer = HumanAnswerPromptRenderer()
-    reserved_output_tokens = DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS
-    estimator = PromptBudgetEstimator(
-        context_tokens=int(config.analysis_context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS),
-        reserved_output_tokens=reserved_output_tokens,
-    )
-    records: list[Dict[str, Any]] = []
-    for index, flow in enumerate(tuple(selected_flows or ()), start=1):
-        source, entrypoint = projector.flow_answer_identity(flow)
-        llm_input = {
-            "promptKind": "FINAL_NARRATION",
-            "originalQuestion": body.queryText,
-            "detectedLanguage": retrieval_plan.detected_language,
-            "responseLanguage": retrieval_plan.response_language,
-            "intent": retrieval_plan.effective_intent,
-            "familyRoot": {"source": source, "entrypoint": entrypoint},
-            "segment": {"index": 1, "total": 1, "terminal": True, "incomingContext": [], "outgoingContext": []},
-            "narrationAtoms": [],
-            "coverageContract": {
-                "canonicalAtomRefs": [],
-                "requiredAtomRefs": [],
-                "atomCertainty": {},
-                "gapRefs": [],
-            },
-            "auditPurpose": "PUBLIC_SAFE_GROUNDED_NARRATION_PREFLIGHT",
-        }
-        prompt = renderer.render(llm_input)
-        estimate = estimator.estimate(prompt)
-        budget_payload = _prompt_budget_estimate_payload(estimate, "INITIAL")
-        records.append(
-            {
-                "flowIndex": index,
-                "source": source,
-                "entrypoint": entrypoint,
-                "attempt": "INITIAL",
-                "promptCharCount": len(prompt),
-                "promptUtf8Bytes": len(prompt.encode("utf-8")),
-                "promptHash": _sha256(prompt),
-                "llmInputHash": _sha256(json.dumps(llm_input, ensure_ascii=False, sort_keys=True, separators=(",", ":"))),
-                **budget_payload,
-                "promptBudgetEstimate": budget_payload,
-            }
-        )
-    return records
-
-
-def _prompt_budget_estimate_payload(estimate, attempt: str) -> Dict[str, Any]:
-    return {
-        "attempt": attempt,
-        "renderedInputTokens": int(estimate.rendered_input_tokens),
-        "reservedOutputTokens": int(estimate.reserved_output_tokens),
-        "fixedFramingReserveTokens": int(estimate.fixed_framing_reserve_tokens),
-        "totalRequiredTokens": int(estimate.total_required_tokens),
-        "contextTokens": int(estimate.context_tokens),
-        "fits": bool(estimate.fits),
-    }
-
-
-def _prompt_budget_summary(records) -> Dict[str, Any]:
-    usable = [record for record in records if isinstance(record.get("promptBudgetEstimate"), dict)]
-    if not usable:
-        return {
-            "flowCount": 0,
-            "maxPromptUtf8Bytes": None,
-            "maxRenderedInputTokens": None,
-            "maxTotalRequiredTokens": None,
-            "contextTokens": None,
-            "allFit": None,
-        }
-    return {
-        "flowCount": len(usable),
-        "maxPromptUtf8Bytes": max(int(record.get("promptUtf8Bytes") or 0) for record in usable),
-        "maxRenderedInputTokens": max(
-            int(record["promptBudgetEstimate"].get("renderedInputTokens") or 0)
-            for record in usable
-        ),
-        "maxTotalRequiredTokens": max(int(record["promptBudgetEstimate"].get("totalRequiredTokens") or 0) for record in usable),
-        "contextTokens": usable[0]["promptBudgetEstimate"].get("contextTokens"),
-        "allFit": all(bool(record["promptBudgetEstimate"].get("fits")) for record in usable),
-    }
-
-
-def _human_narration_terminal_metrics(pipeline_records, answer_records) -> Dict[str, Any]:
-    records = [record for record in pipeline_records if isinstance(record, dict)]
-    answer_records = [record for record in answer_records if isinstance(record, dict)]
-    grounding_records = [record for record in answer_records if record.get("promptKind") == "GROUNDING"]
-    narration_records = [record for record in answer_records if record.get("promptKind") == "FINAL_NARRATION"]
-
-    def total(key: str) -> int:
-        return sum(int(record.get(key) or 0) for record in records)
-
-    def max_float(key: str) -> float:
-        return round(max((float(record.get(key) or 0.0) for record in records), default=0.0), 3)
-
-    return {
-        "narrativePlanCount": total("narrativePlanCount"),
-        "evidenceRecordCount": total("evidenceRecordCount"),
-        "emptyEvidenceRecordCount": total("emptyEvidenceRecordCount"),
-        "singleSliceEvidenceRecordCount": total("singleSliceEvidenceRecordCount"),
-        "evidenceUtf8Bytes": total("evidenceUtf8Bytes"),
-        "evidenceSliceCount": total("evidenceSliceCount"),
-        "splitEvidenceRecordCount": total("splitEvidenceRecordCount"),
-        "sliceMetricInvariants": all(bool(record.get("sliceMetricInvariants")) for record in records) if records else None,
-        "groundingBatchCount": total("groundingBatchCount"),
-        "groundingInitialCallCount": sum(1 for record in grounding_records if int(record.get("attemptCount") or 0) == 1),
-        "groundingRepairCallCount": sum(1 for record in grounding_records if int(record.get("attemptCount") or 0) > 1),
-        "groundingOutputSplitCallCount": total("groundingOutputSplitCallCount"),
-        "groundingValidationRepairCallCount": total("groundingValidationRepairCallCount"),
-        "groundedClaimCount": total("groundedClaimCount"),
-        "noNewBehaviorEvidenceCount": total("noNewBehaviorEvidenceCount"),
-        "narrationAtomCount": total("narrationAtomCount"),
-        "narrationSegmentCount": total("narrationSegmentCount"),
-        "narrationInitialCallCount": sum(1 for record in narration_records if int(record.get("attemptCount") or 0) == 1),
-        "narrationRepairCallCount": sum(1 for record in narration_records if int(record.get("attemptCount") or 0) > 1),
-        "EVIDENCE_SPLIT_MS": max_float("EVIDENCE_SPLIT_MS"),
-        "GROUNDING_BATCH_PLAN_MS": max_float("GROUNDING_BATCH_PLAN_MS"),
-        "CLAIM_ASSEMBLY_MS": max_float("CLAIM_ASSEMBLY_MS"),
-        "NARRATION_SEGMENT_PLAN_MS": max_float("NARRATION_SEGMENT_PLAN_MS"),
-        "EVIDENCE_SERIALIZATION_COUNT": total("EVIDENCE_SERIALIZATION_COUNT"),
-        "NARRATION_SERIALIZATION_COUNT": total("NARRATION_SERIALIZATION_COUNT"),
-    }
-
-
 def _compact_provider_audit_record(record: Dict[str, Any]) -> Dict[str, Any]:
     allowed = {
         "provider",
@@ -1340,23 +1148,14 @@ def _compact_provider_audit_record(record: Dict[str, Any]) -> Dict[str, Any]:
         "promptHash",
         "rawResponseLength",
         "rawResponseHash",
-        "flowEntrypoint",
-        "providerStage",
-        "promptKind",
         "attemptCount",
-        "segmentIndex",
-        "segmentCount",
         "requestedLanguage",
         "resolvedLanguage",
         "detectedLanguage",
         "validationErrors",
-        "attemptType",
         "durationMs",
         "remainingDeadlineBeforeCall",
         "remainingDeadlineAfterCall",
-        "doneReason",
-        "promptEvalCount",
-        "evalCount",
     }
     return {key: record.get(key) for key in allowed if key in record}
 
@@ -1510,52 +1309,6 @@ def _state(request: Request) -> tuple[AppConfig, KnowledgeDependencies]:
             storage_operations=StorageOperations(store.db_path),
         )
     raise RuntimeError("Knowledge app dependencies are not initialized")
-
-
-def _human_answer_service(
-    request: Request,
-    config: AppConfig,
-    cancel_event: threading.Event | None = None,
-) -> tuple[HumanFlowAnswerService, Optional[Any]]:
-    injected_provider = getattr(request.app.state, "flow_explanation_provider", None)
-    context_tokens = int(config.analysis_context_tokens or DEFAULT_GENERATIVE_CONTEXT_TOKENS)
-    reserved_output_tokens = DEFAULT_HUMAN_ANSWER_RESERVED_OUTPUT_TOKENS
-    budget_estimator = PromptBudgetEstimator(
-        context_tokens=context_tokens,
-        reserved_output_tokens=reserved_output_tokens,
-    )
-    request_deadline_seconds = _human_query_request_deadline_seconds(config)
-    if injected_provider is not None:
-        return HumanFlowAnswerService(
-            injected_provider,
-            context_tokens=context_tokens,
-            budget_estimator=budget_estimator,
-            reserved_output_tokens=reserved_output_tokens,
-            request_deadline_seconds=request_deadline_seconds,
-            provider_name=config.analysis_provider,
-            provider_model=config.analysis_model,
-            cancel_event=cancel_event,
-            audit_max_records=config.query_audit_memory_max_records,
-        ), None
-    provider = LocalOllamaFlowExplanationClient(
-        config.analysis_base_url,
-        config.analysis_model,
-        config.analysis_ai_call_timeout_seconds,
-        context_tokens,
-        renderer=HumanAnswerPromptRenderer(),
-        reserved_output_tokens=reserved_output_tokens,
-    )
-    return HumanFlowAnswerService(
-        provider,
-        context_tokens=context_tokens,
-        budget_estimator=budget_estimator,
-        reserved_output_tokens=reserved_output_tokens,
-        request_deadline_seconds=request_deadline_seconds,
-        provider_name=config.analysis_provider,
-        provider_model=config.analysis_model,
-        cancel_event=cancel_event,
-        audit_max_records=config.query_audit_memory_max_records,
-    ), provider.close
 
 
 def _query_interpretation_service(

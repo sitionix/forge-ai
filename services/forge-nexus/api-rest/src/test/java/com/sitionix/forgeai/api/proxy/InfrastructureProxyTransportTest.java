@@ -29,14 +29,13 @@ import org.springframework.http.ResponseEntity;
 class InfrastructureProxyTransportTest {
 
     @Test
-    void humanQueryRouteRequestTimeoutUsesConfiguredKnowledgeDeadlinePlusTransportGrace() {
+    void humanQueryRouteRequestTimeoutUsesConfiguredKnowledgeDeadline() {
         final HttpClient httpClient = mock(HttpClient.class);
         final CompletableFuture<HttpResponse<InputStream>> upstream = new CompletableFuture<>();
         when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
                 .thenReturn(upstream);
 
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        properties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ofSeconds(7));
         final ForgeAiHumanQueryProperties humanQueryProperties = new ForgeAiHumanQueryProperties();
         humanQueryProperties.setRequestTimeoutSeconds(42);
         final ObjectMapper objectMapper = new ObjectMapper();
@@ -60,19 +59,17 @@ class InfrastructureProxyTransportTest {
 
         final ArgumentCaptor<HttpRequest> upstreamRequest = ArgumentCaptor.forClass(HttpRequest.class);
         verify(httpClient).sendAsync(upstreamRequest.capture(), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any());
-        assertThat(upstreamRequest.getValue().timeout()).contains(Duration.ofSeconds(49));
+        assertThat(upstreamRequest.getValue().timeout()).contains(Duration.ofSeconds(42));
     }
 
     @Test
-    void jarvisQueryRouteRequestTimeoutExceedsKnowledgeHumanQueryTimeout() {
+    void jarvisQueryRouteRequestTimeoutUsesConfiguredHumanQueryDeadline() {
         final HttpClient httpClient = mock(HttpClient.class);
         final CompletableFuture<HttpResponse<InputStream>> upstream = new CompletableFuture<>();
         when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
                 .thenReturn(upstream);
 
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        properties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ofSeconds(7));
-        properties.getProxy().setJarvisQueryTransportGrace(Duration.ofSeconds(11));
         final ForgeAiHumanQueryProperties humanQueryProperties = new ForgeAiHumanQueryProperties();
         humanQueryProperties.setRequestTimeoutSeconds(42);
         final ObjectMapper objectMapper = new ObjectMapper();
@@ -96,11 +93,11 @@ class InfrastructureProxyTransportTest {
 
         final ArgumentCaptor<HttpRequest> upstreamRequest = ArgumentCaptor.forClass(HttpRequest.class);
         verify(httpClient).sendAsync(upstreamRequest.capture(), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any());
-        assertThat(upstreamRequest.getValue().timeout()).contains(Duration.ofSeconds(60));
+        assertThat(upstreamRequest.getValue().timeout()).contains(Duration.ofSeconds(42));
     }
 
     @Test
-    void jarvisQueryRouteDoesNotTimeoutBeforeHumanFlowResponse() throws Exception {
+    void jarvisQueryRouteUsesHumanQueryDeadlineForDeterministicResponse() throws Exception {
         final HttpClient httpClient = mock(HttpClient.class);
         final Duration controlledResponseDelay = Duration.ofMillis(150);
         when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
@@ -121,10 +118,8 @@ class InfrastructureProxyTransportTest {
 
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
         properties.getJarvis().setReadTimeout(Duration.ofMillis(120));
-        properties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ofMillis(50));
-        properties.getProxy().setJarvisQueryTransportGrace(Duration.ofMillis(50));
         final ForgeAiHumanQueryProperties humanQueryProperties = new ForgeAiHumanQueryProperties();
-        humanQueryProperties.setRequestTimeout(Duration.ofMillis(100));
+        humanQueryProperties.setRequestTimeout(Duration.ofMillis(200));
         final ObjectMapper objectMapper = new ObjectMapper();
         final InfrastructureProxyTransport transport = new InfrastructureProxyTransport(
                 httpClient,
@@ -153,7 +148,7 @@ class InfrastructureProxyTransportTest {
     }
 
     @Test
-    void humanQueryRouteDoesNotTimeoutBeforeKnowledgeControlledDeadlineResponse() throws Exception {
+    void humanQueryRouteUsesKnowledgeHumanQueryDeadlineForDeterministicResponse() throws Exception {
         final HttpClient httpClient = mock(HttpClient.class);
         final Duration controlledResponseDelay = Duration.ofMillis(25);
         when(httpClient.sendAsync(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<InputStream>>any()))
@@ -173,7 +168,6 @@ class InfrastructureProxyTransportTest {
                 });
 
         final InfrastructureProxyProperties properties = new InfrastructureProxyProperties();
-        properties.getProxy().setKnowledgeHumanQueryTransportGrace(Duration.ofMillis(20));
         final ForgeAiHumanQueryProperties humanQueryProperties = new ForgeAiHumanQueryProperties();
         humanQueryProperties.setRequestTimeoutSeconds(1);
         final ObjectMapper objectMapper = new ObjectMapper();
@@ -205,9 +199,9 @@ class InfrastructureProxyTransportTest {
     void jarvisQueryPreservesControlledHumanQueryServerErrorStatusesAndBodies() throws Exception {
         final ObjectMapper objectMapper = new ObjectMapper();
         final Map<Integer, String> cases = Map.of(
-                503, "{\"code\":\"HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED\",\"message\":\"The complete grounded flow exceeds the available model context.\",\"correlationId\":\"corr-budget\"}",
+                503, "{\"code\":\"KNOWLEDGE_QUERY_FAILED\",\"message\":\"Knowledge query failed before a factual answer could be built.\",\"correlationId\":\"corr-failed\"}",
                 504, "{\"code\":\"HUMAN_QUERY_TIMEOUT\",\"message\":\"Knowledge human query timed out.\",\"correlationId\":\"corr-timeout\"}",
-                502, "{\"code\":\"HUMAN_ANSWER_GENERATION_FAILED\",\"message\":\"The local model could not produce any grounded flow answers.\",\"correlationId\":\"corr-generation\"}"
+                502, "{\"code\":\"QUERY_INTERPRETATION_FAILED\",\"message\":\"The local model could not interpret the query.\",\"correlationId\":\"corr-query\"}"
         );
 
         for (final Map.Entry<Integer, String> entry : cases.entrySet()) {

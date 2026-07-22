@@ -206,6 +206,8 @@ def _query_identifiers(value: str) -> List[str]:
 def write_runtime_config(
     tmp_path: Path,
     *,
+    analysis_enabled: bool = True,
+    startup_maintenance_enabled: bool = True,
     max_file_size_bytes: int = 500000,
     semantic_auto_build_enabled: bool = False,
     semantic_auto_build_interval_seconds: float = 60.0,
@@ -284,6 +286,7 @@ forge:
     config-dir: "{config_dir}"
     runtime-dir: "{runtime_dir}"
     workspace-root: "{workspace}"
+    startup-maintenance-enabled: {str(startup_maintenance_enabled).lower()}
     logging:
       level: INFO
       console-enabled: false
@@ -306,7 +309,7 @@ forge:
           auto-refresh-enabled: false
           auto-refresh-interval-seconds: 60
         analysis:
-          enabled: true
+          enabled: {str(analysis_enabled).lower()}
           request-timeout-seconds: 5
           max-file-chars: 60000
           max-chunk-chars: 20000

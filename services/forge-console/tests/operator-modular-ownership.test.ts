@@ -56,27 +56,12 @@ function graphHtml() {
 
 function jarvisHtml() {
   return baseHtml('jarvis', `
-    <button id="refreshJarvis"></button>
-    <span id="jarvisUpdated"></span>
-    <div id="jarvisStatusError" class="hidden"></div>
-    <div id="jarvisActionsError" class="hidden"></div>
-    <section id="jarvisStatusCards"></section>
-    <section id="jarvisActions"></section>
-    <form id="jarvisCommandForm">
-      <textarea id="jarvisCommandText"></textarea>
-      <button id="executeJarvisCommand" type="submit">Execute</button>
-    </form>
-    <div id="jarvisCommandError" class="hidden"></div>
-    <section id="jarvisCommandResult" class="hidden"></section>
     <form id="jarvisQueryForm">
       <textarea id="jarvisQueryText"></textarea>
       <button id="sendJarvisQuery" type="submit">Send</button>
     </form>
     <div id="jarvisQueryLoading" class="hidden"></div>
-    <div id="jarvisQueryError" class="hidden"></div>
     <section id="jarvisQueryResult" class="hidden"></section>
-    <section id="jarvisQueryDiagnostics" class="hidden"></section>
-    <section id="jarvisQueryRaw" class="hidden"></section>
   `);
 }
 
@@ -166,10 +151,10 @@ describe('Operator Console modular request ownership', () => {
     bootstrapOperatorConsole({ document: jarvis.window.document, window: jarvis.window, http: jarvisHttp });
     await flushAsync();
     expect((jarvis.window.__forgeMountedOperatorPage as any).constructor.name).toBe('JarvisPage');
-    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path).sort()).toEqual(['/jarvis/actions', '/jarvis/status']);
+    expect(jarvisHttp.get).not.toHaveBeenCalled();
   });
 
-  it('UI-IT-02 sends no duplicate Jarvis init, refresh, or remount requests', async () => {
+  it('UI-IT-02 sends no Jarvis init or remount requests from the chat page', async () => {
     const dom = jarvisHtml();
     const http = {
       get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { actions: [] })),
@@ -178,21 +163,13 @@ describe('Operator Console modular request ownership', () => {
     const page = new JarvisPage({ document: dom.window.document, http });
     page.mount();
     await flushAsync();
-    expect(http.get.mock.calls.map(([path]: [string]) => path).sort()).toEqual(['/jarvis/actions', '/jarvis/status']);
-
-    dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-    await flushAsync();
-    expect(http.get.mock.calls.filter(([path]: [string]) => path === '/jarvis/status')).toHaveLength(2);
-    expect(http.get.mock.calls.filter(([path]: [string]) => path === '/jarvis/actions')).toHaveLength(2);
+    expect(http.get).not.toHaveBeenCalled();
 
     page.dispose();
     const second = new JarvisPage({ document: dom.window.document, http });
     second.mount();
     await flushAsync();
-    dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-    await flushAsync();
-    expect(http.get.mock.calls.filter(([path]: [string]) => path === '/jarvis/status')).toHaveLength(4);
-    expect(http.get.mock.calls.filter(([path]: [string]) => path === '/jarvis/actions')).toHaveLength(4);
+    expect(http.get).not.toHaveBeenCalled();
   });
 
   it('UI-IT-03 prevents duplicate Jarvis query submissions while loading', async () => {
@@ -218,17 +195,19 @@ describe('Operator Console modular request ownership', () => {
     expect(dom.window.document.getElementById('sendJarvisQuery')?.textContent).toBe('Send');
   });
 
-  it('UI-IT-04 prevents Jarvis DOM mutation after dispose', async () => {
+  it('UI-IT-04 prevents Jarvis query DOM mutation after dispose', async () => {
     const dom = jarvisHtml();
     const pending = deferred<unknown>();
-    const http = { get: vi.fn(() => pending.promise), post: vi.fn() };
+    const http = { get: vi.fn(), post: vi.fn(() => pending.promise) };
     const page = new JarvisPage({ document: dom.window.document, http });
-    const request = page.loadStatus();
+    (dom.window.document.getElementById('jarvisQueryText') as HTMLTextAreaElement).value = 'hello';
+    const request = page.submitQuery(new dom.window.Event('submit'));
+    await flushAsync();
 
     page.dispose();
-    pending.resolve({ status: 'READY', host: '127.0.0.1' });
+    pending.resolve(humanAnswer());
     await request;
-    expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toBe('');
+    expect(dom.window.document.querySelector('.jarvis-answer-card')).toBeNull();
   });
 
   it('UI-IT-05 aborts an in-flight Jarvis query when the page is disposed', async () => {
@@ -274,9 +253,9 @@ describe('Operator Console modular request ownership', () => {
     await page.submitQuery(new dom.window.Event('submit'));
 
     const text = dom.window.document.body.textContent || '';
-    expect(text).toContain('svc');
     expect(text).toContain('run');
     expect(text).toContain('The run entrypoint was found');
+    expect(text).not.toContain('svc');
     expect(text).not.toContain('Technical details');
     expect(text).not.toContain('EXPLICIT_GRAPH_FACT');
     expect(text).not.toContain('SECRET_SOURCE_CONTENT');

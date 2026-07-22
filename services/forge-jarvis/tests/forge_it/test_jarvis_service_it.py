@@ -135,13 +135,13 @@ def test_human_query_query_uses_dedicated_knowledge_contract(tmp_path):
     assert "flowExplanations" not in body
 
 
-def test_human_query_generation_failure_uses_public_error(tmp_path):
+def test_query_interpretation_failure_uses_public_error(tmp_path):
     knowledge = FakeKnowledgeClient(
         error=KnowledgeUpstreamResponseError(
             502,
             {
-                "code": "HUMAN_ANSWER_GENERATION_FAILED",
-                "message": "The local model could not produce any grounded flow answers.",
+                "code": "QUERY_INTERPRETATION_FAILED",
+                "message": "The local model could not interpret the query.",
             },
         )
     )
@@ -152,8 +152,8 @@ def test_human_query_generation_failure_uses_public_error(tmp_path):
 
     assert response.status_code == 502
     assert response.json() == {
-        "code": "HUMAN_ANSWER_GENERATION_FAILED",
-        "message": "The local model could not produce any grounded flow answers.",
+        "code": "QUERY_INTERPRETATION_FAILED",
+        "message": "The local model could not interpret the query.",
     }
 
 

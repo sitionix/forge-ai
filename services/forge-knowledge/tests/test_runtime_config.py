@@ -11,22 +11,22 @@ from knowledge_service.config import (
     AppConfig,
     load_forge_settings,
 )
-from knowledge_service.flow_explanations import LocalOllamaFlowExplanationClient
+from knowledge_service.query_interpretation import LocalOllamaQueryInterpretationClient
 
 
-class RecordingFlowHttpClient:
+class RecordingQueryHttpClient:
     def __init__(self):
         self.posts = []
 
     def post(self, url, *, json, timeout):
         self.posts.append({"url": url, "json": json, "timeout": timeout})
-        return RecordingFlowResponse()
+        return RecordingQueryResponse()
 
     def close(self):
         return None
 
 
-class RecordingFlowResponse:
+class RecordingQueryResponse:
     def raise_for_status(self):
         return None
 
@@ -46,7 +46,7 @@ def test_knowledge_generative_defaults_are_canonical_when_not_overridden(tmp_pat
     assert config.human_query_request_timeout_seconds == 180
 
 
-def test_analyzer_and_human_answer_provider_resolve_same_generative_model_and_context(tmp_path):
+def test_analyzer_and_query_interpreter_resolve_same_generative_model_and_context(tmp_path):
     config_file = _minimal_forge_config(tmp_path)
     settings = load_forge_settings(config_file=config_file, environ=_env(tmp_path, config_file))
     config = AppConfig.from_forge_settings(settings)
@@ -57,21 +57,21 @@ def test_analyzer_and_human_answer_provider_resolve_same_generative_model_and_co
         config.analysis_ai_call_timeout_seconds,
         config.analysis_context_tokens,
     )
-    flow = LocalOllamaFlowExplanationClient(
+    interpreter = LocalOllamaQueryInterpretationClient(
         config.analysis_base_url,
         config.analysis_model,
         config.analysis_ai_call_timeout_seconds,
         config.analysis_context_tokens,
     )
     try:
-        assert analyzer.model == flow.model == DEFAULT_GENERATIVE_MODEL
-        assert analyzer.context_tokens == flow.context_tokens == DEFAULT_GENERATIVE_CONTEXT_TOKENS
+        assert analyzer.model == interpreter.model == DEFAULT_GENERATIVE_MODEL
+        assert analyzer.context_tokens == interpreter.context_tokens == DEFAULT_GENERATIVE_CONTEXT_TOKENS
     finally:
         asyncio.run(analyzer.aclose())
-        flow.close()
+        interpreter.close()
 
 
-def test_root_generative_config_changes_knowledge_analyzer_and_human_answer_provider(tmp_path):
+def test_root_generative_config_changes_knowledge_analyzer_and_query_interpreter(tmp_path):
     config_file = _minimal_forge_config(
         tmp_path,
         generative_model="root-shared-model",
@@ -86,7 +86,7 @@ def test_root_generative_config_changes_knowledge_analyzer_and_human_answer_prov
         config.analysis_ai_call_timeout_seconds,
         config.analysis_context_tokens,
     )
-    flow = LocalOllamaFlowExplanationClient(
+    interpreter = LocalOllamaQueryInterpretationClient(
         config.analysis_base_url,
         config.analysis_model,
         config.analysis_ai_call_timeout_seconds,
@@ -95,11 +95,11 @@ def test_root_generative_config_changes_knowledge_analyzer_and_human_answer_prov
     try:
         assert config.analysis_model == "root-shared-model"
         assert config.analysis_context_tokens == 4096
-        assert analyzer.model == flow.model == "root-shared-model"
-        assert analyzer.context_tokens == flow.context_tokens == 4096
+        assert analyzer.model == interpreter.model == "root-shared-model"
+        assert analyzer.context_tokens == interpreter.context_tokens == 4096
     finally:
         asyncio.run(analyzer.aclose())
-        flow.close()
+        interpreter.close()
 
 
 def test_root_human_query_timeout_changes_knowledge_deadline(tmp_path):
@@ -152,13 +152,13 @@ def test_generative_context_below_minimum_fails_loading(tmp_path):
 def test_knowledge_ollama_clients_reject_context_below_minimum():
     with pytest.raises(ValueError, match="context_tokens must be at least 1024"):
         OllamaAnalysisClient("http://127.0.0.1:11434", "model", 120, 512)
-    with pytest.raises(ValueError, match="context_tokens must be at least 1024"):
-        LocalOllamaFlowExplanationClient("http://127.0.0.1:11434", "model", 120, 512)
+    with pytest.raises(ValueError, match="Query interpretation context_tokens must be at least 1024"):
+        LocalOllamaQueryInterpretationClient("http://127.0.0.1:11434", "model", 120, 512)
 
 
-def test_human_query_ollama_payload_uses_exact_loaded_context():
-    recorder = RecordingFlowHttpClient()
-    client = LocalOllamaFlowExplanationClient(
+def test_query_interpretation_ollama_payload_uses_exact_loaded_context():
+    recorder = RecordingQueryHttpClient()
+    client = LocalOllamaQueryInterpretationClient(
         "http://127.0.0.1:11434",
         "qwen2.5-coder:14b",
         120,
@@ -166,17 +166,7 @@ def test_human_query_ollama_payload_uses_exact_loaded_context():
         http_client=recorder,
     )
     try:
-        result = client.complete(
-            {
-                "promptKind": "FINAL_NARRATION",
-                "originalQuestion": "Explain the neutral flow",
-                "responseLanguage": "en",
-                "familyRoot": {"source": "source-a", "entrypoint": "Unit.run"},
-                "segment": {"index": 1, "total": 1, "terminal": True, "incomingContext": [], "outgoingContext": []},
-                "narrationAtoms": [],
-                "coverageContract": {"canonicalAtomRefs": [], "requiredAtomRefs": [], "atomCertainty": {}, "gapRefs": []},
-            }
-        )
+        result = client.complete({"queryText": "Explain Unit.run", "answerLanguage": "AUTO"})
     finally:
         client.close()
 

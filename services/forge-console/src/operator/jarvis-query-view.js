@@ -96,13 +96,10 @@ export class JarvisQueryView {
       return '<p>No answer was returned.</p>';
     }
     return items.map((item) => `
-      <article class="jarvis-answer-card">
-        <strong>${escapeHtml(text(item.entrypoint, 'Entrypoint'))}</strong>
+      <section class="jarvis-answer">
+        ${item.entrypoint ? `<strong>${escapeHtml(text(item.entrypoint))}</strong>` : ''}
         <p class="jarvis-answer-text">${escapeHtml(text(item.text))}</p>
-        <footer class="jarvis-answer-sources" aria-label="Answer source">
-          <span>${escapeHtml(text(item.source, 'source'))}${item.entrypoint ? ` · ${escapeHtml(text(item.entrypoint))}` : ''}</span>
-        </footer>
-      </article>
+      </section>
     `).join('');
   }
 

@@ -280,13 +280,13 @@ def test_query_forwards_explicit_ru_and_preserves_knowledge_422(tmp_path) -> Non
     assert knowledge.paths == ["/api/v1/knowledge/query"]
 
 
-def test_human_query_generation_failure_preserves_upstream_error(tmp_path) -> None:
+def test_query_interpretation_failure_preserves_upstream_error(tmp_path) -> None:
     knowledge = FakeKnowledgeClient(
         error=KnowledgeUpstreamResponseError(
             502,
             {
-                "code": "HUMAN_ANSWER_GENERATION_FAILED",
-                "message": "The local model could not produce any grounded flow answers.",
+                "code": "QUERY_INTERPRETATION_FAILED",
+                "message": "The local model could not interpret the query.",
             },
         )
     )
@@ -297,8 +297,8 @@ def test_human_query_generation_failure_preserves_upstream_error(tmp_path) -> No
 
     assert response.status_code == 502
     assert response.json() == {
-        "code": "HUMAN_ANSWER_GENERATION_FAILED",
-        "message": "The local model could not produce any grounded flow answers.",
+        "code": "QUERY_INTERPRETATION_FAILED",
+        "message": "The local model could not interpret the query.",
     }
     assert knowledge.calls == [
         normalized_query_payload("JarvisGateway", intent="FLOW_EXPLANATION", include_tests=False, max_flows=10)
@@ -315,11 +315,11 @@ def test_human_query_response_preserves_multiple_answers_and_diagnostics(tmp_pat
             ],
             diagnostics=[
                 {
-                    "code": "HUMAN_FLOW_ANSWER_GENERATION_FAILED",
-                    "message": "The local model could not explain one selected flow.",
-                    "severity": "WARN",
-                    "sourceId": "service-c",
-                    "metadata": {"entrypoint": "ListenerC.handle"},
+                    "code": "FLOW_WALKTHROUGH_LANGUAGE_FALLBACK",
+                    "message": "Requested response language catalog is unavailable; deterministic flow text used the default catalog.",
+                    "severity": "INFO",
+                    "sourceId": None,
+                    "metadata": {"requestedLanguage": "de", "usedLanguage": "en"},
                 }
             ],
         )
@@ -338,11 +338,11 @@ def test_human_query_response_preserves_multiple_answers_and_diagnostics(tmp_pat
         ],
         "diagnostics": [
             {
-                "code": "HUMAN_FLOW_ANSWER_GENERATION_FAILED",
-                "message": "The local model could not explain one selected flow.",
-                "severity": "WARN",
-                "sourceId": "service-c",
-                "metadata": {"entrypoint": "ListenerC.handle"},
+                "code": "FLOW_WALKTHROUGH_LANGUAGE_FALLBACK",
+                "message": "Requested response language catalog is unavailable; deterministic flow text used the default catalog.",
+                "severity": "INFO",
+                "sourceId": None,
+                "metadata": {"requestedLanguage": "de", "usedLanguage": "en"},
             }
         ],
     }
@@ -390,16 +390,8 @@ def test_query_response_preserves_human_contract(tmp_path) -> None:
     ("status_code", "body"),
     [
         (404, {"code": "NO_GROUNDED_GRAPH_CANDIDATES", "message": "No grounded graph candidates were found."}),
-        (
-            503,
-            {
-                "code": "HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED",
-                "message": "The complete grounded flow exceeds the available model context.",
-                "correlationId": "corr-knowledge-budget",
-            },
-        ),
-        (502, {"code": "HUMAN_ANSWER_GENERATION_FAILED", "message": "The local model could not produce any grounded flow answers."}),
-        (504, {"code": "HUMAN_ANSWER_GENERATION_TIMEOUT", "message": "The local model timed out while generating grounded flow answers."}),
+        (502, {"code": "QUERY_INTERPRETATION_FAILED", "message": "The local model could not interpret the query."}),
+        (504, {"code": "HUMAN_QUERY_TIMEOUT", "message": "Knowledge human query timed out."}),
     ],
 )
 def test_query_preserves_controlled_knowledge_error(tmp_path, status_code, body) -> None:
@@ -455,15 +447,14 @@ def test_non_localhost_knowledge_base_url_rejected() -> None:
         KnowledgeClient("http://example.com:7081", 120)
 
 
-def test_query_client_uses_human_timeout_beyond_normal_knowledge_boundary() -> None:
+def test_query_client_uses_configured_human_query_timeout() -> None:
     async def exercise():
         calls = []
 
         async def handler(request: httpx.Request) -> httpx.Response:
             calls.append(request.url.path)
             read_timeout = request.extensions.get("timeout", {}).get("read", 0)
-            if read_timeout <= 0.12:
-                raise httpx.ReadTimeout("old timeout boundary", request=request)
+            assert read_timeout == pytest.approx(0.15)
             await asyncio.sleep(0.001)
             return httpx.Response(
                 200,

@@ -1223,71 +1223,22 @@ body.sidebar-collapsed .sidebar-link {
   color: #fff8de;
 }
 
-.jarvis-status-grid,
-.jarvis-grid,
-.jarvis-actions-list {
-  position: relative;
-  display: grid;
-  gap: 14px;
-  padding: 18px;
-}
-
-.jarvis-status-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.jarvis-grid {
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
-  align-items: start;
-  padding: 18px 0 0;
-}
-
-.jarvis-command-form {
-  position: relative;
-  display: grid;
-  gap: 16px;
-  padding: 18px 20px 10px;
-}
-
-.jarvis-security-notice {
-  margin: 10px 20px 18px;
-  color: var(--ink);
-}
-
-.jarvis-command-result {
-  position: relative;
-  padding: 0 20px 20px;
-}
-
 .jarvis-query-panel {
-  margin-top: 18px;
+  margin: 0 auto;
+  max-width: 980px;
 }
 
 .jarvis-query-form {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
   align-items: end;
-  padding: 18px 20px 10px;
+  padding: 0 0 16px;
 }
 
-.jarvis-query-message,
-.jarvis-query-control {
+.jarvis-query-message {
   min-width: 0;
-}
-
-.jarvis-query-form .field input[type="number"] {
-  width: 100%;
-  min-width: 0;
-  border: 1px solid rgba(27, 36, 31, 0.14);
-  border-radius: 16px;
-  background: rgba(255, 252, 235, 0.82);
-  color: var(--ink);
-  font: 13px/1.55 var(--mono);
-  outline: none;
-  padding: 14px 16px;
-  text-align: right;
 }
 
 .jarvis-query-form .field textarea {
@@ -1295,26 +1246,9 @@ body.sidebar-collapsed .sidebar-link {
   max-height: 260px;
 }
 
-.jarvis-query-result,
-.jarvis-query-raw,
-.jarvis-query-diagnostics {
+.jarvis-query-result {
   position: relative;
-  padding: 0 20px 20px;
-}
-
-.jarvis-query-raw h3,
-.jarvis-query-diagnostics h3 {
-  margin: 0 0 12px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.jarvis-context-list {
-  display: grid;
-  gap: 12px;
+  padding: 0;
 }
 
 .jarvis-chat-message {
@@ -1363,12 +1297,11 @@ body.sidebar-collapsed .sidebar-link {
   line-height: 1.55;
 }
 
-.jarvis-answer-card + .jarvis-answer-card,
-.jarvis-answer-warning {
+.jarvis-answer + .jarvis-answer {
   margin-top: 12px;
 }
 
-.jarvis-answer-card strong {
+.jarvis-answer strong {
   display: block;
   margin-bottom: 8px;
   color: #1c2f27;
@@ -1377,25 +1310,6 @@ body.sidebar-collapsed .sidebar-link {
 
 .jarvis-answer-text {
   white-space: pre-wrap;
-}
-
-.jarvis-answer-sources {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.jarvis-answer-warning {
-  border-left: 3px solid #c48a2c;
-  padding-left: 10px;
-  color: #6c4a12;
-}
-
-.jarvis-answer-warning p {
-  color: inherit;
 }
 
 .jarvis-error-card {
@@ -3530,8 +3444,6 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
     grid-template-columns: 1fr;
   }
 
-  .jarvis-grid,
-  .jarvis-status-grid,
   .jarvis-query-form {
     grid-template-columns: 1fr;
   }

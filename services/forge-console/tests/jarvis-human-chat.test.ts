@@ -10,10 +10,7 @@ function jarvisDom() {
         <button id="sendJarvisQuery" type="submit">Send</button>
       </form>
       <div id="jarvisQueryLoading" class="hidden"></div>
-      <div id="jarvisQueryError" class="hidden"></div>
       <section id="jarvisQueryResult" class="hidden"></section>
-      <section id="jarvisQueryDiagnostics" class="hidden"></section>
-      <section id="jarvisQueryRaw" class="hidden"></section>
     </body>`, {
     url: 'http://127.0.0.1/operator/jarvis.html',
     pretendToBeVisual: true
@@ -87,7 +84,7 @@ describe('Jarvis human chat', () => {
     await first;
   });
 
-  it('renders only the human answer and compact source footer', async () => {
+  it('renders only the human answer and compact entrypoint title', async () => {
     const dom = jarvisDom();
     const http = { post: vi.fn(() => Promise.resolve(humanResponse())) };
     const page = new JarvisPage({ document: dom.window.document, http });
@@ -100,17 +97,27 @@ describe('Jarvis human chat', () => {
     expect(text).toContain('Як створюється сайт?');
     expect(text).toContain('Jarvis');
     expect(text).toContain('Сайт створюється через SiteController.createSite.');
-    expect(text).toContain('stsssox');
     expect(text).toContain('SiteController.createSite');
-    expect(dom.window.document.querySelectorAll('.jarvis-answer-card')).toHaveLength(1);
+    expect(text).not.toContain('stsssox');
+    expect(dom.window.document.querySelectorAll('.jarvis-answer')).toHaveLength(1);
+    expect(dom.window.document.querySelector('.jarvis-answer-card')).toBeNull();
+    expect(dom.window.document.querySelector('.jarvis-answer-sources')).toBeNull();
     expect(dom.window.document.querySelector('.jarvis-flow-card')).toBeNull();
     expect(text).not.toContain('CALLS');
     expect(text).not.toContain('Technical details');
     expect(text).not.toContain('nodeRef');
     expect(text).not.toContain('Raw JSON');
+    expect(text).not.toContain('Diagnostics');
+    expect(text).not.toContain('Scope:');
+    expect(text).not.toContain('graph-backed');
+    expect(text).not.toContain('grounding');
+    expect(text).not.toContain('segment');
+    expect(dom.window.document.getElementById('jarvisQueryDiagnostics')).toBeNull();
+    expect(dom.window.document.getElementById('jarvisQueryRaw')).toBeNull();
+    expect(dom.window.document.getElementById('jarvisQueryError')).toBeNull();
   });
 
-  it('renders one plain answer card per response item and hides normal-chat diagnostics', async () => {
+  it('renders one plain answer block per response item and hides normal-chat diagnostics', async () => {
     const dom = jarvisDom();
     const response = {
       answerLanguage: 'uk',
@@ -121,7 +128,7 @@ describe('Jarvis human chat', () => {
       ],
       diagnostics: [
         {
-          code: 'HUMAN_FLOW_ANSWER_GENERATION_FAILED',
+          code: 'FLOW_WALKTHROUGH_LANGUAGE_FALLBACK',
           message: 'One flow failed.',
           sourceId: 'svc',
           metadata: { entrypoint: 'Failed.handle' }
@@ -134,14 +141,16 @@ describe('Jarvis human chat', () => {
 
     await page.submitQuery(submitEvent());
 
-    const cards = dom.window.document.querySelectorAll('.jarvis-answer-card');
-    const cardTexts = Array.from(cards).map((card) => card.textContent ?? '');
-    expect(cards).toHaveLength(3);
-    expect(cardTexts[0]).toContain('ControllerA.create');
-    expect(cardTexts[1]).toContain('ListenerB.handle');
-    expect(cardTexts[2]).toContain('JobC.run');
+    const blocks = dom.window.document.querySelectorAll('.jarvis-answer');
+    const blockTexts = Array.from(blocks).map((block) => block.textContent ?? '');
+    expect(blocks).toHaveLength(3);
+    expect(blockTexts[0]).toContain('ControllerA.create');
+    expect(blockTexts[1]).toContain('ListenerB.handle');
+    expect(blockTexts[2]).toContain('JobC.run');
+    expect(dom.window.document.querySelector('.jarvis-answer-card')).toBeNull();
+    expect(dom.window.document.querySelector('.jarvis-answer-sources')).toBeNull();
     expect(dom.window.document.body.textContent).not.toContain('One flow failed.');
-    expect(dom.window.document.body.textContent).not.toContain('HUMAN_FLOW_ANSWER_GENERATION_FAILED');
+    expect(dom.window.document.body.textContent).not.toContain('FLOW_WALKTHROUGH_LANGUAGE_FALLBACK');
     expect(dom.window.document.querySelector('.jarvis-answer-warning')).toBeNull();
   });
 
@@ -159,7 +168,8 @@ describe('Jarvis human chat', () => {
     expect(answer?.textContent).toContain('\\n2. <b>HTML</b> лишається текстом.');
     expect(answer?.innerHTML).toContain('&lt;b&gt;HTML&lt;/b&gt;');
     expect(dom.window.document.querySelector('.jarvis-answer-text b')).toBeNull();
-    expect(dom.window.document.querySelectorAll('.jarvis-answer-card')).toHaveLength(1);
+    expect(dom.window.document.querySelectorAll('.jarvis-answer')).toHaveLength(1);
+    expect(dom.window.document.querySelector('.jarvis-answer-card')).toBeNull();
     expect(dom.window.document.querySelector('.jarvis-flow-card')).toBeNull();
   });
 
@@ -193,6 +203,7 @@ describe('Jarvis human chat', () => {
     expect(text).not.toContain('/api/v1');
     expect(text).not.toContain('correlationId');
     expect(dom.window.document.querySelectorAll('.jarvis-chat-bubble')).toHaveLength(4);
+    expect(dom.window.document.getElementById('jarvisQueryError')).toBeNull();
   });
 
   it('renders only safe generic text for raw backend error title objects', async () => {
@@ -218,6 +229,8 @@ describe('Jarvis human chat', () => {
     expect(text).not.toContain('HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED');
     expect(text).not.toContain('/api/v1/jarvis/query');
     expect(text).not.toContain('secret-correlation-id');
+    expect(dom.window.document.querySelectorAll('.jarvis-error-card')).toHaveLength(1);
+    expect(dom.window.document.getElementById('jarvisQueryError')).toBeNull();
   });
 
   it('keeps safe presentation strings escaped', async () => {

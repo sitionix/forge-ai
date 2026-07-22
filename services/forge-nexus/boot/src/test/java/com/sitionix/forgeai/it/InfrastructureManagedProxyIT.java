@@ -30,8 +30,6 @@ import static org.hamcrest.Matchers.not;
         "forge.ai.infrastructure.knowledge.read-timeout=2500ms",
         "forge.ai.infrastructure.jarvis.read-timeout=2500ms",
         "forge.ai.query.human-query.request-timeout=1000ms",
-        "forge.ai.infrastructure.proxy.knowledge-human-query-transport-grace=750ms",
-        "forge.ai.infrastructure.proxy.jarvis-query-transport-grace=750ms",
         "forge.ai.infrastructure.proxy.max-request-body-bytes=128",
         "forge.ai.infrastructure.proxy.max-response-body-bytes=6500"
 })
@@ -889,16 +887,8 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryFrench()).createDefault();
         this.testManager.wiremock().createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryForbiddenLanguage()).createDefault();
         this.testManager.wiremock()
-                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryContextBudget())
-                .urlWithQueryParam(InfrastructureProxyQuery.upstreamHumanContextBudgetCase())
-                .createDefault();
-        this.testManager.wiremock()
                 .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryHumanTimeout())
                 .urlWithQueryParam(InfrastructureProxyQuery.upstreamHumanTimeoutCase())
-                .createDefault();
-        this.testManager.wiremock()
-                .createMapping(InfrastructureProxyEndpoint.upstreamJarvisQueryGenerationFailed())
-                .urlWithQueryParam(InfrastructureProxyQuery.upstreamHumanGenerationFailedCase())
                 .createDefault();
 
         //when then
@@ -952,28 +942,12 @@ class InfrastructureManagedProxyIT extends AbstractForgeAiIT {
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.flows").doesNotExist())
                 .assertDefault();
 
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryContextBudget())
-                .withQueryParameters(InfrastructureProxyQuery.humanContextBudgetCase())
-                .header("X-Correlation-Id", "corr-jarvis-budget")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("HUMAN_ANSWER_CONTEXT_BUDGET_EXCEEDED"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("The complete grounded flow exceeds the available model context."))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.correlationId").value("corr-jarvis-budget"))
-                .assertDefault();
-
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryHumanTimeout())
                 .withQueryParameters(InfrastructureProxyQuery.humanTimeoutCase())
                 .header("X-Correlation-Id", "corr-jarvis-human-timeout")
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("HUMAN_QUERY_TIMEOUT"))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("Knowledge human query timed out."))
                 .andExpectPath(MockMvcResultMatchers.jsonPath("$.correlationId").value("corr-jarvis-human-timeout"))
-                .assertDefault();
-
-        this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryGenerationFailed())
-                .withQueryParameters(InfrastructureProxyQuery.humanGenerationFailedCase())
-                .header("X-Correlation-Id", "corr-jarvis-generation")
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.code").value("HUMAN_ANSWER_GENERATION_FAILED"))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.message").value("The local model could not produce any grounded flow answers."))
-                .andExpectPath(MockMvcResultMatchers.jsonPath("$.correlationId").value("corr-jarvis-generation"))
                 .assertDefault();
 
         this.proxyMockMvc.ping(InfrastructureProxyEndpoint.nexusJarvisQueryBlank())

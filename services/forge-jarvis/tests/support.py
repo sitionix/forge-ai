@@ -264,7 +264,6 @@ forge:
           request-timeout-seconds: 120
         knowledge:
           request-timeout-seconds: 120
-          human-query-transport-grace-seconds: 5
         actions-file: "{jarvis_dir / "allowed-actions.yaml"}"
         system-prompt-path: "{jarvis_dir / "system-prompt.md"}"
 """.lstrip(),

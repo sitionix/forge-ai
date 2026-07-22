@@ -69,27 +69,12 @@ function graphBody() {
 
 function jarvisBody() {
   return `
-    <button id="refreshJarvis"></button>
-    <span id="jarvisUpdated"></span>
-    <div id="jarvisStatusError" class="hidden"></div>
-    <div id="jarvisActionsError" class="hidden"></div>
-    <section id="jarvisStatusCards"></section>
-    <section id="jarvisActions"></section>
-    <form id="jarvisCommandForm">
-      <textarea id="jarvisCommandText"></textarea>
-      <button id="executeJarvisCommand" type="submit">Execute</button>
-    </form>
-    <div id="jarvisCommandError" class="hidden"></div>
-    <section id="jarvisCommandResult" class="hidden"></section>
     <form id="jarvisQueryForm">
       <textarea id="jarvisQueryText"></textarea>
       <button id="sendJarvisQuery" type="submit">Send</button>
     </form>
     <div id="jarvisQueryLoading" class="hidden"></div>
-    <div id="jarvisQueryError" class="hidden"></div>
     <section id="jarvisQueryResult" class="hidden"></section>
-    <section id="jarvisQueryDiagnostics" class="hidden"></section>
-    <section id="jarvisQueryRaw" class="hidden"></section>
   `;
 }
 
@@ -211,11 +196,7 @@ describe('Operator legacy boundary', () => {
     };
     bootstrapOperatorConsole({ document: jarvis.window.document, window: jarvis.window, http: jarvisHttp });
     await flushAsync();
-    expect(jarvisHttp.get.mock.calls.map(([path]: [string]) => path).sort()).toEqual(['/jarvis/actions', '/jarvis/status']);
-    jarvis.window.document.getElementById('refreshJarvis')?.dispatchEvent(new jarvis.window.MouseEvent('click', { bubbles: true }));
-    await flushAsync();
-    expect(jarvisHttp.get.mock.calls.filter(([path]: [string]) => path === '/jarvis/status')).toHaveLength(2);
-    expect(jarvisHttp.get.mock.calls.filter(([path]: [string]) => path === '/jarvis/actions')).toHaveLength(2);
+    expect(jarvisHttp.get).not.toHaveBeenCalled();
 
     const overview = inScopeDom('knowledge', overviewBody());
     await runLegacy(overview);
@@ -245,7 +226,18 @@ describe('Operator legacy boundary', () => {
       operatorSource('agents.html')
     ]);
     expect(jarvis).toContain('type="module" src="./operator-ui.js"');
-    expect(jarvis).toContain('Graph Knowledge Query');
+    expect(jarvis).toContain('jarvisQueryForm');
+    expect(jarvis).toContain('sendJarvisQuery');
+    expect(jarvis).not.toContain('refreshJarvis');
+    expect(jarvis).not.toContain('jarvisStatusCards');
+    expect(jarvis).not.toContain('jarvisActions');
+    expect(jarvis).not.toContain('jarvisCommandForm');
+    expect(jarvis).not.toContain('Graph Knowledge Query');
+    expect(jarvis).not.toContain('Scope: Auto');
+    expect(jarvis).not.toContain('jarvisQueryDiagnostics');
+    expect(jarvis).not.toContain('jarvisQueryRaw');
+    expect(jarvis).not.toContain('jarvisQueryError');
+    expect(jarvis).not.toContain('graph-backed');
     expect(jarvis).not.toContain('jarvisQueryMaxAnchors');
     expect(jarvis).not.toContain('jarvisQueryDepth');
     expect(jarvis).not.toContain('Max anchors');

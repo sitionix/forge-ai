@@ -227,8 +227,9 @@ class AnalysisSupervisor:
         self._admission_lock = asyncio.Lock()
         self._queue = asyncio.Queue(maxsize=max(1, self.config.analysis_queue_capacity))
         self._stopping = False
-        self.analysis_store.mark_interrupted_jobs()
-        self._finalize_dirty_sources(None)
+        if self.config.startup_maintenance_enabled:
+            self.analysis_store.mark_interrupted_jobs()
+            self._finalize_dirty_sources(None)
         worker_count = max(1, self.config.analysis_concurrency)
         self._workers = [asyncio.create_task(self._worker(index), name=f"knowledge-analysis-worker-{index}") for index in range(worker_count)]
 
