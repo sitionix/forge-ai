@@ -1,14 +1,23 @@
 from __future__ import annotations
 
-import re
+from collections import defaultdict
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Iterable, Mapping, Protocol, Sequence
 
-from knowledge_service.entrypoint_kinds import EntrypointExecutionKind, EntrypointKind
+from knowledge_service.entrypoint_kinds import EntrypointExecutionKind
 from knowledge_service.flow_family import FlowFamily
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphNode, FlowNodeKey
+from knowledge_service.graph_relation_semantics import GraphRelationSemantics, graph_relation_semantics
 from knowledge_service.knowledge_query_schema import KnowledgeQueryDiagnostic
+from knowledge_service.operation_facts import (
+    AvailableOperationFact,
+    clean_identity,
+    normalize_http_method,
+    normalize_route,
+    normalize_transport_kind,
+    split_operation_interface_identity,
+)
 
 
 class FlowNarrativePartKind(str, Enum):
@@ -40,6 +49,7 @@ class AvailableFlowFragment:
     source_id: str
     family: FlowFamily
     matched_anchor_count: int = 0
+    operation_facts: tuple[AvailableOperationFact, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -78,23 +88,10 @@ class FlowNarrativePlan:
 
 
 @dataclass(frozen=True)
-class HttpOperationFact:
-    fragment_key: str
-    role: str
-    source_id: str
-    symbol: str
-    method: str
-    route: str
-    operation_identity: str | None = None
-    request_contract_identity: str | None = None
-    response_contract_identity: str | None = None
-    target_service_identity: str | None = None
-
-
-@dataclass(frozen=True)
 class FlowCorrelationResult:
     status: FlowCorrelationStatus
     source_fragment_key: str
+    operation_key: tuple[str, str, str, str, str, str] | None = None
     target_fragment_keys: tuple[str, ...] = ()
     gap: FlowNarrativeGap | None = None
     diagnostics: tuple[KnowledgeQueryDiagnostic, ...] = ()
@@ -108,27 +105,39 @@ class FlowCorrelationAdapter(Protocol):
 class HttpFlowCorrelationAdapter:
     def correlate(self, fragments: Sequence[AvailableFlowFragment]) -> tuple[FlowCorrelationResult, ...]:
         fragment_by_key = {fragment.key: fragment for fragment in fragments}
-        inbound_by_key: dict[tuple[str, str], list[HttpOperationFact]] = {}
-        outbound: list[HttpOperationFact] = []
+        inbound_by_key: dict[tuple[str, str], list[tuple[str, AvailableOperationFact]]] = {}
+        outbound: list[tuple[str, AvailableOperationFact]] = []
         for fragment in fragments:
-            for fact in self._facts(fragment):
-                if fact.role == "INBOUND":
-                    inbound_by_key.setdefault((fact.method, fact.route), []).append(fact)
-                elif fact.role == "OUTBOUND":
-                    outbound.append(fact)
+            for fact in fragment.operation_facts:
+                if normalize_transport_kind(fact.transport_kind) != "HTTP":
+                    continue
+                method = normalize_http_method(fact.method)
+                route = normalize_route(fact.normalized_route)
+                if not method or not route:
+                    continue
+                if fact.direction_role == "INBOUND":
+                    inbound_by_key.setdefault((method, route), []).append((fragment.key, fact))
+                elif fact.direction_role == "OUTBOUND":
+                    outbound.append((fragment.key, fact))
         results: list[FlowCorrelationResult] = []
-        for source_fact in sorted(outbound, key=self._fact_sort_key):
+        for source_fragment_key, source_fact in sorted(outbound, key=lambda item: self._fact_sort_key(item[1])):
+            method = normalize_http_method(source_fact.method)
+            route = normalize_route(source_fact.normalized_route)
+            if not method or not route:
+                continue
+            operation_key = source_fact.operation_key(source_fragment_key)
             candidates = [
-                fact
-                for fact in inbound_by_key.get((source_fact.method, source_fact.route), [])
-                if fact.fragment_key != source_fact.fragment_key
+                (fragment_key, fact)
+                for fragment_key, fact in inbound_by_key.get((method, route), [])
+                if fragment_key != source_fragment_key
             ]
             candidates = self._filter_by_exact_identity(source_fact, candidates)
             if not candidates:
                 results.append(
                     FlowCorrelationResult(
                         status=FlowCorrelationStatus.NO_MATCH,
-                        source_fragment_key=source_fact.fragment_key,
+                        source_fragment_key=source_fragment_key,
+                        operation_key=operation_key,
                         gap=self._gap(
                             source_fact,
                             None,
@@ -138,13 +147,14 @@ class HttpFlowCorrelationAdapter:
                     )
                 )
                 continue
-            unique_target_keys = tuple(sorted({fact.fragment_key for fact in candidates}))
+            unique_target_keys = tuple(sorted({fragment_key for fragment_key, _fact in candidates}))
             if len(unique_target_keys) == 1:
-                target_fact = sorted(candidates, key=self._fact_sort_key)[0]
+                _target_key, target_fact = sorted(candidates, key=lambda item: self._fact_sort_key(item[1]))[0]
                 results.append(
                     FlowCorrelationResult(
                         status=FlowCorrelationStatus.EXACT_UNVERIFIED,
-                        source_fragment_key=source_fact.fragment_key,
+                        source_fragment_key=source_fragment_key,
+                        operation_key=operation_key,
                         target_fragment_keys=unique_target_keys,
                         gap=self._gap(
                             source_fact,
@@ -158,7 +168,8 @@ class HttpFlowCorrelationAdapter:
             results.append(
                 FlowCorrelationResult(
                     status=FlowCorrelationStatus.AMBIGUOUS,
-                    source_fragment_key=source_fact.fragment_key,
+                    source_fragment_key=source_fragment_key,
+                    operation_key=operation_key,
                     target_fragment_keys=unique_target_keys,
                     gap=self._gap(
                         source_fact,
@@ -171,11 +182,11 @@ class HttpFlowCorrelationAdapter:
                             code="FLOW_CORRELATION_AMBIGUOUS",
                             message="Several fragments satisfy an exact HTTP correlation; the planner did not select one.",
                             severity="INFO",
-                            sourceId=fragment_by_key.get(source_fact.fragment_key).source_id if fragment_by_key.get(source_fact.fragment_key) else None,
+                            sourceId=fragment_by_key.get(source_fragment_key).source_id if fragment_by_key.get(source_fragment_key) else None,
                             metadata={
                                 "transportKind": "HTTP",
-                                "method": source_fact.method,
-                                "route": source_fact.route,
+                                "method": method,
+                                "route": route,
                                 "candidateCount": len(unique_target_keys),
                             },
                         ),
@@ -186,12 +197,13 @@ class HttpFlowCorrelationAdapter:
 
     def _filter_by_exact_identity(
         self,
-        source: HttpOperationFact,
-        candidates: Sequence[HttpOperationFact],
-    ) -> list[HttpOperationFact]:
+        source: AvailableOperationFact,
+        candidates: Sequence[tuple[str, AvailableOperationFact]],
+    ) -> list[tuple[str, AvailableOperationFact]]:
         result = list(candidates)
         for attr in (
             "operation_identity",
+            "interface_identity",
             "request_contract_identity",
             "response_contract_identity",
             "target_service_identity",
@@ -199,126 +211,196 @@ class HttpFlowCorrelationAdapter:
             source_value = getattr(source, attr)
             if not source_value:
                 continue
-            matching = [candidate for candidate in result if getattr(candidate, attr) == source_value]
+            result = [
+                item
+                for item in result
+                if not getattr(item[1], attr) or getattr(item[1], attr) == source_value
+            ]
+            matching = [item for item in result if getattr(item[1], attr) == source_value]
             if matching:
                 result = matching
         return result
 
-    def _facts(self, fragment: AvailableFlowFragment) -> tuple[HttpOperationFact, ...]:
-        facts: dict[tuple[str, str, str, str, str], HttpOperationFact] = {}
-        for node in fragment.family.nodes:
-            fact = self._node_fact(fragment, node)
-            if fact is not None:
-                facts.setdefault((fact.fragment_key, fact.role, fact.method, fact.route, fact.symbol), fact)
-        for edge in (*fragment.family.transitions, *fragment.family.boundary_transitions):
-            fact = self._edge_fact(fragment, edge)
-            if fact is not None:
-                facts.setdefault((fact.fragment_key, fact.role, fact.method, fact.route, fact.symbol), fact)
-        return tuple(facts[key] for key in sorted(facts))
-
-    def _node_fact(self, fragment: AvailableFlowFragment, node: FlowGraphNode) -> HttpOperationFact | None:
-        if str(node.entrypoint_kind or "").upper() != EntrypointKind.HTTP.value:
-            return None
-        method = self._method(node.entrypoint_http_method)
-        route = self._route(node.entrypoint_route)
-        if not method or not route:
-            return None
-        role = "OUTBOUND" if str(node.execution_role or "").upper() == EntrypointExecutionKind.CLIENT_OPERATION.value else "INBOUND"
-        if role == "INBOUND" and str(node.execution_role or "").upper() in {
-            EntrypointExecutionKind.CLIENT_OPERATION.value,
-            EntrypointExecutionKind.CONTRACT_DECLARATION.value,
-            EntrypointExecutionKind.SUPPORTING_DECLARATION.value,
-        }:
-            return None
-        return HttpOperationFact(
-            fragment_key=fragment.key,
-            role=role,
-            source_id=node.source_id,
-            symbol=self._symbol(node),
-            method=method,
-            route=route,
-            operation_identity=self._identity(node.entrypoint_interface_method),
-        )
-
-    def _edge_fact(self, fragment: AvailableFlowFragment, edge: FlowGraphEdge) -> HttpOperationFact | None:
-        metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
-        kind = self._identity(metadata.get("connectorKind") or metadata.get("transportKind"))
-        method = self._method(metadata.get("httpMethod") or metadata.get("method"))
-        route = self._route(metadata.get("routeTemplate") or metadata.get("route"))
-        if kind != "HTTP" or not method or not route:
-            return None
-        return HttpOperationFact(
-            fragment_key=fragment.key,
-            role="OUTBOUND",
-            source_id=edge.source_id,
-            symbol=str(metadata.get("fromSymbol") or edge.from_node_id),
-            method=method,
-            route=route,
-            operation_identity=self._identity(metadata.get("operationIdentity") or metadata.get("interfaceMethod")),
-            request_contract_identity=self._identity(metadata.get("requestContractIdentity")),
-            response_contract_identity=self._identity(metadata.get("responseContractIdentity")),
-            target_service_identity=self._identity(metadata.get("targetServiceIdentity")),
-        )
-
     def _gap(
         self,
-        source: HttpOperationFact,
-        target: HttpOperationFact | None,
+        source: AvailableOperationFact,
+        target: AvailableOperationFact | None,
         status: FlowGapVerificationStatus,
         reason: str,
     ) -> FlowNarrativeGap:
+        method = normalize_http_method(source.method)
+        route = normalize_route(source.normalized_route)
         return FlowNarrativeGap(
             kind=FlowNarrativePartKind.UNVERIFIED_GAP.value if status is FlowGapVerificationStatus.UNVERIFIED else FlowNarrativePartKind.AMBIGUOUS_GAP.value,
             verification_status=status,
-            from_source=source.source_id,
-            from_symbol=source.symbol,
-            to_source=target.source_id if target is not None else None,
-            to_symbol=target.symbol if target is not None else None,
+            from_source=source.owner_source_id,
+            from_symbol=self._symbol(source),
+            to_source=target.owner_source_id if target is not None else None,
+            to_symbol=self._symbol(target) if target is not None else None,
             transport_kind="HTTP",
-            method=source.method,
-            route=source.route,
+            method=method,
+            route=route,
             operation_identity=source.operation_identity,
             reason=reason,
         )
 
-    def _fact_sort_key(self, fact: HttpOperationFact) -> tuple[str, str, str, str, str]:
-        return (fact.fragment_key, fact.role, fact.method, fact.route, fact.symbol)
+    def _fact_sort_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str]:
+        return (
+            fact.source_id,
+            fact.direction_role or "",
+            normalize_http_method(fact.method) or "",
+            normalize_route(fact.normalized_route) or "",
+            self._symbol(fact),
+        )
 
-    def _symbol(self, node: FlowGraphNode) -> str:
-        qualified = str(node.qualified_name or "").strip()
+    def _symbol(self, fact: AvailableOperationFact) -> str:
+        qualified = str(fact.owner_qualified_name or "").strip()
         if qualified:
             parts = [part for part in qualified.split(".") if part]
-            if node.node_kind == "CALLABLE" and len(parts) >= 2:
+            if len(parts) >= 2:
                 return ".".join(parts[-2:])
             return parts[-1] if parts else qualified
-        return str(node.label or node.node_id)
+        return str(fact.owner_node_id)
 
-    def _method(self, value: object) -> str | None:
-        text = str(value or "").strip().upper()
-        return text or None
 
-    def _route(self, value: object) -> str | None:
-        text = str(value or "").strip()
-        if not text:
+class OperationFactProjector:
+    def __init__(self, semantics: GraphRelationSemantics | None = None) -> None:
+        self.semantics = semantics or graph_relation_semantics()
+
+    def project(
+        self,
+        family: FlowFamily,
+        available_facts: Sequence[AvailableOperationFact],
+    ) -> tuple[AvailableOperationFact, ...]:
+        node_by_key = {self._node_key(node): node for node in family.nodes}
+        node_keys = set(node_by_key)
+        reached_non_root_targets = {
+            self._to_key(edge)
+            for edge in family.transitions
+            if self.semantics.is_execution_continuation(edge)
+            and self._to_key(edge) is not None
+            and self._from_key(edge) in node_keys
+            and self._to_key(edge) in node_keys
+            and self._from_key(edge) != self._to_key(edge)
+            and node_by_key.get(self._from_key(edge)) is not None
+            and str(node_by_key[self._from_key(edge)].node_kind or "").upper() == "CALLABLE"
+        }
+        facts: dict[tuple[str, str, str, str, str, str, str, str, str], AvailableOperationFact] = {}
+        for fact in available_facts:
+            if fact.owner_key not in node_keys:
+                continue
+            projected = self._classify_node_fact(fact, node_by_key.get(fact.owner_key), reached_non_root_targets)
+            if projected is None:
+                continue
+            facts.setdefault(self._fact_key(projected), projected)
+        for edge in (*family.transitions, *family.boundary_transitions):
+            projected = self._edge_fact(edge, node_by_key)
+            if projected is None:
+                continue
+            facts.setdefault(self._fact_key(projected), projected)
+        return tuple(facts[key] for key in sorted(facts))
+
+    def _classify_node_fact(
+        self,
+        fact: AvailableOperationFact,
+        node: FlowGraphNode | None,
+        reached_non_root_targets: set[FlowNodeKey | None],
+    ) -> AvailableOperationFact | None:
+        transport = normalize_transport_kind(fact.transport_kind)
+        role = str(fact.execution_role or "").upper()
+        if transport == "HTTP" and (not normalize_http_method(fact.method) or not normalize_route(fact.normalized_route)):
             return None
-        text = re.sub(r"/+", "/", text)
-        if not text.startswith("/"):
-            text = f"/{text}"
-        if len(text) > 1:
-            text = text.rstrip("/")
-        return text
+        direction = "SUPPORTING"
+        if transport == "HTTP" and role == EntrypointExecutionKind.EXECUTABLE.value and node is not None and node.entrypoint:
+            direction = "INBOUND"
+        elif transport == "HTTP" and role == EntrypointExecutionKind.CLIENT_OPERATION.value:
+            direction = "OUTBOUND"
+        elif transport == "HTTP" and role != EntrypointExecutionKind.EXECUTABLE.value and fact.owner_key in reached_non_root_targets:
+            direction = "OUTBOUND"
+        return fact.with_direction(direction)
 
-    def _identity(self, value: object) -> str | None:
-        text = str(value or "").strip()
-        return text or None
+    def _edge_fact(
+        self,
+        edge: FlowGraphEdge,
+        node_by_key: Mapping[FlowNodeKey, FlowGraphNode],
+    ) -> AvailableOperationFact | None:
+        metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
+        transport = normalize_transport_kind(metadata.get("transportKind") or metadata.get("connectorKind"))
+        method = normalize_http_method(metadata.get("httpMethod") or metadata.get("method"))
+        route = normalize_route(metadata.get("routeTemplate") or metadata.get("route"))
+        if transport != "HTTP" or not method or not route:
+            return None
+        operation_identity = clean_identity(metadata.get("operationIdentity"))
+        interface_identity = clean_identity(metadata.get("interfaceMethod") or metadata.get("targetInterfaceMethod"))
+        if not operation_identity and not interface_identity:
+            operation_identity, interface_identity = split_operation_interface_identity(metadata.get("targetEntrypoint"))
+        owner_node = node_by_key.get(self._from_key(edge))
+        return AvailableOperationFact(
+            owner_source_id=edge.source_id,
+            owner_graph_id=edge.graph_id,
+            owner_graph_revision=edge.graph_revision,
+            owner_node_id=edge.from_node_id,
+            source_id=edge.source_id,
+            execution_role="EDGE_BOUNDARY",
+            transport_kind=transport,
+            direction_role="OUTBOUND",
+            method=method,
+            normalized_route=route,
+            operation_identity=operation_identity,
+            interface_identity=interface_identity,
+            request_contract_identity=clean_identity(metadata.get("requestContractIdentity")),
+            response_contract_identity=clean_identity(metadata.get("responseContractIdentity")),
+            target_service_identity=clean_identity(metadata.get("targetServiceIdentity")),
+            owner_qualified_name=owner_node.qualified_name if owner_node is not None else edge.from_node_id,
+            owner_edge_id=edge.edge_id,
+            source_channel="EDGE_METADATA",
+        )
+
+    def _fact_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str, str, str, str, str]:
+        return (
+            fact.owner_source_id,
+            fact.owner_graph_revision or fact.owner_graph_id,
+            fact.owner_node_id,
+            fact.owner_edge_id or "",
+            normalize_transport_kind(fact.transport_kind) or "",
+            normalize_http_method(fact.method) or "",
+            normalize_route(fact.normalized_route) or "",
+            fact.operation_identity or "",
+            fact.interface_identity or "",
+        )
+
+    def _node_key(self, node: FlowGraphNode) -> FlowNodeKey:
+        return (node.source_id, node.graph_revision or node.graph_id, node.node_id)
+
+    def _from_key(self, edge: FlowGraphEdge) -> FlowNodeKey:
+        return (edge.source_id, edge.graph_revision or edge.graph_id, edge.from_node_id)
+
+    def _to_key(self, edge: FlowGraphEdge) -> FlowNodeKey | None:
+        if not edge.to_node_id:
+            return None
+        return (
+            edge.to_source_id or edge.source_id,
+            edge.to_graph_revision or edge.to_graph_id or edge.graph_revision or edge.graph_id,
+            edge.to_node_id,
+        )
 
 
 class FlowNarrativePlanner:
-    def __init__(self, adapters: Sequence[FlowCorrelationAdapter] | None = None) -> None:
+    def __init__(
+        self,
+        adapters: Sequence[FlowCorrelationAdapter] | None = None,
+        operation_projector: OperationFactProjector | None = None,
+    ) -> None:
         self.adapters = tuple(adapters or (HttpFlowCorrelationAdapter(),))
+        self.operation_projector = operation_projector or OperationFactProjector()
 
-    def fragments(self, families: Sequence[FlowFamily]) -> tuple[AvailableFlowFragment, ...]:
-        return tuple(
+    def fragments(
+        self,
+        families: Sequence[FlowFamily],
+        *,
+        operation_facts: Sequence[AvailableOperationFact] = (),
+    ) -> tuple[AvailableFlowFragment, ...]:
+        fragments = tuple(
             AvailableFlowFragment(
                 key=self._fragment_key(family),
                 root=family.entrypoint,
@@ -326,8 +408,85 @@ class FlowNarrativePlanner:
                 source_id=family.entrypoint.source_id,
                 family=family,
                 matched_anchor_count=len(family.anchors or ()),
+                operation_facts=self.operation_projector.project(family, operation_facts),
             )
             for family in families
+        )
+        return self._attach_catalog_client_operations(fragments, operation_facts)
+
+    def _attach_catalog_client_operations(
+        self,
+        fragments: Sequence[AvailableFlowFragment],
+        operation_facts: Sequence[AvailableOperationFact],
+    ) -> tuple[AvailableFlowFragment, ...]:
+        if not fragments or not operation_facts:
+            return tuple(fragments)
+        assigned_owners = {
+            fact.structural_owner
+            for fragment in fragments
+            for fact in fragment.operation_facts
+        }
+        updated = {fragment.key: fragment for fragment in fragments}
+        for fact in sorted(operation_facts, key=self._catalog_fact_sort_key):
+            if fact.structural_owner in assigned_owners:
+                continue
+            if str(fact.source_channel or "") != "CATALOG_CONTRACT":
+                continue
+            if str(fact.execution_role or "").upper() != EntrypointExecutionKind.CLIENT_OPERATION.value:
+                continue
+            target_identity = clean_identity(fact.target_service_identity)
+            method = normalize_http_method(fact.method)
+            route = normalize_route(fact.normalized_route)
+            if not target_identity or normalize_transport_kind(fact.transport_kind) != "HTTP" or not method or not route:
+                continue
+            candidates = [
+                fragment
+                for fragment in updated.values()
+                if fragment.source_id != target_identity
+                and self._fragment_has_inbound_http(fragment, method, route)
+            ]
+            if len(candidates) != 1:
+                continue
+            fragment = candidates[0]
+            projected = fact.with_direction("OUTBOUND")
+            updated[fragment.key] = replace(
+                fragment,
+                operation_facts=tuple(
+                    sorted(
+                        (*fragment.operation_facts, projected),
+                        key=self._fragment_operation_fact_sort_key,
+                    )
+                ),
+            )
+            assigned_owners.add(fact.structural_owner)
+        return tuple(updated[fragment.key] for fragment in fragments)
+
+    def _fragment_has_inbound_http(self, fragment: AvailableFlowFragment, method: str, route: str) -> bool:
+        return any(
+            fact.direction_role == "INBOUND"
+            and normalize_transport_kind(fact.transport_kind) == "HTTP"
+            and normalize_http_method(fact.method) == method
+            and normalize_route(fact.normalized_route) == route
+            for fact in fragment.operation_facts
+        )
+
+    def _catalog_fact_sort_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str]:
+        return (
+            normalize_transport_kind(fact.transport_kind) or "",
+            normalize_http_method(fact.method) or "",
+            normalize_route(fact.normalized_route) or "",
+            fact.target_service_identity or "",
+            fact.structural_owner,
+        )
+
+    def _fragment_operation_fact_sort_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str]:
+        direction_order = {"INBOUND": "0", "OUTBOUND": "1", "SUPPORTING": "2"}
+        return (
+            direction_order.get(str(fact.direction_role or ""), "9"),
+            normalize_transport_kind(fact.transport_kind) or "",
+            normalize_http_method(fact.method) or "",
+            normalize_route(fact.normalized_route) or "",
+            fact.structural_owner,
         )
 
     def assemble(
@@ -335,8 +494,9 @@ class FlowNarrativePlanner:
         families: Sequence[FlowFamily],
         *,
         max_plans: int,
+        operation_facts: Sequence[AvailableOperationFact] = (),
     ) -> tuple[tuple[FlowNarrativePlan, ...], tuple[KnowledgeQueryDiagnostic, ...]]:
-        fragments = self.fragments(families)
+        fragments = self.fragments(families, operation_facts=operation_facts)
         if not fragments:
             return (), ()
         correlation_results = tuple(result for adapter in self.adapters for result in adapter.correlate(fragments))
@@ -345,36 +505,32 @@ class FlowNarrativePlanner:
         fragment_by_key = {fragment.key: fragment for fragment in fragments}
         used: set[str] = set()
         plans: list[FlowNarrativePlan] = []
-        exact_by_source = {
-            result.source_fragment_key: result
-            for result in correlation_results
-            if result.status is FlowCorrelationStatus.EXACT_UNVERIFIED and len(result.target_fragment_keys) == 1
-        }
-        ambiguous_by_source = {
-            result.source_fragment_key: result
-            for result in correlation_results
-            if result.status is FlowCorrelationStatus.AMBIGUOUS and result.gap is not None
-        }
+        exact_by_source: dict[str, list[FlowCorrelationResult]] = defaultdict(list)
+        for result in sorted(
+            (
+                result
+                for result in correlation_results
+                if result.status is FlowCorrelationStatus.EXACT_UNVERIFIED and len(result.target_fragment_keys) == 1
+            ),
+            key=self._correlation_sort_key,
+        ):
+            exact_by_source[result.source_fragment_key].append(result)
+        ambiguous_by_source: dict[str, list[FlowCorrelationResult]] = defaultdict(list)
+        for result in sorted(
+            (
+                result
+                for result in correlation_results
+                if result.status is FlowCorrelationStatus.AMBIGUOUS and result.gap is not None
+            ),
+            key=self._correlation_sort_key,
+        ):
+            ambiguous_by_source[result.source_fragment_key].append(result)
         for fragment in sorted(fragments, key=self._fragment_sort_key):
             if fragment.key in used:
                 continue
             parts = [FlowNarrativePart(FlowNarrativePartKind.VERIFIED_FRAGMENT, fragment=fragment)]
             used.add(fragment.key)
-            current = fragment
-            while current.key in exact_by_source:
-                result = exact_by_source[current.key]
-                target_key = result.target_fragment_keys[0]
-                if target_key in used or target_key not in fragment_by_key or result.gap is None:
-                    break
-                parts.append(FlowNarrativePart(FlowNarrativePartKind.UNVERIFIED_GAP, gap=result.gap))
-                target = fragment_by_key[target_key]
-                parts.append(FlowNarrativePart(FlowNarrativePartKind.VERIFIED_FRAGMENT, fragment=target))
-                used.add(target_key)
-                current = target
-            if current.key in ambiguous_by_source:
-                result = ambiguous_by_source[current.key]
-                if result.gap is not None:
-                    parts.append(FlowNarrativePart(FlowNarrativePartKind.AMBIGUOUS_GAP, gap=result.gap))
+            self._append_continuations(fragment, fragment_by_key, exact_by_source, ambiguous_by_source, used, parts, set())
             plans.append(self._plan(parts))
         ranked = tuple(sorted(plans, key=self._plan_sort_key))
         max_count = max(1, int(max_plans or 1))
@@ -430,6 +586,38 @@ class FlowNarrativePlanner:
 
     def _plan_sort_key(self, plan: FlowNarrativePlan) -> tuple[float, str]:
         return (-float(plan.relevance_score or 0.0), plan.key)
+
+    def _append_continuations(
+        self,
+        fragment: AvailableFlowFragment,
+        fragment_by_key: Mapping[str, AvailableFlowFragment],
+        exact_by_source: Mapping[str, Sequence[FlowCorrelationResult]],
+        ambiguous_by_source: Mapping[str, Sequence[FlowCorrelationResult]],
+        used: set[str],
+        parts: list[FlowNarrativePart],
+        stack: set[str],
+    ) -> None:
+        if fragment.key in stack:
+            return
+        next_stack = {*stack, fragment.key}
+        for result in exact_by_source.get(fragment.key, ()):
+            target_key = result.target_fragment_keys[0]
+            if target_key not in fragment_by_key or result.gap is None:
+                continue
+            parts.append(FlowNarrativePart(FlowNarrativePartKind.UNVERIFIED_GAP, gap=result.gap))
+            if target_key in used:
+                continue
+            target = fragment_by_key[target_key]
+            parts.append(FlowNarrativePart(FlowNarrativePartKind.VERIFIED_FRAGMENT, fragment=target))
+            used.add(target_key)
+            self._append_continuations(target, fragment_by_key, exact_by_source, ambiguous_by_source, used, parts, next_stack)
+        for result in ambiguous_by_source.get(fragment.key, ()):
+            if result.gap is not None:
+                parts.append(FlowNarrativePart(FlowNarrativePartKind.AMBIGUOUS_GAP, gap=result.gap))
+
+    def _correlation_sort_key(self, result: FlowCorrelationResult) -> tuple[str, str, str, str, str, str, str]:
+        key = result.operation_key or ("", "", "", "", "", "")
+        return (result.source_fragment_key, *key)
 
 
 def replace_plan_fragments(

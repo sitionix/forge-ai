@@ -22,6 +22,7 @@ from knowledge_service.flow_family import FlowFamily
 from knowledge_service.flow_narrative import FlowGapVerificationStatus, FlowNarrativeGap, FlowNarrativePartKind, FlowNarrativePlan
 from knowledge_service.flow_boundary_classifier import FlowBoundaryClassifier, FLOW_BOUNDARY_CLASSIFIER
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
+from knowledge_service.operation_facts import AvailableOperationFact, normalize_http_method, normalize_route, normalize_transport_kind
 from knowledge_service.knowledge_query_schema import (
     FlowToolEvidence,
     FlowToolFlow,
@@ -323,7 +324,7 @@ class FlowProjectionBuilder:
         parts: list[FlowToolPart] = []
         for part in plan.parts:
             if part.kind is FlowNarrativePartKind.VERIFIED_FRAGMENT and part.fragment is not None:
-                parts.append(FlowToolPart(kind=part.kind.value, tree=self._tree(part.fragment.family)))
+                parts.append(FlowToolPart(kind=part.kind.value, tree=self._tree(part.fragment.family, part.fragment.operation_facts)))
             elif part.gap is not None:
                 parts.append(FlowToolPart(kind=part.kind.value, gap=self._tool_gap(part.gap)))
         return FlowToolFlow(
@@ -385,7 +386,7 @@ class FlowProjectionBuilder:
         for part in plan.parts:
             if part.kind is FlowNarrativePartKind.VERIFIED_FRAGMENT and part.fragment is not None:
                 part_index += 1
-                fragment_facts, _coverage = self._ordered_facts(part.fragment.family)
+                fragment_facts, _coverage = self._ordered_facts(part.fragment.family, part.fragment.operation_facts)
                 facts.extend(self._remap_fact_refs(fragment_facts, f"p{part_index}_"))
                 continue
             if part.gap is not None:
@@ -406,6 +407,7 @@ class FlowProjectionBuilder:
             "requiredUnitRefs": required_refs,
             "nodeRefs": [fact["ref"] for fact in facts if fact.get("type") == "node"],
             "transitionRefs": [fact["ref"] for fact in facts if fact.get("type") == "transition"],
+            "operationRefs": [fact["ref"] for fact in facts if fact.get("type") == "operation"],
             "supportingRefs": [fact["ref"] for fact in facts if fact.get("type") == "supporting"],
             "boundaryRefs": [fact["ref"] for fact in facts if fact.get("type") == "boundary"],
             "gapRefs": [fact["ref"] for fact in facts if fact.get("type") == "gap"],
@@ -454,8 +456,13 @@ class FlowProjectionBuilder:
             }
         )
 
-    def _tree(self, flow: EntrypointFlow | FlowFamily) -> FlowToolTree:
+    def _tree(
+        self,
+        flow: EntrypointFlow | FlowFamily,
+        operation_facts: Sequence[AvailableOperationFact] = (),
+    ) -> FlowToolTree:
         node_by_key = {self._node_key(node): node for node in flow.nodes}
+        operation_facts_by_node = self._operation_facts_by_node(operation_facts)
         evidence_by_node: Dict[tuple[str, str], List[FlowGraphEvidence]] = {}
         evidence_by_edge: Dict[tuple[str, str], List[FlowGraphEvidence]] = {}
         for item in flow.evidence:
@@ -473,7 +480,12 @@ class FlowProjectionBuilder:
 
         root_key = self._node_key(flow.entrypoint)
         root_source = flow.entrypoint.source_id
-        root = self._node_item(flow.entrypoint, evidence_by_node.get((flow.entrypoint.source_id, flow.entrypoint.node_id), []), root_source=root_source)
+        root = self._node_item(
+            flow.entrypoint,
+            evidence_by_node.get((flow.entrypoint.source_id, flow.entrypoint.node_id), []),
+            root_source=root_source,
+            operation_facts=operation_facts_by_node.get(root_key, ()),
+        )
         rendered = {root_key}
         stack: List[Dict[str, Any]] = [
             {
@@ -503,12 +515,36 @@ class FlowProjectionBuilder:
                 continue
             child_evidence = [*evidence_by_node.get((target.source_id, target.node_id), []), *evidence_by_edge.get(edge_key, [])]
             if target_key in frame["ancestry"]:
-                frame["item"].children.append(self._node_item(target, child_evidence, root_source=root_source, transition=entry, cycle=True))
+                frame["item"].children.append(
+                    self._node_item(
+                        target,
+                        child_evidence,
+                        root_source=root_source,
+                        transition=entry,
+                        cycle=True,
+                        operation_facts=operation_facts_by_node.get(target_key, ()),
+                    )
+                )
                 continue
             if target_key in rendered:
-                frame["item"].children.append(self._node_item(target, child_evidence, root_source=root_source, transition=entry, shared=True))
+                frame["item"].children.append(
+                    self._node_item(
+                        target,
+                        child_evidence,
+                        root_source=root_source,
+                        transition=entry,
+                        shared=True,
+                        operation_facts=operation_facts_by_node.get(target_key, ()),
+                    )
+                )
                 continue
-            child = self._node_item(target, child_evidence, root_source=root_source, transition=entry)
+            child = self._node_item(
+                target,
+                child_evidence,
+                root_source=root_source,
+                transition=entry,
+                operation_facts=operation_facts_by_node.get(target_key, ()),
+            )
             frame["item"].children.append(child)
             rendered.add(target_key)
             stack.append(
@@ -521,6 +557,8 @@ class FlowProjectionBuilder:
                     "ancestry": {*frame["ancestry"], target_key},
                 }
             )
+        for fact in self._external_operation_facts(operation_facts, node_by_key):
+            root.children.append(self._operation_item(fact, root_source=root_source))
         return FlowToolTree(
             source=str(flow.key.source_id or ""),
             entrypoint=root,
@@ -570,8 +608,13 @@ class FlowProjectionBuilder:
             )
         return items
 
-    def _ordered_facts(self, flow: EntrypointFlow) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
+    def _ordered_facts(
+        self,
+        flow: EntrypointFlow | FlowFamily,
+        operation_facts: Sequence[AvailableOperationFact] = (),
+    ) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
         node_by_key = {self._node_key(node): node for node in flow.nodes}
+        operation_facts_by_node = self._operation_facts_by_node(operation_facts)
         evidence_by_node: Dict[tuple[str, str], List[FlowGraphEvidence]] = {}
         evidence_by_edge: Dict[tuple[str, str], List[FlowGraphEvidence]] = {}
         for item in flow.evidence:
@@ -629,12 +672,15 @@ class FlowProjectionBuilder:
             )
         for edge in sorted(supporting_edges, key=lambda item: self._edge_sort_key(item, evidence_by_edge)):
             events.append(("supporting", self._edge_key(edge), {"edge": edge}))
+        for fact in self._external_operation_facts(operation_facts, node_by_key):
+            events.append(("operation", fact.structural_owner, {"fact": fact}))
 
         node_ref_by_key: Dict[tuple[str, str, str], str] = {}
         transition_ref_by_key: Dict[tuple[str, str], str] = {}
         supporting_ref_by_key: Dict[tuple[str, str], str] = {}
         boundary_ref_by_key: Dict[tuple[str, str], str] = {}
-        node_count = transition_count = supporting_count = boundary_count = 0
+        operation_ref_by_key: Dict[str, str] = {}
+        node_count = transition_count = supporting_count = boundary_count = operation_count = 0
         for event_type, key, _metadata in events:
             if event_type == "node" and key not in node_ref_by_key:
                 node_count += 1
@@ -648,6 +694,9 @@ class FlowProjectionBuilder:
             elif event_type == "boundary" and key not in boundary_ref_by_key:
                 boundary_count += 1
                 boundary_ref_by_key[key] = f"b{boundary_count}"
+            elif event_type == "operation" and str(key) not in operation_ref_by_key:
+                operation_count += 1
+                operation_ref_by_key[str(key)] = f"o{operation_count}"
 
         outgoing_refs_by_node: Dict[tuple[str, str, str], List[str]] = {}
         for edge in flow.transitions:
@@ -678,6 +727,7 @@ class FlowProjectionBuilder:
                     incomingTransition=transition_ref_by_key.get(incoming) if incoming else None,
                     branchParent=node_ref_by_key.get(parent) if parent else None,
                     outgoingTransitions=outgoing_refs_by_node.get(key, []),
+                    operation_facts=operation_facts_by_node.get(key, ()),
                 )
             elif event_type == "transition":
                 edge = metadata["edge"]
@@ -703,6 +753,12 @@ class FlowProjectionBuilder:
                     node_ref_by_key,
                     evidence_by_edge.get(self._edge_key(edge), []),
                 )
+            elif event_type == "operation":
+                operation = metadata["fact"]
+                ref = operation_ref_by_key[str(key)]
+                if ref in seen_fact_refs:
+                    continue
+                fact = self._operation_fact(ref, operation)
             else:
                 edge = metadata["edge"]
                 ref = boundary_ref_by_key[key]
@@ -744,6 +800,12 @@ class FlowProjectionBuilder:
                     groups.append(current)
                 current = {"unitRefs": [ref], "certainty": "VERIFIED"}
                 continue
+            if fact_type == "operation":
+                if current is not None:
+                    groups.append(current)
+                groups.append({"unitRefs": [ref], "certainty": "VERIFIED"})
+                current = None
+                continue
             if fact_type == "gap":
                 if current is not None:
                     groups.append(current)
@@ -777,6 +839,7 @@ class FlowProjectionBuilder:
         incomingTransition: str | None,
         branchParent: str | None,
         outgoingTransitions: Sequence[str],
+        operation_facts: Sequence[AvailableOperationFact] = (),
     ) -> Dict[str, Any]:
         fact: Dict[str, Any] = {
             "ref": ref,
@@ -793,10 +856,31 @@ class FlowProjectionBuilder:
             "outgoingTransitions": list(outgoingTransitions),
             "branchParent": branchParent,
         }
-        trigger = self._trigger(node)
+        trigger = self._trigger(node, operation_facts)
         if trigger is not None:
             fact["trigger"] = trigger.dict(exclude_none=True)
         return self._without_none(fact)
+
+    def _operation_fact(self, ref: str, fact: AvailableOperationFact) -> Dict[str, Any]:
+        trigger = self._operation_trigger((fact,))
+        return self._without_none(
+            {
+                "ref": ref,
+                "type": "operation",
+                "certainty": "VERIFIED",
+                "source": fact.owner_source_id,
+                "displaySymbol": self._operation_symbol(fact),
+                "transportKind": normalize_transport_kind(fact.transport_kind),
+                "method": normalize_http_method(fact.method),
+                "route": normalize_route(fact.normalized_route),
+                "operationIdentity": fact.operation_identity,
+                "interfaceIdentity": fact.interface_identity,
+                "targetServiceIdentity": fact.target_service_identity,
+                "path": fact.owner_relative_path,
+                "trigger": trigger.dict(exclude_none=True) if trigger is not None else None,
+                "evidence": [self._operation_evidence(item).dict(exclude_none=True) for item in fact.evidence],
+            }
+        )
 
     def _transition_fact(
         self,
@@ -905,12 +989,13 @@ class FlowProjectionBuilder:
         transition: FlowGraphEdge | None = None,
         cycle: bool = False,
         shared: bool = False,
+        operation_facts: Sequence[AvailableOperationFact] = (),
     ) -> FlowToolTreeItem:
         return FlowToolTreeItem(
             source=node.source_id if root_source and node.source_id != root_source else None,
             symbol=self._symbol(node),
             kind=self._node_kind(node),
-            trigger=self._trigger(node),
+            trigger=self._trigger(node, operation_facts),
             transition=self._tool_transition(transition, node) if transition is not None else None,
             path=node.relative_path,
             lineStart=node.line_start,
@@ -920,6 +1005,17 @@ class FlowProjectionBuilder:
             children=[],
             cycle=True if cycle else None,
             shared=True if shared else None,
+        )
+
+    def _operation_item(self, fact: AvailableOperationFact, *, root_source: str) -> FlowToolTreeItem:
+        return FlowToolTreeItem(
+            source=fact.owner_source_id if fact.owner_source_id != root_source else None,
+            symbol=self._operation_symbol(fact),
+            kind="OPERATION",
+            trigger=self._operation_trigger((fact,)),
+            path=fact.owner_relative_path,
+            evidence=[self._operation_evidence(item) for item in fact.evidence],
+            children=[],
         )
 
     def _tool_transition(self, edge: FlowGraphEdge, target: FlowGraphNode | None = None) -> FlowToolTransition:
@@ -1015,12 +1111,19 @@ class FlowProjectionBuilder:
     def _entrypoint_kind(self, value: str | None) -> str:
         return tree_kind_for_entrypoint(value)
 
-    def _trigger(self, node: FlowGraphNode) -> FlowToolTrigger | None:
+    def _trigger(
+        self,
+        node: FlowGraphNode,
+        operation_facts: Sequence[AvailableOperationFact] = (),
+    ) -> FlowToolTrigger | None:
+        operation_trigger = self._operation_trigger(operation_facts)
+        if operation_trigger is not None and not node.entrypoint:
+            return operation_trigger
         if not node.entrypoint:
             return None
         trigger_kind = trigger_kind_for_entrypoint(node.entrypoint_kind)
         if trigger_kind is None:
-            return None
+            return operation_trigger
         return FlowToolTrigger(
             kind=trigger_kind,
             method=self._clean(node.entrypoint_http_method),
@@ -1028,6 +1131,83 @@ class FlowProjectionBuilder:
             topic=self._clean(node.entrypoint_topic),
             schedule=self._clean(node.entrypoint_schedule),
             interfaceMethod=self._clean(node.entrypoint_interface_method),
+        )
+
+    def _operation_facts_by_node(
+        self,
+        operation_facts: Sequence[AvailableOperationFact],
+    ) -> Dict[tuple[str, str, str], tuple[AvailableOperationFact, ...]]:
+        grouped: Dict[tuple[str, str, str], List[AvailableOperationFact]] = {}
+        for fact in operation_facts:
+            grouped.setdefault(fact.owner_key, []).append(fact)
+        return {
+            key: tuple(sorted(values, key=self._operation_fact_sort_key))
+            for key, values in grouped.items()
+        }
+
+    def _external_operation_facts(
+        self,
+        operation_facts: Sequence[AvailableOperationFact],
+        node_by_key: Mapping[tuple[str, str, str], FlowGraphNode],
+    ) -> tuple[AvailableOperationFact, ...]:
+        return tuple(
+            sorted(
+                (
+                    fact
+                    for fact in operation_facts
+                    if fact.owner_key not in node_by_key
+                    and str(fact.direction_role or "") == "OUTBOUND"
+                ),
+                key=self._operation_fact_sort_key,
+            )
+        )
+
+    def _operation_symbol(self, fact: AvailableOperationFact) -> str:
+        qualified = str(fact.owner_qualified_name or "").strip()
+        if qualified:
+            parts = [part for part in qualified.split(".") if part]
+            if len(parts) >= 2:
+                return ".".join(parts[-2:])
+            return parts[-1] if parts else qualified
+        identity = fact.interface_identity or fact.operation_identity
+        if identity:
+            return str(identity)
+        method = normalize_http_method(fact.method)
+        route = normalize_route(fact.normalized_route)
+        return " ".join(part for part in (method, route) if part) or fact.owner_node_id
+
+    def _operation_evidence(self, item: Any) -> FlowToolEvidence:
+        return FlowToolEvidence(
+            path=getattr(item, "relative_path", None),
+            lineStart=getattr(item, "line_start", None),
+            lineEnd=getattr(item, "line_end", None),
+            excerpt=getattr(item, "excerpt", None),
+        )
+
+    def _operation_trigger(self, operation_facts: Sequence[AvailableOperationFact]) -> FlowToolTrigger | None:
+        for fact in sorted(operation_facts, key=self._operation_fact_sort_key):
+            transport = normalize_transport_kind(fact.transport_kind)
+            if not transport:
+                continue
+            return FlowToolTrigger(
+                kind=transport,
+                method=normalize_http_method(fact.method),
+                route=normalize_route(fact.normalized_route),
+                topic=self._clean(fact.topic),
+                schedule=self._clean(fact.schedule),
+                interfaceMethod=self._clean(fact.interface_identity or fact.operation_identity),
+            )
+        return None
+
+    def _operation_fact_sort_key(self, fact: AvailableOperationFact) -> tuple[int, str, str, str, str, str]:
+        direction_rank = {"OUTBOUND": 0, "INBOUND": 1, "SUPPORTING": 2}.get(str(fact.direction_role or ""), 3)
+        return (
+            direction_rank,
+            normalize_transport_kind(fact.transport_kind) or "",
+            normalize_http_method(fact.method) or "",
+            normalize_route(fact.normalized_route) or "",
+            fact.operation_identity or fact.interface_identity or "",
+            fact.structural_owner,
         )
 
     def _unresolved_target_name(self, edge: FlowGraphEdge) -> str | None:
@@ -1389,6 +1569,7 @@ class HumanFlowAnswerService:
             "transitionRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "transition"],
             "supportingRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "supporting"],
             "boundaryRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "boundary"],
+            "operationRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "operation"],
             "gapRefs": [str(fact["ref"]) for fact in facts if fact.get("type") == "gap"],
         }
 
@@ -1708,6 +1889,7 @@ class HumanFlowAnswerService:
         required_refs = [str(item) for item in coverage.get("requiredUnitRefs", []) if str(item).strip()]
         required_nodes = [str(item) for item in coverage.get("nodeRefs", []) if str(item).strip() and (not required_refs or str(item) in required_refs)]
         required_transitions = [str(item) for item in coverage.get("transitionRefs", []) if str(item).strip() and (not required_refs or str(item) in required_refs)]
+        required_operations = [str(item) for item in coverage.get("operationRefs", []) if str(item).strip() and (not required_refs or str(item) in required_refs)]
         required_boundaries = [str(item) for item in coverage.get("boundaryRefs", []) if str(item).strip() and (not required_refs or str(item) in required_refs)]
         required_gaps = [str(item) for item in coverage.get("gapRefs", []) if str(item).strip() and (not required_refs or str(item) in required_refs)]
         ref_order = {ref: index for index, ref in enumerate(canonical_refs)}
@@ -1767,12 +1949,15 @@ class HumanFlowAnswerService:
 
         missing_nodes = [ref for ref in required_nodes if ref not in seen_refs]
         missing_transitions = [ref for ref in required_transitions if ref not in seen_refs]
+        missing_operations = [ref for ref in required_operations if ref not in seen_refs]
         missing_boundaries = [ref for ref in required_boundaries if ref not in seen_refs]
         missing_gaps = [ref for ref in required_gaps if ref not in seen_refs]
         if missing_nodes:
             errors.append(f"Missing executable flow node facts: {', '.join(missing_nodes)}.")
         if missing_transitions:
             errors.append(f"Missing resolved transition facts: {', '.join(missing_transitions)}.")
+        if missing_operations:
+            errors.append(f"Missing operation facts: {', '.join(missing_operations)}.")
         if missing_boundaries:
             errors.append(f"Missing boundary facts: {', '.join(missing_boundaries)}.")
         if missing_gaps:

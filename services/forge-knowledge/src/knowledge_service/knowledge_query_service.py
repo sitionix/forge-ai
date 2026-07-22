@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import math
 import uuid
 import time
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionBundle,
@@ -385,6 +386,15 @@ class UnifiedAnchorSearcher:
                 threshold = max(policy.exact_identifier_min_score, top_exact - policy.exact_identifier_top_delta)
                 return [candidate for candidate in exact_identifier if candidate.score >= threshold] or exact_identifier
 
+        callable_ranked = [candidate for candidate in ranked if self._node_kind(candidate.document.node_kind) == "CALLABLE"]
+        if callable_ranked:
+            top_callable_score = max(candidate.score for candidate in callable_ranked)
+            ranked = [
+                candidate
+                for candidate in ranked
+                if self._node_kind(candidate.document.node_kind) == "CALLABLE"
+                or candidate.score > top_callable_score
+            ]
         top_score = max(candidate.score for candidate in ranked)
         threshold = max(policy.plan_candidate_min_score, top_score - policy.plan_candidate_top_delta)
         return [
@@ -526,14 +536,22 @@ class UnifiedAnchorSearcher:
         policy: KnowledgeQueryPolicy,
     ) -> tuple[List[Dict[str, Any]], bool]:
         source_ids = [source.source_id for source in eligible_sources]
-        requested_limit = max(1, int(policy.max_search_documents or 1)) + 1
+        total_limit = max(1, int(policy.max_search_documents or 1))
+        per_source_limit = max(1, math.ceil(total_limit / max(1, len(source_ids))))
         if hasattr(self.graph_store, "query_search_documents"):
-            raw_documents = list(self.graph_store.query_search_documents(source_ids, requested_limit))
+            raw_documents = []
+            truncated = False
+            for source_id in source_ids:
+                source_documents = list(self.graph_store.query_search_documents([source_id], per_source_limit + 1))
+                if len(source_documents) > per_source_limit:
+                    truncated = True
+                    source_documents = source_documents[:per_source_limit]
+                raw_documents.extend(source_documents)
         else:
-            raw_documents = list(self.graph_store.query_anchor_candidates(list(tokens), source_ids, requested_limit))
-        truncated = len(raw_documents) > policy.max_search_documents
-        if truncated:
-            raw_documents = raw_documents[: policy.max_search_documents]
+            raw_documents = list(self.graph_store.query_anchor_candidates(list(tokens), source_ids, total_limit + 1))
+            truncated = len(raw_documents) > total_limit
+            if truncated:
+                raw_documents = raw_documents[:total_limit]
         return raw_documents, truncated
 
     def _search_config(self, policy: KnowledgeQueryPolicy, eligible_sources: Sequence[QuerySource], include_tests: bool) -> SearchConfig:
@@ -1052,6 +1070,7 @@ class KnowledgeQueryService:
 
     def query_with_flows(self, request: KnowledgeQueryRequest, plan: QueryRetrievalPlan | None = None) -> KnowledgeQueryExecutionResult:
         query_started = time.monotonic()
+        repository_metrics_before = self._repository_metrics()
         diagnostics: List[KnowledgeQueryDiagnostic] = []
         eligible_sources, scope_diagnostics = self.source_scope_resolver.resolve()
         diagnostics.extend(scope_diagnostics)
@@ -1104,7 +1123,12 @@ class KnowledgeQueryService:
         if plan is not None:
             flows = self._select_plan_flows(flows, plan)
         discovered_family_count = len(flows)
-        narrative_plans, narrative_diagnostics = self.narrative_planner.assemble(flows, max_plans=request_flow_limit)
+        operation_facts = self._available_operation_facts(flows, bool(request.includeTests))
+        narrative_plans, narrative_diagnostics = self.narrative_planner.assemble(
+            flows,
+            max_plans=request_flow_limit,
+            operation_facts=operation_facts,
+        )
         diagnostics.extend(narrative_diagnostics)
         selected_fragments = []
         seen_fragment_keys: set[str] = set()
@@ -1124,6 +1148,9 @@ class KnowledgeQueryService:
         narrative_plans = tuple(replace_plan_fragments(narrative_plan, hydrated_by_key) for narrative_plan in narrative_plans)
         selected_flows = tuple(hydrated_by_key[key] for key in selected_fragment_keys if key in hydrated_by_key)
         public_flows = self.flow_engine.public_flows(selected_flows)
+        repository_metric_delta = self._repository_metric_delta(repository_metrics_before, self._repository_metrics())
+        request_traversal_stats = dict(build_result.traversal_stats or {})
+        request_traversal_stats.update(repository_metric_delta)
         omitted_plan_count = max(
             (int(item.metadata.get("omittedPlanCount") or 0) for item in narrative_diagnostics if item.code == "NARRATIVE_PLAN_MAX_FLOWS_REACHED"),
             default=0,
@@ -1138,7 +1165,8 @@ class KnowledgeQueryService:
                 "candidateSearchMs": round(candidate_ms, 3),
                 **(build_result.stage_timings_ms or {}),
                 "totalMs": round((time.monotonic() - query_started) * 1000, 3),
-                **(build_result.traversal_stats or {}),
+                **request_traversal_stats,
+                "availableOperationFactCount": len(operation_facts),
                 "rawCandidateFlowCount": assembly_result.raw_candidate_flow_count,
                 "discoveredFamilyCount": assembly_result.discovered_family_count,
                 "selectedFamilyCount": len(selected_flows),
@@ -1183,6 +1211,35 @@ class KnowledgeQueryService:
             raw_flows=raw_flows,
             family_assembly=assembly_result,
         )
+
+    def _repository_metrics(self) -> Dict[str, int]:
+        if not hasattr(self.flow_repository, "metrics"):
+            return {}
+        return {
+            str(key): int(value)
+            for key, value in (self.flow_repository.metrics() or {}).items()
+            if isinstance(value, int)
+        }
+
+    def _repository_metric_delta(self, before: Mapping[str, int], after: Mapping[str, int]) -> Dict[str, int]:
+        return {
+            key: max(0, int(after.get(key, 0)) - int(before.get(key, 0)))
+            for key in sorted(set(before) | set(after))
+        }
+
+    def _available_operation_facts(
+        self,
+        flows: Sequence[EntrypointFlow],
+        include_tests: bool,
+    ):
+        if not flows or not hasattr(self.flow_repository, "load_available_operation_facts"):
+            return ()
+        node_keys = {
+            (node.source_id, node.graph_revision or node.graph_id, node.node_id)
+            for flow in flows
+            for node in flow.nodes
+        }
+        return self.flow_repository.load_available_operation_facts(node_keys, include_tests=include_tests)
 
     def _supporting_relations(
         self,

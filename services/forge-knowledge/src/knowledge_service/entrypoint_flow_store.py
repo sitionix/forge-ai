@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from collections import defaultdict
 from dataclasses import replace
 from typing import Any, Dict, Iterable, List, Sequence
@@ -9,6 +11,16 @@ from knowledge_service.entrypoint_kinds import EntrypointExecutionKind
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
 from knowledge_service.graph_relation_semantics import SUPPORTING_RELATION, graph_relation_semantics
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
+from knowledge_service.operation_facts import (
+    AvailableOperationFact,
+    OperationFactEligibility,
+    OperationFactEvidence,
+    clean_identity,
+    normalize_http_method,
+    normalize_route,
+    normalize_transport_kind,
+    split_operation_interface_identity,
+)
 
 
 _SQLITE_BIND_CHUNK_SIZE = 800
@@ -167,6 +179,30 @@ class EntrypointFlowGraphRepository:
                         endpoint_keys.add(to_key)
         nodes = self.load_nodes(endpoint_keys, include_tests=include_tests)
         return nodes, tuple(sorted(edges.values(), key=self._edge_sort_key))
+
+    def load_available_operation_facts(
+        self,
+        node_keys: set[FlowNodeKey],
+        *,
+        include_tests: bool,
+    ) -> tuple[AvailableOperationFact, ...]:
+        self.graph_store.init()
+        grouped = self._group_node_ids_by_source(node_keys)
+        if not grouped:
+            return ()
+        facts: list[AvailableOperationFact] = []
+        with self.graph_store._connect() as conn:
+            for source_id, ids in sorted(grouped.items()):
+                for chunk in _chunks(sorted(ids)):
+                    rows = self._query_available_operation_fact_rows(conn, source_id, list(chunk), include_tests)
+                    self._metrics["operationFactRowsLoaded"] += len(rows)
+                    facts.extend(self._operation_facts_from_rows(rows))
+            catalog_targets = self._catalog_contract_targets(conn, sorted(grouped))
+            for contract_source_id, targets in sorted(catalog_targets.items()):
+                rows = self._query_catalog_operation_fact_rows(conn, contract_source_id, include_tests)
+                self._metrics["operationFactRowsLoaded"] += len(rows)
+                facts.extend(self._operation_facts_from_rows(rows, catalog_targets=targets))
+        return tuple(sorted(self._dedupe_operation_facts(facts), key=self._operation_fact_sort_key))
 
     def metrics(self) -> dict[str, int]:
         return dict(self._metrics)
@@ -489,6 +525,336 @@ class EntrypointFlowGraphRepository:
             projected.append(item)
         return projected
 
+    def _query_available_operation_fact_rows(
+        self,
+        conn: Any,
+        source_id: str,
+        ids: list[str],
+        include_tests: bool,
+    ) -> List[Dict[str, Any]]:
+        if not ids:
+            return []
+        self._metrics["sqlStatements"] += 1
+        placeholders = ",".join("?" for _ in ids)
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT c.id AS claim_id,
+                   c.source_id AS source_id,
+                   c.node_id AS node_id,
+                   c.entrypoint_kind AS entrypoint_kind,
+                   c.entrypoint_http_method AS entrypoint_http_method,
+                   c.entrypoint_route AS entrypoint_route,
+                   c.entrypoint_topic AS entrypoint_topic,
+                   c.entrypoint_schedule AS entrypoint_schedule,
+                   c.entrypoint_interface_method AS entrypoint_interface_method,
+                   c.entrypoint_execution_kind AS entrypoint_execution_kind,
+                   c.status AS claim_status,
+                   c.rejection_reason AS rejection_reason,
+                   COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, c.flow_domain) AS effective_flow_domain,
+                   n.qualified_name AS owner_qualified_name,
+                   n.relative_path AS owner_relative_path,
+                   COALESCE(NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_id,
+                   COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_revision,
+                   EXISTS (
+                       SELECT 1
+                       FROM files f_current
+                       WHERE f_current.source_id = n.source_id
+                         AND f_current.relative_path = n.relative_path
+                         AND f_current.content_hash = n.content_hash
+                   ) AS inventory_current,
+                   EXISTS (
+                       SELECT 1
+                       FROM analysis_files af_current
+                       WHERE af_current.source_id = n.source_id
+                         AND af_current.relative_path = n.relative_path
+                         AND af_current.content_hash = n.content_hash
+                         AND af_current.status IN ('ANALYZED', 'ANALYZED_WITH_DIAGNOSTICS', 'PARTIAL')
+                   ) AS analyzed_current,
+                   ev.source_id AS evidence_source_id,
+                   COALESCE(af.relative_path, ev.relative_path) AS evidence_relative_path,
+                   ev.line_start AS evidence_line_start,
+                   ev.line_end AS evidence_line_end,
+                   ev.excerpt AS evidence_excerpt
+            FROM analysis_graph_claims c
+            JOIN analysis_graph_nodes n
+              ON n.source_id = c.source_id
+             AND n.id = c.node_id
+             AND n.status IN ({current_status_sql})
+             AND {self.graph_store._inventory_membership_graph_node_clause("n")}
+             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            LEFT JOIN analysis_graph_state state
+              ON state.source_id = n.source_id
+            LEFT JOIN analysis_graph_claim_evidence ce
+              ON ce.claim_id = c.id
+            LEFT JOIN analysis_graph_evidence ev
+              ON ev.id = ce.evidence_id
+             AND ev.source_id = c.source_id
+            LEFT JOIN analysis_files af
+              ON af.file_id = ev.analysis_file_id
+            WHERE c.source_id = ?
+              AND c.node_id IN ({placeholders})
+              AND c.claim_kind = ?
+              AND c.status IN ({current_status_sql})
+              AND c.rejection_reason IS NULL
+              AND COALESCE(c.entrypoint_kind, '') != ''
+              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            ORDER BY c.source_id, c.node_id, c.entrypoint_execution_kind, c.entrypoint_kind,
+                     c.entrypoint_http_method, c.entrypoint_route, c.entrypoint_interface_method,
+                     c.id, ev.relative_path, ev.line_start, ev.line_end, ev.id
+            """,
+            [
+                *current_status_params,
+                include_tests,
+                source_id,
+                *ids,
+                contract.entrypoint_claim_kind,
+                *current_status_params,
+                include_tests,
+            ],
+        ).fetchall()
+        return [self.graph_store._row_dict(row) for row in rows]
+
+    def _query_catalog_operation_fact_rows(
+        self,
+        conn: Any,
+        source_id: str,
+        include_tests: bool,
+    ) -> List[Dict[str, Any]]:
+        self._metrics["sqlStatements"] += 1
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT c.id AS claim_id,
+                   c.source_id AS source_id,
+                   c.node_id AS node_id,
+                   c.entrypoint_kind AS entrypoint_kind,
+                   c.entrypoint_http_method AS entrypoint_http_method,
+                   c.entrypoint_route AS entrypoint_route,
+                   c.entrypoint_topic AS entrypoint_topic,
+                   c.entrypoint_schedule AS entrypoint_schedule,
+                   c.entrypoint_interface_method AS entrypoint_interface_method,
+                   c.entrypoint_execution_kind AS entrypoint_execution_kind,
+                   c.status AS claim_status,
+                   c.rejection_reason AS rejection_reason,
+                   COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, c.flow_domain) AS effective_flow_domain,
+                   n.qualified_name AS owner_qualified_name,
+                   n.relative_path AS owner_relative_path,
+                   COALESCE(NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_id,
+                   COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), n.source_id || ':query-current-facts') AS graph_revision,
+                   EXISTS (
+                       SELECT 1
+                       FROM files f_current
+                       WHERE f_current.source_id = n.source_id
+                         AND f_current.relative_path = n.relative_path
+                         AND f_current.content_hash = n.content_hash
+                   ) AS inventory_current,
+                   EXISTS (
+                       SELECT 1
+                       FROM analysis_files af_current
+                       WHERE af_current.source_id = n.source_id
+                         AND af_current.relative_path = n.relative_path
+                         AND af_current.content_hash = n.content_hash
+                         AND af_current.status IN ('ANALYZED', 'ANALYZED_WITH_DIAGNOSTICS', 'PARTIAL')
+                   ) AS analyzed_current,
+                   ev.source_id AS evidence_source_id,
+                   COALESCE(af.relative_path, ev.relative_path) AS evidence_relative_path,
+                   ev.line_start AS evidence_line_start,
+                   ev.line_end AS evidence_line_end,
+                   ev.excerpt AS evidence_excerpt
+            FROM analysis_graph_claims c
+            JOIN analysis_graph_nodes n
+              ON n.source_id = c.source_id
+             AND n.id = c.node_id
+             AND n.status IN ({current_status_sql})
+             AND {self.graph_store._inventory_membership_graph_node_clause("n")}
+             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            LEFT JOIN analysis_graph_state state
+              ON state.source_id = n.source_id
+            LEFT JOIN analysis_graph_claim_evidence ce
+              ON ce.claim_id = c.id
+            LEFT JOIN analysis_graph_evidence ev
+              ON ev.id = ce.evidence_id
+             AND ev.source_id = c.source_id
+            LEFT JOIN analysis_files af
+              ON af.file_id = ev.analysis_file_id
+            WHERE c.source_id = ?
+              AND c.claim_kind = ?
+              AND c.status IN ({current_status_sql})
+              AND c.rejection_reason IS NULL
+              AND COALESCE(c.entrypoint_kind, '') != ''
+              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
+            ORDER BY c.source_id, c.node_id, c.entrypoint_execution_kind, c.entrypoint_kind,
+                     c.entrypoint_http_method, c.entrypoint_route, c.entrypoint_interface_method,
+                     c.id, ev.relative_path, ev.line_start, ev.line_end, ev.id
+            """,
+            [
+                *current_status_params,
+                include_tests,
+                source_id,
+                contract.entrypoint_claim_kind,
+                *current_status_params,
+                include_tests,
+            ],
+        ).fetchall()
+        return [self.graph_store._row_dict(row) for row in rows]
+
+    def _operation_facts_from_rows(
+        self,
+        rows: Sequence[Dict[str, Any]],
+        *,
+        catalog_targets: Sequence[dict[str, str]] = (),
+    ) -> tuple[AvailableOperationFact, ...]:
+        grouped: dict[str, list[Dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            grouped[str(row.get("claim_id") or "")].append(row)
+        facts: list[AvailableOperationFact] = []
+        for claim_id, claim_rows in grouped.items():
+            if not claim_id or not claim_rows:
+                continue
+            first = claim_rows[0]
+            operation_identity, interface_identity = split_operation_interface_identity(first.get("entrypoint_interface_method"))
+            catalog_target_identity = self._catalog_target_identity(first, catalog_targets)
+            evidence = tuple(
+                OperationFactEvidence(
+                    source_id=str(row.get("evidence_source_id") or first.get("source_id") or ""),
+                    relative_path=str(row.get("evidence_relative_path")) if row.get("evidence_relative_path") else None,
+                    line_start=int(row.get("evidence_line_start")) if row.get("evidence_line_start") is not None else None,
+                    line_end=int(row.get("evidence_line_end")) if row.get("evidence_line_end") is not None else None,
+                    excerpt=str(row.get("evidence_excerpt")) if row.get("evidence_excerpt") else None,
+                )
+                for row in claim_rows
+                if row.get("evidence_source_id")
+            )
+            facts.append(
+                AvailableOperationFact(
+                    owner_source_id=str(first.get("source_id") or ""),
+                    owner_graph_id=str(first.get("graph_id") or ""),
+                    owner_graph_revision=str(first.get("graph_revision")) if first.get("graph_revision") else None,
+                    owner_node_id=str(first.get("node_id") or ""),
+                    source_id=str(first.get("source_id") or ""),
+                    execution_role=clean_identity(first.get("entrypoint_execution_kind")),
+                    transport_kind=normalize_transport_kind(first.get("entrypoint_kind")),
+                    direction_role=None,
+                    method=normalize_http_method(first.get("entrypoint_http_method")),
+                    normalized_route=normalize_route(first.get("entrypoint_route")),
+                    topic=clean_identity(first.get("entrypoint_topic")),
+                    schedule=clean_identity(first.get("entrypoint_schedule")),
+                    operation_identity=operation_identity,
+                    interface_identity=interface_identity,
+                    target_service_identity=catalog_target_identity,
+                    owner_qualified_name=clean_identity(first.get("owner_qualified_name")),
+                    owner_relative_path=clean_identity(first.get("owner_relative_path")),
+                    evidence=evidence,
+                    eligibility=OperationFactEligibility(
+                        status=clean_identity(first.get("claim_status")),
+                        rejection_reason=clean_identity(first.get("rejection_reason")),
+                        flow_domain=clean_identity(first.get("effective_flow_domain")),
+                        inventory_current=bool(first.get("inventory_current")),
+                        analyzed_current=bool(first.get("analyzed_current")),
+                    ),
+                    source_channel="CATALOG_CONTRACT" if catalog_target_identity else "ENTRYPOINT_HINT",
+                )
+            )
+        return tuple(facts)
+
+    def _catalog_contract_targets(self, conn: Any, source_ids: Sequence[str]) -> dict[str, tuple[dict[str, str], ...]]:
+        if not source_ids:
+            return {}
+        self._metrics["sqlStatements"] += 1
+        placeholders = ",".join("?" for _ in source_ids)
+        rows = conn.execute(
+            f"""
+            SELECT source_id, metadata_json
+            FROM sources
+            WHERE source_id IN ({placeholders})
+            ORDER BY source_id
+            """,
+            list(source_ids),
+        ).fetchall()
+        result: dict[str, list[dict[str, str]]] = defaultdict(list)
+        for row in rows:
+            metadata = self._json_object(row["metadata_json"])
+            contract_refs = metadata.get("contractRefs") if isinstance(metadata.get("contractRefs"), dict) else {}
+            api_ref = contract_refs.get("api") if isinstance(contract_refs, dict) and isinstance(contract_refs.get("api"), dict) else {}
+            contract_source_id = str(api_ref.get("source_repo") or "").strip()
+            if not contract_source_id:
+                continue
+            service_identity = str(api_ref.get("service_code") or row["source_id"] or "").strip()
+            api_family = str(api_ref.get("api_family") or service_identity or "").strip()
+            if not service_identity or not api_family:
+                continue
+            result[contract_source_id].append(
+                {
+                    "serviceIdentity": service_identity,
+                    "apiFamily": api_family,
+                    "sourceId": str(row["source_id"] or ""),
+                }
+            )
+        return {source_id: tuple(items) for source_id, items in result.items()}
+
+    def _catalog_target_identity(self, row: Dict[str, Any], targets: Sequence[dict[str, str]]) -> str | None:
+        if not targets:
+            return None
+        haystack = "\n".join(
+            str(value or "")
+            for value in (
+                row.get("owner_qualified_name"),
+                row.get("owner_relative_path"),
+                row.get("entrypoint_interface_method"),
+            )
+            if str(value or "").strip()
+        )
+        matches: set[str] = set()
+        for target in targets:
+            identity = target.get("serviceIdentity")
+            if not identity:
+                continue
+            tokens = {
+                str(target.get("apiFamily") or "").strip(),
+                str(target.get("sourceId") or "").strip(),
+                str(target.get("serviceIdentity") or "").strip(),
+            }
+            if any(self._contains_catalog_token(haystack, token) for token in tokens if token):
+                matches.add(identity)
+        return next(iter(matches)) if len(matches) == 1 else None
+
+    def _contains_catalog_token(self, haystack: str, token: str) -> bool:
+        if not haystack or not token:
+            return False
+        pattern = rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])"
+        return re.search(pattern, haystack, flags=re.IGNORECASE) is not None
+
+    def _json_object(self, value: object) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        try:
+            parsed = json.loads(str(value or "{}"))
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _dedupe_operation_facts(self, facts: Sequence[AvailableOperationFact]) -> tuple[AvailableOperationFact, ...]:
+        deduped: dict[tuple[str, str, str, str, str, str, str, str, str], AvailableOperationFact] = {}
+        for fact in facts:
+            key = (
+                fact.owner_source_id,
+                fact.owner_graph_revision or fact.owner_graph_id,
+                fact.owner_node_id,
+                fact.owner_edge_id or "",
+                normalize_transport_kind(fact.transport_kind) or "",
+                normalize_http_method(fact.method) or "",
+                normalize_route(fact.normalized_route) or "",
+                fact.operation_identity or "",
+                fact.interface_identity or "",
+            )
+            existing = deduped.get(key)
+            if existing is None or (fact.target_service_identity and not existing.target_service_identity):
+                deduped[key] = fact
+        return tuple(deduped.values())
+
     def _query_edge_evidence(self, conn: Any, source_id: str, edge_ids: Sequence[str]) -> List[Dict[str, Any]]:
         result: List[Dict[str, Any]] = []
         if not edge_ids:
@@ -634,4 +1000,14 @@ class EntrypointFlowGraphRepository:
             edge.from_node_id,
             edge.to_node_id or "",
             edge.edge_id,
+        )
+
+    def _operation_fact_sort_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str, str]:
+        return (
+            fact.owner_source_id,
+            fact.owner_graph_revision or fact.owner_graph_id,
+            fact.owner_node_id,
+            fact.transport_kind or "",
+            fact.method or "",
+            fact.normalized_route or "",
         )

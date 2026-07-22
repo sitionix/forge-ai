@@ -29,6 +29,7 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryFlowTransition,
     KnowledgeQueryMatchedNode,
 )
+from knowledge_service.operation_facts import AvailableOperationFact
 
 
 class EntrypointFlowOrigin(str, Enum):
@@ -119,6 +120,14 @@ class EntrypointFlowGraphRepository(Protocol):
         *,
         include_tests: bool,
     ) -> tuple[dict[FlowNodeKey, FlowGraphNode], tuple[FlowGraphEdge, ...]]:
+        ...
+
+    def load_available_operation_facts(
+        self,
+        node_keys: set[FlowNodeKey],
+        *,
+        include_tests: bool,
+    ) -> tuple[AvailableOperationFact, ...]:
         ...
 
     def metrics(self) -> dict[str, int]:
