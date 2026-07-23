@@ -204,20 +204,22 @@ class DeterministicFinalFlowFormatterProvider:
             }
         )
         response_language = str(formatter_input.get("responseLanguage") or "en").lower()
-        certainty_by_ref = formatter_input.get("coverageContract", {}).get("certaintyByGroupRef", {})
-        groups = list(_flatten_formatter_groups(formatter_input.get("groups", [])))
-        steps = []
-        for group in groups:
-            group_ref = group.get("groupRef")
-            certainty = str(certainty_by_ref.get(group_ref) or group.get("certainty") or "VERIFIED")
-            steps.append(
-                {
-                    "groupRef": group_ref,
-                    "certainty": certainty,
-                    "text": _formatter_sentence(group, certainty, response_language),
-                }
-            )
-        return FlowFormatterProviderResult(raw_text=json.dumps({"steps": steps}, ensure_ascii=False), prompt_char_length=100)
+        sections = []
+        for section in formatter_input.get("sections", []):
+            steps = []
+            current: List[Dict[str, Any]] = []
+            current_scope = None
+            for group in section.get("orderedGroups", []):
+                scope = group.get("mergeScope")
+                if current and scope != current_scope:
+                    steps.append(_formatter_step(current, response_language))
+                    current = []
+                current_scope = scope
+                current.append(group)
+            if current:
+                steps.append(_formatter_step(current, response_language))
+            sections.append({"sectionRef": section.get("sectionRef"), "steps": steps})
+        return FlowFormatterProviderResult(raw_text=json.dumps({"sections": sections}, ensure_ascii=False), prompt_char_length=100)
 
 
 def _strip_code_symbols(value: str) -> str:
@@ -244,12 +246,22 @@ def _flatten_formatter_groups(groups):
         yield from _flatten_formatter_groups(group.get("childGroups", []))
 
 
-def _formatter_sentence(group: Dict[str, Any], certainty: str, language: str) -> str:
-    identifiers = _formatter_identifiers(group)
-    joined = ", ".join(identifiers) if identifiers else str(group.get("kind") or "step")
-    source = group.get("source") or group.get("fromSource") or group.get("toSource")
-    if group.get("sourceDisplayHint") == "REQUIRED" and source and source not in joined:
-        joined = f"{joined}, {source}"
+def _formatter_step(groups: List[Dict[str, Any]], language: str) -> Dict[str, Any]:
+    certainty = str(groups[0].get("certainty") or "VERIFIED")
+    return {
+        "groupRefs": [group.get("groupRef") for group in groups],
+        "certainty": certainty,
+        "text": _formatter_sentence(groups, certainty, language),
+    }
+
+
+def _formatter_sentence(groups: List[Dict[str, Any]], certainty: str, language: str) -> str:
+    identifiers: List[str] = []
+    for group in groups:
+        for value in _formatter_identifiers(group):
+            if value not in identifiers:
+                identifiers.append(value)
+    joined = ", ".join(identifiers) if identifiers else str(groups[0].get("kind") or "step")
     if language == "uk":
         uncertainty = " з непідтвердженим зв'язком" if certainty == "UNVERIFIED" else " з неоднозначним зв'язком" if certainty == "AMBIGUOUS" else ""
         return f"Цей крок описує доступний потік{uncertainty}: {joined}."

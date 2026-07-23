@@ -90,7 +90,7 @@ def test_formatter_human_and_tool_context_project_same_persisted_flow(tmp_path):
     answer = human_payload["answers"][0]
     assert answer["source"] == "source-a"
     assert answer["entrypoint"] == "Entry.run"
-    assert answer["text"].startswith("1. ")
+    assert answer["text"].startswith("source-a · Entry.run\n1. ")
     assert "\n2. " in answer["text"]
     assert "Entry.run" in answer["text"]
     assert "Worker.apply" in answer["text"]
@@ -127,7 +127,7 @@ def test_multiple_independent_entrypoints_preserve_backend_order(tmp_path):
     payload = post(app, "/api/v1/knowledge/query", request("Shared.run")).json()
 
     assert [answer["entrypoint"] for answer in payload["answers"]] == roots
-    assert all(answer["text"].startswith("1. ") for answer in payload["answers"])
+    assert all(answer["text"].startswith(f"source-a · {entrypoint}\n1. ") for answer, entrypoint in zip(payload["answers"], roots))
     assert "tree" not in json.dumps(payload)
 
 

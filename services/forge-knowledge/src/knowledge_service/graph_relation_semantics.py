@@ -13,6 +13,7 @@ SUPPORTING_RELATION = "supportingRelation"
 ROOT_ELIGIBILITY = "rootEligibility"
 TRANSPORT_CONNECTOR = "transportConnector"
 FAMILY_TRAVERSAL = "familyTraversal"
+EXPLICIT_BRANCH = "explicitBranch"
 
 EXECUTABLE_ENTRYPOINT = "executableEntrypoint"
 CONTRACT_DECLARATION = "contractDeclaration"
@@ -56,6 +57,9 @@ class GraphRelationSemantics:
 
     def is_family_traversal(self, edge: FlowGraphEdge) -> bool:
         return FAMILY_TRAVERSAL in self.edge_semantics(edge.edge_type)
+
+    def is_explicit_branch(self, edge: FlowGraphEdge) -> bool:
+        return EXPLICIT_BRANCH in self.edge_semantics(edge.edge_type)
 
     def is_transport_connector(self, edge: FlowGraphEdge) -> bool:
         if TRANSPORT_CONNECTOR in self.edge_semantics(edge.edge_type):

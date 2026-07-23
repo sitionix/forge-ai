@@ -56,6 +56,18 @@ function graphHtml() {
 
 function jarvisHtml() {
   return baseHtml('jarvis', `
+    <button id="refreshJarvis" type="button">Refresh</button>
+    <span id="jarvisUpdated">loading</span>
+    <div id="jarvisStatusCards"></div>
+    <div id="jarvisStatusError" class="hidden"></div>
+    <div id="jarvisActions"></div>
+    <div id="jarvisActionsError" class="hidden"></div>
+    <form id="jarvisCommandForm">
+      <input id="jarvisCommandText" type="text">
+      <button id="executeJarvisCommand" type="submit">Execute</button>
+    </form>
+    <div id="jarvisCommandResult" class="hidden"></div>
+    <div id="jarvisCommandError" class="hidden"></div>
     <form id="jarvisQueryForm">
       <textarea id="jarvisQueryText"></textarea>
       <button id="sendJarvisQuery" type="submit">Send</button>
@@ -151,10 +163,10 @@ describe('Operator Console modular request ownership', () => {
     bootstrapOperatorConsole({ document: jarvis.window.document, window: jarvis.window, http: jarvisHttp });
     await flushAsync();
     expect((jarvis.window.__forgeMountedOperatorPage as any).constructor.name).toBe('JarvisPage');
-    expect(jarvisHttp.get).not.toHaveBeenCalled();
+    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/jarvis/actions']);
   });
 
-  it('UI-IT-02 sends no Jarvis init or remount requests from the chat page', async () => {
+  it('UI-IT-02 sends only restored Jarvis init requests from the chat page', async () => {
     const dom = jarvisHtml();
     const http = {
       get: vi.fn((path: string) => Promise.resolve(path.endsWith('/status') ? { status: 'READY' } : { actions: [] })),
@@ -163,13 +175,18 @@ describe('Operator Console modular request ownership', () => {
     const page = new JarvisPage({ document: dom.window.document, http });
     page.mount();
     await flushAsync();
-    expect(http.get).not.toHaveBeenCalled();
+    expect((http.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/jarvis/actions']);
 
     page.dispose();
     const second = new JarvisPage({ document: dom.window.document, http });
     second.mount();
     await flushAsync();
-    expect(http.get).not.toHaveBeenCalled();
+    expect((http.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual([
+      '/jarvis/status',
+      '/jarvis/actions',
+      '/jarvis/status',
+      '/jarvis/actions'
+    ]);
   });
 
   it('UI-IT-03 prevents duplicate Jarvis query submissions while loading', async () => {

@@ -1223,9 +1223,44 @@ body.sidebar-collapsed .sidebar-link {
   color: #fff8de;
 }
 
+.jarvis-status-grid,
+.jarvis-grid,
+.jarvis-actions-list {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.jarvis-status-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.jarvis-grid {
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  align-items: start;
+  padding: 18px 0 0;
+}
+
+.jarvis-command-form {
+  position: relative;
+  display: grid;
+  gap: 16px;
+  padding: 18px 20px 10px;
+}
+
+.jarvis-security-notice {
+  margin: 10px 20px 18px;
+  color: var(--ink);
+}
+
+.jarvis-command-result {
+  position: relative;
+  padding: 0 20px 20px;
+}
+
 .jarvis-query-panel {
-  margin: 0 auto;
-  max-width: 980px;
+  margin-top: 18px;
 }
 
 .jarvis-query-form {
@@ -1234,7 +1269,7 @@ body.sidebar-collapsed .sidebar-link {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
   align-items: end;
-  padding: 0 0 16px;
+  padding: 18px 20px 10px;
 }
 
 .jarvis-query-message {
@@ -1248,7 +1283,7 @@ body.sidebar-collapsed .sidebar-link {
 
 .jarvis-query-result {
   position: relative;
-  padding: 0;
+  padding: 0 20px 20px;
 }
 
 .jarvis-chat-message {
@@ -3444,6 +3479,8 @@ body.knowledge-graph-focus-mode .knowledge-graph-layout {
     grid-template-columns: 1fr;
   }
 
+  .jarvis-grid,
+  .jarvis-status-grid,
   .jarvis-query-form {
     grid-template-columns: 1fr;
   }

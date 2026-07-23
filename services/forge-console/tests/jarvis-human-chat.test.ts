@@ -5,6 +5,19 @@ import { JarvisPage } from '../src/operator/jarvis-page.js';
 function jarvisDom() {
   return new JSDOM(`<!doctype html>
     <body data-page="jarvis">
+      <button id="refreshJarvis" type="button">Refresh</button>
+      <span id="jarvisUpdated">loading</span>
+      <div id="jarvisStatusCards"></div>
+      <div id="jarvisStatusError" class="hidden"></div>
+      <div id="jarvisActions"></div>
+      <div id="jarvisActionsError" class="hidden"></div>
+      <form id="jarvisCommandForm">
+        <input id="jarvisCommandText" type="text">
+        <button id="executeJarvisCommand" type="submit">Execute</button>
+      </form>
+      <div class="jarvis-security-notice"></div>
+      <div id="jarvisCommandResult" class="hidden"></div>
+      <div id="jarvisCommandError" class="hidden"></div>
       <form id="jarvisQueryForm">
         <textarea id="jarvisQueryText"></textarea>
         <button id="sendJarvisQuery" type="submit">Send</button>
@@ -26,9 +39,9 @@ function deferred<T>() {
 }
 
 async function flushAsync() {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 8; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 function submitEvent() {
@@ -43,6 +56,33 @@ function humanResponse(text = 'Сайт створюється через SiteCo
   };
 }
 
+function statusResponse() {
+  return {
+    status: 'READY',
+    host: '127.0.0.1',
+    port: 9999,
+    ollama: { status: 'READY', baseUrl: 'http://127.0.0.1:11434' },
+    model: { defaultModel: 'local-model' },
+    actions: { count: 2 }
+  };
+}
+
+function actionsResponse() {
+  return {
+    actions: [
+      { action: 'status', description: 'Checks runtime status.', targets: ['jarvis'] },
+      { action: 'model', description: 'Checks model status.', targets: ['ollama'] }
+    ]
+  };
+}
+
+function commandResponse() {
+  return {
+    intent: { action: 'status', target: 'jarvis' },
+    execution: { executed: true, message: 'Runtime is ready.', output: 'ready' }
+  };
+}
+
 function expectedPayload(queryText: string) {
   return {
     queryText,
@@ -52,6 +92,102 @@ function expectedPayload(queryText: string) {
 }
 
 describe('Jarvis human chat', () => {
+  it('mount loads runtime status and allowlisted actions', async () => {
+    const dom = jarvisDom();
+    const http = {
+      get: vi.fn((path: string) => Promise.resolve(path === '/jarvis/status' ? statusResponse() : actionsResponse())),
+      post: vi.fn()
+    };
+    const page = new JarvisPage({ document: dom.window.document, http });
+
+    page.mount();
+    await flushAsync();
+
+    expect(http.get).toHaveBeenCalledWith('/jarvis/status', expect.any(Object));
+    expect(http.get).toHaveBeenCalledWith('/jarvis/actions', expect.any(Object));
+    expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('Jarvis');
+    expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('Ollama');
+    expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('local-model');
+    expect(dom.window.document.getElementById('jarvisStatusCards')?.textContent).toContain('allowlisted');
+    expect(dom.window.document.getElementById('jarvisUpdated')?.textContent).toContain('updated');
+    expect(dom.window.document.getElementById('jarvisActions')?.textContent).toContain('Checks runtime status.');
+    expect(dom.window.document.getElementById('jarvisActions')?.textContent).toContain('jarvis');
+  });
+
+  it('refresh reloads runtime status and allowlisted actions', async () => {
+    const dom = jarvisDom();
+    const http = {
+      get: vi.fn((path: string) => Promise.resolve(path === '/jarvis/status' ? statusResponse() : actionsResponse())),
+      post: vi.fn()
+    };
+    const page = new JarvisPage({ document: dom.window.document, http });
+
+    page.mount();
+    await flushAsync();
+    dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new dom.window.Event('click'));
+    await flushAsync();
+
+    expect(http.get).toHaveBeenCalledTimes(4);
+    expect(http.get.mock.calls.filter(([path]) => path === '/jarvis/status')).toHaveLength(2);
+    expect(http.get.mock.calls.filter(([path]) => path === '/jarvis/actions')).toHaveLength(2);
+  });
+
+  it('command submission renders command result', async () => {
+    const dom = jarvisDom();
+    const http = {
+      get: vi.fn(),
+      post: vi.fn(() => Promise.resolve(commandResponse()))
+    };
+    const page = new JarvisPage({ document: dom.window.document, http });
+    (dom.window.document.getElementById('jarvisCommandText') as HTMLInputElement).value = 'check status';
+
+    await page.submitCommand(submitEvent());
+
+    expect(http.post).toHaveBeenCalledWith('/jarvis/command', { text: 'check status' }, expect.any(Object));
+    expect(dom.window.document.getElementById('jarvisCommandResult')?.classList.contains('hidden')).toBe(false);
+    expect(dom.window.document.getElementById('jarvisCommandResult')?.textContent).toContain('Runtime is ready.');
+    expect(dom.window.document.getElementById('jarvisCommandError')?.classList.contains('hidden')).toBe(true);
+  });
+
+  it('command errors render technical operator error without using chat safe error', async () => {
+    const dom = jarvisDom();
+    const error = Object.assign(new Error('Jarvis command unavailable'), { code: 'COMMAND_FAILED', endpoint: '/jarvis/command', status: 502 });
+    const http = {
+      get: vi.fn(),
+      post: vi.fn(() => Promise.reject(error))
+    };
+    const page = new JarvisPage({ document: dom.window.document, http });
+    (dom.window.document.getElementById('jarvisCommandText') as HTMLInputElement).value = 'check status';
+
+    await page.submitCommand(submitEvent());
+
+    const commandError = dom.window.document.getElementById('jarvisCommandError');
+    expect(commandError?.classList.contains('hidden')).toBe(false);
+    expect(commandError?.textContent).toContain('/jarvis/command');
+    expect(commandError?.textContent).toContain('COMMAND_FAILED');
+    expect(dom.window.document.querySelectorAll('.jarvis-error-card')).toHaveLength(0);
+  });
+
+  it('page disposal removes restored listeners', async () => {
+    const dom = jarvisDom();
+    const http = {
+      get: vi.fn((path: string) => Promise.resolve(path === '/jarvis/status' ? statusResponse() : actionsResponse())),
+      post: vi.fn(() => Promise.resolve(commandResponse()))
+    };
+    const page = new JarvisPage({ document: dom.window.document, http });
+
+    page.mount();
+    await flushAsync();
+    page.dispose();
+    dom.window.document.getElementById('refreshJarvis')?.dispatchEvent(new dom.window.Event('click'));
+    dom.window.document.getElementById('jarvisCommandForm')?.dispatchEvent(new dom.window.Event('submit'));
+    dom.window.document.getElementById('jarvisQueryForm')?.dispatchEvent(new dom.window.Event('submit'));
+    await flushAsync();
+
+    expect(http.get).toHaveBeenCalledTimes(2);
+    expect(http.post).toHaveBeenCalledTimes(0);
+  });
+
   it('submits one human flow request, omits maxFlows, blocks duplicates, and aborts disposal', async () => {
     const dom = jarvisDom();
     const pending = deferred<Record<string, unknown>>();

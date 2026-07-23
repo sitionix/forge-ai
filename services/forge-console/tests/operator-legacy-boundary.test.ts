@@ -69,6 +69,18 @@ function graphBody() {
 
 function jarvisBody() {
   return `
+    <button id="refreshJarvis" type="button">Refresh</button>
+    <span id="jarvisUpdated">loading</span>
+    <div id="jarvisStatusCards"></div>
+    <div id="jarvisStatusError" class="hidden"></div>
+    <div id="jarvisActions"></div>
+    <div id="jarvisActionsError" class="hidden"></div>
+    <form id="jarvisCommandForm">
+      <input id="jarvisCommandText" type="text">
+      <button id="executeJarvisCommand" type="submit">Execute</button>
+    </form>
+    <div id="jarvisCommandResult" class="hidden"></div>
+    <div id="jarvisCommandError" class="hidden"></div>
     <form id="jarvisQueryForm">
       <textarea id="jarvisQueryText"></textarea>
       <button id="sendJarvisQuery" type="submit">Send</button>
@@ -196,7 +208,7 @@ describe('Operator legacy boundary', () => {
     };
     bootstrapOperatorConsole({ document: jarvis.window.document, window: jarvis.window, http: jarvisHttp });
     await flushAsync();
-    expect(jarvisHttp.get).not.toHaveBeenCalled();
+    expect((jarvisHttp.get.mock.calls as Array<[string]>).map(([path]) => path)).toEqual(['/jarvis/status', '/jarvis/actions']);
 
     const overview = inScopeDom('knowledge', overviewBody());
     await runLegacy(overview);
@@ -226,13 +238,20 @@ describe('Operator legacy boundary', () => {
       operatorSource('agents.html')
     ]);
     expect(jarvis).toContain('type="module" src="./operator-ui.js"');
+    expect(jarvis).toContain('refreshJarvis');
+    expect(jarvis).toContain('jarvisStatusCards');
+    expect(jarvis).toContain('jarvisUpdated');
+    expect(jarvis).toContain('jarvisStatusError');
+    expect(jarvis).toContain('jarvisActions');
+    expect(jarvis).toContain('jarvisActionsError');
+    expect(jarvis).toContain('jarvisCommandForm');
+    expect(jarvis).toContain('jarvisCommandText');
+    expect(jarvis).toContain('executeJarvisCommand');
+    expect(jarvis).toContain('jarvisCommandResult');
+    expect(jarvis).toContain('jarvisCommandError');
     expect(jarvis).toContain('jarvisQueryForm');
     expect(jarvis).toContain('sendJarvisQuery');
-    expect(jarvis).not.toContain('refreshJarvis');
-    expect(jarvis).not.toContain('jarvisStatusCards');
-    expect(jarvis).not.toContain('jarvisActions');
-    expect(jarvis).not.toContain('jarvisCommandForm');
-    expect(jarvis).not.toContain('Graph Knowledge Query');
+    expect(jarvis).toContain('Graph Knowledge Query');
     expect(jarvis).not.toContain('Scope: Auto');
     expect(jarvis).not.toContain('jarvisQueryDiagnostics');
     expect(jarvis).not.toContain('jarvisQueryRaw');

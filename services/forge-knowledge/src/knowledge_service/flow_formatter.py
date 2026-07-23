@@ -42,36 +42,10 @@ _DEFAULT_MIN_CALL_TIMEOUT_SECONDS = 0.01
 _DEADLINE_COMPLETION_GRACE_SECONDS = 0.005
 _FRAMING_RESERVE_TOKENS = 512
 _REPAIRABLE_ATTEMPTS = (1, 2)
-_BRANCH_SEMANTIC_VALUES = frozenset(
-    {
-        "BRANCH",
-        "EXPLICIT_BRANCH",
-        "ALTERNATIVE",
-        "PARALLEL",
-        "CONDITIONAL",
-        "CHOICE",
-    }
-)
-_BRANCH_METADATA_KEYS = frozenset(
-    {
-        "branch",
-        "branchKind",
-        "branchType",
-        "controlFlow",
-        "executionFlow",
-        "flowControl",
-        "flowControlKind",
-        "topologyKind",
-    }
-)
-_ALLOWED_FORMATTER_RESPONSE_KEYS = frozenset({"steps"})
-_ALLOWED_FORMATTER_STEP_KEYS = frozenset({"groupRef", "certainty", "text"})
-_INTERNAL_TEXT_RE = re.compile(
-    r"(?i)\b(?:nodeRef|edgeRef|transitionRef|boundaryRef|evidenceRef|groupRef|graph|evidence|formatter|segment|retrieval|sqlite|sql)\b"
-)
-_LOCAL_GROUP_REF_RE = re.compile(r"\bg\d+(?:[a-z]\d+)?\b", re.IGNORECASE)
+_ALLOWED_FORMATTER_RESPONSE_KEYS = frozenset({"sections"})
+_ALLOWED_FORMATTER_SECTION_KEYS = frozenset({"sectionRef", "steps"})
+_ALLOWED_FORMATTER_STEP_KEYS = frozenset({"groupRefs", "certainty", "text"})
 _ROUTE_RE = re.compile(r"(?<!\w)/(?:[A-Za-z0-9._~!$&'()*+,;=:@%-]+/?)+")
-_HTTP_METHOD_TOKENS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT"})
 
 
 class FlowFormatterGroupKind(str, Enum):
@@ -91,6 +65,12 @@ class FlowFormatterGroupKind(str, Enum):
     SHARED_CONTINUATION = "SHARED_CONTINUATION"
     AVAILABLE_FACTS_END = "AVAILABLE_FACTS_END"
     TYPED_RESULT = "TYPED_RESULT"
+
+
+class FlowPresentationSectionKind(str, Enum):
+    VERIFIED_FRAGMENT = "VERIFIED_FRAGMENT"
+    UNVERIFIED_GAP = "UNVERIFIED_GAP"
+    AMBIGUOUS_GAP = "AMBIGUOUS_GAP"
 
 
 @dataclass(frozen=True)
@@ -121,6 +101,20 @@ class FlowFormatterGroup:
     summary: str | None = None
     child_groups: tuple["FlowFormatterGroup", ...] = ()
     terminal_semantic: str | None = None
+    fragment_ref: str | None = None
+    section_ref: str | None = None
+    branch_path: str = ""
+    merge_scope: str | None = None
+
+
+@dataclass(frozen=True)
+class FlowPresentationSection:
+    section_ref: str
+    kind: FlowPresentationSectionKind
+    source: str | None
+    entrypoint: str | None
+    certainty: str
+    ordered_groups: tuple[FlowFormatterGroup, ...]
 
 
 @dataclass(frozen=True)
@@ -129,6 +123,7 @@ class FlowFormatterPlan:
     entrypoint: str
     groups: tuple[FlowFormatterGroup, ...]
     response_language: str
+    sections: tuple[FlowPresentationSection, ...] = ()
     diagnostics: tuple[KnowledgeQueryDiagnostic, ...] = ()
     structural_metrics: Dict[str, Any] = field(default_factory=dict)
     planning_duration_ms: float = 0.0
@@ -176,7 +171,7 @@ class FlowFormatterSegment:
     segment_index: int
     segment_count: int
     terminal: bool
-    groups: tuple[FlowFormatterGroup, ...]
+    sections: tuple[FlowPresentationSection, ...]
     previous: FlowFormatterContinuity | None
     next: FlowFormatterContinuity | None
     rendered_input_tokens: int
@@ -188,10 +183,26 @@ class FlowFormatterSegment:
 
     @property
     def required_groups(self) -> tuple[FlowFormatterGroup, ...]:
-        return tuple(_walk_groups(self.groups))
+        return tuple(group for section in self.sections for group in section.ordered_groups)
 
     def to_prompt_input(self, original_question: str) -> Dict[str, Any]:
         required = self.required_groups
+        sections = [
+            {
+                "sectionRef": section.section_ref,
+                "kind": section.kind.value,
+                "source": section.source,
+                "entrypoint": section.entrypoint,
+                "certainty": section.certainty,
+                "orderedGroups": [_group_payload(group, include_children=False) for group in section.ordered_groups],
+            }
+            for section in self.sections
+        ]
+        group_to_section = {
+            group.group_ref: section.section_ref
+            for section in self.sections
+            for group in section.ordered_groups
+        }
         return {
             "originalQuestion": original_question,
             "responseLanguage": self.response_language,
@@ -205,15 +216,16 @@ class FlowFormatterSegment:
                 "terminal": self.terminal,
             },
             "coverageContract": {
-                "oneStepPerGroup": True,
-                "requiredStepCount": len(required),
+                "requiredSectionRefs": [section.section_ref for section in self.sections],
                 "requiredGroupRefs": [group.group_ref for group in required],
                 "certaintyByGroupRef": {group.group_ref: group.certainty for group in required},
+                "sectionByGroupRef": group_to_section,
+                "mergeScopeByGroupRef": {group.group_ref: group.merge_scope for group in required},
                 "order": [group.group_ref for group in required],
-                "outputSkeleton": [
-                    {"groupRef": group.group_ref, "certainty": group.certainty, "text": ""}
-                    for group in required
-                ],
+                "groupRefsBySection": {
+                    section.section_ref: [group.group_ref for group in section.ordered_groups]
+                    for section in self.sections
+                },
             },
             "continuity": {
                 "previous": _continuity_payload(self.previous),
@@ -226,7 +238,7 @@ class FlowFormatterSegment:
                 "contextTokens": self.context_tokens,
                 "minimumValidOutputTokens": self.minimum_valid_output_tokens,
             },
-            "groups": [_group_payload(group, include_children=False) for group in required],
+            "sections": _without_empty({"sections": sections})["sections"],
         }
 
 
@@ -239,7 +251,7 @@ class FlowFormatterProviderResult:
 
 @dataclass(frozen=True)
 class FlowFormatterStepText:
-    group_ref: str
+    group_refs: tuple[str, ...]
     certainty: str
     text: str
 
@@ -325,7 +337,7 @@ class FlowFormatterPlanBuilder:
                 groups.extend(self._fragment_groups(fragment.family, fragment.operation_facts, state, part_index=part_index))
                 continue
             if part.gap is not None:
-                groups.append(self._gap_group(part.gap, state))
+                groups.append(replace(self._gap_group(part.gap, state), fragment_ref=f"gap{part_index}"))
         if groups and self._last_runtime_group(groups[-1]).kind not in {
             FlowFormatterGroupKind.AVAILABLE_FACTS_END,
             FlowFormatterGroupKind.TYPED_RESULT,
@@ -348,20 +360,23 @@ class FlowFormatterPlanBuilder:
                 )
             )
         groups_with_hints = self._apply_source_display_hints(tuple(groups))
+        sectioned_groups, sections = self._presentation_sections(groups_with_hints)
         metrics = {
-            "formatterGroupCount": sum(1 for _ in _walk_groups(groups_with_hints)),
-            "branchCount": sum(1 for group in _walk_groups(groups_with_hints) if group.kind is FlowFormatterGroupKind.EXPLICIT_BRANCH),
+            "formatterGroupCount": sum(1 for _ in _walk_groups(sectioned_groups)),
+            "presentationSectionCount": len(sections),
+            "branchCount": sum(1 for group in _walk_groups(sectioned_groups) if group.kind is FlowFormatterGroupKind.EXPLICIT_BRANCH),
             "gapCount": sum(
                 1
-                for group in _walk_groups(groups_with_hints)
+                for group in _walk_groups(sectioned_groups)
                 if group.kind in {FlowFormatterGroupKind.UNVERIFIED_GAP, FlowFormatterGroupKind.AMBIGUOUS_GAP}
             ),
         }
         return FlowFormatterPlan(
             source=source,
             entrypoint=entrypoint,
-            groups=groups_with_hints,
+            groups=sectioned_groups,
             response_language=response_language,
+            sections=sections,
             diagnostics=tuple(diagnostics),
             structural_metrics=metrics,
             planning_duration_ms=round((time.perf_counter() - started) * 1000, 3),
@@ -407,7 +422,7 @@ class FlowFormatterPlanBuilder:
         )
         for fact in self._external_operation_facts(operation_facts, node_by_key):
             groups.append(self._operation_group(fact, state, depth=0))
-        return groups
+        return [self._with_fragment_ref(group, f"f{part_index}") for group in groups]
 
     def _node_groups(
         self,
@@ -748,22 +763,7 @@ class FlowFormatterPlanBuilder:
         return any(self._edge_has_explicit_branch(edge) for edge in edges)
 
     def _edge_has_explicit_branch(self, edge: FlowGraphEdge) -> bool:
-        if set(value.upper() for value in self.semantics.edge_semantics(edge.edge_type)).intersection(_BRANCH_SEMANTIC_VALUES):
-            return True
-        metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
-        for key, value in metadata.items():
-            if key in _BRANCH_METADATA_KEYS and self._metadata_branch_value(value):
-                return True
-        return False
-
-    def _metadata_branch_value(self, value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.strip().upper() in _BRANCH_SEMANTIC_VALUES
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-            return any(self._metadata_branch_value(item) for item in value)
-        return False
+        return self.semantics.is_explicit_branch(edge)
 
     def _dedupe_boundary_edges(self, edges: Sequence[FlowGraphEdge]) -> list[FlowGraphEdge]:
         deduped: list[FlowGraphEdge] = []
@@ -815,6 +815,171 @@ class FlowFormatterPlanBuilder:
             group,
             source_display_hint="REQUIRED" if group.group_ref in required else "OPTIONAL",
             child_groups=tuple(self._with_source_hint(child, required) for child in group.child_groups),
+        )
+
+    def _with_fragment_ref(self, group: FlowFormatterGroup, fragment_ref: str) -> FlowFormatterGroup:
+        return replace(
+            group,
+            fragment_ref=fragment_ref,
+            child_groups=tuple(self._with_fragment_ref(child, fragment_ref) for child in group.child_groups),
+        )
+
+    def _presentation_sections(
+        self,
+        groups: tuple[FlowFormatterGroup, ...],
+    ) -> tuple[tuple[FlowFormatterGroup, ...], tuple[FlowPresentationSection, ...]]:
+        flat = list(self._walk_with_branch_paths(groups))
+        replacements: dict[str, FlowFormatterGroup] = {}
+        sections: list[FlowPresentationSection] = []
+        current_ref: str | None = None
+        current_kind: FlowPresentationSectionKind | None = None
+        current_source: str | None = None
+        current_entrypoint: str | None = None
+        current_certainty: str = VERIFIED
+        current_fragment: str | None = None
+        current_groups: list[FlowFormatterGroup] = []
+        previous_verified_source: str | None = None
+
+        def flush() -> None:
+            nonlocal current_ref, current_kind, current_source, current_entrypoint, current_certainty, current_fragment, current_groups
+            if current_ref and current_kind and current_groups:
+                sections.append(
+                    FlowPresentationSection(
+                        section_ref=current_ref,
+                        kind=current_kind,
+                        source=current_source,
+                        entrypoint=current_entrypoint,
+                        certainty=current_certainty,
+                        ordered_groups=tuple(current_groups),
+                    )
+                )
+            current_ref = None
+            current_kind = None
+            current_source = None
+            current_entrypoint = None
+            current_certainty = VERIFIED
+            current_fragment = None
+            current_groups = []
+
+        for group, branch_path in flat:
+            gap_kind = self._gap_section_kind(group)
+            if gap_kind is not None:
+                flush()
+                section_ref = f"s{len(sections) + 1}"
+                updated = self._sectioned_group(
+                    group,
+                    section_ref=section_ref,
+                    branch_path=branch_path,
+                    merge_scope=f"p1|{section_ref}|{group.fragment_ref or ''}|{branch_path}|{group.certainty}|gap:{group.group_ref}",
+                )
+                replacements[group.group_ref] = updated
+                sections.append(
+                    FlowPresentationSection(
+                        section_ref=section_ref,
+                        kind=gap_kind,
+                        source=None,
+                        entrypoint=None,
+                        certainty=group.certainty,
+                        ordered_groups=(updated,),
+                    )
+                )
+                previous_verified_source = None
+                continue
+
+            group_source = self._section_source(group)
+            starts_new_section = (
+                current_ref is None
+                or current_kind is not FlowPresentationSectionKind.VERIFIED_FRAGMENT
+                or current_fragment != group.fragment_ref
+                or (group_source is not None and previous_verified_source is not None and group_source != previous_verified_source)
+            )
+            if starts_new_section:
+                flush()
+                current_ref = f"s{len(sections) + 1}"
+                current_kind = FlowPresentationSectionKind.VERIFIED_FRAGMENT
+                current_source = group_source
+                current_entrypoint = self._section_entrypoint(group)
+                current_certainty = VERIFIED
+                current_fragment = group.fragment_ref
+
+            section_ref = current_ref or f"s{len(sections) + 1}"
+            updated = self._sectioned_group(
+                group,
+                section_ref=section_ref,
+                branch_path=branch_path,
+                merge_scope=self._merge_scope(group, section_ref, branch_path),
+            )
+            replacements[group.group_ref] = updated
+            current_groups.append(updated)
+            if group_source:
+                previous_verified_source = group_source
+                if current_source is None:
+                    current_source = group_source
+            if current_entrypoint is None:
+                current_entrypoint = self._section_entrypoint(group)
+        flush()
+        return tuple(self._rebuild_sectioned_tree(group, replacements) for group in groups), tuple(sections)
+
+    def _walk_with_branch_paths(
+        self,
+        groups: Sequence[FlowFormatterGroup],
+        branch_path: str = "",
+    ) -> Iterable[tuple[FlowFormatterGroup, str]]:
+        for group in groups:
+            if group.kind is FlowFormatterGroupKind.EXPLICIT_BRANCH:
+                group_path = branch_path
+                child_path = f"{branch_path}/{group.group_ref}" if branch_path else group.group_ref
+            elif group.kind is FlowFormatterGroupKind.BRANCH_ITEM:
+                group_path = f"{branch_path}/{group.group_ref}" if branch_path else group.group_ref
+                child_path = group_path
+            else:
+                group_path = branch_path
+                child_path = group_path
+            yield group, group_path
+            yield from self._walk_with_branch_paths(group.child_groups, child_path)
+
+    def _gap_section_kind(self, group: FlowFormatterGroup) -> FlowPresentationSectionKind | None:
+        if group.kind is FlowFormatterGroupKind.UNVERIFIED_GAP:
+            return FlowPresentationSectionKind.UNVERIFIED_GAP
+        if group.kind is FlowFormatterGroupKind.AMBIGUOUS_GAP:
+            return FlowPresentationSectionKind.AMBIGUOUS_GAP
+        return None
+
+    def _section_source(self, group: FlowFormatterGroup) -> str | None:
+        return group.source or group.from_source or group.to_source
+
+    def _section_entrypoint(self, group: FlowFormatterGroup) -> str | None:
+        return group.symbol or group.to_symbol or group.from_symbol
+
+    def _sectioned_group(
+        self,
+        group: FlowFormatterGroup,
+        *,
+        section_ref: str,
+        branch_path: str,
+        merge_scope: str,
+    ) -> FlowFormatterGroup:
+        return replace(group, section_ref=section_ref, branch_path=branch_path, merge_scope=merge_scope)
+
+    def _merge_scope(self, group: FlowFormatterGroup, section_ref: str, branch_path: str) -> str:
+        boundary = "linear"
+        if group.kind is FlowFormatterGroupKind.EXPLICIT_BRANCH:
+            boundary = f"explicit-branch:{group.group_ref}"
+        elif group.kind in {FlowFormatterGroupKind.CYCLE, FlowFormatterGroupKind.SHARED_CONTINUATION}:
+            boundary = f"{group.kind.value}:{group.group_ref}"
+        elif group.terminal_semantic:
+            boundary = f"terminal:{group.group_ref}"
+        return "|".join(("p1", section_ref, group.fragment_ref or "", branch_path, group.certainty, boundary))
+
+    def _rebuild_sectioned_tree(
+        self,
+        group: FlowFormatterGroup,
+        replacements: Mapping[str, FlowFormatterGroup],
+    ) -> FlowFormatterGroup:
+        base = replacements.get(group.group_ref, group)
+        return replace(
+            base,
+            child_groups=tuple(self._rebuild_sectioned_tree(child, replacements) for child in group.child_groups),
         )
 
     def _primary_operation(self, operation_facts: Sequence[AvailableOperationFact]) -> AvailableOperationFact | None:
@@ -958,31 +1123,36 @@ class FlowFormatterSegmentPlanner:
 
     def plan(self, formatter_plan: FlowFormatterPlan) -> tuple[FlowFormatterSegment, ...]:
         self.serialization_count = 0
-        candidate_groups = tuple(self._partition_oversized_groups(formatter_plan.groups))
-        serialized = {group.group_ref: self._group_tokens(group) for group in candidate_groups}
-        segments: list[tuple[FlowFormatterGroup, ...]] = []
-        current: list[FlowFormatterGroup] = []
-        for group in candidate_groups:
-            single_serialized = {group.group_ref: self._group_tokens(group)}
-            if not self._fits((group,), single_serialized):
+        formatter_plan = self._ensure_sections(formatter_plan)
+        candidate_sections = tuple(
+            section
+            for original in formatter_plan.sections
+            for section in self._partition_oversized_section(original)
+        )
+        serialized = {group.group_ref: self._group_tokens(group) for section in candidate_sections for group in section.ordered_groups}
+        segments: list[tuple[FlowPresentationSection, ...]] = []
+        current: list[FlowPresentationSection] = []
+        for section in candidate_sections:
+            single_serialized = {group.group_ref: self._known_group_tokens(group, serialized) for group in section.ordered_groups}
+            if not self._fits((section,), single_serialized):
                 raise FlowFormatterBudgetError("formatter group cannot fit within the configured context budget")
-            candidate = tuple([*current, group])
+            candidate = tuple([*current, section])
             if current and not self._fits(candidate, serialized):
                 segments.append(tuple(current))
-                current = [group]
+                current = [section]
                 continue
-            current.append(group)
+            current.append(section)
         if current:
             segments.append(tuple(current))
         return self._segments(formatter_plan, tuple(segments), serialized)
 
     def split_segment(self, segment: FlowFormatterSegment) -> tuple[FlowFormatterSegment, ...]:
-        groups = segment.groups
-        if len(groups) > 1:
-            midpoint = max(1, len(groups) // 2)
-            return self._segments_from_existing(segment, (groups[:midpoint], groups[midpoint:]))
-        if len(groups) == 1 and groups[0].child_groups:
-            partitions = tuple(self._split_group_children(groups[0]))
+        sections = segment.sections
+        if len(sections) > 1:
+            midpoint = max(1, len(sections) // 2)
+            return self._segments_from_existing(segment, (sections[:midpoint], sections[midpoint:]))
+        if len(sections) == 1:
+            partitions = self._split_section(sections[0])
             if len(partitions) > 1:
                 return self._segments_from_existing(segment, tuple((item,) for item in partitions))
         return ()
@@ -990,17 +1160,17 @@ class FlowFormatterSegmentPlanner:
     def _segments(
         self,
         formatter_plan: FlowFormatterPlan,
-        group_segments: tuple[tuple[FlowFormatterGroup, ...], ...],
+        section_segments: tuple[tuple[FlowPresentationSection, ...], ...],
         serialized: Mapping[str, int],
     ) -> tuple[FlowFormatterSegment, ...]:
-        count = len(group_segments)
+        count = len(section_segments)
         segments: list[FlowFormatterSegment] = []
-        for index, groups in enumerate(group_segments, start=1):
-            previous = self._continuity(group_segments[index - 2][-1]) if index > 1 and group_segments[index - 2] else None
-            next_value = self._continuity(group_segments[index][0]) if index < count and group_segments[index] else None
-            rendered_input = self._input_tokens(groups, serialized)
-            minimum_output = self._minimum_output_tokens(groups)
-            reserved_output = self._reserved_output_tokens(groups, minimum_output)
+        for index, sections in enumerate(section_segments, start=1):
+            previous = self._continuity(self._last_group(section_segments[index - 2])) if index > 1 and section_segments[index - 2] else None
+            next_value = self._continuity(self._first_group(section_segments[index])) if index < count and section_segments[index] else None
+            rendered_input = self._input_tokens(sections, serialized)
+            minimum_output = self._minimum_output_tokens(sections)
+            reserved_output = self._reserved_output_tokens(sections, minimum_output)
             segments.append(
                 FlowFormatterSegment(
                     plan_source=formatter_plan.source,
@@ -1009,7 +1179,7 @@ class FlowFormatterSegmentPlanner:
                     segment_index=index,
                     segment_count=count,
                     terminal=index == count,
-                    groups=groups,
+                    sections=sections,
                     previous=previous,
                     next=next_value,
                     rendered_input_tokens=rendered_input,
@@ -1017,7 +1187,7 @@ class FlowFormatterSegmentPlanner:
                     fixed_framing_reserve_tokens=self.framing_reserve_tokens,
                     context_tokens=self.context_tokens,
                     minimum_valid_output_tokens=minimum_output,
-                    serialized_group_tokens=tuple(self._known_group_tokens(group, serialized) for group in groups),
+                    serialized_group_tokens=tuple(self._known_group_tokens(group, serialized) for section in sections for group in section.ordered_groups),
                 )
             )
         return tuple(segments)
@@ -1025,102 +1195,184 @@ class FlowFormatterSegmentPlanner:
     def _segments_from_existing(
         self,
         segment: FlowFormatterSegment,
-        group_segments: tuple[tuple[FlowFormatterGroup, ...], ...],
+        section_segments: tuple[tuple[FlowPresentationSection, ...], ...],
     ) -> tuple[FlowFormatterSegment, ...]:
-        serialized = {group.group_ref: self._group_tokens(group) for groups in group_segments for group in groups}
-        count = len(group_segments)
+        serialized = {
+            group.group_ref: self._group_tokens(group)
+            for sections in section_segments
+            for section in sections
+            for group in section.ordered_groups
+        }
+        count = len(section_segments)
         result: list[FlowFormatterSegment] = []
-        for index, groups in enumerate(group_segments, start=1):
-            previous = self._continuity(group_segments[index - 2][-1]) if index > 1 and group_segments[index - 2] else segment.previous
-            next_value = self._continuity(group_segments[index][0]) if index < count and group_segments[index] else segment.next
-            minimum_output = self._minimum_output_tokens(groups)
+        for index, sections in enumerate(section_segments, start=1):
+            previous = self._continuity(self._last_group(section_segments[index - 2])) if index > 1 and section_segments[index - 2] else segment.previous
+            next_value = self._continuity(self._first_group(section_segments[index])) if index < count and section_segments[index] else segment.next
+            minimum_output = self._minimum_output_tokens(sections)
             result.append(
                 replace(
                     segment,
                     segment_index=index,
                     segment_count=count,
                     terminal=segment.terminal and index == count,
-                    groups=groups,
+                    sections=sections,
                     previous=previous,
                     next=next_value,
-                    rendered_input_tokens=self._input_tokens(groups, serialized),
-                    reserved_output_tokens=self._reserved_output_tokens(groups, minimum_output),
+                    rendered_input_tokens=self._input_tokens(sections, serialized),
+                    reserved_output_tokens=self._reserved_output_tokens(sections, minimum_output),
                     minimum_valid_output_tokens=minimum_output,
-                    serialized_group_tokens=tuple(self._known_group_tokens(group, serialized) for group in groups),
+                    serialized_group_tokens=tuple(self._known_group_tokens(group, serialized) for section in sections for group in section.ordered_groups),
                 )
             )
         return tuple(result)
 
-    def _partition_oversized_groups(self, groups: Sequence[FlowFormatterGroup]) -> tuple[FlowFormatterGroup, ...]:
-        result: list[FlowFormatterGroup] = []
-        for group in groups:
-            if self._fits((group,), {group.group_ref: self._group_tokens(group)}):
-                result.append(group)
+    def _ensure_sections(self, formatter_plan: FlowFormatterPlan) -> FlowFormatterPlan:
+        if formatter_plan.sections:
+            return formatter_plan
+        groups, sections = FlowFormatterPlanBuilder()._presentation_sections(formatter_plan.groups)
+        return replace(formatter_plan, groups=groups, sections=sections)
+
+    def _partition_oversized_section(self, section: FlowPresentationSection) -> tuple[FlowPresentationSection, ...]:
+        serialized = {group.group_ref: self._group_tokens(group) for group in section.ordered_groups}
+        if self._fits((section,), serialized):
+            return (section,)
+        if section.kind in {FlowPresentationSectionKind.UNVERIFIED_GAP, FlowPresentationSectionKind.AMBIGUOUS_GAP}:
+            raise FlowFormatterBudgetError("formatter gap group cannot fit within the configured context budget")
+
+        result: list[FlowPresentationSection] = []
+        scopes = self._merge_scope_ranges(section.ordered_groups)
+        current: list[FlowFormatterGroup] = []
+        for scope_groups in scopes:
+            scope_section = replace(section, ordered_groups=tuple(scope_groups))
+            scope_serialized = {group.group_ref: self._known_group_tokens(group, serialized) for group in scope_groups}
+            if not self._fits((scope_section,), scope_serialized):
+                if current:
+                    result.append(replace(section, ordered_groups=tuple(current)))
+                    current = []
+                result.extend(self._split_scope_to_fit(section, tuple(scope_groups), serialized))
                 continue
-            for item in self._force_partition_group(group):
-                if not self._fits((item,), {item.group_ref: self._group_tokens(item)}):
-                    raise FlowFormatterBudgetError("formatter group cannot fit within the configured context budget")
-                result.append(item)
+            candidate = [*current, *scope_groups]
+            candidate_section = replace(section, ordered_groups=tuple(candidate))
+            candidate_serialized = {group.group_ref: self._known_group_tokens(group, serialized) for group in candidate}
+            if current and not self._fits((candidate_section,), candidate_serialized):
+                result.append(replace(section, ordered_groups=tuple(current)))
+                current = list(scope_groups)
+                continue
+            current = candidate
+        if current:
+            result.append(replace(section, ordered_groups=tuple(current)))
         return tuple(result)
 
-    def _force_partition_group(self, group: FlowFormatterGroup) -> tuple[FlowFormatterGroup, ...]:
-        if not group.child_groups:
-            return (group,)
-        partitions = tuple(self._split_group_children(group))
-        if len(partitions) <= 1:
-            return partitions
-        result: list[FlowFormatterGroup] = []
-        for item in partitions:
-            if self._fits((item,), {item.group_ref: self._group_tokens(item)}):
-                result.append(item)
-            else:
-                result.extend(self._force_partition_group(item))
+    def _split_scope_to_fit(
+        self,
+        section: FlowPresentationSection,
+        groups: tuple[FlowFormatterGroup, ...],
+        serialized: Mapping[str, int],
+    ) -> tuple[FlowPresentationSection, ...]:
+        result: list[FlowPresentationSection] = []
+        current: list[FlowFormatterGroup] = []
+        for group in groups:
+            single = replace(section, ordered_groups=(group,))
+            single_serialized = {group.group_ref: self._known_group_tokens(group, serialized)}
+            if not self._fits((single,), single_serialized):
+                raise FlowFormatterBudgetError("formatter group cannot fit within the configured context budget")
+            candidate = [*current, group]
+            candidate_section = replace(section, ordered_groups=tuple(candidate))
+            candidate_serialized = {item.group_ref: self._known_group_tokens(item, serialized) for item in candidate}
+            if current and not self._fits((candidate_section,), candidate_serialized):
+                result.append(replace(section, ordered_groups=tuple(current)))
+                current = [group]
+                continue
+            current.append(group)
+        if current:
+            result.append(replace(section, ordered_groups=tuple(current)))
         return tuple(result)
 
-    def _split_group_children(self, group: FlowFormatterGroup) -> tuple[FlowFormatterGroup, ...]:
-        children = tuple(group.child_groups)
-        if len(children) <= 1:
-            return (group,)
-        midpoint = max(1, len(children) // 2)
-        first = replace(group, group_ref=f"{group.group_ref}a1", child_groups=children[:midpoint])
-        second = replace(group, group_ref=f"{group.group_ref}a2", child_groups=children[midpoint:])
-        return (first, second)
+    def _split_section(self, section: FlowPresentationSection) -> tuple[FlowPresentationSection, ...]:
+        scopes = self._merge_scope_ranges(section.ordered_groups)
+        if len(scopes) > 1:
+            midpoint = max(1, len(scopes) // 2)
+            first = tuple(group for scope in scopes[:midpoint] for group in scope)
+            second = tuple(group for scope in scopes[midpoint:] for group in scope)
+            return (replace(section, ordered_groups=first), replace(section, ordered_groups=second))
+        groups = section.ordered_groups
+        if len(groups) <= 1 or section.kind in {FlowPresentationSectionKind.UNVERIFIED_GAP, FlowPresentationSectionKind.AMBIGUOUS_GAP}:
+            return (section,)
+        midpoint = max(1, len(groups) // 2)
+        return (
+            replace(section, ordered_groups=groups[:midpoint]),
+            replace(section, ordered_groups=groups[midpoint:]),
+        )
 
-    def _fits(self, groups: Sequence[FlowFormatterGroup], serialized: Mapping[str, int]) -> bool:
-        rendered_input = self._input_tokens(groups, serialized)
-        minimum_output = self._minimum_output_tokens(groups)
-        reserved_output = self._reserved_output_tokens(groups, minimum_output)
+    def _merge_scope_ranges(self, groups: Sequence[FlowFormatterGroup]) -> tuple[tuple[FlowFormatterGroup, ...], ...]:
+        ranges: list[tuple[FlowFormatterGroup, ...]] = []
+        current_scope: str | None = None
+        current: list[FlowFormatterGroup] = []
+        for group in groups:
+            if current and group.merge_scope != current_scope:
+                ranges.append(tuple(current))
+                current = []
+            current_scope = group.merge_scope
+            current.append(group)
+        if current:
+            ranges.append(tuple(current))
+        return tuple(ranges)
+
+    def _fits(self, sections: Sequence[FlowPresentationSection], serialized: Mapping[str, int]) -> bool:
+        rendered_input = self._input_tokens(sections, serialized)
+        minimum_output = self._minimum_output_tokens(sections)
+        reserved_output = self._reserved_output_tokens(sections, minimum_output)
         return rendered_input + reserved_output + self.framing_reserve_tokens <= self.context_tokens and minimum_output <= reserved_output
 
     def _group_tokens(self, group: FlowFormatterGroup) -> int:
         self.serialization_count += 1
-        return _estimate_tokens(json.dumps(_group_payload(group), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        return _estimate_tokens(json.dumps(_group_payload(group, include_children=False), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
     def _known_group_tokens(self, group: FlowFormatterGroup, serialized: Mapping[str, int]) -> int:
         if group.group_ref in serialized:
             return serialized[group.group_ref]
         return self._group_tokens(group)
 
-    def _input_tokens(self, groups: Sequence[FlowFormatterGroup], serialized: Mapping[str, int]) -> int:
-        group_tokens = sum(self._known_group_tokens(group, serialized) for group in groups)
-        required_count = sum(1 for _ in _walk_groups(groups))
-        return group_tokens + 220 + required_count * 8
+    def _input_tokens(self, sections: Sequence[FlowPresentationSection], serialized: Mapping[str, int]) -> int:
+        group_tokens = sum(self._known_group_tokens(group, serialized) for section in sections for group in section.ordered_groups)
+        required_count = sum(len(section.ordered_groups) for section in sections)
+        return group_tokens + 260 + len(sections) * 24 + required_count * 10
 
-    def _minimum_output_tokens(self, groups: Sequence[FlowFormatterGroup]) -> int:
-        refs = [group.group_ref for group in _walk_groups(groups)]
-        skeleton = {"steps": [{"groupRef": ref, "certainty": VERIFIED, "text": "x"} for ref in refs]}
+    def _minimum_output_tokens(self, sections: Sequence[FlowPresentationSection]) -> int:
+        skeleton = {
+            "sections": [
+                {
+                    "sectionRef": section.section_ref,
+                    "steps": [
+                        {"groupRefs": [group.group_ref], "certainty": group.certainty, "text": "x"}
+                        for group in section.ordered_groups
+                    ],
+                }
+                for section in sections
+            ]
+        }
         return _estimate_tokens(json.dumps(skeleton, ensure_ascii=False, separators=(",", ":")))
 
-    def _reserved_output_tokens(self, groups: Sequence[FlowFormatterGroup], minimum_output_tokens: int) -> int:
-        required_count = sum(1 for _ in _walk_groups(groups))
-        return max(minimum_output_tokens, required_count * 64 + 160)
+    def _reserved_output_tokens(self, sections: Sequence[FlowPresentationSection], minimum_output_tokens: int) -> int:
+        required_count = sum(len(section.ordered_groups) for section in sections)
+        return max(minimum_output_tokens, required_count * 64 + len(sections) * 16 + 160)
+
+    def _first_group(self, sections: Sequence[FlowPresentationSection]) -> FlowFormatterGroup | None:
+        for section in sections:
+            if section.ordered_groups:
+                return section.ordered_groups[0]
+        return None
+
+    def _last_group(self, sections: Sequence[FlowPresentationSection]) -> FlowFormatterGroup | None:
+        for section in reversed(tuple(sections)):
+            if section.ordered_groups:
+                return section.ordered_groups[-1]
+        return None
 
     def _continuity(self, group: FlowFormatterGroup | None) -> FlowFormatterContinuity | None:
         if group is None:
             return None
         last = group
-        while last.child_groups:
-            last = last.child_groups[-1]
         return FlowFormatterContinuity(
             source=last.source or last.to_source or last.from_source,
             symbol=last.symbol or last.to_symbol or last.from_symbol,
@@ -1144,18 +1396,17 @@ class FlowFormatterPromptRenderer:
             "Format one segment of a backend-owned execution-flow plan for a human reader.\n"
             f"Required responseLanguage: {dict(formatter_input).get('responseLanguage', '')}. Do not use English unless responseLanguage is en.\n"
             "Return strict JSON only. Do not include prose outside JSON.\n"
-            "The JSON shape is exactly: {\"steps\":[{\"groupRef\":\"string\",\"certainty\":\"string\",\"text\":\"string\"}]}.\n"
-            "Return coverageContract.outputSkeleton with each text filled in; keep groupRef, certainty, count, and order unchanged.\n"
+            "The JSON shape is exactly: {\"sections\":[{\"sectionRef\":\"string\",\"steps\":[{\"groupRefs\":[\"string\"],\"certainty\":\"string\",\"text\":\"string\"}]}]}.\n"
+            "Return every supplied sectionRef exactly once, in the supplied section order.\n"
+            "Cover every supplied groupRef exactly once across all steps.\n"
+            "Each step groupRefs array must be one contiguous ordered range inside that section.\n"
+            "Combine adjacent groups only when their supplied mergeScope value is identical.\n"
+            "Do not combine groups across sections, certainty values, gaps, branch paths, independent answers, or different merge scopes.\n"
+            "Produce the smallest clear set of steps that explains the ordered structure without inventing behavior.\n"
+            "Use summaries where useful, translate summaries into responseLanguage, preserve supplied identifiers when mentioned, and avoid repeating equivalent information.\n"
             "Write every text value in responseLanguage.\n"
-            "Use only the supplied structural fields and summaries. Do not add, remove, reorder, merge, or split steps.\n"
-            "Groups may contain identifierHints; if you mention one, copy it exactly.\n"
-            "Keep each text value concise: one short sentence, usually 5 to 12 words, unless a supplied group requires more.\n"
-            "Use uncertainty wording only when the group's certainty is UNVERIFIED or AMBIGUOUS. "
-            "For UNVERIFIED text, explicitly say in responseLanguage that the transition is not verified; "
-            "describe it as an uncertain gap, not as a performed check or confirmed handoff. "
-            "For AMBIGUOUS text, explicitly say in responseLanguage that the transition is ambiguous. "
-            "For VERIFIED text, do not say or imply that the step is uncertain.\n"
-            "Do not mention internal refs, graph terminology, evidence, retrieval, formatter segments, or JSON structure.\n"
+            "Use only the supplied structural fields and summaries.\n"
+            "Do not mention internal refs, evidence records, retrieval mechanics, formatter mechanics, or JSON structure.\n"
             "Do not infer behavior from a symbol, source name, package name, route, or class name.\n"
             f"{validation_block}"
             "BEGIN_FLOW_FORMATTER_INPUT_JSON\n"
@@ -1179,52 +1430,116 @@ class FlowFormatterResponseValidator:
         extra_root = [key for key in payload if key not in _ALLOWED_FORMATTER_RESPONSE_KEYS]
         if extra_root:
             errors.append(f"Response must not include extra root fields: {', '.join(sorted(extra_root))}.")
-        steps = payload.get("steps")
-        if not isinstance(steps, list):
-            errors.append("steps must be a list.")
-            steps = []
 
         required_groups = segment.required_groups
         required_refs = [group.group_ref for group in required_groups]
+        required_sections = list(segment.sections)
+        required_section_refs = [section.section_ref for section in required_sections]
+        section_by_ref = {section.section_ref: section for section in required_sections}
+        group_by_ref = {group.group_ref: group for group in required_groups}
+        group_index = {group.group_ref: index for index, group in enumerate(required_groups)}
         certainty_by_ref = {group.group_ref: group.certainty for group in required_groups}
-        if len(steps) != len(required_refs):
-            errors.append("steps must contain exactly one item per supplied groupRef.")
+        section_by_group_ref = {
+            group.group_ref: section.section_ref
+            for section in required_sections
+            for group in section.ordered_groups
+        }
+
+        sections_payload = payload.get("sections")
+        if not isinstance(sections_payload, list):
+            errors.append("sections must be a list.")
+            sections_payload = []
+        actual_section_refs: list[str] = []
 
         parsed_steps: list[FlowFormatterStepText] = []
         seen: set[str] = set()
-        for index, item in enumerate(steps):
-            if not isinstance(item, dict):
-                errors.append(f"steps[{index}] must be an object.")
+        last_index = -1
+        for section_index, section_item in enumerate(sections_payload):
+            if not isinstance(section_item, dict):
+                errors.append(f"sections[{section_index}] must be an object.")
                 continue
-            extra_step = [key for key in item if key not in _ALLOWED_FORMATTER_STEP_KEYS]
-            if extra_step:
-                errors.append(f"steps[{index}] must not include extra fields: {', '.join(sorted(extra_step))}.")
-            missing_step = [key for key in _ALLOWED_FORMATTER_STEP_KEYS if key not in item]
-            if missing_step:
-                errors.append(f"steps[{index}] missing required fields: {', '.join(sorted(missing_step))}.")
-            group_ref = str(item.get("groupRef") or "").strip()
-            certainty = str(item.get("certainty") or "").strip()
-            text = str(item.get("text") or "").strip() if isinstance(item.get("text"), str) else ""
-            if not group_ref:
-                errors.append(f"steps[{index}].groupRef must be non-empty.")
+            extra_section = [key for key in section_item if key not in _ALLOWED_FORMATTER_SECTION_KEYS]
+            if extra_section:
+                errors.append(f"sections[{section_index}] must not include extra fields: {', '.join(sorted(extra_section))}.")
+            missing_section = [key for key in _ALLOWED_FORMATTER_SECTION_KEYS if key not in section_item]
+            if missing_section:
+                errors.append(f"sections[{section_index}] missing required fields: {', '.join(sorted(missing_section))}.")
+            section_ref = str(section_item.get("sectionRef") or "").strip()
+            actual_section_refs.append(section_ref)
+            if section_ref not in section_by_ref:
+                errors.append(f"sectionRef {section_ref or '<empty>'} was not supplied.")
+            steps = section_item.get("steps")
+            if not isinstance(steps, list):
+                errors.append(f"sections[{section_index}].steps must be a list.")
                 continue
-            if group_ref in seen:
-                errors.append(f"groupRef {group_ref} appears more than once.")
-            seen.add(group_ref)
-            if group_ref not in certainty_by_ref:
-                errors.append(f"groupRef {group_ref} was not supplied.")
-            elif certainty != certainty_by_ref[group_ref]:
-                errors.append(f"groupRef {group_ref} certainty must be {certainty_by_ref[group_ref]}.")
-            if not text:
-                errors.append(f"groupRef {group_ref} text must be non-empty.")
-            parsed_steps.append(FlowFormatterStepText(group_ref=group_ref, certainty=certainty, text=text))
+            for step_index, item in enumerate(steps):
+                if not isinstance(item, dict):
+                    errors.append(f"sections[{section_index}].steps[{step_index}] must be an object.")
+                    continue
+                extra_step = [key for key in item if key not in _ALLOWED_FORMATTER_STEP_KEYS]
+                if extra_step:
+                    errors.append(f"sections[{section_index}].steps[{step_index}] must not include extra fields: {', '.join(sorted(extra_step))}.")
+                missing_step = [key for key in _ALLOWED_FORMATTER_STEP_KEYS if key not in item]
+                if missing_step:
+                    errors.append(f"sections[{section_index}].steps[{step_index}] missing required fields: {', '.join(sorted(missing_step))}.")
+                raw_group_refs = item.get("groupRefs")
+                group_refs = tuple(str(ref or "").strip() for ref in raw_group_refs) if isinstance(raw_group_refs, list) else ()
+                certainty = str(item.get("certainty") or "").strip()
+                text = str(item.get("text") or "").strip() if isinstance(item.get("text"), str) else ""
+                if not group_refs:
+                    errors.append(f"sections[{section_index}].steps[{step_index}].groupRefs must be a non-empty list.")
+                    continue
+                if any(not ref for ref in group_refs):
+                    errors.append(f"sections[{section_index}].steps[{step_index}].groupRefs must contain only non-empty strings.")
+                for ref in group_refs:
+                    if ref in seen:
+                        errors.append(f"groupRef {ref} appears more than once.")
+                    seen.add(ref)
+                    if ref not in group_by_ref:
+                        errors.append(f"groupRef {ref} was not supplied.")
+                    elif section_by_group_ref.get(ref) != section_ref:
+                        errors.append(f"groupRef {ref} does not belong to sectionRef {section_ref}.")
+                supplied = [group_by_ref[ref] for ref in group_refs if ref in group_by_ref]
+                if supplied:
+                    indexes = [group_index[group.group_ref] for group in supplied]
+                    if indexes != sorted(indexes):
+                        errors.append(f"groupRefs {', '.join(group_refs)} must preserve supplied group order.")
+                    if indexes and min(indexes) <= last_index:
+                        errors.append("steps must preserve canonical group order.")
+                    if indexes:
+                        last_index = max(last_index, max(indexes))
+                    expected_range = list(range(min(indexes), max(indexes) + 1))
+                    if indexes != expected_range:
+                        errors.append(f"groupRefs {', '.join(group_refs)} must form one contiguous ordered range.")
+                    certainties = {group.certainty for group in supplied}
+                    if len(certainties) != 1:
+                        errors.append(f"groupRefs {', '.join(group_refs)} must not combine different certainty values.")
+                    elif certainty != supplied[0].certainty:
+                        errors.append(f"groupRefs {', '.join(group_refs)} certainty must be {supplied[0].certainty}.")
+                    merge_scopes = {group.merge_scope for group in supplied}
+                    if len(merge_scopes) != 1:
+                        errors.append(f"groupRefs {', '.join(group_refs)} must share one structural merge scope.")
+                    branch_paths = {group.branch_path for group in supplied}
+                    if len(branch_paths) != 1:
+                        errors.append(f"groupRefs {', '.join(group_refs)} must not combine separate branch paths.")
+                    gap_flags = {group.kind in {FlowFormatterGroupKind.UNVERIFIED_GAP, FlowFormatterGroupKind.AMBIGUOUS_GAP} for group in supplied}
+                    if len(gap_flags) != 1:
+                        errors.append(f"groupRefs {', '.join(group_refs)} must not combine a gap with verified execution.")
+                if not text:
+                    errors.append(f"groupRefs {', '.join(group_refs)} text must be non-empty.")
+                parsed_steps.append(FlowFormatterStepText(group_refs=group_refs, certainty=certainty, text=text))
 
-        actual_order = [step.group_ref for step in parsed_steps]
-        if actual_order != required_refs:
-            errors.append("steps must appear in the supplied group order.")
+        if actual_section_refs != required_section_refs:
+            errors.append("sections must appear exactly once in the supplied section order.")
         missing_refs = [ref for ref in required_refs if ref not in seen]
         if missing_refs:
             errors.append(f"Missing groupRefs: {', '.join(missing_refs)}.")
+        foreign_or_empty_sections = [ref for ref in actual_section_refs if not ref or ref not in section_by_ref]
+        duplicate_sections = sorted({ref for ref in actual_section_refs if ref and actual_section_refs.count(ref) > 1})
+        if foreign_or_empty_sections:
+            errors.append("sections must not include empty or foreign sectionRefs.")
+        if duplicate_sections:
+            errors.append(f"sectionRefs appear more than once: {', '.join(duplicate_sections)}.")
         self._validate_text(parsed_steps, required_groups, segment.response_language, errors)
         if errors:
             raise FlowFormatterContractViolation(errors)
@@ -1237,39 +1552,43 @@ class FlowFormatterResponseValidator:
         response_language: str,
         errors: list[str],
     ) -> None:
-        text_by_ref = {step.group_ref: step.text for step in steps}
         all_text = "\n".join(step.text for step in steps)
         language_result = self.language_validator.validate(all_text, response_language)
         if not language_result.valid:
             errors.extend(language_result.errors)
         all_allowed_routes = {value for group in groups for value in self._group_routes(group)}
-        all_allowed_methods = {value for group in groups for value in self._group_methods(group)}
-        for group in groups:
-            text = text_by_ref.get(group.group_ref, "")
-            if _INTERNAL_TEXT_RE.search(text) or _LOCAL_GROUP_REF_RE.search(text):
-                errors.append(f"groupRef {group.group_ref} text exposes internal terminology or refs.")
+        local_refs = [group.group_ref for group in groups]
+        for step in steps:
+            text = step.text
+            for group_ref in local_refs:
+                if re.search(rf"(?<!\w){re.escape(group_ref)}(?!\w)", text):
+                    errors.append(f"groupRef {group_ref} text exposes a response-local ref.")
             for route in _ROUTE_RE.findall(text):
                 normalized_route = route.rstrip(".,;:)")
                 if normalized_route not in all_allowed_routes:
-                    errors.append(f"groupRef {group.group_ref} text contains unsupported route {route!r}.")
-            for token in _HTTP_METHOD_TOKENS.intersection(set(re.findall(r"\b[A-Z]{2,7}\b", text))):
-                if token not in all_allowed_methods:
-                    errors.append(f"groupRef {group.group_ref} text contains unsupported method {token!r}.")
+                    errors.append(f"groupRefs {', '.join(step.group_refs)} text contains unsupported route {route!r}.")
 
     def _group_routes(self, group: FlowFormatterGroup) -> tuple[str, ...]:
         return tuple(value for value in (group.route, group.target_descriptor) if isinstance(value, str) and value.startswith("/"))
 
-    def _group_methods(self, group: FlowFormatterGroup) -> tuple[str, ...]:
-        return tuple(value for value in (group.method,) if isinstance(value, str) and value)
-
 
 class FlowFormatterStitcher:
-    def stitch(self, groups: Sequence[FlowFormatterGroup], steps: Sequence[FlowFormatterStepText]) -> str:
-        group_by_ref = {group.group_ref: group for group in _walk_groups(groups)}
+    def stitch(self, sections: Sequence[FlowPresentationSection], steps: Sequence[FlowFormatterStepText]) -> str:
+        group_by_ref = {group.group_ref: group for section in sections for group in section.ordered_groups}
+        section_by_ref = {section.section_ref: section for section in sections}
         counters: list[int] = []
         lines: list[str] = []
+        rendered_sections: set[str] = set()
         for step in steps:
-            group = group_by_ref[step.group_ref]
+            group = group_by_ref[step.group_refs[0]]
+            section_ref = group.section_ref or ""
+            if section_ref and section_ref not in rendered_sections:
+                heading = self._heading(section_by_ref.get(section_ref))
+                if lines:
+                    lines.append("")
+                if heading:
+                    lines.append(heading)
+                rendered_sections.add(section_ref)
             depth = max(0, int(group.depth))
             while len(counters) <= depth:
                 counters.append(0)
@@ -1279,6 +1598,12 @@ class FlowFormatterStitcher:
             indent = "   " * depth
             lines.append(f"{indent}{number} {step.text.strip()}")
         return "\n".join(lines).strip()
+
+    def _heading(self, section: FlowPresentationSection | None) -> str:
+        if section is None:
+            return ""
+        values = [value for value in (section.source, section.entrypoint) if value]
+        return " · ".join(values)
 
 
 class FlowFormatterAnswerService:
@@ -1355,22 +1680,22 @@ class FlowFormatterAnswerService:
             try:
                 self.current_stage = "FINAL_FORMATTER"
                 steps: list[FlowFormatterStepText] = []
-                stitch_groups: list[FlowFormatterGroup] = []
+                stitch_sections: list[FlowPresentationSection] = []
                 for segment in segments:
                     self._check_cancelled(cancel_event)
                     if time.monotonic() >= deadline_at:
                         raise FlowFormatterDeadlineExceeded("final formatter deadline exceeded")
-                    segment_steps, segment_groups = self._format_segment(
+                    segment_steps, segment_sections = self._format_segment(
                         request,
                         segment,
                         deadline_at,
                         cancel_event=cancel_event,
                     )
                     steps.extend(segment_steps)
-                    stitch_groups.extend(segment_groups)
+                    stitch_sections.extend(segment_sections)
                 self.current_stage = "FORMATTER_STITCHING"
                 stitching_started = time.perf_counter()
-                text = self.stitcher.stitch(tuple(stitch_groups), steps)
+                text = self.stitcher.stitch(tuple(stitch_sections), steps)
                 self._stitching_duration_ms += round((time.perf_counter() - stitching_started) * 1000, 3)
                 answers.append(
                     FlowFormatterAnswer(
@@ -1428,7 +1753,7 @@ class FlowFormatterAnswerService:
         deadline_at: float,
         *,
         cancel_event: Any | None,
-    ) -> tuple[tuple[FlowFormatterStepText, ...], tuple[FlowFormatterGroup, ...]]:
+    ) -> tuple[tuple[FlowFormatterStepText, ...], tuple[FlowPresentationSection, ...]]:
         validation_errors: Sequence[str] | None = None
         formatter_input = segment.to_prompt_input(request.queryText)
         for attempt_count in _REPAIRABLE_ATTEMPTS:
@@ -1440,19 +1765,19 @@ class FlowFormatterAnswerService:
                     raise FlowFormatterSegmentFailed("formatter response was truncated for an indivisible segment")
                 self._output_split_count += 1
                 split_steps: list[FlowFormatterStepText] = []
-                split_groups: list[FlowFormatterGroup] = []
+                split_sections: list[FlowPresentationSection] = []
                 for child_segment in split:
-                    child_steps, child_groups = self._format_segment(
+                    child_steps, child_sections = self._format_segment(
                         request,
                         child_segment,
                         deadline_at,
                         cancel_event=cancel_event,
                     )
                     split_steps.extend(child_steps)
-                    split_groups.extend(child_groups)
-                return tuple(split_steps), tuple(split_groups)
+                    split_sections.extend(child_sections)
+                return tuple(split_steps), tuple(split_sections)
             try:
-                return self.validator.validate(result.raw_text, segment), segment.groups
+                return self.validator.validate(result.raw_text, segment), segment.sections
             except FlowFormatterContractViolation as exc:
                 if self.audit_records:
                     self.audit_records[-1]["postValidationErrors"] = list(exc.errors)
@@ -1728,10 +2053,13 @@ def _walk_groups(groups: Sequence[FlowFormatterGroup]) -> Iterable[FlowFormatter
 def _group_payload(group: FlowFormatterGroup, *, include_children: bool = True) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "groupRef": group.group_ref,
+        "sectionRef": group.section_ref,
         "order": group.order,
         "depth": group.depth,
         "kind": group.kind.value,
         "certainty": group.certainty,
+        "branchPath": group.branch_path,
+        "mergeScope": group.merge_scope,
         "source": group.source,
         "sourceDisplayHint": group.source_display_hint,
         "symbol": group.symbol,
@@ -1750,42 +2078,10 @@ def _group_payload(group: FlowFormatterGroup, *, include_children: bool = True) 
         "boundaryKind": group.boundary_kind,
         "targetDescriptor": group.target_descriptor,
         "summary": group.summary,
-        "identifierHints": list(_identifier_hints(group)),
         "terminalSemantic": group.terminal_semantic,
         "childGroups": [_group_payload(child) for child in group.child_groups] if include_children else [],
     }
     return _without_empty(payload)
-
-
-def _identifier_hints(group: FlowFormatterGroup) -> tuple[str, ...]:
-    values: list[str] = []
-    if group.kind in {
-        FlowFormatterGroupKind.ENTRYPOINT,
-        FlowFormatterGroupKind.OPERATION,
-        FlowFormatterGroupKind.EXTERNAL_BOUNDARY,
-        FlowFormatterGroupKind.UNRESOLVED_BOUNDARY,
-        FlowFormatterGroupKind.UNVERIFIED_GAP,
-        FlowFormatterGroupKind.AMBIGUOUS_GAP,
-        FlowFormatterGroupKind.BRANCH_ITEM,
-    }:
-        for value in (group.symbol, group.from_symbol, group.to_symbol):
-            if value and _looks_technical_literal(value):
-                _append_identifier(values, value)
-    for value in (group.method, group.route, group.topic, group.schedule):
-        _append_identifier(values, value)
-    if not values:
-        for value in (group.operation_identity, group.interface_identity):
-            if value and _looks_technical_literal(value):
-                _append_identifier(values, value)
-    if group.target_descriptor and _looks_technical_literal(group.target_descriptor):
-        _append_identifier(values, group.target_descriptor)
-    return tuple(values)
-
-
-def _append_identifier(values: list[str], value: str | None) -> None:
-    normalized = str(value or "").strip()
-    if normalized and normalized not in values:
-        values.append(normalized)
 
 
 def _without_empty(value: Dict[str, Any]) -> Dict[str, Any]:
@@ -1830,19 +2126,6 @@ def _looks_complete_json(value: str) -> bool:
         return True
     except Exception:
         return False
-
-
-def _looks_technical_literal(value: str) -> bool:
-    normalized = str(value or "").strip()
-    if not normalized:
-        return False
-    return bool(
-        normalized.startswith("/")
-        or "." in normalized
-        or "_" in normalized
-        or re.search(r"[A-Z][a-z0-9]+[A-Z]", normalized)
-        or normalized.upper() == normalized
-    )
 
 
 def resolved_formatter_language(value: str | None, default_language: str = "en") -> str:

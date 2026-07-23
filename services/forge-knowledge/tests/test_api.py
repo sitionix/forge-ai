@@ -191,7 +191,7 @@ def test_query_endpoint_returns_formatter_backed_human_answer(tmp_path):
     answer = payload["answers"][0]
     assert answer["source"] == "source-a"
     assert answer["entrypoint"] == "A.start"
-    assert answer["text"].startswith("1. ")
+    assert answer["text"].startswith("source-a · A.start\n1. ")
     assert "\n2. " in answer["text"]
     assert "A.start" in answer["text"]
     assert "B.work" in answer["text"]
@@ -317,7 +317,7 @@ def test_query_endpoint_returns_one_answer_per_independent_narrative_plan(tmp_pa
 
     assert status == 200
     assert [answer["entrypoint"] for answer in payload["answers"]] == roots
-    assert all(answer["text"].startswith("1. ") for answer in payload["answers"])
+    assert all(answer["text"].startswith(f"source-a · {entrypoint}\n1. ") for answer, entrypoint in zip(payload["answers"], roots))
     assert payload["diagnostics"] == []
     assert "flows" not in payload
 

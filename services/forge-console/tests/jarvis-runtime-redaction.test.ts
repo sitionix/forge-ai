@@ -5,6 +5,18 @@ import { JarvisPage } from '../src/operator/jarvis-page.js';
 function jarvisDom() {
   return new JSDOM(`<!doctype html>
     <body data-page="jarvis">
+      <button id="refreshJarvis" type="button">Refresh</button>
+      <span id="jarvisUpdated">loading</span>
+      <div id="jarvisStatusCards"></div>
+      <div id="jarvisStatusError" class="hidden"></div>
+      <div id="jarvisActions"></div>
+      <div id="jarvisActionsError" class="hidden"></div>
+      <form id="jarvisCommandForm">
+        <input id="jarvisCommandText" type="text">
+        <button id="executeJarvisCommand" type="submit">Execute</button>
+      </form>
+      <div id="jarvisCommandResult" class="hidden"></div>
+      <div id="jarvisCommandError" class="hidden"></div>
       <form id="jarvisQueryForm">
         <textarea id="jarvisQueryText"></textarea>
         <button id="sendJarvisQuery" type="submit">Send</button>
@@ -36,11 +48,15 @@ function humanAnswer(text = 'JarvisGateway answers from compact human context.')
   };
 }
 
+function getResponse(path: string) {
+  return Promise.resolve(path === '/jarvis/status' ? { status: 'READY', actions: { count: 0 } } : { actions: [] });
+}
+
 describe('Jarvis runtime rendering', () => {
   it('PERF-CON-06 renders human responses without graph internals or command arrays', async () => {
     const dom = jarvisDom();
     const http = {
-      get: vi.fn(),
+      get: vi.fn(getResponse),
       post: vi.fn(() => Promise.resolve(humanAnswer('JarvisGateway explains the request in normal language.')))
     };
     const page = new JarvisPage({ document: dom.window.document, http });
@@ -61,7 +77,7 @@ describe('Jarvis runtime rendering', () => {
     expect(text).not.toContain('["bash"');
     expect(text).not.toContain('sleep 0.2');
     expect(http.post).toHaveBeenCalledWith('/jarvis/query', queryPayload('explain'), expect.any(Object));
-    expect(http.get).not.toHaveBeenCalled();
+    expect(http.get.mock.calls.map(([path]) => path)).toEqual(['/jarvis/status', '/jarvis/actions']);
     page.dispose();
   });
 
@@ -74,7 +90,7 @@ describe('Jarvis runtime rendering', () => {
       correlationId: 'abc-123'
     });
     const http = {
-      get: vi.fn(),
+      get: vi.fn(getResponse),
       post: vi.fn(() => Promise.reject(error))
     };
     const page = new JarvisPage({ document: dom.window.document, http });
@@ -104,7 +120,7 @@ describe('Jarvis runtime rendering', () => {
     const dom = jarvisDom();
     let rejectRequest: (error: Error) => void = () => undefined;
     const http = {
-      get: vi.fn(),
+      get: vi.fn(getResponse),
       post: vi.fn(() => new Promise((_resolve, reject) => {
         rejectRequest = reject;
       }))
