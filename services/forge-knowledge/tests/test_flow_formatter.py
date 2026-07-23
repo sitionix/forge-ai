@@ -416,13 +416,72 @@ def test_incidental_unresolved_boundary_is_absent_from_formatter_plan_but_tool_c
     assert not any(group.kind is FlowFormatterGroupKind.UNRESOLVED_BOUNDARY for group in plan.walk())
 
 
-def test_terminal_meaningful_boundary_is_preserved():
+def test_executable_owned_unresolved_boundaries_are_stage_facts_not_public_stages():
     root = _node("Root.start", entrypoint=True)
-    boundary = _edge("root-missing", root, None, status="UNRESOLVED", target="Missing.operation")
+    first = _edge("root-missing-a", root, None, status="UNRESOLVED", target="Missing.operationA")
+    second = _edge("root-missing-b", root, None, status="UNRESOLVED", target="Missing.operationB", metadata={"transportKind": "QUEUE", "topic": "items.done"})
 
-    plan = _formatter_plan(_flow(root, (root,), boundaries=(boundary,)))
+    plan = _formatter_plan(_flow(root, (root,), boundaries=(first, second)))
+    executable = next(stage for stage in plan.walk_stages() if stage.kind is FlowExecutionStageKind.EXECUTABLE)
 
-    assert any(group.kind is FlowFormatterGroupKind.UNRESOLVED_BOUNDARY for group in plan.walk())
+    assert not any(stage.kind is FlowExecutionStageKind.BOUNDARY for stage in plan.walk_stages())
+    assert len(executable.owned_boundaries) == 2
+    assert {item["targetDescriptor"] for item in executable.owned_boundaries} == {"Missing.operationA", "Missing.operationB"}
+    assert plan.structural_metrics["executableOwnedBoundaryFactCount"] == 2
+    assert plan.structural_metrics["ownerlessBoundaryStageCount"] == 0
+
+
+def test_ownerless_external_boundary_can_remain_public_with_typed_structural_reason():
+    group = FlowFormatterGroup(
+        "g1",
+        1,
+        0,
+        FlowFormatterGroupKind.EXTERNAL_BOUNDARY,
+        source="source-a",
+        from_source="source-a",
+        relation_kind="PUBLISHES",
+        resolution_status="EXTERNAL",
+        transport_kind="QUEUE",
+        topic="items.done",
+        target_descriptor="external-topic",
+        owned_boundaries=(
+            {
+                "kind": "BOUNDARY_RELATION",
+                "fromSource": "source-a",
+                "relationKind": "PUBLISHES",
+                "resolutionStatus": "EXTERNAL",
+                "transportKind": "QUEUE",
+                "topic": "items.done",
+                "targetDescriptor": "external-topic",
+            },
+        ),
+    )
+    plan = FlowFormatterSegmentPlanner().plan(FlowFormatterPlan("source-a", "Detached.publish", (group,), "en"))[0]
+    boundary_stage = next(stage for stage in plan.required_stages if stage.kind is FlowExecutionStageKind.BOUNDARY)
+
+    assert boundary_stage.assertion_subject == FlowAssertionSubject.BOUNDARY_RELATION.value
+    assert boundary_stage.owned_boundaries[0]["topic"] == "items.done"
+
+
+def test_duplicate_typed_operation_and_owned_boundary_deduplicate_by_structural_identity():
+    root = _node("Root.start", entrypoint=True, method="POST", route="/items")
+    fact = _fact(root, direction="OUTBOUND", method="POST", route="/items", target_service="remote", operation_identity="Remote.create")
+    boundary = _edge(
+        "root-remote",
+        root,
+        None,
+        status="EXTERNAL",
+        target="remote",
+        metadata={"transportKind": "HTTP", "method": "POST", "route": "/items", "operationIdentity": "Remote.create"},
+        external=True,
+    )
+
+    plan = _formatter_plan(_flow(root, (root,), boundaries=(boundary,)), facts=(fact,))
+    executable = next(stage for stage in plan.walk_stages() if stage.kind is FlowExecutionStageKind.EXECUTABLE)
+
+    assert not executable.owned_boundaries
+    assert plan.structural_metrics["deduplicatedFactCount"] >= 1
+    assert plan.structural_metrics["expectedPublicStageCount"] == 1
 
 
 def test_two_exact_fragments_insert_one_unverified_gap_in_position():
@@ -531,6 +590,25 @@ def test_small_plan_uses_one_formatter_segment_call_and_one_answer():
     assert metrics["formatterProviderCallCount"] == 1
     assert len(provider.calls) == 1
     assert "\n1. " in response.answers[0].text
+
+
+def test_public_stage_count_contract_uses_validated_and_stitched_steps():
+    root = _node("Root.start", entrypoint=True)
+    worker = _node("Worker.run")
+    edge = _edge("root-worker", root, worker)
+    boundary = _edge("root-helper", root, None, status="UNRESOLVED", target="Helper.run")
+    plans = _plans(_flow(root, (root, worker), (edge,), boundaries=(boundary,)))
+
+    response, metrics, _provider = _answer(plans)
+
+    assert len(response.answers) == 1
+    assert metrics["expectedPublicStageCount"] == 2
+    assert metrics["validatedFormatterStepCount"] == 2
+    assert metrics["stitchedPublicStepCount"] == 2
+    assert metrics["publicStepCount"] == 2
+    assert metrics["stageCountContractMatched"] is True
+    assert metrics["executableOwnedBoundaryFactCount"] == 1
+    assert metrics["ownerlessBoundaryStageCount"] == 0
 
 
 def test_assertion_subject_is_propagated_to_formatter_provider_input():
@@ -873,6 +951,8 @@ def test_formatter_production_code_contains_no_removed_hardcode_paths():
         "EXPECTED_WORDS",
         "BAD_WORDS",
         "GOOD_WORDS",
+        "_meaningful_target_descriptor",
+        "meaningful_target",
     ):
         assert forbidden not in production
 
@@ -1053,6 +1133,9 @@ def test_large_flow_scale_keeps_group_coverage_linear_enough():
     assert sum(1 for group in plan.walk() if group.kind is FlowFormatterGroupKind.ORDERED_CALL_GROUP) >= 1
     assert sum(1 for group in plan.walk() if group.kind is FlowFormatterGroupKind.EXPLICIT_BRANCH) >= 1
     assert sum(1 for group in plan.walk() if group.kind is FlowFormatterGroupKind.UNVERIFIED_GAP) == 1
+    assert sum(1 for stage in plan.walk_stages() if stage.kind is FlowExecutionStageKind.BOUNDARY) == 0
+    assert plan.structural_metrics["executableOwnedBoundaryFactCount"] == 1
+    assert plan.structural_metrics["ownerlessBoundaryStageCount"] == 0
     assert sum(1 for group in plan.walk() if group.kind is FlowFormatterGroupKind.CYCLE) >= 1
     assert any(group.source_display_hint == "REQUIRED" for group in plan.walk())
     assert elapsed < 5.0

@@ -131,6 +131,9 @@ class FlowFormatterGroup:
     branch_path: str = ""
     assertion_subject: str | None = None
     assertion_status: str | None = None
+    owner_key: FlowNodeKey | None = None
+    typed_operation_identities: tuple[tuple[Any, ...], ...] = ()
+    owned_boundary_identities: tuple[tuple[Any, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -162,6 +165,7 @@ class FlowExecutionStage:
     stage_part_count: int | None = None
     source_group_ref: str | None = None
     source_group_kind: FlowFormatterGroupKind | None = None
+    deduplicated_fact_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -502,6 +506,20 @@ class FlowFormatterPlanBuilder:
             incoming_from_symbol=None,
             root=True,
         )
+        standalone_operation_identities = {
+            self._operation_fact_identity(fact)
+            for fact in self._external_operation_facts(operation_facts, node_by_key)
+        }
+        for key, edges in boundaries.items():
+            if key in node_by_key:
+                continue
+            for edge in edges:
+                if not self._ownerless_boundary_required(edge):
+                    continue
+                projection = self.boundary_classifier.project(edge)
+                if self._boundary_fact_identity(edge, key, projection, VERIFIED) in standalone_operation_identities:
+                    continue
+                groups.append(self._ownerless_boundary_group(edge, key, state, depth=0))
         for fact in self._external_operation_facts(operation_facts, node_by_key):
             groups.append(self._operation_group(fact, state, depth=0))
         return [self._with_fragment_ref(group, f"f{part_index}") for group in groups]
@@ -567,32 +585,35 @@ class FlowFormatterPlanBuilder:
                 target_key = self._to_key(edge)
                 target = node_by_key.get(target_key) if target_key is not None else None
                 child_entries.append((edge, target, target_key))
-            has_verified_downstream = bool(child_entries)
+            resolved_child_entries = [
+                (edge, target, target_key)
+                for edge, target, target_key in child_entries
+                if target is not None and target_key is not None
+            ]
+            owned_boundary_edges = [
+                *boundaries.get(current_key, ()),
+                *(edge for edge, target, target_key in child_entries if target is None or target_key is None),
+            ]
             groups.append(
                 self._node_group(
                     current_node,
+                    current_key,
                     state,
                     depth=current_depth,
                     root=current_root,
                     incoming=current_incoming,
                     incoming_from_symbol=current_incoming_from_symbol,
                     operations=node_operations,
-                    outgoing=[edge for edge, _target, _target_key in child_entries],
+                    outgoing=[edge for edge, _target, _target_key in resolved_child_entries],
+                    boundaries=self._dedupe_boundary_edges(tuple(owned_boundary_edges)),
                 )
             )
-            for edge in boundaries.get(current_key, ()):
-                if self._human_relevant_boundary(edge, has_verified_downstream=has_verified_downstream):
-                    groups.append(self._boundary_group(edge, current_node, state, depth=current_depth))
 
-            if not child_entries:
+            if not resolved_child_entries:
                 return groups
 
-            if len(child_entries) == 1:
-                edge, target, target_key = child_entries[0]
-                if target is None or target_key is None:
-                    if self._human_relevant_boundary(edge, has_verified_downstream=False):
-                        groups.append(self._boundary_group(edge, current_node, state, depth=current_depth))
-                    return groups
+            if len(resolved_child_entries) == 1:
+                edge, target, target_key = resolved_child_entries[0]
                 current_ancestry = (*current_ancestry, current_key)
                 current_incoming_from_symbol = self._symbol(current_node)
                 current_node = target
@@ -601,30 +622,27 @@ class FlowFormatterPlanBuilder:
                 current_root = False
                 continue
 
-            if self._has_explicit_branch([edge for edge, _target, _target_key in child_entries]):
+            if self._has_explicit_branch([edge for edge, _target, _target_key in resolved_child_entries]):
                 order, group_ref = state.next_ref()
                 branch_children: list[FlowFormatterGroup] = []
-                for edge, target, target_key in child_entries:
+                for edge, target, target_key in resolved_child_entries:
                     item = self._branch_item_group(edge, current_node, target, state, depth=current_depth + 1)
                     nested: list[FlowFormatterGroup] = []
-                    if target is not None and target_key is not None:
-                        nested = self._node_groups(
-                            target,
-                            target_key,
-                            node_by_key,
-                            outgoing,
-                            boundaries,
-                            operations_by_node,
-                            state,
-                            part_index=part_index,
-                            depth=current_depth + 2,
-                            ancestry=(*current_ancestry, current_key),
-                            incoming=edge,
-                            incoming_from_symbol=self._symbol(current_node),
-                            root=False,
-                        )
-                    elif self._human_relevant_boundary(edge, has_verified_downstream=False):
-                        nested = [self._boundary_group(edge, current_node, state, depth=current_depth + 2)]
+                    nested = self._node_groups(
+                        target,
+                        target_key,
+                        node_by_key,
+                        outgoing,
+                        boundaries,
+                        operations_by_node,
+                        state,
+                        part_index=part_index,
+                        depth=current_depth + 2,
+                        ancestry=(*current_ancestry, current_key),
+                        incoming=edge,
+                        incoming_from_symbol=self._symbol(current_node),
+                        root=False,
+                    )
                     branch_children.append(replace(item, child_groups=tuple(nested)))
                 groups.append(
                     FlowFormatterGroup(
@@ -641,11 +659,7 @@ class FlowFormatterPlanBuilder:
 
             order, group_ref = state.next_ref()
             ordered_children: list[FlowFormatterGroup] = []
-            for edge, target, target_key in child_entries:
-                if target is None or target_key is None:
-                    if self._human_relevant_boundary(edge, has_verified_downstream=False):
-                        ordered_children.append(self._boundary_group(edge, current_node, state, depth=current_depth))
-                    continue
+            for edge, target, target_key in resolved_child_entries:
                 ordered_children.extend(
                     self._node_groups(
                         target,
@@ -679,6 +693,7 @@ class FlowFormatterPlanBuilder:
     def _node_group(
         self,
         node: FlowGraphNode,
+        node_key: FlowNodeKey,
         state: _PlannerState,
         *,
         depth: int,
@@ -687,8 +702,11 @@ class FlowFormatterPlanBuilder:
         incoming_from_symbol: str | None,
         operations: Sequence[AvailableOperationFact],
         outgoing: Sequence[FlowGraphEdge],
+        boundaries: Sequence[FlowGraphEdge],
     ) -> FlowFormatterGroup:
         operation = self._primary_operation(operations)
+        operation_payloads, operation_identities = self._operation_fact_payloads(operations)
+        boundary_payloads, boundary_identities = self._boundary_fact_payloads(boundaries, node, node_key)
         order, group_ref = state.next_ref()
         return FlowFormatterGroup(
             group_ref=group_ref,
@@ -711,12 +729,17 @@ class FlowFormatterPlanBuilder:
             operation_identity=self._clean(operation.operation_identity) if operation is not None else None,
             interface_identity=self._clean(operation.interface_identity) if operation is not None else self._clean(node.entrypoint_interface_method),
             summary=self._clean(node.summary),
-            typed_operations=tuple(self._operation_fact_payload(fact) for fact in sorted(operations, key=self._operation_fact_sort_key)),
+            typed_operations=operation_payloads,
+            typed_operation_identities=operation_identities,
             supporting_facts=tuple(self._outgoing_transition_payload(edge) for edge in outgoing),
+            owned_boundaries=boundary_payloads,
+            owned_boundary_identities=boundary_identities,
+            owner_key=node_key,
         )
 
     def _operation_group(self, fact: AvailableOperationFact, state: _PlannerState, *, depth: int) -> FlowFormatterGroup:
         order, group_ref = state.next_ref()
+        operation_payloads, operation_identities = self._operation_fact_payloads((fact,))
         return FlowFormatterGroup(
             group_ref=group_ref,
             order=order,
@@ -733,7 +756,9 @@ class FlowFormatterPlanBuilder:
             operation_identity=self._clean(fact.operation_identity),
             interface_identity=self._clean(fact.interface_identity),
             target_descriptor=self._clean(fact.target_service_identity),
-            typed_operations=(self._operation_fact_payload(fact),),
+            typed_operations=operation_payloads,
+            typed_operation_identities=operation_identities,
+            owner_key=fact.owner_key,
         )
 
     def _boundary_group(
@@ -776,6 +801,50 @@ class FlowFormatterPlanBuilder:
             boundary_kind=projection.kind.value,
             target_descriptor=self._clean(projection.target) or self._edge_target(edge),
             owned_boundaries=(self._boundary_fact_payload(edge, owner, projection),),
+            owned_boundary_identities=(self._boundary_fact_identity(edge, self._node_key(owner), projection, UNVERIFIED if kind is FlowFormatterGroupKind.UNRESOLVED_BOUNDARY else VERIFIED),),
+            owner_key=self._node_key(owner),
+        )
+
+    def _ownerless_boundary_group(
+        self,
+        edge: FlowGraphEdge,
+        owner_key: FlowNodeKey,
+        state: _PlannerState,
+        *,
+        depth: int,
+    ) -> FlowFormatterGroup:
+        metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
+        projection = self.boundary_classifier.project(edge)
+        order, group_ref = state.next_ref()
+        kind = (
+            FlowFormatterGroupKind.EXTERNAL_BOUNDARY
+            if projection.kind is FlowBoundaryKind.EXTERNAL
+            else FlowFormatterGroupKind.UNRESOLVED_BOUNDARY
+        )
+        certainty = UNVERIFIED if kind is FlowFormatterGroupKind.UNRESOLVED_BOUNDARY else VERIFIED
+        return FlowFormatterGroup(
+            group_ref=group_ref,
+            order=order,
+            depth=depth,
+            kind=kind,
+            certainty=certainty,
+            from_source=edge.source_id,
+            to_source=edge.to_source_id,
+            to_symbol=self._edge_target(edge),
+            relation_kind=edge.edge_type,
+            resolution_status=projection.resolution_status,
+            transport_kind=normalize_transport_kind(metadata.get("transportKind") or metadata.get("connectorKind")),
+            method=normalize_http_method(metadata.get("httpMethod") or metadata.get("method")),
+            route=normalize_route(metadata.get("routeTemplate") or metadata.get("route")),
+            topic=self._clean(metadata.get("topic") if isinstance(metadata.get("topic"), str) else None),
+            schedule=self._clean(metadata.get("schedule") if isinstance(metadata.get("schedule"), str) else None),
+            operation_identity=self._clean(metadata.get("operationIdentity") if isinstance(metadata.get("operationIdentity"), str) else None),
+            interface_identity=self._clean(metadata.get("interfaceIdentity") if isinstance(metadata.get("interfaceIdentity"), str) else None),
+            boundary_kind=projection.kind.value,
+            target_descriptor=self._clean(projection.target) or self._edge_target(edge),
+            owned_boundaries=(self._ownerless_boundary_fact_payload(edge, projection),),
+            owned_boundary_identities=(self._boundary_fact_identity(edge, owner_key, projection, certainty),),
+            owner_key=owner_key,
         )
 
     def _branch_item_group(
@@ -829,27 +898,16 @@ class FlowFormatterPlanBuilder:
             boundary_kind=gap.kind,
         )
 
-    def _human_relevant_boundary(self, edge: FlowGraphEdge, *, has_verified_downstream: bool) -> bool:
+    def _ownerless_boundary_required(self, edge: FlowGraphEdge) -> bool:
         metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
         projection = self.boundary_classifier.project(edge)
-        target_descriptor = projection.target or self._edge_target(edge)
-        meaningful_target = self._meaningful_target_descriptor(target_descriptor)
         typed_transport = any(
             self._clean(metadata.get(key) if isinstance(metadata.get(key), str) else None)
             for key in ("transportKind", "connectorKind", "httpMethod", "method", "routeTemplate", "route", "topic", "schedule", "operationIdentity", "interfaceIdentity")
         )
         external = projection.kind is FlowBoundaryKind.EXTERNAL or bool(edge.external)
-        terminates_path = not has_verified_downstream
         explicit_boundary_reason = bool(self._clean(edge.boundary_reason))
-        if has_verified_downstream and not (typed_transport or external or explicit_boundary_reason):
-            return False
-        return bool(typed_transport or external or explicit_boundary_reason or (terminates_path and meaningful_target))
-
-    def _meaningful_target_descriptor(self, value: str | None) -> bool:
-        normalized = self._clean(value)
-        if not normalized:
-            return False
-        return normalized.startswith("/") or "." in normalized or "::" in normalized or "#" in normalized
+        return bool(typed_transport or external or explicit_boundary_reason)
 
     def _has_explicit_branch(self, edges: Sequence[FlowGraphEdge]) -> bool:
         return any(self._edge_has_explicit_branch(edge) for edge in edges)
@@ -859,17 +917,10 @@ class FlowFormatterPlanBuilder:
 
     def _dedupe_boundary_edges(self, edges: Sequence[FlowGraphEdge]) -> list[FlowGraphEdge]:
         deduped: list[FlowGraphEdge] = []
-        seen: set[tuple[str, str, str, str, str]] = set()
+        seen: set[tuple[Any, ...]] = set()
         for edge in edges:
-            metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
             projection = self.boundary_classifier.project(edge)
-            key = (
-                normalize_transport_kind(metadata.get("transportKind") or metadata.get("connectorKind")) or "",
-                normalize_http_method(metadata.get("httpMethod") or metadata.get("method")) or "",
-                normalize_route(metadata.get("routeTemplate") or metadata.get("route")) or "",
-                projection.kind.value,
-                projection.target or "",
-            )
+            key = self._boundary_fact_identity(edge, self._from_key(edge), projection, UNVERIFIED if projection.kind is FlowBoundaryKind.UNRESOLVED else VERIFIED)
             if key in seen:
                 continue
             seen.add(key)
@@ -1134,14 +1185,47 @@ class FlowFormatterPlanBuilder:
         return stages, updated_sections
 
     def _stage_draft(self, stage_ref: str, group: FlowFormatterGroup, order: int) -> Dict[str, Any]:
-        typed_operations = list(group.typed_operations)
-        fallback_operation = self._group_operation_payload(group)
-        if fallback_operation and fallback_operation not in typed_operations:
-            typed_operations.append(fallback_operation)
+        deduplicated_fact_count = 0
+        seen_typed_identities: set[tuple[Any, ...]] = set()
+        typed_operations: list[Dict[str, Any]] = []
+        for index, payload in enumerate(group.typed_operations):
+            identity = (
+                group.typed_operation_identities[index]
+                if index < len(group.typed_operation_identities)
+                else self._payload_identity(group.owner_key, dict(payload), group.certainty or VERIFIED, "TYPED_OPERATION")
+            )
+            if identity in seen_typed_identities:
+                deduplicated_fact_count += 1
+                continue
+            seen_typed_identities.add(identity)
+            typed_operations.append(dict(payload))
+        fallback_operation = (
+            self._group_operation_payload(group)
+            if group.kind in {FlowFormatterGroupKind.ENTRYPOINT, FlowFormatterGroupKind.LINEAR_EXECUTION, FlowFormatterGroupKind.OPERATION}
+            else {}
+        )
+        if fallback_operation:
+            fallback_identity = self._group_operation_identity(group)
+            if fallback_identity in seen_typed_identities:
+                deduplicated_fact_count += 1
+            else:
+                seen_typed_identities.add(fallback_identity)
+                typed_operations.append(fallback_operation)
         incoming = self._incoming_payload(group)
         owned_summaries = [{"kind": "SUMMARY", "summary": group.summary}] if group.summary else []
         supporting_facts = [dict(item) for item in group.supporting_facts]
-        owned_boundaries = [dict(item) for item in group.owned_boundaries]
+        owned_boundaries: list[Dict[str, Any]] = []
+        for index, payload in enumerate(group.owned_boundaries):
+            identity = (
+                group.owned_boundary_identities[index]
+                if index < len(group.owned_boundary_identities)
+                else self._payload_identity(group.owner_key, dict(payload), group.certainty or VERIFIED, "BOUNDARY_RELATION")
+            )
+            if identity in seen_typed_identities:
+                deduplicated_fact_count += 1
+                continue
+            seen_typed_identities.add(identity)
+            owned_boundaries.append(dict(payload))
         if group.kind in {FlowFormatterGroupKind.UNVERIFIED_GAP, FlowFormatterGroupKind.AMBIGUOUS_GAP}:
             supporting_facts.append(self._gap_fact_payload(group))
         elif group.kind in {
@@ -1178,6 +1262,7 @@ class FlowFormatterPlanBuilder:
             "terminal_semantic": group.terminal_semantic,
             "source_group_ref": group.group_ref,
             "source_group_kind": group.kind,
+            "deduplicated_fact_count": deduplicated_fact_count,
         }
 
     def _stage_kind(self, group: FlowFormatterGroup) -> FlowExecutionStageKind:
@@ -1316,6 +1401,7 @@ class FlowFormatterPlanBuilder:
             owned_fact_refs=tuple(owned_fact_refs),
             source_group_ref=draft.get("source_group_ref"),
             source_group_kind=draft.get("source_group_kind"),
+            deduplicated_fact_count=int(draft.get("deduplicated_fact_count") or 0),
         )
 
     def _structural_metrics(self, stages: Sequence[FlowExecutionStage]) -> Dict[str, Any]:
@@ -1328,6 +1414,10 @@ class FlowFormatterPlanBuilder:
         structural_count = sum(1 for stage in stages if stage.kind is FlowExecutionStageKind.STRUCTURAL)
         presentation_count = len(stages)
         expected_count = len(selected_executable_stages) + standalone_operation_count + gap_count + boundary_count + structural_count
+        executable_stage_refs = [stage.stage_ref for stage in selected_executable_stages]
+        executable_owned_boundary_fact_count = sum(len(stage.owned_boundaries) for stage in selected_executable_stages)
+        ownerless_boundary_fact_count = sum(len(stage.owned_boundaries) for stage in stages if stage.kind is FlowExecutionStageKind.BOUNDARY)
+        deduplicated_fact_count = sum(max(0, int(stage.deduplicated_fact_count)) for stage in stages)
         stage_refs_by_section: dict[str, list[str]] = defaultdict(list)
         for stage in stages:
             stage_refs_by_section[stage.section_ref].append(stage.stage_ref)
@@ -1360,15 +1450,25 @@ class FlowFormatterPlanBuilder:
                 }
                 for stage in selected_executable_stages
             ],
+            "executablePublicStageCount": len(selected_executable_stages),
+            "missingExecutableStageRefs": 0,
+            "duplicateExecutableStageRefs": len(executable_stage_refs) - len(set(executable_stage_refs)),
             "standaloneOperationStageCount": standalone_operation_count,
             "gapStageCount": gap_count,
             "boundaryStageCount": boundary_count,
+            "ownerlessBoundaryStageCount": boundary_count,
             "structuralStageCount": structural_count,
             "presentationStageCount": presentation_count,
-            "publicStepCount": presentation_count,
+            "expectedPublicStageCount": expected_count,
             "stageCountContractExpected": expected_count,
             "stageCountContractMatched": expected_count == presentation_count,
             "expectedPresentationStageCount": presentation_count,
+            "validatedFormatterStepCount": 0,
+            "stitchedPublicStepCount": 0,
+            "publicStepCount": 0,
+            "executableOwnedBoundaryFactCount": executable_owned_boundary_fact_count,
+            "ownerlessBoundaryFactCount": ownerless_boundary_fact_count,
+            "deduplicatedFactCount": deduplicated_fact_count,
             "presentationStageRefs": stage_refs,
             "presentationStages": presentation_stages,
             "stageRefsBySection": dict(stage_refs_by_section),
@@ -1471,6 +1571,26 @@ class FlowFormatterPlanBuilder:
             }
         )
 
+    def _boundary_fact_payloads(
+        self,
+        edges: Sequence[FlowGraphEdge],
+        owner: FlowGraphNode,
+        owner_key: FlowNodeKey,
+    ) -> tuple[tuple[Dict[str, Any], ...], tuple[tuple[Any, ...], ...]]:
+        payloads: list[Dict[str, Any]] = []
+        identities: list[tuple[Any, ...]] = []
+        seen: set[tuple[Any, ...]] = set()
+        for edge in edges:
+            projection = self.boundary_classifier.project(edge)
+            certainty = UNVERIFIED if projection.kind is FlowBoundaryKind.UNRESOLVED else VERIFIED
+            identity = self._boundary_fact_identity(edge, owner_key, projection, certainty)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            payloads.append(self._boundary_fact_payload(edge, owner, projection))
+            identities.append(identity)
+        return tuple(payloads), tuple(identities)
+
     def _boundary_fact_payload(self, edge: FlowGraphEdge, owner: FlowGraphNode, projection: Any) -> Dict[str, Any]:
         metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
         return _without_empty(
@@ -1494,6 +1614,68 @@ class FlowFormatterPlanBuilder:
             }
         )
 
+    def _ownerless_boundary_fact_payload(self, edge: FlowGraphEdge, projection: Any) -> Dict[str, Any]:
+        metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
+        return _without_empty(
+            {
+                "kind": "BOUNDARY_RELATION",
+                "fromSource": edge.source_id,
+                "toSource": edge.to_source_id,
+                "toSymbol": self._edge_target(edge),
+                "relationKind": edge.edge_type,
+                "resolutionStatus": projection.resolution_status,
+                "transportKind": normalize_transport_kind(metadata.get("transportKind") or metadata.get("connectorKind")),
+                "method": normalize_http_method(metadata.get("httpMethod") or metadata.get("method")),
+                "route": normalize_route(metadata.get("routeTemplate") or metadata.get("route")),
+                "topic": self._clean(metadata.get("topic") if isinstance(metadata.get("topic"), str) else None),
+                "schedule": self._clean(metadata.get("schedule") if isinstance(metadata.get("schedule"), str) else None),
+                "operationIdentity": self._clean(metadata.get("operationIdentity") if isinstance(metadata.get("operationIdentity"), str) else None),
+                "interfaceIdentity": self._clean(metadata.get("interfaceIdentity") if isinstance(metadata.get("interfaceIdentity"), str) else None),
+                "boundaryKind": projection.kind.value,
+                "targetDescriptor": self._clean(projection.target) or self._edge_target(edge),
+            }
+        )
+
+    def _boundary_fact_identity(
+        self,
+        edge: FlowGraphEdge,
+        owner_key: FlowNodeKey | None,
+        projection: Any,
+        certainty: str,
+    ) -> tuple[Any, ...]:
+        metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
+        return self._structural_fact_identity(
+            owner_key,
+            relation_or_operation_kind=self._clean(metadata.get("operationIdentity") if isinstance(metadata.get("operationIdentity"), str) else None)
+            or self._clean(metadata.get("interfaceIdentity") if isinstance(metadata.get("interfaceIdentity"), str) else None)
+            or self._clean(edge.edge_type),
+            transport_kind=metadata.get("transportKind") or metadata.get("connectorKind"),
+            method=metadata.get("httpMethod") or metadata.get("method"),
+            route=metadata.get("routeTemplate") or metadata.get("route"),
+            topic=metadata.get("topic") if isinstance(metadata.get("topic"), str) else None,
+            schedule=metadata.get("schedule") if isinstance(metadata.get("schedule"), str) else None,
+            operation_identity=metadata.get("operationIdentity") if isinstance(metadata.get("operationIdentity"), str) else None,
+            interface_identity=metadata.get("interfaceIdentity") if isinstance(metadata.get("interfaceIdentity"), str) else None,
+            target_identity=self._clean(projection.target) or self._edge_target(edge) or edge.to_node_id or edge.to_source_id,
+            certainty=certainty,
+        )
+
+    def _operation_fact_payloads(
+        self,
+        facts: Sequence[AvailableOperationFact],
+    ) -> tuple[tuple[Dict[str, Any], ...], tuple[tuple[Any, ...], ...]]:
+        payloads: list[Dict[str, Any]] = []
+        identities: list[tuple[Any, ...]] = []
+        seen: set[tuple[Any, ...]] = set()
+        for fact in sorted(facts, key=self._operation_fact_sort_key):
+            identity = self._operation_fact_identity(fact)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            payloads.append(self._operation_fact_payload(fact))
+            identities.append(identity)
+        return tuple(payloads), tuple(identities)
+
     def _operation_fact_payload(self, fact: AvailableOperationFact) -> Dict[str, Any]:
         return _without_empty(
             {
@@ -1515,6 +1697,92 @@ class FlowFormatterPlanBuilder:
                 "targetServiceIdentity": self._clean(fact.target_service_identity),
                 "sourceChannel": self._clean(fact.source_channel),
             }
+        )
+
+    def _operation_fact_identity(self, fact: AvailableOperationFact) -> tuple[Any, ...]:
+        return self._structural_fact_identity(
+            fact.owner_key,
+            relation_or_operation_kind=self._clean(fact.operation_identity or fact.interface_identity or fact.direction_role) or "TYPED_OPERATION",
+            transport_kind=fact.transport_kind,
+            method=fact.method,
+            route=fact.normalized_route,
+            topic=fact.topic,
+            schedule=fact.schedule,
+            operation_identity=fact.operation_identity,
+            interface_identity=fact.interface_identity,
+            target_identity=fact.target_service_identity,
+            certainty=VERIFIED,
+        )
+
+    def _group_operation_identity(self, group: FlowFormatterGroup) -> tuple[Any, ...]:
+        return self._structural_fact_identity(
+            group.owner_key,
+            relation_or_operation_kind=self._clean(group.operation_identity or group.interface_identity) or "TYPED_OPERATION",
+            transport_kind=group.transport_kind,
+            method=group.method,
+            route=group.route,
+            topic=group.topic,
+            schedule=group.schedule,
+            operation_identity=group.operation_identity,
+            interface_identity=group.interface_identity,
+            target_identity=group.target_descriptor,
+            certainty=group.certainty or VERIFIED,
+        )
+
+    def _payload_identity(
+        self,
+        owner_key: FlowNodeKey | None,
+        payload: Mapping[str, Any],
+        certainty: str,
+        default_kind: str,
+    ) -> tuple[Any, ...]:
+        return self._structural_fact_identity(
+            owner_key,
+            relation_or_operation_kind=self._clean(
+                payload.get("operationIdentity")
+                or payload.get("interfaceIdentity")
+                or payload.get("directionRole")
+                or payload.get("relationKind")
+            )
+            or default_kind,
+            transport_kind=payload.get("transportKind"),
+            method=payload.get("method"),
+            route=payload.get("route"),
+            topic=payload.get("topic"),
+            schedule=payload.get("schedule"),
+            operation_identity=payload.get("operationIdentity"),
+            interface_identity=payload.get("interfaceIdentity"),
+            target_identity=payload.get("targetServiceIdentity") or payload.get("targetDescriptor") or payload.get("toSymbol") or payload.get("toSource"),
+            certainty=certainty,
+        )
+
+    def _structural_fact_identity(
+        self,
+        owner_key: FlowNodeKey | None,
+        *,
+        relation_or_operation_kind: Any,
+        transport_kind: Any,
+        method: Any,
+        route: Any,
+        topic: Any,
+        schedule: Any,
+        operation_identity: Any,
+        interface_identity: Any,
+        target_identity: Any,
+        certainty: str,
+    ) -> tuple[Any, ...]:
+        return (
+            tuple(owner_key or ("", "", "")),
+            self._clean(relation_or_operation_kind) or "",
+            normalize_transport_kind(transport_kind) or "",
+            normalize_http_method(method) or "",
+            normalize_route(route) or "",
+            self._clean(topic) or "",
+            self._clean(schedule) or "",
+            self._clean(operation_identity) or "",
+            self._clean(interface_identity) or "",
+            self._clean(target_identity) or "",
+            certainty or VERIFIED,
         )
 
     def _primary_operation(self, operation_facts: Sequence[AvailableOperationFact]) -> AvailableOperationFact | None:
@@ -2257,6 +2525,8 @@ class FlowFormatterAnswerService:
         self._stitching_duration_ms = 0.0
         self._serialization_count = 0
         self._executed_segment_count = 0
+        self._validated_formatter_step_count = 0
+        self._stitched_public_step_count = 0
 
     def answer(
         self,
@@ -2310,10 +2580,12 @@ class FlowFormatterAnswerService:
                     )
                     steps.extend(segment_steps)
                     stitch_sections.extend(segment_sections)
+                self._validated_formatter_step_count += len({step.stage_ref for step in steps})
                 self.current_stage = "FORMATTER_STITCHING"
                 stitching_started = time.perf_counter()
                 text = self.stitcher.stitch(tuple(stitch_sections), steps)
                 self._stitching_duration_ms += round((time.perf_counter() - stitching_started) * 1000, 3)
+                self._stitched_public_step_count += len({step.stage_ref for step in steps})
                 answers.append(
                     FlowFormatterAnswer(
                         source=formatter_plan.source,
@@ -2597,6 +2869,10 @@ class FlowFormatterAnswerService:
         group_count = sum(plan.presentation_stage_count for plan in formatter_plans)
         segment_count = max(self._executed_segment_count, 0)
         structural = self._combined_structural_metrics(formatter_plans)
+        expected_public_stage_count = int(structural.get("expectedPublicStageCount") or structural.get("presentationStageCount") or 0)
+        validated_formatter_step_count = int(self._validated_formatter_step_count)
+        stitched_public_step_count = int(self._stitched_public_step_count)
+        stage_count_contract_matched = expected_public_stage_count == validated_formatter_step_count == stitched_public_step_count
         return {
             "narrativePlanCount": len(narrative_plans),
             "formatterGroupCount": group_count,
@@ -2609,6 +2885,11 @@ class FlowFormatterAnswerService:
             "formatterSerializationCount": self._serialization_count,
             "formatterPlanningDurationMs": round(planning_ms, 3),
             "walkthroughPlanningDurationMs": round(planning_ms, 3),
+            "expectedPublicStageCount": expected_public_stage_count,
+            "validatedFormatterStepCount": validated_formatter_step_count,
+            "stitchedPublicStepCount": stitched_public_step_count,
+            "publicStepCount": stitched_public_step_count,
+            "stageCountContractMatched": stage_count_contract_matched,
             "formatterDurationMs": round(self._formatter_duration_ms, 3),
             "totalFormatterDurationMs": round(self._formatter_duration_ms, 3),
             "textRenderingDurationMs": round(self._formatter_duration_ms, 3),
@@ -2667,18 +2948,28 @@ class FlowFormatterAnswerService:
             "selectedExecutableStageRefs": stage_refs,
             "selectedExecutableSymbols": symbols,
             "selectedExecutableStages": selected_stages,
+            "executablePublicStageCount": total_int("executablePublicStageCount"),
+            "missingExecutableStageRefs": total_int("missingExecutableStageRefs"),
+            "duplicateExecutableStageRefs": total_int("duplicateExecutableStageRefs"),
             "standaloneOperationStageCount": total_int("standaloneOperationStageCount"),
             "gapStageCount": total_int("gapStageCount"),
             "boundaryStageCount": total_int("boundaryStageCount"),
+            "ownerlessBoundaryStageCount": total_int("ownerlessBoundaryStageCount"),
             "structuralStageCount": total_int("structuralStageCount"),
             "presentationStageCount": total_int("presentationStageCount"),
-            "publicStepCount": total_int("publicStepCount"),
+            "expectedPublicStageCount": total_int("expectedPublicStageCount"),
+            "validatedFormatterStepCount": 0,
+            "stitchedPublicStepCount": 0,
+            "publicStepCount": 0,
             "stageCountContractExpected": total_int("stageCountContractExpected"),
             "stageCountContractMatched": all(
                 bool(plan.structural_metrics.get("stageCountContractMatched", False))
                 for plan in formatter_plans
             ),
             "expectedPresentationStageCount": total_int("expectedPresentationStageCount"),
+            "executableOwnedBoundaryFactCount": total_int("executableOwnedBoundaryFactCount"),
+            "ownerlessBoundaryFactCount": total_int("ownerlessBoundaryFactCount"),
+            "deduplicatedFactCount": total_int("deduplicatedFactCount"),
             "presentationStageRefs": presentation_stage_refs,
             "presentationStages": presentation_stages,
             "stageOwnershipRecords": stage_ownership_records,
@@ -2712,6 +3003,8 @@ class FlowFormatterAnswerService:
         self._stitching_duration_ms = 0.0
         self._serialization_count = 0
         self._executed_segment_count = 0
+        self._validated_formatter_step_count = 0
+        self._stitched_public_step_count = 0
 
     def _check_cancelled(self, cancel_event: Any | None) -> None:
         if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
