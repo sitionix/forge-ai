@@ -44,7 +44,7 @@ _FRAMING_RESERVE_TOKENS = 512
 _REPAIRABLE_ATTEMPTS = (1, 2)
 _ALLOWED_FORMATTER_RESPONSE_KEYS = frozenset({"sections"})
 _ALLOWED_FORMATTER_SECTION_KEYS = frozenset({"sectionRef", "steps"})
-_ALLOWED_FORMATTER_STEP_KEYS = frozenset({"groupRefs", "certainty", "text"})
+_ALLOWED_FORMATTER_STEP_KEYS = frozenset({"groupRefs", "certainty", "assertionSubject", "text"})
 _ROUTE_RE = re.compile(r"(?<!\w)/(?:[A-Za-z0-9._~!$&'()*+,;=:@%-]+/?)+")
 
 
@@ -71,6 +71,17 @@ class FlowPresentationSectionKind(str, Enum):
     VERIFIED_FRAGMENT = "VERIFIED_FRAGMENT"
     UNVERIFIED_GAP = "UNVERIFIED_GAP"
     AMBIGUOUS_GAP = "AMBIGUOUS_GAP"
+
+
+class FlowAssertionSubject(str, Enum):
+    FLOW_EXECUTION = "FLOW_EXECUTION"
+    DIRECT_RELATION = "DIRECT_RELATION"
+    BOUNDARY_RELATION = "BOUNDARY_RELATION"
+    BRANCH_PATH = "BRANCH_PATH"
+    CYCLE_REFERENCE = "CYCLE_REFERENCE"
+    SHARED_CONTINUATION = "SHARED_CONTINUATION"
+    TERMINAL_SEMANTIC = "TERMINAL_SEMANTIC"
+    TYPED_RESULT = "TYPED_RESULT"
 
 
 @dataclass(frozen=True)
@@ -105,6 +116,8 @@ class FlowFormatterGroup:
     section_ref: str | None = None
     branch_path: str = ""
     merge_scope: str | None = None
+    assertion_subject: str | None = None
+    assertion_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -219,6 +232,8 @@ class FlowFormatterSegment:
                 "requiredSectionRefs": [section.section_ref for section in self.sections],
                 "requiredGroupRefs": [group.group_ref for group in required],
                 "certaintyByGroupRef": {group.group_ref: group.certainty for group in required},
+                "assertionSubjectByGroupRef": {group.group_ref: group.assertion_subject for group in required},
+                "assertionStatusByGroupRef": {group.group_ref: group.assertion_status for group in required},
                 "sectionByGroupRef": group_to_section,
                 "mergeScopeByGroupRef": {group.group_ref: group.merge_scope for group in required},
                 "order": [group.group_ref for group in required],
@@ -253,6 +268,7 @@ class FlowFormatterProviderResult:
 class FlowFormatterStepText:
     group_refs: tuple[str, ...]
     certainty: str
+    assertion_subject: str
     text: str
 
 
@@ -959,7 +975,38 @@ class FlowFormatterPlanBuilder:
         branch_path: str,
         merge_scope: str,
     ) -> FlowFormatterGroup:
-        return replace(group, section_ref=section_ref, branch_path=branch_path, merge_scope=merge_scope)
+        return replace(
+            group,
+            section_ref=section_ref,
+            branch_path=branch_path,
+            merge_scope=merge_scope,
+            assertion_subject=group.assertion_subject or self._assertion_subject(group),
+            assertion_status=group.assertion_status or self._assertion_status(group),
+        )
+
+    def _assertion_subject(self, group: FlowFormatterGroup) -> str:
+        if group.kind in {FlowFormatterGroupKind.UNVERIFIED_GAP, FlowFormatterGroupKind.AMBIGUOUS_GAP}:
+            return FlowAssertionSubject.DIRECT_RELATION.value
+        if group.kind in {FlowFormatterGroupKind.EXPLICIT_BRANCH, FlowFormatterGroupKind.BRANCH_ITEM, FlowFormatterGroupKind.JOIN}:
+            return FlowAssertionSubject.BRANCH_PATH.value
+        if group.kind is FlowFormatterGroupKind.CYCLE:
+            return FlowAssertionSubject.CYCLE_REFERENCE.value
+        if group.kind is FlowFormatterGroupKind.SHARED_CONTINUATION:
+            return FlowAssertionSubject.SHARED_CONTINUATION.value
+        if group.kind is FlowFormatterGroupKind.AVAILABLE_FACTS_END:
+            return FlowAssertionSubject.TERMINAL_SEMANTIC.value
+        if group.kind is FlowFormatterGroupKind.TYPED_RESULT:
+            return FlowAssertionSubject.TYPED_RESULT.value
+        if group.kind is FlowFormatterGroupKind.UNRESOLVED_BOUNDARY:
+            return FlowAssertionSubject.BOUNDARY_RELATION.value
+        return FlowAssertionSubject.FLOW_EXECUTION.value
+
+    def _assertion_status(self, group: FlowFormatterGroup) -> str:
+        if group.kind is FlowFormatterGroupKind.AMBIGUOUS_GAP:
+            return AMBIGUOUS
+        if group.kind in {FlowFormatterGroupKind.UNVERIFIED_GAP, FlowFormatterGroupKind.UNRESOLVED_BOUNDARY}:
+            return UNVERIFIED
+        return group.certainty or VERIFIED
 
     def _merge_scope(self, group: FlowFormatterGroup, section_ref: str, branch_path: str) -> str:
         boundary = "linear"
@@ -1344,7 +1391,12 @@ class FlowFormatterSegmentPlanner:
                 {
                     "sectionRef": section.section_ref,
                     "steps": [
-                        {"groupRefs": [group.group_ref], "certainty": group.certainty, "text": "x"}
+                        {
+                            "groupRefs": [group.group_ref],
+                            "certainty": group.certainty,
+                            "assertionSubject": group.assertion_subject,
+                            "text": "x",
+                        }
                         for group in section.ordered_groups
                     ],
                 }
@@ -1396,12 +1448,17 @@ class FlowFormatterPromptRenderer:
             "Format one segment of a backend-owned execution-flow plan for a human reader.\n"
             f"Required responseLanguage: {dict(formatter_input).get('responseLanguage', '')}. Do not use English unless responseLanguage is en.\n"
             "Return strict JSON only. Do not include prose outside JSON.\n"
-            "The JSON shape is exactly: {\"sections\":[{\"sectionRef\":\"string\",\"steps\":[{\"groupRefs\":[\"string\"],\"certainty\":\"string\",\"text\":\"string\"}]}]}.\n"
+            "The JSON shape is exactly: {\"sections\":[{\"sectionRef\":\"string\",\"steps\":[{\"groupRefs\":[\"string\"],\"certainty\":\"string\",\"assertionSubject\":\"string\",\"text\":\"string\"}]}]}.\n"
             "Return every supplied sectionRef exactly once, in the supplied section order.\n"
             "Cover every supplied groupRef exactly once across all steps.\n"
             "Each step groupRefs array must be one contiguous ordered range inside that section.\n"
             "Combine adjacent groups only when their supplied mergeScope value is identical.\n"
-            "Do not combine groups across sections, certainty values, gaps, branch paths, independent answers, or different merge scopes.\n"
+            "Do not combine groups across sections, certainty values, assertionSubject values, gaps, branch paths, independent answers, or different merge scopes.\n"
+            "Echo the exact assertionSubject supplied for every step range.\n"
+            "Treat assertionSubject as the semantic subject of the step and assertionStatus as the status of only that subject.\n"
+            "When assertionStatus is UNVERIFIED or AMBIGUOUS, make that status clear in text without changing the assertionSubject.\n"
+            "When assertionStatus is not VERIFIED, do not transfer that status from assertionSubject to any other supplied identifier or entity.\n"
+            "For DIRECT_RELATION, explain only the supplied relation between from/to identifiers and typed transport fields.\n"
             "Produce the smallest clear set of steps that explains the ordered structure without inventing behavior.\n"
             "Use summaries where useful, translate summaries into responseLanguage, preserve supplied identifiers when mentioned, and avoid repeating equivalent information.\n"
             "Write every text value in responseLanguage.\n"
@@ -1438,7 +1495,6 @@ class FlowFormatterResponseValidator:
         section_by_ref = {section.section_ref: section for section in required_sections}
         group_by_ref = {group.group_ref: group for group in required_groups}
         group_index = {group.group_ref: index for index, group in enumerate(required_groups)}
-        certainty_by_ref = {group.group_ref: group.certainty for group in required_groups}
         section_by_group_ref = {
             group.group_ref: section.section_ref
             for section in required_sections
@@ -1485,6 +1541,7 @@ class FlowFormatterResponseValidator:
                 raw_group_refs = item.get("groupRefs")
                 group_refs = tuple(str(ref or "").strip() for ref in raw_group_refs) if isinstance(raw_group_refs, list) else ()
                 certainty = str(item.get("certainty") or "").strip()
+                assertion_subject = str(item.get("assertionSubject") or "").strip()
                 text = str(item.get("text") or "").strip() if isinstance(item.get("text"), str) else ""
                 if not group_refs:
                     errors.append(f"sections[{section_index}].steps[{step_index}].groupRefs must be a non-empty list.")
@@ -1516,6 +1573,16 @@ class FlowFormatterResponseValidator:
                         errors.append(f"groupRefs {', '.join(group_refs)} must not combine different certainty values.")
                     elif certainty != supplied[0].certainty:
                         errors.append(f"groupRefs {', '.join(group_refs)} certainty must be {supplied[0].certainty}.")
+                    assertion_subjects = {group.assertion_subject for group in supplied}
+                    if len(assertion_subjects) != 1:
+                        errors.append(f"groupRefs {', '.join(group_refs)} must share one assertionSubject.")
+                    elif assertion_subject != (supplied[0].assertion_subject or ""):
+                        errors.append(f"groupRefs {', '.join(group_refs)} assertionSubject must be {supplied[0].assertion_subject}.")
+                    assertion_statuses = {group.assertion_status for group in supplied}
+                    if len(assertion_statuses) != 1:
+                        errors.append(f"groupRefs {', '.join(group_refs)} must share one assertionStatus.")
+                    elif supplied[0].assertion_status != supplied[0].certainty:
+                        errors.append(f"groupRefs {', '.join(group_refs)} supplied assertionStatus must match certainty.")
                     merge_scopes = {group.merge_scope for group in supplied}
                     if len(merge_scopes) != 1:
                         errors.append(f"groupRefs {', '.join(group_refs)} must share one structural merge scope.")
@@ -1527,7 +1594,7 @@ class FlowFormatterResponseValidator:
                         errors.append(f"groupRefs {', '.join(group_refs)} must not combine a gap with verified execution.")
                 if not text:
                     errors.append(f"groupRefs {', '.join(group_refs)} text must be non-empty.")
-                parsed_steps.append(FlowFormatterStepText(group_refs=group_refs, certainty=certainty, text=text))
+                parsed_steps.append(FlowFormatterStepText(group_refs=group_refs, certainty=certainty, assertion_subject=assertion_subject, text=text))
 
         if actual_section_refs != required_section_refs:
             errors.append("sections must appear exactly once in the supplied section order.")
@@ -2058,6 +2125,8 @@ def _group_payload(group: FlowFormatterGroup, *, include_children: bool = True) 
         "depth": group.depth,
         "kind": group.kind.value,
         "certainty": group.certainty,
+        "assertionSubject": group.assertion_subject,
+        "assertionStatus": group.assertion_status,
         "branchPath": group.branch_path,
         "mergeScope": group.merge_scope,
         "source": group.source,

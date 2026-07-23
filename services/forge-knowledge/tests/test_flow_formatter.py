@@ -20,6 +20,7 @@ from knowledge_service.flow_formatter import (
     AMBIGUOUS,
     UNVERIFIED,
     VERIFIED,
+    FlowAssertionSubject,
     FlowFormatterAnswerService,
     FlowFormatterContractViolation,
     FlowFormatterGroup,
@@ -258,6 +259,7 @@ def _contract_step(groups, language):
     return {
         "groupRefs": [group["groupRef"] for group in groups],
         "certainty": certainty,
+        "assertionSubject": groups[0]["assertionSubject"],
         "text": _contract_text(groups, certainty, language),
     }
 
@@ -290,6 +292,17 @@ def _contract_text(groups, certainty, language):
         return f"Cette étape décrit le flux disponible: {values}."
     uncertainty = " with an unconfirmed connection" if certainty == UNVERIFIED else " with an ambiguous connection" if certainty == AMBIGUOUS else ""
     return f"This step describes the available flow{uncertainty}: {values}."
+
+
+def _raw_step(segment, refs, certainty, text, assertion_subject=None):
+    group_by_ref = {group.group_ref: group for group in segment.required_groups}
+    first = group_by_ref[refs[0]]
+    return {
+        "groupRefs": list(refs),
+        "certainty": certainty,
+        "assertionSubject": assertion_subject if assertion_subject is not None else first.assertion_subject,
+        "text": text,
+    }
 
 
 def _answer(plans, language: str = "en", provider: ContractFormatterProvider | None = None, context_tokens: int = 32768):
@@ -391,6 +404,8 @@ def test_two_exact_fragments_insert_one_unverified_gap_in_position():
         FlowFormatterGroupKind.ENTRYPOINT,
     ]
     assert plan.groups[1].certainty == UNVERIFIED
+    assert plan.groups[1].assertion_subject == FlowAssertionSubject.DIRECT_RELATION.value
+    assert plan.groups[1].assertion_status == UNVERIFIED
 
 
 def test_ambiguous_correlation_creates_gap_without_selected_causal_target():
@@ -407,6 +422,8 @@ def test_ambiguous_correlation_creates_gap_without_selected_causal_target():
     gap = next(group for group in plan.groups if group.kind is FlowFormatterGroupKind.AMBIGUOUS_GAP)
 
     assert gap.certainty == AMBIGUOUS
+    assert gap.assertion_subject == FlowAssertionSubject.DIRECT_RELATION.value
+    assert gap.assertion_status == AMBIGUOUS
     assert gap.to_symbol is None
 
 
@@ -483,6 +500,49 @@ def test_small_plan_uses_one_formatter_segment_call_and_one_answer():
     assert "\n1. " in response.answers[0].text
 
 
+def test_assertion_subject_is_propagated_to_formatter_provider_input():
+    outbound = _node("Client.call", source="client", role="CLIENT_OPERATION", entrypoint=True, method="POST", route="/items")
+    inbound = _node("Handler.receive", source="service", role="EXECUTABLE", entrypoint=True, method="POST", route="/items")
+    plans = _plans(_flow(outbound, (outbound,)), _flow(inbound, (inbound,)), facts=(_fact(outbound), _fact(inbound)))
+
+    _response, _metrics, provider = _answer(plans)
+
+    formatter_input = provider.calls[0]["formatterInput"]
+    gap_group = next(group for section in formatter_input["sections"] for group in section["orderedGroups"] if group["certainty"] == UNVERIFIED)
+    assert gap_group["assertionSubject"] == FlowAssertionSubject.DIRECT_RELATION.value
+    assert gap_group["assertionStatus"] == UNVERIFIED
+    assert formatter_input["coverageContract"]["assertionSubjectByGroupRef"][gap_group["groupRef"]] == FlowAssertionSubject.DIRECT_RELATION.value
+    assert formatter_input["coverageContract"]["assertionStatusByGroupRef"][gap_group["groupRef"]] == UNVERIFIED
+
+
+def test_formatter_output_must_echo_exact_assertion_subject():
+    group = FlowFormatterGroup("g1", 1, 0, FlowFormatterGroupKind.UNVERIFIED_GAP, certainty=UNVERIFIED, from_symbol="A.call", to_symbol="B.receive")
+    segment = FlowFormatterSegmentPlanner().plan(FlowFormatterPlan("source-a", "A.call", (group,), "en"))[0]
+    raw = json.dumps(
+        {
+            "sections": [
+                {
+                    "sectionRef": segment.sections[0].section_ref,
+                    "steps": [
+                        _raw_step(
+                            segment,
+                            ["g1"],
+                            UNVERIFIED,
+                            "This describes the supplied structural relation.",
+                            assertion_subject=FlowAssertionSubject.FLOW_EXECUTION.value,
+                        )
+                    ],
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(FlowFormatterContractViolation) as exc_info:
+        FlowFormatterResponseValidator().validate(raw, segment)
+
+    assert "assertionSubject must be DIRECT_RELATION" in str(exc_info.value)
+
+
 @pytest.mark.parametrize("language", ["en", "uk", "de", "fr"])
 def test_dynamic_language_output_matches_response_language_and_preserves_identifiers(language):
     root = _node("Root.start", entrypoint=True, method="POST", route="/neutral")
@@ -516,8 +576,8 @@ def test_exact_group_coverage_rejects_reorder_and_duplicates():
                 {
                     "sectionRef": segment.sections[0].section_ref,
                     "steps": [
-                        {"groupRefs": ["g2"], "certainty": VERIFIED, "text": "This step describes the available flow: B.work."},
-                        {"groupRefs": ["g2"], "certainty": VERIFIED, "text": "This step describes the available flow: B.work."},
+                        _raw_step(segment, ["g2"], VERIFIED, "This step describes the available flow: B.work."),
+                        _raw_step(segment, ["g2"], VERIFIED, "This step describes the available flow: B.work."),
                     ],
                 }
             ]
@@ -540,6 +600,7 @@ def test_gap_certainty_cannot_be_upgraded_to_verified():
                         {
                             "groupRefs": ["g1"],
                             "certainty": VERIFIED,
+                            "assertionSubject": segment.required_groups[0].assertion_subject,
                             "text": "This step describes the available flow with an unconfirmed connection: A.call, B.receive, /items.",
                         }
                     ],
@@ -564,7 +625,7 @@ def test_contiguous_groups_in_one_merge_scope_can_be_one_step():
             "sections": [
                 {
                     "sectionRef": section_ref,
-                    "steps": [{"groupRefs": ["g1", "g2", "g3"], "certainty": VERIFIED, "text": "This describes the ordered structural work."}],
+                    "steps": [_raw_step(segment, ["g1", "g2", "g3"], VERIFIED, "This describes the ordered structural work.")],
                 }
             ]
         }
@@ -587,8 +648,8 @@ def test_one_merge_scope_can_return_multiple_contiguous_steps():
                 {
                     "sectionRef": segment.sections[0].section_ref,
                     "steps": [
-                        {"groupRefs": ["g1"], "certainty": VERIFIED, "text": "This describes the first structural item."},
-                        {"groupRefs": ["g2", "g3"], "certainty": VERIFIED, "text": "This describes the remaining structural items."},
+                        _raw_step(segment, ["g1"], VERIFIED, "This describes the first structural item."),
+                        _raw_step(segment, ["g2", "g3"], VERIFIED, "This describes the remaining structural items."),
                     ],
                 }
             ]
@@ -612,8 +673,8 @@ def test_non_contiguous_group_range_is_rejected_structurally():
                 {
                     "sectionRef": segment.sections[0].section_ref,
                     "steps": [
-                        {"groupRefs": ["g1", "g3"], "certainty": VERIFIED, "text": "This describes a non contiguous structural range."},
-                        {"groupRefs": ["g2"], "certainty": VERIFIED, "text": "This describes the skipped structural item."},
+                        _raw_step(segment, ["g1", "g3"], VERIFIED, "This describes a non contiguous structural range."),
+                        _raw_step(segment, ["g2"], VERIFIED, "This describes the skipped structural item."),
                     ],
                 }
             ]
@@ -633,7 +694,7 @@ def test_cross_section_merge_is_rejected_structurally():
             "sections": [
                 {
                     "sectionRef": segment.sections[0].section_ref,
-                    "steps": [{"groupRefs": ["g1", "g2"], "certainty": VERIFIED, "text": "This describes two structural fragments together."}],
+                    "steps": [_raw_step(segment, ["g1", "g2"], VERIFIED, "This describes two structural fragments together.")],
                 },
                 {"sectionRef": segment.sections[1].section_ref, "steps": []},
             ]
@@ -653,7 +714,7 @@ def test_cross_certainty_merge_is_rejected_structurally():
             "sections": [
                 {
                     "sectionRef": segment.sections[0].section_ref,
-                    "steps": [{"groupRefs": ["g1", "g2"], "certainty": VERIFIED, "text": "This describes a mixed certainty structural range."}],
+                    "steps": [_raw_step(segment, ["g1", "g2"], VERIFIED, "This describes a mixed certainty structural range.")],
                 }
             ]
         }
@@ -671,9 +732,9 @@ def test_gap_group_remains_isolated_without_phrase_assertions():
     raw = json.dumps(
         {
             "sections": [
-                {"sectionRef": segment.sections[0].section_ref, "steps": [{"groupRefs": ["g1"], "certainty": VERIFIED, "text": "This describes the first structural fragment."}]},
-                {"sectionRef": segment.sections[1].section_ref, "steps": [{"groupRefs": ["g2"], "certainty": UNVERIFIED, "text": "This describes the unresolved structural connection."}]},
-                {"sectionRef": segment.sections[2].section_ref, "steps": [{"groupRefs": ["g3"], "certainty": VERIFIED, "text": "This describes the second structural fragment."}]},
+                {"sectionRef": segment.sections[0].section_ref, "steps": [_raw_step(segment, ["g1"], VERIFIED, "This describes the first structural fragment.")]},
+                {"sectionRef": segment.sections[1].section_ref, "steps": [_raw_step(segment, ["g2"], UNVERIFIED, "This describes the unresolved structural connection.")]},
+                {"sectionRef": segment.sections[2].section_ref, "steps": [_raw_step(segment, ["g3"], VERIFIED, "This describes the second structural fragment.")]},
             ]
         }
     )
@@ -702,11 +763,11 @@ def test_branch_paths_cannot_be_combined_even_when_adjacent():
     branch_start = [group.group_ref for group in segment.required_groups].index(branch_items[0])
     branch_end = [group.group_ref for group in segment.required_groups].index(branch_items[-1])
     before = [
-        {"groupRefs": [group.group_ref], "certainty": group.certainty, "text": "This describes one structural item."}
+        _raw_step(segment, [group.group_ref], group.certainty, "This describes one structural item.")
         for group in segment.required_groups[:branch_start]
     ]
     after = [
-        {"groupRefs": [group.group_ref], "certainty": group.certainty, "text": "This describes one structural item."}
+        _raw_step(segment, [group.group_ref], group.certainty, "This describes one structural item.")
         for group in segment.required_groups[branch_end + 1 :]
     ]
     raw = json.dumps(
@@ -716,7 +777,7 @@ def test_branch_paths_cannot_be_combined_even_when_adjacent():
                     "sectionRef": segment.sections[0].section_ref,
                     "steps": [
                         *before,
-                        {"groupRefs": branch_items, "certainty": VERIFIED, "text": "This combines sibling branch paths."},
+                        _raw_step(segment, branch_items, VERIFIED, "This combines sibling branch paths."),
                         *after,
                     ],
                 }
@@ -736,9 +797,9 @@ def test_structural_section_headings_disambiguate_identical_entrypoints():
     raw = json.dumps(
         {
             "sections": [
-                {"sectionRef": segment.sections[0].section_ref, "steps": [{"groupRefs": ["g1"], "certainty": VERIFIED, "text": "This describes the first structural fragment."}]},
-                {"sectionRef": segment.sections[1].section_ref, "steps": [{"groupRefs": ["g2"], "certainty": UNVERIFIED, "text": "This describes the unresolved structural connection."}]},
-                {"sectionRef": segment.sections[2].section_ref, "steps": [{"groupRefs": ["g3"], "certainty": VERIFIED, "text": "This describes the second structural fragment."}]},
+                {"sectionRef": segment.sections[0].section_ref, "steps": [_raw_step(segment, ["g1"], VERIFIED, "This describes the first structural fragment.")]},
+                {"sectionRef": segment.sections[1].section_ref, "steps": [_raw_step(segment, ["g2"], UNVERIFIED, "This describes the unresolved structural connection.")]},
+                {"sectionRef": segment.sections[2].section_ref, "steps": [_raw_step(segment, ["g3"], VERIFIED, "This describes the second structural fragment.")]},
             ]
         }
     )
@@ -764,6 +825,25 @@ def test_formatter_production_code_contains_no_removed_hardcode_paths():
         "oneStepPerGroup",
         "outputSkeleton",
         "identifierHints",
+        "PHRASE_CATALOG",
+        "PHRASE_BLACKLIST",
+        "PHRASE_WHITELIST",
+        "EXPECTED_SENTENCE",
+        "EXPECTED_WORDS",
+        "BAD_WORDS",
+        "GOOD_WORDS",
+    ):
+        assert forbidden not in production
+
+    for forbidden in (
+        "bffssox",
+        "stsssox",
+        "app-afesox",
+        "SiteController",
+        "SiteRepository",
+        "AgentController",
+        "/api/v1/sites",
+        "/api/v1/agents",
     ):
         assert forbidden not in production
 

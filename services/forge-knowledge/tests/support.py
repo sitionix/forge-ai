@@ -251,6 +251,7 @@ def _formatter_step(groups: List[Dict[str, Any]], language: str) -> Dict[str, An
     return {
         "groupRefs": [group.get("groupRef") for group in groups],
         "certainty": certainty,
+        "assertionSubject": str(groups[0].get("assertionSubject") or ""),
         "text": _formatter_sentence(groups, certainty, language),
     }
 
