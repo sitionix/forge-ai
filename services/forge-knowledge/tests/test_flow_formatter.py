@@ -21,15 +21,20 @@ from knowledge_service.flow_formatter import (
     UNVERIFIED,
     VERIFIED,
     FlowAssertionSubject,
+    FlowExecutionStage,
+    FlowExecutionStageKind,
     FlowFormatterAnswerService,
     FlowFormatterContractViolation,
     FlowFormatterGroup,
     FlowFormatterGroupKind,
     FlowFormatterPlan,
     FlowFormatterPlanBuilder,
+    FlowPresentationSection,
+    FlowPresentationSectionKind,
     FlowFormatterProviderResult,
     FlowFormatterResponseValidator,
     FlowFormatterSegmentPlanner,
+    FlowFormatterStepText,
     FlowFormatterStitcher,
 )
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
@@ -239,34 +244,36 @@ class ContractFormatterProvider:
         sections = []
         for section in formatter_input["sections"]:
             steps = []
-            current = []
-            current_scope = None
-            for group in section.get("orderedGroups", []):
-                scope = group.get("mergeScope")
-                if current and scope != current_scope:
-                    steps.append(_contract_step(current, response_language))
-                    current = []
-                current_scope = scope
-                current.append(group)
-            if current:
-                steps.append(_contract_step(current, response_language))
+            for stage in section.get("stages", []):
+                steps.append(_contract_step(stage, response_language))
             sections.append({"sectionRef": section["sectionRef"], "steps": steps})
         return FlowFormatterProviderResult(raw_text=json.dumps({"sections": sections}, ensure_ascii=False), prompt_char_length=100)
 
 
-def _contract_step(groups, language):
-    certainty = groups[0]["certainty"]
+def _contract_step(stage, language):
+    certainty = stage["certainty"]
     return {
-        "groupRefs": [group["groupRef"] for group in groups],
+        "stageRef": stage["stageRef"],
         "certainty": certainty,
-        "assertionSubject": groups[0]["assertionSubject"],
-        "text": _contract_text(groups, certainty, language),
+        "assertionSubject": stage["assertionSubject"],
+        "coveredFactRefs": list(stage.get("ownedFactRefs") or []),
+        "text": _contract_text(stage, certainty, language),
     }
 
 
-def _contract_text(groups, certainty, language):
+def _contract_text(stage, certainty, language):
     identifiers = []
-    for group in groups:
+    containers = [
+        stage,
+        stage.get("incoming"),
+        *list(stage.get("typedOperations") or []),
+        *list(stage.get("supportingFacts") or []),
+        *list(stage.get("ownedSummaries") or []),
+        *list(stage.get("ownedBoundaries") or []),
+    ]
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
         for key in (
             "symbol",
             "fromSymbol",
@@ -278,11 +285,12 @@ def _contract_text(groups, certainty, language):
             "operationIdentity",
             "interfaceIdentity",
             "targetDescriptor",
+            "targetServiceIdentity",
         ):
-            value = group.get(key)
+            value = container.get(key)
             if isinstance(value, str) and value and value not in identifiers:
                 identifiers.append(value)
-    values = ", ".join(identifiers) or groups[0]["kind"]
+    values = ", ".join(identifiers) or stage["kind"]
     if language == "uk":
         uncertainty = " з непідтвердженим зв'язком" if certainty == UNVERIFIED else " з неоднозначним зв'язком" if certainty == AMBIGUOUS else ""
         return f"Цей крок описує доступний потік{uncertainty}: {values}."
@@ -294,13 +302,21 @@ def _contract_text(groups, certainty, language):
     return f"This step describes the available flow{uncertainty}: {values}."
 
 
-def _raw_step(segment, refs, certainty, text, assertion_subject=None):
-    group_by_ref = {group.group_ref: group for group in segment.required_groups}
-    first = group_by_ref[refs[0]]
+def _raw_step(segment, ref, certainty, text, assertion_subject=None, covered_fact_refs=None):
+    stage_by_ref = {stage.stage_ref: stage for stage in segment.required_stages}
+    if isinstance(ref, (list, tuple)):
+        if len(ref) != 1:
+            raise ValueError("stage formatter steps accept exactly one stage ref")
+        ref = ref[0]
+    if ref not in stage_by_ref:
+        group_to_stage = {stage.source_group_ref: stage.stage_ref for stage in segment.required_stages}
+        ref = group_to_stage[ref]
+    stage = stage_by_ref[ref]
     return {
-        "groupRefs": list(refs),
+        "stageRef": ref,
         "certainty": certainty,
-        "assertionSubject": assertion_subject if assertion_subject is not None else first.assertion_subject,
+        "assertionSubject": assertion_subject if assertion_subject is not None else stage.assertion_subject,
+        "coveredFactRefs": list(covered_fact_refs if covered_fact_refs is not None else stage.owned_fact_refs),
         "text": text,
     }
 
@@ -317,6 +333,23 @@ def _answer(plans, language: str = "en", provider: ContractFormatterProvider | N
         plan=_retrieval_plan(language),
     )
     return service.to_response(result), result.metrics, provider
+
+
+def test_multi_plan_response_uses_unique_response_local_stage_and_fact_refs():
+    first = _node("First.start", source="source-a", entrypoint=True, summary="Runs the first selected flow.")
+    second = _node("Second.start", source="source-b", entrypoint=True, summary="Runs the second selected flow.")
+    first_plan = _plans(_flow(first, (first,)))[0]
+    second_plan = _plans(_flow(second, (second,)))[0]
+
+    response, metrics, provider = _answer((first_plan, second_plan))
+
+    assert len(response.answers) == 2
+    assert metrics["duplicateStageRefs"] == 0
+    assert metrics["duplicateFactRefs"] == 0
+    assert len(metrics["presentationStageRefs"]) == len(set(metrics["presentationStageRefs"]))
+    assert len(metrics["factOwnerByFactRef"]) == sum(len(record["ownedFactRefs"]) for record in metrics["stageOwnershipRecords"])
+    assert provider.calls[0]["formatterInput"]["coverageContract"]["requiredStageRefs"][0].startswith("p1_")
+    assert provider.calls[1]["formatterInput"]["coverageContract"]["requiredStageRefs"][0].startswith("p2_")
 
 
 def test_linear_flow_plan_has_ordered_groups_and_no_user_facing_text():
@@ -508,11 +541,11 @@ def test_assertion_subject_is_propagated_to_formatter_provider_input():
     _response, _metrics, provider = _answer(plans)
 
     formatter_input = provider.calls[0]["formatterInput"]
-    gap_group = next(group for section in formatter_input["sections"] for group in section["orderedGroups"] if group["certainty"] == UNVERIFIED)
-    assert gap_group["assertionSubject"] == FlowAssertionSubject.DIRECT_RELATION.value
-    assert gap_group["assertionStatus"] == UNVERIFIED
-    assert formatter_input["coverageContract"]["assertionSubjectByGroupRef"][gap_group["groupRef"]] == FlowAssertionSubject.DIRECT_RELATION.value
-    assert formatter_input["coverageContract"]["assertionStatusByGroupRef"][gap_group["groupRef"]] == UNVERIFIED
+    gap_stage = next(stage for section in formatter_input["sections"] for stage in section["stages"] if stage["certainty"] == UNVERIFIED)
+    assert gap_stage["assertionSubject"] == FlowAssertionSubject.DIRECT_RELATION.value
+    assert gap_stage["assertionStatus"] == UNVERIFIED
+    assert formatter_input["coverageContract"]["assertionSubjectByStageRef"][gap_stage["stageRef"]] == FlowAssertionSubject.DIRECT_RELATION.value
+    assert formatter_input["coverageContract"]["assertionStatusByStageRef"][gap_stage["stageRef"]] == UNVERIFIED
 
 
 def test_formatter_output_must_echo_exact_assertion_subject():
@@ -598,9 +631,10 @@ def test_gap_certainty_cannot_be_upgraded_to_verified():
                     "sectionRef": segment.sections[0].section_ref,
                     "steps": [
                         {
-                            "groupRefs": ["g1"],
+                            "stageRef": segment.required_stages[0].stage_ref,
                             "certainty": VERIFIED,
-                            "assertionSubject": segment.required_groups[0].assertion_subject,
+                            "assertionSubject": segment.required_stages[0].assertion_subject,
+                            "coveredFactRefs": list(segment.required_stages[0].owned_fact_refs),
                             "text": "This step describes the available flow with an unconfirmed connection: A.call, B.receive, /items.",
                         }
                     ],
@@ -613,30 +647,39 @@ def test_gap_certainty_cannot_be_upgraded_to_verified():
         FlowFormatterResponseValidator().validate(raw, segment)
 
 
-def test_contiguous_groups_in_one_merge_scope_can_be_one_step():
+def test_multiple_stages_cannot_be_covered_by_one_step():
     groups = tuple(
         FlowFormatterGroup(f"g{index}", index, 0, FlowFormatterGroupKind.LINEAR_EXECUTION, symbol=f"Step{index}.run", source="source-a")
         for index in range(1, 4)
     )
     segment = FlowFormatterSegmentPlanner().plan(FlowFormatterPlan("source-a", "Step1.run", groups, "en"))[0]
     section_ref = segment.sections[0].section_ref
+    first_stage = segment.required_stages[0]
+    combined_fact_refs = [fact_ref for stage in segment.required_stages for fact_ref in stage.owned_fact_refs]
     raw = json.dumps(
         {
             "sections": [
                 {
                     "sectionRef": section_ref,
-                    "steps": [_raw_step(segment, ["g1", "g2", "g3"], VERIFIED, "This describes the ordered structural work.")],
+                    "steps": [
+                        _raw_step(
+                            segment,
+                            first_stage.stage_ref,
+                            VERIFIED,
+                            "This describes the ordered structural work.",
+                            covered_fact_refs=combined_fact_refs,
+                        )
+                    ],
                 }
             ]
         }
     )
 
-    steps = FlowFormatterResponseValidator().validate(raw, segment)
+    with pytest.raises(FlowFormatterContractViolation):
+        FlowFormatterResponseValidator().validate(raw, segment)
 
-    assert [step.group_refs for step in steps] == [("g1", "g2", "g3")]
 
-
-def test_one_merge_scope_can_return_multiple_contiguous_steps():
+def test_one_output_step_per_stage_is_accepted():
     groups = tuple(
         FlowFormatterGroup(f"g{index}", index, 0, FlowFormatterGroupKind.LINEAR_EXECUTION, symbol=f"Step{index}.run", source="source-a")
         for index in range(1, 4)
@@ -648,8 +691,8 @@ def test_one_merge_scope_can_return_multiple_contiguous_steps():
                 {
                     "sectionRef": segment.sections[0].section_ref,
                     "steps": [
-                        _raw_step(segment, ["g1"], VERIFIED, "This describes the first structural item."),
-                        _raw_step(segment, ["g2", "g3"], VERIFIED, "This describes the remaining structural items."),
+                        _raw_step(segment, stage.stage_ref, VERIFIED, f"This describes structural item {index}.")
+                        for index, stage in enumerate(segment.required_stages, start=1)
                     ],
                 }
             ]
@@ -658,23 +701,25 @@ def test_one_merge_scope_can_return_multiple_contiguous_steps():
 
     steps = FlowFormatterResponseValidator().validate(raw, segment)
 
-    assert [step.group_refs for step in steps] == [("g1",), ("g2", "g3")]
+    assert [step.stage_ref for step in steps] == [stage.stage_ref for stage in segment.required_stages]
 
 
-def test_non_contiguous_group_range_is_rejected_structurally():
+def test_stage_reorder_is_rejected_structurally():
     groups = tuple(
         FlowFormatterGroup(f"g{index}", index, 0, FlowFormatterGroupKind.LINEAR_EXECUTION, symbol=f"Step{index}.run", source="source-a")
         for index in range(1, 4)
     )
     segment = FlowFormatterSegmentPlanner().plan(FlowFormatterPlan("source-a", "Step1.run", groups, "en"))[0]
+    st1, st2, st3 = [stage.stage_ref for stage in segment.required_stages]
     raw = json.dumps(
         {
             "sections": [
                 {
                     "sectionRef": segment.sections[0].section_ref,
                     "steps": [
-                        _raw_step(segment, ["g1", "g3"], VERIFIED, "This describes a non contiguous structural range."),
-                        _raw_step(segment, ["g2"], VERIFIED, "This describes the skipped structural item."),
+                        _raw_step(segment, st1, VERIFIED, "This describes the first structural item."),
+                        _raw_step(segment, st3, VERIFIED, "This describes the third structural item."),
+                        _raw_step(segment, st2, VERIFIED, "This describes the second structural item."),
                     ],
                 }
             ]
@@ -689,12 +734,13 @@ def test_cross_section_merge_is_rejected_structurally():
     group_a = FlowFormatterGroup("g1", 1, 0, FlowFormatterGroupKind.LINEAR_EXECUTION, symbol="Shared.start", source="source-a")
     group_b = FlowFormatterGroup("g2", 2, 0, FlowFormatterGroupKind.LINEAR_EXECUTION, symbol="Shared.start", source="source-b")
     segment = FlowFormatterSegmentPlanner().plan(FlowFormatterPlan("source-a", "Shared.start", (group_a, group_b), "en"))[0]
+    second_stage = segment.required_stages[1]
     raw = json.dumps(
         {
             "sections": [
                 {
                     "sectionRef": segment.sections[0].section_ref,
-                    "steps": [_raw_step(segment, ["g1", "g2"], VERIFIED, "This describes two structural fragments together.")],
+                    "steps": [_raw_step(segment, second_stage.stage_ref, VERIFIED, "This describes a foreign section stage.")],
                 },
                 {"sectionRef": segment.sections[1].section_ref, "steps": []},
             ]
@@ -709,12 +755,16 @@ def test_cross_certainty_merge_is_rejected_structurally():
     group_a = FlowFormatterGroup("g1", 1, 0, FlowFormatterGroupKind.LINEAR_EXECUTION, symbol="A.run", source="source-a")
     group_b = FlowFormatterGroup("g2", 2, 0, FlowFormatterGroupKind.LINEAR_EXECUTION, certainty=UNVERIFIED, symbol="B.run", source="source-a")
     segment = FlowFormatterSegmentPlanner().plan(FlowFormatterPlan("source-a", "A.run", (group_a, group_b), "en"))[0]
+    second_stage = segment.required_stages[1]
     raw = json.dumps(
         {
             "sections": [
                 {
                     "sectionRef": segment.sections[0].section_ref,
-                    "steps": [_raw_step(segment, ["g1", "g2"], VERIFIED, "This describes a mixed certainty structural range.")],
+                    "steps": [
+                        _raw_step(segment, segment.required_stages[0].stage_ref, VERIFIED, "This describes the first structural item."),
+                        _raw_step(segment, second_stage.stage_ref, VERIFIED, "This describes the second structural item."),
+                    ],
                 }
             ]
         }
@@ -741,7 +791,7 @@ def test_gap_group_remains_isolated_without_phrase_assertions():
 
     steps = FlowFormatterResponseValidator().validate(raw, segment)
 
-    assert [step.group_refs for step in steps] == [("g1",), ("g2",), ("g3",)]
+    assert [step.stage_ref for step in steps] == [stage.stage_ref for stage in segment.required_stages]
 
 
 def test_branch_paths_cannot_be_combined_even_when_adjacent():
@@ -759,26 +809,17 @@ def test_branch_paths_cannot_be_combined_even_when_adjacent():
         ),
     )
     segment = FlowFormatterSegmentPlanner().plan(FlowFormatterPlan("source-a", "Root.start", (root_group, branch), "en"))[0]
-    branch_items = [group.group_ref for group in segment.required_groups if group.kind is FlowFormatterGroupKind.BRANCH_ITEM]
-    branch_start = [group.group_ref for group in segment.required_groups].index(branch_items[0])
-    branch_end = [group.group_ref for group in segment.required_groups].index(branch_items[-1])
-    before = [
-        _raw_step(segment, [group.group_ref], group.certainty, "This describes one structural item.")
-        for group in segment.required_groups[:branch_start]
-    ]
-    after = [
-        _raw_step(segment, [group.group_ref], group.certainty, "This describes one structural item.")
-        for group in segment.required_groups[branch_end + 1 :]
-    ]
+    branch_stages = [stage for stage in segment.required_stages if stage.source_group_kind is FlowFormatterGroupKind.BRANCH_ITEM]
+    skipped = branch_stages[-1].stage_ref
     raw = json.dumps(
         {
             "sections": [
                 {
                     "sectionRef": segment.sections[0].section_ref,
                     "steps": [
-                        *before,
-                        _raw_step(segment, branch_items, VERIFIED, "This combines sibling branch paths."),
-                        *after,
+                        _raw_step(segment, stage.stage_ref, stage.certainty, "This describes one structural item.")
+                        for stage in segment.required_stages
+                        if stage.stage_ref != skipped
                     ],
                 }
             ]
@@ -807,10 +848,10 @@ def test_structural_section_headings_disambiguate_identical_entrypoints():
 
     text = FlowFormatterStitcher().stitch(segment.sections, steps)
 
-    assert text.index("source-a · Shared.start") < text.index("1. ")
+    assert text.index("source-a") < text.index("1. ")
     assert text.index("1. ") < text.index("2. ")
-    assert text.index("2. ") < text.index("source-b · Shared.start")
-    assert text.index("source-b · Shared.start") < text.index("3. ")
+    assert text.index("2. ") < text.index("source-b")
+    assert text.index("source-b") < text.index("3. ")
 
 
 def test_formatter_production_code_contains_no_removed_hardcode_paths():
@@ -857,7 +898,48 @@ def test_large_plan_segments_dynamically_and_stitches_one_answer():
     segments = FlowFormatterSegmentPlanner(context_tokens=1800).plan(plan)
 
     assert len(segments) > 1
-    assert [group.group_ref for segment in segments for group in segment.required_groups] == [group.group_ref for group in groups]
+    assert [stage.source_group_ref for segment in segments for stage in segment.required_stages] == [group.group_ref for group in groups]
+
+
+def test_oversized_stage_splits_owned_facts_and_stitches_one_public_step():
+    fact_refs = tuple(f"f1_{index}" for index in range(1, 12))
+    stage = FlowExecutionStage(
+        stage_ref="st1",
+        section_ref="s1",
+        order=1,
+        depth=0,
+        kind=FlowExecutionStageKind.EXECUTABLE,
+        certainty=VERIFIED,
+        assertion_subject=FlowAssertionSubject.FLOW_EXECUTION.value,
+        assertion_status=VERIFIED,
+        source="source-a",
+        symbol="Oversized.run",
+        supporting_facts=tuple(
+            {"kind": "COMPACT_FACT", "factRef": fact_ref, "detail": f"fact {index} " + ("x" * 120)}
+            for index, fact_ref in enumerate(fact_refs, start=1)
+        ),
+        owned_fact_refs=fact_refs,
+    )
+    section = FlowPresentationSection("s1", FlowPresentationSectionKind.VERIFIED_FRAGMENT, "source-a", "Oversized.run", VERIFIED, (), stages=(stage,))
+    plan = FlowFormatterPlan("source-a", "Oversized.run", (), "en", sections=(section,), stages=(stage,))
+
+    segments = FlowFormatterSegmentPlanner(context_tokens=1024, framing_reserve_tokens=0).plan(plan)
+    steps = tuple(
+        FlowFormatterStepText(
+            stage_ref=segment.required_stages[0].stage_ref,
+            certainty=VERIFIED,
+            assertion_subject=FlowAssertionSubject.FLOW_EXECUTION.value,
+            covered_fact_refs=segment.required_stages[0].owned_fact_refs,
+            text=f"This step describes part {index}.",
+        )
+        for index, segment in enumerate(segments, start=1)
+    )
+    text = FlowFormatterStitcher().stitch(tuple(section for segment in segments for section in segment.sections), steps)
+
+    assert len(segments) > 1
+    assert {stage.stage_ref for segment in segments for stage in segment.required_stages} == {"st1"}
+    assert [fact_ref for segment in segments for stage in segment.required_stages for fact_ref in stage.owned_fact_refs] == list(fact_refs)
+    assert text.count("1. Oversized.run —") == 1
 
 
 def test_truncated_formatter_output_splits_segment_without_lost_groups():
@@ -963,8 +1045,8 @@ def test_large_flow_scale_keeps_group_coverage_linear_enough():
     segments = FlowFormatterSegmentPlanner(context_tokens=32768).plan(plan)
     elapsed = time.perf_counter() - started
 
-    refs = [group.group_ref for group in plan.walk()]
-    segmented_refs = [group.group_ref for segment in segments for group in segment.required_groups]
+    refs = [stage.stage_ref for stage in plan.walk_stages()]
+    segmented_refs = [stage.stage_ref for segment in segments for stage in segment.required_stages]
     assert len(refs) == len(set(refs))
     assert segmented_refs == refs
     assert len(segments) > 1

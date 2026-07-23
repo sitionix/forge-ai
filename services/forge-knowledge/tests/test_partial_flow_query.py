@@ -401,6 +401,30 @@ def test_disconnected_exact_http_fragments_become_one_plan_with_unverified_gap()
     assert plans[0].parts[1].gap.verification_status == "UNVERIFIED"
 
 
+def test_exact_http_continuation_starts_with_source_even_when_target_ranks_higher():
+    outbound = _node("Client.create", source="client", role="CLIENT_OPERATION")
+    inbound = _node("Controller.create", source="service", role="EXECUTABLE")
+
+    plans, diagnostics = FlowNarrativePlanner().assemble(
+        _families(
+            replace(_flow(outbound), relevance_score=0.2),
+            replace(_flow(inbound), relevance_score=1.0),
+        ),
+        max_plans=10,
+        operation_facts=_facts_for(outbound, inbound),
+    )
+
+    assert diagnostics == ()
+    assert len(plans) == 1
+    assert [part.kind for part in plans[0].parts] == [
+        FlowNarrativePartKind.VERIFIED_FRAGMENT,
+        FlowNarrativePartKind.UNVERIFIED_GAP,
+        FlowNarrativePartKind.VERIFIED_FRAGMENT,
+    ]
+    assert plans[0].parts[0].fragment.source_id == "client"
+    assert plans[0].parts[2].fragment.source_id == "service"
+
+
 def test_ambiguous_http_target_does_not_merge_plans():
     outbound = _node("Client.create", source="client", role="CLIENT_OPERATION")
     target_a = _node("ControllerA.create", source="service-a", role="EXECUTABLE")

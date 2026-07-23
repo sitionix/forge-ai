@@ -873,6 +873,19 @@ def _knowledge_human_query_response(
                 "formatterOutputSplitCallCount": 0,
                 "formatterSegmentCount": 0,
                 "formatterGroupCount": 0,
+                "selectedExecutableNodeCount": 0,
+                "selectedExecutableStageRefs": [],
+                "selectedExecutableSymbols": [],
+                "standaloneOperationStageCount": 0,
+                "gapStageCount": 0,
+                "boundaryStageCount": 0,
+                "structuralStageCount": 0,
+                "presentationStageCount": 0,
+                "publicStepCount": 0,
+                "missingStageRefs": 0,
+                "duplicateStageRefs": 0,
+                "unownedFactRefs": 0,
+                "duplicateFactRefs": 0,
                 "formatterSerializationCount": 0,
                 "finalAnswerProviderCallCount": 0,
                 "groundingProviderCallCount": 0,
@@ -1059,6 +1072,29 @@ def _human_query_terminal_audit_record(
         "walkthroughPlanningDurationMs": float(walkthrough_metrics.get("walkthroughPlanningDurationMs") or 0.0),
         "textRenderingDurationMs": float(walkthrough_metrics.get("textRenderingDurationMs") or 0.0),
         "formatterGroupCount": int(walkthrough_metrics.get("formatterGroupCount") or 0),
+        "selectedExecutableNodeCount": int(walkthrough_metrics.get("selectedExecutableNodeCount") or 0),
+        "selectedExecutableStageRefs": list(walkthrough_metrics.get("selectedExecutableStageRefs") or []),
+        "selectedExecutableSymbols": list(walkthrough_metrics.get("selectedExecutableSymbols") or []),
+        "selectedExecutableStages": list(walkthrough_metrics.get("selectedExecutableStages") or []),
+        "standaloneOperationStageCount": int(walkthrough_metrics.get("standaloneOperationStageCount") or 0),
+        "gapStageCount": int(walkthrough_metrics.get("gapStageCount") or 0),
+        "boundaryStageCount": int(walkthrough_metrics.get("boundaryStageCount") or 0),
+        "structuralStageCount": int(walkthrough_metrics.get("structuralStageCount") or 0),
+        "presentationStageCount": int(walkthrough_metrics.get("presentationStageCount") or 0),
+        "publicStepCount": int(walkthrough_metrics.get("publicStepCount") or 0),
+        "stageCountContractExpected": int(walkthrough_metrics.get("stageCountContractExpected") or 0),
+        "stageCountContractMatched": bool(walkthrough_metrics.get("stageCountContractMatched", False)),
+        "expectedPresentationStageCount": int(walkthrough_metrics.get("expectedPresentationStageCount") or 0),
+        "presentationStageRefs": list(walkthrough_metrics.get("presentationStageRefs") or []),
+        "presentationStages": list(walkthrough_metrics.get("presentationStages") or []),
+        "stageOwnershipRecords": list(walkthrough_metrics.get("stageOwnershipRecords") or []),
+        "stageOwnershipMap": dict(walkthrough_metrics.get("stageOwnershipMap") or {}),
+        "ownedFactRefsByStageRef": dict(walkthrough_metrics.get("ownedFactRefsByStageRef") or {}),
+        "factOwnerByFactRef": dict(walkthrough_metrics.get("factOwnerByFactRef") or {}),
+        "missingStageRefs": int(walkthrough_metrics.get("missingStageRefs") or 0),
+        "duplicateStageRefs": int(walkthrough_metrics.get("duplicateStageRefs") or 0),
+        "unownedFactRefs": int(walkthrough_metrics.get("unownedFactRefs") or 0),
+        "duplicateFactRefs": int(walkthrough_metrics.get("duplicateFactRefs") or 0),
         "formatterSegmentCount": int(walkthrough_metrics.get("formatterSegmentCount") or 0),
         "formatterSerializationCount": int(walkthrough_metrics.get("formatterSerializationCount") or 0),
         "formatterPlanningDurationMs": float(walkthrough_metrics.get("formatterPlanningDurationMs") or 0.0),
@@ -1117,6 +1153,14 @@ def _walkthrough_terminal_metrics(pipeline_records) -> Dict[str, Any]:
     def total_float(key: str) -> float:
         return round(sum(float(record.get(key) or 0.0) for record in records), 3)
 
+    def concat_list(key: str) -> list:
+        values = []
+        for record in records:
+            item = record.get(key)
+            if isinstance(item, list):
+                values.extend(item)
+        return values
+
     return {
         "narrativePlanCount": total_int("narrativePlanCount"),
         "walkthroughStepCount": total_int("walkthroughStepCount"),
@@ -1128,6 +1172,46 @@ def _walkthrough_terminal_metrics(pipeline_records) -> Dict[str, Any]:
         "walkthroughPlanningDurationMs": total_float("walkthroughPlanningDurationMs"),
         "textRenderingDurationMs": total_float("textRenderingDurationMs"),
         "formatterGroupCount": total_int("formatterGroupCount"),
+        "selectedExecutableNodeCount": total_int("selectedExecutableNodeCount"),
+        "selectedExecutableStageRefs": concat_list("selectedExecutableStageRefs"),
+        "selectedExecutableSymbols": concat_list("selectedExecutableSymbols"),
+        "selectedExecutableStages": concat_list("selectedExecutableStages"),
+        "standaloneOperationStageCount": total_int("standaloneOperationStageCount"),
+        "gapStageCount": total_int("gapStageCount"),
+        "boundaryStageCount": total_int("boundaryStageCount"),
+        "structuralStageCount": total_int("structuralStageCount"),
+        "presentationStageCount": total_int("presentationStageCount"),
+        "publicStepCount": total_int("publicStepCount"),
+        "stageCountContractExpected": total_int("stageCountContractExpected"),
+        "stageCountContractMatched": all(
+            bool(record.get("stageCountContractMatched", False))
+            for record in records
+        ),
+        "expectedPresentationStageCount": total_int("expectedPresentationStageCount"),
+        "presentationStageRefs": concat_list("presentationStageRefs"),
+        "presentationStages": concat_list("presentationStages"),
+        "stageOwnershipRecords": concat_list("stageOwnershipRecords"),
+        "stageOwnershipMap": {
+            str(record.get("stageRef")): list(record.get("ownedFactRefs") or [])
+            for record in concat_list("stageOwnershipRecords")
+            if isinstance(record, dict) and record.get("stageRef")
+        },
+        "ownedFactRefsByStageRef": {
+            str(record.get("stageRef")): list(record.get("ownedFactRefs") or [])
+            for record in concat_list("stageOwnershipRecords")
+            if isinstance(record, dict) and record.get("stageRef")
+        },
+        "factOwnerByFactRef": {
+            str(fact_ref): str(record.get("stageRef"))
+            for record in concat_list("stageOwnershipRecords")
+            if isinstance(record, dict) and record.get("stageRef")
+            for fact_ref in (record.get("ownedFactRefs") or [])
+            if fact_ref
+        },
+        "missingStageRefs": total_int("missingStageRefs"),
+        "duplicateStageRefs": total_int("duplicateStageRefs"),
+        "unownedFactRefs": total_int("unownedFactRefs"),
+        "duplicateFactRefs": total_int("duplicateFactRefs"),
         "formatterSegmentCount": total_int("formatterSegmentCount"),
         "formatterSerializationCount": total_int("formatterSerializationCount"),
         "formatterPlanningDurationMs": total_float("formatterPlanningDurationMs"),

@@ -44,7 +44,7 @@ _FRAMING_RESERVE_TOKENS = 512
 _REPAIRABLE_ATTEMPTS = (1, 2)
 _ALLOWED_FORMATTER_RESPONSE_KEYS = frozenset({"sections"})
 _ALLOWED_FORMATTER_SECTION_KEYS = frozenset({"sectionRef", "steps"})
-_ALLOWED_FORMATTER_STEP_KEYS = frozenset({"groupRefs", "certainty", "assertionSubject", "text"})
+_ALLOWED_FORMATTER_STEP_KEYS = frozenset({"stageRef", "certainty", "assertionSubject", "coveredFactRefs", "text"})
 _ROUTE_RE = re.compile(r"(?<!\w)/(?:[A-Za-z0-9._~!$&'()*+,;=:@%-]+/?)+")
 
 
@@ -65,6 +65,15 @@ class FlowFormatterGroupKind(str, Enum):
     SHARED_CONTINUATION = "SHARED_CONTINUATION"
     AVAILABLE_FACTS_END = "AVAILABLE_FACTS_END"
     TYPED_RESULT = "TYPED_RESULT"
+
+
+class FlowExecutionStageKind(str, Enum):
+    EXECUTABLE = "EXECUTABLE"
+    STANDALONE_OPERATION = "STANDALONE_OPERATION"
+    BOUNDARY = "BOUNDARY"
+    UNVERIFIED_GAP = "UNVERIFIED_GAP"
+    AMBIGUOUS_GAP = "AMBIGUOUS_GAP"
+    STRUCTURAL = "STRUCTURAL"
 
 
 class FlowPresentationSectionKind(str, Enum):
@@ -94,6 +103,8 @@ class FlowFormatterGroup:
     source: str | None = None
     source_display_hint: str | None = None
     symbol: str | None = None
+    node_kind: str | None = None
+    execution_role: str | None = None
     from_source: str | None = None
     from_symbol: str | None = None
     to_source: str | None = None
@@ -110,14 +121,47 @@ class FlowFormatterGroup:
     boundary_kind: str | None = None
     target_descriptor: str | None = None
     summary: str | None = None
+    typed_operations: tuple[Dict[str, Any], ...] = ()
+    supporting_facts: tuple[Dict[str, Any], ...] = ()
+    owned_boundaries: tuple[Dict[str, Any], ...] = ()
     child_groups: tuple["FlowFormatterGroup", ...] = ()
     terminal_semantic: str | None = None
     fragment_ref: str | None = None
     section_ref: str | None = None
     branch_path: str = ""
-    merge_scope: str | None = None
     assertion_subject: str | None = None
     assertion_status: str | None = None
+
+
+@dataclass(frozen=True)
+class FlowExecutionStage:
+    stage_ref: str
+    section_ref: str
+    order: int
+    depth: int
+    kind: FlowExecutionStageKind
+    certainty: str
+    assertion_subject: str
+    assertion_status: str
+    source: str | None = None
+    source_display_hint: str | None = None
+    symbol: str | None = None
+    node_kind: str | None = None
+    execution_role: str | None = None
+    incoming: Dict[str, Any] = field(default_factory=dict)
+    typed_operations: tuple[Dict[str, Any], ...] = ()
+    supporting_facts: tuple[Dict[str, Any], ...] = ()
+    owned_summaries: tuple[Dict[str, Any], ...] = ()
+    owned_boundaries: tuple[Dict[str, Any], ...] = ()
+    outgoing_stage_refs: tuple[str, ...] = ()
+    branch_path: str = ""
+    terminal_semantic: str | None = None
+    owned_fact_refs: tuple[str, ...] = ()
+    stage_part_ref: str | None = None
+    stage_part_index: int | None = None
+    stage_part_count: int | None = None
+    source_group_ref: str | None = None
+    source_group_kind: FlowFormatterGroupKind | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +172,7 @@ class FlowPresentationSection:
     entrypoint: str | None
     certainty: str
     ordered_groups: tuple[FlowFormatterGroup, ...]
+    stages: tuple[FlowExecutionStage, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -137,6 +182,7 @@ class FlowFormatterPlan:
     groups: tuple[FlowFormatterGroup, ...]
     response_language: str
     sections: tuple[FlowPresentationSection, ...] = ()
+    stages: tuple[FlowExecutionStage, ...] = ()
     diagnostics: tuple[KnowledgeQueryDiagnostic, ...] = ()
     structural_metrics: Dict[str, Any] = field(default_factory=dict)
     planning_duration_ms: float = 0.0
@@ -144,6 +190,10 @@ class FlowFormatterPlan:
     @property
     def group_count(self) -> int:
         return sum(1 for _ in self.walk())
+
+    @property
+    def presentation_stage_count(self) -> int:
+        return len(self.stages)
 
     @property
     def branch_count(self) -> int:
@@ -163,6 +213,9 @@ class FlowFormatterPlan:
             group = stack.pop()
             yield group
             stack.extend(reversed(group.child_groups))
+
+    def walk_stages(self) -> Iterable[FlowExecutionStage]:
+        return iter(self.stages)
 
 
 @dataclass(frozen=True)
@@ -192,14 +245,18 @@ class FlowFormatterSegment:
     fixed_framing_reserve_tokens: int
     context_tokens: int
     minimum_valid_output_tokens: int
-    serialized_group_tokens: tuple[int, ...] = ()
+    serialized_stage_tokens: tuple[int, ...] = ()
+
+    @property
+    def required_stages(self) -> tuple[FlowExecutionStage, ...]:
+        return tuple(stage for section in self.sections for stage in section.stages)
 
     @property
     def required_groups(self) -> tuple[FlowFormatterGroup, ...]:
         return tuple(group for section in self.sections for group in section.ordered_groups)
 
     def to_prompt_input(self, original_question: str) -> Dict[str, Any]:
-        required = self.required_groups
+        required = self.required_stages
         sections = [
             {
                 "sectionRef": section.section_ref,
@@ -207,14 +264,14 @@ class FlowFormatterSegment:
                 "source": section.source,
                 "entrypoint": section.entrypoint,
                 "certainty": section.certainty,
-                "orderedGroups": [_group_payload(group, include_children=False) for group in section.ordered_groups],
+                "stages": [_stage_payload(stage) for stage in section.stages],
             }
             for section in self.sections
         ]
-        group_to_section = {
-            group.group_ref: section.section_ref
+        stage_to_section = {
+            stage.stage_ref: section.section_ref
             for section in self.sections
-            for group in section.ordered_groups
+            for stage in section.stages
         }
         return {
             "originalQuestion": original_question,
@@ -230,15 +287,15 @@ class FlowFormatterSegment:
             },
             "coverageContract": {
                 "requiredSectionRefs": [section.section_ref for section in self.sections],
-                "requiredGroupRefs": [group.group_ref for group in required],
-                "certaintyByGroupRef": {group.group_ref: group.certainty for group in required},
-                "assertionSubjectByGroupRef": {group.group_ref: group.assertion_subject for group in required},
-                "assertionStatusByGroupRef": {group.group_ref: group.assertion_status for group in required},
-                "sectionByGroupRef": group_to_section,
-                "mergeScopeByGroupRef": {group.group_ref: group.merge_scope for group in required},
-                "order": [group.group_ref for group in required],
-                "groupRefsBySection": {
-                    section.section_ref: [group.group_ref for group in section.ordered_groups]
+                "requiredStageRefs": [stage.stage_ref for stage in required],
+                "certaintyByStageRef": {stage.stage_ref: stage.certainty for stage in required},
+                "assertionSubjectByStageRef": {stage.stage_ref: stage.assertion_subject for stage in required},
+                "assertionStatusByStageRef": {stage.stage_ref: stage.assertion_status for stage in required},
+                "coveredFactRefsByStageRef": {stage.stage_ref: list(stage.owned_fact_refs) for stage in required},
+                "sectionByStageRef": stage_to_section,
+                "order": [stage.stage_ref for stage in required],
+                "stageRefsBySection": {
+                    section.section_ref: [stage.stage_ref for stage in section.stages]
                     for section in self.sections
                 },
             },
@@ -266,10 +323,15 @@ class FlowFormatterProviderResult:
 
 @dataclass(frozen=True)
 class FlowFormatterStepText:
-    group_refs: tuple[str, ...]
+    stage_ref: str
     certainty: str
     assertion_subject: str
+    covered_fact_refs: tuple[str, ...]
     text: str
+
+    @property
+    def group_refs(self) -> tuple[str, ...]:
+        return (self.stage_ref,)
 
 
 @dataclass(frozen=True)
@@ -377,8 +439,11 @@ class FlowFormatterPlanBuilder:
             )
         groups_with_hints = self._apply_source_display_hints(tuple(groups))
         sectioned_groups, sections = self._presentation_sections(groups_with_hints)
+        stages, sections = self._execution_stages(sectioned_groups, sections)
+        structural_metrics = self._structural_metrics(stages)
         metrics = {
             "formatterGroupCount": sum(1 for _ in _walk_groups(sectioned_groups)),
+            **structural_metrics,
             "presentationSectionCount": len(sections),
             "branchCount": sum(1 for group in _walk_groups(sectioned_groups) if group.kind is FlowFormatterGroupKind.EXPLICIT_BRANCH),
             "gapCount": sum(
@@ -393,6 +458,7 @@ class FlowFormatterPlanBuilder:
             groups=sectioned_groups,
             response_language=response_language,
             sections=sections,
+            stages=stages,
             diagnostics=tuple(diagnostics),
             structural_metrics=metrics,
             planning_duration_ms=round((time.perf_counter() - started) * 1000, 3),
@@ -496,6 +562,12 @@ class FlowFormatterPlanBuilder:
 
             state.rendered.add(current_key)
             node_operations = tuple(operations_by_node.get(current_key, ()))
+            child_entries: list[tuple[FlowGraphEdge, FlowGraphNode | None, FlowNodeKey | None]] = []
+            for edge in outgoing.get(current_key, ()):
+                target_key = self._to_key(edge)
+                target = node_by_key.get(target_key) if target_key is not None else None
+                child_entries.append((edge, target, target_key))
+            has_verified_downstream = bool(child_entries)
             groups.append(
                 self._node_group(
                     current_node,
@@ -505,15 +577,9 @@ class FlowFormatterPlanBuilder:
                     incoming=current_incoming,
                     incoming_from_symbol=current_incoming_from_symbol,
                     operations=node_operations,
+                    outgoing=[edge for edge, _target, _target_key in child_entries],
                 )
             )
-
-            child_entries: list[tuple[FlowGraphEdge, FlowGraphNode | None, FlowNodeKey | None]] = []
-            for edge in outgoing.get(current_key, ()):
-                target_key = self._to_key(edge)
-                target = node_by_key.get(target_key) if target_key is not None else None
-                child_entries.append((edge, target, target_key))
-            has_verified_downstream = bool(child_entries)
             for edge in boundaries.get(current_key, ()):
                 if self._human_relevant_boundary(edge, has_verified_downstream=has_verified_downstream):
                     groups.append(self._boundary_group(edge, current_node, state, depth=current_depth))
@@ -578,7 +644,7 @@ class FlowFormatterPlanBuilder:
             for edge, target, target_key in child_entries:
                 if target is None or target_key is None:
                     if self._human_relevant_boundary(edge, has_verified_downstream=False):
-                        ordered_children.append(self._boundary_group(edge, current_node, state, depth=current_depth + 1))
+                        ordered_children.append(self._boundary_group(edge, current_node, state, depth=current_depth))
                     continue
                 ordered_children.extend(
                     self._node_groups(
@@ -590,7 +656,7 @@ class FlowFormatterPlanBuilder:
                         operations_by_node,
                         state,
                         part_index=part_index,
-                        depth=current_depth + 1,
+                        depth=current_depth,
                         ancestry=(*current_ancestry, current_key),
                         incoming=edge,
                         incoming_from_symbol=self._symbol(current_node),
@@ -620,6 +686,7 @@ class FlowFormatterPlanBuilder:
         incoming: FlowGraphEdge | None,
         incoming_from_symbol: str | None,
         operations: Sequence[AvailableOperationFact],
+        outgoing: Sequence[FlowGraphEdge],
     ) -> FlowFormatterGroup:
         operation = self._primary_operation(operations)
         order, group_ref = state.next_ref()
@@ -630,6 +697,8 @@ class FlowFormatterPlanBuilder:
             kind=FlowFormatterGroupKind.ENTRYPOINT if root else FlowFormatterGroupKind.LINEAR_EXECUTION,
             source=node.source_id,
             symbol=self._symbol(node),
+            node_kind=self._clean(node.node_kind),
+            execution_role=self._clean(node.execution_role),
             from_source=incoming.source_id if incoming is not None else None,
             from_symbol=self._clean(incoming_from_symbol) if incoming is not None else None,
             relation_kind=incoming.edge_type if incoming is not None else None,
@@ -642,6 +711,8 @@ class FlowFormatterPlanBuilder:
             operation_identity=self._clean(operation.operation_identity) if operation is not None else None,
             interface_identity=self._clean(operation.interface_identity) if operation is not None else self._clean(node.entrypoint_interface_method),
             summary=self._clean(node.summary),
+            typed_operations=tuple(self._operation_fact_payload(fact) for fact in sorted(operations, key=self._operation_fact_sort_key)),
+            supporting_facts=tuple(self._outgoing_transition_payload(edge) for edge in outgoing),
         )
 
     def _operation_group(self, fact: AvailableOperationFact, state: _PlannerState, *, depth: int) -> FlowFormatterGroup:
@@ -653,6 +724,7 @@ class FlowFormatterPlanBuilder:
             kind=FlowFormatterGroupKind.OPERATION,
             source=fact.owner_source_id,
             symbol=self._operation_symbol(fact),
+            execution_role=self._clean(fact.execution_role),
             transport_kind=normalize_transport_kind(fact.transport_kind),
             method=normalize_http_method(fact.method),
             route=normalize_route(fact.normalized_route),
@@ -661,6 +733,7 @@ class FlowFormatterPlanBuilder:
             operation_identity=self._clean(fact.operation_identity),
             interface_identity=self._clean(fact.interface_identity),
             target_descriptor=self._clean(fact.target_service_identity),
+            typed_operations=(self._operation_fact_payload(fact),),
         )
 
     def _boundary_group(
@@ -687,6 +760,8 @@ class FlowFormatterPlanBuilder:
             certainty=UNVERIFIED if kind is FlowFormatterGroupKind.UNRESOLVED_BOUNDARY else VERIFIED,
             source=owner.source_id,
             symbol=self._symbol(owner),
+            node_kind=self._clean(owner.node_kind),
+            execution_role=self._clean(owner.execution_role),
             from_source=owner.source_id,
             from_symbol=self._symbol(owner),
             to_source=edge.to_source_id,
@@ -700,6 +775,7 @@ class FlowFormatterPlanBuilder:
             interface_identity=self._clean(metadata.get("interfaceIdentity") if isinstance(metadata.get("interfaceIdentity"), str) else None),
             boundary_kind=projection.kind.value,
             target_descriptor=self._clean(projection.target) or self._edge_target(edge),
+            owned_boundaries=(self._boundary_fact_payload(edge, owner, projection),),
         )
 
     def _branch_item_group(
@@ -886,7 +962,6 @@ class FlowFormatterPlanBuilder:
                     group,
                     section_ref=section_ref,
                     branch_path=branch_path,
-                    merge_scope=f"p1|{section_ref}|{group.fragment_ref or ''}|{branch_path}|{group.certainty}|gap:{group.group_ref}",
                 )
                 replacements[group.group_ref] = updated
                 sections.append(
@@ -923,7 +998,6 @@ class FlowFormatterPlanBuilder:
                 group,
                 section_ref=section_ref,
                 branch_path=branch_path,
-                merge_scope=self._merge_scope(group, section_ref, branch_path),
             )
             replacements[group.group_ref] = updated
             current_groups.append(updated)
@@ -973,13 +1047,11 @@ class FlowFormatterPlanBuilder:
         *,
         section_ref: str,
         branch_path: str,
-        merge_scope: str,
     ) -> FlowFormatterGroup:
         return replace(
             group,
             section_ref=section_ref,
             branch_path=branch_path,
-            merge_scope=merge_scope,
             assertion_subject=group.assertion_subject or self._assertion_subject(group),
             assertion_status=group.assertion_status or self._assertion_status(group),
         )
@@ -997,7 +1069,7 @@ class FlowFormatterPlanBuilder:
             return FlowAssertionSubject.TERMINAL_SEMANTIC.value
         if group.kind is FlowFormatterGroupKind.TYPED_RESULT:
             return FlowAssertionSubject.TYPED_RESULT.value
-        if group.kind is FlowFormatterGroupKind.UNRESOLVED_BOUNDARY:
+        if group.kind in {FlowFormatterGroupKind.EXTERNAL_BOUNDARY, FlowFormatterGroupKind.UNRESOLVED_BOUNDARY}:
             return FlowAssertionSubject.BOUNDARY_RELATION.value
         return FlowAssertionSubject.FLOW_EXECUTION.value
 
@@ -1008,16 +1080,6 @@ class FlowFormatterPlanBuilder:
             return UNVERIFIED
         return group.certainty or VERIFIED
 
-    def _merge_scope(self, group: FlowFormatterGroup, section_ref: str, branch_path: str) -> str:
-        boundary = "linear"
-        if group.kind is FlowFormatterGroupKind.EXPLICIT_BRANCH:
-            boundary = f"explicit-branch:{group.group_ref}"
-        elif group.kind in {FlowFormatterGroupKind.CYCLE, FlowFormatterGroupKind.SHARED_CONTINUATION}:
-            boundary = f"{group.kind.value}:{group.group_ref}"
-        elif group.terminal_semantic:
-            boundary = f"terminal:{group.group_ref}"
-        return "|".join(("p1", section_ref, group.fragment_ref or "", branch_path, group.certainty, boundary))
-
     def _rebuild_sectioned_tree(
         self,
         group: FlowFormatterGroup,
@@ -1027,6 +1089,432 @@ class FlowFormatterPlanBuilder:
         return replace(
             base,
             child_groups=tuple(self._rebuild_sectioned_tree(child, replacements) for child in group.child_groups),
+        )
+
+    def _execution_stages(
+        self,
+        groups: tuple[FlowFormatterGroup, ...],
+        sections: tuple[FlowPresentationSection, ...],
+    ) -> tuple[tuple[FlowExecutionStage, ...], tuple[FlowPresentationSection, ...]]:
+        drafts: list[Dict[str, Any]] = []
+        terminals: list[FlowFormatterGroup] = []
+        for group in _walk_groups(groups):
+            if group.kind is FlowFormatterGroupKind.AVAILABLE_FACTS_END:
+                terminals.append(group)
+                continue
+            if group.kind is FlowFormatterGroupKind.ORDERED_CALL_GROUP:
+                continue
+            stage_ref = f"st{len(drafts) + 1}"
+            drafts.append(self._stage_draft(stage_ref, group, len(drafts) + 1))
+
+        for terminal in terminals:
+            target = self._terminal_owner(drafts, terminal)
+            if target is not None:
+                target["terminal_semantic"] = terminal.terminal_semantic or FlowFormatterGroupKind.AVAILABLE_FACTS_END.value
+                target["supporting_facts"].append(
+                    _without_empty(
+                        {
+                            "kind": FlowAssertionSubject.TERMINAL_SEMANTIC.value,
+                            "terminalSemantic": target["terminal_semantic"],
+                        }
+                    )
+                )
+
+        self._link_outgoing_stage_refs(drafts)
+        stages = tuple(self._final_stage(draft, fact_index) for fact_index, draft in self._stage_fact_indexes(drafts))
+        stages_by_section: Dict[str, list[FlowExecutionStage]] = defaultdict(list)
+        for stage in stages:
+            stages_by_section[stage.section_ref].append(stage)
+        updated_sections = tuple(
+            updated
+            for section in sections
+            for updated in (replace(section, stages=tuple(stages_by_section.get(section.section_ref, ()))),)
+            if updated.stages
+        )
+        return stages, updated_sections
+
+    def _stage_draft(self, stage_ref: str, group: FlowFormatterGroup, order: int) -> Dict[str, Any]:
+        typed_operations = list(group.typed_operations)
+        fallback_operation = self._group_operation_payload(group)
+        if fallback_operation and fallback_operation not in typed_operations:
+            typed_operations.append(fallback_operation)
+        incoming = self._incoming_payload(group)
+        owned_summaries = [{"kind": "SUMMARY", "summary": group.summary}] if group.summary else []
+        supporting_facts = [dict(item) for item in group.supporting_facts]
+        owned_boundaries = [dict(item) for item in group.owned_boundaries]
+        if group.kind in {FlowFormatterGroupKind.UNVERIFIED_GAP, FlowFormatterGroupKind.AMBIGUOUS_GAP}:
+            supporting_facts.append(self._gap_fact_payload(group))
+        elif group.kind in {
+            FlowFormatterGroupKind.EXPLICIT_BRANCH,
+            FlowFormatterGroupKind.BRANCH_ITEM,
+            FlowFormatterGroupKind.JOIN,
+            FlowFormatterGroupKind.CYCLE,
+            FlowFormatterGroupKind.SHARED_CONTINUATION,
+        }:
+            supporting_facts.append(self._structural_fact_payload(group))
+        if not incoming and not typed_operations and not owned_summaries and not supporting_facts and not owned_boundaries:
+            supporting_facts.append(self._structural_fact_payload(group))
+        return {
+            "stage_ref": stage_ref,
+            "section_ref": group.section_ref or "s1",
+            "order": order,
+            "depth": max(0, int(group.depth)),
+            "kind": self._stage_kind(group),
+            "certainty": group.certainty or VERIFIED,
+            "assertion_subject": group.assertion_subject or self._assertion_subject(group),
+            "assertion_status": group.assertion_status or self._assertion_status(group),
+            "source": group.source,
+            "source_display_hint": group.source_display_hint,
+            "symbol": group.symbol,
+            "node_kind": group.node_kind,
+            "execution_role": group.execution_role,
+            "incoming": incoming,
+            "typed_operations": typed_operations,
+            "supporting_facts": supporting_facts,
+            "owned_summaries": owned_summaries,
+            "owned_boundaries": owned_boundaries,
+            "outgoing_stage_refs": [],
+            "branch_path": group.branch_path,
+            "terminal_semantic": group.terminal_semantic,
+            "source_group_ref": group.group_ref,
+            "source_group_kind": group.kind,
+        }
+
+    def _stage_kind(self, group: FlowFormatterGroup) -> FlowExecutionStageKind:
+        if group.kind in {FlowFormatterGroupKind.ENTRYPOINT, FlowFormatterGroupKind.LINEAR_EXECUTION}:
+            return FlowExecutionStageKind.EXECUTABLE
+        if group.kind is FlowFormatterGroupKind.OPERATION:
+            return FlowExecutionStageKind.STANDALONE_OPERATION
+        if group.kind in {FlowFormatterGroupKind.EXTERNAL_BOUNDARY, FlowFormatterGroupKind.UNRESOLVED_BOUNDARY}:
+            return FlowExecutionStageKind.BOUNDARY
+        if group.kind is FlowFormatterGroupKind.UNVERIFIED_GAP:
+            return FlowExecutionStageKind.UNVERIFIED_GAP
+        if group.kind is FlowFormatterGroupKind.AMBIGUOUS_GAP:
+            return FlowExecutionStageKind.AMBIGUOUS_GAP
+        return FlowExecutionStageKind.STRUCTURAL
+
+    def _terminal_owner(self, drafts: Sequence[Dict[str, Any]], terminal: FlowFormatterGroup) -> Dict[str, Any] | None:
+        for draft in reversed(drafts):
+            if draft["kind"] not in {FlowExecutionStageKind.EXECUTABLE, FlowExecutionStageKind.BOUNDARY}:
+                continue
+            if terminal.source and draft.get("source") and terminal.source != draft.get("source"):
+                continue
+            if terminal.symbol and draft.get("symbol") and terminal.symbol != draft.get("symbol"):
+                continue
+            return draft
+        for draft in reversed(drafts):
+            if draft["kind"] in {FlowExecutionStageKind.EXECUTABLE, FlowExecutionStageKind.BOUNDARY}:
+                return draft
+        return drafts[-1] if drafts else None
+
+    def _link_outgoing_stage_refs(self, drafts: Sequence[Dict[str, Any]]) -> None:
+        for index, draft in enumerate(drafts):
+            incoming = draft.get("incoming") if isinstance(draft.get("incoming"), dict) else {}
+            from_source = incoming.get("fromSource")
+            from_symbol = incoming.get("fromSymbol")
+            if not from_symbol:
+                continue
+            owner = self._nearest_prior_stage(drafts[:index], from_source, from_symbol)
+            if owner is None:
+                continue
+            if draft["stage_ref"] not in owner["outgoing_stage_refs"]:
+                owner["outgoing_stage_refs"].append(draft["stage_ref"])
+            if draft["kind"] in {FlowExecutionStageKind.UNVERIFIED_GAP, FlowExecutionStageKind.AMBIGUOUS_GAP}:
+                continue
+            owner["supporting_facts"].append(
+                _without_empty(
+                    {
+                        "kind": "OUTGOING_STAGE",
+                        "toSource": draft.get("source") or incoming.get("toSource"),
+                        "toSymbol": draft.get("symbol") or incoming.get("toSymbol"),
+                        "relationKind": incoming.get("relationKind"),
+                        "resolutionStatus": incoming.get("resolutionStatus"),
+                    }
+                )
+            )
+        for index, draft in enumerate(drafts):
+            if draft["kind"] not in {FlowExecutionStageKind.UNVERIFIED_GAP, FlowExecutionStageKind.AMBIGUOUS_GAP}:
+                continue
+            relation = draft.get("incoming") if isinstance(draft.get("incoming"), dict) else {}
+            target = self._nearest_later_stage(drafts[index + 1 :], relation.get("toSource"), relation.get("toSymbol"))
+            if target is not None and target["stage_ref"] not in draft["outgoing_stage_refs"]:
+                draft["outgoing_stage_refs"].append(target["stage_ref"])
+
+    def _nearest_prior_stage(
+        self,
+        drafts: Sequence[Dict[str, Any]],
+        source: Any,
+        symbol: Any,
+    ) -> Dict[str, Any] | None:
+        for candidate in reversed(tuple(drafts)):
+            if candidate["kind"] is not FlowExecutionStageKind.EXECUTABLE:
+                continue
+            if source and candidate.get("source") != source:
+                continue
+            if candidate.get("symbol") == symbol:
+                return candidate
+        return None
+
+    def _nearest_later_stage(
+        self,
+        drafts: Sequence[Dict[str, Any]],
+        source: Any,
+        symbol: Any,
+    ) -> Dict[str, Any] | None:
+        for candidate in drafts:
+            if candidate["kind"] is not FlowExecutionStageKind.EXECUTABLE:
+                continue
+            if source and candidate.get("source") != source:
+                continue
+            if not symbol or candidate.get("symbol") == symbol:
+                return candidate
+        return None
+
+    def _stage_fact_indexes(self, drafts: Sequence[Dict[str, Any]]) -> tuple[tuple[int, Dict[str, Any]], ...]:
+        return tuple((index, draft) for index, draft in enumerate(drafts, start=1))
+
+    def _final_stage(self, draft: Dict[str, Any], stage_index: int) -> FlowExecutionStage:
+        fact_counter = 0
+        owned_fact_refs: list[str] = []
+
+        def assign(payload: Dict[str, Any]) -> Dict[str, Any]:
+            nonlocal fact_counter
+            fact_counter += 1
+            ref = f"f{stage_index}_{fact_counter}"
+            owned_fact_refs.append(ref)
+            result = dict(payload)
+            result["factRef"] = ref
+            return result
+
+        incoming = assign(draft["incoming"]) if draft.get("incoming") else {}
+        typed_operations = tuple(assign(dict(item)) for item in draft.get("typed_operations", ()) if item)
+        supporting_facts = tuple(assign(dict(item)) for item in draft.get("supporting_facts", ()) if item)
+        owned_summaries = tuple(assign(dict(item)) for item in draft.get("owned_summaries", ()) if item)
+        owned_boundaries = tuple(assign(dict(item)) for item in draft.get("owned_boundaries", ()) if item)
+        return FlowExecutionStage(
+            stage_ref=draft["stage_ref"],
+            section_ref=draft["section_ref"],
+            order=int(draft["order"]),
+            depth=int(draft["depth"]),
+            kind=draft["kind"],
+            certainty=draft["certainty"],
+            assertion_subject=draft["assertion_subject"],
+            assertion_status=draft["assertion_status"],
+            source=draft.get("source"),
+            source_display_hint=draft.get("source_display_hint"),
+            symbol=draft.get("symbol"),
+            node_kind=draft.get("node_kind"),
+            execution_role=draft.get("execution_role"),
+            incoming=incoming,
+            typed_operations=typed_operations,
+            supporting_facts=supporting_facts,
+            owned_summaries=owned_summaries,
+            owned_boundaries=owned_boundaries,
+            outgoing_stage_refs=tuple(draft.get("outgoing_stage_refs", ())),
+            branch_path=draft.get("branch_path") or "",
+            terminal_semantic=draft.get("terminal_semantic"),
+            owned_fact_refs=tuple(owned_fact_refs),
+            source_group_ref=draft.get("source_group_ref"),
+            source_group_kind=draft.get("source_group_kind"),
+        )
+
+    def _structural_metrics(self, stages: Sequence[FlowExecutionStage]) -> Dict[str, Any]:
+        stage_refs = [stage.stage_ref for stage in stages]
+        fact_refs = [fact_ref for stage in stages for fact_ref in stage.owned_fact_refs]
+        selected_executable_stages = [stage for stage in stages if stage.kind is FlowExecutionStageKind.EXECUTABLE]
+        standalone_operation_count = sum(1 for stage in stages if stage.kind is FlowExecutionStageKind.STANDALONE_OPERATION)
+        gap_count = sum(1 for stage in stages if stage.kind in {FlowExecutionStageKind.UNVERIFIED_GAP, FlowExecutionStageKind.AMBIGUOUS_GAP})
+        boundary_count = sum(1 for stage in stages if stage.kind is FlowExecutionStageKind.BOUNDARY)
+        structural_count = sum(1 for stage in stages if stage.kind is FlowExecutionStageKind.STRUCTURAL)
+        presentation_count = len(stages)
+        expected_count = len(selected_executable_stages) + standalone_operation_count + gap_count + boundary_count + structural_count
+        stage_refs_by_section: dict[str, list[str]] = defaultdict(list)
+        for stage in stages:
+            stage_refs_by_section[stage.section_ref].append(stage.stage_ref)
+        presentation_stages = [_stage_payload(stage) for stage in stages]
+        stage_ownership_records = [
+            {
+                "stageRef": stage.stage_ref,
+                "sectionRef": stage.section_ref,
+                "order": stage.order,
+                "kind": stage.kind.value,
+                "certainty": stage.certainty,
+                "assertionSubject": stage.assertion_subject,
+                "source": stage.source,
+                "symbol": stage.symbol,
+                "ownedFactRefs": list(stage.owned_fact_refs),
+            }
+            for stage in stages
+        ]
+        return {
+            "selectedExecutableNodeCount": len(selected_executable_stages),
+            "selectedExecutableStageRefs": [stage.stage_ref for stage in selected_executable_stages],
+            "selectedExecutableSymbols": [stage.symbol for stage in selected_executable_stages if stage.symbol],
+            "selectedExecutableStages": [
+                {
+                    "stageRef": stage.stage_ref,
+                    "sectionRef": stage.section_ref,
+                    "order": stage.order,
+                    "source": stage.source,
+                    "symbol": stage.symbol,
+                }
+                for stage in selected_executable_stages
+            ],
+            "standaloneOperationStageCount": standalone_operation_count,
+            "gapStageCount": gap_count,
+            "boundaryStageCount": boundary_count,
+            "structuralStageCount": structural_count,
+            "presentationStageCount": presentation_count,
+            "publicStepCount": presentation_count,
+            "stageCountContractExpected": expected_count,
+            "stageCountContractMatched": expected_count == presentation_count,
+            "expectedPresentationStageCount": presentation_count,
+            "presentationStageRefs": stage_refs,
+            "presentationStages": presentation_stages,
+            "stageRefsBySection": dict(stage_refs_by_section),
+            "stageOwnershipRecords": stage_ownership_records,
+            "stageOwnershipMap": {stage.stage_ref: list(stage.owned_fact_refs) for stage in stages},
+            "ownedFactRefsByStageRef": {stage.stage_ref: list(stage.owned_fact_refs) for stage in stages},
+            "factOwnerByFactRef": {fact_ref: stage.stage_ref for stage in stages for fact_ref in stage.owned_fact_refs},
+            "missingStageRefs": 0,
+            "duplicateStageRefs": len(stage_refs) - len(set(stage_refs)),
+            "unownedFactRefs": 0,
+            "duplicateFactRefs": len(fact_refs) - len(set(fact_refs)),
+        }
+
+    def _incoming_payload(self, group: FlowFormatterGroup) -> Dict[str, Any]:
+        to_source = group.to_source or group.source
+        to_symbol = group.to_symbol or group.symbol
+        return _without_empty(
+            {
+                "fromSource": group.from_source,
+                "fromSymbol": group.from_symbol,
+                "toSource": to_source,
+                "toSymbol": to_symbol,
+                "relationKind": group.relation_kind,
+                "resolutionStatus": group.resolution_status,
+                "transportKind": group.transport_kind,
+                "method": group.method,
+                "route": group.route,
+                "topic": group.topic,
+                "schedule": group.schedule,
+                "operationIdentity": group.operation_identity,
+                "interfaceIdentity": group.interface_identity,
+                "boundaryKind": group.boundary_kind,
+                "targetDescriptor": group.target_descriptor,
+            }
+        )
+
+    def _group_operation_payload(self, group: FlowFormatterGroup) -> Dict[str, Any]:
+        payload = _without_empty(
+            {
+                "kind": "TYPED_OPERATION",
+                "source": group.source,
+                "symbol": group.symbol,
+                "executionRole": group.execution_role,
+                "transportKind": group.transport_kind,
+                "method": group.method,
+                "route": group.route,
+                "topic": group.topic,
+                "schedule": group.schedule,
+                "operationIdentity": group.operation_identity,
+                "interfaceIdentity": group.interface_identity,
+                "targetDescriptor": group.target_descriptor,
+            }
+        )
+        meaningful_keys = set(payload) - {"kind", "source", "symbol"}
+        return payload if meaningful_keys else {}
+
+    def _gap_fact_payload(self, group: FlowFormatterGroup) -> Dict[str, Any]:
+        return _without_empty(
+            {
+                "kind": group.kind.value,
+                "fromSource": group.from_source,
+                "fromSymbol": group.from_symbol,
+                "toSource": group.to_source,
+                "toSymbol": group.to_symbol,
+                "transportKind": group.transport_kind,
+                "method": group.method,
+                "route": group.route,
+                "operationIdentity": group.operation_identity,
+                "targetDescriptor": group.target_descriptor,
+                "assertionSubject": FlowAssertionSubject.DIRECT_RELATION.value,
+                "assertionStatus": group.assertion_status or self._assertion_status(group),
+            }
+        )
+
+    def _structural_fact_payload(self, group: FlowFormatterGroup) -> Dict[str, Any]:
+        return _without_empty(
+            {
+                "kind": group.kind.value,
+                "source": group.source,
+                "symbol": group.symbol,
+                "fromSource": group.from_source,
+                "fromSymbol": group.from_symbol,
+                "toSource": group.to_source,
+                "toSymbol": group.to_symbol,
+                "relationKind": group.relation_kind,
+                "resolutionStatus": group.resolution_status,
+                "branchPath": group.branch_path,
+            }
+        )
+
+    def _outgoing_transition_payload(self, edge: FlowGraphEdge) -> Dict[str, Any]:
+        return _without_empty(
+            {
+                "kind": "OUTGOING_RELATION",
+                "fromSource": edge.source_id,
+                "toSource": edge.to_source_id or edge.source_id,
+                "toSymbol": self._edge_target(edge),
+                "relationKind": edge.edge_type,
+                "resolutionStatus": edge.resolution_status,
+            }
+        )
+
+    def _boundary_fact_payload(self, edge: FlowGraphEdge, owner: FlowGraphNode, projection: Any) -> Dict[str, Any]:
+        metadata = edge.metadata if isinstance(edge.metadata, dict) else {}
+        return _without_empty(
+            {
+                "kind": "BOUNDARY_RELATION",
+                "fromSource": owner.source_id,
+                "fromSymbol": self._symbol(owner),
+                "toSource": edge.to_source_id,
+                "toSymbol": self._edge_target(edge),
+                "relationKind": edge.edge_type,
+                "resolutionStatus": projection.resolution_status,
+                "transportKind": normalize_transport_kind(metadata.get("transportKind") or metadata.get("connectorKind")),
+                "method": normalize_http_method(metadata.get("httpMethod") or metadata.get("method")),
+                "route": normalize_route(metadata.get("routeTemplate") or metadata.get("route")),
+                "topic": self._clean(metadata.get("topic") if isinstance(metadata.get("topic"), str) else None),
+                "schedule": self._clean(metadata.get("schedule") if isinstance(metadata.get("schedule"), str) else None),
+                "operationIdentity": self._clean(metadata.get("operationIdentity") if isinstance(metadata.get("operationIdentity"), str) else None),
+                "interfaceIdentity": self._clean(metadata.get("interfaceIdentity") if isinstance(metadata.get("interfaceIdentity"), str) else None),
+                "boundaryKind": projection.kind.value,
+                "targetDescriptor": self._clean(projection.target) or self._edge_target(edge),
+            }
+        )
+
+    def _operation_fact_payload(self, fact: AvailableOperationFact) -> Dict[str, Any]:
+        return _without_empty(
+            {
+                "kind": "TYPED_OPERATION",
+                "source": fact.source_id,
+                "ownerSource": fact.owner_source_id,
+                "ownerSymbol": self._compact_symbol(fact.owner_qualified_name),
+                "executionRole": self._clean(fact.execution_role),
+                "transportKind": normalize_transport_kind(fact.transport_kind),
+                "directionRole": self._clean(fact.direction_role),
+                "method": normalize_http_method(fact.method),
+                "route": normalize_route(fact.normalized_route),
+                "topic": self._clean(fact.topic),
+                "schedule": self._clean(fact.schedule),
+                "operationIdentity": self._clean(fact.operation_identity),
+                "interfaceIdentity": self._clean(fact.interface_identity),
+                "requestContractIdentity": self._clean(fact.request_contract_identity),
+                "responseContractIdentity": self._clean(fact.response_contract_identity),
+                "targetServiceIdentity": self._clean(fact.target_service_identity),
+                "sourceChannel": self._clean(fact.source_channel),
+            }
         )
 
     def _primary_operation(self, operation_facts: Sequence[AvailableOperationFact]) -> AvailableOperationFact | None:
@@ -1176,15 +1664,15 @@ class FlowFormatterSegmentPlanner:
             for original in formatter_plan.sections
             for section in self._partition_oversized_section(original)
         )
-        serialized = {group.group_ref: self._group_tokens(group) for section in candidate_sections for group in section.ordered_groups}
+        serialized = {self._stage_key(stage): self._stage_tokens(stage) for section in candidate_sections for stage in section.stages}
         segments: list[tuple[FlowPresentationSection, ...]] = []
         current: list[FlowPresentationSection] = []
         for section in candidate_sections:
-            single_serialized = {group.group_ref: self._known_group_tokens(group, serialized) for group in section.ordered_groups}
+            single_serialized = {self._stage_key(stage): self._known_stage_tokens(stage, serialized) for stage in section.stages}
             if not self._fits((section,), single_serialized):
-                raise FlowFormatterBudgetError("formatter group cannot fit within the configured context budget")
+                raise FlowFormatterBudgetError("formatter stage cannot fit within the configured context budget")
             candidate = tuple([*current, section])
-            if current and not self._fits(candidate, serialized):
+            if current and (not self._fits(candidate, serialized) or self._has_duplicate_stage_or_section_ref(candidate)):
                 segments.append(tuple(current))
                 current = [section]
                 continue
@@ -1234,7 +1722,7 @@ class FlowFormatterSegmentPlanner:
                     fixed_framing_reserve_tokens=self.framing_reserve_tokens,
                     context_tokens=self.context_tokens,
                     minimum_valid_output_tokens=minimum_output,
-                    serialized_group_tokens=tuple(self._known_group_tokens(group, serialized) for section in sections for group in section.ordered_groups),
+                    serialized_stage_tokens=tuple(self._known_stage_tokens(stage, serialized) for section in sections for stage in section.stages),
                 )
             )
         return tuple(segments)
@@ -1245,10 +1733,10 @@ class FlowFormatterSegmentPlanner:
         section_segments: tuple[tuple[FlowPresentationSection, ...], ...],
     ) -> tuple[FlowFormatterSegment, ...]:
         serialized = {
-            group.group_ref: self._group_tokens(group)
+            self._stage_key(stage): self._stage_tokens(stage)
             for sections in section_segments
             for section in sections
-            for group in section.ordered_groups
+            for stage in section.stages
         }
         count = len(section_segments)
         result: list[FlowFormatterSegment] = []
@@ -1268,102 +1756,112 @@ class FlowFormatterSegmentPlanner:
                     rendered_input_tokens=self._input_tokens(sections, serialized),
                     reserved_output_tokens=self._reserved_output_tokens(sections, minimum_output),
                     minimum_valid_output_tokens=minimum_output,
-                    serialized_group_tokens=tuple(self._known_group_tokens(group, serialized) for section in sections for group in section.ordered_groups),
+                    serialized_stage_tokens=tuple(self._known_stage_tokens(stage, serialized) for section in sections for stage in section.stages),
                 )
             )
         return tuple(result)
 
     def _ensure_sections(self, formatter_plan: FlowFormatterPlan) -> FlowFormatterPlan:
-        if formatter_plan.sections:
+        if formatter_plan.sections and all(section.stages for section in formatter_plan.sections):
             return formatter_plan
         groups, sections = FlowFormatterPlanBuilder()._presentation_sections(formatter_plan.groups)
-        return replace(formatter_plan, groups=groups, sections=sections)
+        stages, sections = FlowFormatterPlanBuilder()._execution_stages(groups, sections)
+        return replace(formatter_plan, groups=groups, sections=sections, stages=stages)
 
     def _partition_oversized_section(self, section: FlowPresentationSection) -> tuple[FlowPresentationSection, ...]:
-        serialized = {group.group_ref: self._group_tokens(group) for group in section.ordered_groups}
+        serialized = {self._stage_key(stage): self._stage_tokens(stage) for stage in section.stages}
         if self._fits((section,), serialized):
             return (section,)
         if section.kind in {FlowPresentationSectionKind.UNVERIFIED_GAP, FlowPresentationSectionKind.AMBIGUOUS_GAP}:
-            raise FlowFormatterBudgetError("formatter gap group cannot fit within the configured context budget")
+            raise FlowFormatterBudgetError("formatter gap stage cannot fit within the configured context budget")
 
         result: list[FlowPresentationSection] = []
-        scopes = self._merge_scope_ranges(section.ordered_groups)
-        current: list[FlowFormatterGroup] = []
-        for scope_groups in scopes:
-            scope_section = replace(section, ordered_groups=tuple(scope_groups))
-            scope_serialized = {group.group_ref: self._known_group_tokens(group, serialized) for group in scope_groups}
-            if not self._fits((scope_section,), scope_serialized):
+        current: list[FlowExecutionStage] = []
+        for stage in section.stages:
+            single_section = replace(section, stages=(stage,), ordered_groups=())
+            single_serialized = {self._stage_key(stage): self._known_stage_tokens(stage, serialized)}
+            if not self._fits((single_section,), single_serialized):
                 if current:
-                    result.append(replace(section, ordered_groups=tuple(current)))
+                    result.append(replace(section, stages=tuple(current), ordered_groups=()))
                     current = []
-                result.extend(self._split_scope_to_fit(section, tuple(scope_groups), serialized))
+                result.extend(replace(section, stages=(part,), ordered_groups=()) for part in self._split_stage_to_fit(section, stage))
                 continue
-            candidate = [*current, *scope_groups]
-            candidate_section = replace(section, ordered_groups=tuple(candidate))
-            candidate_serialized = {group.group_ref: self._known_group_tokens(group, serialized) for group in candidate}
+            candidate = [*current, stage]
+            candidate_section = replace(section, stages=tuple(candidate), ordered_groups=())
+            candidate_serialized = {self._stage_key(item): self._known_stage_tokens(item, serialized) for item in candidate}
             if current and not self._fits((candidate_section,), candidate_serialized):
-                result.append(replace(section, ordered_groups=tuple(current)))
-                current = list(scope_groups)
+                result.append(replace(section, stages=tuple(current), ordered_groups=()))
+                current = [stage]
                 continue
             current = candidate
         if current:
-            result.append(replace(section, ordered_groups=tuple(current)))
+            result.append(replace(section, stages=tuple(current), ordered_groups=()))
         return tuple(result)
 
-    def _split_scope_to_fit(
-        self,
-        section: FlowPresentationSection,
-        groups: tuple[FlowFormatterGroup, ...],
-        serialized: Mapping[str, int],
-    ) -> tuple[FlowPresentationSection, ...]:
-        result: list[FlowPresentationSection] = []
-        current: list[FlowFormatterGroup] = []
-        for group in groups:
-            single = replace(section, ordered_groups=(group,))
-            single_serialized = {group.group_ref: self._known_group_tokens(group, serialized)}
-            if not self._fits((single,), single_serialized):
-                raise FlowFormatterBudgetError("formatter group cannot fit within the configured context budget")
-            candidate = [*current, group]
-            candidate_section = replace(section, ordered_groups=tuple(candidate))
-            candidate_serialized = {item.group_ref: self._known_group_tokens(item, serialized) for item in candidate}
-            if current and not self._fits((candidate_section,), candidate_serialized):
-                result.append(replace(section, ordered_groups=tuple(current)))
-                current = [group]
+    def _split_stage_to_fit(self, section: FlowPresentationSection, stage: FlowExecutionStage) -> tuple[FlowExecutionStage, ...]:
+        fact_refs = tuple(stage.owned_fact_refs)
+        if len(fact_refs) <= 1:
+            raise FlowFormatterBudgetError("formatter stage fact cannot fit within the configured context budget")
+        parts: list[tuple[str, ...]] = []
+        current: list[str] = []
+        for fact_ref in fact_refs:
+            candidate_refs = tuple([*current, fact_ref])
+            candidate = self._stage_part(stage, candidate_refs, part_index=1, part_count=1)
+            candidate_section = replace(section, stages=(candidate,), ordered_groups=())
+            serialized = {self._stage_key(candidate): self._stage_tokens(candidate)}
+            if not self._fits((candidate_section,), serialized):
+                if not current:
+                    raise FlowFormatterBudgetError("formatter stage fact cannot fit within the configured context budget")
+                parts.append(tuple(current))
+                current = [fact_ref]
+                single = self._stage_part(stage, tuple(current), part_index=1, part_count=1)
+                single_section = replace(section, stages=(single,), ordered_groups=())
+                single_serialized = {self._stage_key(single): self._stage_tokens(single)}
+                if not self._fits((single_section,), single_serialized):
+                    raise FlowFormatterBudgetError("formatter stage fact cannot fit within the configured context budget")
                 continue
-            current.append(group)
+            current.append(fact_ref)
         if current:
-            result.append(replace(section, ordered_groups=tuple(current)))
-        return tuple(result)
+            parts.append(tuple(current))
+        count = len(parts)
+        return tuple(self._stage_part(stage, refs, part_index=index, part_count=count) for index, refs in enumerate(parts, start=1))
 
-    def _split_section(self, section: FlowPresentationSection) -> tuple[FlowPresentationSection, ...]:
-        scopes = self._merge_scope_ranges(section.ordered_groups)
-        if len(scopes) > 1:
-            midpoint = max(1, len(scopes) // 2)
-            first = tuple(group for scope in scopes[:midpoint] for group in scope)
-            second = tuple(group for scope in scopes[midpoint:] for group in scope)
-            return (replace(section, ordered_groups=first), replace(section, ordered_groups=second))
-        groups = section.ordered_groups
-        if len(groups) <= 1 or section.kind in {FlowPresentationSectionKind.UNVERIFIED_GAP, FlowPresentationSectionKind.AMBIGUOUS_GAP}:
-            return (section,)
-        midpoint = max(1, len(groups) // 2)
-        return (
-            replace(section, ordered_groups=groups[:midpoint]),
-            replace(section, ordered_groups=groups[midpoint:]),
+    def _stage_part(
+        self,
+        stage: FlowExecutionStage,
+        fact_refs: tuple[str, ...],
+        *,
+        part_index: int,
+        part_count: int,
+    ) -> FlowExecutionStage:
+        allowed = set(fact_refs)
+
+        def fact_selected(item: Mapping[str, Any]) -> bool:
+            return str(item.get("factRef") or "") in allowed
+
+        incoming = dict(stage.incoming) if stage.incoming and fact_selected(stage.incoming) else {}
+        return replace(
+            stage,
+            incoming=incoming,
+            typed_operations=tuple(dict(item) for item in stage.typed_operations if fact_selected(item)),
+            supporting_facts=tuple(dict(item) for item in stage.supporting_facts if fact_selected(item)),
+            owned_summaries=tuple(dict(item) for item in stage.owned_summaries if fact_selected(item)),
+            owned_boundaries=tuple(dict(item) for item in stage.owned_boundaries if fact_selected(item)),
+            owned_fact_refs=fact_refs,
+            stage_part_ref=f"{stage.stage_ref}p{part_index}",
+            stage_part_index=part_index,
+            stage_part_count=part_count,
         )
 
-    def _merge_scope_ranges(self, groups: Sequence[FlowFormatterGroup]) -> tuple[tuple[FlowFormatterGroup, ...], ...]:
-        ranges: list[tuple[FlowFormatterGroup, ...]] = []
-        current_scope: str | None = None
-        current: list[FlowFormatterGroup] = []
-        for group in groups:
-            if current and group.merge_scope != current_scope:
-                ranges.append(tuple(current))
-                current = []
-            current_scope = group.merge_scope
-            current.append(group)
-        if current:
-            ranges.append(tuple(current))
-        return tuple(ranges)
+    def _split_section(self, section: FlowPresentationSection) -> tuple[FlowPresentationSection, ...]:
+        stages = section.stages
+        if len(stages) <= 1 or section.kind in {FlowPresentationSectionKind.UNVERIFIED_GAP, FlowPresentationSectionKind.AMBIGUOUS_GAP}:
+            return (section,)
+        midpoint = max(1, len(stages) // 2)
+        return (
+            replace(section, stages=stages[:midpoint], ordered_groups=()),
+            replace(section, stages=stages[midpoint:], ordered_groups=()),
+        )
 
     def _fits(self, sections: Sequence[FlowPresentationSection], serialized: Mapping[str, int]) -> bool:
         rendered_input = self._input_tokens(sections, serialized)
@@ -1371,19 +1869,28 @@ class FlowFormatterSegmentPlanner:
         reserved_output = self._reserved_output_tokens(sections, minimum_output)
         return rendered_input + reserved_output + self.framing_reserve_tokens <= self.context_tokens and minimum_output <= reserved_output
 
-    def _group_tokens(self, group: FlowFormatterGroup) -> int:
+    def _stage_tokens(self, stage: FlowExecutionStage) -> int:
         self.serialization_count += 1
-        return _estimate_tokens(json.dumps(_group_payload(group, include_children=False), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        return _estimate_tokens(json.dumps(_stage_payload(stage), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
-    def _known_group_tokens(self, group: FlowFormatterGroup, serialized: Mapping[str, int]) -> int:
-        if group.group_ref in serialized:
-            return serialized[group.group_ref]
-        return self._group_tokens(group)
+    def _known_stage_tokens(self, stage: FlowExecutionStage, serialized: Mapping[str, int]) -> int:
+        key = self._stage_key(stage)
+        if key in serialized:
+            return serialized[key]
+        return self._stage_tokens(stage)
+
+    def _stage_key(self, stage: FlowExecutionStage) -> str:
+        return stage.stage_part_ref or stage.stage_ref
+
+    def _has_duplicate_stage_or_section_ref(self, sections: Sequence[FlowPresentationSection]) -> bool:
+        section_refs = [section.section_ref for section in sections]
+        stage_refs = [stage.stage_ref for section in sections for stage in section.stages]
+        return len(section_refs) != len(set(section_refs)) or len(stage_refs) != len(set(stage_refs))
 
     def _input_tokens(self, sections: Sequence[FlowPresentationSection], serialized: Mapping[str, int]) -> int:
-        group_tokens = sum(self._known_group_tokens(group, serialized) for section in sections for group in section.ordered_groups)
-        required_count = sum(len(section.ordered_groups) for section in sections)
-        return group_tokens + 260 + len(sections) * 24 + required_count * 10
+        stage_tokens = sum(self._known_stage_tokens(stage, serialized) for section in sections for stage in section.stages)
+        required_count = sum(len(section.stages) for section in sections)
+        return stage_tokens + 260 + len(sections) * 24 + required_count * 10
 
     def _minimum_output_tokens(self, sections: Sequence[FlowPresentationSection]) -> int:
         skeleton = {
@@ -1392,12 +1899,13 @@ class FlowFormatterSegmentPlanner:
                     "sectionRef": section.section_ref,
                     "steps": [
                         {
-                            "groupRefs": [group.group_ref],
-                            "certainty": group.certainty,
-                            "assertionSubject": group.assertion_subject,
+                            "stageRef": stage.stage_ref,
+                            "certainty": stage.certainty,
+                            "assertionSubject": stage.assertion_subject,
+                            "coveredFactRefs": list(stage.owned_fact_refs),
                             "text": "x",
                         }
-                        for group in section.ordered_groups
+                        for stage in section.stages
                     ],
                 }
                 for section in sections
@@ -1406,33 +1914,37 @@ class FlowFormatterSegmentPlanner:
         return _estimate_tokens(json.dumps(skeleton, ensure_ascii=False, separators=(",", ":")))
 
     def _reserved_output_tokens(self, sections: Sequence[FlowPresentationSection], minimum_output_tokens: int) -> int:
-        required_count = sum(len(section.ordered_groups) for section in sections)
-        return max(minimum_output_tokens, required_count * 64 + len(sections) * 16 + 160)
+        required_count = sum(len(section.stages) for section in sections)
+        fact_count = sum(len(stage.owned_fact_refs) for section in sections for stage in section.stages)
+        return max(
+            minimum_output_tokens + required_count * 128 + fact_count * 32,
+            required_count * 192 + fact_count * 24 + len(sections) * 64 + 256,
+        )
 
-    def _first_group(self, sections: Sequence[FlowPresentationSection]) -> FlowFormatterGroup | None:
+    def _first_group(self, sections: Sequence[FlowPresentationSection]) -> FlowExecutionStage | None:
         for section in sections:
-            if section.ordered_groups:
-                return section.ordered_groups[0]
+            if section.stages:
+                return section.stages[0]
         return None
 
-    def _last_group(self, sections: Sequence[FlowPresentationSection]) -> FlowFormatterGroup | None:
+    def _last_group(self, sections: Sequence[FlowPresentationSection]) -> FlowExecutionStage | None:
         for section in reversed(tuple(sections)):
-            if section.ordered_groups:
-                return section.ordered_groups[-1]
+            if section.stages:
+                return section.stages[-1]
         return None
 
-    def _continuity(self, group: FlowFormatterGroup | None) -> FlowFormatterContinuity | None:
-        if group is None:
+    def _continuity(self, stage: FlowExecutionStage | None) -> FlowFormatterContinuity | None:
+        if stage is None:
             return None
-        last = group
+        incoming = stage.incoming if isinstance(stage.incoming, dict) else {}
         return FlowFormatterContinuity(
-            source=last.source or last.to_source or last.from_source,
-            symbol=last.symbol or last.to_symbol or last.from_symbol,
-            transition_kind=last.relation_kind,
-            gap_kind=last.kind.value if last.kind in {FlowFormatterGroupKind.UNVERIFIED_GAP, FlowFormatterGroupKind.AMBIGUOUS_GAP} else None,
-            transport_kind=last.transport_kind,
-            method=last.method,
-            route=last.route,
+            source=stage.source or incoming.get("toSource") or incoming.get("fromSource"),
+            symbol=stage.symbol or incoming.get("toSymbol") or incoming.get("fromSymbol"),
+            transition_kind=incoming.get("relationKind"),
+            gap_kind=stage.kind.value if stage.kind in {FlowExecutionStageKind.UNVERIFIED_GAP, FlowExecutionStageKind.AMBIGUOUS_GAP} else None,
+            transport_kind=incoming.get("transportKind"),
+            method=incoming.get("method"),
+            route=incoming.get("route"),
         )
 
 
@@ -1448,19 +1960,17 @@ class FlowFormatterPromptRenderer:
             "Format one segment of a backend-owned execution-flow plan for a human reader.\n"
             f"Required responseLanguage: {dict(formatter_input).get('responseLanguage', '')}. Do not use English unless responseLanguage is en.\n"
             "Return strict JSON only. Do not include prose outside JSON.\n"
-            "The JSON shape is exactly: {\"sections\":[{\"sectionRef\":\"string\",\"steps\":[{\"groupRefs\":[\"string\"],\"certainty\":\"string\",\"assertionSubject\":\"string\",\"text\":\"string\"}]}]}.\n"
+            "The JSON shape is exactly: {\"sections\":[{\"sectionRef\":\"string\",\"steps\":[{\"stageRef\":\"string\",\"certainty\":\"string\",\"assertionSubject\":\"string\",\"coveredFactRefs\":[\"string\"],\"text\":\"string\"}]}]}.\n"
             "Return every supplied sectionRef exactly once, in the supplied section order.\n"
-            "Cover every supplied groupRef exactly once across all steps.\n"
-            "Each step groupRefs array must be one contiguous ordered range inside that section.\n"
-            "Combine adjacent groups only when their supplied mergeScope value is identical.\n"
-            "Do not combine groups across sections, certainty values, assertionSubject values, gaps, branch paths, independent answers, or different merge scopes.\n"
-            "Echo the exact assertionSubject supplied for every step range.\n"
+            "Return exactly one step for every supplied stageRef, in the supplied stage order, and never combine stageRefs.\n"
+            "Echo the exact certainty and assertionSubject supplied for each stageRef.\n"
+            "For each step, coveredFactRefs must exactly equal the ownedFactRefs supplied for that stageRef.\n"
             "Treat assertionSubject as the semantic subject of the step and assertionStatus as the status of only that subject.\n"
             "When assertionStatus is UNVERIFIED or AMBIGUOUS, make that status clear in text without changing the assertionSubject.\n"
             "When assertionStatus is not VERIFIED, do not transfer that status from assertionSubject to any other supplied identifier or entity.\n"
             "For DIRECT_RELATION, explain only the supplied relation between from/to identifiers and typed transport fields.\n"
-            "Produce the smallest clear set of steps that explains the ordered structure without inventing behavior.\n"
-            "Use summaries where useful, translate summaries into responseLanguage, preserve supplied identifiers when mentioned, and avoid repeating equivalent information.\n"
+            "For each stage, synthesize all supplied owned summaries, typed operations, supporting facts, owned boundaries, incoming context, outgoing context, and terminal semantics into one complete description.\n"
+            "Use all distinct supplied facts, translate persisted summaries into responseLanguage, preserve supplied identifiers and typed literals when mentioned, and avoid repeating equivalent information.\n"
             "Write every text value in responseLanguage.\n"
             "Use only the supplied structural fields and summaries.\n"
             "Do not mention internal refs, evidence records, retrieval mechanics, formatter mechanics, or JSON structure.\n"
@@ -1488,17 +1998,17 @@ class FlowFormatterResponseValidator:
         if extra_root:
             errors.append(f"Response must not include extra root fields: {', '.join(sorted(extra_root))}.")
 
-        required_groups = segment.required_groups
-        required_refs = [group.group_ref for group in required_groups]
+        required_stages = segment.required_stages
+        required_refs = [stage.stage_ref for stage in required_stages]
         required_sections = list(segment.sections)
         required_section_refs = [section.section_ref for section in required_sections]
         section_by_ref = {section.section_ref: section for section in required_sections}
-        group_by_ref = {group.group_ref: group for group in required_groups}
-        group_index = {group.group_ref: index for index, group in enumerate(required_groups)}
-        section_by_group_ref = {
-            group.group_ref: section.section_ref
+        stage_by_ref = {stage.stage_ref: stage for stage in required_stages}
+        stage_index = {stage.stage_ref: index for index, stage in enumerate(required_stages)}
+        section_by_stage_ref = {
+            stage.stage_ref: section.section_ref
             for section in required_sections
-            for group in section.ordered_groups
+            for stage in section.stages
         }
 
         sections_payload = payload.get("sections")
@@ -1538,76 +2048,63 @@ class FlowFormatterResponseValidator:
                 missing_step = [key for key in _ALLOWED_FORMATTER_STEP_KEYS if key not in item]
                 if missing_step:
                     errors.append(f"sections[{section_index}].steps[{step_index}] missing required fields: {', '.join(sorted(missing_step))}.")
-                raw_group_refs = item.get("groupRefs")
-                group_refs = tuple(str(ref or "").strip() for ref in raw_group_refs) if isinstance(raw_group_refs, list) else ()
+                stage_ref = str(item.get("stageRef") or "").strip()
                 certainty = str(item.get("certainty") or "").strip()
                 assertion_subject = str(item.get("assertionSubject") or "").strip()
+                raw_fact_refs = item.get("coveredFactRefs")
+                covered_fact_refs = tuple(str(ref or "").strip() for ref in raw_fact_refs) if isinstance(raw_fact_refs, list) else ()
                 text = str(item.get("text") or "").strip() if isinstance(item.get("text"), str) else ""
-                if not group_refs:
-                    errors.append(f"sections[{section_index}].steps[{step_index}].groupRefs must be a non-empty list.")
+                if not stage_ref:
+                    errors.append(f"sections[{section_index}].steps[{step_index}].stageRef must be a non-empty string.")
                     continue
-                if any(not ref for ref in group_refs):
-                    errors.append(f"sections[{section_index}].steps[{step_index}].groupRefs must contain only non-empty strings.")
-                for ref in group_refs:
-                    if ref in seen:
-                        errors.append(f"groupRef {ref} appears more than once.")
-                    seen.add(ref)
-                    if ref not in group_by_ref:
-                        errors.append(f"groupRef {ref} was not supplied.")
-                    elif section_by_group_ref.get(ref) != section_ref:
-                        errors.append(f"groupRef {ref} does not belong to sectionRef {section_ref}.")
-                supplied = [group_by_ref[ref] for ref in group_refs if ref in group_by_ref]
-                if supplied:
-                    indexes = [group_index[group.group_ref] for group in supplied]
-                    if indexes != sorted(indexes):
-                        errors.append(f"groupRefs {', '.join(group_refs)} must preserve supplied group order.")
-                    if indexes and min(indexes) <= last_index:
-                        errors.append("steps must preserve canonical group order.")
-                    if indexes:
-                        last_index = max(last_index, max(indexes))
-                    expected_range = list(range(min(indexes), max(indexes) + 1))
-                    if indexes != expected_range:
-                        errors.append(f"groupRefs {', '.join(group_refs)} must form one contiguous ordered range.")
-                    certainties = {group.certainty for group in supplied}
-                    if len(certainties) != 1:
-                        errors.append(f"groupRefs {', '.join(group_refs)} must not combine different certainty values.")
-                    elif certainty != supplied[0].certainty:
-                        errors.append(f"groupRefs {', '.join(group_refs)} certainty must be {supplied[0].certainty}.")
-                    assertion_subjects = {group.assertion_subject for group in supplied}
-                    if len(assertion_subjects) != 1:
-                        errors.append(f"groupRefs {', '.join(group_refs)} must share one assertionSubject.")
-                    elif assertion_subject != (supplied[0].assertion_subject or ""):
-                        errors.append(f"groupRefs {', '.join(group_refs)} assertionSubject must be {supplied[0].assertion_subject}.")
-                    assertion_statuses = {group.assertion_status for group in supplied}
-                    if len(assertion_statuses) != 1:
-                        errors.append(f"groupRefs {', '.join(group_refs)} must share one assertionStatus.")
-                    elif supplied[0].assertion_status != supplied[0].certainty:
-                        errors.append(f"groupRefs {', '.join(group_refs)} supplied assertionStatus must match certainty.")
-                    merge_scopes = {group.merge_scope for group in supplied}
-                    if len(merge_scopes) != 1:
-                        errors.append(f"groupRefs {', '.join(group_refs)} must share one structural merge scope.")
-                    branch_paths = {group.branch_path for group in supplied}
-                    if len(branch_paths) != 1:
-                        errors.append(f"groupRefs {', '.join(group_refs)} must not combine separate branch paths.")
-                    gap_flags = {group.kind in {FlowFormatterGroupKind.UNVERIFIED_GAP, FlowFormatterGroupKind.AMBIGUOUS_GAP} for group in supplied}
-                    if len(gap_flags) != 1:
-                        errors.append(f"groupRefs {', '.join(group_refs)} must not combine a gap with verified execution.")
+                if stage_ref in seen:
+                    errors.append(f"stageRef {stage_ref} appears more than once.")
+                seen.add(stage_ref)
+                stage = stage_by_ref.get(stage_ref)
+                if stage is None:
+                    errors.append(f"stageRef {stage_ref} was not supplied.")
+                elif section_by_stage_ref.get(stage_ref) != section_ref:
+                    errors.append(f"stageRef {stage_ref} does not belong to sectionRef {section_ref}.")
+                if stage is not None:
+                    index = stage_index[stage_ref]
+                    if index <= last_index:
+                        errors.append("steps must preserve canonical stage order.")
+                    last_index = index
+                    if certainty != stage.certainty:
+                        errors.append(f"stageRef {stage_ref} certainty must be {stage.certainty}.")
+                    if assertion_subject != stage.assertion_subject:
+                        errors.append(f"stageRef {stage_ref} assertionSubject must be {stage.assertion_subject}.")
+                    if list(covered_fact_refs) != list(stage.owned_fact_refs):
+                        errors.append(f"stageRef {stage_ref} coveredFactRefs must exactly match supplied ownedFactRefs.")
+                    if len(covered_fact_refs) != len(set(covered_fact_refs)):
+                        errors.append(f"stageRef {stage_ref} coveredFactRefs must not contain duplicates.")
+                    foreign_facts = [ref for ref in covered_fact_refs if ref not in stage.owned_fact_refs]
+                    if foreign_facts:
+                        errors.append(f"stageRef {stage_ref} coveredFactRefs contains foreign fact refs: {', '.join(foreign_facts)}.")
                 if not text:
-                    errors.append(f"groupRefs {', '.join(group_refs)} text must be non-empty.")
-                parsed_steps.append(FlowFormatterStepText(group_refs=group_refs, certainty=certainty, assertion_subject=assertion_subject, text=text))
+                    errors.append(f"stageRef {stage_ref} text must be non-empty.")
+                parsed_steps.append(
+                    FlowFormatterStepText(
+                        stage_ref=stage_ref,
+                        certainty=certainty,
+                        assertion_subject=assertion_subject,
+                        covered_fact_refs=covered_fact_refs,
+                        text=text,
+                    )
+                )
 
         if actual_section_refs != required_section_refs:
             errors.append("sections must appear exactly once in the supplied section order.")
         missing_refs = [ref for ref in required_refs if ref not in seen]
         if missing_refs:
-            errors.append(f"Missing groupRefs: {', '.join(missing_refs)}.")
+            errors.append(f"Missing stageRefs: {', '.join(missing_refs)}.")
         foreign_or_empty_sections = [ref for ref in actual_section_refs if not ref or ref not in section_by_ref]
         duplicate_sections = sorted({ref for ref in actual_section_refs if ref and actual_section_refs.count(ref) > 1})
         if foreign_or_empty_sections:
             errors.append("sections must not include empty or foreign sectionRefs.")
         if duplicate_sections:
             errors.append(f"sectionRefs appear more than once: {', '.join(duplicate_sections)}.")
-        self._validate_text(parsed_steps, required_groups, segment.response_language, errors)
+        self._validate_text(parsed_steps, required_stages, segment.response_language, errors)
         if errors:
             raise FlowFormatterContractViolation(errors)
         return tuple(parsed_steps)
@@ -1615,7 +2112,7 @@ class FlowFormatterResponseValidator:
     def _validate_text(
         self,
         steps: Sequence[FlowFormatterStepText],
-        groups: Sequence[FlowFormatterGroup],
+        stages: Sequence[FlowExecutionStage],
         response_language: str,
         errors: list[str],
     ) -> None:
@@ -1623,32 +2120,44 @@ class FlowFormatterResponseValidator:
         language_result = self.language_validator.validate(all_text, response_language)
         if not language_result.valid:
             errors.extend(language_result.errors)
-        all_allowed_routes = {value for group in groups for value in self._group_routes(group)}
-        local_refs = [group.group_ref for group in groups]
+        all_allowed_routes = {value for stage in stages for value in self._stage_routes(stage)}
+        local_refs = [ref for stage in stages for ref in (stage.stage_ref, *stage.owned_fact_refs)]
         for step in steps:
             text = step.text
-            for group_ref in local_refs:
-                if re.search(rf"(?<!\w){re.escape(group_ref)}(?!\w)", text):
-                    errors.append(f"groupRef {group_ref} text exposes a response-local ref.")
+            for local_ref in local_refs:
+                if re.search(rf"(?<!\w){re.escape(local_ref)}(?!\w)", text):
+                    errors.append(f"stageRef/factRef {local_ref} text exposes a response-local ref.")
             for route in _ROUTE_RE.findall(text):
                 normalized_route = route.rstrip(".,;:)")
                 if normalized_route not in all_allowed_routes:
-                    errors.append(f"groupRefs {', '.join(step.group_refs)} text contains unsupported route {route!r}.")
+                    errors.append(f"stageRef {step.stage_ref} text contains unsupported route {route!r}.")
 
-    def _group_routes(self, group: FlowFormatterGroup) -> tuple[str, ...]:
-        return tuple(value for value in (group.route, group.target_descriptor) if isinstance(value, str) and value.startswith("/"))
+    def _stage_routes(self, stage: FlowExecutionStage) -> tuple[str, ...]:
+        values: list[str] = []
+        containers: list[Any] = [stage.incoming, *stage.typed_operations, *stage.supporting_facts, *stage.owned_boundaries]
+        for item in containers:
+            if not isinstance(item, Mapping):
+                continue
+            for key in ("route", "targetDescriptor"):
+                value = item.get(key)
+                if isinstance(value, str) and value.startswith("/") and value not in values:
+                    values.append(value)
+        return tuple(values)
 
 
 class FlowFormatterStitcher:
     def stitch(self, sections: Sequence[FlowPresentationSection], steps: Sequence[FlowFormatterStepText]) -> str:
-        group_by_ref = {group.group_ref: group for section in sections for group in section.ordered_groups}
+        stage_by_ref: Dict[str, FlowExecutionStage] = {}
+        for section in sections:
+            for stage in section.stages:
+                stage_by_ref.setdefault(stage.stage_ref, stage)
         section_by_ref = {section.section_ref: section for section in sections}
         counters: list[int] = []
         lines: list[str] = []
         rendered_sections: set[str] = set()
-        for step in steps:
-            group = group_by_ref[step.group_refs[0]]
-            section_ref = group.section_ref or ""
+        for step in self._combine_stage_parts(steps):
+            stage = stage_by_ref[step.stage_ref]
+            section_ref = stage.section_ref or ""
             if section_ref and section_ref not in rendered_sections:
                 heading = self._heading(section_by_ref.get(section_ref))
                 if lines:
@@ -1656,21 +2165,60 @@ class FlowFormatterStitcher:
                 if heading:
                     lines.append(heading)
                 rendered_sections.add(section_ref)
-            depth = max(0, int(group.depth))
+            depth = max(0, int(stage.depth))
             while len(counters) <= depth:
                 counters.append(0)
             counters[depth] += 1
             del counters[depth + 1 :]
             number = ".".join(str(item) for item in counters[: depth + 1]) + "."
             indent = "   " * depth
-            lines.append(f"{indent}{number} {step.text.strip()}")
+            identifier = self._stage_identifier(stage)
+            prefix = f"{identifier} — " if identifier else ""
+            lines.append(f"{indent}{number} {prefix}{step.text.strip()}")
         return "\n".join(lines).strip()
+
+    def _combine_stage_parts(self, steps: Sequence[FlowFormatterStepText]) -> tuple[FlowFormatterStepText, ...]:
+        combined: list[FlowFormatterStepText] = []
+        index_by_stage_ref: dict[str, int] = {}
+        for step in steps:
+            if step.stage_ref not in index_by_stage_ref:
+                index_by_stage_ref[step.stage_ref] = len(combined)
+                combined.append(step)
+                continue
+            index = index_by_stage_ref[step.stage_ref]
+            previous = combined[index]
+            text = " ".join(part for part in (previous.text.strip(), step.text.strip()) if part)
+            combined[index] = FlowFormatterStepText(
+                stage_ref=previous.stage_ref,
+                certainty=previous.certainty,
+                assertion_subject=previous.assertion_subject,
+                covered_fact_refs=(*previous.covered_fact_refs, *step.covered_fact_refs),
+                text=text,
+            )
+        return tuple(combined)
 
     def _heading(self, section: FlowPresentationSection | None) -> str:
         if section is None:
             return ""
-        values = [value for value in (section.source, section.entrypoint) if value]
-        return " · ".join(values)
+        return self._display_text(section.source)
+
+    def _stage_identifier(self, stage: FlowExecutionStage) -> str:
+        if stage.kind is FlowExecutionStageKind.EXECUTABLE:
+            return self._display_text(stage.symbol)
+        if stage.kind in {FlowExecutionStageKind.UNVERIFIED_GAP, FlowExecutionStageKind.AMBIGUOUS_GAP}:
+            incoming = stage.incoming if isinstance(stage.incoming, dict) else {}
+            from_value = self._display_text(incoming.get("fromSymbol") or incoming.get("fromSource"))
+            to_value = self._display_text(incoming.get("toSymbol") or incoming.get("toSource"))
+            if from_value and to_value:
+                return f"{from_value} -> {to_value}"
+            return from_value or to_value or stage.kind.value
+        if stage.kind is FlowExecutionStageKind.BOUNDARY:
+            incoming = stage.incoming if isinstance(stage.incoming, dict) else {}
+            return self._display_text(incoming.get("targetDescriptor") or incoming.get("toSymbol") or stage.symbol)
+        return self._display_text(stage.symbol or stage.kind.value)
+
+    def _display_text(self, value: Any) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip())
 
 
 class FlowFormatterAnswerService:
@@ -1739,6 +2287,8 @@ class FlowFormatterAnswerService:
             self._check_cancelled(cancel_event)
             self.current_stage = "FORMATTER_PLAN_BUILDING"
             formatter_plan = self.plan_builder.plan(narrative_plan, response_language=plan.response_language)
+            if len(narrative_plans) > 1:
+                formatter_plan = self._with_response_local_refs(formatter_plan, f"p{narrative_index}_")
             formatter_plans.append(formatter_plan)
             total_planning_ms += formatter_plan.planning_duration_ms
             self.current_stage = "FORMATTER_SEGMENT_PLANNING"
@@ -1811,6 +2361,75 @@ class FlowFormatterAnswerService:
                 for answer in result.answers
             ],
             diagnostics=list(result.diagnostics),
+        )
+
+    def _with_response_local_refs(self, plan: FlowFormatterPlan, prefix: str) -> FlowFormatterPlan:
+        if not prefix:
+            return plan
+        section_ref_by_ref = {section.section_ref: f"{prefix}{section.section_ref}" for section in plan.sections}
+        stage_ref_by_ref = {stage.stage_ref: f"{prefix}{stage.stage_ref}" for stage in plan.stages}
+        fact_ref_by_ref = {
+            fact_ref: f"{prefix}{fact_ref}"
+            for stage in plan.stages
+            for fact_ref in stage.owned_fact_refs
+        }
+
+        def scoped_payload(value: Any) -> Any:
+            if isinstance(value, dict):
+                result: Dict[str, Any] = {}
+                for key, item in value.items():
+                    if key == "factRef" and isinstance(item, str):
+                        result[key] = fact_ref_by_ref.get(item, f"{prefix}{item}")
+                    elif key == "stageRef" and isinstance(item, str):
+                        result[key] = stage_ref_by_ref.get(item, f"{prefix}{item}")
+                    elif key == "sectionRef" and isinstance(item, str):
+                        result[key] = section_ref_by_ref.get(item, f"{prefix}{item}")
+                    elif key == "outgoingStageRefs" and isinstance(item, list):
+                        result[key] = [stage_ref_by_ref.get(str(entry), f"{prefix}{entry}") for entry in item]
+                    elif key == "ownedFactRefs" and isinstance(item, list):
+                        result[key] = [fact_ref_by_ref.get(str(entry), f"{prefix}{entry}") for entry in item]
+                    else:
+                        result[key] = scoped_payload(item)
+                return result
+            if isinstance(value, list):
+                return [scoped_payload(item) for item in value]
+            return value
+
+        stages_by_old_ref: dict[str, FlowExecutionStage] = {}
+        for stage in plan.stages:
+            stages_by_old_ref[stage.stage_ref] = replace(
+                stage,
+                stage_ref=stage_ref_by_ref[stage.stage_ref],
+                section_ref=section_ref_by_ref.get(stage.section_ref, f"{prefix}{stage.section_ref}"),
+                incoming=scoped_payload(stage.incoming) if stage.incoming else {},
+                typed_operations=tuple(scoped_payload(dict(item)) for item in stage.typed_operations),
+                supporting_facts=tuple(scoped_payload(dict(item)) for item in stage.supporting_facts),
+                owned_summaries=tuple(scoped_payload(dict(item)) for item in stage.owned_summaries),
+                owned_boundaries=tuple(scoped_payload(dict(item)) for item in stage.owned_boundaries),
+                outgoing_stage_refs=tuple(stage_ref_by_ref.get(ref, f"{prefix}{ref}") for ref in stage.outgoing_stage_refs),
+                owned_fact_refs=tuple(fact_ref_by_ref[ref] for ref in stage.owned_fact_refs),
+                stage_part_ref=f"{prefix}{stage.stage_part_ref}" if stage.stage_part_ref else None,
+            )
+
+        updated_sections: list[FlowPresentationSection] = []
+        for section in plan.sections:
+            updated_sections.append(
+                replace(
+                    section,
+                    section_ref=section_ref_by_ref[section.section_ref],
+                    stages=tuple(stages_by_old_ref[stage.stage_ref] for stage in section.stages),
+                )
+            )
+        updated_stages = tuple(stages_by_old_ref[stage.stage_ref] for stage in plan.stages)
+        structural_metrics = self.plan_builder._structural_metrics(updated_stages)
+        metrics = dict(plan.structural_metrics)
+        metrics.update(structural_metrics)
+        metrics["presentationSectionCount"] = len(updated_sections)
+        return replace(
+            plan,
+            sections=tuple(updated_sections),
+            stages=updated_stages,
+            structural_metrics=metrics,
         )
 
     def _format_segment(
@@ -1953,7 +2572,8 @@ class FlowFormatterAnswerService:
             "responseLanguage": segment.response_language,
             "segmentIndex": segment.segment_index,
             "segmentCount": segment.segment_count,
-            "groupCount": len(segment.required_groups),
+            "groupCount": len(segment.required_stages),
+            "stageCount": len(segment.required_stages),
             "renderedInputTokens": segment.rendered_input_tokens,
             "reservedOutputTokens": segment.reserved_output_tokens,
             "minimumValidOutputTokens": segment.minimum_valid_output_tokens,
@@ -1974,15 +2594,17 @@ class FlowFormatterAnswerService:
         *,
         answer_count: int,
     ) -> Dict[str, Any]:
-        group_count = sum(plan.group_count for plan in formatter_plans)
+        group_count = sum(plan.presentation_stage_count for plan in formatter_plans)
         segment_count = max(self._executed_segment_count, 0)
+        structural = self._combined_structural_metrics(formatter_plans)
         return {
             "narrativePlanCount": len(narrative_plans),
             "formatterGroupCount": group_count,
             "walkthroughStepCount": group_count,
-            "branchCount": sum(plan.branch_count for plan in formatter_plans),
-            "gapCount": sum(plan.gap_count for plan in formatter_plans),
+            "branchCount": structural["structuralStageCount"],
+            "gapCount": structural["gapStageCount"],
             "answerCount": int(answer_count),
+            **structural,
             "formatterSegmentCount": segment_count,
             "formatterSerializationCount": self._serialization_count,
             "formatterPlanningDurationMs": round(planning_ms, 3),
@@ -1998,6 +2620,88 @@ class FlowFormatterAnswerService:
             "groundingProviderCallCount": 0,
             "analysisProviderCallCount": 0,
             "toolContextFormatterCallCount": 0,
+        }
+
+    def _combined_structural_metrics(self, formatter_plans: Sequence[FlowFormatterPlan]) -> Dict[str, Any]:
+        def total_int(key: str) -> int:
+            return sum(int(plan.structural_metrics.get(key) or 0) for plan in formatter_plans)
+
+        symbols: list[str] = []
+        stage_refs: list[str] = []
+        selected_stages: list[Dict[str, Any]] = []
+        presentation_stage_refs: list[str] = []
+        presentation_stages: list[Dict[str, Any]] = []
+        stage_ownership_records: list[Dict[str, Any]] = []
+        fact_refs: list[str] = []
+        for plan in formatter_plans:
+            symbols.extend(str(value) for value in plan.structural_metrics.get("selectedExecutableSymbols", []) if value)
+            stage_refs.extend(str(value) for value in plan.structural_metrics.get("selectedExecutableStageRefs", []) if value)
+            selected_stages.extend(
+                dict(value)
+                for value in plan.structural_metrics.get("selectedExecutableStages", [])
+                if isinstance(value, dict)
+            )
+            presentation_stage_refs.extend(
+                str(value)
+                for value in plan.structural_metrics.get("presentationStageRefs", [])
+                if value
+            )
+            presentation_stages.extend(
+                dict(value)
+                for value in plan.structural_metrics.get("presentationStages", [])
+                if isinstance(value, dict)
+            )
+            stage_ownership_records.extend(
+                dict(value)
+                for value in plan.structural_metrics.get("stageOwnershipRecords", [])
+                if isinstance(value, dict)
+            )
+        fact_refs.extend(
+            str(fact_ref)
+            for record in stage_ownership_records
+            for fact_ref in (record.get("ownedFactRefs") or [])
+            if fact_ref
+        )
+        return {
+            "selectedExecutableNodeCount": total_int("selectedExecutableNodeCount"),
+            "selectedExecutableStageRefs": stage_refs,
+            "selectedExecutableSymbols": symbols,
+            "selectedExecutableStages": selected_stages,
+            "standaloneOperationStageCount": total_int("standaloneOperationStageCount"),
+            "gapStageCount": total_int("gapStageCount"),
+            "boundaryStageCount": total_int("boundaryStageCount"),
+            "structuralStageCount": total_int("structuralStageCount"),
+            "presentationStageCount": total_int("presentationStageCount"),
+            "publicStepCount": total_int("publicStepCount"),
+            "stageCountContractExpected": total_int("stageCountContractExpected"),
+            "stageCountContractMatched": all(
+                bool(plan.structural_metrics.get("stageCountContractMatched", False))
+                for plan in formatter_plans
+            ),
+            "expectedPresentationStageCount": total_int("expectedPresentationStageCount"),
+            "presentationStageRefs": presentation_stage_refs,
+            "presentationStages": presentation_stages,
+            "stageOwnershipRecords": stage_ownership_records,
+            "stageOwnershipMap": {
+                str(record.get("stageRef")): list(record.get("ownedFactRefs") or [])
+                for record in stage_ownership_records
+                if record.get("stageRef")
+            },
+            "ownedFactRefsByStageRef": {
+                str(record.get("stageRef")): list(record.get("ownedFactRefs") or [])
+                for record in stage_ownership_records
+                if record.get("stageRef")
+            },
+            "factOwnerByFactRef": {
+                str(fact_ref): str(record.get("stageRef"))
+                for record in stage_ownership_records
+                for fact_ref in (record.get("ownedFactRefs") or [])
+                if record.get("stageRef") and fact_ref
+            },
+            "missingStageRefs": total_int("missingStageRefs"),
+            "duplicateStageRefs": len(presentation_stage_refs) - len(set(presentation_stage_refs)),
+            "unownedFactRefs": total_int("unownedFactRefs"),
+            "duplicateFactRefs": len(fact_refs) - len(set(fact_refs)),
         }
 
     def _reset_metrics(self) -> None:
@@ -2117,6 +2821,37 @@ def _walk_groups(groups: Sequence[FlowFormatterGroup]) -> Iterable[FlowFormatter
         stack.extend(reversed(group.child_groups))
 
 
+def _stage_payload(stage: FlowExecutionStage) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "stageRef": stage.stage_ref,
+        "sectionRef": stage.section_ref,
+        "order": stage.order,
+        "depth": stage.depth,
+        "kind": stage.kind.value,
+        "certainty": stage.certainty,
+        "assertionSubject": stage.assertion_subject,
+        "assertionStatus": stage.assertion_status,
+        "source": stage.source,
+        "sourceDisplayHint": stage.source_display_hint,
+        "symbol": stage.symbol,
+        "nodeKind": stage.node_kind,
+        "executionRole": stage.execution_role,
+        "incoming": stage.incoming,
+        "typedOperations": list(stage.typed_operations),
+        "supportingFacts": list(stage.supporting_facts),
+        "ownedSummaries": list(stage.owned_summaries),
+        "ownedBoundaries": list(stage.owned_boundaries),
+        "outgoingStageRefs": list(stage.outgoing_stage_refs),
+        "branchPath": stage.branch_path,
+        "terminalSemantic": stage.terminal_semantic,
+        "ownedFactRefs": list(stage.owned_fact_refs),
+        "stagePartRef": stage.stage_part_ref,
+        "stagePartIndex": stage.stage_part_index,
+        "stagePartCount": stage.stage_part_count,
+    }
+    return _without_empty(payload)
+
+
 def _group_payload(group: FlowFormatterGroup, *, include_children: bool = True) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "groupRef": group.group_ref,
@@ -2128,7 +2863,6 @@ def _group_payload(group: FlowFormatterGroup, *, include_children: bool = True) 
         "assertionSubject": group.assertion_subject,
         "assertionStatus": group.assertion_status,
         "branchPath": group.branch_path,
-        "mergeScope": group.merge_scope,
         "source": group.source,
         "sourceDisplayHint": group.source_display_hint,
         "symbol": group.symbol,

@@ -525,7 +525,13 @@ class FlowNarrativePlanner:
             key=self._correlation_sort_key,
         ):
             ambiguous_by_source[result.source_fragment_key].append(result)
-        for fragment in sorted(fragments, key=self._fragment_sort_key):
+        exact_target_keys = {
+            target_key
+            for results in exact_by_source.values()
+            for result in results
+            for target_key in result.target_fragment_keys
+        }
+        for fragment in sorted(fragments, key=lambda item: self._root_fragment_sort_key(item, exact_target_keys)):
             if fragment.key in used:
                 continue
             parts = [FlowNarrativePart(FlowNarrativePartKind.VERIFIED_FRAGMENT, fragment=fragment)]
@@ -583,6 +589,9 @@ class FlowNarrativePlanner:
             key.graph_revision,
             key.entrypoint_node_id,
         )
+
+    def _root_fragment_sort_key(self, fragment: AvailableFlowFragment, exact_target_keys: set[str]) -> tuple[int, float, str, str, str]:
+        return (1 if fragment.key in exact_target_keys else 0, *self._fragment_sort_key(fragment))
 
     def _plan_sort_key(self, plan: FlowNarrativePlan) -> tuple[float, int, int, str]:
         fragment_count = sum(1 for part in plan.parts if part.fragment is not None)

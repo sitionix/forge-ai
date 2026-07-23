@@ -97,10 +97,18 @@ export class JarvisQueryView {
     }
     return items.map((item) => `
       <section class="jarvis-answer">
-        ${item.entrypoint ? `<strong>${escapeHtml(text(item.entrypoint))}</strong>` : ''}
+        ${this.shouldRenderAnswerTitle(item) ? `<strong>${escapeHtml(text(item.entrypoint))}</strong>` : ''}
         <p class="jarvis-answer-text">${escapeHtml(text(item.text))}</p>
       </section>
     `).join('');
+  }
+
+  shouldRenderAnswerTitle(item) {
+    const entrypoint = text(item?.entrypoint);
+    if (!entrypoint) {
+      return false;
+    }
+    return !text(item?.text).includes(entrypoint);
   }
 
   panel() {

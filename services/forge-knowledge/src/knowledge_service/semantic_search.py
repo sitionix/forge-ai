@@ -11,7 +11,7 @@ from typing import Any, Mapping, Optional, Sequence
 from knowledge_service.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 from knowledge_service.knowledge_search import CandidateProvider, SearchCandidate, SearchConfig, SearchDocument, SearchQuery
 from knowledge_service.observability import observed_connect
-from knowledge_service.semantic_index import SQLITE_SEMANTIC_BUSY_TIMEOUT_MS, SemanticIndexStatus, SemanticIndexStore, ensure_semantic_index_schema
+from knowledge_service.semantic_index import SQLITE_SEMANTIC_BUSY_TIMEOUT_MS, SemanticIndexStatus, SemanticIndexStore
 
 
 @dataclass(frozen=True)
@@ -137,7 +137,6 @@ class SemanticVectorStore:
         conn.execute(f"PRAGMA busy_timeout = {SQLITE_SEMANTIC_BUSY_TIMEOUT_MS}")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
-        ensure_semantic_index_schema(conn)
         return conn
 
 
@@ -415,7 +414,6 @@ class SemanticCandidateProvider(CandidateProvider):
         conn.execute(f"PRAGMA busy_timeout = {SQLITE_SEMANTIC_BUSY_TIMEOUT_MS}")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.row_factory = sqlite3.Row
-        ensure_semantic_index_schema(conn)
         return conn
 
     def _timed_out(self, started_at: float) -> bool:

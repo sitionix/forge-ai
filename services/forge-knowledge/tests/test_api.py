@@ -191,7 +191,7 @@ def test_query_endpoint_returns_formatter_backed_human_answer(tmp_path):
     answer = payload["answers"][0]
     assert answer["source"] == "source-a"
     assert answer["entrypoint"] == "A.start"
-    assert answer["text"].startswith("source-a · A.start\n1. ")
+    assert answer["text"].startswith("source-a\n1. A.start — ")
     assert "\n2. " in answer["text"]
     assert "A.start" in answer["text"]
     assert "B.work" in answer["text"]
@@ -256,7 +256,14 @@ def test_human_query_writes_formatter_terminal_audit_record(tmp_path):
     assert record["queryInterpreterCallCount"] == 1
     assert record["narrativePlanCount"] == 1
     assert record["verifiedFragmentCount"] == 1
-    assert record["walkthroughStepCount"] >= 3
+    assert record["walkthroughStepCount"] == 2
+    assert record["selectedExecutableNodeCount"] == 2
+    assert record["presentationStageCount"] == 2
+    assert record["publicStepCount"] == record["presentationStageCount"]
+    assert record["missingStageRefs"] == 0
+    assert record["duplicateStageRefs"] == 0
+    assert record["unownedFactRefs"] == 0
+    assert record["duplicateFactRefs"] == 0
     assert record["answerCount"] == 1
     assert record["formatterProviderCallCount"] == 1
     assert record["finalAnswerProviderCallCount"] == 1
@@ -317,7 +324,7 @@ def test_query_endpoint_returns_one_answer_per_independent_narrative_plan(tmp_pa
 
     assert status == 200
     assert [answer["entrypoint"] for answer in payload["answers"]] == roots
-    assert all(answer["text"].startswith(f"source-a · {entrypoint}\n1. ") for answer, entrypoint in zip(payload["answers"], roots))
+    assert all(answer["text"].startswith(f"source-a\n1. {entrypoint} — ") for answer, entrypoint in zip(payload["answers"], roots))
     assert payload["diagnostics"] == []
     assert "flows" not in payload
 

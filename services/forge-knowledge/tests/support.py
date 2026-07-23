@@ -207,17 +207,8 @@ class DeterministicFinalFlowFormatterProvider:
         sections = []
         for section in formatter_input.get("sections", []):
             steps = []
-            current: List[Dict[str, Any]] = []
-            current_scope = None
-            for group in section.get("orderedGroups", []):
-                scope = group.get("mergeScope")
-                if current and scope != current_scope:
-                    steps.append(_formatter_step(current, response_language))
-                    current = []
-                current_scope = scope
-                current.append(group)
-            if current:
-                steps.append(_formatter_step(current, response_language))
+            for stage in section.get("stages", []):
+                steps.append(_formatter_step(stage, response_language))
             sections.append({"sectionRef": section.get("sectionRef"), "steps": steps})
         return FlowFormatterProviderResult(raw_text=json.dumps({"sections": sections}, ensure_ascii=False), prompt_char_length=100)
 
@@ -246,23 +237,23 @@ def _flatten_formatter_groups(groups):
         yield from _flatten_formatter_groups(group.get("childGroups", []))
 
 
-def _formatter_step(groups: List[Dict[str, Any]], language: str) -> Dict[str, Any]:
-    certainty = str(groups[0].get("certainty") or "VERIFIED")
+def _formatter_step(stage: Dict[str, Any], language: str) -> Dict[str, Any]:
+    certainty = str(stage.get("certainty") or "VERIFIED")
     return {
-        "groupRefs": [group.get("groupRef") for group in groups],
+        "stageRef": stage.get("stageRef"),
         "certainty": certainty,
-        "assertionSubject": str(groups[0].get("assertionSubject") or ""),
-        "text": _formatter_sentence(groups, certainty, language),
+        "assertionSubject": str(stage.get("assertionSubject") or ""),
+        "coveredFactRefs": list(stage.get("ownedFactRefs") or []),
+        "text": _formatter_sentence(stage, certainty, language),
     }
 
 
-def _formatter_sentence(groups: List[Dict[str, Any]], certainty: str, language: str) -> str:
+def _formatter_sentence(stage: Dict[str, Any], certainty: str, language: str) -> str:
     identifiers: List[str] = []
-    for group in groups:
-        for value in _formatter_identifiers(group):
-            if value not in identifiers:
-                identifiers.append(value)
-    joined = ", ".join(identifiers) if identifiers else str(groups[0].get("kind") or "step")
+    for value in _formatter_identifiers(stage):
+        if value not in identifiers:
+            identifiers.append(value)
+    joined = ", ".join(identifiers) if identifiers else str(stage.get("kind") or "stage")
     if language == "uk":
         uncertainty = " з непідтвердженим зв'язком" if certainty == "UNVERIFIED" else " з неоднозначним зв'язком" if certainty == "AMBIGUOUS" else ""
         return f"Цей крок описує доступний потік{uncertainty}: {joined}."
@@ -278,21 +269,33 @@ def _formatter_sentence(groups: List[Dict[str, Any]], certainty: str, language: 
 
 def _formatter_identifiers(group: Dict[str, Any]) -> List[str]:
     values: List[str] = []
-    for key in (
-        "symbol",
-        "fromSymbol",
-        "toSymbol",
-        "method",
-        "route",
-        "topic",
-        "schedule",
-        "operationIdentity",
-        "interfaceIdentity",
-        "targetDescriptor",
-    ):
-        value = group.get(key)
-        if isinstance(value, str) and value.strip() and value.strip() not in values:
-            values.append(value.strip())
+    containers: List[Any] = [
+        group,
+        group.get("incoming"),
+        *list(group.get("typedOperations") or []),
+        *list(group.get("supportingFacts") or []),
+        *list(group.get("ownedSummaries") or []),
+        *list(group.get("ownedBoundaries") or []),
+    ]
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        for key in (
+            "symbol",
+            "fromSymbol",
+            "toSymbol",
+            "method",
+            "route",
+            "topic",
+            "schedule",
+            "operationIdentity",
+            "interfaceIdentity",
+            "targetDescriptor",
+            "targetServiceIdentity",
+        ):
+            value = container.get(key)
+            if isinstance(value, str) and value.strip() and value.strip() not in values:
+                values.append(value.strip())
     return values
 
 

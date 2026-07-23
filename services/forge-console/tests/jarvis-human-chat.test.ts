@@ -48,7 +48,7 @@ function submitEvent() {
   return { preventDefault: () => undefined };
 }
 
-function humanResponse(text = 'Сайт створюється через SiteController.createSite.') {
+function humanResponse(text = 'stsssox\n1. SiteController.createSite — Сайт створюється через збережені факти.') {
   return {
     answerLanguage: 'uk',
     answers: [{ source: 'stsssox', entrypoint: 'SiteController.createSite', text }],
@@ -220,7 +220,7 @@ describe('Jarvis human chat', () => {
     await first;
   });
 
-  it('renders only the human answer and compact entrypoint title', async () => {
+  it('renders only the human answer without duplicating the stitched entrypoint title', async () => {
     const dom = jarvisDom();
     const http = { post: vi.fn(() => Promise.resolve(humanResponse())) };
     const page = new JarvisPage({ document: dom.window.document, http });
@@ -232,9 +232,10 @@ describe('Jarvis human chat', () => {
     expect(text).toContain('Operator');
     expect(text).toContain('Як створюється сайт?');
     expect(text).toContain('Jarvis');
-    expect(text).toContain('Сайт створюється через SiteController.createSite.');
+    expect(text).toContain('Сайт створюється через збережені факти.');
     expect(text).toContain('SiteController.createSite');
-    expect(text).not.toContain('stsssox');
+    expect(text).toContain('stsssox');
+    expect((text.match(/SiteController\.createSite/g) || [])).toHaveLength(1);
     expect(dom.window.document.querySelectorAll('.jarvis-answer')).toHaveLength(1);
     expect(dom.window.document.querySelector('.jarvis-answer-card')).toBeNull();
     expect(dom.window.document.querySelector('.jarvis-answer-sources')).toBeNull();
