@@ -24,6 +24,7 @@ from knowledge_service.operation_facts import (
 
 
 _SQLITE_BIND_CHUNK_SIZE = 800
+_HTTP_DIRECTION_ROLES = {"INBOUND", "OUTBOUND"}
 
 
 def _chunks(values: Sequence[str], size: int = _SQLITE_BIND_CHUNK_SIZE) -> Iterable[Sequence[str]]:
@@ -197,6 +198,9 @@ class EntrypointFlowGraphRepository:
                     rows = self._query_available_operation_fact_rows(conn, source_id, list(chunk), include_tests)
                     self._metrics["operationFactRowsLoaded"] += len(rows)
                     facts.extend(self._operation_facts_from_rows(rows))
+                    edge_rows = self._query_edge_operation_fact_rows(conn, source_id, list(chunk), include_tests)
+                    self._metrics["operationFactRowsLoaded"] += len(edge_rows)
+                    facts.extend(self._operation_facts_from_edge_rows(edge_rows))
             catalog_targets = self._catalog_contract_targets(conn, sorted(grouped))
             for contract_source_id, targets in sorted(catalog_targets.items()):
                 rows = self._query_catalog_operation_fact_rows(conn, contract_source_id, include_tests)
@@ -701,6 +705,88 @@ class EntrypointFlowGraphRepository:
         ).fetchall()
         return [self.graph_store._row_dict(row) for row in rows]
 
+    def _query_edge_operation_fact_rows(
+        self,
+        conn: Any,
+        source_id: str,
+        ids: list[str],
+        include_tests: bool,
+    ) -> List[Dict[str, Any]]:
+        if not ids:
+            return []
+        self._metrics["sqlStatements"] += 1
+        placeholders = ",".join("?" for _ in ids)
+        contract = graph_query_contract()
+        current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
+        rows = conn.execute(
+            f"""
+            SELECT e.id AS edge_id,
+                   e.source_id AS source_id,
+                   e.from_node_id AS from_node_id,
+                   e.metadata_json AS metadata_json,
+                   e.status AS edge_status,
+                   e.resolution_status AS edge_resolution_status,
+                   COALESCE({self.graph_store._inventory_flow_domain_sql("e")}, {self.graph_store._inventory_flow_domain_sql("fn")}) AS effective_flow_domain,
+                   fn.qualified_name AS owner_qualified_name,
+                   fn.relative_path AS owner_relative_path,
+                   COALESCE(NULLIF(state.graph_id, ''), e.source_id || ':query-current-facts') AS graph_id,
+                   COALESCE(NULLIF(state.content_identity, ''), NULLIF(state.graph_id, ''), e.source_id || ':query-current-facts') AS graph_revision,
+                   EXISTS (
+                       SELECT 1
+                       FROM files f_current
+                       WHERE f_current.source_id = e.source_id
+                         AND f_current.relative_path = e.relative_path
+                         AND f_current.content_hash = e.content_hash
+                   ) AS inventory_current,
+                   EXISTS (
+                       SELECT 1
+                       FROM analysis_files af_current
+                       WHERE af_current.source_id = e.source_id
+                         AND af_current.relative_path = e.relative_path
+                         AND af_current.content_hash = e.content_hash
+                         AND af_current.status IN ('ANALYZED', 'ANALYZED_WITH_DIAGNOSTICS', 'PARTIAL')
+                   ) AS analyzed_current,
+                   ev.source_id AS evidence_source_id,
+                   COALESCE(af.relative_path, ev.relative_path) AS evidence_relative_path,
+                   ev.line_start AS evidence_line_start,
+                   ev.line_end AS evidence_line_end,
+                   ev.excerpt AS evidence_excerpt
+            FROM analysis_graph_edges e
+            JOIN analysis_graph_nodes fn
+              ON fn.source_id = e.source_id
+             AND fn.id = e.from_node_id
+             AND fn.status IN ({current_status_sql})
+             AND {self.graph_store._inventory_membership_graph_node_clause("fn")}
+             AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("fn")}, '') != 'TEST')
+            LEFT JOIN analysis_graph_state state
+              ON state.source_id = e.source_id
+            LEFT JOIN analysis_graph_owner_evidence owner
+              ON owner.owner_kind = 'EDGE'
+             AND owner.owner_source_id = e.source_id
+             AND owner.owner_edge_id = e.id
+            LEFT JOIN analysis_graph_evidence ev
+              ON ev.source_id = owner.evidence_source_id
+             AND ev.id = owner.evidence_id
+            LEFT JOIN analysis_files af
+              ON af.file_id = ev.analysis_file_id
+            WHERE e.source_id = ?
+              AND e.from_node_id IN ({placeholders})
+              AND e.status IN ({current_status_sql})
+              AND {self.graph_store._inventory_membership_graph_edge_clause("e")}
+              AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("e")}, '') != 'TEST')
+            ORDER BY e.source_id, e.from_node_id, e.id, ev.relative_path, ev.line_start, ev.line_end, ev.id
+            """,
+            [
+                *current_status_params,
+                include_tests,
+                source_id,
+                *ids,
+                *current_status_params,
+                include_tests,
+            ],
+        ).fetchall()
+        return [self.graph_store._row_dict(row) for row in rows]
+
     def _operation_facts_from_rows(
         self,
         rows: Sequence[Dict[str, Any]],
@@ -737,7 +823,7 @@ class EntrypointFlowGraphRepository:
                     source_id=str(first.get("source_id") or ""),
                     execution_role=clean_identity(first.get("entrypoint_execution_kind")),
                     transport_kind=normalize_transport_kind(first.get("entrypoint_kind")),
-                    direction_role=None,
+                    direction_role=self._claim_fact_direction(first),
                     method=normalize_http_method(first.get("entrypoint_http_method")),
                     normalized_route=normalize_route(first.get("entrypoint_route")),
                     topic=clean_identity(first.get("entrypoint_topic")),
@@ -759,6 +845,92 @@ class EntrypointFlowGraphRepository:
                 )
             )
         return tuple(facts)
+
+    def _operation_facts_from_edge_rows(self, rows: Sequence[Dict[str, Any]]) -> tuple[AvailableOperationFact, ...]:
+        grouped: dict[str, list[Dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            grouped[str(row.get("edge_id") or "")].append(row)
+        facts: list[AvailableOperationFact] = []
+        for edge_id, edge_rows in grouped.items():
+            if not edge_id or not edge_rows:
+                continue
+            first = edge_rows[0]
+            metadata = self._json_object(first.get("metadata_json"))
+            transport = normalize_transport_kind(metadata.get("transportKind") or metadata.get("connectorKind"))
+            method = normalize_http_method(metadata.get("httpMethod") or metadata.get("method"))
+            route = normalize_route(metadata.get("routeTemplate") or metadata.get("route"))
+            if transport != "HTTP" or not method or not route:
+                continue
+            direction = self._edge_fact_direction(metadata)
+            operation_identity = clean_identity(metadata.get("operationIdentity"))
+            interface_identity = clean_identity(
+                metadata.get("interfaceIdentity")
+                or metadata.get("interfaceMethod")
+                or metadata.get("targetInterfaceMethod")
+            )
+            if not operation_identity and not interface_identity:
+                operation_identity, interface_identity = split_operation_interface_identity(metadata.get("targetEntrypoint"))
+            evidence = tuple(
+                OperationFactEvidence(
+                    source_id=str(row.get("evidence_source_id") or first.get("source_id") or ""),
+                    relative_path=str(row.get("evidence_relative_path")) if row.get("evidence_relative_path") else None,
+                    line_start=int(row.get("evidence_line_start")) if row.get("evidence_line_start") is not None else None,
+                    line_end=int(row.get("evidence_line_end")) if row.get("evidence_line_end") is not None else None,
+                    excerpt=str(row.get("evidence_excerpt")) if row.get("evidence_excerpt") else None,
+                )
+                for row in edge_rows
+                if row.get("evidence_source_id")
+            )
+            facts.append(
+                AvailableOperationFact(
+                    owner_source_id=str(first.get("source_id") or ""),
+                    owner_graph_id=str(first.get("graph_id") or ""),
+                    owner_graph_revision=str(first.get("graph_revision")) if first.get("graph_revision") else None,
+                    owner_node_id=str(first.get("from_node_id") or ""),
+                    source_id=str(first.get("source_id") or ""),
+                    execution_role="EDGE_METADATA",
+                    transport_kind=transport,
+                    direction_role=direction,
+                    method=method,
+                    normalized_route=route,
+                    operation_identity=operation_identity,
+                    interface_identity=interface_identity,
+                    request_contract_identity=clean_identity(metadata.get("requestContractIdentity")),
+                    response_contract_identity=clean_identity(metadata.get("responseContractIdentity")),
+                    target_service_identity=clean_identity(metadata.get("targetServiceIdentity")),
+                    owner_qualified_name=clean_identity(first.get("owner_qualified_name")),
+                    owner_relative_path=clean_identity(first.get("owner_relative_path")),
+                    owner_edge_id=edge_id,
+                    evidence=evidence,
+                    eligibility=OperationFactEligibility(
+                        status=clean_identity(first.get("edge_status")),
+                        rejection_reason=None,
+                        flow_domain=clean_identity(first.get("effective_flow_domain")),
+                        inventory_current=bool(first.get("inventory_current")),
+                        analyzed_current=bool(first.get("analyzed_current")),
+                    ),
+                    source_channel="EDGE_METADATA",
+                )
+            )
+        return tuple(facts)
+
+    def _claim_fact_direction(self, row: Dict[str, Any]) -> str | None:
+        if normalize_transport_kind(row.get("entrypoint_kind")) != "HTTP":
+            return None
+        if not normalize_http_method(row.get("entrypoint_http_method")) or not normalize_route(row.get("entrypoint_route")):
+            return None
+        role = str(row.get("entrypoint_execution_kind") or "").strip().upper()
+        if role == EntrypointExecutionKind.EXECUTABLE.value:
+            return "INBOUND"
+        if role == EntrypointExecutionKind.CLIENT_OPERATION.value:
+            return "OUTBOUND"
+        return None
+
+    def _edge_fact_direction(self, metadata: Dict[str, Any]) -> str:
+        raw = str(metadata.get("directionRole") or "").strip().upper()
+        if raw in _HTTP_DIRECTION_ROLES:
+            return raw
+        return "OUTBOUND"
 
     def _catalog_contract_targets(self, conn: Any, source_ids: Sequence[str]) -> dict[str, tuple[dict[str, str], ...]]:
         if not source_ids:
@@ -837,13 +1009,14 @@ class EntrypointFlowGraphRepository:
         return parsed if isinstance(parsed, dict) else {}
 
     def _dedupe_operation_facts(self, facts: Sequence[AvailableOperationFact]) -> tuple[AvailableOperationFact, ...]:
-        deduped: dict[tuple[str, str, str, str, str, str, str, str, str], AvailableOperationFact] = {}
+        deduped: dict[tuple[str, str, str, str, str, str, str, str, str, str], AvailableOperationFact] = {}
         for fact in facts:
             key = (
                 fact.owner_source_id,
                 fact.owner_graph_revision or fact.owner_graph_id,
                 fact.owner_node_id,
                 fact.owner_edge_id or "",
+                fact.direction_role or "",
                 normalize_transport_kind(fact.transport_kind) or "",
                 normalize_http_method(fact.method) or "",
                 normalize_route(fact.normalized_route) or "",

@@ -16,7 +16,7 @@ from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepositor
 from knowledge_service.flow_family import FlowFamilyAssembler
 from knowledge_service.flow_explanations import FlowProjectionBuilder
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
-from knowledge_service.flow_narrative import FlowNarrativePartKind, FlowNarrativePlanner
+from knowledge_service.flow_narrative import FlowNarrativePartKind, FlowNarrativePlanner, HttpFlowCorrelationAdapter, FlowCorrelationStatus
 from knowledge_service.flow_formatter import FlowFormatterGroupKind, FlowFormatterPlanBuilder
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import KnowledgeQueryService, SourceScopeResolver, UnifiedAnchorSearcher
@@ -297,9 +297,9 @@ def test_available_operation_fact_sql_scales_by_chunk_not_node(tmp_path):
 
     assert len(small) == 20
     assert len(large) == 2000
-    assert small_delta == 2
-    assert large_delta == 4
-    assert large_delta - small_delta == 2
+    assert small_delta == 3
+    assert large_delta == 7
+    assert large_delta - small_delta == 4
 
 
 def _node(node_id: str, *, source: str, role: str, method: str = "POST", route: str = "/items") -> FlowGraphNode:
@@ -379,6 +379,220 @@ def _flow(
 
 def _families(*flows: EntrypointFlow):
     return FlowFamilyAssembler().rank(FlowFamilyAssembler().assemble(flows).families)
+
+
+def _seed_registration_operation_pair(
+    db_path,
+    *,
+    downstream_source: str = "fixture-auth",
+    downstream_node: str = "auth-register",
+    outbound_route: str | None = "api/v1/registrations",
+    outbound_method: str | None = "POST",
+    outbound_status: str = "TRUSTED",
+    outbound_transport: str = "HTTP",
+):
+    upstream_revision = seed_semantic_graph(
+        db_path,
+        source_id="fixture-bff",
+        nodes=[
+            {
+                "id": "bff-register",
+                "nodeKind": "CALLABLE",
+                "name": "Gateway.submit",
+                "qualified": "fixture.bff.Gateway.submit",
+                "path": "src/Gateway.java",
+            },
+        ],
+        edges=[
+            {
+                "id": "bff-auth-http",
+                "fromNodeId": "bff-register",
+                "toNodeId": None,
+                "edgeType": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "status": outbound_status,
+                "metadata": {
+                    "transportKind": outbound_transport,
+                    "httpMethod": outbound_method,
+                    "routeTemplate": outbound_route,
+                    "operationIdentity": "HTTP POST /api/v1/registrations",
+                    "interfaceIdentity": "AuthRegistrationApi.register",
+                    "requestContractIdentity": "RegistrationRequest",
+                    "responseContractIdentity": "RegistrationResponse",
+                    "targetServiceIdentity": downstream_source,
+                },
+            }
+        ],
+        claims=[
+            _claim(
+                "claim-bff-register",
+                "bff-register",
+                method="POST",
+                route="/bff/registrations",
+                interface_method="BffRegistrationApi.submit",
+            )
+        ],
+        evidence_ids=["ev-bff-register"],
+    )
+    downstream_revision = seed_semantic_graph(
+        db_path,
+        source_id=downstream_source,
+        nodes=[
+            {
+                "id": downstream_node,
+                "nodeKind": "CALLABLE",
+                "name": "RegistrationEndpoint.accept",
+                "qualified": f"{downstream_source}.RegistrationEndpoint.accept",
+                "path": "src/RegistrationEndpoint.java",
+            },
+        ],
+        claims=[
+            _claim(
+                f"claim-{downstream_node}",
+                downstream_node,
+                method="POST",
+                route="/api/v1/registrations/",
+                interface_method="AuthRegistrationApi.register",
+            )
+        ],
+        evidence_ids=[f"ev-{downstream_node}"],
+    )
+    return (
+        ("fixture-bff", upstream_revision, "bff-register"),
+        (downstream_source, downstream_revision, downstream_node),
+    )
+
+
+def _loaded_nodes_and_facts(db_path, *keys):
+    repo = EntrypointFlowGraphRepository(AnalysisStore(db_path))
+    key_set = set(keys)
+    nodes = repo.load_nodes(key_set, include_tests=False)
+    facts = repo.load_available_operation_facts(key_set, include_tests=False)
+    return nodes, facts
+
+
+def _correlation_results(nodes, facts, *keys):
+    families = _families(*(_flow(nodes[key]) for key in keys))
+    fragments = FlowNarrativePlanner().fragments(families, operation_facts=facts)
+    return HttpFlowCorrelationAdapter().correlate(fragments)
+
+
+def test_persisted_generic_http_operation_facts_support_registration_style_exact_correlation(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    upstream_key, downstream_key = _seed_registration_operation_pair(db_path)
+    nodes, facts = _loaded_nodes_and_facts(db_path, upstream_key, downstream_key)
+
+    outbound = next(fact for fact in facts if fact.direction_role == "OUTBOUND")
+    inbound = next(fact for fact in facts if fact.direction_role == "INBOUND" and fact.owner_source_id == "fixture-auth")
+
+    assert outbound.source_channel == "EDGE_METADATA"
+    assert outbound.owner_source_id == "fixture-bff"
+    assert outbound.owner_node_id == "bff-register"
+    assert outbound.owner_edge_id == "bff-auth-http"
+    assert outbound.owner_qualified_name == "fixture.bff.Gateway.submit"
+    assert outbound.owner_graph_revision == upstream_key[1]
+    assert outbound.transport_kind == "HTTP"
+    assert outbound.method == "POST"
+    assert outbound.normalized_route == "/api/v1/registrations"
+    assert outbound.operation_identity == "HTTP POST /api/v1/registrations"
+    assert outbound.interface_identity == "AuthRegistrationApi.register"
+    assert outbound.request_contract_identity == "RegistrationRequest"
+    assert outbound.response_contract_identity == "RegistrationResponse"
+    assert outbound.target_service_identity == "fixture-auth"
+    assert outbound.eligibility is not None
+    assert outbound.eligibility.inventory_current is True
+    assert outbound.eligibility.analyzed_current is True
+    assert outbound.evidence
+
+    assert inbound.source_channel == "ENTRYPOINT_HINT"
+    assert inbound.owner_source_id == "fixture-auth"
+    assert inbound.owner_node_id == "auth-register"
+    assert inbound.owner_qualified_name == "fixture-auth.RegistrationEndpoint.accept"
+    assert inbound.owner_graph_revision == downstream_key[1]
+    assert inbound.transport_kind == "HTTP"
+    assert inbound.method == "POST"
+    assert inbound.normalized_route == "/api/v1/registrations"
+    assert inbound.interface_identity == "AuthRegistrationApi.register"
+    assert outbound.method == inbound.method
+    assert outbound.normalized_route == inbound.normalized_route
+
+    results = _correlation_results(nodes, facts, upstream_key, downstream_key)
+    exact = [result for result in results if result.status is FlowCorrelationStatus.EXACT_UNVERIFIED]
+    assert len(exact) == 1
+    assert exact[0].target_fragment_keys == (":".join(downstream_key),)
+
+
+def test_multiple_exact_downstream_http_operation_matches_are_ambiguous(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    upstream_key, first_downstream_key = _seed_registration_operation_pair(db_path)
+    second_downstream_revision = seed_semantic_graph(
+        db_path,
+        source_id="fixture-auth-copy",
+        nodes=[
+            {
+                "id": "auth-register-copy",
+                "nodeKind": "CALLABLE",
+                "name": "RegistrationEndpoint.accept",
+                "qualified": "fixture-auth-copy.RegistrationEndpoint.accept",
+                "path": "src/RegistrationEndpoint.java",
+            },
+        ],
+        claims=[
+            _claim(
+                "claim-auth-register-copy",
+                "auth-register-copy",
+                method="POST",
+                route="/api/v1/registrations",
+                interface_method="AuthRegistrationApi.register",
+            )
+        ],
+        evidence_ids=["ev-auth-register-copy"],
+    )
+    second_downstream_key = ("fixture-auth-copy", second_downstream_revision, "auth-register-copy")
+    nodes, facts = _loaded_nodes_and_facts(db_path, upstream_key, first_downstream_key, second_downstream_key)
+
+    results = _correlation_results(nodes, facts, upstream_key, first_downstream_key, second_downstream_key)
+
+    ambiguous = [result for result in results if result.status is FlowCorrelationStatus.AMBIGUOUS]
+    assert len(ambiguous) == 1
+    assert set(ambiguous[0].target_fragment_keys) == {":".join(first_downstream_key), ":".join(second_downstream_key)}
+
+
+def test_missing_http_method_or_route_does_not_create_false_correlation(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    upstream_key, downstream_key = _seed_registration_operation_pair(db_path, outbound_route=None)
+    nodes, facts = _loaded_nodes_and_facts(db_path, upstream_key, downstream_key)
+
+    assert all(fact.direction_role != "OUTBOUND" for fact in facts)
+    results = _correlation_results(nodes, facts, upstream_key, downstream_key)
+
+    assert all(result.status is not FlowCorrelationStatus.EXACT_UNVERIFIED for result in results)
+
+
+def test_stale_and_non_current_edge_operation_facts_are_not_loaded(tmp_path):
+    stale_db_path = tmp_path / "stale.sqlite"
+    stale_key, _downstream_key = _seed_registration_operation_pair(stale_db_path)
+    with sqlite3.connect(stale_db_path) as conn:
+        conn.execute(
+            "UPDATE files SET content_hash = 'new-hash' WHERE source_id = 'fixture-bff' AND relative_path = 'src/Gateway.java'"
+        )
+    _nodes, stale_facts = _loaded_nodes_and_facts(stale_db_path, stale_key)
+
+    non_current_db_path = tmp_path / "non-current.sqlite"
+    non_current_key, _other_downstream_key = _seed_registration_operation_pair(non_current_db_path, outbound_status="CANDIDATE")
+    _nodes, non_current_facts = _loaded_nodes_and_facts(non_current_db_path, non_current_key)
+
+    assert all(fact.direction_role != "OUTBOUND" for fact in stale_facts)
+    assert all(fact.direction_role != "OUTBOUND" for fact in non_current_facts)
+
+
+def test_non_http_helper_boundary_metadata_does_not_become_operation_fact(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    upstream_key, _downstream_key = _seed_registration_operation_pair(db_path, outbound_transport="QUEUE")
+    _nodes, facts = _loaded_nodes_and_facts(db_path, upstream_key)
+
+    assert all(fact.source_channel != "EDGE_METADATA" for fact in facts)
+    assert all(fact.direction_role != "OUTBOUND" for fact in facts)
 
 
 def test_disconnected_exact_http_fragments_become_one_plan_with_unverified_gap():

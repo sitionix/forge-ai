@@ -7,6 +7,7 @@ from typing import Sequence
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine, EntrypointFlowOrigin
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
 from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode
+from knowledge_service.operation_facts import AvailableOperationFact, OperationFactEligibility
 from knowledge_service.file_classification import FileClassifier
 from knowledge_service.knowledge_defaults import load_knowledge_defaults
 
@@ -100,10 +101,12 @@ class FakeFlowRepository:
         nodes: Sequence[FlowGraphNode],
         edges: Sequence[FlowGraphEdge],
         evidence_items: Sequence[FlowGraphEvidence] | None = None,
+        operation_facts: Sequence[AvailableOperationFact] | None = None,
     ) -> None:
         self.nodes = {self._node_key(item): item for item in nodes}
         self.edges = {self._edge_key(item): item for item in edges}
         self.evidence = tuple(evidence_items or tuple(evidence(item) for item in edges))
+        self.operation_facts = tuple(operation_facts or ())
         self.calls = defaultdict(int)
 
     def load_nodes(self, node_keys: set[FlowNodeKey], *, include_tests: bool) -> dict[FlowNodeKey, FlowGraphNode]:
@@ -170,6 +173,15 @@ class FakeFlowRepository:
             ))
         return tuple(hydrated)
 
+    def load_available_operation_facts(
+        self,
+        node_keys: set[FlowNodeKey],
+        *,
+        include_tests: bool,
+    ) -> tuple[AvailableOperationFact, ...]:
+        self.calls["load_available_operation_facts"] += 1
+        return tuple(fact for fact in self.operation_facts if fact.owner_key in node_keys)
+
     def metrics(self) -> dict[str, int]:
         return dict(self.calls)
 
@@ -188,8 +200,37 @@ class FakeFlowRepository:
         return (item.source_id, item.graph_revision or item.graph_id, item.to_node_id)
 
 
-def build(nodes, edges, anchors, *, max_flows=10, include_tests=False, evidence_items=None):
-    repository = FakeFlowRepository(nodes, edges, evidence_items)
+def operation_fact(
+    owner: FlowGraphNode,
+    *,
+    direction: str = "INBOUND",
+    method: str | None = "POST",
+    route: str | None = "/registrations",
+    transport: str = "HTTP",
+    current: bool = True,
+) -> AvailableOperationFact:
+    return AvailableOperationFact(
+        owner_source_id=owner.source_id,
+        owner_graph_id=owner.graph_id,
+        owner_graph_revision=owner.graph_revision,
+        owner_node_id=owner.node_id,
+        source_id=owner.source_id,
+        execution_role="EXECUTABLE" if direction == "INBOUND" else "CLIENT_OPERATION",
+        transport_kind=transport,
+        direction_role=direction,
+        method=method,
+        normalized_route=route,
+        owner_qualified_name=owner.qualified_name,
+        eligibility=OperationFactEligibility(
+            status="TRUSTED",
+            inventory_current=current,
+            analyzed_current=current,
+        ),
+    )
+
+
+def build(nodes, edges, anchors, *, max_flows=10, include_tests=False, evidence_items=None, operation_facts=None):
+    repository = FakeFlowRepository(nodes, edges, evidence_items, operation_facts)
     return EntrypointFlowEngine(repository).build(
         anchors,
         max_flows=max_flows,
@@ -264,6 +305,53 @@ def test_explicit_entrypoint_stops_reverse_traversal_above_fact():
     result = build(nodes, edges, [anchor("Gamma")])
     assert [flow.entrypoint.node_id for flow in result.flows] == ["Beta"]
     assert result.flows[0].origin is EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT
+
+
+def test_inbound_http_operation_fact_promotes_callable_to_explicit_root():
+    beta = node("Beta")
+    nodes = [node("Alpha"), beta, node("Gamma")]
+    edges = [edge("ab", "Alpha", "Beta"), edge("bg", "Beta", "Gamma")]
+
+    result = build(nodes, edges, [anchor("Gamma")], operation_facts=[operation_fact(beta)])
+
+    assert [flow.entrypoint.node_id for flow in result.flows] == ["Beta"]
+    assert result.flows[0].origin is EntrypointFlowOrigin.EXPLICIT_GRAPH_FACT
+    assert result.flows[0].entrypoint.entrypoint is True
+    assert result.flows[0].entrypoint.entrypoint_kind == "HTTP"
+    assert result.flows[0].entrypoint.entrypoint_http_method == "POST"
+    assert result.flows[0].entrypoint.entrypoint_route == "/registrations"
+
+
+def test_similarly_named_callable_without_http_operation_fact_is_not_explicit_root():
+    nodes = [node("Alpha"), node("RegistrationController"), node("Gamma")]
+    edges = [edge("ar", "Alpha", "RegistrationController"), edge("rg", "RegistrationController", "Gamma")]
+
+    result = build(nodes, edges, [anchor("Gamma")])
+
+    assert [flow.entrypoint.node_id for flow in result.flows] == ["Alpha"]
+    assert result.flows[0].origin is EntrypointFlowOrigin.INFERRED_ROOT
+
+
+def test_stale_inbound_http_operation_fact_does_not_promote_root():
+    beta = node("Beta")
+    nodes = [node("Alpha"), beta, node("Gamma")]
+    edges = [edge("ab", "Alpha", "Beta"), edge("bg", "Beta", "Gamma")]
+
+    result = build(nodes, edges, [anchor("Gamma")], operation_facts=[operation_fact(beta, current=False)])
+
+    assert [flow.entrypoint.node_id for flow in result.flows] == ["Alpha"]
+    assert result.flows[0].origin is EntrypointFlowOrigin.INFERRED_ROOT
+
+
+def test_non_http_operation_fact_does_not_promote_root():
+    beta = node("Beta")
+    nodes = [node("Alpha"), beta, node("Gamma")]
+    edges = [edge("ab", "Alpha", "Beta"), edge("bg", "Beta", "Gamma")]
+
+    result = build(nodes, edges, [anchor("Gamma")], operation_facts=[operation_fact(beta, transport="QUEUE")])
+
+    assert [flow.entrypoint.node_id for flow in result.flows] == ["Alpha"]
+    assert result.flows[0].origin is EntrypointFlowOrigin.INFERRED_ROOT
 
 
 def test_inferred_root_is_marked_and_diagnosed():

@@ -13,9 +13,9 @@ from knowledge_service.flow_graph_contract import (
     FlowGraphEvidenceKey,
     FlowGraphNode,
     FlowNodeKey,
-    dedupe_evidence,
     evidence_key,
 )
+from knowledge_service.entrypoint_kinds import EntrypointExecutionKind
 from knowledge_service.flow_boundary_classifier import FlowBoundaryClassifier, FLOW_BOUNDARY_CLASSIFIER
 from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryDiagnostic,
@@ -29,7 +29,7 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryFlowTransition,
     KnowledgeQueryMatchedNode,
 )
-from knowledge_service.operation_facts import AvailableOperationFact
+from knowledge_service.operation_facts import AvailableOperationFact, normalize_http_method, normalize_route, normalize_transport_kind
 
 
 class EntrypointFlowOrigin(str, Enum):
@@ -271,6 +271,12 @@ class EntrypointFlowEngine:
                         continue
                     query_frontier.add(node_key)
 
+            operation_entrypoint_by_key = self._inbound_http_entrypoint_facts(query_frontier, include_tests=include_tests)
+            for node_key, fact in operation_entrypoint_by_key.items():
+                node = known_nodes.get(node_key)
+                if node is not None and not node.entrypoint:
+                    known_nodes[node_key] = self._node_with_http_entrypoint(node, fact)
+
             incoming_by_target = self.repository.load_incoming_calls(query_frontier, include_tests=include_tests) if query_frontier else {}
             incoming_source_keys = {
                 self._from_key(edge)
@@ -341,6 +347,7 @@ class EntrypointFlowEngine:
             for (key, _origin), _anchors in selected
         }
         roots = self.repository.load_nodes(root_keys, include_tests=include_tests)
+        operation_entrypoint_by_key = self._inbound_http_entrypoint_facts(root_keys, include_tests=include_tests)
         states: list[_FlowCollectionState] = []
         for candidate_key, raw_anchors in selected:
             key, _origin = candidate_key
@@ -349,6 +356,9 @@ class EntrypointFlowEngine:
             if root is None:
                 continue
             actual_root_key = self._node_key(root)
+            operation_fact = operation_entrypoint_by_key.get(actual_root_key)
+            if operation_fact is not None:
+                root = self._node_with_http_entrypoint(root, operation_fact)
             states.append(_FlowCollectionState(
                 candidate_key=candidate_key,
                 anchors=self._merge_anchors(raw_anchors),
@@ -560,6 +570,57 @@ class EntrypointFlowEngine:
             if node_key not in best or distance < best[node_key]:
                 best[node_key] = distance
         return tuple(sorted(best.items(), key=lambda item: (item[1], item[0])))
+
+    def _inbound_http_entrypoint_facts(
+        self,
+        node_keys: set[FlowNodeKey],
+        *,
+        include_tests: bool,
+    ) -> dict[FlowNodeKey, AvailableOperationFact]:
+        if not node_keys or not hasattr(self.repository, "load_available_operation_facts"):
+            return {}
+        result: dict[FlowNodeKey, AvailableOperationFact] = {}
+        for fact in sorted(
+            self.repository.load_available_operation_facts(node_keys, include_tests=include_tests),
+            key=self._operation_fact_sort_key,
+        ):
+            if not self._is_inbound_http_entrypoint_fact(fact):
+                continue
+            key = fact.owner_key
+            if key in node_keys:
+                result.setdefault(key, fact)
+        return result
+
+    def _is_inbound_http_entrypoint_fact(self, fact: AvailableOperationFact) -> bool:
+        if normalize_transport_kind(fact.transport_kind) != "HTTP":
+            return False
+        if str(fact.direction_role or "").strip().upper() != "INBOUND":
+            return False
+        if not normalize_http_method(fact.method) or not normalize_route(fact.normalized_route):
+            return False
+        if fact.eligibility is not None and (not fact.eligibility.inventory_current or not fact.eligibility.analyzed_current):
+            return False
+        return True
+
+    def _node_with_http_entrypoint(self, node: FlowGraphNode, fact: AvailableOperationFact) -> FlowGraphNode:
+        return replace(
+            node,
+            entrypoint=True,
+            entrypoint_kind="HTTP",
+            entrypoint_http_method=normalize_http_method(fact.method),
+            entrypoint_route=normalize_route(fact.normalized_route),
+            entrypoint_interface_method=fact.interface_identity or fact.operation_identity,
+            execution_role=EntrypointExecutionKind.EXECUTABLE.value,
+        )
+
+    def _operation_fact_sort_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str]:
+        return (
+            fact.owner_source_id,
+            fact.owner_graph_revision or fact.owner_graph_id,
+            fact.owner_node_id,
+            normalize_http_method(fact.method) or "",
+            normalize_route(fact.normalized_route) or "",
+        )
 
     def _public_node(self, node: FlowGraphNode, ref: str) -> KnowledgeQueryFlowNode:
         return KnowledgeQueryFlowNode(

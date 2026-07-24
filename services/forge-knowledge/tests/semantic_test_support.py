@@ -248,7 +248,7 @@ def seed_semantic_graph(
                     from_node_id, to_node_id, to_source_id, edge_type, resolution_status, confidence,
                     unresolved_target_json, metadata_json, status, created_at, updated_at, fact_origin, flow_domain
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.91, ?, '{}', ?, ?, ?, 'STATIC', 'CODE')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.91, ?, ?, ?, ?, ?, 'STATIC', 'CODE')
                 """,
                 (
                     edge["id"],
@@ -265,6 +265,7 @@ def seed_semantic_graph(
                     edge.get("edgeType", "CALLS"),
                     edge.get("resolutionStatus", "RESOLVED" if edge.get("toNodeId") else "UNRESOLVED"),
                     json.dumps(edge.get("unresolved")) if edge.get("unresolved") else None,
+                    json.dumps(edge.get("metadata") or {}),
                     edge.get("status", "TRUSTED"),
                     now,
                     now,

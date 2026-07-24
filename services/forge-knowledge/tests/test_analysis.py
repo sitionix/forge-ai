@@ -62,7 +62,6 @@ from knowledge_service.target_enrichment import (
     TARGET_INPUT_SCHEMA_VERSION,
     TARGET_REQUEST_KIND,
 )
-from semantic_test_support import seed_semantic_graph
 
 
 def knowledge_query_request(query_text: str) -> KnowledgeQueryRequest:
@@ -436,6 +435,49 @@ def materialize_graph_for_test(
         "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
     }
     return GraphAnalysisEngine().materialize(row, "job-1", "test-analyzer", "1", result, content.splitlines())
+
+
+def test_graph_analysis_preserves_typed_http_operation_edge_metadata():
+    graph = materialize_graph_for_test(
+        GraphAnalysisResult(
+            nodes=[
+                GraphNode(localId="caller", nodeKind="CALLABLE", name="Caller.run", lineStart=1, lineEnd=1, confidence=1.0),
+                GraphNode(localId="target", nodeKind="CALLABLE", name="Target.run", lineStart=1, lineEnd=1, confidence=1.0),
+            ],
+            edges=[
+                GraphEdge(
+                    localId="caller-target",
+                    fromNodeLocalId="caller",
+                    toNodeLocalId="target",
+                    edgeType="CALLS",
+                    resolutionStatus="RESOLVED",
+                    confidence=1.0,
+                    evidence=[GraphEvidenceRef(lineStart=1, lineEnd=1, text="http call")],
+                    metadata={
+                        "transportKind": "HTTP",
+                        "httpMethod": "POST",
+                        "routeTemplate": "/api/v1/registrations",
+                        "operationIdentity": "HTTP POST /api/v1/registrations",
+                        "interfaceIdentity": "AuthRegistrationApi.register",
+                        "requestContractIdentity": "RegistrationRequest",
+                        "responseContractIdentity": "RegistrationResponse",
+                        "targetServiceIdentity": "auth-service",
+                    },
+                )
+            ],
+        ),
+        content="class Caller {}\n",
+    )
+
+    metadata = graph["edges"][0]["metadata"]
+    assert metadata["transportKind"] == "HTTP"
+    assert metadata["httpMethod"] == "POST"
+    assert metadata["routeTemplate"] == "/api/v1/registrations"
+    assert metadata["operationIdentity"] == "HTTP POST /api/v1/registrations"
+    assert metadata["interfaceIdentity"] == "AuthRegistrationApi.register"
+    assert metadata["requestContractIdentity"] == "RegistrationRequest"
+    assert metadata["responseContractIdentity"] == "RegistrationResponse"
+    assert metadata["targetServiceIdentity"] == "auth-service"
 
 
 def _static_java_graph_result_for_test(content: str, file_id: int, relative_path: str, source_id: str = "edge-gateway"):

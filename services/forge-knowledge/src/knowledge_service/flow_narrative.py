@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Iterable, Mapping, Protocol, Sequence
+from typing import Mapping, Protocol, Sequence
 
 from knowledge_service.entrypoint_kinds import EntrypointExecutionKind
 from knowledge_service.flow_family import FlowFamily
@@ -285,7 +285,7 @@ class OperationFactProjector:
             and node_by_key.get(self._from_key(edge)) is not None
             and str(node_by_key[self._from_key(edge)].node_kind or "").upper() == "CALLABLE"
         }
-        facts: dict[tuple[str, str, str, str, str, str, str, str, str], AvailableOperationFact] = {}
+        facts: dict[tuple[str, str, str, str, str, str, str, str, str, str], AvailableOperationFact] = {}
         for fact in available_facts:
             if fact.owner_key not in node_keys:
                 continue
@@ -310,6 +310,9 @@ class OperationFactProjector:
         role = str(fact.execution_role or "").upper()
         if transport == "HTTP" and (not normalize_http_method(fact.method) or not normalize_route(fact.normalized_route)):
             return None
+        explicit_direction = str(fact.direction_role or "").strip().upper()
+        if transport == "HTTP" and explicit_direction in {"INBOUND", "OUTBOUND"}:
+            return fact.with_direction(explicit_direction)
         direction = "SUPPORTING"
         if transport == "HTTP" and role == EntrypointExecutionKind.EXECUTABLE.value and node is not None and node.entrypoint:
             direction = "INBOUND"
@@ -331,10 +334,17 @@ class OperationFactProjector:
         if transport != "HTTP" or not method or not route:
             return None
         operation_identity = clean_identity(metadata.get("operationIdentity"))
-        interface_identity = clean_identity(metadata.get("interfaceMethod") or metadata.get("targetInterfaceMethod"))
+        interface_identity = clean_identity(
+            metadata.get("interfaceIdentity")
+            or metadata.get("interfaceMethod")
+            or metadata.get("targetInterfaceMethod")
+        )
         if not operation_identity and not interface_identity:
             operation_identity, interface_identity = split_operation_interface_identity(metadata.get("targetEntrypoint"))
         owner_node = node_by_key.get(self._from_key(edge))
+        direction = str(metadata.get("directionRole") or "").strip().upper()
+        if direction not in {"INBOUND", "OUTBOUND"}:
+            direction = "OUTBOUND"
         return AvailableOperationFact(
             owner_source_id=edge.source_id,
             owner_graph_id=edge.graph_id,
@@ -343,7 +353,7 @@ class OperationFactProjector:
             source_id=edge.source_id,
             execution_role="EDGE_BOUNDARY",
             transport_kind=transport,
-            direction_role="OUTBOUND",
+            direction_role=direction,
             method=method,
             normalized_route=route,
             operation_identity=operation_identity,
@@ -352,16 +362,18 @@ class OperationFactProjector:
             response_contract_identity=clean_identity(metadata.get("responseContractIdentity")),
             target_service_identity=clean_identity(metadata.get("targetServiceIdentity")),
             owner_qualified_name=owner_node.qualified_name if owner_node is not None else edge.from_node_id,
+            owner_relative_path=owner_node.relative_path if owner_node is not None else None,
             owner_edge_id=edge.edge_id,
             source_channel="EDGE_METADATA",
         )
 
-    def _fact_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str, str, str, str, str]:
+    def _fact_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str, str, str, str, str, str]:
         return (
             fact.owner_source_id,
             fact.owner_graph_revision or fact.owner_graph_id,
             fact.owner_node_id,
             fact.owner_edge_id or "",
+            fact.direction_role or "",
             normalize_transport_kind(fact.transport_kind) or "",
             normalize_http_method(fact.method) or "",
             normalize_route(fact.normalized_route) or "",
