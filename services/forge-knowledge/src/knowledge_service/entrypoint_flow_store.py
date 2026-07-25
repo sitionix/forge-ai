@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections import defaultdict
 from dataclasses import replace
 from typing import Any, Dict, Iterable, List, Sequence
@@ -201,11 +200,36 @@ class EntrypointFlowGraphRepository:
                     edge_rows = self._query_edge_operation_fact_rows(conn, source_id, list(chunk), include_tests)
                     self._metrics["operationFactRowsLoaded"] += len(edge_rows)
                     facts.extend(self._operation_facts_from_edge_rows(edge_rows))
-            catalog_targets = self._catalog_contract_targets(conn, sorted(grouped))
-            for contract_source_id, targets in sorted(catalog_targets.items()):
-                rows = self._query_catalog_operation_fact_rows(conn, contract_source_id, include_tests)
-                self._metrics["operationFactRowsLoaded"] += len(rows)
-                facts.extend(self._operation_facts_from_rows(rows, catalog_targets=targets))
+        return tuple(sorted(self._dedupe_operation_facts(facts), key=self._operation_fact_sort_key))
+
+    def load_matching_inbound_operation_facts(
+        self,
+        outbound_facts: Sequence[AvailableOperationFact],
+        *,
+        eligible_source_ids: Sequence[str],
+        include_tests: bool,
+    ) -> tuple[AvailableOperationFact, ...]:
+        requested = tuple(
+            fact
+            for fact in outbound_facts
+            if normalize_transport_kind(fact.transport_kind) == "HTTP"
+            and str(fact.direction_role or "").strip().upper() == "OUTBOUND"
+            and normalize_http_method(fact.method)
+            and normalize_route(fact.normalized_route)
+        )
+        source_ids = tuple(dict.fromkeys(str(source_id or "").strip() for source_id in eligible_source_ids if str(source_id or "").strip()))
+        if not requested or not source_ids:
+            return ()
+        methods = tuple(sorted({normalize_http_method(fact.method) or "" for fact in requested if normalize_http_method(fact.method)}))
+        self.graph_store.init()
+        with self.graph_store._connect() as conn:
+            rows = self._query_matching_inbound_operation_fact_rows(conn, source_ids, methods, include_tests)
+            self._metrics["operationFactRowsLoaded"] += len(rows)
+        facts = [
+            fact
+            for fact in self._operation_facts_from_rows(rows)
+            if self._inbound_fact_matches_any_outbound(fact, requested)
+        ]
         return tuple(sorted(self._dedupe_operation_facts(facts), key=self._operation_fact_sort_key))
 
     def metrics(self) -> dict[str, int]:
@@ -620,13 +644,18 @@ class EntrypointFlowGraphRepository:
         ).fetchall()
         return [self.graph_store._row_dict(row) for row in rows]
 
-    def _query_catalog_operation_fact_rows(
+    def _query_matching_inbound_operation_fact_rows(
         self,
         conn: Any,
-        source_id: str,
+        source_ids: Sequence[str],
+        methods: Sequence[str],
         include_tests: bool,
     ) -> List[Dict[str, Any]]:
+        if not source_ids or not methods:
+            return []
         self._metrics["sqlStatements"] += 1
+        source_placeholders = ",".join("?" for _ in source_ids)
+        method_placeholders = ",".join("?" for _ in methods)
         contract = graph_query_contract()
         current_status_sql, current_status_params = sql_in_clause(contract.statuses_for_current_graph())
         rows = conn.execute(
@@ -684,11 +713,13 @@ class EntrypointFlowGraphRepository:
              AND ev.source_id = c.source_id
             LEFT JOIN analysis_files af
               ON af.file_id = ev.analysis_file_id
-            WHERE c.source_id = ?
+            WHERE c.source_id IN ({source_placeholders})
               AND c.claim_kind = ?
               AND c.status IN ({current_status_sql})
               AND c.rejection_reason IS NULL
-              AND COALESCE(c.entrypoint_kind, '') != ''
+              AND c.entrypoint_kind = 'HTTP'
+              AND c.entrypoint_execution_kind = ?
+              AND c.entrypoint_http_method IN ({method_placeholders})
               AND (? OR COALESCE({self.graph_store._inventory_flow_domain_sql("n")}, '') != 'TEST')
             ORDER BY c.source_id, c.node_id, c.entrypoint_execution_kind, c.entrypoint_kind,
                      c.entrypoint_http_method, c.entrypoint_route, c.entrypoint_interface_method,
@@ -697,9 +728,11 @@ class EntrypointFlowGraphRepository:
             [
                 *current_status_params,
                 include_tests,
-                source_id,
+                *source_ids,
                 contract.entrypoint_claim_kind,
                 *current_status_params,
+                EntrypointExecutionKind.EXECUTABLE.value,
+                *methods,
                 include_tests,
             ],
         ).fetchall()
@@ -791,8 +824,6 @@ class EntrypointFlowGraphRepository:
     def _operation_facts_from_rows(
         self,
         rows: Sequence[Dict[str, Any]],
-        *,
-        catalog_targets: Sequence[dict[str, str]] = (),
     ) -> tuple[AvailableOperationFact, ...]:
         grouped: dict[str, list[Dict[str, Any]]] = defaultdict(list)
         for row in rows:
@@ -803,7 +834,6 @@ class EntrypointFlowGraphRepository:
                 continue
             first = claim_rows[0]
             operation_identity, interface_identity = split_operation_interface_identity(first.get("entrypoint_interface_method"))
-            catalog_target_identity = self._catalog_target_identity(first, catalog_targets)
             evidence = tuple(
                 OperationFactEvidence(
                     source_id=str(row.get("evidence_source_id") or first.get("source_id") or ""),
@@ -831,7 +861,6 @@ class EntrypointFlowGraphRepository:
                     schedule=clean_identity(first.get("entrypoint_schedule")),
                     operation_identity=operation_identity,
                     interface_identity=interface_identity,
-                    target_service_identity=catalog_target_identity,
                     owner_qualified_name=clean_identity(first.get("owner_qualified_name")),
                     owner_relative_path=clean_identity(first.get("owner_relative_path")),
                     evidence=evidence,
@@ -842,7 +871,7 @@ class EntrypointFlowGraphRepository:
                         inventory_current=bool(first.get("inventory_current")),
                         analyzed_current=bool(first.get("analyzed_current")),
                     ),
-                    source_channel="CATALOG_CONTRACT" if catalog_target_identity else "ENTRYPOINT_HINT",
+                    source_channel="ENTRYPOINT_HINT",
                 )
             )
         return tuple(facts)
@@ -935,72 +964,46 @@ class EntrypointFlowGraphRepository:
             execution_continuation=EXECUTION_CONTINUATION in graph_relation_semantics().edge_semantics(str(edge_type or "")),
         )
 
-    def _catalog_contract_targets(self, conn: Any, source_ids: Sequence[str]) -> dict[str, tuple[dict[str, str], ...]]:
-        if not source_ids:
-            return {}
-        self._metrics["sqlStatements"] += 1
-        placeholders = ",".join("?" for _ in source_ids)
-        rows = conn.execute(
-            f"""
-            SELECT source_id, metadata_json
-            FROM sources
-            WHERE source_id IN ({placeholders})
-            ORDER BY source_id
-            """,
-            list(source_ids),
-        ).fetchall()
-        result: dict[str, list[dict[str, str]]] = defaultdict(list)
-        for row in rows:
-            metadata = self._json_object(row["metadata_json"])
-            contract_refs = metadata.get("contractRefs") if isinstance(metadata.get("contractRefs"), dict) else {}
-            api_ref = contract_refs.get("api") if isinstance(contract_refs, dict) and isinstance(contract_refs.get("api"), dict) else {}
-            contract_source_id = str(api_ref.get("source_repo") or "").strip()
-            if not contract_source_id:
-                continue
-            service_identity = str(api_ref.get("service_code") or row["source_id"] or "").strip()
-            api_family = str(api_ref.get("api_family") or service_identity or "").strip()
-            if not service_identity or not api_family:
-                continue
-            result[contract_source_id].append(
-                {
-                    "serviceIdentity": service_identity,
-                    "apiFamily": api_family,
-                    "sourceId": str(row["source_id"] or ""),
-                }
-            )
-        return {source_id: tuple(items) for source_id, items in result.items()}
-
-    def _catalog_target_identity(self, row: Dict[str, Any], targets: Sequence[dict[str, str]]) -> str | None:
-        if not targets:
-            return None
-        haystack = "\n".join(
-            str(value or "")
-            for value in (
-                row.get("owner_qualified_name"),
-                row.get("owner_relative_path"),
-                row.get("entrypoint_interface_method"),
-            )
-            if str(value or "").strip()
-        )
-        matches: set[str] = set()
-        for target in targets:
-            identity = target.get("serviceIdentity")
-            if not identity:
-                continue
-            tokens = {
-                str(target.get("apiFamily") or "").strip(),
-                str(target.get("sourceId") or "").strip(),
-                str(target.get("serviceIdentity") or "").strip(),
-            }
-            if any(self._contains_catalog_token(haystack, token) for token in tokens if token):
-                matches.add(identity)
-        return next(iter(matches)) if len(matches) == 1 else None
-
-    def _contains_catalog_token(self, haystack: str, token: str) -> bool:
-        if not haystack or not token:
+    def _inbound_fact_matches_any_outbound(
+        self,
+        inbound: AvailableOperationFact,
+        outbound_facts: Sequence[AvailableOperationFact],
+    ) -> bool:
+        if not self._is_current_inbound_http_fact(inbound):
             return False
-        pattern = rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])"
-        return re.search(pattern, haystack, flags=re.IGNORECASE) is not None
+        return any(self._operation_facts_match(outbound, inbound) for outbound in outbound_facts)
+
+    def _is_current_inbound_http_fact(self, fact: AvailableOperationFact) -> bool:
+        if normalize_transport_kind(fact.transport_kind) != "HTTP":
+            return False
+        if str(fact.direction_role or "").strip().upper() != "INBOUND":
+            return False
+        if not normalize_http_method(fact.method) or not normalize_route(fact.normalized_route):
+            return False
+        if fact.eligibility is not None and (not fact.eligibility.inventory_current or not fact.eligibility.analyzed_current):
+            return False
+        return True
+
+    def _operation_facts_match(self, outbound: AvailableOperationFact, inbound: AvailableOperationFact) -> bool:
+        if normalize_transport_kind(outbound.transport_kind) != normalize_transport_kind(inbound.transport_kind):
+            return False
+        if normalize_http_method(outbound.method) != normalize_http_method(inbound.method):
+            return False
+        if normalize_route(outbound.normalized_route) != normalize_route(inbound.normalized_route):
+            return False
+        if outbound.target_service_identity and inbound.owner_source_id != outbound.target_service_identity:
+            return False
+        for attr in (
+            "operation_identity",
+            "interface_identity",
+            "request_contract_identity",
+            "response_contract_identity",
+        ):
+            outbound_value = clean_identity(getattr(outbound, attr))
+            inbound_value = clean_identity(getattr(inbound, attr))
+            if outbound_value and inbound_value and outbound_value != inbound_value:
+                return False
+        return True
 
     def _json_object(self, value: object) -> dict[str, Any]:
         if isinstance(value, dict):

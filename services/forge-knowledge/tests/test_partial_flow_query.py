@@ -28,6 +28,7 @@ from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import KnowledgeQueryService, SourceScopeResolver, UnifiedAnchorSearcher
 from knowledge_service.operation_facts import AvailableOperationFact
+from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 REVISION = "graph-current"
 
@@ -361,8 +362,8 @@ def test_available_operation_fact_sql_scales_by_chunk_not_node(tmp_path):
 
     assert len(small) == 20
     assert len(large) == 2000
-    assert small_delta == 3
-    assert large_delta == 7
+    assert small_delta == 2
+    assert large_delta == 6
     assert large_delta - small_delta == 4
 
 
@@ -456,6 +457,7 @@ def _seed_registration_operation_pair(
     outbound_transport: str = "HTTP",
     outbound_edge_type: str = "CALLS",
     outbound_direction_role: str | None = None,
+    outbound_target_service_identity: str | None = None,
 ):
     outbound_metadata = {
         "transportKind": outbound_transport,
@@ -465,8 +467,10 @@ def _seed_registration_operation_pair(
         "interfaceIdentity": "AuthRegistrationApi.register",
         "requestContractIdentity": "RegistrationRequest",
         "responseContractIdentity": "RegistrationResponse",
-        "targetServiceIdentity": downstream_source,
     }
+    target_identity = downstream_source if outbound_target_service_identity is None else outbound_target_service_identity
+    if target_identity:
+        outbound_metadata["targetServiceIdentity"] = target_identity
     if outbound_direction_role is not None:
         outbound_metadata["directionRole"] = outbound_direction_role
     upstream_revision = seed_semantic_graph(
@@ -532,6 +536,112 @@ def _seed_registration_operation_pair(
     )
 
 
+def _registration_plan() -> QueryRetrievalPlan:
+    return QueryRetrievalPlan(
+        original_query="створити юзера",
+        normalized_query="create user",
+        search_queries=("AgentProjectController.addAgentToProject",),
+        code_identifiers=(),
+        concepts=("user creation",),
+        effective_intent="FLOW_EXPLANATION",
+        detected_language="uk",
+        response_language="uk",
+    )
+
+
+def _seed_registration_query_graph(db_path):
+    outbound_metadata = {
+        "transportKind": "HTTP",
+        "httpMethod": "POST",
+        "routeTemplate": "/api/v1/registrations",
+        "operationIdentity": "HTTP POST /api/v1/registrations",
+        "interfaceIdentity": "RegistrationApi.create",
+        "targetServiceIdentity": "registration-auth",
+    }
+    bff_revision = seed_semantic_graph(
+        db_path,
+        source_id="registration-bff",
+        nodes=[
+            {
+                "id": "bff-create-user",
+                "nodeKind": "CALLABLE",
+                "name": "UserRegistrationController.createUser",
+                "qualified": "bff.UserRegistrationController.createUser",
+                "path": "src/UserRegistrationController.java",
+            },
+            {
+                "id": "agent-project",
+                "nodeKind": "CALLABLE",
+                "name": "AgentProjectController.addAgentToProject",
+                "qualified": "bff.AgentProjectController.addAgentToProject",
+                "path": "src/AgentProjectController.java",
+            },
+        ],
+        edges=[
+            {
+                "id": "bff-auth-http",
+                "fromNodeId": "bff-create-user",
+                "toNodeId": None,
+                "edgeType": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "metadata": outbound_metadata,
+            }
+        ],
+        claims=[
+            _claim(
+                "claim-bff-create-user",
+                "bff-create-user",
+                method="POST",
+                route="/bff/users",
+                interface_method="BffUsersApi.create",
+            ),
+            _claim(
+                "claim-agent-project",
+                "agent-project",
+                method="POST",
+                route="/agent-projects",
+                interface_method="AgentProjectsApi.addAgent",
+            ),
+        ],
+        evidence_ids=["ev-bff-create-user", "ev-agent-project"],
+    )
+    auth_revision = seed_semantic_graph(
+        db_path,
+        source_id="registration-auth",
+        nodes=[
+            {
+                "id": "auth-entry",
+                "nodeKind": "CALLABLE",
+                "name": "IdentityEndpoint.accept",
+                "qualified": "auth.IdentityEndpoint.accept",
+                "path": "src/IdentityEndpoint.java",
+            },
+            {
+                "id": "auth-service",
+                "nodeKind": "CALLABLE",
+                "name": "IdentityService.persist",
+                "qualified": "auth.IdentityService.persist",
+                "path": "src/IdentityService.java",
+            },
+        ],
+        edges=[{"id": "auth-entry-service", "fromNodeId": "auth-entry", "toNodeId": "auth-service", "edgeType": "CALLS"}],
+        claims=[
+            _claim(
+                "claim-auth-entry",
+                "auth-entry",
+                method="POST",
+                route="/api/v1/registrations",
+                interface_method="RegistrationApi.create",
+            )
+        ],
+        evidence_ids=["ev-auth-entry", "ev-auth-service"],
+    )
+    return (
+        ("registration-bff", bff_revision, "bff-create-user"),
+        ("registration-auth", auth_revision, "auth-entry"),
+    )
+
+
 def _loaded_nodes_and_facts(db_path, *keys):
     repo = EntrypointFlowGraphRepository(AnalysisStore(db_path))
     key_set = set(keys)
@@ -591,6 +701,122 @@ def test_persisted_generic_http_operation_facts_support_registration_style_exact
     exact = [result for result in results if result.status is FlowCorrelationStatus.EXACT_UNVERIFIED]
     assert len(exact) == 1
     assert exact[0].target_fragment_keys == (":".join(downstream_key),)
+
+
+def test_matching_inbound_operation_lookup_discovers_auth_after_initial_bff_only(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    bff_key, auth_key = _seed_registration_query_graph(db_path)
+    repo = EntrypointFlowGraphRepository(AnalysisStore(db_path))
+
+    initial_facts = repo.load_available_operation_facts({bff_key}, include_tests=False)
+    assert [fact.owner_source_id for fact in initial_facts if fact.direction_role == "OUTBOUND"] == ["registration-bff"]
+    assert all(fact.owner_source_id != "registration-auth" for fact in initial_facts)
+
+    inbound_matches = repo.load_matching_inbound_operation_facts(
+        [fact for fact in initial_facts if fact.direction_role == "OUTBOUND"],
+        eligible_source_ids=["registration-bff", "registration-auth"],
+        include_tests=False,
+    )
+
+    assert [(fact.owner_source_id, fact.owner_node_id, fact.method, fact.normalized_route) for fact in inbound_matches] == [
+        ("registration-auth", auth_key[2], "POST", "/api/v1/registrations")
+    ]
+
+
+def test_registration_query_rejects_expansion_only_agent_project_and_adds_auth_continuation(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _bff_key, _auth_key = _seed_registration_query_graph(db_path)
+
+    result = _service(db_path).query_with_flows(
+        KnowledgeQueryRequest(queryText="створити юзера"),
+        plan=_registration_plan(),
+    )
+
+    matched_qualified = [node.qualifiedName for node in result.response.matchedNodes]
+    assert all("AgentProjectController.addAgentToProject" not in str(value) for value in matched_qualified)
+    assert {source.sourceId for source in result.response.matchedSources} == {"registration-bff"}
+    assert len(result.narrative_plans) == 1
+    parts = result.narrative_plans[0].parts
+    assert [part.kind for part in parts] == [
+        FlowNarrativePartKind.VERIFIED_FRAGMENT,
+        FlowNarrativePartKind.UNVERIFIED_GAP,
+        FlowNarrativePartKind.VERIFIED_FRAGMENT,
+    ]
+    assert parts[0].fragment.source_id == "registration-bff"
+    assert parts[1].gap.verification_status == "UNVERIFIED"
+    assert parts[1].gap.method == "POST"
+    assert parts[1].gap.route == "/api/v1/registrations"
+    assert parts[2].fragment.source_id == "registration-auth"
+    assert any(node.qualified_name == "auth.IdentityService.persist" for node in parts[2].fragment.family.nodes)
+    assert sum(1 for part in parts if part.kind is FlowNarrativePartKind.UNVERIFIED_GAP) == 1
+
+
+def test_create_site_query_uses_typed_continuation_without_catalog_attachment(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_semantic_graph(
+        db_path,
+        source_id="site-bff",
+        nodes=[
+            {
+                "id": "create-site",
+                "nodeKind": "CALLABLE",
+                "name": "SiteController.createSite",
+                "qualified": "bff.SiteController.createSite",
+                "path": "src/SiteController.java",
+            }
+        ],
+        edges=[
+            {
+                "id": "site-http",
+                "fromNodeId": "create-site",
+                "toNodeId": None,
+                "edgeType": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "metadata": {
+                    "transportKind": "HTTP",
+                    "httpMethod": "POST",
+                    "routeTemplate": "/api/v1/sites",
+                    "operationIdentity": "HTTP POST /api/v1/sites",
+                    "interfaceIdentity": "SitesApi.create",
+                    "targetServiceIdentity": "site-service",
+                },
+            }
+        ],
+        claims=[_claim("claim-create-site", "create-site", method="POST", route="/bff/sites", interface_method="BffSitesApi.create")],
+        evidence_ids=["ev-create-site"],
+    )
+    seed_semantic_graph(
+        db_path,
+        source_id="site-service",
+        nodes=[
+            {
+                "id": "site-entry",
+                "nodeKind": "CALLABLE",
+                "name": "SiteEndpoint.accept",
+                "qualified": "site.SiteEndpoint.accept",
+                "path": "src/SiteEndpoint.java",
+            }
+        ],
+        claims=[_claim("claim-site-entry", "site-entry", method="POST", route="/api/v1/sites", interface_method="SitesApi.create")],
+        evidence_ids=["ev-site-entry"],
+    )
+    plan = QueryRetrievalPlan(
+        original_query="створити сайт",
+        normalized_query="create site",
+        search_queries=("site creation execution flow",),
+        code_identifiers=(),
+        concepts=("site creation",),
+        effective_intent="FLOW_EXPLANATION",
+        detected_language="uk",
+        response_language="uk",
+    )
+
+    result = _service(db_path).query_with_flows(KnowledgeQueryRequest(queryText="створити сайт"), plan=plan)
+
+    assert len(result.narrative_plans) == 1
+    parts = result.narrative_plans[0].parts
+    assert [part.fragment.source_id for part in parts if part.fragment is not None] == ["site-bff", "site-service"]
+    assert sum(1 for part in parts if part.kind is FlowNarrativePartKind.UNVERIFIED_GAP) == 1
 
 
 def test_graph_analysis_persisted_http_operation_metadata_loads_and_correlates(tmp_path):
@@ -943,6 +1169,150 @@ def test_multiple_exact_downstream_http_operation_matches_are_ambiguous(tmp_path
     assert set(ambiguous[0].target_fragment_keys) == {":".join(first_downstream_key), ":".join(second_downstream_key)}
 
 
+def test_continuation_lookup_ambiguous_missing_stale_malformed_and_test_inbound_facts_fail_closed(tmp_path):
+    ambiguous_db = tmp_path / "ambiguous.sqlite"
+    upstream_key, _first_downstream_key = _seed_registration_operation_pair(ambiguous_db, outbound_target_service_identity="")
+    seed_semantic_graph(
+        ambiguous_db,
+        source_id="fixture-auth-copy",
+        nodes=[
+            {
+                "id": "auth-register-copy",
+                "nodeKind": "CALLABLE",
+                "name": "RegistrationEndpoint.accept",
+                "qualified": "fixture-auth-copy.RegistrationEndpoint.accept",
+                "path": "src/RegistrationEndpoint.java",
+            },
+        ],
+        claims=[_claim("claim-auth-register-copy", "auth-register-copy", route="/api/v1/registrations", interface_method="AuthRegistrationApi.register")],
+        evidence_ids=["ev-auth-register-copy"],
+    )
+    ambiguous_service = _service(ambiguous_db)
+    upstream_family = _families(_flow(EntrypointFlowGraphRepository(AnalysisStore(ambiguous_db)).load_nodes({upstream_key}, include_tests=False)[upstream_key]))
+    ambiguous_result = ambiguous_service._assemble_exact_downstream_continuations(
+        upstream_family,
+        SourceScopeResolver(AnalysisStore(ambiguous_db)).resolve()[0],
+        include_tests=False,
+    )
+    assert [family.key.source_id for family in ambiguous_result.families] == ["fixture-bff"]
+    assert any(item.code == "FLOW_CONTINUATION_AMBIGUOUS" for item in ambiguous_result.diagnostics)
+
+    missing_db = tmp_path / "missing.sqlite"
+    missing_upstream_key, _missing_downstream_key = _seed_registration_operation_pair(missing_db, downstream_source="missing-auth")
+    with sqlite3.connect(missing_db) as conn:
+        conn.execute("DELETE FROM analysis_graph_claims WHERE source_id = 'missing-auth'")
+    missing_repo = EntrypointFlowGraphRepository(AnalysisStore(missing_db))
+    missing_facts = missing_repo.load_available_operation_facts({missing_upstream_key}, include_tests=False)
+    assert missing_repo.load_matching_inbound_operation_facts(missing_facts, eligible_source_ids=["fixture-bff", "missing-auth"], include_tests=False) == ()
+
+    stale_db = tmp_path / "stale-inbound.sqlite"
+    stale_upstream_key, _stale_downstream_key = _seed_registration_operation_pair(stale_db, downstream_source="stale-auth")
+    with sqlite3.connect(stale_db) as conn:
+        conn.execute("UPDATE files SET content_hash = 'changed-auth-hash' WHERE source_id = 'stale-auth'")
+    stale_repo = EntrypointFlowGraphRepository(AnalysisStore(stale_db))
+    stale_facts = stale_repo.load_available_operation_facts({stale_upstream_key}, include_tests=False)
+    assert stale_repo.load_matching_inbound_operation_facts(stale_facts, eligible_source_ids=["fixture-bff", "stale-auth"], include_tests=False) == ()
+
+    malformed_db = tmp_path / "malformed.sqlite"
+    malformed_upstream_key, _malformed_downstream_key = _seed_registration_operation_pair(malformed_db, downstream_source="malformed-auth")
+    with sqlite3.connect(malformed_db) as conn:
+        conn.execute("UPDATE analysis_graph_claims SET entrypoint_route = NULL WHERE source_id = 'malformed-auth'")
+    malformed_repo = EntrypointFlowGraphRepository(AnalysisStore(malformed_db))
+    malformed_facts = malformed_repo.load_available_operation_facts({malformed_upstream_key}, include_tests=False)
+    assert malformed_repo.load_matching_inbound_operation_facts(
+        malformed_facts,
+        eligible_source_ids=["fixture-bff", "malformed-auth"],
+        include_tests=False,
+    ) == ()
+
+    test_db = tmp_path / "test-excluded.sqlite"
+    test_upstream_key, _test_downstream_key = _seed_registration_operation_pair(test_db, downstream_source="test-auth")
+    with sqlite3.connect(test_db) as conn:
+        conn.execute("UPDATE files SET flow_domain = 'TEST' WHERE source_id = 'test-auth'")
+    test_repo = EntrypointFlowGraphRepository(AnalysisStore(test_db))
+    test_facts = test_repo.load_available_operation_facts({test_upstream_key}, include_tests=False)
+    assert test_repo.load_matching_inbound_operation_facts(test_facts, eligible_source_ids=["fixture-bff", "test-auth"], include_tests=False) == ()
+    assert len(test_repo.load_matching_inbound_operation_facts(test_facts, eligible_source_ids=["fixture-bff", "test-auth"], include_tests=True)) == 1
+
+
+def test_recursive_exact_continuation_terminates_without_duplicate_fragments_or_gaps(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    seed_semantic_graph(
+        db_path,
+        source_id="chain-a",
+        nodes=[{"id": "entry-a", "nodeKind": "CALLABLE", "name": "CreateRoot.start", "qualified": "a.CreateRoot.start", "path": "src/A.java"}],
+        edges=[
+            {
+                "id": "a-b",
+                "fromNodeId": "entry-a",
+                "toNodeId": None,
+                "edgeType": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "metadata": {
+                    "transportKind": "HTTP",
+                    "httpMethod": "POST",
+                    "routeTemplate": "/b",
+                    "interfaceIdentity": "ChainB.accept",
+                    "targetServiceIdentity": "chain-b",
+                },
+            }
+        ],
+        claims=[_claim("claim-entry-a", "entry-a", method="POST", route="/start")],
+        evidence_ids=["ev-entry-a"],
+    )
+    seed_semantic_graph(
+        db_path,
+        source_id="chain-b",
+        nodes=[{"id": "entry-b", "nodeKind": "CALLABLE", "name": "ChainB.accept", "qualified": "b.ChainB.accept", "path": "src/B.java"}],
+        edges=[
+            {
+                "id": "b-c",
+                "fromNodeId": "entry-b",
+                "toNodeId": None,
+                "edgeType": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "metadata": {
+                    "transportKind": "HTTP",
+                    "httpMethod": "POST",
+                    "routeTemplate": "/c",
+                    "interfaceIdentity": "ChainC.accept",
+                    "targetServiceIdentity": "chain-c",
+                },
+            }
+        ],
+        claims=[_claim("claim-entry-b", "entry-b", method="POST", route="/b", interface_method="ChainB.accept")],
+        evidence_ids=["ev-entry-b"],
+    )
+    seed_semantic_graph(
+        db_path,
+        source_id="chain-c",
+        nodes=[{"id": "entry-c", "nodeKind": "CALLABLE", "name": "ChainC.accept", "qualified": "c.ChainC.accept", "path": "src/C.java"}],
+        claims=[_claim("claim-entry-c", "entry-c", method="POST", route="/c", interface_method="ChainC.accept")],
+        evidence_ids=["ev-entry-c"],
+    )
+    plan = QueryRetrievalPlan(
+        original_query="root start",
+        normalized_query="root start",
+        search_queries=(),
+        code_identifiers=(),
+        concepts=("root start",),
+        effective_intent="FLOW_EXPLANATION",
+        detected_language="en",
+        response_language="en",
+    )
+
+    result = _service(db_path).query_with_flows(KnowledgeQueryRequest(queryText="root start"), plan=plan)
+
+    assert len(result.narrative_plans) == 1
+    parts = result.narrative_plans[0].parts
+    fragment_keys = [part.fragment.key for part in parts if part.fragment is not None]
+    gap_keys = [(part.gap.from_source, part.gap.to_source, part.gap.route) for part in parts if part.gap is not None]
+    assert fragment_keys == list(dict.fromkeys(fragment_keys))
+    assert gap_keys == list(dict.fromkeys(gap_keys))
+    assert [part.fragment.source_id for part in parts if part.fragment is not None] == ["chain-a", "chain-b", "chain-c"]
+    assert [part.gap.route for part in parts if part.gap is not None] == ["/b", "/c"]
+
+
 def test_missing_http_method_or_route_does_not_create_false_correlation(tmp_path):
     db_path = tmp_path / "knowledge.sqlite"
     upstream_key, downstream_key = _seed_registration_operation_pair(db_path, outbound_route=None)
@@ -1247,7 +1617,7 @@ def test_tool_and_human_projection_share_gap_and_operation_order():
     assert formatter_plan.groups[1].certainty == "UNVERIFIED"
 
 
-def test_catalog_client_operation_attaches_to_non_target_fragment_and_is_projected():
+def test_catalog_client_operation_does_not_attach_to_unrelated_fragment():
     upstream = _node("Gateway.create", source="gateway", role="EXECUTABLE")
     downstream = _node("Controller.create", source="service", role="EXECUTABLE")
     catalog_operation = AvailableOperationFact(
@@ -1279,21 +1649,21 @@ def test_catalog_client_operation_attaches_to_non_target_fragment_and_is_project
     formatter_plan = FlowFormatterPlanBuilder().plan(plans[0])
 
     assert diagnostics == ()
-    assert len(plans) == 1
-    assert [part.kind for part in plans[0].parts] == [
-        FlowNarrativePartKind.VERIFIED_FRAGMENT,
-        FlowNarrativePartKind.UNVERIFIED_GAP,
-        FlowNarrativePartKind.VERIFIED_FRAGMENT,
-    ]
-    assert plans[0].parts[0].fragment.operation_facts[-1].owner_source_id == "contract-source"
-    assert len(tool.flows) == 1
-    assert any(item.kind == "OPERATION" for item in tool.flows[0].parts[0].tree.entrypoint.children)
-    assert [group.kind for group in formatter_plan.groups[:4]] == [
-        FlowFormatterGroupKind.ENTRYPOINT,
-        FlowFormatterGroupKind.OPERATION,
-        FlowFormatterGroupKind.UNVERIFIED_GAP,
-        FlowFormatterGroupKind.ENTRYPOINT,
-    ]
+    assert len(plans) == 2
+    assert all(
+        part.kind is not FlowNarrativePartKind.UNVERIFIED_GAP
+        for plan in plans
+        for part in plan.parts
+    )
+    assert all(
+        fact.owner_source_id != "contract-source"
+        for plan in plans
+        for fragment in plan.fragments
+        for fact in fragment.operation_facts
+    )
+    assert len(tool.flows) == 2
+    assert all(item.kind != "OPERATION" for flow in tool.flows for item in flow.parts[0].tree.entrypoint.children)
+    assert [group.kind for group in formatter_plan.groups[:1]] == [FlowFormatterGroupKind.ENTRYPOINT]
 
 
 def test_large_partial_fragment_with_exact_http_gap_is_linear_enough():

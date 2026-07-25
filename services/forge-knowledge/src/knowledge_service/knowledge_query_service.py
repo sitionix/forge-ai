@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import math
-import uuid
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionBundle,
@@ -14,15 +13,10 @@ from knowledge_service.anchor_expansion_contract import (
     AnchorExpansionNode,
     AnchorExpansionRequest,
 )
-from knowledge_service.knowledge_search import (
-    CandidateMerger,
-    DeterministicCodeSearchEngine,
-    MergedCandidate,
-    QueryNormalizer,
-    SearchConfig,
-    SearchCandidate,
-    SearchDocument,
-)
+from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine
+from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
+from knowledge_service.flow_family import FlowFamily, FlowFamilyAssembler, FlowFamilyAssemblyResult
+from knowledge_service.flow_narrative import FlowNarrativePlan, FlowNarrativePlanner, replace_plan_fragments
 from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryCoverage,
     KnowledgeQueryDiagnostic,
@@ -33,11 +27,25 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryResponse,
     KnowledgeQueryStatus,
 )
+from knowledge_service.knowledge_search import (
+    CandidateMerger,
+    DeterministicCodeSearchEngine,
+    MergedCandidate,
+    QueryNormalizer,
+    SearchCandidate,
+    SearchConfig,
+    SearchDocument,
+)
+from knowledge_service.operation_facts import (
+    AvailableOperationFact,
+    clean_identity,
+    merge_semantic_operation_facts,
+    normalize_http_method,
+    normalize_route,
+    normalize_transport_kind,
+)
 from knowledge_service.query_interpretation import QueryRetrievalPlan
-from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine
-from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
-from knowledge_service.flow_family import FlowFamily, FlowFamilyAssembler, FlowFamilyAssemblyResult
-from knowledge_service.flow_narrative import FlowNarrativePlan, FlowNarrativePlanner, replace_plan_fragments
+
 
 @dataclass(frozen=True)
 class KnowledgeQueryPolicy:
@@ -143,6 +151,13 @@ class KnowledgeQueryExecutionResult:
     narrative_plans: tuple[FlowNarrativePlan, ...] = ()
     raw_flows: tuple[EntrypointFlow, ...] = ()
     family_assembly: FlowFamilyAssemblyResult | None = None
+
+
+@dataclass(frozen=True)
+class ContinuationAssemblyResult:
+    families: tuple[FlowFamily, ...]
+    operation_facts: tuple[AvailableOperationFact, ...]
+    diagnostics: tuple[KnowledgeQueryDiagnostic, ...]
 
 
 class SourceScopeResolver:
@@ -372,6 +387,13 @@ class UnifiedAnchorSearcher:
         ranked = list(candidates)
         if not ranked:
             return []
+        ranked = [
+            candidate
+            for candidate in ranked
+            if not self._is_expansion_only_candidate(candidate)
+        ]
+        if not ranked:
+            return []
         if plan.code_identifiers:
             exact_identifier = [
                 candidate
@@ -402,6 +424,12 @@ class UnifiedAnchorSearcher:
             for candidate in ranked
             if candidate.score >= threshold
         ]
+
+    def _is_expansion_only_candidate(self, candidate: MergedCandidate) -> bool:
+        reasons = set(candidate.reasons)
+        if "QUERY_EXPANSION" not in reasons:
+            return False
+        return not reasons.intersection({"QUERY_ORIGINAL", "QUERY_NORMALIZED", "QUERY_EXACT_IDENTIFIER"})
 
     def _is_precise_identifier_candidate(self, candidate: MergedCandidate) -> bool:
         reasons = set(candidate.reasons)
@@ -537,16 +565,11 @@ class UnifiedAnchorSearcher:
     ) -> tuple[List[Dict[str, Any]], bool]:
         source_ids = [source.source_id for source in eligible_sources]
         total_limit = max(1, int(policy.max_search_documents or 1))
-        per_source_limit = max(1, math.ceil(total_limit / max(1, len(source_ids))))
         if hasattr(self.graph_store, "query_search_documents"):
-            raw_documents = []
-            truncated = False
-            for source_id in source_ids:
-                source_documents = list(self.graph_store.query_search_documents([source_id], per_source_limit + 1))
-                if len(source_documents) > per_source_limit:
-                    truncated = True
-                    source_documents = source_documents[:per_source_limit]
-                raw_documents.extend(source_documents)
+            raw_documents = list(self.graph_store.query_search_documents(source_ids, total_limit + 1))
+            truncated = len(raw_documents) > total_limit
+            if truncated:
+                raw_documents = raw_documents[:total_limit]
         else:
             raw_documents = list(self.graph_store.query_anchor_candidates(list(tokens), source_ids, total_limit + 1))
             truncated = len(raw_documents) > total_limit
@@ -1122,8 +1145,14 @@ class KnowledgeQueryService:
         flows = self.family_assembler.rank(assembly_result.families)
         if plan is not None:
             flows = self._select_plan_flows(flows, plan)
-        discovered_family_count = len(flows)
-        operation_facts = self._available_operation_facts(flows, bool(request.includeTests))
+        continuation_result = self._assemble_exact_downstream_continuations(
+            flows,
+            eligible_sources,
+            include_tests=bool(request.includeTests),
+        )
+        flows = continuation_result.families
+        operation_facts = continuation_result.operation_facts
+        diagnostics.extend(continuation_result.diagnostics)
         narrative_plans, narrative_diagnostics = self.narrative_planner.assemble(
             flows,
             max_plans=request_flow_limit,
@@ -1229,7 +1258,7 @@ class KnowledgeQueryService:
 
     def _available_operation_facts(
         self,
-        flows: Sequence[EntrypointFlow],
+        flows: Sequence[EntrypointFlow | FlowFamily],
         include_tests: bool,
     ):
         if not flows or not hasattr(self.flow_repository, "load_available_operation_facts"):
@@ -1240,6 +1269,180 @@ class KnowledgeQueryService:
             for node in flow.nodes
         }
         return self.flow_repository.load_available_operation_facts(node_keys, include_tests=include_tests)
+
+    def _assemble_exact_downstream_continuations(
+        self,
+        initial_families: Sequence[FlowFamily],
+        eligible_sources: Sequence[QuerySource],
+        *,
+        include_tests: bool,
+    ) -> ContinuationAssemblyResult:
+        families: list[FlowFamily] = list(initial_families)
+        if not families:
+            return ContinuationAssemblyResult((), (), ())
+        operation_facts: tuple[AvailableOperationFact, ...] = self._available_operation_facts(families, include_tests)
+        if not hasattr(self.flow_repository, "load_matching_inbound_operation_facts"):
+            return ContinuationAssemblyResult(tuple(families), operation_facts, ())
+
+        diagnostics: list[KnowledgeQueryDiagnostic] = []
+        known_family_keys = {self._flow_family_key(family) for family in families}
+        processed_operations: set[tuple[str, str, str, str, str, str]] = set()
+        eligible_source_ids = [source.source_id for source in eligible_sources]
+
+        while True:
+            fragments = self.narrative_planner.fragments(families, operation_facts=operation_facts)
+            outbound_facts: list[AvailableOperationFact] = []
+            for fragment in fragments:
+                for fact in fragment.operation_facts:
+                    if not self._is_usable_outbound_http_fact(fact):
+                        continue
+                    operation_key = fact.operation_key(fragment.key)
+                    if operation_key in processed_operations:
+                        continue
+                    processed_operations.add(operation_key)
+                    outbound_facts.append(fact)
+            if not outbound_facts:
+                break
+
+            inbound_facts = self.flow_repository.load_matching_inbound_operation_facts(
+                outbound_facts,
+                eligible_source_ids=eligible_source_ids,
+                include_tests=include_tests,
+            )
+            discovered: list[FlowFamily] = []
+            for outbound in sorted(outbound_facts, key=self._operation_fact_sort_key):
+                matches = [
+                    inbound
+                    for inbound in inbound_facts
+                    if self._operation_facts_match(outbound, inbound)
+                    and self._operation_owner_key(inbound) not in known_family_keys
+                ]
+                owner_keys = sorted({self._operation_owner_key(fact) for fact in matches})
+                if len(owner_keys) > 1:
+                    diagnostics.append(
+                        KnowledgeQueryDiagnostic(
+                            code="FLOW_CONTINUATION_AMBIGUOUS",
+                            message="Multiple current inbound HTTP operation facts matched an outbound operation; no downstream flow was selected.",
+                            severity="INFO",
+                            sourceId=outbound.owner_source_id,
+                            metadata={
+                                "transportKind": "HTTP",
+                                "method": normalize_http_method(outbound.method),
+                                "route": normalize_route(outbound.normalized_route),
+                                "candidateCount": len(owner_keys),
+                            },
+                        )
+                    )
+                    continue
+                if len(owner_keys) != 1:
+                    continue
+                inbound = sorted(
+                    [fact for fact in matches if self._operation_owner_key(fact) == owner_keys[0]],
+                    key=self._operation_fact_sort_key,
+                )[0]
+                new_families = [
+                    family
+                    for family in self._families_for_inbound_operation(inbound, include_tests=include_tests)
+                    if self._flow_family_key(family) not in known_family_keys
+                ]
+                for family in new_families:
+                    known_family_keys.add(self._flow_family_key(family))
+                discovered.extend(new_families)
+            if not discovered:
+                break
+            families.extend(discovered)
+            operation_facts = merge_semantic_operation_facts((
+                *operation_facts,
+                *self._available_operation_facts(discovered, include_tests),
+            ))
+
+        return ContinuationAssemblyResult(tuple(families), operation_facts, tuple(diagnostics))
+
+    def _families_for_inbound_operation(
+        self,
+        inbound: AvailableOperationFact,
+        *,
+        include_tests: bool,
+    ) -> tuple[FlowFamily, ...]:
+        anchor = KnowledgeQueryMatchedNode(
+            sourceId=inbound.owner_source_id,
+            nodeId=inbound.owner_node_id,
+            stableKey=inbound.structural_owner,
+            nodeKind="CALLABLE",
+            label=self._operation_owner_label(inbound),
+            score=1.0,
+            matchReasons=["TYPED_HTTP_OPERATION_MATCH"],
+            graphId=inbound.owner_graph_id or None,
+            graphRevision=inbound.owner_graph_revision or inbound.owner_graph_id or None,
+            relativePath=inbound.owner_relative_path,
+            qualifiedName=inbound.owner_qualified_name,
+            flowDomain=inbound.eligibility.flow_domain if inbound.eligibility is not None else None,
+        )
+        build_result = self.flow_engine.build([anchor], max_flows=0, include_tests=include_tests)
+        if not build_result.flows:
+            return ()
+        supporting_nodes, supporting_relations = self._supporting_relations(build_result.flows, include_tests)
+        assembly = self.family_assembler.assemble(
+            build_result.flows,
+            supporting_nodes=supporting_nodes,
+            supporting_relations=supporting_relations,
+        )
+        return self.family_assembler.rank(assembly.families)
+
+    def _is_usable_outbound_http_fact(self, fact: AvailableOperationFact) -> bool:
+        if normalize_transport_kind(fact.transport_kind) != "HTTP":
+            return False
+        if str(fact.direction_role or "").strip().upper() != "OUTBOUND":
+            return False
+        if not normalize_http_method(fact.method) or not normalize_route(fact.normalized_route):
+            return False
+        if fact.eligibility is not None and (not fact.eligibility.inventory_current or not fact.eligibility.analyzed_current):
+            return False
+        return True
+
+    def _operation_facts_match(self, outbound: AvailableOperationFact, inbound: AvailableOperationFact) -> bool:
+        if normalize_transport_kind(outbound.transport_kind) != normalize_transport_kind(inbound.transport_kind):
+            return False
+        if normalize_http_method(outbound.method) != normalize_http_method(inbound.method):
+            return False
+        if normalize_route(outbound.normalized_route) != normalize_route(inbound.normalized_route):
+            return False
+        target_identity = clean_identity(outbound.target_service_identity)
+        if target_identity and inbound.owner_source_id != target_identity:
+            return False
+        for attr in (
+            "operation_identity",
+            "interface_identity",
+            "request_contract_identity",
+            "response_contract_identity",
+        ):
+            outbound_value = clean_identity(getattr(outbound, attr))
+            inbound_value = clean_identity(getattr(inbound, attr))
+            if outbound_value and inbound_value and outbound_value != inbound_value:
+                return False
+        return True
+
+    def _operation_owner_key(self, fact: AvailableOperationFact) -> str:
+        return ":".join((fact.owner_source_id, fact.owner_graph_revision or fact.owner_graph_id, fact.owner_node_id))
+
+    def _flow_family_key(self, family: FlowFamily) -> str:
+        return ":".join((family.key.source_id, family.key.graph_revision, family.key.entrypoint_node_id))
+
+    def _operation_owner_label(self, fact: AvailableOperationFact) -> str:
+        qualified = clean_identity(fact.owner_qualified_name)
+        if qualified:
+            return qualified
+        return fact.owner_node_id
+
+    def _operation_fact_sort_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str, str]:
+        return (
+            fact.owner_source_id,
+            fact.owner_graph_revision or fact.owner_graph_id,
+            fact.owner_node_id,
+            normalize_transport_kind(fact.transport_kind) or "",
+            normalize_http_method(fact.method) or "",
+            normalize_route(fact.normalized_route) or "",
+        )
 
     def _supporting_relations(
         self,

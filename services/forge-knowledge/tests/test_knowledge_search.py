@@ -1,3 +1,11 @@
+from knowledge_service.entrypoint_flow_engine import (
+    EntrypointFlow,
+    EntrypointFlowCoverage,
+    EntrypointFlowKey,
+    EntrypointFlowOrigin,
+)
+from knowledge_service.flow_graph_contract import FlowGraphNode
+from knowledge_service.knowledge_query_service import KnowledgeQueryPolicy, KnowledgeQueryService, UnifiedAnchorSearcher
 from knowledge_service.knowledge_search import (
     CandidateMerger,
     DeterministicCodeSearchEngine,
@@ -8,14 +16,6 @@ from knowledge_service.knowledge_search import (
     SearchDocument,
     SearchQueryProfile,
 )
-from knowledge_service.entrypoint_flow_engine import (
-    EntrypointFlow,
-    EntrypointFlowCoverage,
-    EntrypointFlowKey,
-    EntrypointFlowOrigin,
-)
-from knowledge_service.flow_graph_contract import FlowGraphNode
-from knowledge_service.knowledge_query_service import KnowledgeQueryPolicy, KnowledgeQueryService, UnifiedAnchorSearcher
 from knowledge_service.query_interpretation import QueryRetrievalPlan
 
 
@@ -153,30 +153,32 @@ def test_ranker_merges_duplicate_candidates_and_preserves_reasons():
     assert {"ExactCandidateProvider", "LexicalCandidateProvider"} <= set(merged[0].providers)
 
 
-def test_retrieval_plan_filter_keeps_grounded_candidates_within_policy_score_window():
+def test_retrieval_plan_filter_rejects_expansion_only_candidates():
     searcher = UnifiedAnchorSearcher(graph_store=object())
-    top = doc("top", "ReadController.read", summary="reads a record")
-    nearby = doc("nearby", "ReadService.fetch", summary="fetches the same record")
+    top = doc("top", "UserRegistrationController.create", summary="creates a user account")
+    additive = doc("additive", "UserRegistrationService.create", summary="creates a user record")
+    agent_project = doc("agent-project", "AgentProjectController.addAgentToProject", summary="adds an agent to a project")
     distant = doc("distant", "UnrelatedWorker.run", summary="background maintenance")
     plan = QueryRetrievalPlan(
-        original_query="how is a record read",
-        normalized_query="how is a record read",
-        search_queries=("record read flow",),
+        original_query="створити юзера",
+        normalized_query="create user",
+        search_queries=("AgentProjectController.addAgentToProject",),
         code_identifiers=(),
-        concepts=("record read",),
+        concepts=("user creation",),
         effective_intent="FLOW_EXPLANATION",
-        detected_language="en",
-        response_language="en",
+        detected_language="uk",
+        response_language="uk",
     )
     candidates = [
         MergedCandidate(top, 0.70, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_ORIGINAL"], ["LexicalCandidateProvider"]),
-        MergedCandidate(nearby, 0.56, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_EXPANSION"], ["LexicalCandidateProvider"]),
+        MergedCandidate(additive, 0.68, "MEDIUM", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_NORMALIZED", "QUERY_EXPANSION"], ["LexicalCandidateProvider"]),
+        MergedCandidate(agent_project, 0.99, "HIGH", 8, ["QUALIFIED_NAME_EXACT", "QUERY_EXPANSION"], ["QualifiedNameCandidateProvider"]),
         MergedCandidate(distant, 0.40, "LOW", 42, ["LEXICAL_TOKEN_OVERLAP", "QUERY_EXPANSION"], ["LexicalCandidateProvider"]),
     ]
 
     filtered = searcher._filter_plan_candidates(candidates, plan, KnowledgeQueryPolicy(plan_candidate_min_score=0.42, plan_candidate_top_delta=0.18))
 
-    assert [candidate.document.node_id for candidate in filtered] == ["top", "nearby"]
+    assert [candidate.document.node_id for candidate in filtered] == ["top", "additive"]
 
 
 def test_retrieval_plan_filter_prefers_exact_code_identifier_matches():
