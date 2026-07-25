@@ -13,6 +13,8 @@ from knowledge_service.knowledge_query_schema import KnowledgeQueryDiagnostic
 from knowledge_service.operation_facts import (
     AvailableOperationFact,
     clean_identity,
+    edge_backed_http_direction,
+    merge_semantic_operation_facts,
     normalize_http_method,
     normalize_route,
     normalize_transport_kind,
@@ -108,7 +110,7 @@ class HttpFlowCorrelationAdapter:
         inbound_by_key: dict[tuple[str, str], list[tuple[str, AvailableOperationFact]]] = {}
         outbound: list[tuple[str, AvailableOperationFact]] = []
         for fragment in fragments:
-            for fact in fragment.operation_facts:
+            for fact in merge_semantic_operation_facts(fragment.operation_facts):
                 if normalize_transport_kind(fact.transport_kind) != "HTTP":
                     continue
                 method = normalize_http_method(fact.method)
@@ -285,20 +287,20 @@ class OperationFactProjector:
             and node_by_key.get(self._from_key(edge)) is not None
             and str(node_by_key[self._from_key(edge)].node_kind or "").upper() == "CALLABLE"
         }
-        facts: dict[tuple[str, str, str, str, str, str, str, str, str, str], AvailableOperationFact] = {}
+        facts: list[AvailableOperationFact] = []
         for fact in available_facts:
             if fact.owner_key not in node_keys:
                 continue
             projected = self._classify_node_fact(fact, node_by_key.get(fact.owner_key), reached_non_root_targets)
             if projected is None:
                 continue
-            facts.setdefault(self._fact_key(projected), projected)
+            facts.append(projected)
         for edge in (*family.transitions, *family.boundary_transitions):
             projected = self._edge_fact(edge, node_by_key)
             if projected is None:
                 continue
-            facts.setdefault(self._fact_key(projected), projected)
-        return tuple(facts[key] for key in sorted(facts))
+            facts.append(projected)
+        return merge_semantic_operation_facts(facts)
 
     def _classify_node_fact(
         self,
@@ -342,9 +344,12 @@ class OperationFactProjector:
         if not operation_identity and not interface_identity:
             operation_identity, interface_identity = split_operation_interface_identity(metadata.get("targetEntrypoint"))
         owner_node = node_by_key.get(self._from_key(edge))
-        direction = str(metadata.get("directionRole") or "").strip().upper()
-        if direction not in {"INBOUND", "OUTBOUND"}:
-            direction = "OUTBOUND"
+        direction = edge_backed_http_direction(
+            metadata,
+            execution_continuation=self.semantics.is_execution_continuation(edge),
+        )
+        if direction is None:
+            return None
         return AvailableOperationFact(
             owner_source_id=edge.source_id,
             owner_graph_id=edge.graph_id,
@@ -365,20 +370,6 @@ class OperationFactProjector:
             owner_relative_path=owner_node.relative_path if owner_node is not None else None,
             owner_edge_id=edge.edge_id,
             source_channel="EDGE_METADATA",
-        )
-
-    def _fact_key(self, fact: AvailableOperationFact) -> tuple[str, str, str, str, str, str, str, str, str, str]:
-        return (
-            fact.owner_source_id,
-            fact.owner_graph_revision or fact.owner_graph_id,
-            fact.owner_node_id,
-            fact.owner_edge_id or "",
-            fact.direction_role or "",
-            normalize_transport_kind(fact.transport_kind) or "",
-            normalize_http_method(fact.method) or "",
-            normalize_route(fact.normalized_route) or "",
-            fact.operation_identity or "",
-            fact.interface_identity or "",
         )
 
     def _node_key(self, node: FlowGraphNode) -> FlowNodeKey:

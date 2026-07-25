@@ -9,22 +9,22 @@ from typing import Any, Dict, Iterable, List, Sequence
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow
 from knowledge_service.entrypoint_kinds import EntrypointExecutionKind
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
-from knowledge_service.graph_relation_semantics import SUPPORTING_RELATION, graph_relation_semantics
 from knowledge_service.graph_query_contract import graph_query_contract, sql_in_clause
+from knowledge_service.graph_relation_semantics import EXECUTION_CONTINUATION, SUPPORTING_RELATION, graph_relation_semantics
 from knowledge_service.operation_facts import (
     AvailableOperationFact,
     OperationFactEligibility,
     OperationFactEvidence,
     clean_identity,
+    edge_backed_http_direction,
+    merge_semantic_operation_facts,
     normalize_http_method,
     normalize_route,
     normalize_transport_kind,
     split_operation_interface_identity,
 )
 
-
 _SQLITE_BIND_CHUNK_SIZE = 800
-_HTTP_DIRECTION_ROLES = {"INBOUND", "OUTBOUND"}
 
 
 def _chunks(values: Sequence[str], size: int = _SQLITE_BIND_CHUNK_SIZE) -> Iterable[Sequence[str]]:
@@ -723,6 +723,7 @@ class EntrypointFlowGraphRepository:
             SELECT e.id AS edge_id,
                    e.source_id AS source_id,
                    e.from_node_id AS from_node_id,
+                   e.edge_type AS edge_type,
                    e.metadata_json AS metadata_json,
                    e.status AS edge_status,
                    e.resolution_status AS edge_resolution_status,
@@ -861,7 +862,9 @@ class EntrypointFlowGraphRepository:
             route = normalize_route(metadata.get("routeTemplate") or metadata.get("route"))
             if transport != "HTTP" or not method or not route:
                 continue
-            direction = self._edge_fact_direction(metadata)
+            direction = self._edge_fact_direction(first.get("edge_type"), metadata)
+            if direction is None:
+                continue
             operation_identity = clean_identity(metadata.get("operationIdentity"))
             interface_identity = clean_identity(
                 metadata.get("interfaceIdentity")
@@ -926,11 +929,11 @@ class EntrypointFlowGraphRepository:
             return "OUTBOUND"
         return None
 
-    def _edge_fact_direction(self, metadata: Dict[str, Any]) -> str:
-        raw = str(metadata.get("directionRole") or "").strip().upper()
-        if raw in _HTTP_DIRECTION_ROLES:
-            return raw
-        return "OUTBOUND"
+    def _edge_fact_direction(self, edge_type: object, metadata: Dict[str, Any]) -> str | None:
+        return edge_backed_http_direction(
+            metadata,
+            execution_continuation=EXECUTION_CONTINUATION in graph_relation_semantics().edge_semantics(str(edge_type or "")),
+        )
 
     def _catalog_contract_targets(self, conn: Any, source_ids: Sequence[str]) -> dict[str, tuple[dict[str, str], ...]]:
         if not source_ids:
@@ -1009,24 +1012,7 @@ class EntrypointFlowGraphRepository:
         return parsed if isinstance(parsed, dict) else {}
 
     def _dedupe_operation_facts(self, facts: Sequence[AvailableOperationFact]) -> tuple[AvailableOperationFact, ...]:
-        deduped: dict[tuple[str, str, str, str, str, str, str, str, str, str], AvailableOperationFact] = {}
-        for fact in facts:
-            key = (
-                fact.owner_source_id,
-                fact.owner_graph_revision or fact.owner_graph_id,
-                fact.owner_node_id,
-                fact.owner_edge_id or "",
-                fact.direction_role or "",
-                normalize_transport_kind(fact.transport_kind) or "",
-                normalize_http_method(fact.method) or "",
-                normalize_route(fact.normalized_route) or "",
-                fact.operation_identity or "",
-                fact.interface_identity or "",
-            )
-            existing = deduped.get(key)
-            if existing is None or (fact.target_service_identity and not existing.target_service_identity):
-                deduped[key] = fact
-        return tuple(deduped.values())
+        return merge_semantic_operation_facts(facts)
 
     def _query_edge_evidence(self, conn: Any, source_id: str, edge_ids: Sequence[str]) -> List[Dict[str, Any]]:
         result: List[Dict[str, Any]] = []

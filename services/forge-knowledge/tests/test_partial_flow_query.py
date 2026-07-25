@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 import time
 from dataclasses import replace
+
+from semantic_test_support import seed_semantic_graph
 
 from knowledge_service.analysis_store import AnalysisStore
 from knowledge_service.entrypoint_flow_engine import (
@@ -13,16 +17,17 @@ from knowledge_service.entrypoint_flow_engine import (
     EntrypointFlowOrigin,
 )
 from knowledge_service.entrypoint_flow_store import EntrypointFlowGraphRepository
-from knowledge_service.flow_family import FlowFamilyAssembler
 from knowledge_service.flow_explanations import FlowProjectionBuilder
-from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
-from knowledge_service.flow_narrative import FlowNarrativePartKind, FlowNarrativePlanner, HttpFlowCorrelationAdapter, FlowCorrelationStatus
+from knowledge_service.flow_family import FlowFamilyAssembler
 from knowledge_service.flow_formatter import FlowFormatterGroupKind, FlowFormatterPlanBuilder
+from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode
+from knowledge_service.flow_narrative import FlowCorrelationStatus, FlowNarrativePartKind, FlowNarrativePlanner, HttpFlowCorrelationAdapter
+from knowledge_service.graph_analysis import GraphAnalysisEngine
+from knowledge_service.graph_schema import GraphAnalysisResult, GraphClaim, GraphEdge, GraphEvidenceRef, GraphNode
+from knowledge_service.inventory_store import InventoryStore
 from knowledge_service.knowledge_query_schema import KnowledgeQueryRequest
 from knowledge_service.knowledge_query_service import KnowledgeQueryService, SourceScopeResolver, UnifiedAnchorSearcher
 from knowledge_service.operation_facts import AvailableOperationFact
-from semantic_test_support import seed_semantic_graph
-
 
 REVISION = "graph-current"
 
@@ -64,6 +69,65 @@ def _service(db_path) -> KnowledgeQueryService:
         UnifiedAnchorSearcher(store),
         EntrypointFlowGraphRepository(store),
     )
+
+
+def _persist_graph_result(
+    db_path,
+    *,
+    source_id: str,
+    file_id: int,
+    relative_path: str,
+    content: str,
+    result: GraphAnalysisResult,
+):
+    store = AnalysisStore(db_path)
+    InventoryStore(db_path).init()
+    store.init()
+    now = "2026-07-25T00:00:00+00:00"
+    lines = content.splitlines()
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    row = {
+        "id": file_id,
+        "source_id": source_id,
+        "relative_path": relative_path,
+        "content_hash": content_hash,
+        "flow_domain": "CODE",
+    }
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO sources(source_id, display_name, group_name, path, root_exists, tags_json, metadata_json, last_seen_at)
+            VALUES (?, ?, 'operation-test', '.', 1, '[]', '{}', ?)
+            """,
+            (source_id, source_id, now),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO files(
+                id, source_id, source_path, absolute_path, relative_path, extension, language, flow_domain,
+                size_bytes, content_hash, last_modified, line_count, decode_policy, indexed_at
+            )
+            VALUES (?, ?, '.', '.', ?, '.java', 'java', 'CODE', ?, ?, ?, ?, 'utf-8:replace', ?)
+            """,
+            (file_id, source_id, relative_path, len(content.encode("utf-8")), content_hash, now, len(lines), now),
+        )
+    materialized = GraphAnalysisEngine().materialize(row, "job-1", "test-analyzer", "1", result, lines)
+    store.replace_file_graph_analysis(
+        file_id,
+        {
+            "source_id": source_id,
+            "relative_path": relative_path,
+            "content_hash": content_hash,
+            "analyzer_name": "test-analyzer",
+            "analyzer_version": "1",
+            "flow_domain": "CODE",
+            "status": "ANALYZED",
+            "analyzed_at": now,
+            "diagnostics": [],
+        },
+        materialized,
+    )
+    return store, materialized
 
 
 def test_partial_source_current_successful_facts_are_queryable(tmp_path):
@@ -390,7 +454,21 @@ def _seed_registration_operation_pair(
     outbound_method: str | None = "POST",
     outbound_status: str = "TRUSTED",
     outbound_transport: str = "HTTP",
+    outbound_edge_type: str = "CALLS",
+    outbound_direction_role: str | None = None,
 ):
+    outbound_metadata = {
+        "transportKind": outbound_transport,
+        "httpMethod": outbound_method,
+        "routeTemplate": outbound_route,
+        "operationIdentity": "HTTP POST /api/v1/registrations",
+        "interfaceIdentity": "AuthRegistrationApi.register",
+        "requestContractIdentity": "RegistrationRequest",
+        "responseContractIdentity": "RegistrationResponse",
+        "targetServiceIdentity": downstream_source,
+    }
+    if outbound_direction_role is not None:
+        outbound_metadata["directionRole"] = outbound_direction_role
     upstream_revision = seed_semantic_graph(
         db_path,
         source_id="fixture-bff",
@@ -408,19 +486,10 @@ def _seed_registration_operation_pair(
                 "id": "bff-auth-http",
                 "fromNodeId": "bff-register",
                 "toNodeId": None,
-                "edgeType": "CALLS",
+                "edgeType": outbound_edge_type,
                 "resolutionStatus": "EXTERNAL_TARGET",
                 "status": outbound_status,
-                "metadata": {
-                    "transportKind": outbound_transport,
-                    "httpMethod": outbound_method,
-                    "routeTemplate": outbound_route,
-                    "operationIdentity": "HTTP POST /api/v1/registrations",
-                    "interfaceIdentity": "AuthRegistrationApi.register",
-                    "requestContractIdentity": "RegistrationRequest",
-                    "responseContractIdentity": "RegistrationResponse",
-                    "targetServiceIdentity": downstream_source,
-                },
+                "metadata": outbound_metadata,
             }
         ],
         claims=[
@@ -482,7 +551,9 @@ def test_persisted_generic_http_operation_facts_support_registration_style_exact
     upstream_key, downstream_key = _seed_registration_operation_pair(db_path)
     nodes, facts = _loaded_nodes_and_facts(db_path, upstream_key, downstream_key)
 
-    outbound = next(fact for fact in facts if fact.direction_role == "OUTBOUND")
+    outbound_facts = [fact for fact in facts if fact.direction_role == "OUTBOUND"]
+    assert len(outbound_facts) == 1
+    outbound = outbound_facts[0]
     inbound = next(fact for fact in facts if fact.direction_role == "INBOUND" and fact.owner_source_id == "fixture-auth")
 
     assert outbound.source_channel == "EDGE_METADATA"
@@ -520,6 +591,320 @@ def test_persisted_generic_http_operation_facts_support_registration_style_exact
     exact = [result for result in results if result.status is FlowCorrelationStatus.EXACT_UNVERIFIED]
     assert len(exact) == 1
     assert exact[0].target_fragment_keys == (":".join(downstream_key),)
+
+
+def test_graph_analysis_persisted_http_operation_metadata_loads_and_correlates(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    _store, upstream_graph = _persist_graph_result(
+        db_path,
+        source_id="persisted-gateway",
+        file_id=1,
+        relative_path="src/Gateway.java",
+        content="class Gateway {\n  void submit() { client.post(); }\n}\n",
+        result=GraphAnalysisResult(
+            nodes=[
+                GraphNode(
+                    localId="gateway-submit",
+                    nodeKind="CALLABLE",
+                    name="Gateway.submit",
+                    qualifiedName="persisted.gateway.Gateway.submit",
+                    lineStart=1,
+                    lineEnd=2,
+                    confidence=1.0,
+                )
+            ],
+            edges=[
+                GraphEdge(
+                    localId="gateway-auth-http",
+                    fromNodeLocalId="gateway-submit",
+                    toNodeLocalId=None,
+                    edgeType="CALLS",
+                    resolutionStatus="EXTERNAL_TARGET",
+                    confidence=1.0,
+                    evidence=[GraphEvidenceRef(lineStart=2, lineEnd=2, text="client.post()")],
+                    unresolvedTarget={"name": "AuthRegistrationApi.register"},
+                    metadata={
+                        "transportKind": "HTTP",
+                        "httpMethod": "POST",
+                        "routeTemplate": "/api/v1/registrations",
+                        "operationIdentity": "HTTP POST /api/v1/registrations",
+                        "interfaceIdentity": "AuthRegistrationApi.register",
+                        "requestContractIdentity": "RegistrationRequest",
+                        "responseContractIdentity": "RegistrationResponse",
+                        "targetServiceIdentity": "persisted-auth",
+                    },
+                )
+            ],
+        ),
+    )
+    _other_store, downstream_graph = _persist_graph_result(
+        db_path,
+        source_id="persisted-auth",
+        file_id=2,
+        relative_path="src/RegistrationEndpoint.java",
+        content="class RegistrationEndpoint {\n  void accept() {}\n}\n",
+        result=GraphAnalysisResult(
+            nodes=[
+                GraphNode(
+                    localId="registration-accept",
+                    nodeKind="CALLABLE",
+                    name="RegistrationEndpoint.accept",
+                    qualifiedName="persisted.auth.RegistrationEndpoint.accept",
+                    lineStart=1,
+                    lineEnd=2,
+                    confidence=1.0,
+                )
+            ],
+            claims=[
+                GraphClaim(
+                    localId="registration-entrypoint",
+                    nodeLocalId="registration-accept",
+                    claimKind="ENTRYPOINT_HINT",
+                    summary="POST /api/v1/registrations",
+                    confidence=1.0,
+                    evidence=[GraphEvidenceRef(lineStart=2, lineEnd=2, text="accept")],
+                    metadata={
+                        "entrypointKind": "HTTP",
+                        "httpMethod": "POST",
+                        "route": "/api/v1/registrations/",
+                        "interfaceMethod": "AuthRegistrationApi.register",
+                        "entrypointExecutionKind": "EXECUTABLE",
+                    },
+                )
+            ],
+        ),
+    )
+    upstream_node_id = upstream_graph["nodes"][0]["id"]
+    downstream_node_id = downstream_graph["nodes"][0]["id"]
+    requested_upstream_key = ("persisted-gateway", "", upstream_node_id)
+    requested_downstream_key = ("persisted-auth", "", downstream_node_id)
+
+    with sqlite3.connect(db_path) as conn:
+        metadata = json.loads(
+            conn.execute(
+                "SELECT metadata_json FROM analysis_graph_edges WHERE source_id = ?",
+                ("persisted-gateway",),
+            ).fetchone()[0]
+        )
+    assert metadata["transportKind"] == "HTTP"
+    assert metadata["httpMethod"] == "POST"
+    assert metadata["routeTemplate"] == "/api/v1/registrations"
+    assert metadata["operationIdentity"] == "HTTP POST /api/v1/registrations"
+    assert metadata["interfaceIdentity"] == "AuthRegistrationApi.register"
+    assert metadata["requestContractIdentity"] == "RegistrationRequest"
+    assert metadata["responseContractIdentity"] == "RegistrationResponse"
+    assert metadata["targetServiceIdentity"] == "persisted-auth"
+
+    repo = EntrypointFlowGraphRepository(AnalysisStore(db_path))
+    facts = repo.load_available_operation_facts({requested_upstream_key, requested_downstream_key}, include_tests=False)
+    outbound = next(fact for fact in facts if fact.direction_role == "OUTBOUND")
+    inbound = next(fact for fact in facts if fact.direction_role == "INBOUND")
+
+    assert outbound.source_channel == "EDGE_METADATA"
+    assert outbound.owner_edge_id == upstream_graph["edges"][0]["id"]
+    assert outbound.method == "POST"
+    assert outbound.normalized_route == "/api/v1/registrations"
+    assert outbound.operation_identity == "HTTP POST /api/v1/registrations"
+    assert outbound.interface_identity == "AuthRegistrationApi.register"
+    assert outbound.request_contract_identity == "RegistrationRequest"
+    assert outbound.response_contract_identity == "RegistrationResponse"
+    assert outbound.target_service_identity == "persisted-auth"
+    assert outbound.evidence
+    assert inbound.method == outbound.method
+    assert inbound.normalized_route == outbound.normalized_route
+
+    upstream_node = FlowGraphNode(
+        source_id=outbound.owner_source_id,
+        graph_id=outbound.owner_graph_id,
+        graph_revision=outbound.owner_graph_revision,
+        node_id=outbound.owner_node_id,
+        stable_key=outbound.structural_owner,
+        node_kind="CALLABLE",
+        label="Gateway.submit",
+        qualified_name=outbound.owner_qualified_name,
+        entrypoint=True,
+        execution_role="CLIENT_OPERATION",
+    )
+    downstream_node = FlowGraphNode(
+        source_id=inbound.owner_source_id,
+        graph_id=inbound.owner_graph_id,
+        graph_revision=inbound.owner_graph_revision,
+        node_id=inbound.owner_node_id,
+        stable_key=inbound.structural_owner,
+        node_kind="CALLABLE",
+        label="RegistrationEndpoint.accept",
+        qualified_name=inbound.owner_qualified_name,
+        entrypoint=True,
+        entrypoint_kind="HTTP",
+        entrypoint_http_method=inbound.method,
+        entrypoint_route=inbound.normalized_route,
+        execution_role="EXECUTABLE",
+    )
+    families = _families(_flow(upstream_node), _flow(downstream_node))
+    fragments = FlowNarrativePlanner().fragments(families, operation_facts=facts)
+    assert {
+        fragment.source_id: [
+            (fact.direction_role, fact.method, fact.normalized_route, fact.operation_identity, fact.interface_identity)
+            for fact in fragment.operation_facts
+        ]
+        for fragment in fragments
+    } == {
+        "persisted-gateway": [
+            (
+                "OUTBOUND",
+                "POST",
+                "/api/v1/registrations",
+                "HTTP POST /api/v1/registrations",
+                "AuthRegistrationApi.register",
+            )
+        ],
+        "persisted-auth": [
+            ("INBOUND", "POST", "/api/v1/registrations", None, "AuthRegistrationApi.register")
+        ],
+    }
+    results = HttpFlowCorrelationAdapter().correlate(fragments)
+    assert [result.status for result in results] == [FlowCorrelationStatus.EXACT_UNVERIFIED]
+
+
+def test_supporting_http_edge_metadata_does_not_become_operation_fact(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    upstream_key, _downstream_key = _seed_registration_operation_pair(db_path, outbound_edge_type="OVERRIDES")
+
+    _nodes, facts = _loaded_nodes_and_facts(db_path, upstream_key)
+
+    assert all(fact.source_channel != "EDGE_METADATA" for fact in facts)
+    assert all(fact.direction_role != "OUTBOUND" for fact in facts)
+
+
+def test_invalid_or_contradictory_edge_direction_metadata_is_not_guessed(tmp_path):
+    for direction_role in ("INBOUND", "SIDEWAYS"):
+        db_path = tmp_path / f"{direction_role.lower()}.sqlite"
+        upstream_key, _downstream_key = _seed_registration_operation_pair(
+            db_path,
+            outbound_direction_role=direction_role,
+        )
+
+        _nodes, facts = _loaded_nodes_and_facts(db_path, upstream_key)
+
+        assert all(fact.source_channel != "EDGE_METADATA" for fact in facts)
+        assert all(fact.direction_role != "OUTBOUND" for fact in facts)
+
+
+def test_claim_and_edge_duplicate_operation_dedupes_correlation_and_public_gap(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    upstream_key, downstream_key = _seed_registration_operation_pair(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO analysis_graph_claims(
+                id, job_id, source_id, node_id, claim_kind, summary, confidence, status,
+                rejection_reason, created_at, updated_at, entrypoint_kind,
+                entrypoint_http_method, entrypoint_route, entrypoint_topic, entrypoint_schedule,
+                entrypoint_interface_method, entrypoint_execution_kind, fact_origin, flow_domain
+            )
+            VALUES (
+                'claim-bff-client-operation', 'semantic-job:one:fixture-bff', 'fixture-bff', 'bff-register',
+                'ENTRYPOINT_HINT', 'POST /api/v1/registrations', 0.9, 'TRUSTED', NULL,
+                '2026-07-25T00:00:00+00:00', '2026-07-25T00:00:00+00:00',
+                'HTTP', 'POST', '/api/v1/registrations', NULL, NULL,
+                'AuthRegistrationApi.register', 'CLIENT_OPERATION', 'STATIC', 'CODE'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_claim_evidence(claim_id, evidence_id)
+            VALUES ('claim-bff-client-operation', 'ev-bff-register')
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO analysis_graph_owner_evidence(
+                owner_kind, owner_source_id, owner_node_id, owner_edge_id, evidence_source_id, evidence_id
+            )
+            VALUES ('NODE', 'fixture-bff', 'bff-register', '', 'fixture-bff', 'ev-bff-register')
+            """
+        )
+
+    nodes, facts = _loaded_nodes_and_facts(db_path, upstream_key, downstream_key)
+    outbound_facts = [fact for fact in facts if fact.owner_source_id == "fixture-bff" and fact.direction_role == "OUTBOUND"]
+    assert len(outbound_facts) == 1
+    assert outbound_facts[0].operation_identity == "HTTP POST /api/v1/registrations"
+    assert outbound_facts[0].interface_identity == "AuthRegistrationApi.register"
+    assert {item.relative_path for item in outbound_facts[0].evidence} == {"src/Gateway.java"}
+
+    families = _families(*(_flow(nodes[key]) for key in (upstream_key, downstream_key)))
+    fragments = FlowNarrativePlanner().fragments(families, operation_facts=facts)
+    source_fragment = next(fragment for fragment in fragments if fragment.source_id == "fixture-bff")
+    assert [fact.direction_role for fact in source_fragment.operation_facts].count("OUTBOUND") == 1
+
+    correlations = HttpFlowCorrelationAdapter().correlate(fragments)
+    assert [result.status for result in correlations] == [FlowCorrelationStatus.EXACT_UNVERIFIED]
+
+    plans, diagnostics = FlowNarrativePlanner().assemble(families, max_plans=10, operation_facts=facts)
+    assert diagnostics == ()
+    assert len(plans) == 1
+    assert [part.kind for part in plans[0].parts].count(FlowNarrativePartKind.UNVERIFIED_GAP) == 1
+    tool = FlowProjectionBuilder().to_tool_response(
+        KnowledgeQueryRequest(queryText="registration", intent="FLOW_EXPLANATION"),
+        type("Execution", (), {"narrative_plans": plans, "flows": (), "response": None})(),
+    )
+    assert sum(1 for part in tool.flows[0].parts if part.kind == "UNVERIFIED_GAP") == 1
+
+
+def test_distinct_edge_backed_outbound_operations_remain_distinct(tmp_path):
+    db_path = tmp_path / "knowledge.sqlite"
+    revision = seed_semantic_graph(
+        db_path,
+        source_id="multi-operation-client",
+        nodes=[
+            {
+                "id": "gateway",
+                "nodeKind": "CALLABLE",
+                "name": "Gateway.send",
+                "qualified": "fixture.Gateway.send",
+                "path": "src/Gateway.java",
+            },
+        ],
+        edges=[
+            {
+                "id": "create-operation",
+                "fromNodeId": "gateway",
+                "toNodeId": None,
+                "edgeType": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "metadata": {
+                    "transportKind": "HTTP",
+                    "httpMethod": "POST",
+                    "routeTemplate": "/items",
+                    "operationIdentity": "HTTP POST /items",
+                },
+            },
+            {
+                "id": "update-operation",
+                "fromNodeId": "gateway",
+                "toNodeId": None,
+                "edgeType": "CALLS",
+                "resolutionStatus": "EXTERNAL_TARGET",
+                "metadata": {
+                    "transportKind": "HTTP",
+                    "httpMethod": "PUT",
+                    "routeTemplate": "/items/{id}",
+                    "operationIdentity": "HTTP PUT /items/{id}",
+                },
+            },
+        ],
+        evidence_ids=["ev-gateway"],
+    )
+
+    _nodes, facts = _loaded_nodes_and_facts(db_path, ("multi-operation-client", revision, "gateway"))
+    outbound_facts = [fact for fact in facts if fact.direction_role == "OUTBOUND"]
+
+    assert len(outbound_facts) == 2
+    assert {(fact.method, fact.normalized_route) for fact in outbound_facts} == {
+        ("POST", "/items"),
+        ("PUT", "/items/{id}"),
+    }
 
 
 def test_multiple_exact_downstream_http_operation_matches_are_ambiguous(tmp_path):

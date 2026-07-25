@@ -30,9 +30,14 @@ from knowledge_service.knowledge_query_schema import (
     KnowledgeQueryRequest,
 )
 from knowledge_service.language_policy import normalize_response_language
-from knowledge_service.operation_facts import AvailableOperationFact, normalize_http_method, normalize_route, normalize_transport_kind
+from knowledge_service.operation_facts import (
+    AvailableOperationFact,
+    merge_semantic_operation_facts,
+    normalize_http_method,
+    normalize_route,
+    normalize_transport_kind,
+)
 from knowledge_service.query_interpretation import QueryRetrievalPlan
-
 
 VERIFIED = "VERIFIED"
 UNVERIFIED = "UNVERIFIED"
@@ -1667,7 +1672,7 @@ class FlowFormatterPlanBuilder:
         payloads: list[Dict[str, Any]] = []
         identities: list[tuple[Any, ...]] = []
         seen: set[tuple[Any, ...]] = set()
-        for fact in sorted(facts, key=self._operation_fact_sort_key):
+        for fact in sorted(merge_semantic_operation_facts(facts), key=self._operation_fact_sort_key):
             identity = self._operation_fact_identity(fact)
             if identity in seen:
                 continue

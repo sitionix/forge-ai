@@ -5,12 +5,11 @@ from dataclasses import replace
 from typing import Sequence
 
 from knowledge_service.entrypoint_flow_engine import EntrypointFlow, EntrypointFlowEngine, EntrypointFlowOrigin
+from knowledge_service.file_classification import FileClassifier
 from knowledge_service.flow_graph_contract import FlowGraphEdge, FlowGraphEvidence, FlowGraphNode, FlowNodeKey, dedupe_evidence
+from knowledge_service.knowledge_defaults import load_knowledge_defaults
 from knowledge_service.knowledge_query_schema import KnowledgeQueryMatchedNode
 from knowledge_service.operation_facts import AvailableOperationFact, OperationFactEligibility
-from knowledge_service.file_classification import FileClassifier
-from knowledge_service.knowledge_defaults import load_knowledge_defaults
-
 
 SOURCE = "source-neutral"
 REVISION = "revision-current"
@@ -320,6 +319,17 @@ def test_inbound_http_operation_fact_promotes_callable_to_explicit_root():
     assert result.flows[0].entrypoint.entrypoint_kind == "HTTP"
     assert result.flows[0].entrypoint.entrypoint_http_method == "POST"
     assert result.flows[0].entrypoint.entrypoint_route == "/registrations"
+
+
+def test_outbound_http_operation_fact_does_not_promote_callable_to_explicit_root():
+    beta = node("Beta")
+    nodes = [node("Alpha"), beta, node("Gamma")]
+    edges = [edge("ab", "Alpha", "Beta"), edge("bg", "Beta", "Gamma")]
+
+    result = build(nodes, edges, [anchor("Gamma")], operation_facts=[operation_fact(beta, direction="OUTBOUND")])
+
+    assert [flow.entrypoint.node_id for flow in result.flows] == ["Alpha"]
+    assert result.flows[0].origin is EntrypointFlowOrigin.INFERRED_ROOT
 
 
 def test_similarly_named_callable_without_http_operation_fact_is_not_explicit_root():
